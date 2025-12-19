@@ -28,7 +28,7 @@ pflow workflow discover "user's exact request here"
 ### No Match (<70%): Execute Directly vs Create Workflow
 
 - **1-2 nodes needed** (e.g., fetch + save) → Ask user: "Execute directly (via `registry run`) or create reusable workflow?"
-- **3+ nodes needed** → Create workflow (don't ask, just proceed with `pflow instructions create`)
+- **3+ nodes needed** → Create workflow (don't ask, just proceed with `pflow instructions create --part 1/2/3`)
 
 ## Essential Commands
 
@@ -66,11 +66,13 @@ Data saved successfully # Only first workflow output is presented to the user (t
 ### Instructions for building workflows
 
 ```bash
-# Only read this if you need to build a new workflow from scratch and user has approved the creation of a new workflow.
-pflow instructions create
+# Read all 3 parts sequentially before building workflows:
+pflow instructions create --part 1
+pflow instructions create --part 2
+pflow instructions create --part 3
 ```
 
-**ONLY use `pflow instructions create` when:**
+**ONLY read these instructions when:**
 - Building your first workflow
 - User has approved the creation of a new workflow
 - You are sure no existing workflow matches the user's request
@@ -146,7 +148,7 @@ Is it a complex task or workflow request?
     │       ↓
     │       How many nodes needed?
     │       ├─ 1-2 nodes → Ask: "Execute directly or create workflow?"
-    │       └─ 3+ nodes → Create workflow (pflow instructions create)
+    │       └─ 3+ nodes → Create workflow (pflow instructions create --part 1/2/3)
     │
     └─ NO: Simple request (specific node/tool)
         ↓

@@ -1,3 +1,5 @@
+<!-- PART 1 START: Foundation & Mental Model -->
+<!-- Covers: Core concepts, edges vs templates, workflow limitations, node selection, development steps 1-8 -->
 # pflow Agent Instructions - Complete Guide
 
 > **Purpose**: Enable AI agents to build reusable workflows by transforming user-specific examples into general-purpose tools with precision and clarity.
@@ -566,6 +568,8 @@ uv run pflow phase1.json source_url="https://api.example.com/data"
 }
 ```
 
+<!-- PART 2 START: Building Workflows -->
+<!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->
 #### Input Declaration - Complete Rules
 
 **Decision process for EVERY value:**
@@ -1100,6 +1104,8 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
 }
 ```
 
+<!-- PART 3 START: Testing & Reference -->
+<!-- Covers: Testing, debugging, workflow patterns, troubleshooting, quick reference cheat sheets -->
 ## Part 5: Testing, Debugging & Validation
 
 ### Precise Testing Decision Matrix

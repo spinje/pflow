@@ -89,28 +89,22 @@ class TestUsageInstructions:
 class TestCreateInstructions:
     """Test the create instructions command."""
 
-    def test_create_instructions_success(self, runner: CliRunner) -> None:
-        """Test that create instructions command returns content."""
+    def test_create_instructions_returns_full_content(self, runner: CliRunner) -> None:
+        """Test that create instructions returns full content by default."""
         result = runner.invoke(create_instructions, [])
         assert result.exit_code == 0
         assert "pflow Agent Instructions - Complete Guide" in result.output
         assert "Core Mission" in result.output
         assert "MANDATORY First Step" in result.output
-
-    def test_create_instructions_content_length(self, runner: CliRunner) -> None:
-        """Test that create instructions are comprehensive (~1600 lines)."""
-        result = runner.invoke(create_instructions, [])
-        assert result.exit_code == 0
+        # Full content should be ~1650 lines
         line_count = len(result.output.split("\n"))
-        # Should be around 1600 lines, allow reasonable variance
-        assert 1000 <= line_count <= 2000, f"Expected ~1600 lines, got {line_count}"
+        assert 1400 <= line_count <= 1800, f"Expected ~1650 lines, got {line_count}"
 
-    def test_create_instructions_comprehensive_content(self, runner: CliRunner) -> None:
-        """Test that create instructions contain comprehensive sections."""
+    def test_create_instructions_content_has_all_parts(self, runner: CliRunner) -> None:
+        """Test that full content contains all major sections."""
         result = runner.invoke(create_instructions, [])
         assert result.exit_code == 0
-
-        # Key comprehensive sections (using actual section names from the file)
+        # Key sections from all parts
         expected_sections = [
             "Part 1: Foundation & Mental Model",
             "Two Fundamental Concepts - Edges vs Templates",
@@ -119,15 +113,51 @@ class TestCreateInstructions:
             "Part 3: The Complete Development Loop",
             "Part 4: Building Workflows - Technical Reference",
         ]
-
         for section in expected_sections:
             assert section in result.output, f"Expected section '{section}' not found"
+
+    def test_create_instructions_part1(self, runner: CliRunner) -> None:
+        """Test that --part 1 returns foundation content only."""
+        result = runner.invoke(create_instructions, ["--part", "1"])
+        assert result.exit_code == 0
+        assert "pflow Agent Instructions - Complete Guide" in result.output
+        assert "Core Mission" in result.output
+        assert "MANDATORY First Step" in result.output
+        # Part 1 should have ~550 lines
+        line_count = len(result.output.split("\n"))
+        assert 400 <= line_count <= 700, f"Expected ~550 lines for Part 1, got {line_count}"
+
+    def test_create_instructions_part2(self, runner: CliRunner) -> None:
+        """Test that --part 2 returns building workflows content."""
+        result = runner.invoke(create_instructions, ["--part", "2"])
+        assert result.exit_code == 0
+        assert "Input Declaration - Complete Rules" in result.output
+        # Part 2 should have ~550 lines
+        line_count = len(result.output.split("\n"))
+        assert 400 <= line_count <= 700, f"Expected ~550 lines for Part 2, got {line_count}"
+
+    def test_create_instructions_part3(self, runner: CliRunner) -> None:
+        """Test that --part 3 returns testing & reference content."""
+        result = runner.invoke(create_instructions, ["--part", "3"])
+        assert result.exit_code == 0
+        assert "Testing, Debugging & Validation" in result.output
+        assert "Command Cheat Sheet" in result.output
+        # Part 3 should have ~550 lines
+        line_count = len(result.output.split("\n"))
+        assert 400 <= line_count <= 700, f"Expected ~550 lines for Part 3, got {line_count}"
+
+    def test_create_instructions_invalid_part(self, runner: CliRunner) -> None:
+        """Test that invalid part number shows error."""
+        result = runner.invoke(create_instructions, ["--part", "4"])
+        assert result.exit_code != 0
+        assert "Invalid value" in result.output or "not in the range" in result.output
 
     def test_create_instructions_help(self, runner: CliRunner) -> None:
         """Test create command help."""
         result = runner.invoke(create_instructions, ["--help"])
         assert result.exit_code == 0
         assert "comprehensive workflow creation instructions" in result.output
+        assert "--part" in result.output
 
 
 class TestInstructionFiles:
@@ -182,4 +212,14 @@ class TestEndToEndInstructions:
         """Test that 'pflow instructions create' works through main CLI."""
         result = runner.invoke(instructions, ["create"])
         assert result.exit_code == 0
+        # Without --part, shows full content
         assert "pflow Agent Instructions - Complete Guide" in result.output
+
+    def test_instructions_create_with_part_via_main_cli(self, runner: CliRunner) -> None:
+        """Test that 'pflow instructions create --part 1' works through main CLI."""
+        result = runner.invoke(instructions, ["create", "--part", "1"])
+        assert result.exit_code == 0
+        assert "pflow Agent Instructions - Complete Guide" in result.output
+        # Part 1 should be smaller than full content
+        line_count = len(result.output.split("\n"))
+        assert line_count < 700, f"Part 1 should be ~550 lines, got {line_count}"
