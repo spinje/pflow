@@ -21,7 +21,7 @@
 
 pflow is a workflow compiler for AI agents. Instead of reasoning through multi-step tasks every time, your agent builds a workflow once. After that, the workflow runs instantly—no AI, no token cost, deterministic results.
 
-Workflows combine MCP servers, HTTP APIs, shell commands, and LLM calls. Your agent (Claude Code, Cursor, Windsurf) discovers existing workflows or creates new ones as needed.
+Workflows combine MCP servers, HTTP APIs, shell commands, and LLM calls. Your agent (Claude Code, Cursor, Windsurf or any other locally installed agent) discovers existing workflows or creates new ones as needed.
 
 **Status:** Pre-release. Actively developed. See [Roadmap](https://docs.pflow.run/roadmap) for direction.
 
