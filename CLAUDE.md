@@ -284,18 +284,17 @@ pflow/
 │   ├── test_mcp/            # MCP integration tests (client-side MCP node/server integration)
 │   ├── test_mcp_server/     # MCP server tests (pflow-as-MCP-server)
 │   ├── test_nodes/          # Node implementation tests
-│   │   ├── test_claude/     # Claude nodes
-│   │   ├── test_file/       # File nodes
-│   │   ├── test_git/        # Git nodes
-│   │   ├── test_github/     # GitHub nodes
-│   │   ├── test_http/       # HTTP node
-│   │   ├── test_llm/        # LLM node
-│   │   ├── test_mcp/        # MCP node
-│   │   └── test_shell/      # Shell node
 │   ├── test_planning/       # Planner tests (behavior, prompts, integration)
 │   ├── test_registry/       # Registry/scanner tests
 │   └── test_runtime/        # Runtime/compiler/executor tests
 ├── .taskmaster/             # Task management and planning
+│   └──  tasks/              # Task implementation files for all tasks
+│       └── task_<task-number>/         # Task <task-number> implementation files
+│           ├── task-review.md # Task review
+│           ├── task-<task-number>.md # Task specification
+│           └── implementation/
+│               └── progress-log.md # Progress tracking during development
+│               └── implementation-plan.md # Implementation plan
 └── CLAUDE.md                # This guide for agents working in the repo
 ```
 
@@ -469,9 +468,10 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 85: Runtime Template Resolution Hardening
 - ✅ Task 89: Implement Structure-Only Mode and Selective Data Retrieval
 - ✅ Task 83: Pre-Release Security and Code Quality Audit
+- ✅ Task 93: Set Up Mintlify Documentation
 
 Next up:
-- ⏳ Task 93: Set Up Mintlify Documentation
+- ⏳ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
 First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
@@ -479,7 +479,6 @@ First version (v0.6.0 - public release):
 Version (v0.7.0):
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
-- ⏳ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
 Version (v0.8.0):
 - ⏳ Task 59: Add support for nested workflows
