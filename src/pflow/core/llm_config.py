@@ -197,9 +197,10 @@ def get_model_for_feature(feature: str) -> str:
     """Get LLM model for a specific feature with fallback chain.
 
     Resolution order:
-    1. Settings file (if configured in ~/.pflow/settings.json)
-    2. Auto-detected default (based on available API keys)
-    3. Hardcoded fallback (anthropic/claude-sonnet-4-5)
+    1. Feature-specific setting (discovery_model or filtering_model)
+    2. Default model setting (default_model) - shared fallback for all features
+    3. Auto-detected default (based on available API keys)
+    4. Hardcoded fallback (anthropic/claude-sonnet-4-5)
 
     Args:
         feature: Feature name - "discovery" or "filtering"
@@ -220,24 +221,29 @@ def get_model_for_feature(feature: str) -> str:
     try:
         settings = SettingsManager().load()
 
-        # Check settings first
+        # 1. Check feature-specific setting first
         if feature == "discovery" and settings.llm.discovery_model:
             logger.debug(f"Using configured discovery model: {settings.llm.discovery_model}")
             return settings.llm.discovery_model
         elif feature == "filtering" and settings.llm.filtering_model:
             logger.debug(f"Using configured filtering model: {settings.llm.filtering_model}")
             return settings.llm.filtering_model
+
+        # 2. Check default_model as shared fallback
+        if settings.llm.default_model:
+            logger.debug(f"Using default_model for {feature}: {settings.llm.default_model}")
+            return settings.llm.default_model
     except Exception as e:
         # Settings load failed, continue with auto-detection
         logger.debug(f"Failed to load settings for {feature} model: {e}")
 
-    # Fall back to auto-detection
+    # 3. Fall back to auto-detection
     detected = get_default_llm_model()
     if detected:
         logger.debug(f"Using auto-detected model for {feature}: {detected}")
         return detected
 
-    # Final fallback
+    # 4. Final fallback
     logger.debug(f"Using fallback model for {feature}: {_DEFAULT_FALLBACK_MODEL}")
     return _DEFAULT_FALLBACK_MODEL
 

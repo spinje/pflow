@@ -349,3 +349,204 @@ def list_env(show_values: bool) -> None:
     click.echo("Environment variables:")
     for key, value in sorted(env_vars.items()):
         click.echo(f"  {key}: {value}")
+
+
+# ============================================================================
+# LLM Settings Subgroup
+# ============================================================================
+
+
+@settings.group()
+def llm() -> None:
+    """Manage LLM model settings.
+
+    Configure which models are used for different pflow features:
+    - default: Model for LLM nodes in user workflows
+    - discovery: Model for 'pflow registry discover' and 'pflow workflow discover'
+    - filtering: Model for smart field filtering (structure-only mode)
+    """
+    pass
+
+
+def _get_resolved_model(setting_name: str, configured_value: str | None, default_model: str | None = None) -> str:
+    """Get the resolved model value with source indication.
+
+    Args:
+        setting_name: Name of the setting (default, discovery, filtering)
+        configured_value: Value from settings (may be None)
+        default_model: The default_model setting value (for fallback display)
+
+    Returns:
+        String describing the resolved value and its source
+    """
+    from pflow.core.llm_config import (
+        get_default_llm_model,
+        get_llm_cli_default_model,
+    )
+
+    if configured_value:
+        return f"{configured_value} (configured)"
+
+    # For default_model, resolution is: settings → llm CLI → error
+    if setting_name == "default":
+        llm_cli_default = get_llm_cli_default_model()
+        if llm_cli_default:
+            return f"(llm CLI default → {llm_cli_default})"
+        return "(not configured - will error if LLM node used)"
+
+    # For discovery/filtering, resolution is: feature → default_model → auto-detect → fallback
+    # Check if default_model is set and will be used
+    if default_model:
+        return f"(using default_model → {default_model})"
+
+    detected = get_default_llm_model()
+    if detected:
+        return f"(auto-detect → {detected})"
+    return "(fallback → anthropic/claude-sonnet-4-5)"
+
+
+@llm.command(name="show")
+def llm_show() -> None:
+    """Show current LLM model settings.
+
+    Displays configured models and shows how unset values will be resolved.
+
+    Example:
+        pflow settings llm show
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+
+    click.echo("LLM Model Settings:\n")
+
+    # Show each setting with resolution info
+    # Pass default_model to discovery/filtering so they can show fallback
+    default_model = current_settings.llm.default_model
+    default_resolved = _get_resolved_model("default", default_model)
+    discovery_resolved = _get_resolved_model("discovery", current_settings.llm.discovery_model, default_model)
+    filtering_resolved = _get_resolved_model("filtering", current_settings.llm.filtering_model, default_model)
+
+    click.echo(f"  default_model:    {default_resolved}")
+    click.echo(f"  discovery_model:  {discovery_resolved}")
+    click.echo(f"  filtering_model:  {filtering_resolved}")
+
+    click.echo("\nResolution order:")
+    click.echo("  default:    workflow params → default_model → llm CLI default → error")
+    click.echo("  discovery:  discovery_model → default_model → auto-detect → fallback")
+    click.echo("  filtering:  filtering_model → default_model → auto-detect → fallback")
+
+    click.echo("\nTo configure:")
+    click.echo("  pflow settings llm set-default <model>")
+    click.echo("  pflow settings llm set-discovery <model>")
+    click.echo("  pflow settings llm set-filtering <model>")
+
+
+@llm.command(name="set-default")
+@click.argument("model")
+def llm_set_default(model: str) -> None:
+    """Set the default model for all pflow LLM usage.
+
+    This model is used as the fallback for:
+    - LLM nodes in workflows (when no model specified)
+    - Discovery commands (when discovery_model not set)
+    - Smart filtering (when filtering_model not set)
+
+    Example:
+        pflow settings llm set-default gpt-5.2
+        pflow settings llm set-default anthropic/claude-sonnet-4-5
+        pflow settings llm set-default gemini-3-flash-preview
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+    current_settings.llm.default_model = model
+    manager.save(current_settings)
+
+    click.echo(f"✓ Set default_model: {model}")
+
+
+@llm.command(name="set-discovery")
+@click.argument("model")
+def llm_set_discovery(model: str) -> None:
+    """Set the model for discovery commands.
+
+    Used by 'pflow registry discover' and 'pflow workflow discover'.
+
+    Example:
+        pflow settings llm set-discovery anthropic/claude-sonnet-4-5
+        pflow settings llm set-discovery gemini-3-flash-preview
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+    current_settings.llm.discovery_model = model
+    manager.save(current_settings)
+
+    click.echo(f"✓ Set discovery_model: {model}")
+
+
+@llm.command(name="set-filtering")
+@click.argument("model")
+def llm_set_filtering(model: str) -> None:
+    """Set the model for smart field filtering.
+
+    Used for structure-only mode when filtering large LLM responses.
+
+    Example:
+        pflow settings llm set-filtering gemini-2.5-flash-lite
+        pflow settings llm set-filtering gpt-4o-mini
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+    current_settings.llm.filtering_model = model
+    manager.save(current_settings)
+
+    click.echo(f"✓ Set filtering_model: {model}")
+
+
+# Valid setting names for unset command
+_LLM_SETTING_NAMES = {"default", "discovery", "filtering", "all"}
+
+
+@llm.command(name="unset")
+@click.argument("setting", type=click.Choice(["default", "discovery", "filtering", "all"]))
+def llm_unset(setting: str) -> None:
+    """Remove an LLM model setting.
+
+    Removes the configured value, reverting to auto-detection behavior.
+
+    SETTING can be: default, discovery, filtering, or all
+
+    Example:
+        pflow settings llm unset default      # Clear default_model
+        pflow settings llm unset discovery    # Clear discovery_model
+        pflow settings llm unset all          # Clear all LLM settings
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+
+    if setting == "all":
+        current_settings.llm.default_model = None
+        current_settings.llm.discovery_model = None
+        current_settings.llm.filtering_model = None
+        manager.save(current_settings)
+        click.echo("✓ Removed all LLM settings (will use auto-detection)")
+    elif setting == "default":
+        if current_settings.llm.default_model is None:
+            click.echo("default_model is not set")
+        else:
+            current_settings.llm.default_model = None
+            manager.save(current_settings)
+            click.echo("✓ Removed default_model (will use llm CLI default or error)")
+    elif setting == "discovery":
+        if current_settings.llm.discovery_model is None:
+            click.echo("discovery_model is not set")
+        else:
+            current_settings.llm.discovery_model = None
+            manager.save(current_settings)
+            click.echo("✓ Removed discovery_model (will use auto-detection)")
+    elif setting == "filtering":
+        if current_settings.llm.filtering_model is None:
+            click.echo("filtering_model is not set")
+        else:
+            current_settings.llm.filtering_model = None
+            manager.save(current_settings)
+            click.echo("✓ Removed filtering_model (will use auto-detection)")

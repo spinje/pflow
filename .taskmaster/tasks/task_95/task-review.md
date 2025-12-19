@@ -49,6 +49,7 @@ The bug occurred because the monkey-patch was installed for ALL workflows, not j
 | `src/pflow/core/smart_filter.py:164-167` | Use `get_model_for_feature("filtering")` | Smart filter uses configured model |
 | `src/pflow/core/workflow_save_service.py:300-332` | Accept optional `model_name` parameter | Pass model to metadata generation |
 | `src/pflow/core/llm_pricing.py` | Added GPT-5.2, Gemini 3 Flash pricing | Cost tracking for new models |
+| `src/pflow/cli/commands/settings.py` | Added `llm` subgroup with show/set-*/unset commands | CLI management for LLM settings |
 
 ### Test Files
 
@@ -92,6 +93,7 @@ compiler → llm_config (for model resolution)
 | Require explicit model configuration | Fail-early with helpful message > silent runtime failure | Auto-detect and use (confusing if user has multiple keys) |
 | Settings → llm CLI → error resolution | Respects user's explicit choice, falls back to llm ecosystem | Auto-detect from API keys (too magical) |
 | Top-level imports in compiler/llm_config | Avoids repeated import overhead; no circular import exists | Keep inline imports (review feedback said change) |
+| Unified `default_model` fallback | Name implies shared behavior; simpler UX (set once, applies everywhere) | Separate settings per feature (more configuration burden) |
 
 ### Technical Debt Incurred
 
@@ -136,21 +138,25 @@ compiler → llm_config (for model resolution)
 
 ### Reusable Patterns
 
-**Model Resolution Chain**:
+**Model Resolution Chain** (unified default):
 ```python
 def get_model_for_feature(feature: str) -> str:
-    """Resolution: settings → auto-detect → fallback"""
-    # 1. Check settings first
+    """Resolution: feature_model → default_model → auto-detect → fallback"""
     settings = SettingsManager().load()
+
+    # 1. Feature-specific setting (discovery_model, filtering_model)
     if getattr(settings.llm, f"{feature}_model"):
         return getattr(settings.llm, f"{feature}_model")
 
-    # 2. Auto-detect from API keys
-    detected = get_default_llm_model()
-    if detected:
+    # 2. Shared default_model fallback
+    if settings.llm.default_model:
+        return settings.llm.default_model
+
+    # 3. Auto-detect from API keys
+    if detected := get_default_llm_model():
         return detected
 
-    # 3. Hardcoded fallback
+    # 4. Hardcoded fallback
     return _DEFAULT_FALLBACK_MODEL
 ```
 
@@ -188,7 +194,7 @@ No model specified for LLM node 'my-llm' and no default configured.
 
 Configure a default model using one of these methods:
   1. Specify in workflow (per-node): {"params": {"model": "gpt-5.2"}}
-  2. Set pflow default: ~/.pflow/settings.json {"llm": {"default_model": "gpt-5.2"}}
+  2. Set pflow default via CLI: pflow settings llm set-default gpt-5.2
   3. Set llm library default: llm models default gpt-5.2
 ```
 

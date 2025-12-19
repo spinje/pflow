@@ -644,3 +644,72 @@ Comprehensive verification of all Task 95 changes:
 ### Task 95 Status: ✅ COMPLETE
 
 All implementation phases verified and working correctly.
+
+---
+
+## [2025-12-19] - CLI Commands for LLM Settings
+
+### Problem
+
+Users had to manually edit `~/.pflow/settings.json` to configure LLM models. No CLI interface existed for the new `LLMSettings` fields added in Task 95.
+
+### Implementation
+
+Added `pflow settings llm` subgroup with 5 commands:
+
+```bash
+pflow settings llm show              # Show settings with resolution status
+pflow settings llm set-default MODEL # Set default_model
+pflow settings llm set-discovery MODEL
+pflow settings llm set-filtering MODEL
+pflow settings llm unset SETTING     # SETTING: default|discovery|filtering|all
+```
+
+### Key Design Decision: Unified Default Model
+
+During implementation, the user identified that `default_model` should logically be the default for *all* LLM usage, not just workflow nodes. The name implies shared behavior.
+
+**Before:**
+```
+discovery:  discovery_model → auto-detect → fallback
+filtering:  filtering_model → auto-detect → fallback
+```
+
+**After:**
+```
+discovery:  discovery_model → default_model → auto-detect → fallback
+filtering:  filtering_model → default_model → auto-detect → fallback
+```
+
+This means setting `default_model` once configures everything, with feature-specific overrides still available.
+
+### CLI Output Example
+
+```
+$ pflow settings llm show
+LLM Model Settings:
+
+  default_model:    gemini-3-flash-preview (configured)
+  discovery_model:  (using default_model → gemini-3-flash-preview)
+  filtering_model:  (using default_model → gemini-3-flash-preview)
+
+Resolution order:
+  default:    workflow params → default_model → llm CLI default → error
+  discovery:  discovery_model → default_model → auto-detect → fallback
+  filtering:  filtering_model → default_model → auto-detect → fallback
+```
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `src/pflow/cli/commands/settings.py` | Added `llm` subgroup with 5 commands |
+| `src/pflow/core/llm_config.py` | Added `default_model` fallback in `get_model_for_feature()` |
+| `src/pflow/core/settings.py` | Updated `LLMSettings` docstring |
+| `tests/test_cli/test_settings_cli.py` | Added 22 tests for LLM commands |
+| `tests/test_core/test_llm_config_workflow_model.py` | Added 8 tests for resolution chain |
+
+### Verification
+
+- `make check`: All passed ✅
+- `make test`: 3418 passed, 7 skipped ✅

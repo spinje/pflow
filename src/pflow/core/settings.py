@@ -61,34 +61,36 @@ class LLMSettings(BaseModel):
     The planner always uses Anthropic for its advanced features.
 
     Resolution order:
-    - default_model: settings → llm CLI default → fail with setup instructions
-    - discovery_model: settings → auto-detect → fallback
-    - filtering_model: settings → auto-detect → fallback
+    - LLM nodes:  workflow params → default_model → llm CLI default → error
+    - discovery:  discovery_model → default_model → auto-detect → fallback
+    - filtering:  filtering_model → default_model → auto-detect → fallback
+
+    The default_model serves as a shared fallback for all features when
+    feature-specific settings are not configured.
 
     Examples:
-        # Set default model for all LLM nodes in workflows
-        {"default_model": "gpt-5.2"}
+        # Set default model for everything (LLM nodes, discovery, filtering)
+        {"default_model": "gemini-3-flash-preview"}
 
-        # Different models for different purposes
+        # Override just discovery while using default for others
         {
             "default_model": "gemini-3-flash-preview",
-            "discovery_model": "anthropic/claude-sonnet-4-5",
-            "filtering_model": "gemini-2.5-flash-lite"
+            "discovery_model": "anthropic/claude-sonnet-4-5"
         }
     """
 
     default_model: Optional[str] = Field(
         default=None,
-        description="Default model for LLM nodes in user workflows. "
-        "If not set, falls back to llm CLI default, then fails with setup instructions.",
+        description="Default model for all pflow LLM usage. "
+        "Used by LLM nodes, discovery, and filtering when specific settings are not set.",
     )
     discovery_model: Optional[str] = Field(
         default=None,
-        description="Model for discovery commands (registry discover, workflow discover). None = auto-detect.",
+        description="Model for discovery commands. Overrides default_model for discovery only.",
     )
     filtering_model: Optional[str] = Field(
         default=None,
-        description="Model for smart field filtering (structure-only mode). None = auto-detect.",
+        description="Model for smart field filtering. Overrides default_model for filtering only.",
     )
 
 

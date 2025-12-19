@@ -1,4 +1,4 @@
-"""Test get_default_workflow_model and related functions."""
+"""Test get_default_workflow_model, get_model_for_feature, and related functions."""
 
 import subprocess
 from unittest.mock import MagicMock, patch
@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 from pflow.core.llm_config import (
     get_default_workflow_model,
     get_llm_cli_default_model,
+    get_model_for_feature,
     get_model_not_configured_help,
 )
 
@@ -188,3 +189,120 @@ class TestGetModelNotConfiguredHelp:
         # Check that the JSON example includes the node ID
         assert '"id": "my-node"' in help_text
         assert '"model": "gpt-5.2"' in help_text
+
+
+class TestGetModelForFeature:
+    """Test get_model_for_feature resolution chain."""
+
+    def test_returns_feature_specific_model_when_set(self):
+        """Returns discovery_model when explicitly configured."""
+        mock_settings = MagicMock()
+        mock_settings.llm.discovery_model = "discovery-specific-model"
+        mock_settings.llm.default_model = "default-model"
+
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.return_value = mock_settings
+
+            result = get_model_for_feature("discovery")
+
+            assert result == "discovery-specific-model"
+
+    def test_falls_back_to_default_model(self):
+        """Falls back to default_model when feature-specific not set."""
+        mock_settings = MagicMock()
+        mock_settings.llm.discovery_model = None
+        mock_settings.llm.default_model = "shared-default-model"
+
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.return_value = mock_settings
+
+            result = get_model_for_feature("discovery")
+
+            assert result == "shared-default-model"
+
+    def test_falls_back_to_auto_detect_when_no_default(self):
+        """Falls back to auto-detect when neither feature nor default set."""
+        mock_settings = MagicMock()
+        mock_settings.llm.filtering_model = None
+        mock_settings.llm.default_model = None
+
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.return_value = mock_settings
+
+            with patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value="auto-detected-model",
+            ):
+                result = get_model_for_feature("filtering")
+
+                assert result == "auto-detected-model"
+
+    def test_falls_back_to_hardcoded_fallback(self):
+        """Falls back to hardcoded value when nothing else available."""
+        mock_settings = MagicMock()
+        mock_settings.llm.discovery_model = None
+        mock_settings.llm.default_model = None
+
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.return_value = mock_settings
+
+            with patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value=None,
+            ):
+                result = get_model_for_feature("discovery")
+
+                assert result == "anthropic/claude-sonnet-4-5"
+
+    def test_feature_specific_takes_priority_over_default(self):
+        """Feature-specific model takes priority over default_model."""
+        mock_settings = MagicMock()
+        mock_settings.llm.filtering_model = "filtering-specific"
+        mock_settings.llm.default_model = "default-model"
+
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.return_value = mock_settings
+
+            result = get_model_for_feature("filtering")
+
+            # Feature-specific wins
+            assert result == "filtering-specific"
+
+    def test_default_model_takes_priority_over_auto_detect(self):
+        """default_model takes priority over auto-detection."""
+        mock_settings = MagicMock()
+        mock_settings.llm.discovery_model = None
+        mock_settings.llm.default_model = "user-default"
+
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.return_value = mock_settings
+
+            # Auto-detect would return something different
+            with patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value="auto-detected-model",
+            ):
+                result = get_model_for_feature("discovery")
+
+                # default_model wins over auto-detect
+                assert result == "user-default"
+
+    def test_raises_on_invalid_feature(self):
+        """Raises ValueError for unknown feature names."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Unknown feature"):
+            get_model_for_feature("invalid-feature")
+
+    def test_handles_settings_load_failure(self):
+        """Falls back gracefully when settings fail to load."""
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+            MockManager.return_value.load.side_effect = Exception("Settings error")
+
+            with patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value="fallback-model",
+            ):
+                result = get_model_for_feature("discovery")
+
+                assert result == "fallback-model"

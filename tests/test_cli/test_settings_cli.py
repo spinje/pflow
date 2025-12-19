@@ -500,3 +500,286 @@ class TestShowCommand:
 
         # Assert: Non-sensitive visible
         assert parsed["env"]["config"] == "🌍test"
+
+
+# ============================================================================
+# LLM Settings Subgroup Tests
+# ============================================================================
+
+
+class TestLLMShowCommand:
+    """Test pflow settings llm show command."""
+
+    def test_llm_show_default_state(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test llm show with no settings configured."""
+        result = runner.invoke(settings, ["llm", "show"])
+
+        assert result.exit_code == 0
+        assert "LLM Model Settings:" in result.output
+        assert "default_model:" in result.output
+        assert "discovery_model:" in result.output
+        assert "filtering_model:" in result.output
+
+    def test_llm_show_with_configured_default(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test llm show when default_model is configured."""
+        # Set a default model
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+
+        result = runner.invoke(settings, ["llm", "show"])
+
+        assert result.exit_code == 0
+        assert "gpt-5.2 (configured)" in result.output
+
+    def test_llm_show_with_all_configured(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test llm show when all settings are configured."""
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+        runner.invoke(settings, ["llm", "set-discovery", "anthropic/claude-sonnet-4-5"])
+        runner.invoke(settings, ["llm", "set-filtering", "gemini-3-flash-preview"])
+
+        result = runner.invoke(settings, ["llm", "show"])
+
+        assert result.exit_code == 0
+        assert "gpt-5.2 (configured)" in result.output
+        assert "anthropic/claude-sonnet-4-5 (configured)" in result.output
+        assert "gemini-3-flash-preview (configured)" in result.output
+
+    def test_llm_show_resolution_order(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that show displays resolution order information."""
+        result = runner.invoke(settings, ["llm", "show"])
+
+        assert result.exit_code == 0
+        assert "Resolution order:" in result.output
+        assert "To configure:" in result.output
+
+    def test_llm_show_default_used_as_fallback(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that show displays when default_model is used as fallback for discovery/filtering."""
+        # Set only default_model, not discovery or filtering
+        runner.invoke(settings, ["llm", "set-default", "gemini-3-flash-preview"])
+
+        result = runner.invoke(settings, ["llm", "show"])
+
+        assert result.exit_code == 0
+        assert "gemini-3-flash-preview (configured)" in result.output
+        # Discovery and filtering should show they're using default_model
+        assert "(using default_model → gemini-3-flash-preview)" in result.output
+
+
+class TestLLMSetDefaultCommand:
+    """Test pflow settings llm set-default command."""
+
+    def test_set_default_model(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test setting default model."""
+        result = runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+
+        assert result.exit_code == 0
+        assert "✓ Set default_model: gpt-5.2" in result.output
+
+        # Verify it was saved
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.default_model == "gpt-5.2"
+
+    def test_set_default_model_with_provider_prefix(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test setting model with provider prefix."""
+        result = runner.invoke(settings, ["llm", "set-default", "anthropic/claude-sonnet-4-5"])
+
+        assert result.exit_code == 0
+        assert "✓ Set default_model: anthropic/claude-sonnet-4-5" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.default_model == "anthropic/claude-sonnet-4-5"
+
+    def test_set_default_overwrites_existing(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that setting default model overwrites existing value."""
+        runner.invoke(settings, ["llm", "set-default", "old-model"])
+        result = runner.invoke(settings, ["llm", "set-default", "new-model"])
+
+        assert result.exit_code == 0
+        assert "✓ Set default_model: new-model" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.default_model == "new-model"
+
+
+class TestLLMSetDiscoveryCommand:
+    """Test pflow settings llm set-discovery command."""
+
+    def test_set_discovery_model(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test setting discovery model."""
+        result = runner.invoke(settings, ["llm", "set-discovery", "anthropic/claude-sonnet-4-5"])
+
+        assert result.exit_code == 0
+        assert "✓ Set discovery_model: anthropic/claude-sonnet-4-5" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.discovery_model == "anthropic/claude-sonnet-4-5"
+
+    def test_set_discovery_overwrites_existing(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that setting discovery model overwrites existing value."""
+        runner.invoke(settings, ["llm", "set-discovery", "old-model"])
+        result = runner.invoke(settings, ["llm", "set-discovery", "new-model"])
+
+        assert result.exit_code == 0
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.discovery_model == "new-model"
+
+
+class TestLLMSetFilteringCommand:
+    """Test pflow settings llm set-filtering command."""
+
+    def test_set_filtering_model(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test setting filtering model."""
+        result = runner.invoke(settings, ["llm", "set-filtering", "gemini-2.5-flash-lite"])
+
+        assert result.exit_code == 0
+        assert "✓ Set filtering_model: gemini-2.5-flash-lite" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.filtering_model == "gemini-2.5-flash-lite"
+
+    def test_set_filtering_overwrites_existing(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that setting filtering model overwrites existing value."""
+        runner.invoke(settings, ["llm", "set-filtering", "old-model"])
+        result = runner.invoke(settings, ["llm", "set-filtering", "new-model"])
+
+        assert result.exit_code == 0
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.filtering_model == "new-model"
+
+
+class TestLLMUnsetCommand:
+    """Test pflow settings llm unset command."""
+
+    def test_unset_default(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test unsetting default_model."""
+        # First set a value
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+
+        # Then unset it
+        result = runner.invoke(settings, ["llm", "unset", "default"])
+
+        assert result.exit_code == 0
+        assert "✓ Removed default_model" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.default_model is None
+
+    def test_unset_discovery(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test unsetting discovery_model."""
+        runner.invoke(settings, ["llm", "set-discovery", "anthropic/claude-sonnet-4-5"])
+
+        result = runner.invoke(settings, ["llm", "unset", "discovery"])
+
+        assert result.exit_code == 0
+        assert "✓ Removed discovery_model" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.discovery_model is None
+
+    def test_unset_filtering(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test unsetting filtering_model."""
+        runner.invoke(settings, ["llm", "set-filtering", "gemini-3-flash-preview"])
+
+        result = runner.invoke(settings, ["llm", "unset", "filtering"])
+
+        assert result.exit_code == 0
+        assert "✓ Removed filtering_model" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.filtering_model is None
+
+    def test_unset_all(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test unsetting all LLM settings at once."""
+        # Set all values
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+        runner.invoke(settings, ["llm", "set-discovery", "anthropic/claude-sonnet-4-5"])
+        runner.invoke(settings, ["llm", "set-filtering", "gemini-3-flash-preview"])
+
+        # Unset all
+        result = runner.invoke(settings, ["llm", "unset", "all"])
+
+        assert result.exit_code == 0
+        assert "✓ Removed all LLM settings" in result.output
+
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+        assert loaded.llm.default_model is None
+        assert loaded.llm.discovery_model is None
+        assert loaded.llm.filtering_model is None
+
+    def test_unset_when_not_set(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test unsetting a value that is not set."""
+        result = runner.invoke(settings, ["llm", "unset", "default"])
+
+        assert result.exit_code == 0
+        assert "default_model is not set" in result.output
+
+    def test_unset_invalid_setting(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that invalid setting name is rejected."""
+        result = runner.invoke(settings, ["llm", "unset", "invalid"])
+
+        assert result.exit_code != 0
+        # Click should show valid choices
+        assert "Invalid value" in result.output or "invalid" in result.output.lower()
+
+
+class TestLLMSubgroupHelp:
+    """Test help output for LLM subgroup."""
+
+    def test_llm_help(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that llm subgroup shows help."""
+        result = runner.invoke(settings, ["llm", "--help"])
+
+        assert result.exit_code == 0
+        assert "Manage LLM model settings" in result.output
+        assert "show" in result.output
+        assert "set-default" in result.output
+        assert "set-discovery" in result.output
+        assert "set-filtering" in result.output
+        assert "unset" in result.output
+
+    def test_llm_set_default_help(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test set-default command help."""
+        result = runner.invoke(settings, ["llm", "set-default", "--help"])
+
+        assert result.exit_code == 0
+        assert "Set the default model" in result.output
+
+
+class TestLLMSettingsPersistence:
+    """Test that LLM settings are properly persisted to file."""
+
+    def test_settings_persist_across_reloads(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that settings persist across manager reloads."""
+        # Set values
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+        runner.invoke(settings, ["llm", "set-discovery", "anthropic/claude-sonnet-4-5"])
+
+        # Create a new manager and load
+        manager = SettingsManager(settings_path=isolated_settings)
+        loaded = manager.load()
+
+        assert loaded.llm.default_model == "gpt-5.2"
+        assert loaded.llm.discovery_model == "anthropic/claude-sonnet-4-5"
+
+    def test_llm_settings_in_show_output(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Test that LLM settings appear in global settings show."""
+        runner.invoke(settings, ["llm", "set-default", "gpt-5.2"])
+
+        result = runner.invoke(settings, ["show"])
+
+        assert result.exit_code == 0
+        # The llm section should be in the JSON output
+        assert '"llm"' in result.output
+        assert '"default_model": "gpt-5.2"' in result.output
