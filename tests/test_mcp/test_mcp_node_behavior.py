@@ -303,3 +303,200 @@ class TestMCPNodeErrorHandling:
             # All params should pass through unchanged
             assert prep_res["arguments"]["title"] == "Bug"
             assert prep_res["arguments"]["path"] == "some/path"
+
+
+class TestMCPResultPreParsedData:
+    """Test handling of pre-parsed dict/list data from MCP SDK.
+
+    Real Bug: When MCP SDK returns content.text as an already-parsed dict
+    (not a JSON string), calling str() on it produces Python repr format
+    with single quotes, which breaks JSON tools like jq.
+
+    Example of the bug:
+    - content.text = {"key": "value"}  (Python dict)
+    - str(content.text) = "{'key': 'value'}"  (single quotes!)
+    - json.loads("{'key': 'value'}") → JSONDecodeError
+    """
+
+    def test_text_content_with_pre_parsed_dict(self):
+        """Pre-parsed dict in content.text should be preserved, not stringified.
+
+        Real Bug: YouTube transcript MCP returns content.text as dict, not string.
+        Calling str() on it produces Python repr with single quotes.
+        """
+        node = MCPNode()
+
+        mock_result = MagicMock()
+        mock_result.structuredContent = None
+        mock_result.isError = False
+
+        # Simulate MCP SDK returning pre-parsed dict in content.text
+        mock_content = MagicMock()
+        mock_content.text = {
+            "video_id": "abc123",
+            "transcript": [{"text": "Hello", "start": 0.0}],
+        }
+        mock_result.content = [mock_content]
+
+        # Remove other attributes to simulate text-only content
+        del mock_content.image
+        del mock_content.resource
+        del mock_content.resource_link
+
+        result = node._extract_result(mock_result)
+
+        # Should preserve the dict, not convert to "{'video_id': ...}"
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}: {result!r}"
+        assert result["video_id"] == "abc123"
+        assert result["transcript"][0]["text"] == "Hello"
+
+    def test_text_content_with_pre_parsed_list(self):
+        """Pre-parsed list in content.text should be preserved."""
+        node = MCPNode()
+
+        mock_result = MagicMock()
+        mock_result.structuredContent = None
+        mock_result.isError = False
+
+        # Simulate MCP SDK returning pre-parsed list in content.text
+        mock_content = MagicMock()
+        mock_content.text = [
+            {"name": "item1", "value": 100},
+            {"name": "item2", "value": 200},
+        ]
+        mock_result.content = [mock_content]
+
+        del mock_content.image
+        del mock_content.resource
+        del mock_content.resource_link
+
+        result = node._extract_result(mock_result)
+
+        # Should preserve the list
+        assert isinstance(result, list), f"Expected list, got {type(result)}: {result!r}"
+        assert len(result) == 2
+        assert result[0]["name"] == "item1"
+
+    def test_text_content_string_still_parsed_as_json(self):
+        """String content.text should still be parsed as JSON (existing behavior)."""
+        node = MCPNode()
+
+        mock_result = MagicMock()
+        mock_result.structuredContent = None
+        mock_result.isError = False
+
+        # Normal case: content.text is a JSON string
+        mock_content = MagicMock()
+        mock_content.text = '{"key": "value", "number": 42}'
+        mock_result.content = [mock_content]
+
+        del mock_content.image
+        del mock_content.resource
+        del mock_content.resource_link
+
+        result = node._extract_result(mock_result)
+
+        # Should parse JSON string to dict
+        assert isinstance(result, dict)
+        assert result["key"] == "value"
+        assert result["number"] == 42
+
+    def test_unknown_content_with_dict_preserved(self):
+        """Unknown content type that is already a dict should be preserved."""
+        node = MCPNode()
+
+        # Directly test _extract_unknown_content
+        dict_content = {"data": "value", "nested": {"inner": "data"}}
+        result = node._extract_unknown_content(dict_content)
+
+        assert isinstance(result, dict)
+        assert result["data"] == "value"
+        assert result["nested"]["inner"] == "data"
+
+    def test_unknown_content_with_list_preserved(self):
+        """Unknown content type that is already a list should be preserved."""
+        node = MCPNode()
+
+        list_content = [1, 2, 3, {"key": "value"}]
+        result = node._extract_unknown_content(list_content)
+
+        assert isinstance(result, list)
+        assert result == [1, 2, 3, {"key": "value"}]
+
+    def test_fallback_with_dict_preserved(self):
+        """Fallback in _extract_result should preserve dicts."""
+        node = MCPNode()
+
+        # Create a plain dict without MCP-specific attributes
+        plain_dict = {"raw": "data", "list": [1, 2, 3]}
+
+        result = node._extract_result(plain_dict)
+
+        # Should preserve the dict, not convert to "{'raw': ...}"
+        assert isinstance(result, dict)
+        assert result["raw"] == "data"
+        assert result["list"] == [1, 2, 3]
+
+    def test_fallback_with_list_preserved(self):
+        """Fallback in _extract_result should preserve lists."""
+        node = MCPNode()
+
+        plain_list = [{"item": 1}, {"item": 2}]
+
+        result = node._extract_result(plain_list)
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["item"] == 1
+
+    def test_python_repr_string_parsed_with_literal_eval(self):
+        """Python repr format (single quotes) should be parsed with ast.literal_eval.
+
+        Real Bug: Some MCP servers (e.g., klavis-youtube-transcripts) incorrectly
+        return str(dict) instead of json.dumps(dict), producing Python repr format
+        with single quotes that breaks JSON tools like jq.
+        """
+        node = MCPNode()
+
+        mock_result = MagicMock()
+        mock_result.structuredContent = None
+        mock_result.isError = False
+
+        # Simulate MCP server returning Python repr string instead of JSON
+        mock_content = MagicMock()
+        mock_content.text = "{'video_id': 'abc123', 'transcript': [{'text': 'Hello', 'start': 0.0}]}"
+        mock_result.content = [mock_content]
+
+        del mock_content.image
+        del mock_content.resource
+        del mock_content.resource_link
+
+        result = node._extract_result(mock_result)
+
+        # Should parse Python repr and return dict
+        assert isinstance(result, dict), f"Expected dict, got {type(result)}: {result!r}"
+        assert result["video_id"] == "abc123"
+        assert result["transcript"][0]["text"] == "Hello"
+
+    def test_valid_json_string_preferred_over_literal_eval(self):
+        """Valid JSON should be parsed with json.loads, not ast.literal_eval."""
+        node = MCPNode()
+
+        mock_result = MagicMock()
+        mock_result.structuredContent = None
+        mock_result.isError = False
+
+        # Valid JSON with double quotes
+        mock_content = MagicMock()
+        mock_content.text = '{"key": "value", "number": 42}'
+        mock_result.content = [mock_content]
+
+        del mock_content.image
+        del mock_content.resource
+        del mock_content.resource_link
+
+        result = node._extract_result(mock_result)
+
+        assert isinstance(result, dict)
+        assert result["key"] == "value"
+        assert result["number"] == 42
