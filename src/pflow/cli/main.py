@@ -3546,9 +3546,6 @@ def workflow_command(
             validate_only,
         )
 
-        # Install Anthropic model wrapper for planning models
-        _install_anthropic_model_if_needed(verbose)
-
         # Auto-discover and sync MCP servers
         # Only show MCP output if verbose AND not in print mode or JSON output
         print_flag = ctx.obj.get("print_flag", False)
@@ -3583,6 +3580,11 @@ def workflow_command(
 
         # Validate input for natural language processing
         raw_input = _validate_and_join_workflow_input(workflow)
+
+        # Install Anthropic model wrapper ONLY for planner path
+        # This provides caching, thinking tokens, and structured output features
+        # that the planner requires. File/saved workflows use standard llm library.
+        _install_anthropic_model_if_needed(verbose)
 
         # Multi-word or parameterized input: planner by design
         cache_planner = ctx.obj.get("cache_planner", False)

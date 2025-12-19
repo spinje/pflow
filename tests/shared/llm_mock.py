@@ -105,6 +105,10 @@ class MockGetModel:
                 "capabilities": ["testing"],
                 "typical_use_cases": ["unit tests"],
             },
+            "FilteredFields": {
+                "included_fields": ["field0", "field1", "field2"],
+                "reasoning": "Default mock: kept first 3 fields",
+            },
         }
 
     def __call__(self, model_name: str) -> MockLLMModel:
@@ -112,17 +116,36 @@ class MockGetModel:
         return MockLLMModel(model_name, self)
 
     def set_response(self, model: str, schema: Optional[Any], response: dict):
-        """Configure response for specific model and schema combination."""
+        """Configure response for specific model and schema combination.
+
+        Args:
+            model: Model name, or "*" for wildcard matching any model
+            schema: Pydantic schema class, or None for text responses
+            response: Response dict to return
+        """
         key = f"{model}:{schema.__name__ if schema else 'text'}"
         self._responses[key] = response
 
     def get_response(self, model: str, schema: Optional[type]) -> dict:
-        """Get configured response or default."""
-        key = f"{model}:{schema.__name__ if schema else 'text'}"
+        """Get configured response or default.
+
+        Resolution order:
+        1. Exact model+schema match
+        2. Wildcard model match (*:schema)
+        3. Schema-based default (_default_responses)
+        4. Final fallback
+        """
+        schema_name = schema.__name__ if schema else "text"
+        key = f"{model}:{schema_name}"
 
         # Check for specific configuration
         if key in self._responses:
             return self._responses[key]
+
+        # Check for wildcard model configuration
+        wildcard_key = f"*:{schema_name}"
+        if wildcard_key in self._responses:
+            return self._responses[wildcard_key]
 
         # Use schema-based default if available
         if schema and schema.__name__ in self._default_responses:

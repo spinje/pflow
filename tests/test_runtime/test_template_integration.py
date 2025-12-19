@@ -397,7 +397,8 @@ class TestRealWorldWorkflows:
                     "id": "summarize",
                     "type": "llm",
                     "params": {
-                        "prompt": "Create a bullet-point summary of this video:\n\nTitle: ${transcript_data.title}\nAuthor: ${transcript_data.metadata.author}\n\nTranscript:\n${transcript_data.text}"
+                        "model": "gpt-5.2",
+                        "prompt": "Create a bullet-point summary of this video:\n\nTitle: ${transcript_data.title}\nAuthor: ${transcript_data.metadata.author}\n\nTranscript:\n${transcript_data.text}",
                     },
                 },
                 {

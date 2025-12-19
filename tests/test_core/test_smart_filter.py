@@ -50,7 +50,7 @@ class TestSmartFilterThreshold:
 
         # Mock LLM to return subset
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {
                 "included_fields": ["field0", "field1", "field2"],
@@ -84,7 +84,7 @@ class TestSmartFilterThreshold:
 
         # Mock LLM to return relevant business fields only
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {
                 "included_fields": [
@@ -122,7 +122,7 @@ class TestLLMIntegration:
         ]
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["title", "count"], "reasoning": "Kept primary fields"},
         )
@@ -138,7 +138,7 @@ class TestLLMIntegration:
 
         # LLM hallucinates non-existent fields
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {
                 "included_fields": ["field1", "field_DOES_NOT_EXIST", "field99"],
@@ -163,7 +163,7 @@ class TestLLMIntegration:
 
         # LLM selects subset
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {
                 "included_fields": [
@@ -211,7 +211,7 @@ class TestFallbackBehavior:
 
         # LLM returns nothing
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": [], "reasoning": "Filtered everything"},
         )
@@ -273,7 +273,7 @@ class TestEdgeCases:
 
         # Lower threshold to 10
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["field0", "field1"], "reasoning": "Reduced to 2"},
         )
@@ -295,7 +295,7 @@ class TestEdgeCases:
 
         # LLM returns out of order
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["banana", "zebra", "apple"], "reasoning": "Selected 3"},
         )
@@ -317,7 +317,7 @@ class TestEdgeCases:
         ]
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["id", "title", "active"], "reasoning": "Core fields"},
         )
@@ -335,7 +335,7 @@ class TestEdgeCases:
         ]
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {
                 "included_fields": ["result[0].author.login"],
@@ -360,7 +360,7 @@ class TestSmartFilterCaching:
 
         # Setup mock LLM
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["field0", "field1"], "reasoning": "Test"},
         )
@@ -390,7 +390,7 @@ class TestSmartFilterCaching:
         clear_cache()
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["field1"], "reasoning": "Test"},
         )
@@ -425,7 +425,7 @@ class TestSmartFilterCaching:
         assert fp1 == fp2  # Order doesn't matter for fingerprint
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["a"], "reasoning": "Test"},
         )
@@ -458,7 +458,7 @@ class TestSmartFilterCaching:
         assert stats["hit_rate"] == 0.0
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["field1"], "reasoning": "Test"},
         )
@@ -497,7 +497,7 @@ class TestSmartFilterCaching:
         clear_cache()
 
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {"included_fields": ["field1"], "reasoning": "Test"},
         )
