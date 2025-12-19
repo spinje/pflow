@@ -624,7 +624,6 @@ def discover_nodes(query: str) -> None:
     Example:
         pflow registry discover "I need to fetch GitHub data and analyze it"
     """
-    import os
     from datetime import datetime
 
     from pflow.core.workflow_manager import WorkflowManager
@@ -640,11 +639,10 @@ def discover_nodes(query: str) -> None:
         click.echo("  Please use a more concise description", err=True)
         sys.exit(1)
 
-    # Install Anthropic monkey patch for LLM calls (required for planning nodes)
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
+    # Get LLM model from settings → auto-detect → fallback
+    from pflow.core.llm_config import get_model_for_feature
 
-        install_anthropic_model()
+    discovery_model = get_model_for_feature("discovery")
 
     # Create complete shared store context (required by ComponentBrowsingNode)
     workflow_manager = WorkflowManager()
@@ -653,6 +651,7 @@ def discover_nodes(query: str) -> None:
         "workflow_manager": workflow_manager,  # Required for workflow context
         "current_date": datetime.now().strftime("%Y-%m-%d"),  # Standard context
         "cache_planner": False,  # Disable cache for CLI (no planner context)
+        "model_name": discovery_model,  # Use configured model (any provider)
     }
 
     # Create and run browsing node

@@ -20,14 +20,14 @@ classifiers = [
 dependencies = [
     "click", # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
-    "llm>=0.27.1", # Simon Willison's LLM library for text processing
-    "llm-anthropic==0.20", # Anthropic Claude models for planner
-    "anthropic>=0.40.0", # Anthropic SDK for direct API access (thinking/caching)
+    "llm>=0.28", # Simon Willison's LLM library for text processing
+    "llm-anthropic==0.23", # Anthropic Claude models for planner
+    "anthropic>=0.75", # Anthropic SDK for direct API access (thinking/caching)
     "pydantic", # IR/metadata validation (used in planning/ir_models.py)
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-code-sdk>=0.0.25", # Claude Code SDK for agentic development node
-    "llm-gemini>=0.25", # Google Gemini models (free tier, good for onboarding)
+    "llm-gemini>=0.28.1", # Google Gemini models including Gemini 3 Flash
 ]
 
 # Optional dependencies can be added here for future LLM providers

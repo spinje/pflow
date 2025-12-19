@@ -137,12 +137,12 @@ def _detect_default_model() -> Optional[str]:
     # Try Gemini second (good quality, cheaper)
     if _has_llm_key("gemini"):
         logger.debug("Using Google Gemini (key detected)")
-        return "gemini/gemini-2.0-flash-lite"
+        return "gemini/gemini-3-flash-preview"
 
     # Try OpenAI last (common fallback)
     if _has_llm_key("openai"):
         logger.debug("Using OpenAI GPT (key detected)")
-        return "gpt-4o-mini"
+        return "gpt-5.2"
 
     logger.debug("No LLM API keys detected")
     return None
@@ -209,3 +209,169 @@ def clear_model_cache() -> None:
     global _cached_default_model, _detection_complete
     _cached_default_model = None
     _detection_complete = False
+
+
+# Default fallback model when nothing else is configured
+_DEFAULT_FALLBACK_MODEL = "anthropic/claude-sonnet-4-5"
+
+
+def get_model_for_feature(feature: str) -> str:
+    """Get LLM model for a specific feature with fallback chain.
+
+    Resolution order:
+    1. Settings file (if configured in ~/.pflow/settings.json)
+    2. Auto-detected default (based on available API keys)
+    3. Hardcoded fallback (anthropic/claude-sonnet-4-5)
+
+    Args:
+        feature: Feature name - "discovery" or "filtering"
+
+    Returns:
+        Model name string (e.g., "anthropic/claude-sonnet-4-5", "gemini-2.5-flash")
+
+    Raises:
+        ValueError: If feature name is not recognized
+
+    Examples:
+        >>> model = get_model_for_feature("discovery")
+        >>> model = get_model_for_feature("filtering")
+    """
+    if feature not in ("discovery", "filtering"):
+        raise ValueError(f"Unknown feature: {feature}. Must be 'discovery' or 'filtering'")
+
+    # Import here to avoid circular imports
+    from pflow.core.settings import SettingsManager
+
+    try:
+        settings = SettingsManager().load()
+
+        # Check settings first
+        if feature == "discovery" and settings.llm.discovery_model:
+            logger.debug(f"Using configured discovery model: {settings.llm.discovery_model}")
+            return settings.llm.discovery_model
+        elif feature == "filtering" and settings.llm.filtering_model:
+            logger.debug(f"Using configured filtering model: {settings.llm.filtering_model}")
+            return settings.llm.filtering_model
+    except Exception as e:
+        # Settings load failed, continue with auto-detection
+        logger.debug(f"Failed to load settings for {feature} model: {e}")
+
+    # Fall back to auto-detection
+    detected = get_default_llm_model()
+    if detected:
+        logger.debug(f"Using auto-detected model for {feature}: {detected}")
+        return detected
+
+    # Final fallback
+    logger.debug(f"Using fallback model for {feature}: {_DEFAULT_FALLBACK_MODEL}")
+    return _DEFAULT_FALLBACK_MODEL
+
+
+def get_llm_cli_default_model() -> Optional[str]:
+    """Get the default model configured in llm CLI.
+
+    Runs `llm models default` to check if user has configured
+    a default model in Simon Willison's llm library.
+
+    Returns:
+        Model name string or None if not configured
+
+    Note:
+        Returns None (not error) if llm CLI not installed or fails.
+        This is a fallback, not a requirement.
+    """
+    # Skip in test environment to avoid subprocess issues
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return None
+
+    llm_path = _get_validated_llm_path()
+    if not llm_path:
+        return None
+
+    try:
+        result = subprocess.run(
+            [llm_path, "models", "default"],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            timeout=2,
+            check=False,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            default_model = result.stdout.strip()
+            logger.debug(f"Found llm CLI default model: {default_model}")
+            return default_model
+    except subprocess.TimeoutExpired:
+        logger.debug("Timeout checking llm default model")
+    except Exception as e:
+        logger.debug(f"Failed to check llm default model: {e}")
+
+    return None
+
+
+def get_default_workflow_model() -> Optional[str]:
+    """Get the default model for user workflow LLM nodes.
+
+    Resolution order:
+    1. settings.llm.default_model (pflow settings)
+    2. llm CLI default model (llm models default)
+    3. None (caller should fail with helpful error)
+
+    This function does NOT auto-detect based on API keys.
+    Users must explicitly configure their preferred model.
+
+    Returns:
+        Model name string or None if nothing configured
+
+    Example:
+        >>> model = get_default_workflow_model()
+        >>> if model is None:
+        >>>     raise CompilationError("No model configured", ...)
+    """
+    # 1. Check pflow settings first
+    try:
+        from pflow.core.settings import SettingsManager
+
+        settings = SettingsManager().load()
+        if settings.llm.default_model:
+            logger.debug(f"Using pflow settings default_model: {settings.llm.default_model}")
+            return settings.llm.default_model
+    except Exception as e:
+        logger.debug(f"Failed to load settings for default_model: {e}")
+
+    # 2. Check llm CLI default
+    llm_default = get_llm_cli_default_model()
+    if llm_default:
+        logger.debug(f"Using llm CLI default model: {llm_default}")
+        return llm_default
+
+    # 3. Nothing configured
+    logger.debug("No default workflow model configured")
+    return None
+
+
+def get_model_not_configured_help(node_id: str) -> str:
+    """Get helpful error message when no model is configured.
+
+    Args:
+        node_id: The LLM node ID for context in message
+
+    Returns:
+        Multi-line string with setup instructions
+    """
+    return f"""No model specified for LLM node '{node_id}' and no default configured.
+
+Configure a default model using one of these methods:
+
+  1. Specify in workflow (per-node):
+     {{"id": "{node_id}", "type": "llm", "params": {{"model": "gpt-5.2", "prompt": "..."}}}}
+
+  2. Set pflow default (recommended, applies to all workflows):
+     Add to ~/.pflow/settings.json:
+     {{"llm": {{"default_model": "gpt-5.2"}}}}
+
+  3. Set llm library default (applies to all llm usage):
+     llm models default gpt-5.2
+
+To see available models: llm models list
+To see configured keys: llm keys list"""

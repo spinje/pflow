@@ -595,7 +595,7 @@ class TestSmartFilteringIntegration:
 
         # Mock LLM to filter to 10 fields
         mock_llm_calls.set_response(
-            "anthropic/claude-haiku-4-5-20251001",
+            "*",
             FilteredFields,
             {
                 "included_fields": [f"result.field{i}" for i in range(10)],

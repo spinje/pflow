@@ -600,6 +600,34 @@ def _create_single_node(
     node_type = node_data["type"]
     params = node_data.get("params", {})
 
+    # Inject default model for LLM nodes if not specified
+    if node_type == "llm" and "model" not in params:
+        from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
+
+        default_model = get_default_workflow_model()
+
+        if default_model:
+            # Inject the configured default (create new dict to avoid mutating IR)
+            params = {**params, "model": default_model}
+            logger.info(
+                f"Injecting default model '{default_model}' for LLM node '{node_id}'",
+                extra={
+                    "phase": "node_instantiation",
+                    "node_id": node_id,
+                    "default_model": default_model,
+                    "source": "settings_or_llm_default",
+                },
+            )
+        else:
+            # No model configured anywhere - fail with helpful message
+            raise CompilationError(
+                message=f"No model configured for LLM node '{node_id}'",
+                phase="node_instantiation",
+                node_id=node_id,
+                node_type=node_type,
+                suggestion=get_model_not_configured_help(node_id),
+            )
+
     logger.debug(
         "Creating node instance",
         extra={"phase": "node_instantiation", "node_id": node_id, "node_type": node_type},

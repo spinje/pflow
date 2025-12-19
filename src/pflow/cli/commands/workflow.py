@@ -130,24 +130,21 @@ def discover_workflows(query: str) -> None:
     Example:
         pflow workflow discover "I need to analyze pull requests"
     """
-    import os
-
+    from pflow.core.llm_config import get_model_for_feature
     from pflow.planning.nodes import WorkflowDiscoveryNode
 
     # Validate query before processing
     query = _validate_discovery_query(query, "workflow discover")
 
-    # Install Anthropic monkey patch for LLM calls (required for planning nodes)
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
-
-        install_anthropic_model()
+    # Get LLM model from settings → auto-detect → fallback
+    discovery_model = get_model_for_feature("discovery")
 
     # Create and run discovery node
     node = WorkflowDiscoveryNode()
     shared = {
         "user_input": query,
         "workflow_manager": WorkflowManager(),
+        "model_name": discovery_model,  # Use configured model (any provider)
     }
 
     try:
@@ -256,19 +253,14 @@ def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metad
     if not generate_metadata:
         return None
 
-    import os
-
-    # Install Anthropic monkey patch for LLM calls (required for Anthropic-specific features)
-    # Note: Other models (Gemini, OpenAI) work through standard LLM library
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
-
-        install_anthropic_model()
-
+    from pflow.core.llm_config import get_model_for_feature
     from pflow.core.workflow_save_service import generate_workflow_metadata
 
+    # Get LLM model from settings → auto-detect → fallback
+    discovery_model = get_model_for_feature("discovery")
+
     click.echo("Generating rich metadata...")
-    metadata = generate_workflow_metadata(validated_ir)
+    metadata = generate_workflow_metadata(validated_ir, model_name=discovery_model)
 
     if metadata:
         click.echo(f"  Generated {len(metadata.get('keywords', []))} keywords")

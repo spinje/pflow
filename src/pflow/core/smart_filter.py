@@ -161,8 +161,11 @@ For arrays, showing sample item fields is crucial for the agent to know what's a
 
 Return ONLY the field paths (without type annotations) that the agent needs to see."""
 
-        # Call Haiku 4.5 with structured output
-        model = llm.get_model("anthropic/claude-haiku-4-5-20251001")
+        # Get filtering model from settings → auto-detect → fallback
+        from pflow.core.llm_config import get_model_for_feature
+
+        filtering_model = get_model_for_feature("filtering")
+        model = llm.get_model(filtering_model)
         response = model.prompt(
             prompt=prompt,
             schema=FilteredFields,

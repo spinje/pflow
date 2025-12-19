@@ -68,7 +68,7 @@ class TestCostInTrace:
 
         # Verify model and version
         assert cost_data["pricing_model"] == "anthropic/claude-3-5-sonnet-20241022"
-        assert cost_data["pricing_version"] == "2025-01-15"
+        assert cost_data["pricing_version"] == "2025-12-19"
 
     def test_cost_in_saved_trace_file(self):
         """Test that cost data is preserved when saving trace to file."""

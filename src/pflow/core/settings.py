@@ -50,12 +50,55 @@ class RuntimeSettings(BaseModel):
         return v
 
 
+class LLMSettings(BaseModel):
+    """LLM model configuration.
+
+    These settings control which LLM models are used for:
+    - User workflow LLM nodes (default_model)
+    - Discovery commands (discovery_model)
+    - Smart filtering (filtering_model)
+
+    The planner always uses Anthropic for its advanced features.
+
+    Resolution order:
+    - default_model: settings → llm CLI default → fail with setup instructions
+    - discovery_model: settings → auto-detect → fallback
+    - filtering_model: settings → auto-detect → fallback
+
+    Examples:
+        # Set default model for all LLM nodes in workflows
+        {"default_model": "gpt-5.2"}
+
+        # Different models for different purposes
+        {
+            "default_model": "gemini-3-flash-preview",
+            "discovery_model": "anthropic/claude-sonnet-4-5",
+            "filtering_model": "gemini-2.5-flash-lite"
+        }
+    """
+
+    default_model: Optional[str] = Field(
+        default=None,
+        description="Default model for LLM nodes in user workflows. "
+        "If not set, falls back to llm CLI default, then fails with setup instructions.",
+    )
+    discovery_model: Optional[str] = Field(
+        default=None,
+        description="Model for discovery commands (registry discover, workflow discover). None = auto-detect.",
+    )
+    filtering_model: Optional[str] = Field(
+        default=None,
+        description="Model for smart field filtering (structure-only mode). None = auto-detect.",
+    )
+
+
 class PflowSettings(BaseModel):
     """Main settings configuration."""
 
     version: str = Field(default="1.0.0")
     registry: RegistrySettings = Field(default_factory=RegistrySettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
     env: dict[str, str] = Field(default_factory=dict)
 
 

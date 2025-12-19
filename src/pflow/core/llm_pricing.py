@@ -7,7 +7,7 @@ models used in pflow. All cost calculations should use this module to ensure con
 from typing import Any
 
 # Version tracking for pricing updates
-PRICING_VERSION = "2025-01-15"
+PRICING_VERSION = "2025-12-19"
 
 # Comprehensive model pricing per million tokens
 # Prices are in USD per million tokens for input and output
@@ -29,6 +29,8 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gpt-4o": {"input": 5.0, "output": 15.0},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
     "gpt-5-mini": {"input": 0.25, "output": 2.00},
+    "gpt-5.2": {"input": 1.75, "output": 14.00},
+    "gpt-5.2-pro": {"input": 21.00, "output": 168.00},
     "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
     # Google models (support both short and full format)
     "gemini-1.5-pro": {"input": 1.25, "output": 5.00},
@@ -47,6 +49,8 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gemini/gemini-2.5-flash": {"input": 0.30, "output": 2.50},
     "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
     "gemini/gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
+    "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "gemini/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
 }
 
 # Model aliases mapping - maps common aliases to their canonical names
@@ -71,6 +75,9 @@ MODEL_ALIASES = {
     "gpt4": "gpt-4",
     "4t": "gpt-4-turbo",
     "4-turbo": "gpt-4-turbo",
+    "5.2": "gpt-5.2",
+    "gpt5": "gpt-5.2",
+    "5.2-pro": "gpt-5.2-pro",
     # Gemini aliases (without prefix)
     "gemini-pro": "gemini/gemini-pro",
     "gemini-1.5-pro": "gemini/gemini-1.5-pro",
@@ -84,6 +91,8 @@ MODEL_ALIASES = {
     "gemini-2.5-pro": "gemini/gemini-2.5-pro",
     "gemini-2.5-flash": "gemini/gemini-2.5-flash",
     "gemini-2.5-flash-lite": "gemini/gemini-2.5-flash-lite",
+    "gemini-3-flash": "gemini/gemini-3-flash-preview",
+    "gemini-3-flash-preview": "gemini/gemini-3-flash-preview",
 }
 
 

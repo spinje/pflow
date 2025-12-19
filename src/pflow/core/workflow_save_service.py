@@ -300,7 +300,9 @@ def save_workflow_with_options(
         raise WorkflowValidationError(f"Failed to save workflow '{name}': {e}") from e
 
 
-def generate_workflow_metadata(workflow_ir: dict[str, Any]) -> Optional[dict[str, Any]]:
+def generate_workflow_metadata(
+    workflow_ir: dict[str, Any], model_name: Optional[str] = None
+) -> Optional[dict[str, Any]]:
     """Generate rich metadata for workflow using LLM.
 
     This is an optional CLI-only feature that generates:
@@ -313,6 +315,7 @@ def generate_workflow_metadata(workflow_ir: dict[str, Any]) -> Optional[dict[str
 
     Args:
         workflow_ir: Validated workflow IR
+        model_name: Optional LLM model to use (defaults to node's default)
 
     Returns:
         Metadata dict with keywords, capabilities, use_cases
@@ -328,6 +331,10 @@ def generate_workflow_metadata(workflow_ir: dict[str, Any]) -> Optional[dict[str
             "user_input": "",  # Not needed for metadata generation
             "cache_planner": False,  # Disable caching for metadata
         }
+
+        # Add model_name if provided (supports any LLM provider)
+        if model_name:
+            shared["model_name"] = model_name
 
         node.run(shared)
 

@@ -13,20 +13,21 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.60.0"
+version = "0.75.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "distro" },
+    { name = "docstring-parser" },
     { name = "httpx" },
     { name = "jiter" },
     { name = "pydantic" },
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4e/03/3334921dc54ed822b3dd993ae72d823a7402588521bbba3e024b3333a1fd/anthropic-0.60.0.tar.gz", hash = "sha256:a22ba187c6f4fd5afecb2fc913b960feccf72bc0d25c1b7ce0345e87caede577", size = 425983, upload-time = "2025-07-28T19:53:47.685Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/04/1f/08e95f4b7e2d35205ae5dcbb4ae97e7d477fc521c275c02609e2931ece2d/anthropic-0.75.0.tar.gz", hash = "sha256:e8607422f4ab616db2ea5baacc215dd5f028da99ce2f022e33c7c535b29f3dfb", size = 439565, upload-time = "2025-11-24T20:41:45.28Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/bb/d84f287fb1c217b30c328af987cf8bbe3897edf0518dcc5fa39412f794ec/anthropic-0.60.0-py3-none-any.whl", hash = "sha256:65ad1f088a960217aaf82ba91ff743d6c89e9d811c6d64275b9a7c59ee9ac3c6", size = 293116, upload-time = "2025-07-28T19:53:45.944Z" },
+    { url = "https://files.pythonhosted.org/packages/60/1c/1cd02b7ae64302a6e06724bf80a96401d5313708651d277b1458504a1730/anthropic-0.75.0-py3-none-any.whl", hash = "sha256:ea8317271b6c15d80225a9f3c670152746e88805a7a61e14d4a374577164965b", size = 388164, upload-time = "2025-11-24T20:41:43.587Z" },
 ]
 
 [[package]]
@@ -252,6 +253,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
+name = "docstring-parser"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
 ]
 
 [[package]]
@@ -505,6 +515,18 @@ wheels = [
 ]
 
 [[package]]
+name = "json-schema-to-pydantic"
+version = "0.4.7"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e6/b1/fbcbda5e23ecb5ff987076d9caccb11d182a249cedd5424236aaca4e65b8/json_schema_to_pydantic-0.4.7.tar.gz", hash = "sha256:a6384825fee7609715641a1e5095ddf41aa3bdd06cd91d4a6b6d88a3dfcad920", size = 50054, upload-time = "2025-11-03T19:28:30.65Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/af/f64664df8d4d52a371195e16c6ff4419968ee3eb6f96b21e596e3623dcf3/json_schema_to_pydantic-0.4.7-py3-none-any.whl", hash = "sha256:e329506e42b63f9a0ae0a17f7082ec7fc7cb3326138ec5c24904e0af5a660e63", size = 14709, upload-time = "2025-11-03T19:28:29.168Z" },
+]
+
+[[package]]
 name = "jsonschema"
 version = "4.24.0"
 source = { registry = "https://pypi.org/simple" }
@@ -533,7 +555,7 @@ wheels = [
 
 [[package]]
 name = "llm"
-version = "0.27.1"
+version = "0.28"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -551,36 +573,37 @@ dependencies = [
     { name = "sqlite-migrate" },
     { name = "sqlite-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/05/7f/f2fe103b8fa6c5a96ba117fef46af15c766d4c28640893c2c7feb79c0df3/llm-0.27.1.tar.gz", hash = "sha256:02b0b393e31cf0e0ee1f2a6006c451c74ec18c7ec3973218de56e76fd72baa80", size = 85109, upload-time = "2025-08-12T05:17:46.797Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cb/91/5071c6e0e7eabbf3a95870a4b2ec0fc585e0d4d57532d305d08d6595f8a3/llm-0.28.tar.gz", hash = "sha256:e3d8bcc0f016fae8aeca1d702491a1891523702983459cb66afec99d74cabfc1", size = 85022, upload-time = "2025-12-12T20:05:30.448Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/67/47585c961ff2299749e519891681025c2685b75801e3f784ee232853c5b0/llm-0.27.1-py3-none-any.whl", hash = "sha256:a884a575062fbea8c2b129708a80e146fa9682bd1c444d8d7b028196107de727", size = 82500, upload-time = "2025-08-12T05:17:45.104Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/9f/b22de67c44c8fdac517889feb6f45a90cbc2783f71c70ea9e2614e815126/llm-0.28-py3-none-any.whl", hash = "sha256:7d70c22f2dbfe47123a67328eea9c25add8f0a3c6a439f7d452219edf2e4dd76", size = 82559, upload-time = "2025-12-12T20:05:29.173Z" },
 ]
 
 [[package]]
 name = "llm-anthropic"
-version = "0.20"
+version = "0.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
+    { name = "json-schema-to-pydantic" },
     { name = "llm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/78/f9a76cea9b141ad35684cac1892787f4e8fe840800fcffba0513aa1aff5d/llm_anthropic-0.20.tar.gz", hash = "sha256:43a59a6853336a6bd4c8ee1bf73b148d2e7d74d8ad4d2b466b18e4c69680d8af", size = 16248, upload-time = "2025-10-15T18:00:09.364Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/36/b5/e2a6e38f9aafd068065f14ae1183021544220840a2669571a593f08af65c/llm_anthropic-0.23.tar.gz", hash = "sha256:9d77af370921d921ef7657bb8ba035c6c01797f247b42d378678fddaf0c9f320", size = 18734, upload-time = "2025-11-25T05:21:18.464Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b4/52/f69beedd4fe84a97edc69d8e41aa2430046802ecfb134c4a4652efd88a12/llm_anthropic-0.20-py3-none-any.whl", hash = "sha256:546edb43ea03e779e8114a0b6924a517f1c8bc1423a5a6b94fca9abbad6e80de", size = 13723, upload-time = "2025-10-15T18:00:08.245Z" },
+    { url = "https://files.pythonhosted.org/packages/86/8d/8c36199e2c4a9d57db16f446a6ec26ad8f96abca691ee157133bba0977d7/llm_anthropic-0.23-py3-none-any.whl", hash = "sha256:8c933eb4126f4e3d39fea275470d97bd2297ceaf93bbf9781104b3dba6e872bf", size = 16108, upload-time = "2025-11-25T05:21:17.376Z" },
 ]
 
 [[package]]
 name = "llm-gemini"
-version = "0.25"
+version = "0.28.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "ijson" },
     { name = "llm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/08/05/cd66f8bdb5946e4f9ba9fca11d19c8b1a4e86e30933b8e9f68335f20eb73/llm_gemini-0.25.tar.gz", hash = "sha256:ebf1533c69f6d0ab4d03fe77d58192a267e2de03ec6bd3d2b9ad45159dbd170f", size = 16772, upload-time = "2025-08-18T23:55:32.744Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/02/9a/444ad61e5e7fcdae837582960e93345af1f40603e9f1a78a8aa185016441/llm_gemini-0.28.1.tar.gz", hash = "sha256:98d18f6ba6b62ef96e3d7893bcdee4a414cfdd4bf87b3407d06f05cc04d8a67b", size = 22809, upload-time = "2025-12-18T17:58:19.33Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/94/76201e91b48a100ff699e9c0283c17eae648471e869b6e51cfb26dc33f0b/llm_gemini-0.25-py3-none-any.whl", hash = "sha256:e5a7d090376937167cc95cffce7d9234497226a755e5a2c9492da4336031bec6", size = 15290, upload-time = "2025-08-18T23:55:31.906Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/a2/5bf3209ccc37e171ae24a67cb9da2f66f17ba633ab6682738d4383c183ae/llm_gemini-0.28.1-py3-none-any.whl", hash = "sha256:adda8251e7425e97052001631e7f3582c46069ecde5cf43f345f2b44cf83b17f", size = 17611, upload-time = "2025-12-18T17:58:18.334Z" },
 ]
 
 [[package]]
@@ -760,13 +783,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "anthropic", specifier = ">=0.75" },
     { name = "claude-code-sdk", specifier = ">=0.0.25" },
     { name = "click" },
     { name = "jsonschema", specifier = ">=4.20.0" },
-    { name = "llm", specifier = ">=0.27.1" },
-    { name = "llm-anthropic", specifier = "==0.20" },
-    { name = "llm-gemini", specifier = ">=0.25" },
+    { name = "llm", specifier = ">=0.28" },
+    { name = "llm-anthropic", specifier = "==0.23" },
+    { name = "llm-gemini", specifier = ">=0.28.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.17.0" },
     { name = "pydantic" },
     { name = "requests", specifier = ">=2.32.5" },
