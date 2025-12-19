@@ -21,9 +21,14 @@ pflow workflow discover "user's exact request here"
 - **≥95% match** → Use it immediately with `pflow workflow-name`
 - **80-94% match** → Ask user if they want to use, modify, or build new
 - **70-79% match** → Suggest modifying the existing workflow
-- **<70% match** → Proceed with building new workflow by first using `pflow instructions create` to understand HOW to build a workflow using the pflow CLI.
+- **<70% match** → See "No Match" rules below
 
 > Always make sure to make it clear what the differences are between the existing workflow and the user's request if there are any (<94% matches).
+
+### No Match (<70%): Execute Directly vs Create Workflow
+
+- **1-2 nodes needed** (e.g., fetch + save) → Ask user: "Execute directly (via `registry run`) or create reusable workflow?"
+- **3+ nodes needed** → Create workflow (don't ask, just proceed with `pflow instructions create`)
 
 ## Essential Commands
 
@@ -70,6 +75,7 @@ pflow instructions create
 - User has approved the creation of a new workflow
 - You are sure no existing workflow matches the user's request
 - Running into errors when running a workflow
+- You need to modify an existing workflow to fit the user's request
 
 ## Node Commands (run nodes individually as tools)
 
@@ -138,15 +144,9 @@ Is it a complex task or workflow request?
     │   │
     │   └─ Match <70% → No good match found
     │       ↓
-    │       Ask user: "Should I build new workflow?"
-    │       ↓
-    │       ├─ User approves → pflow instructions create
-    │       │                  ↓
-    │       │                  Read comprehensive guide
-    │       │                  ↓
-    │       │                  Build → Test → Save
-    │       │
-    │       └─ User declines → Suggest alternatives or DONE
+    │       How many nodes needed?
+    │       ├─ 1-2 nodes → Ask: "Execute directly or create workflow?"
+    │       └─ 3+ nodes → Create workflow (pflow instructions create)
     │
     └─ NO: Simple request (specific node/tool)
         ↓
