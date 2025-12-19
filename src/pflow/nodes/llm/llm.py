@@ -6,16 +6,19 @@ Interface:
 - Reads: shared["images"]: list[str]  # Image URLs or file paths (optional)
 - Writes: shared["response"]: Any  # Model's response (auto-parsed JSON or string)
 - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
-- Params: model: str  # Model to use (required - injected by pflow or specify explicitly)
+- Params: model: str  # Model to use (optional - use default unless user requests specific model)
 - Params: temperature: float  # Sampling temperature (default: 1.0)
 - Params: max_tokens: int  # Max response tokens (optional)
 - Actions: default (always)
 
 Note on model parameter:
-    In pflow context, the compiler injects the model from:
+    Always use the default model unless the user explicitly requests a specific model.
+
+    In pflow context, the compiler auto-detects the model from:
     1. settings.llm.default_model (if configured)
     2. llm CLI default (llm models default)
-    If neither is configured, compilation fails with setup instructions.
+    3. Auto-detect from API keys (Anthropic → Gemini → OpenAI)
+    If nothing is configured, compilation fails with setup instructions.
 
     When using this node standalone (outside pflow), falls back to gemini-3-flash-preview.
 """
@@ -39,7 +42,6 @@ class LLMNode(Node):
     When using this node, you should always only have it do ONE task. If you need to do multiple AI tasks, you should use multiple LLM nodes.
     For example, if you need to create both unstructured and structured data, you should use two different LLM nodes not one node that does both.
 
-
     Interface:
     - Reads: shared["prompt"]: str  # Text prompt to send to model
     - Reads: shared["system"]: str  # System prompt (optional)
@@ -52,7 +54,7 @@ class LLMNode(Node):
         - total_tokens: int  # Total tokens (input + output)
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
-    - Params: model: str  # Model to use (required - injected by pflow or specify explicitly)
+    - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
     - Actions: default (always)
