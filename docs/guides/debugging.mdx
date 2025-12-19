@@ -65,10 +65,16 @@ Some things require human action. Your agent will tell you when these come up:
 If pflow's discovery features aren't working:
 
 ```bash
-pflow settings set-env ANTHROPIC_API_KEY "your-key"
+pflow settings set-env OPENAI_API_KEY "sk-..."
 ```
 
-Your agent can't set API keys for security reasons, but it will tell you exactly what command to run.
+pflow auto-detects available providers. You can optionally override the model:
+
+```bash
+pflow settings llm set-default gpt-5.2
+```
+
+Your agent can't configure API keys for security reasons, but it will tell you exactly what command to run.
 
 ### MCP server issues
 
@@ -103,7 +109,7 @@ pflow also has experimental features like a built-in planner and auto-repair. Se
 |-----------|----------------|
 | Workflow fails with fixable error | Your agent (self-corrects) |
 | Agent needs more context | Your agent (reads trace files) |
-| API key missing | You (agent tells you the command) |
+| API key not configured | You (agent tells you the command) |
 | MCP server not connected | You (agent guides you) |
 | Disk space from traces | You (manual cleanup) |
 

@@ -33,33 +33,52 @@ pflow --version
 
 ## Set up your API key
 
-pflow uses an LLM for **intelligent discovery** - finding the right workflows and nodes without your agent needing to load everything into context. These features currently require an Anthropic API key.
+pflow uses an LLM for **intelligent discovery** - finding the right workflows and nodes without your agent needing to load everything into context. You can use any provider supported by [Simon Willison's llm](https://llm.datasette.io/).
 
 ```bash
-pflow settings set-env ANTHROPIC_API_KEY "your-api-key"
+# OpenAI
+pflow settings set-env OPENAI_API_KEY "sk-..."
+
+# Or Anthropic
+pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+
+# Or Google
+pflow settings set-env GEMINI_API_KEY "..."
 ```
 
+pflow auto-detects your provider and selects a default model (Claude Sonnet 4.5 for Anthropic, Gemini 3 Flash for Google, GPT-5.2 for OpenAI).
+
 <Tip>
-pflow uses [Simon Willison's llm](https://llm.datasette.io/) under the hood. If you already have `llm` installed and configured with Anthropic, pflow will use that key automatically.
+If you already have `llm` installed and configured (`llm keys set openai`), pflow will use those keys automatically.
 </Tip>
 
-### What the API key is used for
+### Choose a specific model (optional)
 
-This is **pflow's own API key**, separate from whatever LLM your agent uses:
+To use a different model than the auto-detected default:
+
+```bash
+pflow settings llm set-default claude-sonnet-4-5
+```
+
+See [LLM model settings](/reference/cli/settings#llm-model-settings) for all options.
+
+### What the model is used for
+
+This is **pflow's LLM configuration**, separate from whatever LLM your agent uses:
 
 - **Discovery commands** - `pflow registry discover` and `pflow workflow discover` use LLM to find relevant nodes and workflows
 - **LLM nodes** - workflows that include an LLM node for text processing
 - **Smart filtering** - automatic field selection for large API responses
 
 <Note>
-Your agent creates workflows using its own LLM (Claude Code uses Claude, Cursor uses its models, etc.). pflow's API key is only for pflow's internal features.
+Your agent creates workflows using its own LLM (Claude Code uses Claude, Cursor uses its models, etc.). pflow's model configuration is only for pflow's internal features.
 </Note>
 
 ### When is it required?
 
-The API key is **strongly recommended** if you're using MCP servers. MCP servers expose many tools, and intelligent discovery is how pflow avoids loading all those tool schemas into your agent's context. Without it, you lose the main benefit.
+LLM configuration is **strongly recommended** if you're using MCP servers. MCP servers expose many tools, and intelligent discovery is how pflow avoids loading all those tool schemas into your agent's context. Without it, you lose the main benefit.
 
-For basic usage without MCP servers or testing pflow, the API key is optional.
+For basic usage without MCP servers or testing pflow, the configuration is optional.
 
 <Tip>
 The cost of pflow's discovery features is minimal compared to running your agent directly. By finding only what's needed, intelligent discovery significantly reduces your agent's token usage, speeds up responses, and improves output quality.

@@ -5,6 +5,44 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="December 2024" description="v0.7.0" tags={["New releases", "Improvements"]}>
+  ## Unified LLM model support
+
+  Configure which models pflow uses for discovery, filtering, and workflow execution.
+
+  **Model configuration**
+  - New `pflow settings llm` commands for model management
+  - Single `default_model` setting applies to all pflow features
+  - Feature-specific overrides for discovery and filtering
+  - Works with any llm-supported provider (OpenAI, Anthropic, Google, local models)
+
+  **Bug fixes**
+  - User model choice now respected in workflows (was silently overridden)
+  - Invalid model names properly error instead of silent failures
+  - Consistent behavior between `registry run` and workflow execution
+
+  <Accordion title="Quick setup">
+    ```bash
+    # Set an API key (pflow auto-detects the model)
+    pflow settings set-env OPENAI_API_KEY "sk-..."
+
+    # Or override the auto-detected model
+    pflow settings llm set-default gpt-5.2
+    ```
+  </Accordion>
+
+  <Accordion title="Breaking changes">
+    Discovery and filtering commands no longer require an Anthropic API key - any llm-supported provider works.
+
+    LLM nodes in workflows now use the same resolution as discovery:
+    1. Workflow params (`"model": "gpt-5.2"`)
+    2. `pflow settings llm set-default`
+    3. `llm models default` (llm CLI)
+    4. Auto-detect from API keys
+    5. Error with setup instructions
+  </Accordion>
+</Update>
+
 <Update label="December 2024" description="v0.6.0" tags={["New releases"]}>
   ## Initial release
 
@@ -37,19 +75,18 @@ rss: true
   <Accordion title="Quick start">
     ```bash
     uv tool install git+https://github.com/spinje/pflow.git
-    pflow settings set-env ANTHROPIC_API_KEY "your-key"
+    pflow settings set-env OPENAI_API_KEY "sk-..."
     ```
     See [Quickstart](/quickstart) for full setup.
   </Accordion>
 
   <Accordion title="Limitations">
-    - Discovery features require an Anthropic API key
     - Currently supports macOS only
     - Shell commands run with user privileges (not sandboxed)
     - No conditional branching or parallel execution yet
   </Accordion>
 
   <Accordion title="What's next">
-    See the [Roadmap](/roadmap) — unified model support, conditional branching, parallel execution, and benchmarking coming soon.
+    See the [Roadmap](/roadmap) — conditional branching, parallel execution, and benchmarking coming soon.
   </Accordion>
 </Update>

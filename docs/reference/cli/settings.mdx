@@ -24,6 +24,11 @@ The `pflow settings` command group manages pflow configuration stored in `~/.pfl
 | `remove` | Remove a pattern |
 | `check` | Check if a node is allowed |
 | `reset` | Reset to defaults |
+| `llm show` | Show LLM model settings |
+| `llm set-default` | Set default model for all features |
+| `llm set-discovery` | Set model for discovery commands |
+| `llm set-filtering` | Set model for smart filtering |
+| `llm unset` | Remove an LLM model setting |
 
 ## pflow settings init
 
@@ -45,6 +50,11 @@ Creates `~/.pflow/settings.json` with default configuration. Prompts for confirm
       "allow": ["*"],
       "deny": []
     }
+  },
+  "llm": {
+    "default_model": null,
+    "discovery_model": null,
+    "filtering_model": null
   },
   "env": {}
 }
@@ -72,6 +82,11 @@ Current settings:
       "deny": ["test.*"]
     }
   },
+  "llm": {
+    "default_model": "gpt-5.2",
+    "discovery_model": null,
+    "filtering_model": null
+  },
   "env": {
     "ANTHROPIC_API_KEY": "sk-***",
     "log_level": "debug"
@@ -98,7 +113,8 @@ pflow settings set-env <KEY> <VALUE>
 **Examples:**
 
 ```bash
-# Set Anthropic API key (required for discovery features)
+# Set API keys for LLM providers
+pflow settings set-env OPENAI_API_KEY "sk-..."
 pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
 
 # Set other variables
@@ -108,7 +124,7 @@ pflow settings set-env GITHUB_TOKEN "ghp_..."
 **Output:**
 
 ```
-✓ Set environment variable: ANTHROPIC_API_KEY
+✓ Set environment variable: OPENAI_API_KEY
    Value: sk-***
 ```
 
@@ -160,7 +176,7 @@ pflow settings list-env --show-values
 
 ```
 Environment variables:
-  ANTHROPIC_API_KEY: sk-***
+  OPENAI_API_KEY: sk-***
   GITHUB_TOKEN: ghp***
   LOG_LEVEL: debug
 ```
@@ -295,6 +311,150 @@ Prompts for confirmation before resetting. This removes all custom settings incl
 <Warning>
   This deletes ALL custom settings including environment variables and API keys.
 </Warning>
+
+## LLM model settings
+
+These commands let you override which models pflow uses for its internal features. By default, pflow auto-detects based on your configured API keys - these are optional.
+
+### pflow settings llm show
+
+Display LLM model settings with resolution status.
+
+```bash
+pflow settings llm show
+```
+
+**Output:**
+
+```
+LLM Model Settings:
+
+  default_model:    gpt-5.2 (configured)
+  discovery_model:  (using default_model → gpt-5.2)
+  filtering_model:  (using default_model → gpt-5.2)
+
+Resolution: setting → default_model → llm CLI default → auto-detect → error
+
+To configure:
+  pflow settings llm set-default <model>
+  pflow settings llm set-discovery <model>
+  pflow settings llm set-filtering <model>
+```
+
+### pflow settings llm set-default
+
+Override the auto-detected model for all pflow LLM usage.
+
+```bash
+pflow settings llm set-default <MODEL>
+```
+
+**Arguments:**
+- `MODEL` - Model identifier (e.g., `gpt-5.2`, `anthropic/claude-sonnet-4-5`, `gemini-3-flash-preview`)
+
+When set, this model is used instead of auto-detection for:
+- LLM nodes in workflows (when no model specified in params)
+- Discovery commands (when `discovery_model` not set)
+- Smart filtering (when `filtering_model` not set)
+
+**Examples:**
+
+```bash
+# Set OpenAI model
+pflow settings llm set-default gpt-5.2
+
+# Set Anthropic model
+pflow settings llm set-default anthropic/claude-sonnet-4-5
+
+# Set Google model
+pflow settings llm set-default gemini-3-flash-preview
+```
+
+<Tip>
+  This is optional - pflow auto-detects a model based on your API keys. Use this if you want a specific model instead of the auto-detected one.
+</Tip>
+
+### pflow settings llm set-discovery
+
+Set the model for discovery commands (`pflow registry discover`, `pflow workflow discover`).
+
+```bash
+pflow settings llm set-discovery <MODEL>
+```
+
+**Arguments:**
+- `MODEL` - Model identifier
+
+**Example:**
+
+```bash
+# Use a fast, cheap model for discovery
+pflow settings llm set-discovery gemini-3-flash-preview
+```
+
+### pflow settings llm set-filtering
+
+Set the model for smart field filtering (structure-only mode with large responses).
+
+```bash
+pflow settings llm set-filtering <MODEL>
+```
+
+**Arguments:**
+- `MODEL` - Model identifier
+
+**Example:**
+
+```bash
+# Use a fast model for filtering
+pflow settings llm set-filtering gemini-3-flash-preview
+```
+
+### pflow settings llm unset
+
+Remove an LLM model setting, reverting to auto-detection.
+
+```bash
+pflow settings llm unset {default|discovery|filtering|all}
+```
+
+**Arguments:**
+- `SETTING` - Which setting to remove: `default`, `discovery`, `filtering`, or `all`
+
+**Examples:**
+
+```bash
+# Clear default model
+pflow settings llm unset default
+
+# Clear discovery model (will use default_model or auto-detect)
+pflow settings llm unset discovery
+
+# Clear all LLM settings
+pflow settings llm unset all
+```
+
+### Model resolution order
+
+pflow uses the same resolution order for all LLM usage (discovery, filtering, and workflow LLM nodes):
+
+1. Explicit setting (workflow params or feature-specific setting)
+2. `default_model` from settings
+3. `llm` library default (`llm models default`)
+4. Auto-detect from API keys
+5. Error with setup instructions
+
+**Auto-detected defaults by provider:**
+
+| Provider | Default model |
+|----------|---------------|
+| Anthropic | `anthropic/claude-sonnet-4-5` |
+| Google | `gemini/gemini-3-flash-preview` |
+| OpenAI | `gpt-5.2` |
+
+<Note>
+  Most users just need an API key configured. pflow auto-detects the appropriate model. Use these commands only to override the auto-detected model.
+</Note>
 
 ## How node filtering works
 

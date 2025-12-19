@@ -15,11 +15,23 @@ The LLM node calls AI models using [Simon Willison's llm library](https://llm.da
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `prompt` | str | Yes | - | Text prompt to send to the model |
-| `model` | str | No | `gpt-5.2` | Model identifier |
+| `model` | str | No | See below | Model identifier |
 | `system` | str | No | - | System prompt for behavior guidance |
 | `temperature` | float | No | `1.0` | Sampling temperature (0.0-2.0) |
 | `max_tokens` | int | No | - | Maximum response tokens |
 | `images` | list | No | `[]` | Image URLs or file paths for vision models |
+
+### Model resolution
+
+If `model` is not specified in workflow params, pflow auto-detects based on your configured API keys.
+
+Most users just need an API key:
+
+```bash
+pflow settings set-env OPENAI_API_KEY "sk-..."
+```
+
+See [LLM model settings](/reference/cli/settings#llm-model-settings) for the full resolution order and default models per provider.
 
 ## Output
 

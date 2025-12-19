@@ -29,6 +29,11 @@ pflow settings show
   "runtime": {
     "template_resolution_mode": "strict"
   },
+  "llm": {
+    "default_model": null,
+    "discovery_model": null,
+    "filtering_model": null
+  },
   "env": {}
 }
 ```
@@ -41,6 +46,9 @@ pflow settings show
 | `registry.nodes.deny` | `["pflow.nodes.git.*", "pflow.nodes.github.*"]` | Patterns for nodes to exclude |
 | `registry.include_test_nodes` | `false` | Show internal test nodes |
 | `runtime.template_resolution_mode` | `"strict"` | `"strict"` or `"permissive"` |
+| `llm.default_model` | `null` | Default model for all pflow LLM usage |
+| `llm.discovery_model` | `null` | Model for discovery commands (overrides default) |
+| `llm.filtering_model` | `null` | Model for smart filtering (overrides default) |
 | `env` | `{}` | API keys and environment variables |
 
 ### Commands
@@ -55,6 +63,39 @@ pflow settings show
 # Reset to defaults
 pflow settings reset
 ```
+
+## LLM model configuration
+
+pflow uses LLMs for discovery features, smart filtering, and the LLM node in workflows. Set up an API key, and pflow auto-detects which model to use.
+
+### API key setup
+
+```bash
+# Set an API key (any llm-supported provider works)
+pflow settings set-env OPENAI_API_KEY "sk-..."
+```
+
+pflow auto-detects available providers based on configured API keys.
+
+### Override the model (optional)
+
+To use a specific model instead of auto-detection:
+
+```bash
+# Set a default model for all pflow features
+pflow settings llm set-default gpt-5.2
+
+# Or configure specific features
+pflow settings llm set-discovery anthropic/claude-haiku-4-5
+pflow settings llm set-filtering gemini-3-flash-preview
+
+# View current configuration
+pflow settings llm show
+```
+
+### Resolution order
+
+pflow auto-detects a model based on your configured API keys. To override this or see the full resolution order and default models, see [LLM model settings](/reference/cli/settings#llm-model-settings).
 
 ## Environment variables
 
