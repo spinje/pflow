@@ -469,9 +469,10 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 89: Implement Structure-Only Mode and Selective Data Retrieval
 - ✅ Task 83: Pre-Release Security and Code Quality Audit
 - ✅ Task 93: Set Up Mintlify Documentation
+- ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
 Next up:
-- ⏳ Task 95: Unify LLM Usage via Simon Willison's llm Library
+
 
 First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
