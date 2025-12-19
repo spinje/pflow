@@ -42,21 +42,72 @@ class TestGetDefaultWorkflowModel:
 
                 assert result == "claude-3-sonnet"
 
-    def test_returns_none_when_nothing_configured(self):
-        """Returns None when nothing is configured."""
+    def test_falls_back_to_auto_detect(self):
+        """Falls back to auto-detect when settings and llm CLI not configured."""
         mock_settings = MagicMock()
         mock_settings.llm.default_model = None
 
-        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
-            MockManager.return_value.load.return_value = mock_settings
-
-            with patch(
+        with (
+            patch("pflow.core.llm_config.SettingsManager") as MockManager,
+            patch(
                 "pflow.core.llm_config.get_llm_cli_default_model",
                 return_value=None,
-            ):
-                result = get_default_workflow_model()
+            ),
+            patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value="anthropic/claude-sonnet-4-5",
+            ),
+        ):
+            MockManager.return_value.load.return_value = mock_settings
 
-                assert result is None
+            result = get_default_workflow_model()
+
+            assert result == "anthropic/claude-sonnet-4-5"
+
+    def test_llm_cli_takes_priority_over_auto_detect(self):
+        """llm CLI default takes priority over auto-detection."""
+        mock_settings = MagicMock()
+        mock_settings.llm.default_model = None
+
+        with (
+            patch("pflow.core.llm_config.SettingsManager") as MockManager,
+            patch(
+                "pflow.core.llm_config.get_llm_cli_default_model",
+                return_value="llm-cli-model",
+            ),
+            patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value="auto-detected-model",
+            ),
+        ):
+            MockManager.return_value.load.return_value = mock_settings
+
+            result = get_default_workflow_model()
+
+            # llm CLI wins over auto-detect
+            assert result == "llm-cli-model"
+
+    def test_returns_none_when_nothing_configured(self):
+        """Returns None when settings, llm CLI, and auto-detect all return None."""
+        mock_settings = MagicMock()
+        mock_settings.llm.default_model = None
+
+        with (
+            patch("pflow.core.llm_config.SettingsManager") as MockManager,
+            patch(
+                "pflow.core.llm_config.get_llm_cli_default_model",
+                return_value=None,
+            ),
+            patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value=None,
+            ),
+        ):
+            MockManager.return_value.load.return_value = mock_settings
+
+            result = get_default_workflow_model()
+
+            assert result is None
 
     def test_settings_takes_priority_over_llm_cli(self):
         """Settings default_model takes priority over llm CLI default."""
@@ -70,6 +121,25 @@ class TestGetDefaultWorkflowModel:
             result = get_default_workflow_model()
 
             # Settings wins
+            assert result == "settings-model"
+
+    def test_settings_takes_priority_over_auto_detect(self):
+        """Settings default_model takes priority over auto-detection."""
+        mock_settings = MagicMock()
+        mock_settings.llm.default_model = "settings-model"
+
+        with (
+            patch("pflow.core.llm_config.SettingsManager") as MockManager,
+            patch(
+                "pflow.core.llm_config.get_default_llm_model",
+                return_value="auto-detected-model",
+            ),
+        ):
+            MockManager.return_value.load.return_value = mock_settings
+
+            result = get_default_workflow_model()
+
+            # Settings wins over auto-detect
             assert result == "settings-model"
 
     def test_handles_settings_load_failure(self):
@@ -167,13 +237,32 @@ class TestGetModelNotConfiguredHelp:
         help_text = get_model_not_configured_help("my-custom-llm")
         assert "my-custom-llm" in help_text
 
-    def test_includes_all_configuration_methods(self):
-        """Help message shows all three configuration methods."""
+    def test_mentions_auto_detect_failure(self):
+        """Help message explains that auto-detection was tried."""
         help_text = get_model_not_configured_help("test-node")
 
-        assert "params" in help_text  # Method 1: IR params
-        assert "settings.json" in help_text  # Method 2: pflow settings
-        assert "llm models default" in help_text  # Method 3: llm CLI
+        assert "no default could be detected" in help_text
+        assert "pflow tried to auto-detect" in help_text
+        assert "no API keys were found" in help_text
+
+    def test_api_key_setup_is_first_option(self):
+        """Help message shows API key setup as first option."""
+        help_text = get_model_not_configured_help("test-node")
+
+        # Check API key setup is option 1
+        assert "1. Set an API key" in help_text
+        assert "pflow settings set-env OPENAI_API_KEY" in help_text
+        assert "pflow settings set-env ANTHROPIC_API_KEY" in help_text
+        assert "pflow settings set-env GEMINI_API_KEY" in help_text
+
+    def test_includes_all_configuration_methods(self):
+        """Help message shows all four configuration methods."""
+        help_text = get_model_not_configured_help("test-node")
+
+        assert "Set an API key" in help_text  # Method 1: API key
+        assert "params" in help_text  # Method 2: IR params
+        assert "set-default" in help_text  # Method 3: pflow settings
+        assert "llm models default" in help_text  # Method 4: llm CLI
 
     def test_includes_discovery_commands(self):
         """Help message includes helpful discovery commands."""

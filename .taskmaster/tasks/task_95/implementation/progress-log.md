@@ -713,3 +713,49 @@ Resolution order:
 
 - `make check`: All passed ✅
 - `make test`: 3418 passed, 7 skipped ✅
+
+---
+
+## [2025-12-19] - LLM Node Auto-Detection (Follow-up Fix)
+
+### Problem
+
+Inconsistent behavior between features:
+- Discovery/filtering: Auto-detect model from API keys ✅
+- Workflow LLM nodes: Fail with error ❌
+
+User experience issue: Set API key → discovery works → run workflow with LLM node → error "No model configured". Confusing because the API key is already set.
+
+### Root Cause
+
+`get_default_workflow_model()` was intentionally missing the auto-detect step that `get_model_for_feature()` had. The original design required explicit configuration, but this created friction.
+
+### Solution
+
+Added auto-detect as step 3 in `get_default_workflow_model()`:
+
+```
+1. settings.llm.default_model
+2. llm CLI default (llm models default)
+3. Auto-detect from API keys (Anthropic → Gemini → OpenAI)  ← NEW
+4. None → Error
+```
+
+Updated error message to guide users to API key setup first (simplest path).
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `src/pflow/core/llm_config.py` | Added auto-detect step + updated error message |
+| `tests/test_core/test_llm_config_workflow_model.py` | +5 tests for auto-detect behavior |
+| `tests/test_runtime/test_compiler_llm_model.py` | Updated 2 tests for new error message |
+
+### Key Insight
+
+Documentation was already correct - it described auto-detection for all LLM usage. The code was catching up to the documented behavior.
+
+### Verification
+
+- `make check`: All passed ✅
+- `make test`: 3423 passed, 7 skipped ✅

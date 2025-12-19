@@ -83,7 +83,7 @@ class TestLLMModelInjection:
             error = exc_info.value
             assert "my-llm" in str(error)
             assert "No model configured" in str(error)
-            assert "settings.json" in error.suggestion
+            assert "pflow settings llm set-default" in error.suggestion
             assert "llm models default" in error.suggestion
 
     def test_non_llm_nodes_not_affected(self, mock_read_file_registry):
@@ -120,7 +120,7 @@ class TestLLMModelInjection:
                 assert "model" not in original_params
 
     def test_error_message_includes_helpful_suggestions(self, mock_registry):
-        """Error message includes all three configuration methods."""
+        """Error message includes all four configuration methods."""
         node_data = {"id": "test-llm", "type": "llm", "params": {"prompt": "Test"}}
 
         with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
@@ -131,10 +131,11 @@ class TestLLMModelInjection:
 
             suggestion = exc_info.value.suggestion
 
-            # All three methods should be mentioned
-            assert "workflow" in suggestion.lower()  # Method 1
-            assert "settings.json" in suggestion  # Method 2
-            assert "llm models default" in suggestion  # Method 3
+            # All four methods should be mentioned
+            assert "pflow settings set-env" in suggestion  # Method 1: API key
+            assert "workflow" in suggestion.lower()  # Method 2: IR params
+            assert "pflow settings llm set-default" in suggestion  # Method 3: pflow settings
+            assert "llm models default" in suggestion  # Method 4: llm CLI
 
             # Helpful commands should be included
             assert "llm models list" in suggestion

@@ -296,10 +296,8 @@ def get_default_workflow_model() -> Optional[str]:
     Resolution order:
     1. settings.llm.default_model (pflow settings)
     2. llm CLI default model (llm models default)
-    3. None (caller should fail with helpful error)
-
-    This function does NOT auto-detect based on API keys.
-    Users must explicitly configure their preferred model.
+    3. Auto-detect from API keys (Anthropic → Gemini → OpenAI)
+    4. None (caller should fail with helpful error)
 
     Returns:
         Model name string or None if nothing configured
@@ -324,8 +322,14 @@ def get_default_workflow_model() -> Optional[str]:
         logger.debug(f"Using llm CLI default model: {llm_default}")
         return llm_default
 
-    # 3. Nothing configured
-    logger.debug("No default workflow model configured")
+    # 3. Auto-detect from API keys (matches discovery/filtering behavior)
+    detected = get_default_llm_model()
+    if detected:
+        logger.debug(f"Using auto-detected model from API keys: {detected}")
+        return detected
+
+    # 4. Nothing configured
+    logger.debug("No default workflow model configured or detected")
     return None
 
 
@@ -338,18 +342,24 @@ def get_model_not_configured_help(node_id: str) -> str:
     Returns:
         Multi-line string with setup instructions
     """
-    return f"""No model specified for LLM node '{node_id}' and no default configured.
+    return f"""No model specified for LLM node '{node_id}' and no default could be detected.
 
-Configure a default model using one of these methods:
+pflow tried to auto-detect a model but no API keys were found for supported providers.
 
-  1. Specify in workflow (per-node):
+Configure using one of these methods:
+
+  1. Set an API key (pflow will auto-detect the model):
+     pflow settings set-env OPENAI_API_KEY "sk-..."
+     pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+     pflow settings set-env GEMINI_API_KEY "..."
+
+  2. Specify model in workflow (per-node):
      {{"id": "{node_id}", "type": "llm", "params": {{"model": "gpt-5.2", "prompt": "..."}}}}
 
-  2. Set pflow default (recommended, applies to all workflows):
-     Add to ~/.pflow/settings.json:
-     {{"llm": {{"default_model": "gpt-5.2"}}}}
+  3. Set pflow default model (overrides auto-detection):
+     pflow settings llm set-default gpt-5.2
 
-  3. Set llm library default (applies to all llm usage):
+  4. Set llm library default:
      llm models default gpt-5.2
 
 To see available models: llm models list

@@ -138,27 +138,22 @@ compiler → llm_config (for model resolution)
 
 ### Reusable Patterns
 
-**Model Resolution Chain** (unified default):
+**Model Resolution Chain** (unified for ALL LLM usage):
 ```python
-def get_model_for_feature(feature: str) -> str:
-    """Resolution: feature_model → default_model → auto-detect → fallback"""
-    settings = SettingsManager().load()
+# For workflow LLM nodes (get_default_workflow_model):
+# 1. settings.llm.default_model
+# 2. llm CLI default (llm models default)
+# 3. Auto-detect from API keys
+# 4. None → CompilationError with helpful message
 
-    # 1. Feature-specific setting (discovery_model, filtering_model)
-    if getattr(settings.llm, f"{feature}_model"):
-        return getattr(settings.llm, f"{feature}_model")
-
-    # 2. Shared default_model fallback
-    if settings.llm.default_model:
-        return settings.llm.default_model
-
-    # 3. Auto-detect from API keys
-    if detected := get_default_llm_model():
-        return detected
-
-    # 4. Hardcoded fallback
-    return _DEFAULT_FALLBACK_MODEL
+# For discovery/filtering (get_model_for_feature):
+# 1. Feature-specific setting (discovery_model, filtering_model)
+# 2. Shared default_model
+# 3. Auto-detect from API keys
+# 4. Hardcoded fallback (anthropic/claude-sonnet-4-5)
 ```
+
+**Key insight**: Both paths now include auto-detect, so users just need an API key configured.
 
 **Helpful Error Messages**:
 ```python
@@ -182,20 +177,23 @@ raise CompilationError(
 
 | Before | After |
 |--------|-------|
-| LLM nodes with no model used hardcoded default | Must configure model explicitly (settings, llm CLI, or IR) |
 | Invalid Claude model names silently "worked" | Now properly error with llm library validation |
 | `registry run` and file workflows behaved differently | Now consistent behavior |
+| Discovery auto-detected, workflows didn't | All LLM usage now auto-detects from API keys |
 
-### Error Message Change
+### Error Message (only shown when no API keys configured)
 
-Users without model configuration now see:
 ```
-No model specified for LLM node 'my-llm' and no default configured.
+No model specified for LLM node 'my-llm' and no default could be detected.
 
-Configure a default model using one of these methods:
-  1. Specify in workflow (per-node): {"params": {"model": "gpt-5.2"}}
-  2. Set pflow default via CLI: pflow settings llm set-default gpt-5.2
-  3. Set llm library default: llm models default gpt-5.2
+pflow tried to auto-detect a model but no API keys were found.
+
+Configure using one of these methods:
+  1. Set an API key (pflow will auto-detect the model):
+     pflow settings set-env OPENAI_API_KEY "sk-..."
+  2. Specify model in workflow (per-node)
+  3. Set pflow default: pflow settings llm set-default gpt-5.2
+  4. Set llm library default: llm models default gpt-5.2
 ```
 
 ## Future Considerations
