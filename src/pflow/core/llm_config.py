@@ -10,6 +10,8 @@ import shutil
 import subprocess
 from typing import Optional
 
+from pflow.core.settings import SettingsManager
+
 logger = logging.getLogger(__name__)
 
 # Cache the detected default model to avoid repeated key checks
@@ -70,13 +72,6 @@ def _has_llm_key(provider: str) -> bool:
     # Build command from constants and validated inputs
     command = [llm_path, *_LLM_KEYS_SUBCOMMAND, provider]
 
-    # Debug logging for CI troubleshooting
-    import sys
-
-    if os.environ.get("CI"):
-        print(f"[DEBUG CI] About to run subprocess: {command}", file=sys.stderr, flush=True)
-        print(f"[DEBUG CI] stdin=subprocess.DEVNULL: {subprocess.DEVNULL}", file=sys.stderr, flush=True)
-
     try:
         result = subprocess.run(
             command,
@@ -86,20 +81,12 @@ def _has_llm_key(provider: str) -> bool:
             timeout=1,  # Reduced from 2s for security
             check=False,
         )
-        # Debug logging for CI
-        if os.environ.get("CI"):
-            print(f"[DEBUG CI] Subprocess completed: returncode={result.returncode}", file=sys.stderr, flush=True)
-
         # Key exists if command succeeds and returns non-empty output
         return result.returncode == 0 and bool(result.stdout.strip())
     except subprocess.TimeoutExpired:
-        if os.environ.get("CI"):
-            print(f"[DEBUG CI] Subprocess TIMEOUT for {provider}", file=sys.stderr, flush=True)
         logger.debug(f"Timeout checking {provider} key")
         return False
     except Exception as e:
-        if os.environ.get("CI"):
-            print(f"[DEBUG CI] Subprocess EXCEPTION: {e}", file=sys.stderr, flush=True)
         logger.debug(f"Failed to check {provider} key: {e}")
         return False
 
@@ -115,18 +102,9 @@ def _detect_default_model() -> Optional[str]:
     Returns:
         Model name string, or None if no keys configured
     """
-    # Debug logging for CI
-    import sys
-
-    if os.environ.get("CI"):
-        print("[DEBUG CI] _detect_default_model called", file=sys.stderr, flush=True)
-        print(f"[DEBUG CI] PYTEST_CURRENT_TEST={os.environ.get('PYTEST_CURRENT_TEST')}", file=sys.stderr, flush=True)
-
     # Skip detection entirely in test environment to avoid subprocess hangs
     if os.environ.get("PYTEST_CURRENT_TEST"):
         logger.debug("Skipping LLM detection in test environment")
-        if os.environ.get("CI"):
-            print("[DEBUG CI] Skipping detection due to PYTEST_CURRENT_TEST", file=sys.stderr, flush=True)
         return None
 
     # Try Anthropic first (best for planning/repair)
@@ -239,9 +217,6 @@ def get_model_for_feature(feature: str) -> str:
     if feature not in ("discovery", "filtering"):
         raise ValueError(f"Unknown feature: {feature}. Must be 'discovery' or 'filtering'")
 
-    # Import here to avoid circular imports
-    from pflow.core.settings import SettingsManager
-
     try:
         settings = SettingsManager().load()
 
@@ -330,8 +305,6 @@ def get_default_workflow_model() -> Optional[str]:
     """
     # 1. Check pflow settings first
     try:
-        from pflow.core.settings import SettingsManager
-
         settings = SettingsManager().load()
         if settings.llm.default_model:
             logger.debug(f"Using pflow settings default_model: {settings.llm.default_model}")

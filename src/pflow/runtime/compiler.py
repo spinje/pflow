@@ -14,6 +14,7 @@ import sys
 from typing import Any, Optional, Union, cast
 
 from pflow.core.ir_schema import ValidationError
+from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.registry import Registry
@@ -602,8 +603,6 @@ def _create_single_node(
 
     # Inject default model for LLM nodes if not specified
     if node_type == "llm" and "model" not in params:
-        from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
-
         default_model = get_default_workflow_model()
 
         if default_model:

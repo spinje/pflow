@@ -18,7 +18,7 @@ class TestGetDefaultWorkflowModel:
         mock_settings = MagicMock()
         mock_settings.llm.default_model = "gpt-5.2"
 
-        with patch("pflow.core.settings.SettingsManager") as MockManager:
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
             MockManager.return_value.load.return_value = mock_settings
 
             result = get_default_workflow_model()
@@ -30,12 +30,11 @@ class TestGetDefaultWorkflowModel:
         mock_settings = MagicMock()
         mock_settings.llm.default_model = None
 
-        with patch("pflow.core.settings.SettingsManager") as MockManager:
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
             MockManager.return_value.load.return_value = mock_settings
 
-            with patch.object(
-                __import__("pflow.core.llm_config", fromlist=["get_llm_cli_default_model"]),
-                "get_llm_cli_default_model",
+            with patch(
+                "pflow.core.llm_config.get_llm_cli_default_model",
                 return_value="claude-3-sonnet",
             ):
                 result = get_default_workflow_model()
@@ -47,12 +46,11 @@ class TestGetDefaultWorkflowModel:
         mock_settings = MagicMock()
         mock_settings.llm.default_model = None
 
-        with patch("pflow.core.settings.SettingsManager") as MockManager:
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
             MockManager.return_value.load.return_value = mock_settings
 
-            with patch.object(
-                __import__("pflow.core.llm_config", fromlist=["get_llm_cli_default_model"]),
-                "get_llm_cli_default_model",
+            with patch(
+                "pflow.core.llm_config.get_llm_cli_default_model",
                 return_value=None,
             ):
                 result = get_default_workflow_model()
@@ -64,7 +62,7 @@ class TestGetDefaultWorkflowModel:
         mock_settings = MagicMock()
         mock_settings.llm.default_model = "settings-model"
 
-        with patch("pflow.core.settings.SettingsManager") as MockManager:
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
             MockManager.return_value.load.return_value = mock_settings
 
             # llm CLI should not even be checked since settings is configured
@@ -75,12 +73,11 @@ class TestGetDefaultWorkflowModel:
 
     def test_handles_settings_load_failure(self):
         """Falls back to llm CLI if settings fail to load."""
-        with patch("pflow.core.settings.SettingsManager") as MockManager:
+        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
             MockManager.return_value.load.side_effect = Exception("Settings error")
 
-            with patch.object(
-                __import__("pflow.core.llm_config", fromlist=["get_llm_cli_default_model"]),
-                "get_llm_cli_default_model",
+            with patch(
+                "pflow.core.llm_config.get_llm_cli_default_model",
                 return_value="fallback-model",
             ):
                 result = get_default_workflow_model()
