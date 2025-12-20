@@ -755,7 +755,7 @@ class TestSmartOutputMode:
         formatted, truncated = format_value_for_smart_display(large_dict)
 
         assert "{...10 keys}" in formatted
-        assert truncated is False  # Summarized, not truncated
+        assert truncated is True  # Summarized - user can't see data, hint should appear
 
     def test_smart_mode_summarizes_large_lists(self):
         """SMART MODE: Shows summary for lists with more than 5 items."""
@@ -765,7 +765,7 @@ class TestSmartOutputMode:
         formatted, truncated = format_value_for_smart_display(large_list)
 
         assert "[...20 items]" in formatted
-        assert truncated is False
+        assert truncated is True  # Summarized - user can't see data, hint should appear
 
     def test_smart_mode_shows_primitives_fully(self):
         """SMART MODE: Always shows numbers, booleans, and null fully."""
@@ -846,6 +846,63 @@ class TestSmartOutputMode:
         assert long_content in result
         # Should say "all N fields"
         assert "all" in result.lower()
+
+    def test_smart_mode_shows_null_for_none_values(self):
+        """SMART MODE: Legitimate None values show as 'null', not '<not found>'."""
+        from pflow.execution.formatters.node_output_formatter import format_value_for_smart_display
+
+        formatted, truncated = format_value_for_smart_display(None)
+
+        assert formatted == "null"
+        assert truncated is False
+
+    def test_smart_mode_hint_not_shown_with_empty_execution_id(self):
+        """SMART MODE: Hint should not appear if execution_id is empty."""
+        from pflow.execution.formatters.node_output_formatter import (
+            format_smart_paths_with_values,
+        )
+
+        paths = [("content", "str")]
+        outputs = {"content": "x" * 300}  # Long enough to trigger truncation
+        shared_store = {}
+
+        lines, any_truncated = format_smart_paths_with_values(
+            paths=paths,
+            outputs=outputs,
+            shared_store=shared_store,
+            source_description=None,
+            execution_id="",  # Empty execution_id
+        )
+
+        assert any_truncated is True  # Value was truncated
+        # But hint should NOT appear because execution_id is empty
+        assert not any("read-fields" in line for line in lines)
+
+    def test_smart_mode_hint_shows_example_path(self):
+        """SMART MODE: Hint should show an actual path, not '<path>' placeholder."""
+        from pflow.execution.formatters.node_output_formatter import (
+            format_smart_paths_with_values,
+        )
+
+        paths = [("result.data", "str"), ("result.status", "int")]
+        outputs = {"result": {"data": "x" * 300, "status": 200}}
+        shared_store = {}
+
+        lines, any_truncated = format_smart_paths_with_values(
+            paths=paths,
+            outputs=outputs,
+            shared_store=shared_store,
+            source_description=None,
+            execution_id="exec-123",
+        )
+
+        assert any_truncated is True
+        # Find the hint line
+        hint_lines = [line for line in lines if "read-fields" in line]
+        assert len(hint_lines) == 1
+        # Should contain actual path, not placeholder
+        assert "result.data" in hint_lines[0]
+        assert "<path>" not in hint_lines[0]
 
 
 if __name__ == "__main__":

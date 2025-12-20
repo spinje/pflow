@@ -643,6 +643,11 @@ class MCPNode(Node):
                 try:
                     import ast
 
+                    # SECURITY: ast.literal_eval() is safe for untrusted input - it only
+                    # evaluates Python literals (strings, numbers, tuples, lists, dicts,
+                    # bools, None) and never executes arbitrary code. This is the
+                    # recommended way to parse Python repr format from non-compliant
+                    # MCP servers that return str(dict) instead of json.dumps(dict).
                     parsed = ast.literal_eval(text_stripped)
                     if isinstance(parsed, (dict, list)):
                         logger.warning(

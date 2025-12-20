@@ -4,7 +4,7 @@ import json
 
 import click
 
-from pflow.core.settings import PflowSettings, SettingsManager
+from pflow.core.settings import OUTPUT_MODES, PflowSettings, SettingsManager
 
 
 @click.group()
@@ -567,7 +567,7 @@ def registry_settings() -> None:
 
 
 @registry_settings.command(name="output-mode")
-@click.argument("mode", required=False, type=click.Choice(["smart", "structure", "full"]))
+@click.argument("mode", required=False, type=click.Choice(OUTPUT_MODES))
 def registry_output_mode(mode: str | None) -> None:
     """Show or set registry output mode.
 

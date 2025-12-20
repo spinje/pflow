@@ -35,6 +35,31 @@ SMART_MAX_STRING_LENGTH = 200  # Truncate strings longer than this
 SMART_MAX_DICT_KEYS = 5  # Show summary for dicts with more keys
 SMART_MAX_LIST_ITEMS = 5  # Show summary for lists with more items
 
+# Sentinel to distinguish "path not found" from actual None value
+_NOT_FOUND = object()
+
+
+def _resolve_template_value(path: str, outputs: dict[str, Any], shared_store: dict[str, Any]) -> Any:
+    """Resolve a template path to its actual value.
+
+    Returns _NOT_FOUND sentinel if path doesn't exist in either dict,
+    allowing distinction between "not found" and legitimate None values.
+    """
+    value = TemplateResolver.resolve_value(path, outputs)
+    if value is not None:
+        return value
+    # Value is None - check shared_store as fallback
+    value = TemplateResolver.resolve_value(path, shared_store)
+    if value is not None:
+        return value
+    # Both returned None - but is None the actual value or path not found?
+    # Check if path exists in either dict by looking for the root key
+    root_key = path.split(".")[0].split("[")[0]
+    if root_key in outputs or root_key in shared_store:
+        # Path root exists, so None is the actual value
+        return None
+    return _NOT_FOUND
+
 
 def format_node_output(
     node_type: str,
@@ -685,23 +710,27 @@ def format_output_value(value: Any, max_length: int = 200) -> str:
 
 
 def _format_collection_smart(value: dict | list) -> tuple[str, bool]:
-    """Format dict or list for smart display."""
+    """Format dict or list for smart display.
+
+    Returns (formatted_string, was_summarized) where was_summarized=True
+    means the user can't see actual data and may want to use read-fields.
+    """
     is_dict = isinstance(value, dict)
     count = len(value)
     threshold = SMART_MAX_DICT_KEYS if is_dict else SMART_MAX_LIST_ITEMS
     summary = f"{{...{count} keys}}" if is_dict else f"[...{count} items]"
 
     if count > threshold:
-        return summary, False
+        return summary, True  # Summarized - user can't see data, show hint
 
     # Try compact JSON for small collections
     try:
         compact = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
         if len(compact) > SMART_MAX_STRING_LENGTH:
-            return summary, False
-        return compact, False
+            return summary, True  # Too long to display fully
+        return compact, False  # Full data shown
     except (TypeError, ValueError):
-        return summary, False
+        return summary, True  # Can't serialize, show hint
 
 
 def format_value_for_smart_display(value: Any) -> tuple[str, bool]:
@@ -763,6 +792,7 @@ def format_smart_paths_with_values(
     """
     lines: list[str] = []
     any_truncated = False
+    first_truncated_path: str | None = None
 
     # Header
     if source_description:
@@ -772,14 +802,11 @@ def format_smart_paths_with_values(
 
     # Format each path with its value
     for path, type_str in paths[:MAX_DISPLAYED_FIELDS]:
-        # Resolve the actual value from outputs or shared_store
-        value = TemplateResolver.resolve_value(path, outputs)
-        if value is None:
-            # Try shared_store as fallback
-            value = TemplateResolver.resolve_value(path, shared_store)
+        # Resolve the actual value using helper that handles None vs not-found
+        value = _resolve_template_value(path, outputs, shared_store)
 
         # Format the value
-        if value is None:
+        if value is _NOT_FOUND:
             formatted_value = "<not found>"
             truncated = False
         else:
@@ -787,6 +814,8 @@ def format_smart_paths_with_values(
 
         if truncated:
             any_truncated = True
+            if first_truncated_path is None:
+                first_truncated_path = path
 
         lines.append(f"  ✓ ${{{path}}} ({type_str}) = {formatted_value}")
 
@@ -795,9 +824,10 @@ def format_smart_paths_with_values(
         remaining = len(paths) - MAX_DISPLAYED_FIELDS
         lines.append(f"  ... and {remaining} more paths")
 
-    # Add read-fields hint if any value was truncated
-    if any_truncated:
-        lines.append(f"\nUse `pflow read-fields {execution_id} <path>` for full values.")
+    # Add read-fields hint if any value was truncated and we have an execution_id
+    if any_truncated and execution_id:
+        example_path = first_truncated_path or (paths[0][0] if paths else "path")
+        lines.append(f"\nUse `pflow read-fields {execution_id} {example_path}` for full values.")
 
     return lines, any_truncated
 
@@ -833,13 +863,11 @@ def format_full_paths_with_values(
     lines: list[str] = [f"Output (all {len(paths)} fields):"]
 
     for path, type_str in paths:
-        # Resolve the actual value from outputs or shared_store
-        value = TemplateResolver.resolve_value(path, outputs)
-        if value is None:
-            value = TemplateResolver.resolve_value(path, shared_store)
+        # Resolve the actual value using helper that handles None vs not-found
+        value = _resolve_template_value(path, outputs, shared_store)
 
         # Format value
-        formatted_value = "<not found>" if value is None else _format_value_full(value)
+        formatted_value = "<not found>" if value is _NOT_FOUND else _format_value_full(value)
         lines.append(f"  ✓ ${{{path}}} ({type_str}) = {formatted_value}")
 
     return lines

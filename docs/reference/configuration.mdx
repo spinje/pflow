@@ -24,7 +24,8 @@ pflow settings show
       "allow": ["*"],
       "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"]
     },
-    "include_test_nodes": false
+    "include_test_nodes": false,
+    "output_mode": "smart"
   },
   "runtime": {
     "template_resolution_mode": "strict"
@@ -45,6 +46,7 @@ pflow settings show
 | `registry.nodes.allow` | `["*"]` | Patterns for nodes to include |
 | `registry.nodes.deny` | `["pflow.nodes.git.*", "pflow.nodes.github.*"]` | Patterns for nodes to exclude |
 | `registry.include_test_nodes` | `false` | Show internal test nodes |
+| `registry.output_mode` | `"smart"` | Output display mode for `registry run`: `"smart"`, `"structure"`, or `"full"` |
 | `runtime.template_resolution_mode` | `"strict"` | `"strict"` or `"permissive"` |
 | `llm.default_model` | `null` | Default model for all pflow LLM usage |
 | `llm.discovery_model` | `null` | Model for discovery commands (overrides default) |
