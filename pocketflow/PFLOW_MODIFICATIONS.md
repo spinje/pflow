@@ -1,10 +1,10 @@
 # PocketFlow Modifications for pflow
 
-This file documents temporary modifications made to PocketFlow to support pflow's use case.
+This file documents modifications made to PocketFlow for pflow's use case.
 
 ## Modified Files
 
-### 1. `pocketflow/__init__.py` - Flow._orch() method
+### 1. `pocketflow/__init__.py` - Flow._orch() method (pflow-specific)
 
 **Line 104-105**: Added conditional parameter setting
 
@@ -13,6 +13,24 @@ This file documents temporary modifications made to PocketFlow to support pflow'
 if params is not None:
     curr.set_params(p)
 ```
+
+### 2. `pocketflow/__init__.py` - AsyncNode._exec() method (upstream sync)
+
+**Line 141-146**: Aligned retry tracking with sync Node implementation
+
+**Upstream commit**: [fd5817f](https://github.com/The-Pocket/PocketFlow/commit/fd5817fdccfed7c77b1665fce8e0f69bf4c359e1)
+
+```python
+# Changed from local variable 'i' to instance attribute 'self.cur_retry'
+for self.cur_retry in range(self.max_retries):
+    try:
+        return await self.exec_async(prep_res)
+    except Exception as e:
+        if self.cur_retry == self.max_retries - 1:
+            return await self.exec_fallback_async(prep_res, e)
+```
+
+**Why**: Ensures consistency between sync `Node` and `AsyncNode` retry mechanisms. Allows derived classes to access `self.cur_retry` during async execution, which is important for retry-aware logic in parallel execution scenarios.
 
 ## Rationale
 

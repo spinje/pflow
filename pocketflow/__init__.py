@@ -138,11 +138,11 @@ class AsyncNode(Node):
         pass
 
     async def _exec(self, prep_res):
-        for i in range(self.max_retries):
+        for self.cur_retry in range(self.max_retries):
             try:
                 return await self.exec_async(prep_res)
             except Exception as e:
-                if i == self.max_retries - 1:
+                if self.cur_retry == self.max_retries - 1:
                     return await self.exec_fallback_async(prep_res, e)
                 if self.wait > 0:
                     await asyncio.sleep(self.wait)
