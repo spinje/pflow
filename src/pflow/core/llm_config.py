@@ -131,8 +131,10 @@ def _has_provider_key(provider: str) -> bool:
             logger.debug(f"Found {provider} key in environment variable {var}")
             return True
 
-    # 2. Check pflow settings (uses module-level import)
+    # 2. Check pflow settings (lazy import to avoid circular dependencies)
     try:
+        from pflow.core.settings import SettingsManager
+
         manager = SettingsManager()
         for var in env_vars:
             settings_value = manager.get_env(var)
@@ -265,6 +267,8 @@ def inject_settings_env_vars() -> None:
         return
 
     try:
+        from pflow.core.settings import SettingsManager
+
         manager = SettingsManager()
         env_vars = manager.list_env(mask_values=False)
 

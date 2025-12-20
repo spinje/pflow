@@ -15,29 +15,38 @@ class TestInjectSettingsEnvVars:
 
     def test_injects_keys_from_settings(self, monkeypatch):
         """Keys from settings.env are injected into os.environ."""
-        # Ensure key doesn't exist and bypass test environment check
         monkeypatch.delenv("TEST_API_KEY", raising=False)
-        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
         mock_manager = MagicMock()
         mock_manager.list_env.return_value = {"TEST_API_KEY": "injected-value"}
 
-        with patch("pflow.core.llm_config.SettingsManager", return_value=mock_manager):
+        # Patch at source module since we use lazy imports
+        with (
+            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
+            patch("pflow.core.settings.SettingsManager", return_value=mock_manager),
+        ):
+            del os.environ["PYTEST_CURRENT_TEST"]
+
             from pflow.core.llm_config import inject_settings_env_vars
 
             inject_settings_env_vars()
 
-        assert os.environ.get("TEST_API_KEY") == "injected-value"
+            assert os.environ.get("TEST_API_KEY") == "injected-value"
+            os.environ.pop("TEST_API_KEY", None)
 
     def test_does_not_override_existing_env_vars(self, monkeypatch):
         """Existing env vars take priority over settings."""
         monkeypatch.setenv("PRIORITY_KEY", "from-environment")
-        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
 
         mock_manager = MagicMock()
         mock_manager.list_env.return_value = {"PRIORITY_KEY": "from-settings"}
 
-        with patch("pflow.core.llm_config.SettingsManager", return_value=mock_manager):
+        with (
+            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
+            patch("pflow.core.settings.SettingsManager", return_value=mock_manager),
+        ):
+            del os.environ["PYTEST_CURRENT_TEST"]
+
             from pflow.core.llm_config import inject_settings_env_vars
 
             inject_settings_env_vars()
@@ -46,7 +55,11 @@ class TestInjectSettingsEnvVars:
 
     def test_handles_missing_settings_gracefully(self):
         """Missing settings file doesn't raise errors."""
-        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+        with (
+            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
+            patch("pflow.core.settings.SettingsManager") as MockManager,
+        ):
+            del os.environ["PYTEST_CURRENT_TEST"]
             MockManager.side_effect = FileNotFoundError("No settings")
 
             from pflow.core.llm_config import inject_settings_env_vars
@@ -61,12 +74,32 @@ class TestInjectSettingsEnvVars:
         mock_manager = MagicMock()
         mock_manager.list_env.return_value = {"EMPTY_KEY": "   "}
 
-        with patch("pflow.core.llm_config.SettingsManager", return_value=mock_manager):
+        with (
+            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
+            patch("pflow.core.settings.SettingsManager", return_value=mock_manager),
+        ):
+            del os.environ["PYTEST_CURRENT_TEST"]
+
             from pflow.core.llm_config import inject_settings_env_vars
 
             inject_settings_env_vars()
 
         assert "EMPTY_KEY" not in os.environ
+
+    def test_skipped_in_pytest_environment(self):
+        """Injection is skipped when PYTEST_CURRENT_TEST is set."""
+        mock_manager = MagicMock()
+        mock_manager.list_env.return_value = {"SHOULD_NOT_INJECT": "value"}
+
+        # Don't remove PYTEST_CURRENT_TEST - let the guard trigger
+        with patch("pflow.core.settings.SettingsManager", return_value=mock_manager):
+            from pflow.core.llm_config import inject_settings_env_vars
+
+            inject_settings_env_vars()
+
+        # Manager should never be instantiated (guard returns early)
+        mock_manager.list_env.assert_not_called()
+        assert "SHOULD_NOT_INJECT" not in os.environ
 
 
 class TestHasProviderKey:
@@ -87,7 +120,7 @@ class TestHasProviderKey:
         mock_manager = MagicMock()
         mock_manager.get_env.return_value = "settings-key"
 
-        with patch("pflow.core.llm_config.SettingsManager", return_value=mock_manager):
+        with patch("pflow.core.settings.SettingsManager", return_value=mock_manager):
             from pflow.core.llm_config import _has_provider_key
 
             assert _has_provider_key("openai") is True
@@ -101,7 +134,7 @@ class TestHasProviderKey:
         mock_manager.get_env.return_value = None
 
         with (
-            patch("pflow.core.llm_config.SettingsManager", return_value=mock_manager),
+            patch("pflow.core.settings.SettingsManager", return_value=mock_manager),
             patch("pflow.core.llm_config._has_llm_key", return_value=True) as mock_llm,
         ):
             from pflow.core.llm_config import _has_provider_key
@@ -113,7 +146,7 @@ class TestHasProviderKey:
         """Env var is found without checking settings."""
         monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
 
-        with patch("pflow.core.llm_config.SettingsManager") as MockManager:
+        with patch("pflow.core.settings.SettingsManager") as MockManager:
             from pflow.core.llm_config import _has_provider_key
 
             result = _has_provider_key("anthropic")
@@ -128,7 +161,7 @@ class TestHasProviderKey:
         mock_manager = MagicMock()
         mock_manager.get_env.return_value = "settings-key"
 
-        with patch("pflow.core.llm_config.SettingsManager", return_value=mock_manager):
+        with patch("pflow.core.settings.SettingsManager", return_value=mock_manager):
             from pflow.core.llm_config import _has_provider_key
 
             assert _has_provider_key("openai") is True
@@ -152,12 +185,13 @@ class TestHasProviderKey:
 class TestDetectDefaultModel:
     """Test _detect_default_model() uses _has_provider_key()."""
 
-    def test_priority_order(self, monkeypatch):
+    def test_priority_order(self):
         """Anthropic > Gemini > OpenAI priority."""
-        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-
-        with patch("pflow.core.llm_config._has_provider_key") as mock_has_key:
-            # All providers have keys
+        with (
+            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
+            patch("pflow.core.llm_config._has_provider_key") as mock_has_key,
+        ):
+            del os.environ["PYTEST_CURRENT_TEST"]
             mock_has_key.return_value = True
 
             from pflow.core.llm_config import _detect_default_model, clear_model_cache
@@ -170,12 +204,13 @@ class TestDetectDefaultModel:
             # Should have checked Anthropic first
             assert mock_has_key.call_args_list[0][0][0] == "anthropic"
 
-    def test_skips_to_next_when_no_key(self, monkeypatch):
+    def test_skips_to_next_when_no_key(self):
         """Skips provider without key, uses next available."""
-        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
-
-        with patch("pflow.core.llm_config._has_provider_key") as mock_has_key:
-            # Only OpenAI has key
+        with (
+            patch.dict(os.environ, {"PYTEST_CURRENT_TEST": ""}, clear=False),
+            patch("pflow.core.llm_config._has_provider_key") as mock_has_key,
+        ):
+            del os.environ["PYTEST_CURRENT_TEST"]
             mock_has_key.side_effect = lambda p: p == "openai"
 
             from pflow.core.llm_config import _detect_default_model, clear_model_cache
