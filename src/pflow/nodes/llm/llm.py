@@ -255,7 +255,9 @@ class LLMNode(Node):
                 f"Set up with 'llm keys set <provider>' or environment variable."
             )
         else:
-            error_detail = f"LLM call failed after {self.max_retries} attempts. Model: {prep_res['model']}"
+            error_detail = (
+                f"LLM call failed after {self.max_retries} attempts. Model: {prep_res['model']}. Error: {error_msg}"
+            )
 
         # Return error dict instead of raising
         return {

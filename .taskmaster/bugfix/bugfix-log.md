@@ -1,5 +1,86 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] LLM node swallows exception details; trace shows incorrect success status — 2025-12-20
+
+Meta:
+- id: BF-20251220-llm-error-trace-success
+- area: nodes|runtime
+- severity: incorrect-output
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: LLM node failures, workflow trace accuracy, AI agent debugging
+- owner: ai-agent
+- links: src/pflow/nodes/llm/llm.py, src/pflow/runtime/instrumented_wrapper.py
+- session_id: current
+
+Summary:
+- Problem: LLM node failures showed generic "LLM call failed after 3 attempts" with no details; trace showed `success: true` for failed nodes
+- Root cause: (1) exec_fallback discarded original exception in generic error case; (2) trace recorded success=True before checking node's action string
+- Fix: (1) Include original exception in error message; (2) Check `result != "error"` before recording trace success
+
+Repro:
+- Steps:
+  1) Create workflow with invalid/unconfigured model
+  2) Run workflow
+  3) Observe unhelpful error message and trace showing success=true
+- Commands:
+  ```bash
+  cat > /tmp/test-llm-fail.json << 'EOF'
+  {"inputs": {}, "nodes": [{"id": "test-llm", "type": "llm", "params": {"prompt": "Say hello", "model": "nonexistent-model"}}], "edges": []}
+  EOF
+  uv run pflow /tmp/test-llm-fail.json
+  # Before fix: "LLM call failed after 3 attempts. Model: nonexistent-model" (no details)
+  # After fix: "LLM call failed after 3 attempts. Model: nonexistent-model. Error: UnknownModelError..."
+  ```
+- Expected vs actual:
+  - Expected: Error message includes actual exception; trace shows success=false
+  - Actual: Generic error message; trace showed success=true
+
+Implementation:
+- Changed files:
+  - `src/pflow/nodes/llm/llm.py`: Include `error_msg` in generic error case (line 258)
+  - `src/pflow/runtime/instrumented_wrapper.py`: Check `result != "error"` before recording trace (lines 675-677)
+- Key edits:
+  - LLM error now includes original exception: `f"... Error: {error_msg}"`
+  - Trace success respects node's action string, consistent with caching logic (line 255)
+- Tests: All 97 LLM/wrapper/trace tests pass; 341 integration tests pass
+
+Verification:
+- Manual:
+  ```bash
+  uv run pflow /tmp/test-llm-fail.json
+  # Error now includes actual exception details
+  cat ~/.pflow/debug/workflow-trace-*.json | tail -1 | jq '.nodes[0].success'
+  # Returns: false (previously true)
+  ```
+- CI: `make check` passes; all tests pass
+
+Risks & rollbacks:
+- Risk flags: Trace format change (success field semantics tightened)
+- Rollback plan: Revert instrumented_wrapper.py line 675-677; revert llm.py line 258
+
+Lessons & heuristics:
+- Lessons learned:
+  - Trace success should respect node's own action string, not rely on pattern matching
+  - Consistency: caching already checked `result != "error"`; trace should match
+  - The shell node was fixed for similar error message issue 12 hours prior (commit 27bac20)
+- Heuristics to detect recurrence:
+  - Grep for `success=True` in trace recording without checking action result
+  - Check if exec_fallback methods preserve original exception details
+  - Compare trace logic with caching logic for consistency
+- Related pitfalls: Pattern-based error detection (`_detect_api_warning`) designed for external APIs, not internal node failures
+
+Follow-ups:
+- Consider similar error message improvements in other nodes
+- Shell node already fixed; HTTP node may benefit from same pattern
+
+Implementer details:
+- Claude Code Session ID: current
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] MCP node result stored as Python repr string instead of dict, breaking shell+jq workflows — 2025-12-19
 
 Meta:

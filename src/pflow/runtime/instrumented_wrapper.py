@@ -672,7 +672,9 @@ class InstrumentedNodeWrapper:
             self._validate_llm_json_output(shared_before, shared)
 
             # Record trace if collector present
-            self._record_trace(duration_ms, shared_before, dict(shared), success=True)
+            # Node returning "error" action is a failure, regardless of API warning detection
+            trace_success = result != "error"
+            self._record_trace(duration_ms, shared_before, dict(shared), success=trace_success)
 
             # Call progress callback for node complete if present
             self._call_completion_callback(shared, callback, result, duration_ms)
