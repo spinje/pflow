@@ -25,6 +25,14 @@ LLM_COMMAND = "llm"
 # Allowlist of trusted LLM providers
 ALLOWED_PROVIDERS = frozenset({"anthropic", "gemini", "openai"})
 
+# Provider to environment variable mapping
+# Some providers accept multiple variable names (e.g., Gemini accepts both)
+PROVIDER_ENV_VARS: dict[str, list[str]] = {
+    "anthropic": ["ANTHROPIC_API_KEY"],
+    "gemini": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    "openai": ["OPENAI_API_KEY"],
+}
+
 # Constant command args (security: prevents injection)
 _LLM_KEYS_SUBCOMMAND = ["keys", "get"]
 
@@ -91,6 +99,56 @@ def _has_llm_key(provider: str) -> bool:
         return False
 
 
+def _has_provider_key(provider: str) -> bool:
+    """Check if an LLM provider key is configured from ANY source.
+
+    Checks in order (stops at first found):
+    1. Environment variables (os.environ)
+    2. pflow settings (settings.json env section)
+    3. llm CLI keys (llm keys get)
+
+    Args:
+        provider: Provider name ("anthropic", "gemini", "openai")
+
+    Returns:
+        True if key is configured in any source
+
+    Note:
+        This function is intentionally lenient - it checks multiple sources
+        to maximize the chance of finding a configured key and providing
+        helpful model suggestions in error messages.
+    """
+    if provider not in ALLOWED_PROVIDERS:
+        logger.debug("Provider validation failed")
+        return False
+
+    env_vars = PROVIDER_ENV_VARS.get(provider, [])
+
+    # 1. Check environment variables directly (fastest)
+    for var in env_vars:
+        value = os.environ.get(var, "").strip()
+        if value:
+            logger.debug(f"Found {provider} key in environment variable {var}")
+            return True
+
+    # 2. Check pflow settings (lazy import to avoid circular dependencies)
+    try:
+        from pflow.core.settings import SettingsManager
+
+        manager = SettingsManager()
+        for var in env_vars:
+            settings_value = manager.get_env(var)
+            if settings_value and settings_value.strip():
+                logger.debug(f"Found {provider} key in pflow settings ({var})")
+                return True
+    except Exception as e:
+        # Settings might not exist or be corrupt - continue to next source
+        logger.debug(f"Failed to check pflow settings for {provider}: {e}")
+
+    # 3. Fall back to llm CLI check
+    return _has_llm_key(provider)
+
+
 def _detect_default_model() -> Optional[str]:
     """Detect best available LLM model based on configured API keys.
 
@@ -108,17 +166,17 @@ def _detect_default_model() -> Optional[str]:
         return None
 
     # Try Anthropic first (best for planning/repair)
-    if _has_llm_key("anthropic"):
+    if _has_provider_key("anthropic"):
         logger.debug("Using Anthropic Claude (key detected)")
         return "anthropic/claude-sonnet-4-5"
 
     # Try Gemini second (good quality, cheaper)
-    if _has_llm_key("gemini"):
+    if _has_provider_key("gemini"):
         logger.debug("Using Google Gemini (key detected)")
         return "gemini/gemini-3-flash-preview"
 
     # Try OpenAI last (common fallback)
-    if _has_llm_key("openai"):
+    if _has_provider_key("openai"):
         logger.debug("Using OpenAI GPT (key detected)")
         return "gpt-5.2"
 
@@ -187,6 +245,45 @@ def clear_model_cache() -> None:
     global _cached_default_model, _detection_complete
     _cached_default_model = None
     _detection_complete = False
+
+
+def inject_settings_env_vars() -> None:
+    """Inject env vars from pflow settings into os.environ.
+
+    This allows the llm library (and other tools) to find API keys
+    stored in pflow settings. Only injects if the key isn't already
+    set in os.environ (user's actual environment takes priority).
+
+    Should be called early in CLI/MCP server startup, before any LLM operations.
+
+    Note:
+        This is idempotent - safe to call multiple times.
+        Failures are logged but don't raise (graceful degradation).
+        Skipped in test environment to avoid test pollution.
+    """
+    # Skip in test environment to avoid polluting test state
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        logger.debug("Skipping env injection in test environment")
+        return
+
+    try:
+        from pflow.core.settings import SettingsManager
+
+        manager = SettingsManager()
+        env_vars = manager.list_env(mask_values=False)
+
+        for key, value in env_vars.items():
+            if not value or not value.strip():
+                continue  # Skip empty values
+
+            if key not in os.environ:  # Don't override user's environment
+                os.environ[key] = value
+                logger.debug(f"Injected {key} from pflow settings into environment")
+            else:
+                logger.debug(f"Skipped {key} - already set in environment")
+    except Exception as e:
+        # Settings file might not exist or be corrupt - that's fine
+        logger.debug(f"Failed to inject settings env vars: {e}")
 
 
 # Default fallback model when nothing else is configured

@@ -3309,6 +3309,20 @@ def _install_anthropic_model_if_needed(verbose: bool) -> None:
             click.echo("cli: Using Anthropic SDK for planning models", err=True)
 
 
+def _inject_settings_env_vars() -> None:
+    """Inject API keys from pflow settings into environment.
+
+    This allows API keys stored via 'pflow settings set-env' to be available
+    to the llm library and other tools that read from os.environ.
+
+    Called early in CLI startup, before any LLM operations.
+    Skipped in test environment to avoid test pollution.
+    """
+    from pflow.core.llm_config import inject_settings_env_vars
+
+    inject_settings_env_vars()
+
+
 def _try_execute_named_workflow(
     ctx: click.Context,
     workflow: tuple[str, ...],
@@ -3542,6 +3556,10 @@ def workflow_command(
         pflow_logger.setLevel(logging.ERROR)
 
     try:
+        # Inject API keys from pflow settings into environment
+        # This must happen early, before any LLM operations
+        _inject_settings_env_vars()
+
         # Initialize context with configuration
         trace_enabled = not no_trace
         _initialize_context(
