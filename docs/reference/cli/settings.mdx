@@ -29,6 +29,7 @@ The `pflow settings` command group manages pflow configuration stored in `~/.pfl
 | `llm set-discovery` | Set model for discovery commands |
 | `llm set-filtering` | Set model for smart filtering |
 | `llm unset` | Remove an LLM model setting |
+| `registry output-mode` | Set registry run output display mode |
 
 ## pflow settings init
 
@@ -49,7 +50,8 @@ Creates `~/.pflow/settings.json` with default configuration. Prompts for confirm
     "nodes": {
       "allow": ["*"],
       "deny": []
-    }
+    },
+    "output_mode": "smart"
   },
   "llm": {
     "default_model": null,
@@ -455,6 +457,51 @@ pflow uses the same resolution order for all LLM usage (discovery, filtering, an
 <Note>
   Most users just need an API key configured. pflow auto-detects the appropriate model. Use these commands only to override the auto-detected model.
 </Note>
+
+## Registry settings
+
+Configure how `pflow registry run` displays output.
+
+### pflow settings registry output-mode
+
+Show or set the output display mode for `pflow registry run`.
+
+```bash
+pflow settings registry output-mode [MODE]
+```
+
+**Arguments:**
+- `MODE` (optional) - One of `smart`, `structure`, or `full`. If omitted, shows current mode.
+
+**Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `smart` (default) | Shows template paths with values, truncates large data |
+| `structure` | Shows template paths only, no values |
+| `full` | Shows all fields with full values, no truncation |
+
+**Examples:**
+
+```bash
+# Show current mode
+pflow settings registry output-mode
+
+# Set to smart (default - shows values with truncation)
+pflow settings registry output-mode smart
+
+# Set to structure-only (paths without values)
+pflow settings registry output-mode structure
+
+# Set to full (all values, no truncation)
+pflow settings registry output-mode full
+```
+
+<Warning>
+  Use `structure` mode when working with sensitive data. Avoid `full` mode with AI agents - it bypasses all truncation and can consume excessive tokens.
+</Warning>
+
+See [registry run output modes](/reference/cli/registry#output-modes) for detailed examples of each mode.
 
 ## How node filtering works
 

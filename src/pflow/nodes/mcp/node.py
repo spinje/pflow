@@ -597,11 +597,15 @@ class MCPNode(Node):
         return cast(dict, result)
 
     def _safe_parse_json(self, text: str) -> Any:
-        """Attempt to parse JSON, return original string on failure.
+        """Attempt to parse JSON or Python literal, return original string on failure.
 
         This allows MCP text content blocks containing JSON to be
         automatically parsed into Python objects, enabling nested
         template access like ${node.result.data.channels[0]}.
+
+        Some MCP servers incorrectly return Python repr format (single quotes)
+        instead of valid JSON (double quotes). We handle this by falling back
+        to ast.literal_eval() for dict/list-like strings that fail JSON parsing.
 
         For non-JSON text (plain strings, logs, etc.), returns the
         original string unchanged.
@@ -624,7 +628,7 @@ class MCPNode(Node):
             # Doesn't look like JSON - save CPU cycles
             return text
 
-        # Attempt to parse
+        # Attempt to parse as JSON first (preferred)
         try:
             parsed = json.loads(text_stripped)
             logger.debug(
@@ -632,9 +636,33 @@ class MCPNode(Node):
                 extra={"type": type(parsed).__name__, "text_preview": text_stripped[:100]},
             )
             return parsed
-        except (json.JSONDecodeError, ValueError) as e:
-            # Not valid JSON - return as plain text
-            logger.debug(f"Text content is not valid JSON, returning as string: {e}")
+        except (json.JSONDecodeError, ValueError) as json_error:
+            # JSON parsing failed - check if it might be Python repr format
+            # Some MCP servers incorrectly return str(dict) instead of json.dumps(dict)
+            if first_char in ("{", "["):
+                try:
+                    import ast
+
+                    # SECURITY: ast.literal_eval() is safe for untrusted input - it only
+                    # evaluates Python literals (strings, numbers, tuples, lists, dicts,
+                    # bools, None) and never executes arbitrary code. This is the
+                    # recommended way to parse Python repr format from non-compliant
+                    # MCP servers that return str(dict) instead of json.dumps(dict).
+                    parsed = ast.literal_eval(text_stripped)
+                    if isinstance(parsed, (dict, list)):
+                        logger.warning(
+                            "MCP server returned Python repr instead of JSON - "
+                            "parsed with ast.literal_eval(). "
+                            "Consider reporting this to the MCP server maintainer.",
+                            extra={"type": type(parsed).__name__, "text_preview": text_stripped[:100]},
+                        )
+                        return parsed
+                except (ValueError, SyntaxError):
+                    # Not valid Python literal either
+                    pass
+
+            # Not valid JSON or Python literal - return as plain text
+            logger.debug(f"Text content is not valid JSON, returning as string: {json_error}")
             return text
 
     def _extract_text_content(self, content: Any) -> Any:
@@ -661,11 +689,30 @@ class MCPNode(Node):
             >>> result = self._extract_text_content(content)
             >>> assert isinstance(result, str)  # Unchanged string
 
+            >>> # Pre-parsed dict from MCP SDK is preserved
+            >>> content.text = {"key": "value"}  # Already a dict
+            >>> result = self._extract_text_content(content)
+            >>> assert isinstance(result, dict)  # Preserved as dict
+
         Note:
             This enables nested template access like ${node.result.data.field}
             without requiring jq workarounds for MCP servers that return JSON
             as text content.
+
+            Some MCP SDKs may pre-parse JSON content into Python dicts/lists
+            before returning. We detect this and preserve the structured data
+            rather than converting to string (which would produce Python repr
+            format with single quotes, breaking JSON tools like jq).
         """
+        # If content.text is already structured data (MCP SDK may pre-parse),
+        # return it directly without string conversion
+        if isinstance(content.text, (dict, list)):
+            logger.debug(
+                f"Content text already structured: {type(content.text).__name__}",
+                extra={"type": type(content.text).__name__},
+            )
+            return content.text
+
         text = str(content.text)
         return self._safe_parse_json(text)
 
@@ -694,8 +741,15 @@ class MCPNode(Node):
             "metadata": getattr(content.resource, "metadata", {}),
         }
 
-    def _extract_unknown_content(self, content: Any) -> str:
-        """Extract unknown content as string."""
+    def _extract_unknown_content(self, content: Any) -> Any:
+        """Extract unknown content, preserving structured data.
+
+        If the content is already a dict or list, return it directly
+        to avoid converting to Python repr format (single quotes)
+        which breaks JSON tools.
+        """
+        if isinstance(content, (dict, list)):
+            return content
         return str(content)
 
     def _extract_error_message(self, mcp_result: Any) -> str:
@@ -778,5 +832,8 @@ class MCPNode(Node):
         if hasattr(mcp_result, "content"):
             return self._process_content_blocks(mcp_result)
 
-        # Fallback: convert to string
+        # Fallback: preserve structured data, otherwise convert to string
+        # This avoids Python repr format (single quotes) which breaks JSON tools
+        if isinstance(mcp_result, (dict, list)):
+            return mcp_result
         return str(mcp_result)

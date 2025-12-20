@@ -1556,3 +1556,106 @@ Available template paths (10 of 52 shown):
 - More intelligent field selection
 
 **Deployment**: Included in Task 89 completion (no separate deployment needed)
+
+---
+
+## [2025-12-20] - Smart Output Display Enhancement
+
+### Overview
+
+Extended Task 89 to show actual values in `registry run` output by default, while preserving the structure-only mode as an option.
+
+**Problem**: Task 89's structure-only mode required a separate `pflow read-fields` command for every value lookup, adding friction for simple debugging.
+
+**Solution**: Three output modes controlled via settings:
+- `smart` (new default): Show values with truncation, apply smart filtering
+- `structure`: Original Task 89 behavior (paths only)
+- `full`: Show all values without filtering or truncation
+
+### Implementation
+
+**Settings Infrastructure** (`src/pflow/core/settings.py`):
+- Added `output_mode` field to `RegistrySettings` with `@field_validator`
+- Default: `"smart"`, valid: `["smart", "structure", "full"]`
+
+**CLI Commands** (`src/pflow/cli/commands/settings.py`):
+```bash
+pflow settings registry output-mode          # Show current
+pflow settings registry output-mode smart    # Set mode
+```
+
+**Formatter Functions** (`src/pflow/execution/formatters/node_output_formatter.py`):
+- `format_value_for_smart_display()`: Truncation with `(truncated)` indicator
+- `_format_collection_smart()`: Dict/list summarization (`{...N keys}`, `[...N items]`)
+- `format_smart_paths_with_values()`: Smart mode output with values
+- `_format_value_full()` and `format_full_paths_with_values()`: Full mode
+- `_apply_smart_filtering()` and `_get_paths_to_display()`: Extracted helpers to reduce complexity
+
+**Call Site Updates**:
+- `src/pflow/cli/registry_run.py`: Load settings, pass `output_mode` to formatter
+- `src/pflow/mcp_server/services/execution_service.py`: Same pattern for MCP parity
+
+### Output Format
+
+**Smart mode example**:
+```
+✓ Node executed successfully
+
+Execution ID: exec-1766180609-f4e20a18
+
+Output (8 of 54 shown):
+  ✓ ${result.status} (int) = 200
+  ✓ ${result.data} (dict) = {...5 keys}
+  ✓ ${result.data.items} (list) = [...156 items]
+  ✓ ${result.data.items[0].title} (str) = "Hello World"
+  ✓ ${result.data.items[0].body} (str) = "This is a long..." (truncated)
+
+Use `pflow read-fields exec-... <path>` for full values.
+
+Execution time: 100ms
+```
+
+### Truncation Rules
+
+| Type | Threshold | Display |
+|------|-----------|---------|
+| String | >200 chars | `"text..." (truncated)` |
+| Dict | >5 keys | `{...N keys}` |
+| List | >5 items | `[...N items]` |
+| Primitives | - | Always full |
+
+### Files Modified
+
+1. `src/pflow/core/settings.py` (+15 lines)
+2. `src/pflow/cli/commands/settings.py` (+40 lines)
+3. `src/pflow/execution/formatters/node_output_formatter.py` (+180 lines, refactored)
+4. `src/pflow/cli/registry_run.py` (+8 lines)
+5. `src/pflow/mcp_server/services/execution_service.py` (+8 lines)
+
+### Tests
+
+**New tests** (10 tests in `test_node_output_formatter.py`):
+- `TestSmartOutputMode`: 7 tests (truncation, summarization, primitives, read-fields hint)
+- `TestOutputModeSettings`: 3 tests (default value, validation, persistence)
+
+**Updated tests** (5 tests):
+- Tests expecting structure-only behavior now explicitly pass `output_mode="structure"`
+
+**Results**: 2940 passed, 16 skipped (all tests passing)
+
+### Key Design Decisions
+
+1. **Character-based thresholds** (not tokens): Simpler, no tokenizer dependency
+2. **Smart filtering applies to smart and structure modes**: Full mode skips filtering entirely
+3. **Show both paths and values**: `${path} (type) = value` format
+4. **`(truncated)` indicator for strings only**: Collections use `{...N keys}` which is self-explanatory
+5. **Settings-based control**: Persists user preference across sessions
+
+### Verification
+
+```bash
+make check  # ✅ Passing
+make test   # ✅ 2940 passed, 16 skipped
+```
+
+**Status**: ✅ COMPLETE - Ready for use

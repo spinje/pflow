@@ -783,3 +783,34 @@ class TestLLMSettingsPersistence:
         # The llm section should be in the JSON output
         assert '"llm"' in result.output
         assert '"default_model": "gpt-5.2"' in result.output
+
+
+# ============================================================================
+# Registry Settings Subgroup Tests
+# ============================================================================
+
+
+class TestRegistryOutputModeCommand:
+    """Test pflow settings registry output-mode command."""
+
+    def test_output_mode_show_default(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Show command displays current mode (default: smart)."""
+        result = runner.invoke(settings, ["registry", "output-mode"])
+        assert result.exit_code == 0
+        assert "smart" in result.output
+
+    @pytest.mark.parametrize("mode", ["smart", "structure", "full"])
+    def test_output_mode_set_and_persist(self, runner: CliRunner, isolated_settings: Path, mode: str) -> None:
+        """Set command updates mode and persists to settings."""
+        result = runner.invoke(settings, ["registry", "output-mode", mode])
+        assert result.exit_code == 0
+        assert f"✓ Set registry output mode: {mode}" in result.output
+
+        # Verify persistence
+        manager = SettingsManager(settings_path=isolated_settings)
+        assert manager.load().registry.output_mode == mode
+
+    def test_output_mode_invalid_rejected(self, runner: CliRunner, isolated_settings: Path) -> None:
+        """Invalid mode is rejected by Click.Choice."""
+        result = runner.invoke(settings, ["registry", "output-mode", "invalid"])
+        assert result.exit_code != 0

@@ -24,10 +24,41 @@ import json
 from typing import Any, Optional
 
 from pflow.registry import Registry
+from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validator import TemplateValidator
 
 # Constants
 MAX_DISPLAYED_FIELDS = 500  # Allow up to 500 template paths
+
+# Smart output truncation thresholds
+SMART_MAX_STRING_LENGTH = 200  # Truncate strings longer than this
+SMART_MAX_DICT_KEYS = 5  # Show summary for dicts with more keys
+SMART_MAX_LIST_ITEMS = 5  # Show summary for lists with more items
+
+# Sentinel to distinguish "path not found" from actual None value
+_NOT_FOUND = object()
+
+
+def _resolve_template_value(path: str, outputs: dict[str, Any], shared_store: dict[str, Any]) -> Any:
+    """Resolve a template path to its actual value.
+
+    Returns _NOT_FOUND sentinel if path doesn't exist in either dict,
+    allowing distinction between "not found" and legitimate None values.
+    """
+    value = TemplateResolver.resolve_value(path, outputs)
+    if value is not None:
+        return value
+    # Value is None - check shared_store as fallback
+    value = TemplateResolver.resolve_value(path, shared_store)
+    if value is not None:
+        return value
+    # Both returned None - but is None the actual value or path not found?
+    # Check if path exists in either dict by looking for the root key
+    root_key = path.split(".")[0].split("[")[0]
+    if root_key in outputs or root_key in shared_store:
+        # Path root exists, so None is the actual value
+        return None
+    return _NOT_FOUND
 
 
 def format_node_output(
@@ -40,6 +71,7 @@ def format_node_output(
     format_type: str = "text",
     verbose: bool = False,
     execution_id: Optional[str] = None,
+    output_mode: str = "smart",
 ) -> str | dict[str, Any]:
     """Format node execution results for display.
 
@@ -55,6 +87,8 @@ def format_node_output(
         registry: Registry instance for metadata
         format_type: Output format - "text", "json", "structure"
         verbose: Include verbose details (for text mode)
+        execution_id: Optional execution ID for field retrieval
+        output_mode: For structure format - "smart", "structure", or "full"
 
     Returns:
         - str for text/structure modes
@@ -84,7 +118,14 @@ def format_node_output(
     # Handle success cases
     if format_type == "structure":
         return format_structure_output(
-            node_type, outputs, shared_store, registry, execution_time_ms, verbose, execution_id=execution_id
+            node_type,
+            outputs,
+            shared_store,
+            registry,
+            execution_time_ms,
+            verbose,
+            execution_id=execution_id,
+            output_mode=output_mode,
         )
     elif format_type == "json":
         return format_json_output(node_type, outputs, execution_time_ms)
@@ -180,6 +221,44 @@ def format_json_output(node_type: str, outputs: dict[str, Any], execution_time_m
         }
 
 
+def _apply_smart_filtering(
+    paths: list[tuple[str, str]], source_desc: str | None, original_count: int
+) -> tuple[list[tuple[str, str]], str | None]:
+    """Apply smart filtering to paths and update source description."""
+    from pflow.core.smart_filter import smart_filter_fields_cached
+
+    paths_tuple = tuple(paths)
+    filtered_tuple = smart_filter_fields_cached(paths_tuple, threshold=25)
+    filtered_paths = list(filtered_tuple)
+
+    # Update description if filtering occurred
+    if len(filtered_paths) < original_count:
+        filter_info = f"{len(filtered_paths)} of {original_count} shown"
+        source_desc = f"{source_desc} ({filter_info})" if source_desc else filter_info
+
+    return filtered_paths, source_desc
+
+
+def _get_paths_to_display(
+    node_type: str, outputs: dict[str, Any], registry: Registry, verbose: bool
+) -> tuple[list[tuple[str, str]] | None, str | None, list[str]]:
+    """Extract paths to display from runtime outputs or metadata."""
+    warnings: list[str] = []
+
+    metadata_paths, has_any_type = extract_metadata_paths(node_type, registry)
+    if metadata_paths is None:
+        return None, None, warnings
+
+    if has_any_type and outputs:
+        paths, warnings = extract_runtime_paths(outputs)
+        return paths, "from actual output", warnings if verbose else []
+
+    if metadata_paths:
+        return metadata_paths, None, warnings
+
+    return None, None, warnings
+
+
 def format_structure_output(
     node_type: str,
     outputs: dict[str, Any],
@@ -189,82 +268,50 @@ def format_structure_output(
     verbose: bool = False,
     include_values: bool = False,
     execution_id: Optional[str] = None,
+    output_mode: str = "smart",
 ) -> str:
     """Format flattened output structure for template variable discovery.
 
-    This shows template paths like ${node.field} that agents can use when
-    building workflows.
-
     Args:
-        node_type: Node type identifier
-        outputs: Node output dictionary
-        shared_store: Complete shared store
-        registry: Registry instance
-        execution_time_ms: Execution duration
-        verbose: If True, show duplicate structure warnings
-        include_values: If True, show actual data values before template paths.
-                       If False (default), show only template paths (structure-only mode).
-        execution_id: Optional execution ID to display for later field retrieval.
-
-    Returns:
-        Formatted text string with template paths
+        output_mode: "smart" (values+filtering), "structure" (paths only), "full" (all values)
     """
     lines = ["✓ Node executed successfully\n"]
 
-    # Show execution ID if provided (for structure-only mode)
     if execution_id:
         lines.append(f"Execution ID: {execution_id}\n")
 
-    # Only show full output values if explicitly requested
     if include_values:
-        output_lines = format_output_values(outputs)
-        lines.extend(output_lines)
+        lines.extend(format_output_values(outputs))
 
-    # Get metadata and extract template paths
-    metadata_paths, has_any_type = extract_metadata_paths(node_type, registry)
-    if metadata_paths is None:
-        # No metadata available
+    # Get paths to display
+    paths_to_display, source_desc, warnings = _get_paths_to_display(node_type, outputs, registry, verbose)
+    lines.extend(warnings)
+
+    if paths_to_display is None:
         lines.append("Note: Output structure information not available for this node")
         lines.append(f"\nExecution time: {execution_time_ms}ms")
         return "\n".join(lines)
 
-    # Determine which paths to use (runtime vs metadata)
-    if has_any_type and outputs:
-        # Extract from actual runtime outputs (more accurate)
-        paths_to_display, warnings = extract_runtime_paths(outputs)
-        source_desc = "from actual output"
-        if warnings and verbose:
-            lines.extend(warnings)
-    elif metadata_paths:
-        # Use metadata paths from registry
-        paths_to_display = metadata_paths
-        source_desc = None
-    else:
+    if not paths_to_display:
         lines.append("No structured outputs defined for this node")
         lines.append(f"\nExecution time: {execution_time_ms}ms")
         return "\n".join(lines)
 
-    # Apply smart filtering to reduce large field sets (with caching)
-    from pflow.core.smart_filter import smart_filter_fields_cached
-
     original_count = len(paths_to_display)
 
-    # Convert to tuple for caching (LRU cache requires hashable args)
-    paths_tuple = tuple(paths_to_display)
-    filtered_tuple = smart_filter_fields_cached(paths_tuple, threshold=25)
-    paths_to_display = list(filtered_tuple)
+    # Format based on output mode
+    if output_mode == "full":
+        path_lines = format_full_paths_with_values(paths_to_display, outputs, shared_store)
+    elif output_mode == "smart":
+        paths_to_display, source_desc = _apply_smart_filtering(paths_to_display, source_desc, original_count)
+        path_lines, _ = format_smart_paths_with_values(
+            paths_to_display, outputs, shared_store, source_desc, execution_id or ""
+        )
+    else:  # structure mode
+        paths_to_display, source_desc = _apply_smart_filtering(paths_to_display, source_desc, original_count)
+        path_lines = format_template_paths(paths_to_display, source_desc)
 
-    # Adjust source description if filtering occurred
-    if len(paths_to_display) < original_count:
-        if source_desc:
-            source_desc = f"{source_desc} ({len(paths_to_display)} of {original_count} shown)"
-        else:
-            source_desc = f"{len(paths_to_display)} of {original_count} shown"
-
-    # Display filtered paths
-    path_lines = format_template_paths(paths_to_display, source_desc)
     lines.extend(path_lines)
-
     lines.append(f"\nExecution time: {execution_time_ms}ms")
     return "\n".join(lines)
 
@@ -660,6 +707,170 @@ def format_output_value(value: Any, max_length: int = 200) -> str:
         if len(value_str) > max_length:
             return f"{value_str[: max_length - 3]}..."
         return value_str
+
+
+def _format_collection_smart(value: dict | list) -> tuple[str, bool]:
+    """Format dict or list for smart display.
+
+    Returns (formatted_string, was_summarized) where was_summarized=True
+    means the user can't see actual data and may want to use read-fields.
+    """
+    is_dict = isinstance(value, dict)
+    count = len(value)
+    threshold = SMART_MAX_DICT_KEYS if is_dict else SMART_MAX_LIST_ITEMS
+    summary = f"{{...{count} keys}}" if is_dict else f"[...{count} items]"
+
+    if count > threshold:
+        return summary, True  # Summarized - user can't see data, show hint
+
+    # Try compact JSON for small collections
+    try:
+        compact = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        if len(compact) > SMART_MAX_STRING_LENGTH:
+            return summary, True  # Too long to display fully
+        return compact, False  # Full data shown
+    except (TypeError, ValueError):
+        return summary, True  # Can't serialize, show hint
+
+
+def format_value_for_smart_display(value: Any) -> tuple[str, bool]:
+    """Format a value for smart display mode with truncation tracking.
+
+    Returns:
+        Tuple of (formatted_string, was_truncated)
+    """
+    # Handle None first
+    if value is None:
+        return "null", False
+
+    # Handle primitives (no truncation possible)
+    if isinstance(value, bool):
+        return str(value).lower(), False
+    if isinstance(value, (int, float)):
+        return str(value), False
+    if isinstance(value, bytes):
+        return f"<binary data, {len(value)} bytes>", False
+
+    # Handle strings with potential truncation
+    if isinstance(value, str):
+        if len(value) > SMART_MAX_STRING_LENGTH:
+            truncated = value[: SMART_MAX_STRING_LENGTH - 3] + "..."
+            return f'"{truncated}" (truncated)', True
+        return f'"{value}"', False
+
+    # Handle collections
+    if isinstance(value, (dict, list)):
+        return _format_collection_smart(value)
+
+    # Fallback for other types
+    value_str = str(value)
+    if len(value_str) > SMART_MAX_STRING_LENGTH:
+        return f"{value_str[: SMART_MAX_STRING_LENGTH - 3]}..." + " (truncated)", True
+    return value_str, False
+
+
+def format_smart_paths_with_values(
+    paths: list[tuple[str, str]],
+    outputs: dict[str, Any],
+    shared_store: dict[str, Any],
+    source_description: str | None,
+    execution_id: str,
+) -> tuple[list[str], bool]:
+    """Format template paths with their actual values (smart mode).
+
+    Resolves each path to its value and formats with truncation rules.
+
+    Args:
+        paths: List of (path, type) tuples
+        outputs: Node output dictionary
+        shared_store: Complete shared store
+        source_description: Description of path source (e.g., "8 of 54 shown")
+        execution_id: Execution ID for read-fields hint
+
+    Returns:
+        Tuple of (formatted_lines, any_value_truncated)
+    """
+    lines: list[str] = []
+    any_truncated = False
+    first_truncated_path: str | None = None
+
+    # Header
+    if source_description:
+        lines.append(f"Output ({source_description}):")
+    else:
+        lines.append("Output:")
+
+    # Format each path with its value
+    for path, type_str in paths[:MAX_DISPLAYED_FIELDS]:
+        # Resolve the actual value using helper that handles None vs not-found
+        value = _resolve_template_value(path, outputs, shared_store)
+
+        # Format the value
+        if value is _NOT_FOUND:
+            formatted_value = "<not found>"
+            truncated = False
+        else:
+            formatted_value, truncated = format_value_for_smart_display(value)
+
+        if truncated:
+            any_truncated = True
+            if first_truncated_path is None:
+                first_truncated_path = path
+
+        lines.append(f"  ✓ ${{{path}}} ({type_str}) = {formatted_value}")
+
+    # Show overflow message if needed
+    if len(paths) > MAX_DISPLAYED_FIELDS:
+        remaining = len(paths) - MAX_DISPLAYED_FIELDS
+        lines.append(f"  ... and {remaining} more paths")
+
+    # Add read-fields hint if any value was truncated and we have an execution_id
+    if any_truncated and execution_id:
+        example_path = first_truncated_path or (paths[0][0] if paths else "path")
+        lines.append(f"\nUse `pflow read-fields {execution_id} {example_path}` for full values.")
+
+    return lines, any_truncated
+
+
+def _format_value_full(value: Any) -> str:
+    """Format a value for full display mode (no truncation)."""
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, bytes):
+        return f"<binary data, {len(value)} bytes>"
+    if isinstance(value, (dict, list)):
+        try:
+            formatted = json.dumps(value, ensure_ascii=False, indent=2)
+            if "\n" in formatted:
+                indented = "\n    ".join(formatted.split("\n"))
+                return f"\n    {indented}"
+            return formatted
+        except (TypeError, ValueError):
+            return str(value)
+    return str(value)
+
+
+def format_full_paths_with_values(
+    paths: list[tuple[str, str]],
+    outputs: dict[str, Any],
+    shared_store: dict[str, Any],
+) -> list[str]:
+    """Format all template paths with full values (full mode, no truncation)."""
+    lines: list[str] = [f"Output (all {len(paths)} fields):"]
+
+    for path, type_str in paths:
+        # Resolve the actual value using helper that handles None vs not-found
+        value = _resolve_template_value(path, outputs, shared_store)
+
+        # Format value
+        formatted_value = "<not found>" if value is _NOT_FOUND else _format_value_full(value)
+        lines.append(f"  ✓ ${{{path}}} ({type_str}) = {formatted_value}")
+
+    return lines
 
 
 def json_serializer(obj: Any) -> Any:

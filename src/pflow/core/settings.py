@@ -15,6 +15,10 @@ from pydantic import BaseModel, Field, field_validator
 logger = logging.getLogger(__name__)
 
 
+# Valid output modes for registry run (used by settings validator and CLI)
+OUTPUT_MODES: list[str] = ["smart", "structure", "full"]
+
+
 class NodeFilterSettings(BaseModel):
     """Node filtering configuration."""
 
@@ -29,6 +33,19 @@ class RegistrySettings(BaseModel):
 
     nodes: NodeFilterSettings = Field(default_factory=NodeFilterSettings)
     include_test_nodes: bool = Field(default=False)  # Can be overridden by env var
+    output_mode: str = Field(
+        default="smart",
+        description="Output mode for registry run: smart (show values with truncation), "
+        "structure (paths only), or full (all values, no filtering)",
+    )
+
+    @field_validator("output_mode")
+    @classmethod
+    def validate_output_mode(cls, v: str) -> str:
+        """Validate output_mode is valid."""
+        if v not in OUTPUT_MODES:
+            raise ValueError(f"Invalid output_mode: {v}. Must be one of: {', '.join(OUTPUT_MODES)}")
+        return v
 
 
 class RuntimeSettings(BaseModel):

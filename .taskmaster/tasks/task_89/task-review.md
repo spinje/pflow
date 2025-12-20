@@ -2,9 +2,9 @@
 
 ## Metadata
 
-- **Implementation Date**: 2025-01-14 (core), 2025-01-17 (enhancements)
-- **Implementation Context**: Multi-phase implementation across 7 phases + caching enhancement
-- **Final Status**: Production-ready, all tests passing (96/96 unit + 9 MCP integration)
+- **Implementation Date**: 2025-01-14 (core), 2025-01-17 (enhancements), 2025-01-20 (smart output)
+- **Implementation Context**: Multi-phase implementation across 7 phases + caching enhancement + smart output display
+- **Final Status**: Production-ready, all tests passing (96/96 unit + 9 MCP integration + 10 smart output)
 - **Token Efficiency Achieved**: 600x improvement (200,000 → 300 tokens)
 
 ## Executive Summary
@@ -22,6 +22,16 @@ Task 89 fundamentally changes how pflow returns node execution results—instead
 4. **Smart filtering** - Haiku 4.5 reduces large field sets (>30 fields) to 8-15 relevant ones
 5. **Smart filter caching** - LRU cache avoids redundant LLM calls (67% latency improvement)
 6. **CLI + MCP parity** - Identical behavior across both interfaces
+
+**Post-Implementation Enhancement (2025-01-20): Smart Output Display**
+The original structure-only default was reconsidered for UX. Now supports three `output_mode` settings:
+- **smart** (NEW DEFAULT): Show template paths WITH values, truncate large values (>200 chars)
+- **structure**: Original Task 89 behavior (paths only, no values)
+- **full**: Show all paths with full values, no filtering or truncation
+
+Configure via: `pflow settings registry output-mode <smart|structure|full>`
+
+**CRITICAL INSIGHT**: The original "hide all values" default was too aggressive for debugging. Users repeatedly needed to run `read-fields` even for simple outputs like `stdout: "hello world"`. Smart mode shows short values inline while still truncating large payloads, eliminating the extra step in 90% of cases.
 
 **Bonus Discoveries**:
 - Smart filtering shows "(X of Y shown)" when filtering occurs
@@ -86,8 +96,14 @@ Task 89 fundamentally changes how pflow returns node execution results—instead
 - `src/pflow/cli/main_wrapper.py` - Registered read-fields command
 
 **MCP Execution**:
-- `src/pflow/mcp_server/services/execution_service.py` - Mirrors CLI caching logic
+- `src/pflow/mcp_server/services/execution_service.py` - Mirrors CLI caching logic + output_mode
 - `src/pflow/mcp_server/tools/execution_tools.py` - Added `read_fields` MCP tool
+
+**Smart Output Display Enhancement (2025-01-20)**:
+- `src/pflow/core/settings.py` - Added `output_mode` to RegistrySettings with validator
+- `src/pflow/cli/commands/settings.py` - Added `pflow settings registry output-mode` command
+- `src/pflow/execution/formatters/node_output_formatter.py` - Added smart/full formatting functions
+- `src/pflow/cli/registry_run.py` - Load settings and pass output_mode to formatter
 
 ### Test Files (4 new test files, 1 modified)
 
@@ -98,7 +114,9 @@ Task 89 fundamentally changes how pflow returns node execution results—instead
   - **CRITICAL**: `test_preserves_order` - Cache order independence
 - `tests/test_cli/test_read_fields.py` (174 LOC, 12 tests)
 - `tests/test_mcp_server/test_read_fields.py` (228 LOC, 15 tests)
-- `tests/test_execution/formatters/test_node_output_formatter.py` - Added 8 structure-only tests
+- `tests/test_execution/formatters/test_node_output_formatter.py` - Added 8 structure-only tests + 10 smart output tests
+  - `TestSmartOutputMode` (7 tests) - Value display, truncation, summaries, primitives
+  - `TestOutputModeSettings` (3 tests) - Default, validation, persistence
 
 ## Integration Points & Dependencies
 
@@ -159,11 +177,13 @@ Task 89 fundamentally changes how pflow returns node execution results—instead
 
 ### Key Decisions
 
-**1. Structure-Only as DEFAULT (Not Opt-In)**
-- **Decision**: Remove `--show-structure` flag, make structure-only the default
-- **Reasoning**: Zero users = acceptable breaking change, better UX for agents
-- **Alternative**: Keep flag for backward compat (rejected - adds complexity)
-- **Implementation**: Hardcoded `show_structure=True` in `registry.py:746`
+**1. Structure-Only as DEFAULT (Not Opt-In)** → **REVISED: Smart Output as Default**
+- **Original Decision**: Remove `--show-structure` flag, make structure-only the default
+- **Original Reasoning**: Zero users = acceptable breaking change, better UX for agents
+- **2025-01-20 Revision**: Structure-only was too aggressive for debugging workflows
+- **New Default**: `smart` mode shows values with truncation (>200 chars → truncate)
+- **Configuration**: `pflow settings registry output-mode <smart|structure|full>`
+- **Backward Compat**: `structure` mode preserves original Task 89 behavior
 
 **2. Threshold 30 (Changed from 50)**
 - **Decision**: Trigger smart filtering at 31+ fields (was 51+)
@@ -370,6 +390,22 @@ except Exception as e:
 ```
 
 **Why**: MVP philosophy - keep working even if enhancement fails.
+
+**5. Smart Value Truncation Pattern (2025-01-20)**
+```python
+# Truncation thresholds for smart display
+SMART_MAX_STRING_LENGTH = 200  # Strings > 200 chars → "text..." (truncated)
+SMART_MAX_DICT_KEYS = 5        # Dicts > 5 keys → {...N keys}
+SMART_MAX_LIST_ITEMS = 5       # Lists > 5 items → [...N items]
+# Numbers, booleans, null: Always show fully
+
+# Return tuple (formatted_str, was_truncated) for hint display
+formatted, truncated = format_value_for_smart_display(value)
+if truncated:
+    show_read_fields_hint(execution_id)
+```
+
+**Why**: Balances immediate debugging utility with terminal readability.
 
 ### Anti-Patterns to Avoid
 

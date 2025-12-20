@@ -246,11 +246,12 @@ def test_structure_mode_shows_flattened_paths(runner, mock_registry):
     with patch("pflow.cli.registry_run.import_node_class") as mock_import:
         mock_import.return_value = ComplexOutputNode
 
-        # Task 89: Structure mode is now the default (no flag needed)
+        # Default is now "smart" mode which shows template paths with values
         result = runner.invoke(registry, ["run", "read-file"])
 
         assert result.exit_code == 0
-        assert "Available template paths" in result.output
+        # Smart mode shows "Output" header (with optional description), structure mode shows "Available template paths"
+        assert "Output" in result.output or "Available template paths" in result.output
 
 
 def test_text_mode_displays_human_readable_output(runner, tmp_path):
@@ -602,11 +603,12 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
     ):
         mock_import.return_value = JsonStringNode
 
-        # Task 89: Structure mode is now the default (no flag needed)
+        # Default is now "smart" mode which shows template paths with values
         result = runner.invoke(registry, ["run", "mcp-github-list-repos"])
 
         assert result.exit_code == 0
-        assert "Available template paths" in result.output or "structure" in result.output.lower()
+        # Smart mode shows "Output" header (with optional description), structure mode shows "Available template paths"
+        assert "Output" in result.output or "Available template paths" in result.output
         # Should show flattened paths from parsed JSON
         # The exact paths depend on implementation, but should include array notation
 
@@ -681,7 +683,7 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
     ):
         mock_import.return_value = DuplicateOutputNode
 
-        # Task 89: Structure mode is now the default (no flag needed)
+        # Default is now "smart" mode which shows template paths with values
         result = runner.invoke(registry, ["run", "mcp-node"])
 
         assert result.exit_code == 0
@@ -689,8 +691,8 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
         if "contains the same data" in result.output or "showing paths" in result.output:
             pass  # Deduplication detected
         else:
-            # At minimum, should not crash and should show structure
-            assert "Available template paths" in result.output or "structure" in result.output.lower()
+            # At minimum, should not crash and should show output or structure
+            assert "Output" in result.output or "Available template paths" in result.output
 
 
 # ==============================================================================

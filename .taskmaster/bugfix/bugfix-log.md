@@ -1,5 +1,124 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] MCP node result stored as Python repr string instead of dict, breaking shell+jq workflows — 2025-12-19
+
+Meta:
+- id: BF-20251219-mcp-python-repr
+- area: nodes
+- severity: incorrect-output
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: MCP nodes, shell nodes with jq, any workflow piping MCP output to JSON tools
+- owner: ai-agent
+- links: src/pflow/nodes/mcp/node.py, tests/test_mcp/test_mcp_node_behavior.py
+- session_id: current
+
+Summary:
+- Problem: Shell node with jq failed to parse MCP output - `jq: parse error: Invalid numeric literal at line 1, column 2`
+- Root cause: MCP server (klavis-youtube-transcripts) returned Python repr string (`{'key': 'value'}` with single quotes) instead of JSON; pflow stored it as-is without parsing
+- Fix: Added `ast.literal_eval()` fallback in `_safe_parse_json()` when JSON parsing fails for dict/list-like strings
+
+Repro:
+- Steps:
+  1) Create workflow with MCP node piping to shell node with jq
+  2) Run workflow
+  3) jq fails with parse error due to single quotes
+- Commands:
+  ```bash
+  # Check MCP node result type - shows (str) instead of (dict)
+  uv run pflow registry run mcp-klavis-youtube-transcripts-get_youtube_video_transcript \
+    url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  # Output: ${result} (str)  <-- Should be (dict)
+
+  # Shell+jq workflow fails
+  cat > /tmp/test.json << 'EOF'
+  {
+    "inputs": {"url": {"type": "string", "required": true}},
+    "nodes": [
+      {"id": "fetch", "type": "mcp-klavis-youtube-transcripts-get_youtube_video_transcript",
+       "params": {"url": "${url}"}},
+      {"id": "extract", "type": "shell",
+       "params": {"stdin": "${fetch.result}", "command": "jq -r '.video_id'"}}
+    ],
+    "edges": [{"from": "fetch", "to": "extract"}]
+  }
+  EOF
+  uv run pflow /tmp/test.json url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  ```
+- Expected vs actual:
+  - Expected: jq parses JSON and extracts video_id
+  - Actual: `jq: parse error: Invalid numeric literal at line 1, column 2` (fails on first single quote)
+
+Implementation:
+- Changed files:
+  - `src/pflow/nodes/mcp/node.py`:
+    - Modified `_safe_parse_json()` (lines 639-657): Added `ast.literal_eval()` fallback when JSON parsing fails for strings starting with `{` or `[`
+    - Modified `_extract_text_content()` (lines 702-708): Added type check to preserve pre-parsed dict/list in `content.text`
+    - Modified `_extract_unknown_content()` (lines 722-731): Added dict/list preservation
+    - Modified `_extract_result()` fallback (lines 813-816): Added dict/list preservation
+- Key edits:
+  - JSON parsing is tried first (correct behavior for compliant servers)
+  - `ast.literal_eval()` only runs when JSON fails AND string starts with `{` or `[`
+  - Only accepts dict/list results from literal_eval (rejects sets, tuples, etc.)
+  - Logs warning to inform users their MCP server is non-compliant
+- Tests: 9 new tests in `TestMCPResultPreParsedData` class
+  - `test_text_content_with_pre_parsed_dict`
+  - `test_text_content_with_pre_parsed_list`
+  - `test_text_content_string_still_parsed_as_json`
+  - `test_unknown_content_with_dict_preserved`
+  - `test_unknown_content_with_list_preserved`
+  - `test_fallback_with_dict_preserved`
+  - `test_fallback_with_list_preserved`
+  - `test_python_repr_string_parsed_with_literal_eval`
+  - `test_valid_json_string_preferred_over_literal_eval`
+
+Verification:
+- Manual:
+  ```bash
+  # After fix - shows (dict) instead of (str)
+  uv run pflow registry run mcp-klavis-youtube-transcripts-get_youtube_video_transcript \
+    url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  # Output:
+  # WARNING: MCP server returned Python repr instead of JSON - parsed with ast.literal_eval()
+  # ✓ ${result} (dict)
+  # ✓ ${result.transcript} (list, 61 items)
+  # ✓ ${result.video_id} (str)
+
+  # Shell+jq workflow now works
+  uv run pflow /tmp/test.json url="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+  # Output: dQw4w9WgXcQ
+  ```
+- CI: All 3382 tests pass, 167 MCP tests pass
+
+Risks & rollbacks:
+- Risk flags: `ast.literal_eval()` on untrusted input (but it's designed to be safe - only evaluates literals)
+- Rollback plan: Remove ast.literal_eval() fallback in `_safe_parse_json()`; no regressions expected since JSON is tried first
+
+Lessons & heuristics:
+- Lessons learned:
+  - MCP servers may not follow the spec - some return `str(dict)` instead of `json.dumps(dict)`
+  - Debug with actual runtime data, not assumptions - the bug report hypothesis was wrong
+  - `str(dict)` produces Python repr with single quotes which isn't valid JSON
+  - `ast.literal_eval()` is the safe way to parse Python literals (never executes code)
+  - Add fallback parsing for non-compliant external services rather than rejecting the data
+- Heuristics to detect recurrence:
+  - Grep for `str(result)` or `str(value)` near MCP/external API handling - may indicate repr conversion
+  - If jq fails with "Invalid numeric literal", check if input uses single quotes
+  - Watch for MCP tools showing `(str)` type when structured data expected
+  - Check `~/.pflow/debug/workflow-trace-*.json` to see actual stdin content
+- Related pitfalls: External services may not follow their documented protocols
+
+Follow-ups:
+- Consider reporting to klavis-youtube-transcripts maintainer that they return Python repr instead of JSON
+- Document that pflow handles non-compliant MCP servers gracefully
+
+Implementer details:
+- Claude Code Session ID: current
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] Fix nested template resolution for HTTP headers, body, and params — 2025-01-19
 
 Meta:
