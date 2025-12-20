@@ -379,6 +379,23 @@ class ShellNode(Node):
         )
         return result
 
+    @staticmethod
+    def _build_shell_error_message(exit_code: int, stderr: str) -> str:
+        """Build a descriptive error message for shell command failures.
+
+        Args:
+            exit_code: The command's exit code
+            stderr: The stderr output from the command
+
+        Returns:
+            A formatted error message with exit code and stderr preview
+        """
+        stderr_preview = stderr[:500] if stderr else ""
+        error_msg = f"Command failed with exit code {exit_code}"
+        if stderr_preview:
+            error_msg += f": {stderr_preview}"
+        return error_msg
+
     def __init__(self) -> None:
         """Initialize the shell node with retry support."""
         # Shell commands can be flaky, so allow retries
@@ -596,6 +613,9 @@ class ShellNode(Node):
         # Store exit code
         shared["exit_code"] = exec_res["exit_code"]
 
+        # Store command for error reporting
+        shared["command"] = prep_res["command"]
+
         # Store error message if present
         if "error" in exec_res:
             shared["error"] = exec_res["error"]
@@ -664,6 +684,9 @@ class ShellNode(Node):
                 },
             )
             return "default"  # Continue on normal path
+
+        # Build descriptive error message for non-zero exit codes
+        shared["error"] = self._build_shell_error_message(exit_code, shared.get("stderr", ""))
 
         logger.warning(
             f"Command failed with exit code {exit_code}",

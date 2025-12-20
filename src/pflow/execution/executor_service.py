@@ -323,6 +323,13 @@ class WorkflowExecutorService:
                 ):
                     error["mcp_error"] = node_output["result"]["error"]
 
+                # Shell node data (from src/pflow/nodes/shell/shell.py)
+                if "exit_code" in node_output and "command" in node_output:
+                    error["shell_command"] = node_output.get("command")
+                    error["shell_exit_code"] = node_output.get("exit_code")
+                    error["shell_stdout"] = node_output.get("stdout")
+                    error["shell_stderr"] = node_output.get("stderr")
+
                 # For template errors, capture available fields (use same limit as template validator)
                 if category == "template_error":
                     from pflow.runtime.template_validator import MAX_DISPLAYED_FIELDS

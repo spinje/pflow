@@ -1424,6 +1424,7 @@ def _display_single_error(
     error: dict[str, Any],
     error_number: int,
     auto_repair: bool,
+    verbose: bool = False,
 ) -> None:
     """Display a single workflow error with all details.
 
@@ -1431,6 +1432,7 @@ def _display_single_error(
         error: Error dict from ExecutionResult
         error_number: Error number for display (1-indexed)
         auto_repair: Whether auto-repair is enabled
+        verbose: Whether to show extended details (command, stdout, etc.)
     """
     if error_number == 1:
         click.echo("❌ Workflow execution failed", err=True)
@@ -1471,16 +1473,29 @@ def _display_single_error(
             click.echo("\n  📁 Complete field list available in trace file", err=True)
             click.echo("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json", err=True)
 
+    # Show shell command details in verbose mode
+    if verbose and "shell_command" in error:
+        click.echo("\n  Shell details:", err=True)
+        cmd = error.get("shell_command", "")
+        # Truncate very long commands
+        cmd_display = cmd[:200] + "..." if len(cmd) > 200 else cmd
+        click.echo(f"    Command: {cmd_display}", err=True)
+        if stdout := error.get("shell_stdout"):
+            stdout_preview = stdout[:300] + "..." if len(stdout) > 300 else stdout
+            click.echo(f"    Stdout: {stdout_preview}", err=True)
+
 
 def _display_text_error_details(
     result: Any,
     auto_repair: bool,
+    verbose: bool = False,
 ) -> None:
     """Display detailed text error output.
 
     Args:
         result: ExecutionResult with error details
         auto_repair: Whether auto-repair is enabled
+        verbose: Whether to show extended details (command, stdout, etc.)
     """
     if not result or not hasattr(result, "errors") or not result.errors:
         # Fallback to generic message
@@ -1489,7 +1504,7 @@ def _display_text_error_details(
         return
 
     for i, error in enumerate(result.errors, 1):
-        _display_single_error(error, i, auto_repair)
+        _display_single_error(error, i, auto_repair, verbose=verbose)
 
 
 def _handle_workflow_error(
@@ -1511,7 +1526,7 @@ def _handle_workflow_error(
         _serialize_json_result(error_output, verbose)
     else:
         # Text mode: Show detailed rich error context
-        _display_text_error_details(result, auto_repair)
+        _display_text_error_details(result, auto_repair, verbose=verbose)
 
     # Save trace even on error
     if workflow_trace:
