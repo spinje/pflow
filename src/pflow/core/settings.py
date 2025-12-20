@@ -29,6 +29,20 @@ class RegistrySettings(BaseModel):
 
     nodes: NodeFilterSettings = Field(default_factory=NodeFilterSettings)
     include_test_nodes: bool = Field(default=False)  # Can be overridden by env var
+    output_mode: str = Field(
+        default="smart",
+        description="Output mode for registry run: smart (show values with truncation), "
+        "structure (paths only), or full (all values, no filtering)",
+    )
+
+    @field_validator("output_mode")
+    @classmethod
+    def validate_output_mode(cls, v: str) -> str:
+        """Validate output_mode is valid."""
+        valid_modes = ["smart", "structure", "full"]
+        if v not in valid_modes:
+            raise ValueError(f"Invalid output_mode: {v}. Must be one of: {', '.join(valid_modes)}")
+        return v
 
 
 class RuntimeSettings(BaseModel):

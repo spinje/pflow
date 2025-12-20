@@ -423,13 +423,14 @@ class TestStructureOnlyMode:
         outputs = {"result": "sensitive data value"}
         shared_store = {}
 
-        # Default: structure-only (include_values=False)
+        # Explicit structure mode: paths only, no values
         result = format_structure_output(
             node_type="test-node",
             outputs=outputs,
             shared_store=shared_store,
             registry=registry,
             execution_time_ms=100,
+            output_mode="structure",  # Explicitly request structure-only mode
         )
 
         # Must NOT contain actual data values
@@ -525,8 +526,9 @@ class TestStructureOnlyMode:
             shared_store=shared_store,
             registry=registry,
             execution_time_ms=100,
-            include_values=False,  # Structure-only
+            include_values=False,
             execution_id=execution_id,
+            output_mode="structure",  # Explicitly request structure-only mode
         )
 
         # Must show execution ID
@@ -658,6 +660,7 @@ class TestSmartFilteringIntegration:
             registry=registry,
             format_type="structure",
             execution_id="exec-456-def",
+            output_mode="structure",  # Test structure-only mode filtering
         )
 
         # Should NOT show filtering message (only 3-4 fields)
@@ -700,6 +703,149 @@ class TestSmartFilteringIntegration:
         # Should NOT show filtering message (exactly 50 or 51 fields including base key)
         # All fields should be shown
         assert "field0" in result or "result.field0" in result
+
+
+class TestSmartOutputMode:
+    """Tests for smart output mode (showing values with truncation)."""
+
+    def test_smart_mode_shows_values(self):
+        """SMART MODE: Shows actual values alongside template paths."""
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {
+            "test-node": {"interface": {"outputs": [{"key": "result", "type": "string"}]}}
+        }
+
+        outputs = {"result": "hello world"}
+        shared_store = {}
+
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            output_mode="smart",
+        )
+
+        # Must show the Output header
+        assert "Output" in result
+        # Must show the value
+        assert "hello world" in result
+        # Must show the template path
+        assert "${result}" in result
+
+    def test_smart_mode_truncates_long_strings(self):
+        """SMART MODE: Truncates strings longer than 200 chars."""
+        from pflow.execution.formatters.node_output_formatter import format_value_for_smart_display
+
+        long_string = "x" * 250
+        formatted, truncated = format_value_for_smart_display(long_string)
+
+        assert truncated is True
+        assert "(truncated)" in formatted
+        assert len(formatted) < 250  # Should be shorter than original
+
+    def test_smart_mode_summarizes_large_dicts(self):
+        """SMART MODE: Shows summary for dicts with more than 5 keys."""
+        from pflow.execution.formatters.node_output_formatter import format_value_for_smart_display
+
+        large_dict = {f"key{i}": f"value{i}" for i in range(10)}
+        formatted, truncated = format_value_for_smart_display(large_dict)
+
+        assert "{...10 keys}" in formatted
+        assert truncated is False  # Summarized, not truncated
+
+    def test_smart_mode_summarizes_large_lists(self):
+        """SMART MODE: Shows summary for lists with more than 5 items."""
+        from pflow.execution.formatters.node_output_formatter import format_value_for_smart_display
+
+        large_list = list(range(20))
+        formatted, truncated = format_value_for_smart_display(large_list)
+
+        assert "[...20 items]" in formatted
+        assert truncated is False
+
+    def test_smart_mode_shows_primitives_fully(self):
+        """SMART MODE: Always shows numbers, booleans, and null fully."""
+        from pflow.execution.formatters.node_output_formatter import format_value_for_smart_display
+
+        # Integer
+        formatted, truncated = format_value_for_smart_display(42)
+        assert formatted == "42"
+        assert truncated is False
+
+        # Float
+        formatted, truncated = format_value_for_smart_display(3.14159)
+        assert formatted == "3.14159"
+        assert truncated is False
+
+        # Boolean
+        formatted, truncated = format_value_for_smart_display(True)
+        assert formatted == "true"
+        assert truncated is False
+
+        # None/null
+        formatted, truncated = format_value_for_smart_display(None)
+        assert formatted == "null"
+        assert truncated is False
+
+    def test_smart_mode_shows_read_fields_hint_when_truncated(self):
+        """SMART MODE: Shows read-fields hint when values are truncated."""
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {
+            "test-node": {"interface": {"outputs": [{"key": "content", "type": "string"}]}}
+        }
+
+        # Long content that will be truncated
+        outputs = {"content": "x" * 300}
+        shared_store = {}
+        execution_id = "exec-test-123"
+
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            execution_id=execution_id,
+            output_mode="smart",
+        )
+
+        # Should show hint to use read-fields
+        assert "pflow read-fields" in result
+        assert execution_id in result
+
+    def test_full_mode_shows_all_without_truncation(self):
+        """FULL MODE: Shows all values without truncation or filtering."""
+        from pflow.execution.formatters.node_output_formatter import format_structure_output
+
+        registry = Mock(spec=Registry)
+        registry.get_nodes_metadata.return_value = {
+            "test-node": {"interface": {"outputs": [{"key": "content", "type": "string"}]}}
+        }
+
+        # Long content
+        long_content = "x" * 300
+        outputs = {"content": long_content}
+        shared_store = {}
+
+        result = format_structure_output(
+            node_type="test-node",
+            outputs=outputs,
+            shared_store=shared_store,
+            registry=registry,
+            execution_time_ms=100,
+            output_mode="full",
+        )
+
+        # Full mode should show the complete content
+        assert long_content in result
+        # Should say "all N fields"
+        assert "all" in result.lower()
 
 
 if __name__ == "__main__":

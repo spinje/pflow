@@ -686,6 +686,13 @@ class ExecutionService(BaseService):
             # Cache execution results
             cls._cache_execution_result(execution_id, node_type, parameters, outputs, action)
 
+            # Load settings to get output mode
+            from pflow.core.settings import SettingsManager
+
+            settings_manager = SettingsManager()
+            settings = settings_manager.load()
+            output_mode = settings.registry.output_mode
+
             # Format result using shared formatter (CLI's structure mode)
             from pflow.execution.formatters.node_output_formatter import format_node_output
 
@@ -699,6 +706,7 @@ class ExecutionService(BaseService):
                 format_type="structure",  # CLI's --show-structure mode
                 verbose=True,
                 execution_id=execution_id,  # Task 89: pass execution_id
+                output_mode=output_mode,  # Smart output display mode
             )
 
             # format_node_output with format_type="structure" always returns str

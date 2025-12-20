@@ -237,6 +237,13 @@ def _execute_and_display_results(
                 if verbose:
                     click.echo(f"⚠️  Failed to cache execution: {cache_error}", err=True)
 
+        # Load settings to get output mode
+        from pflow.core.settings import SettingsManager
+
+        settings_manager = SettingsManager()
+        settings = settings_manager.load()
+        output_mode = settings.registry.output_mode
+
         # Display results based on mode
         _display_results(
             node_type=resolved_node,
@@ -249,6 +256,7 @@ def _execute_and_display_results(
             registry=registry,
             verbose=verbose,
             execution_id=execution_id,
+            output_mode=output_mode,
         )
 
     except MCPError as e:
@@ -272,15 +280,20 @@ def _display_results(
     registry: Registry,
     verbose: bool,
     execution_id: str,
+    output_mode: str = "smart",
 ) -> None:
-    """Display execution results based on output format and options."""
+    """Display execution results based on output format and options.
+
+    Args:
+        output_mode: Display mode for structure format - "smart", "structure", or "full"
+    """
     # Use shared formatter for all output formatting
     from pflow.execution.formatters.node_output_formatter import format_node_output
 
     # Determine format type
     format_type = "structure" if show_structure else output_format  # "text" or "json"
 
-    # Format result using shared formatter (Task 89: pass execution_id)
+    # Format result using shared formatter
     result = format_node_output(
         node_type=node_type,
         action=action,
@@ -291,6 +304,7 @@ def _display_results(
         format_type=format_type,
         verbose=verbose,
         execution_id=execution_id if format_type == "structure" else None,
+        output_mode=output_mode,
     )
 
     # Display result

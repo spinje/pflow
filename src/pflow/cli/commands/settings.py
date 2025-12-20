@@ -550,3 +550,54 @@ def llm_unset(setting: str) -> None:
             current_settings.llm.filtering_model = None
             manager.save(current_settings)
             click.echo("✓ Removed filtering_model (will use auto-detection)")
+
+
+# ============================================================================
+# Registry Settings Subgroup
+# ============================================================================
+
+
+@settings.group(name="registry")
+def registry_settings() -> None:
+    """Manage registry settings.
+
+    Configure registry behavior including output display mode.
+    """
+    pass
+
+
+@registry_settings.command(name="output-mode")
+@click.argument("mode", required=False, type=click.Choice(["smart", "structure", "full"]))
+def registry_output_mode(mode: str | None) -> None:
+    """Show or set registry output mode.
+
+    Controls how 'pflow registry run' displays node execution results.
+
+    MODES:
+      smart     - Show values with truncation, apply smart filtering (default)
+      structure - Show template paths only, no values (Task 89 behavior)
+      full      - Show all values, no filtering or truncation
+
+    Examples:
+        pflow settings registry output-mode           # Show current mode
+        pflow settings registry output-mode smart     # Set to smart
+        pflow settings registry output-mode structure # Set to structure-only
+        pflow settings registry output-mode full      # Set to full output
+    """
+    manager = SettingsManager()
+    current_settings = manager.load()
+
+    if mode is None:
+        # Show current mode
+        current_mode = current_settings.registry.output_mode
+        click.echo(f"Current output mode: {current_mode}")
+        click.echo("\nModes:")
+        click.echo("  smart     - Show values with truncation, apply smart filtering (default)")
+        click.echo("  structure - Show template paths only, no values")
+        click.echo("  full      - Show all values, no filtering or truncation")
+        click.echo("\nTo change: pflow settings registry output-mode <mode>")
+    else:
+        # Set mode
+        current_settings.registry.output_mode = mode
+        manager.save(current_settings)
+        click.echo(f"✓ Set registry output mode: {mode}")
