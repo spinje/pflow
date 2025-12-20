@@ -14,9 +14,9 @@ Meta:
 - session_id: current
 
 Summary:
-- Problem: LLM node failures showed generic "LLM call failed after 3 attempts" with no details; trace showed `success: true` for failed nodes
-- Root cause: (1) exec_fallback discarded original exception in generic error case; (2) trace recorded success=True before checking node's action string
-- Fix: (1) Include original exception in error message; (2) Check `result != "error"` before recording trace success
+- Problem: LLM node failures showed generic "LLM call failed after 3 attempts" with no details; trace showed `success: true` for failed nodes; unknown model errors gave no guidance
+- Root cause: (1) exec_fallback discarded original exception in generic error case; (2) trace recorded success=True before checking node's action string; (3) unknown model error didn't suggest alternatives
+- Fix: (1) Include original exception in error message; (2) Check `result != "error"` before recording trace success; (3) Suggest detected default model for unknown model errors
 
 Repro:
 - Steps:
@@ -38,10 +38,11 @@ Repro:
 
 Implementation:
 - Changed files:
-  - `src/pflow/nodes/llm/llm.py`: Include `error_msg` in generic error case (line 258)
+  - `src/pflow/nodes/llm/llm.py`: Enhanced error messages with exception details and model suggestions (lines 251-271)
   - `src/pflow/runtime/instrumented_wrapper.py`: Check `result != "error"` before recording trace (lines 675-677)
 - Key edits:
-  - LLM error now includes original exception: `f"... Error: {error_msg}"`
+  - Unknown model errors now suggest detected default model via `get_default_llm_model()`
+  - Generic LLM errors now include original exception: `f"... Error: {error_msg}"`
   - Trace success respects node's action string, consistent with caching logic (line 255)
 - Tests: All 97 LLM/wrapper/trace tests pass; 341 integration tests pass
 
@@ -49,11 +50,13 @@ Verification:
 - Manual:
   ```bash
   uv run pflow /tmp/test-llm-fail.json
-  # Error now includes actual exception details
+  # Error now shows:
+  # "Unknown model: nonexistent-model. Tip: Your API key supports 'anthropic/claude-sonnet-4-5'. Run 'llm models' to see all available models."
+
   cat ~/.pflow/debug/workflow-trace-*.json | tail -1 | jq '.nodes[0].success'
   # Returns: false (previously true)
   ```
-- CI: `make check` passes; all tests pass
+- CI: `make check` passes; all 38 LLM tests pass
 
 Risks & rollbacks:
 - Risk flags: Trace format change (success field semantics tightened)

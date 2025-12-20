@@ -21,10 +21,11 @@ def run_server() -> None:
     """Run the pflow MCP server with stdio transport.
 
     This function:
-    1. Installs Anthropic model wrapper (required for planning nodes)
-    2. Registers all tools with the server
-    3. Sets up signal handlers for graceful shutdown
-    4. Runs the server with stdio transport
+    1. Injects API keys from pflow settings into environment
+    2. Installs Anthropic model wrapper (required for planning nodes)
+    3. Registers all tools with the server
+    4. Sets up signal handlers for graceful shutdown
+    5. Runs the server with stdio transport
 
     The server uses stdio transport where:
     - stdin: Receives JSON-RPC requests from the client
@@ -34,6 +35,14 @@ def run_server() -> None:
     Note: This function is synchronous because FastMCP manages
     its own event loop when using stdio transport.
     """
+    # Inject API keys from pflow settings into environment
+    # This must happen early, before any LLM operations
+    if not os.environ.get("PYTEST_CURRENT_TEST"):
+        from pflow.core.llm_config import inject_settings_env_vars
+
+        inject_settings_env_vars()
+        logger.info("Injected environment variables from pflow settings")
+
     # Install Anthropic model wrapper (REQUIRED for planning nodes)
     # This monkey-patches llm.get_model() to return AnthropicLLMModel
     # for Claude models, enabling prompt caching and thinking tokens

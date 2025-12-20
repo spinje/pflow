@@ -246,10 +246,22 @@ class LLMNode(Node):
         """Handle errors after all retries exhausted."""
         # Enhanced error messages
         error_msg = str(exc)
+        exc_type = type(exc).__name__
 
-        if "UnknownModelError" in error_msg:
-            error_detail = f"Unknown model: {prep_res['model']}. Run 'llm models' to see available models."
-        elif "NeedsKeyException" in error_msg:
+        if exc_type == "UnknownModelError" or "UnknownModelError" in error_msg or "Unknown model" in error_msg:
+            # Try to suggest a working model based on configured API keys
+            from pflow.core.llm_config import get_default_llm_model
+
+            detected_model = get_default_llm_model()
+            if detected_model:
+                error_detail = (
+                    f"Unknown model: {prep_res['model']}. "
+                    f"Tip: Your API key supports '{detected_model}'. "
+                    f"Run 'llm models' to see all available models."
+                )
+            else:
+                error_detail = f"Unknown model: {prep_res['model']}. Run 'llm models' to see available models."
+        elif exc_type == "NeedsKeyException" or "NeedsKeyException" in error_msg:
             error_detail = (
                 f"API key required for model: {prep_res['model']}. "
                 f"Set up with 'llm keys set <provider>' or environment variable."
