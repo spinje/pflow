@@ -1,5 +1,13 @@
 # Real-World Validation: pflow Pipeline Format
 
+**Updated**: 2024-12-21 (verified and clarified)
+
+> **Scope**: This document validates the pipeline format for **task parallelism**.
+> For **data parallelism** (batch processing), see Task 96.
+
+> **Correction**: Earlier versions claimed pflow has a "batch node" - this is not yet implemented.
+> Task 96 will add batch processing support. PocketFlow has BatchNode, but pflow doesn't expose it yet.
+
 ## Comparison with Industry Workflow Engines
 
 ### GitHub Actions (YAML-based, Step-oriented)
@@ -282,24 +290,32 @@ async def run(self):
 }
 ```
 
-**pflow Pipeline Equivalent:**
+**pflow Pipeline Equivalent (using Task 96 batch syntax - PROPOSED):**
 ```json
 {
   "pipeline": [
     {"id": "fetch", "type": "http", "params": {...}},
-    {"id": "process_all", "type": "llm-batch", "params": {
-      "items": "${fetch.items}",
-      "parallel": true
-    }},
+    {
+      "id": "process_all",
+      "type": "llm",
+      "batch": {
+        "items": "${fetch.items}",
+        "as": "item",
+        "parallel": true
+      },
+      "params": {"prompt": "Process: ${item}"}
+    },
     {"id": "save", "type": "write-file", "params": {...}}
   ]
 }
 ```
 
+> **Note**: The `batch` configuration is PROPOSED syntax for Task 96, not yet implemented.
+
 **Analysis:**
 - ✅ pflow pipeline is MORE readable than n8n's connection format
 - ✅ n8n uses explicit nodes for split/merge, pflow makes it implicit
-- ✅ pflow's batch node pattern is cleaner than split → process → merge
+- ✅ pflow's proposed batch syntax is cleaner than split → process → merge
 - ✅ Both are JSON-based and tool-friendly
 
 ---
@@ -343,7 +359,7 @@ Action 3: Send Notification
 | **Parallel** | ✅ jobs | ✅ [a,b,c] | ✅ nested | ✅ .map() | ⚠️ split/merge | ✅ {parallel} |
 | **Branching** | ⚠️ if conditions | ⚠️ BranchPythonOp | ✅ when clause | ⚠️ code | ✅ Switch node | ✅ next/on_action |
 | **Loops** | ❌ | ⚠️ complex | ✅ loops | ✅ code | ⚠️ Loop node | ✅ next (backward) |
-| **Map-Reduce** | ⚠️ matrix | ✅ dynamic tasks | ✅ withItems | ✅ .map() | ✅ split/merge | ✅ batch node |
+| **Map-Reduce** | ⚠️ matrix | ✅ dynamic tasks | ✅ withItems | ✅ .map() | ✅ split/merge | ⏳ batch (Task 96) |
 | **Error Handling** | ✅ on failure | ✅ triggers | ✅ onExit | ✅ code | ✅ Error node | ✅ action routing |
 | **LLM-Friendly** | ⭐⭐⭐⭐ | ⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐ | ⭐⭐ | ⭐⭐⭐⭐⭐ |
 
@@ -377,7 +393,7 @@ Action 3: Send Notification
 
 5. **Map-Reduce** (20% of workflows)
    - Most engines have specialized constructs
-   - pflow's batch node aligns with this pattern
+   - pflow's proposed batch syntax (Task 96) will align with this pattern
 
 ### LLM Training Data Insights
 
@@ -595,8 +611,9 @@ def my_flow():
 
 1. **Barrier semantics**: Parallel block implicitly creates a barrier, but could be more explicit
 2. **Nested workflows**: Not covered in current design (but can be added as special node type)
-3. **Dynamic parallelism**: `llm-batch` node handles this, but could have dedicated syntax
+3. **Dynamic parallelism**: Task 96's batch syntax will handle this
 4. **Timeout/retry config**: Not shown in examples, but should be node-level params
+5. **PocketFlow limitation**: Fan-out requires custom `ParallelGroupNode` (not native to PocketFlow)
 
 ### Design Principles Validated:
 
@@ -604,7 +621,8 @@ def my_flow():
 ✅ **LLM priors**: LLMs have seen similar structures in training data
 ✅ **Human readable**: Top-to-bottom execution order is obvious
 ✅ **Composable**: Nodes, parallel blocks, and branches compose naturally
-✅ **PocketFlow faithful**: Maps cleanly to `>>`, `-`, and async primitives
+⚠️ **PocketFlow integration**: Sequential (`>>`) and branching (`-`) map cleanly;
+   parallel blocks require custom `ParallelGroupNode` (PocketFlow Flow doesn't support fan-out)
 
 ---
 
@@ -617,7 +635,7 @@ def my_flow():
 - ✅ More LLM-friendly than any existing format
 - ✅ Flexible enough for complex patterns
 - ✅ Simple enough for common cases
-- ✅ Faithful to PocketFlow semantics
+- ⚠️ Requires custom ParallelGroupNode for fan-out (PocketFlow doesn't support natively)
 
 **Implement this in pflow v2.0 with confidence.**
 

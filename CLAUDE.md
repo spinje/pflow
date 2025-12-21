@@ -478,18 +478,17 @@ First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0):
-- ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
-- ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
-
-Version (v0.8.0):
+- ⏳ Task 96: Support Batch Processing in Workflows (data parallelism - uses existing PocketFlow BatchNode)
+- ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
-- ⏳ Task 39: Support Parallel Execution in Workflows
+- ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 
-Version (v0.9.0):
+Version (v0.8.0):
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 75: Execution Preview in Validation
+- ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
 
 Version (v1.0.0):
 - ⏳ Task 66: Support structured output for LLM node

@@ -1,4 +1,10 @@
-# The Optimal JSON IR for PocketFlow Parallelization (LLM-Optimized)
+# The Optimal JSON IR for Task Parallelism (LLM-Optimized)
+
+**Updated**: 2024-12-21 (verified and clarified scope)
+
+> **Important Clarification**: This document focuses on **task parallelism** (fan-out/fan-in
+> patterns with different operations). For **data parallelism** (same operation on multiple
+> items), see Task 96 which leverages PocketFlow's existing BatchNode infrastructure.
 
 ## Executive Summary
 
@@ -638,9 +644,52 @@ pflow validate workflow.json  # Auto-detects format
 
 ---
 
+## Clarification: Two Types of Parallelism
+
+This document addresses **task parallelism**, which is distinct from data parallelism:
+
+| Type | Pattern | pflow Task | PocketFlow Support |
+|------|---------|------------|-------------------|
+| **Task Parallelism** | Different ops × same data | Task 39 (this) | ❌ Must build custom |
+| **Data Parallelism** | Same op × N items | Task 96 | ✅ BatchNode exists |
+
+```
+TASK PARALLELISM (this document):
+fetch → [analyze, visualize, summarize] → combine
+        └──── DIFFERENT operations ─────┘
+
+DATA PARALLELISM (Task 96):
+files[] → [process(f1), process(f2), process(f3)] → results[]
+          └──────── SAME operation ──────────────┘
+```
+
+### Why PocketFlow Can't Do Task Parallelism
+
+PocketFlow's Flow class only supports ONE successor per action:
+```python
+def next(self, node, action="default"):
+    self.successors[action] = node  # Only ONE!
+```
+
+When you do `fetch >> analyze` then `fetch >> visualize`, the second overwrites the first.
+
+### Verified Findings (2024-12-21)
+
+1. **Parameter passing is NOT a blocker**: The modification to `Flow._orch()` only affects
+   sync flows without explicit params. BatchFlow and async flows work correctly.
+
+2. **AsyncFlow._orch_async is unmodified**: All async parallel classes work as documented.
+
+3. **Namespacing provides isolation**: Parallel nodes write to different namespaces,
+   reducing shared store conflicts.
+
+See `session-verification-summary.md` for full verification details.
+
+---
+
 ## Final Recommendation
 
-**Adopt the pipeline format as pflow's primary IR in v2.0.**
+**Adopt the pipeline format as pflow's primary IR for task parallelism in v2.0.**
 
 **Reasons:**
 1. **28-45% token reduction** vs DAG format
@@ -657,11 +706,23 @@ pflow validate workflow.json  # Auto-detects format
 
 ## Documentation
 
-Created comprehensive analysis documents:
+### Current Research Documents (Task 39)
 
-1. **`llm-optimized-ir-analysis.md`**: Deep dive into LLM-friendly design principles
-2. **`format-comparison-matrix.md`**: Side-by-side comparison of all design options
-3. **`real-world-validation.md`**: Validation against industry workflow engines
-4. **`OPTIMAL_SOLUTION.md`**: This document - comprehensive recommendation
+1. **`OPTIMAL_SOLUTION.md`**: This document - comprehensive recommendation for task parallelism
+2. **`llm-optimized-ir-analysis.md`**: Deep dive into LLM-friendly design principles
+3. **`format-comparison-matrix.md`**: Side-by-side comparison of all design options
+4. **`real-world-validation.md`**: Validation against industry workflow engines
+5. **`current-ir-analysis.md`**: Current IR schema structure analysis
+6. **`session-verification-summary.md`**: Verified findings from 2024-12-21 deep dive
 
-**Next steps**: Review with maintainers, prototype parser, update planner prompts.
+### Related Documentation (Task 96)
+
+- **`task_96/research/pocketflow-batch-capabilities.md`**: PocketFlow's batch processing primitives
+
+### Archived (Historical, Contains Inaccuracies)
+
+- **`archive/`**: Superseded documents with explanatory README
+
+**Next steps**:
+1. Implement Task 96 first (data parallelism - lower risk, higher impact)
+2. Then implement Task 39 (task parallelism - builds on Task 96 patterns)
