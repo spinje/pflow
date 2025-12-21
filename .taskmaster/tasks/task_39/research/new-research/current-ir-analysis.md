@@ -3,6 +3,7 @@
 **Purpose**: Understanding the current JSON IR schema to inform branching and parallel execution design.
 
 **Date**: 2025-01-23
+**Verified**: 2024-12-21 (against `src/pflow/core/ir_schema.py`)
 
 ---
 
@@ -19,10 +20,13 @@
   "mappings": {...},                  // Optional - proxy mappings
   "inputs": {...},                    // Optional - workflow input declarations
   "outputs": {...},                   // Optional - workflow output declarations
-  "enable_namespacing": true,         // Optional - default true
   "template_resolution_mode": "strict" // Optional - "strict" or "permissive"
 }
 ```
+
+> **Note**: `enable_namespacing` is NOT an IR schema field. Namespacing is controlled
+> at runtime by the compiler (default: enabled). This was incorrectly listed in earlier
+> versions of this document.
 
 ### Node Structure
 

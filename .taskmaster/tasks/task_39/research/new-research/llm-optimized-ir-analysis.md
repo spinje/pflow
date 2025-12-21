@@ -1,5 +1,14 @@
 # LLM-Optimized IR Design for Parallel and Branching Workflows
 
+**Updated**: 2024-12-21 (verified and clarified)
+
+> **Scope**: This document focuses on **task parallelism** (fan-out/fan-in with different operations).
+> For **data parallelism** (same operation on multiple items), see Task 96.
+
+> **Important Correction**: Earlier versions suggested using `AsyncParallelBatchNode` for task parallelism.
+> This is incorrect - that class is for data parallelism. Task parallelism requires a custom
+> `ParallelGroupNode` implementation since PocketFlow's Flow class doesn't support fan-out.
+
 ## Design Principles for LLM-Friendly IR
 
 ### What Makes IR LLM-Friendly?
@@ -278,7 +287,10 @@ b = LlmNode()
 a >> b
 ```
 
-### Parallel Block → AsyncParallelBatchNode Pattern
+### Parallel Block → Custom ParallelGroupNode
+
+> **Note**: PocketFlow's `AsyncParallelBatchNode` is for DATA parallelism (same op, many items).
+> For TASK parallelism (different ops, same data), we need a custom implementation.
 
 ```json
 {"parallel": [
@@ -290,25 +302,34 @@ a >> b
 
 Compiles to:
 ```python
-# Option 1: Synthetic barrier node
-class ParallelGroup(AsyncParallelBatchNode):
-    async def prep_async(self, shared):
-        return ["t1", "t2", "t3"]
+# Custom ParallelGroupNode (must be implemented for Task 39)
+class ParallelGroupNode(Node):
+    """Synthetic node that executes different child nodes concurrently."""
 
-    async def exec_async(self, item):
-        if item == "t1":
-            return await t1.run_async(shared)
-        # ... etc
+    def __init__(self, child_nodes: list[Node]):
+        super().__init__()
+        self.children = child_nodes
 
-# Option 2: Custom parallel orchestrator
+    def _run(self, shared):
+        # Use ThreadPoolExecutor for sync nodes
+        with ThreadPoolExecutor() as executor:
+            futures = [executor.submit(child._run, shared) for child in self.children]
+            results = [f.result() for f in futures]
+        return "default"
+
+# Or async version:
 async def run_parallel(shared):
     results = await asyncio.gather(
-        t1.run_async(shared),
-        t2.run_async(shared),
-        t3.run_async(shared)
+        asyncio.to_thread(t1._run, shared),
+        asyncio.to_thread(t2._run, shared),
+        asyncio.to_thread(t3._run, shared)
     )
     return results
 ```
+
+**Key difference from AsyncParallelBatchNode:**
+- `AsyncParallelBatchNode`: Same `exec_async()` called N times with different items
+- `ParallelGroupNode`: Different nodes, each with their own logic, run concurrently
 
 ### Inline `next` → Action-Based Transitions
 
@@ -373,6 +394,9 @@ validate - "rejected" >> error
 
 ### Pattern 2: Conditional Parallel (Fan-Out Based on Data)
 
+> **Note**: This pattern uses data parallelism (Task 96) - same operation on multiple items.
+> The `batch` configuration shown here is a PROPOSED syntax, not yet implemented.
+
 ```json
 {
   "pipeline": [
@@ -383,11 +407,14 @@ validate - "rejected" >> error
     },
     {
       "id": "translate_all",
-      "type": "llm-batch",
-      "params": {
+      "type": "llm",
+      "batch": {
         "items": "${detect_languages.languages}",
-        "prompt": "Translate to {{item}}: ${input}",
+        "as": "target_lang",
         "parallel": true
+      },
+      "params": {
+        "prompt": "Translate to ${target_lang}: ${input}"
       }
     },
     {
@@ -399,7 +426,7 @@ validate - "rejected" >> error
 }
 ```
 
-**Semantics**: Use batch node for data-driven parallelism.
+**Semantics**: Use batch configuration for data-driven parallelism (see Task 96).
 
 ### Pattern 3: Error Recovery with Retry Loop
 

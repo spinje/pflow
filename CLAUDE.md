@@ -478,7 +478,8 @@ First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0):
-- ⏳ Task 39: Support Parallel Execution in Workflows
+- ⏳ Task 96: Support Batch Processing in Workflows (data parallelism - uses existing PocketFlow BatchNode)
+- ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation

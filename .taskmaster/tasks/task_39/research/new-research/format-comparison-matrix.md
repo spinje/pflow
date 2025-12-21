@@ -1,5 +1,13 @@
 # IR Format Comparison Matrix
 
+**Updated**: 2024-12-21 (verified and clarified)
+
+> **Scope**: This document focuses on **task parallelism** IR formats.
+> For **data parallelism**, see Task 96.
+
+> **Note**: Examples using `llm-batch` or batch node patterns are PROPOSED syntax
+> for Task 96, not yet implemented in pflow.
+
 ## Real-World Example: Multi-Language Translation Pipeline
 
 **User Request**: "Fetch article from URL, translate it into English, Spanish, and Chinese in parallel, then combine the translations into a summary"
