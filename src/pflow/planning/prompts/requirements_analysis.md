@@ -33,6 +33,7 @@ Input is **too vague** when:
 - Missing ACTION: "the deployment", "that thing"
 - Missing TARGET: "process it", "handle this"
 - Too generic: "do the usual", "the standard process"
+- Unspecified data sources: "read a file", "fetch from the API", "get the data" (without specifying WHICH file/endpoint/data)
 
 Input is **clear enough** when:
 - Has clear action + target: "generate changelog", "analyze code"
@@ -75,11 +76,19 @@ Steps:
 
 > Note: The input has been templatized, so that you are not dealing with the raw values, but with the ${param_name} placeholders. This is to ensure you are not accidentally extracting the raw values or letting them influence your output.
 
-### Example 2: Too Vague
+### Example 2: Too Vague (missing action/target)
 Input: "process the data"
 
 is_clear: false
 clarification_needed: "Please specify: 1) What data to process 2) What type of processing 3) Expected output format"
+
+### Example 3: Too Vague (unspecified data source)
+Input: "read a file and summarize it"
+
+is_clear: false
+clarification_needed: "Which file should I read? Please specify the file path or name."
+
+> Note: "read a file" without specifying WHICH file is too vague - there is no sensible default for input files. Compare with "write to a file" which CAN have a default output path.
 
 Remember: Extract WHAT needs to be done, not HOW to do it. The planning phase will determine HOW.
 

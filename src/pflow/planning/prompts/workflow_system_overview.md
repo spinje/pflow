@@ -25,7 +25,7 @@ Think of it like a recipe: inputs are the ingredients users bring, nodes are the
 - User says "write hello to file.txt" → Create inputs for content ("hello") and file_path ("file.txt")
 - Do NOT create inputs for optional parameters unless user mentioned them
 - Use hardcoded values for defaults: `"encoding": "utf-8"` not `"encoding": "${encoding}"`
-- Focus on only creating inputs for user-provided values. If your create additional inputs, make sure they have a good default value and make them required: false or the workflow will fail to run
+- Focus on only creating inputs for user-provided values. Any input without an explicit user value MUST have a sensible default and required: false, or the workflow will fail to run
 
 ## Critical: Sequential Execution Only
 
@@ -189,7 +189,8 @@ Here's a real workflow showing inputs, nodes with outputs, and complete data flo
     "output_file": {
       "type": "string",
       "description": "Path where the report will be saved",
-      "required": true
+      "required": false,
+      "default": "report.md"
     }
   },
   "nodes": [
