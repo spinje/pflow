@@ -491,6 +491,7 @@ Version (v0.8.0):
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
 
 Version (v1.0.0):
+- ⏳ Task 97: OAuth Authentication for Remote MCP Servers
 - ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 87: Implement sandbox runtime for Shell Node
 - ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
