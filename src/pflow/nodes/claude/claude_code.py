@@ -11,16 +11,19 @@ Interface:
 - Reads: shared["output_schema"]: dict  # JSON schema for structured outputs (optional)
 - Writes: shared["result"]: any  # Response - string or dict with schema keys
 - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
-- Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage)
+- Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage, session_id)
 - Params: working_directory: str  # Project root directory (default: os.getcwd())
 - Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
-- Params: allowed_tools: list  # Permitted tools (default: ["Read", "Write", "Edit", "Bash"])
+- Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
 - Params: max_turns: int  # Maximum conversation turns (default: 50)
 - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
+- Params: timeout: int  # Execution timeout in seconds (default: 300, max: 3600)
 - Params: system_prompt: str  # System instructions for Claude (optional)
+- Params: resume: str  # Session ID to resume a previous conversation (optional)
 
 Note: When output_schema is provided, the result is a dict with schema keys.
 Access values as shared["result"]["key"] in templates: ${node.result.key}
+Session ID is available at ${node._claude_metadata.session_id} for chaining sessions.
 """
 
 import asyncio
@@ -95,6 +98,7 @@ class ClaudeCodeNode(Node):
     - Writes: shared["_claude_metadata"]: dict  # Execution metadata
         - duration_ms: int  # Execution time in milliseconds
         - total_cost_usd: float  # Total cost in USD
+        - session_id: str  # Session ID for resuming conversations
         - usage: dict  # Token usage information
             - input_tokens: int  # Number of input tokens
             - output_tokens: int  # Number of output tokens
@@ -102,10 +106,12 @@ class ClaudeCodeNode(Node):
             - cache_read_input_tokens: int  # Cache read tokens (if applicable)
     - Params: working_directory: str  # Project root directory (default: os.getcwd())
     - Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
-    - Params: allowed_tools: list  # Permitted tools (default: ["Read", "Write", "Edit", "Bash"])
+    - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
     - Params: max_turns: int  # Maximum conversation turns (default: 50)
     - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
+    - Params: timeout: int  # Execution timeout in seconds (default: 300, range: 30-3600)
     - Params: system_prompt: str  # System instructions for Claude (optional)
+    - Params: resume: str  # Session ID to resume a previous conversation (optional)
 
     Authentication:
         The Claude Code SDK supports two authentication methods:
@@ -154,7 +160,6 @@ class ClaudeCodeNode(Node):
         """Initialize with conservative retry settings for expensive API calls."""
         # Only 2 attempts total (1 initial + 1 retry) due to API cost
         super().__init__(max_retries=2, wait=1.0)
-        self._timeout: int = 300  # Default 5 minutes timeout
 
     def _validate_task(self, task: Any) -> str:
         """Validate task parameter."""
@@ -204,12 +209,16 @@ class ClaudeCodeNode(Node):
             raise ValueError(f"Restricted directory: {working_directory}")
         return working_directory
 
-    def _validate_tools(self, allowed_tools: list) -> list:
-        """Validate allowed tools list."""
-        valid_tools = ["Read", "Write", "Edit", "Bash"]
-        for tool in allowed_tools:
-            if tool not in valid_tools:
-                raise ValueError(f"Invalid tool '{tool}'. Valid tools: {valid_tools}")
+    def _validate_tools(self, allowed_tools: Optional[list]) -> Optional[list]:
+        """Validate allowed tools list.
+
+        If None or empty, all tools are available (SDK default).
+        If provided, pass through to SDK without validation - let SDK handle unknown tools.
+        """
+        if not allowed_tools:
+            return None  # All tools available
+        if not isinstance(allowed_tools, list):
+            raise TypeError(f"allowed_tools must be a list, got {type(allowed_tools).__name__}")
         return allowed_tools
 
     def _validate_context(self, context: Any) -> Optional[Union[str, dict]]:
@@ -248,6 +257,27 @@ class ClaudeCodeNode(Node):
                 f"Invalid max_thinking_tokens: {max_thinking_tokens}. Must be integer between 1000 and 100000."
             ) from None
 
+    def _validate_timeout(self, timeout: Any) -> int:
+        """Validate and convert timeout parameter."""
+        default_timeout = 300  # 5 minutes default
+        if timeout is None:
+            return default_timeout
+        try:
+            timeout_int = int(timeout)
+            if timeout_int < 30 or timeout_int > 3600:
+                raise ValueError
+            return timeout_int
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid timeout: {timeout}. Must be integer between 30 and 3600 seconds.") from None
+
+    def _validate_resume(self, resume: Any) -> Optional[str]:
+        """Validate resume session ID parameter."""
+        if not resume:
+            return None
+        if not isinstance(resume, str):
+            raise TypeError(f"resume must be a string (session ID), got {type(resume).__name__}")
+        return resume
+
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Prepare Claude Code execution parameters.
 
@@ -271,8 +301,8 @@ class ClaudeCodeNode(Node):
         # Get model with fallback
         model = self.params.get("model", "claude-sonnet-4-20250514")
 
-        # Validate tools
-        allowed_tools = self._validate_tools(self.params.get("allowed_tools", ["Read", "Write", "Edit", "Bash"]))
+        # Validate tools (None = all tools available, including Task for subagents)
+        allowed_tools = self._validate_tools(self.params.get("allowed_tools"))
 
         # Validate numeric parameters
         max_turns = self._validate_max_turns(self.params.get("max_turns", 50))
@@ -280,6 +310,12 @@ class ClaudeCodeNode(Node):
 
         # Get system prompt
         system_prompt = self.params.get("system_prompt", "")
+
+        # Session management
+        resume = self._validate_resume(self.params.get("resume"))
+
+        # Timeout (default 300s, configurable for long multi-agent tasks)
+        timeout = self._validate_timeout(self.params.get("timeout"))
 
         logger.info(f"Prepared Claude Code execution for task: {task[:100]}...")
 
@@ -293,6 +329,8 @@ class ClaudeCodeNode(Node):
             "max_turns": max_turns,
             "max_thinking_tokens": max_thinking_tokens,
             "system_prompt": system_prompt,
+            "resume": resume,
+            "timeout": timeout,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -348,17 +386,25 @@ class ClaudeCodeNode(Node):
         Returns:
             ClaudeCodeOptions configured for execution
         """
-        return ClaudeCodeOptions(
-            model=prep_res["model"],
-            max_thinking_tokens=prep_res["max_thinking_tokens"],  # NOT max_tokens!
-            allowed_tools=prep_res["allowed_tools"],
-            system_prompt=system_prompt,
-            max_turns=prep_res["max_turns"],
-            cwd=prep_res["working_directory"],
-            permission_mode="bypassPermissions",  # Always bypass prompts in autonomous workflows
-            # Note: Do NOT use extra_args=["--output-format", "json"] as it breaks the SDK
-            # The SDK properly assembles streaming responses and provides metadata via ResultMessage
-        )
+        # Build base options
+        options_kwargs: dict[str, Any] = {
+            "model": prep_res["model"],
+            "max_thinking_tokens": prep_res["max_thinking_tokens"],
+            "system_prompt": system_prompt,
+            "max_turns": prep_res["max_turns"],
+            "cwd": prep_res["working_directory"],
+            "permission_mode": "bypassPermissions",  # Always bypass prompts in autonomous workflows
+        }
+
+        # Only pass allowed_tools if explicitly set (None = all tools including Task for subagents)
+        if prep_res["allowed_tools"] is not None:
+            options_kwargs["allowed_tools"] = prep_res["allowed_tools"]
+
+        # Add session resumption if provided
+        if prep_res["resume"]:
+            options_kwargs["resume"] = prep_res["resume"]
+
+        return ClaudeCodeOptions(**options_kwargs)
 
     async def _execute_with_timeout(
         self, prompt: str, options: ClaudeCodeOptions, prep_res: dict[str, Any]
@@ -373,15 +419,18 @@ class ClaudeCodeNode(Node):
         Returns:
             Dictionary with execution results
         """
+        # Use configurable timeout from prep_res
+        timeout = prep_res["timeout"]
+
         # Handle timeout at asyncio level (SDK has no timeout parameter)
         timeout_context = getattr(asyncio, "timeout", None)
         if timeout_context is not None:
             # Python 3.11+
-            async with timeout_context(self._timeout):
+            async with timeout_context(timeout):
                 return await self._run_claude_session(prompt, options, prep_res)
         else:
             # Python 3.10 fallback
-            return await asyncio.wait_for(self._run_claude_session(prompt, options, prep_res), timeout=self._timeout)
+            return await asyncio.wait_for(self._run_claude_session(prompt, options, prep_res), timeout=timeout)
 
     async def _run_claude_session(
         self, prompt: str, options: ClaudeCodeOptions, prep_res: dict[str, Any]
@@ -591,10 +640,11 @@ class ClaudeCodeNode(Node):
 
         # Handle timeout
         if isinstance(exc, asyncio.TimeoutError):
+            timeout = prep_res.get("timeout", 300)
             raise ValueError(  # noqa: TRY004 - This is a timeout error, not a type error
-                f"Claude Code execution timed out after {self._timeout} seconds. "
+                f"Claude Code execution timed out after {timeout} seconds. "
                 "The task may be too complex or the system may be slow. "
-                "Consider breaking the task into smaller parts."
+                "Consider increasing timeout or breaking the task into smaller parts."
             ) from None
 
         # Handle rate limiting

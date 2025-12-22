@@ -312,16 +312,17 @@ def test_timeout_error(claude_node):
     claude_node.shared = shared
 
     async def mock_timeout(*args, **kwargs):
-        await asyncio.sleep(301)  # Exceed timeout
+        await asyncio.sleep(100)  # Exceed timeout (will be cut short by 0.1s timeout)
         yield AssistantMessage(content=[TextBlock(text="Never reached")])
 
     with patch("pflow.nodes.claude.claude_code.query") as mock_query:
         mock_query.return_value = mock_timeout()
 
-        # Speed up test with shorter timeout
-        claude_node._timeout = 0.1
-
+        # Speed up test with shorter timeout via params (minimum allowed is 30s, but we patch it)
+        claude_node.params = {"timeout": 30}  # Use minimum allowed timeout
         prep_res = claude_node.prep(shared)
+        # Override with very short timeout for testing (bypass validation)
+        prep_res["timeout"] = 0.1
 
         # Execute should timeout
         with pytest.raises(asyncio.TimeoutError):
@@ -332,7 +333,7 @@ def test_timeout_error(claude_node):
             claude_node.exec_fallback(prep_res, asyncio.TimeoutError())
 
         assert "timed out" in str(fallback_exc.value).lower()
-        assert "0.1 seconds" in str(fallback_exc.value) or "300 seconds" in str(fallback_exc.value)
+        assert "0.1 seconds" in str(fallback_exc.value)
 
 
 # Test Criteria 14: CLINotFoundError handling → Correct error transformation
@@ -416,24 +417,82 @@ def test_process_error_handling(claude_node):
         assert "Command not found" in str(fallback_exc.value)
 
 
-# Test Criteria 17: Tool whitelist enforcement → Only ["Read", "Write", "Edit", "Bash"] allowed
-def test_tool_whitelist_enforcement(claude_node):
-    """Test that only whitelisted tools are allowed."""
+# Test Criteria 17: Tool configuration → All tools available by default, pass through when specified
+def test_tool_configuration(claude_node):
+    """Test that tools are passed through to SDK without validation.
+
+    By default (allowed_tools=None), all tools are available including Task for subagents.
+    When explicitly specified, tools are passed through to SDK for validation.
+    """
     shared = {"task": "test task"}
 
-    # Valid tools should work
-    valid_tools = ["Read", "Write", "Edit", "Bash"]
-    claude_node.params = {"allowed_tools": valid_tools}
+    # Default: None = all tools available (including Task for subagents)
+    claude_node.params = {}
     prep_res = claude_node.prep(shared)
-    assert prep_res["allowed_tools"] == valid_tools
+    assert prep_res["allowed_tools"] is None  # None = SDK default (all tools)
 
-    # Invalid tool should fail
-    claude_node.params = {"allowed_tools": ["Read", "InvalidTool"]}
+    # Explicit tools are passed through without validation
+    explicit_tools = ["Read", "Write", "Edit", "Bash"]
+    claude_node.params = {"allowed_tools": explicit_tools}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["allowed_tools"] == explicit_tools
+
+    # Task tool (for subagents) can now be explicitly included
+    tools_with_task = ["Read", "Write", "Task", "Glob", "Grep"]
+    claude_node.params = {"allowed_tools": tools_with_task}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["allowed_tools"] == tools_with_task
+    assert "Task" in prep_res["allowed_tools"]  # Task tool for subagents
+
+
+# Test: Resume parameter for session continuation
+def test_resume_parameter(claude_node):
+    """Test that resume parameter is validated and passed through."""
+    shared = {"task": "test task"}
+
+    # Default: None
+    claude_node.params = {}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["resume"] is None
+
+    # Valid session ID
+    claude_node.params = {"resume": "session-abc123"}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["resume"] == "session-abc123"
+
+    # Invalid type should raise
+    claude_node.params = {"resume": 12345}  # Not a string
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "resume must be a string" in str(exc_info.value)
+
+
+# Test: Timeout parameter configuration
+def test_timeout_parameter(claude_node):
+    """Test that timeout parameter is validated and configurable."""
+    shared = {"task": "test task"}
+
+    # Default: 300 seconds
+    claude_node.params = {}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["timeout"] == 300
+
+    # Custom timeout
+    claude_node.params = {"timeout": 600}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["timeout"] == 600
+
+    # Too short (< 30s)
+    claude_node.params = {"timeout": 10}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
+    assert "between 30 and 3600" in str(exc_info.value)
 
-    assert "Invalid tool 'InvalidTool'" in str(exc_info.value)
-    assert "Valid tools: ['Read', 'Write', 'Edit', 'Bash']" in str(exc_info.value)
+    # Too long (> 3600s)
+    claude_node.params = {"timeout": 5000}
+    with pytest.raises(ValueError) as exc_info:
+        claude_node.prep(shared)
+    assert "between 30 and 3600" in str(exc_info.value)
 
 
 # Test Criteria 18: Schema to prompt conversion → System prompt contains JSON format
@@ -774,7 +833,7 @@ def test_retry_configuration(claude_node):
     # Node should be configured for only 2 attempts total (expensive API)
     assert claude_node.max_retries == 2
     assert claude_node.wait == 1.0
-    assert claude_node._timeout == 300  # 5 minutes default
+    # Timeout is now configurable via params, default 300s tested in test_timeout_parameter
 
 
 def test_generic_error_fallback(claude_node):
