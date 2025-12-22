@@ -30,7 +30,7 @@ The mock is automatically applied to all tests via `tests/conftest.py`. Tests ca
 def test_something(mock_llm_responses):
     # Configure what the LLM will return
     mock_llm_responses.set_response(
-        "anthropic/claude-sonnet-4-0",
+        "anthropic/claude-sonnet-4-5",
         WorkflowDecision,
         {"found": True, "workflow_name": "test-workflow"}
     )

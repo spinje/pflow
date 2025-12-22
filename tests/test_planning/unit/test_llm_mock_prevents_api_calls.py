@@ -14,7 +14,7 @@ class TestLLMMockPreventsAPICalls:
         """Test that discovery node uses the mock instead of real API."""
         # Configure a specific response
         mock_llm_responses.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             WorkflowDecision,
             {
                 "found": True,
@@ -29,7 +29,7 @@ class TestLLMMockPreventsAPICalls:
         prep_res = {
             "user_input": "test query",
             "discovery_context": "test context",
-            "model_name": "anthropic/claude-sonnet-4-0",
+            "model_name": "anthropic/claude-sonnet-4-5",
             "temperature": 0.0,
         }
 
@@ -44,7 +44,7 @@ class TestLLMMockPreventsAPICalls:
 
         # Verify the mock was called
         assert len(mock_llm_responses.call_history) == 1
-        assert mock_llm_responses.call_history[0]["model"] == "anthropic/claude-sonnet-4-0"
+        assert mock_llm_responses.call_history[0]["model"] == "anthropic/claude-sonnet-4-5"
 
     def test_mock_applies_automatically_without_explicit_patch(self, mock_llm_responses):
         """Test that mock is auto-applied without needing explicit @patch."""
@@ -52,7 +52,7 @@ class TestLLMMockPreventsAPICalls:
 
         # Configure response
         mock_llm_responses.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             WorkflowDecision,
             {"found": False, "workflow_name": None, "confidence": 0.1, "reasoning": "Auto-mock working"},
         )
@@ -62,7 +62,7 @@ class TestLLMMockPreventsAPICalls:
         result = node.exec({
             "user_input": "test",
             "discovery_context": "context",
-            "model_name": "anthropic/claude-sonnet-4-0",
+            "model_name": "anthropic/claude-sonnet-4-5",
             "temperature": 0.0,
         })
 
@@ -79,7 +79,7 @@ class TestLLMMockPreventsAPICalls:
         node.exec({
             "user_input": "test",
             "discovery_context": "context",
-            "model_name": "anthropic/claude-sonnet-4-0",
+            "model_name": "anthropic/claude-sonnet-4-5",
             "temperature": 0.0,
         })
 

@@ -42,7 +42,7 @@ def mock_llm_responses(request):
     Usage:
         def test_something(mock_llm_responses):
             mock_llm_responses.set_response(
-                "anthropic/claude-sonnet-4-0",
+                "anthropic/claude-sonnet-4-5",
                 WorkflowDecision,
                 {"found": True, "workflow_name": "test"}
             )

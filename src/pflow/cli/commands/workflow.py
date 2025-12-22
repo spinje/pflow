@@ -139,12 +139,13 @@ def discover_workflows(query: str) -> None:
     # Get LLM model from settings → auto-detect → fallback
     discovery_model = get_model_for_feature("discovery")
 
-    # Create and run discovery node
+    # Create discovery node and set model via params (PocketFlow convention)
     node = WorkflowDiscoveryNode()
+    node.params["model"] = discovery_model
+
     shared = {
         "user_input": query,
         "workflow_manager": WorkflowManager(),
-        "model_name": discovery_model,  # Use configured model (any provider)
     }
 
     try:

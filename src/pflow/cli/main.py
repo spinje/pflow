@@ -2204,7 +2204,7 @@ def _check_llm_configuration(verbose: bool) -> None:
 
     # Quick check to see if API key is configured
     # We don't actually call the API here, just check configuration
-    model_name = "anthropic/claude-sonnet-4-0"
+    model_name = "anthropic/claude-sonnet-4-5"
     try:
         _ = llm.get_model(model_name)
         # The model loaded successfully - LLM is configured

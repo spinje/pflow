@@ -151,7 +151,7 @@ class TestDiscoveryErrorHandling:
             prep_res = {
                 "user_input": "test",
                 "discovery_context": "context",
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 
@@ -206,7 +206,7 @@ class TestDiscoveryErrorHandling:
             prep_res = {
                 "user_input": long_input,
                 "discovery_context": "context",
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 

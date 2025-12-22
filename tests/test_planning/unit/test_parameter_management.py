@@ -125,7 +125,7 @@ class TestParameterDiscoveryNode:
         """Test node extracts named parameters from user input."""
         # Configure the global mock to return the expected response
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             ParameterDiscovery,
             {
                 "parameters": {"filename": "report.csv", "limit": "20", "format": "json"},
@@ -158,7 +158,7 @@ class TestParameterDiscoveryNode:
         """Test node handles empty or minimal input without errors."""
         # Configure the global mock to return empty parameters
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             ParameterDiscovery,
             {
                 "parameters": {},
@@ -183,7 +183,7 @@ class TestParameterDiscoveryNode:
         """Test node recognizes when stdin contains parameters."""
         # Configure the global mock to indicate stdin as parameter source
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             ParameterDiscovery,
             {
                 "parameters": {},
@@ -209,7 +209,7 @@ class TestParameterDiscoveryNode:
         """Test model is loaded in exec(), not __init__()."""
         # Configure the global mock
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             ParameterDiscovery,
             {
                 "parameters": {},
@@ -262,7 +262,7 @@ class TestParameterMappingNode:
         """Test node does INDEPENDENT extraction, not using discovered_params."""
         # Configure the global mock
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             ParameterExtraction,
             {
                 "extracted": {"input_file": "data.csv", "limit": "50"},

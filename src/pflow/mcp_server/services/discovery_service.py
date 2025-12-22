@@ -32,12 +32,17 @@ class DiscoveryService(BaseService):
         Returns:
             Markdown formatted string with discovery results (same as CLI)
         """
+        from pflow.core.llm_config import get_model_for_feature
         from pflow.core.workflow_manager import WorkflowManager
         from pflow.planning.nodes import WorkflowDiscoveryNode
 
         # Create fresh instances (CRITICAL for stateless pattern)
         node = WorkflowDiscoveryNode()
         workflow_manager = WorkflowManager()
+
+        # Set model via params (PocketFlow convention)
+        discovery_model = get_model_for_feature("discovery")
+        node.params["model"] = discovery_model
 
         # Build context for discovery node
         shared = {
@@ -46,7 +51,7 @@ class DiscoveryService(BaseService):
         }
 
         # Run discovery
-        logger.debug(f"Running workflow discovery for: {query}")
+        logger.debug(f"Running workflow discovery for: {query} with model: {discovery_model}")
         action = node.run(shared)
 
         # Extract results from shared store
@@ -95,12 +100,17 @@ class DiscoveryService(BaseService):
         Returns:
             Markdown formatted string with selected components (same as CLI)
         """
+        from pflow.core.llm_config import get_model_for_feature
         from pflow.core.workflow_manager import WorkflowManager
         from pflow.planning.nodes import ComponentBrowsingNode
 
         # Create fresh instances
         node = ComponentBrowsingNode()
         workflow_manager = WorkflowManager()
+
+        # Set model via params (PocketFlow convention)
+        discovery_model = get_model_for_feature("discovery")
+        node.params["model"] = discovery_model
 
         # Build context for browsing node
         shared = {
@@ -111,7 +121,7 @@ class DiscoveryService(BaseService):
         }
 
         # Run component discovery
-        logger.debug(f"Running component discovery for: {task}")
+        logger.debug(f"Running component discovery for: {task} with model: {discovery_model}")
         action = node.run(shared)
 
         # Extract planning context (markdown formatted)

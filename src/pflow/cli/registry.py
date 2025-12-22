@@ -651,11 +651,11 @@ def discover_nodes(query: str) -> None:
         "workflow_manager": workflow_manager,  # Required for workflow context
         "current_date": datetime.now().strftime("%Y-%m-%d"),  # Standard context
         "cache_planner": False,  # Disable cache for CLI (no planner context)
-        "model_name": discovery_model,  # Use configured model (any provider)
     }
 
-    # Create and run browsing node
+    # Create browsing node and set model via params (PocketFlow convention)
     node = ComponentBrowsingNode()
+    node.params["model"] = discovery_model
 
     try:
         node.run(shared)

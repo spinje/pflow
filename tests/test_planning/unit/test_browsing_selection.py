@@ -101,7 +101,7 @@ class TestComponentBrowsingSelection:
             assert result["nodes_context"] == "nodes context"
             assert result["workflows_context"] == "workflows context"
             assert result["registry_metadata"] == mock_registry.load()
-            assert result["model_name"] == "anthropic/claude-sonnet-4-0"  # Default model
+            assert result["model_name"] == "anthropic/claude-sonnet-4-5"  # Default model
             assert result["temperature"] == 0.0  # Default temperature
 
             mock_build_nodes.assert_called_once_with(node_ids=None, registry_metadata=mock_registry.load())
@@ -130,14 +130,14 @@ class TestComponentBrowsingSelection:
                 "nodes_context": "test nodes context",
                 "workflows_context": "test workflows context",
                 "registry_metadata": {},
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 
             result = node.exec(prep_res)
 
             # Verify lazy loading of model happens in exec
-            mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-0")
+            mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-5")
 
             # Verify nested extraction worked
             assert result["node_ids"] == ["read-file", "llm", "write-file"]

@@ -225,7 +225,7 @@ class WorkflowDiscoveryNode(Node):
             raise ValueError("Missing required 'user_input' in shared store or params")
 
         # Configuration from params with defaults
-        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         temperature = self.params.get("temperature", 0.0)
 
         # Get WorkflowManager from shared store if available
@@ -484,7 +484,7 @@ class ComponentBrowsingNode(Node):
             raise ValueError("Missing required 'user_input' in shared store or params")
 
         # Configuration from params with defaults
-        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         temperature = self.params.get("temperature", 0.0)
 
         # Instantiate Registry directly (PocketFlow pattern)
@@ -834,7 +834,7 @@ class ParameterDiscoveryNode(Node):
             raise ValueError("Missing required 'user_input' in shared store or params")
 
         # Configuration from params with defaults
-        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         temperature = self.params.get("temperature", 0.0)
 
         # Check for stdin data (fallback parameter source)
@@ -1059,7 +1059,7 @@ class RequirementsAnalysisNode(Node):
             raise ValueError("Missing required input (templatized_input or user_input)")
 
         # Configuration from params with defaults
-        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         temperature = self.params.get("temperature", 0.0)
 
         # Get cache_planner flag from shared store
@@ -1414,7 +1414,7 @@ class PlanningNode(Node):
         discovered_params = shared.get("discovered_params")
 
         # Configuration from params with defaults
-        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         base_temperature = self.params.get("temperature", 0.3)  # Default for creative planning
 
         # Get complexity analysis from RequirementsAnalysisNode
@@ -1743,7 +1743,7 @@ class ParameterMappingNode(Node):
             logger.warning("ParameterMappingNode: No workflow IR available", extra={"phase": "prep"})
 
         # Configuration from params with defaults
-        model_name = self.params.get("model", "anthropic/claude-sonnet-4-0")
+        model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         temperature = self.params.get("temperature", 0.0)
 
         # Get stdin as fallback parameter source
@@ -2134,7 +2134,7 @@ class WorkflowGeneratorNode(Node):
         cache_planner = shared.get("cache_planner", False)
 
         return {
-            "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
+            "model_name": self.params.get("model", "anthropic/claude-sonnet-4-5"),
             "temperature": temperature,
             "planning_context": shared.get(
                 "planning_context", ""
@@ -2646,7 +2646,7 @@ class MetadataGenerationNode(Node):
             "planning_context": shared.get("planning_context", ""),
             "discovered_params": shared.get("discovered_params", {}),
             "extracted_params": shared.get("extracted_params", {}),  # Add extracted params from ParameterMappingNode
-            "model_name": self.params.get("model", "anthropic/claude-sonnet-4-0"),
+            "model_name": self.params.get("model", "anthropic/claude-sonnet-4-5"),
             "temperature": self.params.get("temperature", 0.3),  # Lower for consistency
             "cache_planner": cache_planner,
         }

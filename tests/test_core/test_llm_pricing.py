@@ -26,7 +26,7 @@ class TestLLMPricing:
     def test_cache_creation_pricing(self):
         """Test cache creation token pricing (2x premium)."""
         cost = calculate_llm_cost(
-            model="anthropic/claude-sonnet-4-0",
+            model="anthropic/claude-sonnet-4-5",
             input_tokens=1000,
             cache_creation_tokens=2000,
         )
@@ -40,7 +40,7 @@ class TestLLMPricing:
     def test_cache_read_pricing(self):
         """Test cache read token pricing (90% discount)."""
         cost = calculate_llm_cost(
-            model="anthropic/claude-sonnet-4-0",
+            model="anthropic/claude-sonnet-4-5",
             input_tokens=1000,
             cache_read_tokens=5000,
         )

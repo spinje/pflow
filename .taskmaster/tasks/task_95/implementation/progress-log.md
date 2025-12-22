@@ -759,3 +759,50 @@ Documentation was already correct - it described auto-detection for all LLM usag
 
 - `make check`: All passed ✅
 - `make test`: 3423 passed, 7 skipped ✅
+
+---
+
+## [2025-12-22] - Discovery Commands Model Configuration Bug Fix
+
+### Problem Found
+
+Discovery commands (`pflow registry discover`, `pflow workflow discover`) were ignoring user's configured model settings.
+
+**Root cause**: CLI passed model via `shared["model_name"]` but planning nodes read from `self.params.get("model")`.
+
+```python
+# CLI (broken)
+shared["model_name"] = discovery_model  # Written but never read
+node = ComponentBrowsingNode()
+node.run(shared)  # Node uses hardcoded default
+
+# Planner flow (correct)
+node.params = {"model": model}  # Set via factory
+node.run(shared)  # Node reads from params
+```
+
+### Solution
+
+Standardized on `node.params["model"]` (PocketFlow convention: params for config, shared store for data).
+
+| File | Change |
+|------|--------|
+| `cli/registry.py` | `node.params["model"] = discovery_model` |
+| `cli/commands/workflow.py` | `node.params["model"] = discovery_model` |
+| `mcp_server/services/discovery_service.py` | Added model detection + `node.params["model"]` |
+| `core/workflow_save_service.py` | `node.params["model"]` instead of `shared["model_name"]` |
+
+### Also Updated Default Model
+
+Changed planning node defaults from `claude-sonnet-4-0` to `claude-sonnet-4-5` for consistency with rest of codebase.
+
+### Registry Order is Deterministic
+
+Verified that node/workflow lists are sorted alphabetically (`context_builder.py` uses `sorted()` throughout), enabling prompt caching to work effectively.
+
+### Verification
+
+```
+make check → All passed ✅
+make test  → All passed ✅
+```

@@ -97,7 +97,7 @@ class TestSharedStoreContracts:
 
             assert result["user_input"] == "create a data pipeline"
             assert result["discovery_context"] == "test context"
-            assert result["model_name"] == "anthropic/claude-sonnet-4-0"  # Default model
+            assert result["model_name"] == "anthropic/claude-sonnet-4-5"  # Default model
             assert result["temperature"] == 0.0  # Default temperature
             mock_build.assert_called_once_with(workflow_names=None, workflow_manager=None)
 
@@ -121,14 +121,14 @@ class TestSharedStoreContracts:
             prep_res = {
                 "user_input": "create a data pipeline",
                 "discovery_context": "test context",
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 
             result = node.exec(prep_res)
 
             # Verify lazy loading of model happens in exec
-            mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-0")
+            mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-5")
 
             # Verify nested extraction worked
             assert result["found"] is True
@@ -153,7 +153,7 @@ class TestSharedStoreContracts:
             prep_res = {
                 "user_input": "do something unique",
                 "discovery_context": "test context",
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 
@@ -181,7 +181,7 @@ class TestSharedStoreContracts:
             prep_res = {
                 "user_input": "analyze CSV files",
                 "discovery_context": "available workflows and nodes here",
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 

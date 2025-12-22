@@ -129,7 +129,7 @@ def create_planner_flow(
             f"The planner currently doesn't support Gemini models due to llm-gemini library limitations.\n"
             f"You specified: {model}\n\n"
             f"Supported models:\n"
-            f"  - Anthropic: anthropic/claude-sonnet-4-0, claude-opus-4-0, etc.\n"
+            f"  - Anthropic: anthropic/claude-sonnet-4-5, claude-opus-4-0, etc.\n"
             f"  - OpenAI: gpt-4o, gpt-4o-mini, etc.\n\n"
             f"Technical details: The llm-gemini plugin uses the old response_schema API\n"
             f"which doesn't support complex schemas. Gemini 2.5 itself supports these via\n"

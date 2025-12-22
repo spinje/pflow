@@ -113,7 +113,7 @@ class TestWorkflowDiscoveryRouting:
         prep_res = {
             "user_input": "test request",
             "discovery_context": "",  # Empty = no workflows
-            "model_name": "anthropic/claude-sonnet-4-0",
+            "model_name": "anthropic/claude-sonnet-4-5",
             "temperature": 0.0,
             "cache_planner": False,
         }

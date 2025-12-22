@@ -224,7 +224,7 @@ class TestComponentBrowsingPrompt:
         assert "temperature" in prep_res
         assert "nodes_context" in prep_res
         assert "workflows_context" in prep_res
-        assert prep_res["model_name"] == "anthropic/claude-sonnet-4-0"
+        assert prep_res["model_name"] == "anthropic/claude-sonnet-4-5"
         assert prep_res["temperature"] == 0.0
 
     def _validate_exec_result(self, exec_res: dict) -> None:

@@ -254,7 +254,7 @@ class TestPathADiscoveryToParameter:
 
         # Set up responses for the expected LLM calls
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             WorkflowDecision,
             {
                 "found": True,
@@ -264,7 +264,7 @@ class TestPathADiscoveryToParameter:
             },
         )
         mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-0",
+            "anthropic/claude-sonnet-4-5",
             ParameterExtraction,
             {
                 "extracted": {"input_file": "data.csv"},

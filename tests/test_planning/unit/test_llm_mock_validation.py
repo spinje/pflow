@@ -65,7 +65,7 @@ class TestLLMMockValidation:
 
         # Configure response for discovery
         mock_get_model.set_response(
-            "anthropic/claude-sonnet-4-0",  # Default model used by discovery node
+            "anthropic/claude-sonnet-4-5",  # Default model used by discovery node
             WorkflowDecision,
             {
                 "found": True,
@@ -83,7 +83,7 @@ class TestLLMMockValidation:
             prep_res = {
                 "user_input": "generate a changelog",
                 "discovery_context": "Workflows: generate-changelog, create-report",
-                "model_name": "anthropic/claude-sonnet-4-0",
+                "model_name": "anthropic/claude-sonnet-4-5",
                 "temperature": 0.0,
             }
 
@@ -98,7 +98,7 @@ class TestLLMMockValidation:
 
             # Verify LLM was called
             assert len(mock_get_model.call_history) == 1
-            assert mock_get_model.call_history[0]["model"] == "anthropic/claude-sonnet-4-0"
+            assert mock_get_model.call_history[0]["model"] == "anthropic/claude-sonnet-4-5"
 
     def test_mock_reset_provides_isolation(self):
         """Test that reset() provides clean state between tests."""

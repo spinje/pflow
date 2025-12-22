@@ -396,7 +396,7 @@ class TestMetadataGenerationNode:
                 exec_res = metadata_node.exec(prep_res)
 
                 # Verify LLM was called
-                mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-0")
+                mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-5")
                 mock_model.prompt.assert_called_once()
 
                 # Verify rich metadata fields
@@ -471,7 +471,7 @@ class TestMetadataGenerationNode:
                 metadata_node.exec(prep_res)
 
                 # Verify Sonnet model is used for metadata generation
-                mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-0")
+                mock_get_model.assert_called_once_with("anthropic/claude-sonnet-4-5")
 
     def test_temperature_setting_for_consistency(self, metadata_node):
         """Test that metadata generation uses lower temperature for consistency."""
@@ -835,5 +835,5 @@ class TestMetadataGenerationNode:
         assert prep_res["user_input"] == "test input"
         assert prep_res["planning_context"] == "test context"
         assert prep_res["discovered_params"] == {"param1": "value1"}
-        assert prep_res["model_name"] == "anthropic/claude-sonnet-4-0"
+        assert prep_res["model_name"] == "anthropic/claude-sonnet-4-5"
         assert prep_res["temperature"] == 0.3

@@ -326,15 +326,16 @@ def generate_workflow_metadata(
         from pflow.planning.nodes import MetadataGenerationNode
 
         node = MetadataGenerationNode()
+
+        # Set model via params if provided (PocketFlow convention)
+        if model_name:
+            node.params["model"] = model_name
+
         shared: dict[str, Any] = {
             "generated_workflow": workflow_ir,
             "user_input": "",  # Not needed for metadata generation
             "cache_planner": False,  # Disable caching for metadata
         }
-
-        # Add model_name if provided (supports any LLM provider)
-        if model_name:
-            shared["model_name"] = model_name
 
         node.run(shared)
 
