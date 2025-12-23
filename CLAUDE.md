@@ -472,13 +472,12 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
 Next up:
-
+⏳ Task 96: Support Batch Processing in Workflows (data parallelism - uses existing PocketFlow BatchNode)
 
 First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0):
-- ⏳ Task 96: Support Batch Processing in Workflows (data parallelism - uses existing PocketFlow BatchNode)
 - ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
@@ -510,6 +509,7 @@ Later:
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
+- ⏳ Task 98: Architectural Refactor - First-Class IR Execution
 
 Deprecated Tasks?:
 - ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair and workflow iteratio
