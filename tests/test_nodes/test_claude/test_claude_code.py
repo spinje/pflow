@@ -1,9 +1,9 @@
 """Comprehensive tests for Claude Code Agentic Node.
 
 Tests criteria from the specification:
-1. Task missing → ValueError with "No task provided"
-2. Task empty string → ValueError with "No task provided"
-3. Task > 10000 chars → ValueError with "Task too long"
+1. Prompt missing → ValueError with "No prompt provided"
+2. Prompt empty string → ValueError with "Prompt cannot be empty"
+3. Prompt > 10000 chars → ValueError with "Prompt too long"
 4. Working directory missing → ValueError with path
 5. Working directory restricted → ValueError with "Restricted directory"
 6-7. Authentication now handled by SDK (tests removed)
@@ -82,16 +82,16 @@ mock_sdk_exceptions.ClaudeSDKError = ClaudeSDKError
 
 mock_sdk = Mock()
 mock_sdk.query = Mock()
-mock_sdk.ClaudeCodeOptions = Mock
+mock_sdk.ClaudeAgentOptions = Mock
 # Add exception classes to main mock_sdk module
 mock_sdk.CLINotFoundError = CLINotFoundError
 mock_sdk.CLIConnectionError = CLIConnectionError
 mock_sdk.ProcessError = ProcessError
 mock_sdk.ClaudeSDKError = ClaudeSDKError
 
-sys.modules["claude_code_sdk"] = mock_sdk
-sys.modules["claude_code_sdk.types"] = mock_sdk_types
-sys.modules["claude_code_sdk.exceptions"] = mock_sdk_exceptions
+sys.modules["claude_agent_sdk"] = mock_sdk
+sys.modules["claude_agent_sdk.types"] = mock_sdk_types
+sys.modules["claude_agent_sdk.exceptions"] = mock_sdk_exceptions
 
 # Now import the node after SDK mocking - E402 is expected here
 from pflow.nodes.claude.claude_code import ClaudeCodeNode  # noqa: E402
@@ -106,8 +106,8 @@ def claude_node():
 
 @pytest.fixture
 def shared_store():
-    """Create a basic shared store with task."""
-    return {"task": "Write a hello world function"}
+    """Create a basic shared store with prompt."""
+    return {"prompt": "Write a hello world function"}
 
 
 @pytest.fixture
@@ -122,39 +122,39 @@ def mock_query_success():
         yield mock
 
 
-# Test Criteria 1: Task missing → ValueError with "No task provided"
+# Test Criteria 1: Prompt missing → ValueError with "No prompt provided"
 def test_task_missing(claude_node):
-    """Test that missing task raises ValueError."""
+    """Test that missing prompt raises ValueError."""
     shared = {}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
-    assert "No task provided" in str(exc_info.value)
+    assert "No prompt provided" in str(exc_info.value)
 
 
-# Test Criteria 2: Task empty string → ValueError with "No task provided"
+# Test Criteria 2: Prompt empty string → ValueError with "cannot be empty"
 def test_task_empty_string(claude_node):
-    """Test that empty string task raises ValueError."""
-    shared = {"task": "   "}  # Whitespace only
+    """Test that empty string prompt raises ValueError."""
+    shared = {"prompt": "   "}  # Whitespace only
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
     assert "cannot be empty" in str(exc_info.value)
 
 
-# Test Criteria 3: Task > 10000 chars → ValueError with "Task too long"
+# Test Criteria 3: Prompt > 10000 chars → ValueError with "Prompt too long"
 def test_task_too_long(claude_node):
-    """Test that task over 10000 chars raises ValueError."""
-    shared = {"task": "x" * 10001}
+    """Test that prompt over 10000 chars raises ValueError."""
+    shared = {"prompt": "x" * 10001}
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
-    assert "Task too long" in str(exc_info.value)
+    assert "Prompt too long" in str(exc_info.value)
     assert "10001" in str(exc_info.value)
 
 
 # Test Criteria 4: Working directory missing → ValueError with path
 def test_working_directory_missing(claude_node):
     """Test that non-existent working directory raises ValueError."""
-    shared = {"task": "test task"}
-    claude_node.params = {"working_directory": "/nonexistent/path"}
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"cwd": "/nonexistent/path"}
 
     with pytest.raises(ValueError) as exc_info:
         claude_node.prep(shared)
@@ -165,11 +165,11 @@ def test_working_directory_missing(claude_node):
 # Test Criteria 5: Working directory restricted → ValueError with "Restricted directory"
 def test_working_directory_restricted(claude_node):
     """Test that restricted directories raise ValueError."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Test multiple restricted directories
     for restricted in ["/", "/etc", "/usr", "/bin"]:
-        claude_node.params = {"working_directory": restricted}
+        claude_node.params = {"cwd": restricted}
         with pytest.raises(ValueError) as exc_info:
             claude_node.prep(shared)
         assert "Restricted directory" in str(exc_info.value)
@@ -178,10 +178,10 @@ def test_working_directory_restricted(claude_node):
 # Note: Tests 6 & 7 (CLI/auth checking) removed as authentication is now handled by SDK
 
 
-# Test Criteria 8: Valid task without schema → "success" and shared["result"] populated
+# Test Criteria 8: Valid prompt without schema → "success" and shared["result"] populated
 def test_valid_task_without_schema(claude_node):
     """Test successful execution without output schema."""
-    shared = {"task": "Write a hello world function"}
+    shared = {"prompt": "Write a hello world function"}
     claude_node.shared = shared
 
     # Mock query response
@@ -208,11 +208,11 @@ def test_valid_task_without_schema(claude_node):
         assert "Hello, World!" in shared["result"]
 
 
-# Test Criteria 9: Valid task with schema → "success" and schema keys in shared
+# Test Criteria 9: Valid prompt with schema → "success" and schema keys in shared
 def test_valid_task_with_schema(claude_node):
     """Test successful execution with output schema."""
     shared = {
-        "task": "Review this code for issues",
+        "prompt": "Review this code for issues",
         "output_schema": {
             "risk_level": {"type": "str", "description": "high/medium/low"},
             "issues": {"type": "list", "description": "List of issues"},
@@ -248,7 +248,7 @@ def test_valid_task_with_schema(claude_node):
 def test_output_schema_invalid_keys(claude_node):
     """Test that invalid schema keys raise ValueError."""
     shared = {
-        "task": "test task",
+        "prompt": "test prompt",
         "output_schema": {
             "valid_key": {"type": "str"},
             "invalid-key": {"type": "str"},  # Invalid: contains hyphen
@@ -267,7 +267,7 @@ def test_output_schema_too_complex(claude_node):
     """Test that overly complex schema raises ValueError."""
     schema = {f"key_{i}": {"type": "str"} for i in range(51)}
     shared = {
-        "task": "test task",
+        "prompt": "test prompt",
         "output_schema": schema,
     }
 
@@ -281,7 +281,7 @@ def test_output_schema_too_complex(claude_node):
 # Test Criteria 12: Rate limit error → ValueError with retry message
 def test_rate_limit_error(claude_node):
     """Test rate limit error handling."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     async def mock_error(*args, **kwargs):
@@ -308,7 +308,7 @@ def test_rate_limit_error(claude_node):
 # Test Criteria 13: Timeout at 300s → ValueError with timeout message
 def test_timeout_error(claude_node):
     """Test timeout error handling."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     async def mock_timeout(*args, **kwargs):
@@ -339,7 +339,7 @@ def test_timeout_error(claude_node):
 # Test Criteria 14: CLINotFoundError handling → Correct error transformation
 def test_cli_not_found_error_handling(claude_node):
     """Test CLINotFoundError transformation."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     async def mock_cli_error(*args, **kwargs):
@@ -365,7 +365,7 @@ def test_cli_not_found_error_handling(claude_node):
 # Test Criteria 15: CLIConnectionError handling → Correct error transformation
 def test_cli_connection_error_handling(claude_node):
     """Test CLIConnectionError transformation."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     async def mock_conn_error(*args, **kwargs):
@@ -392,7 +392,7 @@ def test_cli_connection_error_handling(claude_node):
 # Test Criteria 16: ProcessError handling → Includes exit code
 def test_process_error_handling(claude_node):
     """Test ProcessError transformation with exit code."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     error = ProcessError(exit_code=127, stderr="Command not found")
@@ -424,7 +424,7 @@ def test_tool_configuration(claude_node):
     By default (allowed_tools=None), all tools are available including Task for subagents.
     When explicitly specified, tools are passed through to SDK for validation.
     """
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Default: None = all tools available (including Task for subagents)
     claude_node.params = {}
@@ -448,7 +448,7 @@ def test_tool_configuration(claude_node):
 # Test: Resume parameter for session continuation
 def test_resume_parameter(claude_node):
     """Test that resume parameter is validated and passed through."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Default: None
     claude_node.params = {}
@@ -470,7 +470,7 @@ def test_resume_parameter(claude_node):
 # Test: Timeout parameter configuration
 def test_timeout_parameter(claude_node):
     """Test that timeout parameter is validated and configurable."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Default: 300 seconds
     claude_node.params = {}
@@ -499,7 +499,7 @@ def test_timeout_parameter(claude_node):
 def test_schema_to_prompt_conversion(claude_node):
     """Test that schema is converted to JSON format instructions in system prompt."""
     shared = {
-        "task": "test task",
+        "prompt": "test prompt",
         "output_schema": {
             "summary": {"type": "str", "description": "Brief summary"},
             "score": {"type": "int", "description": "Score from 1-10"},
@@ -523,7 +523,7 @@ def test_schema_to_prompt_conversion(claude_node):
 def test_valid_json_response_storage(claude_node):
     """Test that valid JSON response is correctly parsed and stored."""
     shared = {
-        "task": "Analyze code",
+        "prompt": "Analyze code",
         "output_schema": {
             "complexity": {"type": "str", "description": "Code complexity"},
             "lines": {"type": "int", "description": "Number of lines"},
@@ -571,7 +571,7 @@ def test_valid_json_response_storage(claude_node):
 def test_invalid_json_response_fallback(claude_node):
     """Test that invalid JSON falls back to raw text storage."""
     shared = {
-        "task": "Analyze code",
+        "prompt": "Analyze code",
         "output_schema": {
             "summary": {"type": "str", "description": "Summary"},
         },
@@ -601,7 +601,7 @@ def test_invalid_json_response_fallback(claude_node):
 def test_partial_json_response(claude_node):
     """Test that partial JSON response stores None for missing keys."""
     shared = {
-        "task": "Analyze code",
+        "prompt": "Analyze code",
         "output_schema": {
             "found": {"type": "str", "description": "Found key"},
             "missing": {"type": "str", "description": "Missing key"},
@@ -634,7 +634,7 @@ def test_partial_json_response(claude_node):
 # Test Criteria 22: No response content → Empty result stored
 def test_no_response_content(claude_node):
     """Test that empty response stores empty result."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     # Mock empty response
@@ -660,7 +660,7 @@ def test_no_response_content(claude_node):
 def test_schema_merged_with_user_prompt(claude_node):
     """Test that schema instructions and user system prompt are both present."""
     shared = {
-        "task": "test task",
+        "prompt": "test prompt",
         "output_schema": {
             "result": {"type": "str", "description": "Result"},
         },
@@ -682,7 +682,7 @@ def test_schema_merged_with_user_prompt(claude_node):
 
 def test_max_thinking_tokens_validation(claude_node):
     """Test max_thinking_tokens parameter validation."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Valid range
     claude_node.params = {"max_thinking_tokens": 5000}
@@ -704,7 +704,7 @@ def test_max_thinking_tokens_validation(claude_node):
 
 def test_max_turns_validation(claude_node):
     """Test max_turns parameter validation."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Valid range
     claude_node.params = {"max_turns": 10}
@@ -724,30 +724,11 @@ def test_max_turns_validation(claude_node):
     assert "Invalid max_turns" in str(exc_info.value)
 
 
-def test_context_handling(claude_node):
-    """Test different context formats."""
-    shared = {"task": "test task"}
-
-    # String context
-    shared["context"] = "This is string context"
-    prep_res = claude_node.prep(shared)
-    prompt = claude_node._build_prompt(prep_res)
-    assert "Context:\nThis is string context" in prompt
-
-    # Dict context
-    shared["context"] = {"key": "value", "number": 42}
-    prep_res = claude_node.prep(shared)
-    prompt = claude_node._build_prompt(prep_res)
-    assert "Context:\n" in prompt
-    assert '"key": "value"' in prompt
-    assert '"number": 42' in prompt
-
-
 def test_tool_use_logging(claude_node, caplog):
     """Test that tool uses are logged."""
     import logging
 
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     claude_node.shared = shared
 
     # Mock response with tool uses
@@ -802,22 +783,22 @@ def test_json_extraction_strategies(claude_node):
 
 def test_working_directory_expansion(claude_node):
     """Test that working directory paths are expanded correctly."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
 
     # Test tilde expansion
     with patch("os.path.exists", return_value=True), patch("os.path.isdir", return_value=True):
-        claude_node.params = {"working_directory": "~/projects"}
+        claude_node.params = {"cwd": "~/projects"}
         prep_res = claude_node.prep(shared)
 
         # Should be expanded to absolute path
-        assert prep_res["working_directory"].startswith("/")
-        assert "~" not in prep_res["working_directory"]
+        assert prep_res["cwd"].startswith("/")
+        assert "~" not in prep_res["cwd"]
 
 
 def test_post_method(claude_node):
     """Test post method always returns 'default'."""
-    shared = {"task": "test"}
-    prep_res = {"task": "test"}
+    shared = {"prompt": "test"}
+    prep_res = {"prompt": "test"}
 
     # Create proper exec_res dict
     exec_res = {"result_text": "test completed", "tool_uses": [], "output_schema": None}
@@ -838,7 +819,7 @@ def test_retry_configuration(claude_node):
 
 def test_generic_error_fallback(claude_node):
     """Test generic error handling in exec_fallback."""
-    shared = {"task": "test task"}
+    shared = {"prompt": "test prompt"}
     prep_res = claude_node.prep(shared)
 
     # Generic exception
@@ -872,3 +853,99 @@ def test_no_temperature_parameter():
 
     # The real SDK ClaudeCodeOptions only accepts max_thinking_tokens
     # This test documents that the node correctly uses max_thinking_tokens
+
+
+# Sandbox parameter tests
+
+
+def test_sandbox_parameter_defaults(claude_node):
+    """Test sandbox parameter defaults to None."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {}
+    prep_res = claude_node.prep(shared)
+    assert prep_res.get("sandbox") is None
+
+
+def test_sandbox_parameter_valid_config(claude_node):
+    """Test valid sandbox configuration."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {
+        "sandbox": {
+            "enabled": True,
+            "autoAllowBashIfSandboxed": True,
+            "excludedCommands": ["docker", "kubectl"],
+            "network": {"allowLocalBinding": True},
+        }
+    }
+    prep_res = claude_node.prep(shared)
+    assert prep_res["sandbox"]["enabled"] is True
+    assert prep_res["sandbox"]["autoAllowBashIfSandboxed"] is True
+    assert prep_res["sandbox"]["excludedCommands"] == ["docker", "kubectl"]
+    assert prep_res["sandbox"]["network"]["allowLocalBinding"] is True
+
+
+def test_sandbox_parameter_minimal_config(claude_node):
+    """Test minimal sandbox configuration with just enabled."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"sandbox": {"enabled": True}}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["sandbox"]["enabled"] is True
+
+
+def test_sandbox_parameter_invalid_type(claude_node):
+    """Test sandbox rejects non-dict values."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"sandbox": "not a dict"}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "sandbox must be a dict" in str(exc_info.value)
+
+
+def test_sandbox_parameter_invalid_enabled_type(claude_node):
+    """Test sandbox['enabled'] must be bool."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"sandbox": {"enabled": "yes"}}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "sandbox['enabled'] must be bool" in str(exc_info.value)
+
+
+def test_sandbox_parameter_invalid_auto_allow_bash_type(claude_node):
+    """Test sandbox['autoAllowBashIfSandboxed'] must be bool."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"sandbox": {"autoAllowBashIfSandboxed": 1}}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "sandbox['autoAllowBashIfSandboxed'] must be bool" in str(exc_info.value)
+
+
+def test_sandbox_parameter_invalid_excluded_commands_type(claude_node):
+    """Test sandbox['excludedCommands'] must be list."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"sandbox": {"excludedCommands": "docker"}}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "sandbox['excludedCommands'] must be a list" in str(exc_info.value)
+
+
+def test_sandbox_parameter_invalid_network_type(claude_node):
+    """Test sandbox['network'] must be dict."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {"sandbox": {"network": "localhost"}}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "sandbox['network'] must be a dict" in str(exc_info.value)
+
+
+def test_sandbox_parameter_passes_unknown_keys(claude_node):
+    """Test that unknown sandbox keys are passed through for SDK forward compatibility."""
+    shared = {"prompt": "test prompt"}
+    claude_node.params = {
+        "sandbox": {
+            "enabled": True,
+            "futureOption": "some value",  # Unknown key should pass through
+        }
+    }
+    prep_res = claude_node.prep(shared)
+    assert prep_res["sandbox"]["enabled"] is True
+    assert prep_res["sandbox"]["futureOption"] == "some value"

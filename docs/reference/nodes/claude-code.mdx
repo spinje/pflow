@@ -20,24 +20,38 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 
 ## Parameters
 
-### Task parameters
+### Prompt parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `task` | str | Yes | - | Task description (max 10,000 chars) |
-| `context` | str/dict | No | - | Additional context for the task |
+| `prompt` | str | Yes | - | The prompt to send to Claude (max 10,000 chars) |
 | `output_schema` | dict | No | - | JSON schema for structured output |
 
 ### Execution parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `working_directory` | str | No | Current dir | Project root directory |
+| `cwd` | str | No | Current dir | Working directory for Claude |
 | `model` | str | No | `claude-sonnet-4-5` | Claude model to use |
-| `allowed_tools` | list | No | `["Read", "Write", "Edit", "Bash"]` | Permitted tools |
+| `allowed_tools` | list | No | All tools | Permitted tools |
 | `max_turns` | int | No | `50` | Maximum conversation turns (1-100) |
 | `max_thinking_tokens` | int | No | `8000` | Reasoning budget (1000-100000) |
+| `timeout` | int | No | `300` | Execution timeout in seconds (30-3600) |
 | `system_prompt` | str | No | - | Custom system instructions |
+| `resume` | str | No | - | Session ID to resume a previous conversation |
+| `sandbox` | dict | No | - | Sandbox configuration for command isolation |
+
+### Sandbox configuration
+
+The `sandbox` parameter controls command execution isolation. See the [Claude Agent SDK sandbox documentation](https://platform.claude.com/docs/en/agent-sdk/python#sandbox-configuration) for full details.
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `enabled` | bool | Enable sandbox mode |
+| `autoAllowBashIfSandboxed` | bool | Auto-allow bash when sandboxed |
+| `excludedCommands` | list | Commands that bypass sandbox (e.g., `["docker"]`) |
+| `allowUnsandboxedCommands` | bool | Allow model to request unsandboxed execution |
+| `network` | dict | Network settings (`allowLocalBinding`, `allowUnixSockets`) |
 
 ## Output
 
@@ -45,7 +59,6 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 |-----|------|-------------|
 | `result` | str/dict | Response text or parsed schema dict |
 | `_claude_metadata` | dict | Execution metadata (cost, duration, turns) |
-| `llm_usage` | dict | Token usage metrics |
 | `_schema_error` | str | JSON parse error (only if schema provided and parsing failed) |
 
 ### Metadata structure
@@ -54,8 +67,6 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 {
   "total_cost_usd": 0.0234,
   "duration_ms": 3450,
-  "duration_api_ms": 2800,
-  "num_turns": 2,
   "session_id": "abc123",
   "usage": {
     "input_tokens": 1500,
@@ -95,8 +106,7 @@ Use `output_schema` to get structured JSON responses:
   "id": "review",
   "type": "claude-code",
   "params": {
-    "task": "Review this code for security issues",
-    "context": "${code.content}",
+    "prompt": "Review this code for security issues: ${code.content}",
     "output_schema": {
       "risk_level": {
         "type": "str",
@@ -144,7 +154,7 @@ ${review.result.score}       → 6
       "id": "generate",
       "type": "claude-code",
       "params": {
-        "task": "Write a Python function to calculate Fibonacci numbers",
+        "prompt": "Write a Python function to calculate Fibonacci numbers",
         "max_turns": 1
       }
     }
@@ -166,8 +176,7 @@ ${review.result.score}       → 6
       "id": "review",
       "type": "claude-code",
       "params": {
-        "task": "Review this authentication code",
-        "context": "${read.content}",
+        "prompt": "Review this authentication code: ${read.content}",
         "output_schema": {
           "issues": { "type": "list", "description": "Problems found" },
           "suggestions": { "type": "list", "description": "Improvements" },
@@ -179,7 +188,7 @@ ${review.result.score}       → 6
 }
 ```
 
-### File modification
+### File modification with sandbox
 
 ```json
 {
@@ -188,9 +197,14 @@ ${review.result.score}       → 6
       "id": "refactor",
       "type": "claude-code",
       "params": {
-        "task": "Refactor the User class to use dataclasses",
-        "working_directory": "/path/to/project",
-        "allowed_tools": ["Read", "Write", "Edit"]
+        "prompt": "Refactor the User class to use dataclasses",
+        "cwd": "/path/to/project",
+        "allowed_tools": ["Read", "Write", "Edit"],
+        "sandbox": {
+          "enabled": true,
+          "autoAllowBashIfSandboxed": true,
+          "excludedCommands": ["docker"]
+        }
       }
     }
   ]
@@ -207,13 +221,23 @@ Control what Claude can do with `allowed_tools`:
 | `Write` | Create new files |
 | `Edit` | Modify existing files |
 | `Bash` | Execute shell commands |
+| `Task` | Spawn subagents |
+| `Glob` | Find files by pattern |
+| `Grep` | Search file contents |
+| `LS` | List directory contents |
+| `WebFetch` | Fetch web content |
+| `WebSearch` | Search the web |
 
-For read-only analysis, use `["Read"]`. For full capability, use all four (default).
+For read-only analysis, use `["Read", "Glob", "Grep", "LS"]`. For full capability, leave unset (default allows all tools).
+
+<Tip>
+  See the [Claude Agent SDK documentation](https://platform.claude.com/docs/en/agent-sdk/python) for the complete list of available tools and options.
+</Tip>
 
 ## Limitations
 
 - **Restricted directories**: Cannot use `/`, `/etc`, `/usr`, `/bin`, `/sbin`, `/lib`, `/sys`, `/proc` as working directory
-- **Timeout**: 5 minutes (300 seconds) default
+- **Timeout**: 5 minutes (300 seconds) default, configurable up to 1 hour
 - **Cost**: More expensive than simple LLM calls - use for tasks that need file access and iteration
 
 ## Error handling
@@ -222,7 +246,13 @@ For read-only analysis, use `["Read"]`. For full capability, use all four (defau
 |-------|-------|----------|
 | CLI not found | Claude Code not installed | `npm install -g @anthropic-ai/claude-code` |
 | Connection error | Auth issue | Run `claude auth login` or set API key |
-| Timeout | Task too complex | Increase `max_turns` or simplify task |
+| Timeout | Task too complex | Increase `timeout` or simplify prompt |
 | Rate limit | Too many requests | Wait and retry |
 
 The node retries failures automatically (2 attempts, conservative for expensive API).
+
+## Related
+
+- [Claude Agent SDK documentation](https://platform.claude.com/docs/en/agent-sdk/python) - Full SDK reference
+- [Sandbox configuration](https://platform.claude.com/docs/en/agent-sdk/python#sandbox-configuration) - Command isolation options
+- [Secure deployment](https://platform.claude.com/docs/en/agent-sdk/secure-deployment) - Production security guidance

@@ -18,24 +18,24 @@ The key insight that emerged: **Claude Code already has subagent capabilities vi
 
 ## Critical SDK Knowledge I Discovered
 
-### 1. ClaudeCodeOptions Parameters (SDK v0.0.25)
+### 1. ClaudeAgentOptions Parameters (SDK v0.1.18+)
 
 From inspecting the actual SDK, these are the REAL parameters:
 
 ```python
-ClaudeCodeOptions(
+ClaudeAgentOptions(
     allowed_tools: list[str] = [],           # Tools Claude can use
     system_prompt: str | None = None,
     mcp_servers: dict | str | Path = {},     # MCP server configurations
     resume: str | None = None,               # Session ID to resume
     max_turns: int | None = None,
+    max_thinking_tokens: int | None = None,  # Extended thinking tokens
     cwd: str | Path | None = None,
     permission_mode: str | None = None,      # "bypassPermissions", "acceptEdits", etc.
+    sandbox: SandboxSettings | None = None,  # Command isolation settings
     # ... more fields
 )
 ```
-
-**⚠️ WARNING: `max_thinking_tokens` is NOT a real parameter!** The current code passes it, but the tests mock the SDK. This is a pre-existing bug - don't spend time fixing it unless it breaks something.
 
 ### 2. How `mcp_servers` Works
 
@@ -74,7 +74,7 @@ You may need to add this to `allowed_tools` if you're restricting tools.
 
 | File | Why It Matters |
 |------|----------------|
-| `src/pflow/nodes/claude/claude_code.py` | Main file to modify. I just added `resume`, `timeout`, and changed `allowed_tools` default to `None`. Study `_build_claude_options()`. |
+| `src/pflow/nodes/claude/claude_code.py` | Main file to modify. Current params: `prompt`, `cwd`, `model`, `allowed_tools`, `max_turns`, `max_thinking_tokens`, `timeout`, `system_prompt`, `resume`, `sandbox`. Study `_build_claude_options()`. |
 | `src/pflow/mcp_server/services/execution_service.py` | Has `run_registry_node()` - this is the function to reuse. It's a classmethod that handles node loading, execution, and formatting. |
 | `src/pflow/mcp_server/tools/execution_tools.py` | Look at `registry_run` MCP tool (line ~228). Shows the pattern for wrapping ExecutionService. |
 | `src/pflow/planning/context_builder.py` | Has `build_planning_context()` for generating node descriptions. May be useful for system prompt injection. |
@@ -125,7 +125,7 @@ async def pflow_run(node_type: str, parameters: dict) -> str:
 
 In the current implementation:
 ```python
-# If allowed_tools is None, we DON'T pass it to ClaudeCodeOptions
+# If allowed_tools is None, we DON'T pass it to ClaudeAgentOptions
 if prep_res["allowed_tools"] is not None:
     options_kwargs["allowed_tools"] = prep_res["allowed_tools"]
 ```

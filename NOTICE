@@ -32,7 +32,7 @@ requests (https://github.com/psf/requests)
 Copyright (c) Kenneth Reitz
 Licensed under Apache License 2.0
 
-claude-code-sdk (https://github.com/anthropics/claude-code-sdk)
+claude-agent-sdk (https://github.com/anthropics/claude-agent-sdk-python)
 Copyright (c) Anthropic, PBC
 Licensed under MIT License
 
