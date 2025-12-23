@@ -32,7 +32,7 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `cwd` | str | No | Current dir | Working directory for Claude |
-| `model` | str | No | `claude-sonnet-4-20250514` | Claude model to use |
+| `model` | str | No | `claude-sonnet-4-5` | Claude model to use |
 | `allowed_tools` | list | No | All tools | Permitted tools |
 | `max_turns` | int | No | `50` | Maximum conversation turns (1-100) |
 | `max_thinking_tokens` | int | No | `8000` | Reasoning budget (1000-100000) |
@@ -43,7 +43,7 @@ The claude-code node runs agentic tasks using Claude Code's capabilities. It can
 
 ### Sandbox configuration
 
-The `sandbox` parameter controls command execution isolation. See the [Claude Agent SDK sandbox documentation](https://docs.anthropic.com/en/docs/claude-code/sdk#sandbox-configuration) for full details.
+The `sandbox` parameter controls command execution isolation. See the [Claude Agent SDK sandbox documentation](https://platform.claude.com/docs/en/agent-sdk/python#sandbox-configuration) for full details.
 
 | Key | Type | Description |
 |-----|------|-------------|
@@ -231,7 +231,7 @@ Control what Claude can do with `allowed_tools`:
 For read-only analysis, use `["Read", "Glob", "Grep", "LS"]`. For full capability, leave unset (default allows all tools).
 
 <Tip>
-  See the [Claude Agent SDK documentation](https://docs.anthropic.com/en/docs/claude-code/sdk) for the complete list of available tools and options.
+  See the [Claude Agent SDK documentation](https://platform.claude.com/docs/en/agent-sdk/python) for the complete list of available tools and options.
 </Tip>
 
 ## Limitations
@@ -253,6 +253,6 @@ The node retries failures automatically (2 attempts, conservative for expensive 
 
 ## Related
 
-- [Claude Agent SDK documentation](https://docs.anthropic.com/en/docs/claude-code/sdk) - Full SDK reference
-- [Sandbox configuration](https://docs.anthropic.com/en/docs/claude-code/sdk#sandbox-configuration) - Command isolation options
-- [Secure deployment](https://docs.anthropic.com/en/docs/claude-code/sdk/secure-deployment) - Production security guidance
+- [Claude Agent SDK documentation](https://platform.claude.com/docs/en/agent-sdk/python) - Full SDK reference
+- [Sandbox configuration](https://platform.claude.com/docs/en/agent-sdk/python#sandbox-configuration) - Command isolation options
+- [Secure deployment](https://platform.claude.com/docs/en/agent-sdk/secure-deployment) - Production security guidance

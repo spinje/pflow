@@ -12,7 +12,7 @@ Interface:
 - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
 - Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage, session_id)
 - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
-- Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
+- Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
 - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
 - Params: max_turns: int  # Maximum conversation turns (default: 50)
 - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
@@ -109,7 +109,7 @@ class ClaudeCodeNode(Node):
             - cache_creation_input_tokens: int  # Cache creation tokens (if applicable)
             - cache_read_input_tokens: int  # Cache read tokens (if applicable)
     - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
-    - Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
+    - Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
     - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
     - Params: max_turns: int  # Maximum conversation turns (default: 50)
     - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
@@ -339,7 +339,7 @@ class ClaudeCodeNode(Node):
         cwd = self._validate_cwd(self.params.get("cwd"))
 
         # Get model with fallback
-        model = self.params.get("model", "claude-sonnet-4-20250514")
+        model = self.params.get("model", "claude-sonnet-4-5")
 
         # Validate tools (None = all tools available, including Task for subagents)
         allowed_tools = self._validate_tools(self.params.get("allowed_tools"))
@@ -851,7 +851,7 @@ class ClaudeCodeNode(Node):
             total_output = usage.get("output_tokens", 0)
 
             shared["llm_usage"] = {
-                "model": self.params.get("model", "claude-sonnet-4-20250514"),
+                "model": self.params.get("model", "claude-sonnet-4-5"),
                 "input_tokens": base_input,  # Only non-cached input tokens
                 "output_tokens": total_output,
                 "total_tokens": base_input + total_output,

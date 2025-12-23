@@ -1,9 +1,9 @@
 """Comprehensive tests for Claude Code Agentic Node.
 
 Tests criteria from the specification:
-1. Task missing → ValueError with "No task provided"
-2. Task empty string → ValueError with "No task provided"
-3. Task > 10000 chars → ValueError with "Task too long"
+1. Prompt missing → ValueError with "No prompt provided"
+2. Prompt empty string → ValueError with "Prompt cannot be empty"
+3. Prompt > 10000 chars → ValueError with "Prompt too long"
 4. Working directory missing → ValueError with path
 5. Working directory restricted → ValueError with "Restricted directory"
 6-7. Authentication now handled by SDK (tests removed)
