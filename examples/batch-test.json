@@ -1,0 +1,29 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "fetch_users",
+      "type": "http",
+      "purpose": "Fetch a list of users from JSONPlaceholder API",
+      "params": {
+        "url": "https://jsonplaceholder.typicode.com/users",
+        "method": "GET"
+      }
+    },
+    {
+      "id": "greet_users",
+      "type": "shell",
+      "purpose": "Greet each user by name",
+      "batch": {
+        "items": "${fetch_users.response}",
+        "as": "user"
+      },
+      "params": {
+        "command": "echo \"Hello, ${user.name}!\""
+      }
+    }
+  ],
+  "edges": [
+    {"from": "fetch_users", "to": "greet_users"}
+  ]
+}

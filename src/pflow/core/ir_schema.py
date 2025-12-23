@@ -114,6 +114,35 @@ class ValidationError(Exception):
         super().__init__(full_message)
 
 
+# JSON Schema for batch configuration on nodes
+# Enables sequential processing of multiple items through a single node
+BATCH_CONFIG_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "description": "Configuration for batch processing of multiple items",
+    "properties": {
+        "items": {
+            "type": "string",
+            "pattern": r"^\$\{.+\}$",
+            "description": "Template reference to array of items to process (e.g., '${node.files}')",
+        },
+        "as": {
+            "type": "string",
+            "pattern": r"^[a-zA-Z_][a-zA-Z0-9_]*$",
+            "default": "item",
+            "description": "Variable name for current item in templates (default: 'item')",
+        },
+        "error_handling": {
+            "type": "string",
+            "enum": ["fail_fast", "continue"],
+            "default": "fail_fast",
+            "description": "How to handle per-item errors: 'fail_fast' stops on first error, 'continue' processes all items",
+        },
+    },
+    "required": ["items"],
+    "additionalProperties": False,
+}
+
+
 # JSON Schema for workflow IR (minimal MVP version)
 FLOW_IR_SCHEMA: dict[str, Any] = {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -141,6 +170,7 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "description": "Parameters for node behavior",
                         "additionalProperties": True,
                     },
+                    "batch": BATCH_CONFIG_SCHEMA,
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,

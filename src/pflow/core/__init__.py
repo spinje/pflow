@@ -6,7 +6,7 @@ from .exceptions import (
     RuntimeValidationError,
     WorkflowExecutionError,
 )
-from .ir_schema import FLOW_IR_SCHEMA, ValidationError, normalize_ir, validate_ir
+from .ir_schema import BATCH_CONFIG_SCHEMA, FLOW_IR_SCHEMA, ValidationError, normalize_ir, validate_ir
 from .llm_pricing import MODEL_PRICING, PRICING_VERSION, calculate_llm_cost, get_model_pricing
 from .shell_integration import (
     StdinData,
@@ -23,6 +23,7 @@ from .workflow_data_flow import CycleError, build_execution_order, validate_data
 from .workflow_validator import WorkflowValidator
 
 __all__ = [
+    "BATCH_CONFIG_SCHEMA",
     "FLOW_IR_SCHEMA",
     "MODEL_PRICING",
     "PRICING_VERSION",
