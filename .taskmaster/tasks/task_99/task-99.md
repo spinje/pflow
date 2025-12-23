@@ -26,7 +26,7 @@ When invoking a Claude Code node, users should be able to specify a list of pflo
 {
   "type": "claude-code",
   "params": {
-    "task": "Review PR and post comments to GitHub",
+    "prompt": "Review PR and post comments to GitHub",
     "pflow_tools": ["github-add-comment", "http", "llm"],
     "timeout": 600
   }
@@ -93,7 +93,7 @@ if pflow_tools:
 
 ### Integration Points
 
-- **Claude Code SDK**: Uses `mcp_servers` parameter in `ClaudeCodeOptions`
+- **Claude Agent SDK**: Uses `mcp_servers` parameter in `ClaudeAgentOptions`
 - **ExecutionService**: Reuses `run_registry_node()` for actual execution
 - **Registry**: Loads node metadata for system prompt injection
 - **Context Builder**: May reuse `build_planning_context()` for node descriptions
@@ -105,7 +105,7 @@ if pflow_tools:
   "id": "smart_agent",
   "type": "claude-code",
   "params": {
-    "task": "Analyze the PR, identify issues, then use github-add-comment to post your findings",
+    "prompt": "Analyze the PR, identify issues, then use github-add-comment to post your findings",
     "pflow_tools": ["github-add-comment", "github-list-prs"],
     "timeout": 600
   }

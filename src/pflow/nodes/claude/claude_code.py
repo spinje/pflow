@@ -6,20 +6,25 @@ gets converted to system prompt instructions, enabling structured outputs from C
 unstructured text generation.
 
 Interface:
-- Reads: shared["task"]: str  # Development task description (required)
-- Reads: shared["context"]: Union[str, dict]  # Additional context (optional)
+- Reads: shared["prompt"]: str  # The prompt to send to Claude (required)
 - Reads: shared["output_schema"]: dict  # JSON schema for structured outputs (optional)
 - Writes: shared["result"]: any  # Response - string or dict with schema keys
 - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
 - Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage, session_id)
-- Params: working_directory: str  # Project root directory (default: os.getcwd())
+- Params: cwd: str  # Working directory for Claude (default: os.getcwd())
 - Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
 - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
 - Params: max_turns: int  # Maximum conversation turns (default: 50)
 - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
-- Params: timeout: int  # Execution timeout in seconds (default: 300, max: 3600)
+- Params: timeout: int  # Execution timeout in seconds (default: 300; max: 3600)
 - Params: system_prompt: str  # System instructions for Claude (optional)
 - Params: resume: str  # Session ID to resume a previous conversation (optional)
+- Params: sandbox: dict  # Sandbox configuration for command isolation (optional)
+    - enabled: bool  # Enable sandbox mode (default: false)
+    - autoAllowBashIfSandboxed: bool  # Auto-allow bash when sandboxed (default: false)
+    - excludedCommands: list  # Commands that bypass sandbox (e.g., ["docker"])
+    - allowUnsandboxedCommands: bool  # Allow model to request unsandboxed execution
+    - network: dict  # Network settings (allowLocalBinding, allowUnixSockets, etc.)
 
 Note: When output_schema is provided, the result is a dict with schema keys.
 Access values as shared["result"]["key"] in templates: ${node.result.key}
@@ -31,18 +36,18 @@ import json
 import logging
 import os
 import re
-from typing import Any, Optional, Union
+from typing import Any, Optional
 
 from pocketflow import Node
 
-# Import Claude Code SDK
+# Import Claude Agent SDK (renamed from Claude Code SDK)
 try:
-    from claude_code_sdk import ClaudeCodeOptions, query
-    from claude_code_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
+    from claude_agent_sdk import ClaudeAgentOptions, query
+    from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock, ToolUseBlock
 
     # Try to import exceptions, but make them optional for test environments
     try:
-        from claude_code_sdk import (
+        from claude_agent_sdk import (
             ClaudeSDKError,
             CLIConnectionError,
             CLINotFoundError,
@@ -55,7 +60,7 @@ try:
         ProcessError = None
         ClaudeSDKError = None
 except ImportError as e:
-    raise ImportError("Claude Code SDK is not installed. Install with: pip install claude-code-sdk") from e
+    raise ImportError("Claude Agent SDK is not installed. Install with: pip install claude-agent-sdk") from e
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +95,8 @@ class ClaudeCodeNode(Node):
                   "score": {"type": "int", "description": "Security score 1-10"}}
 
     Interface:
-    - Reads: shared["task"]: str  # Development task description (required)
-    - Reads: shared["context"]: Union[str, dict]  # Additional context (optional)
-    - Reads: shared["output_schema"]: dict  # Schema for structured outputs: {"field": {"type": "str", "description": "..."}}
+    - Reads: shared["prompt"]: str  # The prompt to send to Claude (required)
+    - Reads: shared["output_schema"]: dict  # Schema for structured outputs (optional): {"field": {"type": "str", "description": "..."}}
     - Writes: shared["result"]: any  # Response - string without schema, dict with schema
     - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
     - Writes: shared["_claude_metadata"]: dict  # Execution metadata
@@ -104,14 +108,20 @@ class ClaudeCodeNode(Node):
             - output_tokens: int  # Number of output tokens
             - cache_creation_input_tokens: int  # Cache creation tokens (if applicable)
             - cache_read_input_tokens: int  # Cache read tokens (if applicable)
-    - Params: working_directory: str  # Project root directory (default: os.getcwd())
+    - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
     - Params: model: str  # Claude model identifier (default: claude-sonnet-4-20250514)
     - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
     - Params: max_turns: int  # Maximum conversation turns (default: 50)
     - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
-    - Params: timeout: int  # Execution timeout in seconds (default: 300, range: 30-3600)
+    - Params: timeout: int  # Execution timeout in seconds (default: 300; valid: 30-3600)
     - Params: system_prompt: str  # System instructions for Claude (optional)
     - Params: resume: str  # Session ID to resume a previous conversation (optional)
+    - Params: sandbox: dict  # Sandbox configuration for command isolation (optional)
+        - enabled: bool  # Enable sandbox mode (default: false)
+        - autoAllowBashIfSandboxed: bool  # Auto-allow bash when sandboxed (default: false)
+        - excludedCommands: list  # Commands that bypass sandbox (e.g., ["docker"])
+        - allowUnsandboxedCommands: bool  # Allow model to request unsandboxed execution
+        - network: dict  # Network settings (allowLocalBinding, allowUnixSockets, etc.)
 
     Authentication:
         The Claude Code SDK supports two authentication methods:
@@ -134,14 +144,14 @@ class ClaudeCodeNode(Node):
     - With schema (parse failure): Falls back to string in ${node_id.result} with error in _schema_error
 
     Example:
-        # Basic task execution
-        shared = {"task": "Write a fibonacci function"}
+        # Basic execution
+        shared = {"prompt": "Write a fibonacci function"}
         node = ClaudeCodeNode()
         node.run(shared)  # Result in shared["result"] as string
 
         # With schema-driven output
         shared = {
-            "task": "Review this code for security issues",
+            "prompt": "Review this code for security issues",
             "output_schema": {
                 "risk_level": {"type": "str", "description": "high/medium/low"},
                 "issues": {"type": "list", "description": "List of security issues"},
@@ -161,17 +171,17 @@ class ClaudeCodeNode(Node):
         # Only 2 attempts total (1 initial + 1 retry) due to API cost
         super().__init__(max_retries=2, wait=1.0)
 
-    def _validate_task(self, task: Any) -> str:
-        """Validate task parameter."""
-        if not task:
-            raise ValueError("No task provided. Please specify a development task in shared['task'] or params.")
-        if not isinstance(task, str):
-            raise TypeError(f"Task must be a string, got {type(task).__name__}")
-        if len(task) > 10000:
-            raise ValueError(f"Task too long ({len(task)} chars). Maximum 10000 characters allowed.")
-        if not task.strip():
-            raise ValueError("Task cannot be empty or whitespace only.")
-        return task
+    def _validate_prompt(self, prompt: Any) -> str:
+        """Validate prompt parameter."""
+        if not prompt:
+            raise ValueError("No prompt provided. Please specify a prompt in shared['prompt'] or params.")
+        if not isinstance(prompt, str):
+            raise TypeError(f"Prompt must be a string, got {type(prompt).__name__}")
+        if len(prompt) > 10000:
+            raise ValueError(f"Prompt too long ({len(prompt)} chars). Maximum 10000 characters allowed.")
+        if not prompt.strip():
+            raise ValueError("Prompt cannot be empty or whitespace only.")
+        return prompt
 
     def _validate_schema(self, output_schema: Any) -> Optional[dict]:
         """Validate output schema parameter."""
@@ -190,24 +200,24 @@ class ClaudeCodeNode(Node):
             raise ValueError(f"Schema too complex ({len(output_schema)} keys). Maximum 50 keys allowed.")
         return output_schema
 
-    def _validate_working_directory(self, working_directory: Optional[str]) -> str:
+    def _validate_cwd(self, cwd: Optional[str]) -> str:
         """Validate and normalize working directory."""
-        if not working_directory:
+        if not cwd:
             return os.getcwd()
 
-        working_directory = os.path.expanduser(working_directory)
-        working_directory = os.path.abspath(working_directory)
+        cwd = os.path.expanduser(cwd)
+        cwd = os.path.abspath(cwd)
 
-        if not os.path.exists(working_directory):
-            raise ValueError(f"Working directory does not exist: {working_directory}")
-        if not os.path.isdir(working_directory):
-            raise ValueError(f"Working directory is not a directory: {working_directory}")
+        if not os.path.exists(cwd):
+            raise ValueError(f"Working directory does not exist: {cwd}")
+        if not os.path.isdir(cwd):
+            raise ValueError(f"Working directory is not a directory: {cwd}")
 
         # Check for restricted directories
-        normalized_path = os.path.normpath(working_directory)
+        normalized_path = os.path.normpath(cwd)
         if normalized_path in RESTRICTED_DIRECTORIES:
-            raise ValueError(f"Restricted directory: {working_directory}")
-        return working_directory
+            raise ValueError(f"Restricted directory: {cwd}")
+        return cwd
 
     def _validate_tools(self, allowed_tools: Optional[list]) -> Optional[list]:
         """Validate allowed tools list.
@@ -220,14 +230,6 @@ class ClaudeCodeNode(Node):
         if not isinstance(allowed_tools, list):
             raise TypeError(f"allowed_tools must be a list, got {type(allowed_tools).__name__}")
         return allowed_tools
-
-    def _validate_context(self, context: Any) -> Optional[Union[str, dict]]:
-        """Validate context parameter."""
-        if not context:
-            return None
-        if not isinstance(context, (str, dict)):
-            raise TypeError(f"Context must be string or dict, got {type(context).__name__}")
-        return context
 
     def _validate_max_turns(self, max_turns: Any) -> int:
         """Validate and convert max_turns parameter."""
@@ -278,11 +280,50 @@ class ClaudeCodeNode(Node):
             raise TypeError(f"resume must be a string (session ID), got {type(resume).__name__}")
         return resume
 
+    def _validate_sandbox(self, sandbox: Any) -> Optional[dict]:
+        """Validate sandbox configuration parameter.
+
+        Sandbox settings control command execution isolation via the Claude Agent SDK.
+        See: https://platform.claude.com/docs/en/agent-sdk/python#sandbox-configuration
+
+        Args:
+            sandbox: Sandbox configuration dict or None
+
+        Returns:
+            Validated sandbox dict or None
+
+        Raises:
+            TypeError: If sandbox or nested values have wrong types
+        """
+        if not sandbox:
+            return None
+        if not isinstance(sandbox, dict):
+            raise TypeError(f"sandbox must be a dict, got {type(sandbox).__name__}")
+
+        # Type validation for known keys (pass through unknown for SDK forward compatibility)
+        # Boolean fields
+        bool_fields = ["enabled", "autoAllowBashIfSandboxed", "allowUnsandboxedCommands", "enableWeakerNestedSandbox"]
+        for field in bool_fields:
+            if field in sandbox and not isinstance(sandbox[field], bool):
+                raise TypeError(f"sandbox['{field}'] must be bool")
+
+        # Dict fields
+        dict_fields = ["network", "ignoreViolations"]
+        for field in dict_fields:
+            if field in sandbox and not isinstance(sandbox[field], dict):
+                raise TypeError(f"sandbox['{field}'] must be a dict")
+
+        # List fields
+        if "excludedCommands" in sandbox and not isinstance(sandbox["excludedCommands"], list):
+            raise TypeError("sandbox['excludedCommands'] must be a list")
+
+        return sandbox
+
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Prepare Claude Code execution parameters.
 
         Args:
-            shared: Shared store containing task, context, and optional schema
+            shared: Shared store containing prompt and optional schema
 
         Returns:
             Dictionary with prepared execution parameters
@@ -290,13 +331,12 @@ class ClaudeCodeNode(Node):
         Raises:
             ValueError: If required parameters are missing or invalid
         """
-        # Validate task
-        task = self._validate_task(shared.get("task") or self.params.get("task"))
+        # Validate prompt
+        prompt = self._validate_prompt(shared.get("prompt") or self.params.get("prompt"))
 
         # Validate optional parameters
-        context = self._validate_context(shared.get("context") or self.params.get("context"))
         output_schema = self._validate_schema(shared.get("output_schema") or self.params.get("output_schema"))
-        working_directory = self._validate_working_directory(self.params.get("working_directory"))
+        cwd = self._validate_cwd(self.params.get("cwd"))
 
         # Get model with fallback
         model = self.params.get("model", "claude-sonnet-4-20250514")
@@ -317,13 +357,15 @@ class ClaudeCodeNode(Node):
         # Timeout (default 300s, configurable for long multi-agent tasks)
         timeout = self._validate_timeout(self.params.get("timeout"))
 
-        logger.info(f"Prepared Claude Code execution for task: {task[:100]}...")
+        # Sandbox configuration for command isolation
+        sandbox = self._validate_sandbox(self.params.get("sandbox"))
+
+        logger.info(f"Prepared Claude Code execution for prompt: {prompt[:100]}...")
 
         return {
-            "task": task,
-            "context": context,
+            "prompt": prompt,
             "output_schema": output_schema,
-            "working_directory": working_directory,
+            "cwd": cwd,
             "model": model,
             "allowed_tools": allowed_tools,
             "max_turns": max_turns,
@@ -331,6 +373,7 @@ class ClaudeCodeNode(Node):
             "system_prompt": system_prompt,
             "resume": resume,
             "timeout": timeout,
+            "sandbox": sandbox,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -376,7 +419,7 @@ class ClaudeCodeNode(Node):
         result = await self._execute_with_timeout(prompt, options, prep_res)
         return result
 
-    def _build_claude_options(self, prep_res: dict[str, Any], system_prompt: str) -> ClaudeCodeOptions:
+    def _build_claude_options(self, prep_res: dict[str, Any], system_prompt: str) -> ClaudeAgentOptions:
         """Build Claude Code options object.
 
         Args:
@@ -384,7 +427,7 @@ class ClaudeCodeNode(Node):
             system_prompt: System prompt to use
 
         Returns:
-            ClaudeCodeOptions configured for execution
+            ClaudeAgentOptions configured for execution
         """
         # Build base options
         options_kwargs: dict[str, Any] = {
@@ -392,7 +435,7 @@ class ClaudeCodeNode(Node):
             "max_thinking_tokens": prep_res["max_thinking_tokens"],
             "system_prompt": system_prompt,
             "max_turns": prep_res["max_turns"],
-            "cwd": prep_res["working_directory"],
+            "cwd": prep_res["cwd"],
             "permission_mode": "bypassPermissions",  # Always bypass prompts in autonomous workflows
         }
 
@@ -404,10 +447,14 @@ class ClaudeCodeNode(Node):
         if prep_res["resume"]:
             options_kwargs["resume"] = prep_res["resume"]
 
-        return ClaudeCodeOptions(**options_kwargs)
+        # Add sandbox configuration if provided
+        if prep_res.get("sandbox") is not None:
+            options_kwargs["sandbox"] = prep_res["sandbox"]
+
+        return ClaudeAgentOptions(**options_kwargs)
 
     async def _execute_with_timeout(
-        self, prompt: str, options: ClaudeCodeOptions, prep_res: dict[str, Any]
+        self, prompt: str, options: ClaudeAgentOptions, prep_res: dict[str, Any]
     ) -> dict[str, Any]:
         """Execute Claude Code query with timeout handling.
 
@@ -433,7 +480,7 @@ class ClaudeCodeNode(Node):
             return await asyncio.wait_for(self._run_claude_session(prompt, options, prep_res), timeout=timeout)
 
     async def _run_claude_session(
-        self, prompt: str, options: ClaudeCodeOptions, prep_res: dict[str, Any]
+        self, prompt: str, options: ClaudeAgentOptions, prep_res: dict[str, Any]
     ) -> dict[str, Any]:
         """Run the Claude Code session and process messages.
 
@@ -673,8 +720,7 @@ class ClaudeCodeNode(Node):
         Returns:
             Formatted prompt string
         """
-        task = prep_res["task"]
-        context = prep_res["context"]
+        prompt = prep_res["prompt"]
         output_schema = prep_res.get("output_schema")
 
         # Build base prompt
@@ -685,15 +731,7 @@ class ClaudeCodeNode(Node):
             prompt_parts.append("RESPOND WITH JSON ONLY. Complete the following task and output the result as JSON:")
             prompt_parts.append("")
 
-        prompt_parts.append(task)
-
-        # Add context if provided
-        if context:
-            if isinstance(context, dict):
-                context_str = json.dumps(context, indent=2)
-                prompt_parts.append(f"\nContext:\n{context_str}")
-            else:
-                prompt_parts.append(f"\nContext:\n{context}")
+        prompt_parts.append(prompt)
 
         # If there's a schema, remind again at the end
         if output_schema:
