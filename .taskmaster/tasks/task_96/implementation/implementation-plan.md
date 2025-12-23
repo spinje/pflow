@@ -1,8 +1,14 @@
 # Task 96 Implementation Plan: Batch Processing
 
-**Version**: 1.0
-**Based on**: task-96-spec.md v1.1.0 (Option D: Isolated Shared Store Per Item)
-**Date**: 2024-12-22
+**Version**: 1.1
+**Based on**: task-96-spec.md v1.2.0 (Option D: Isolated Shared Store Per Item)
+**Date**: 2024-12-23
+
+---
+
+## Changelog
+
+- **v1.1** (2024-12-23): Added error detection for non-exception errors (dict with "error" key), added `_extract_error()` helper, updated success counting logic, clarified test criteria interpretation
 
 ---
 
@@ -133,14 +139,43 @@ class PflowBatchNode(BatchNode):
             raise ValueError(f"Batch items must be array, got {type(items)}")
         return items
 
+    def _extract_error(self, result: Any) -> str | None:
+        """Extract error message from result dict if present.
+
+        Nodes signal errors in two ways:
+        1. Exceptions (caught by retry logic, then re-raised or handled by exec_fallback)
+        2. Error key in result dict (e.g., {"error": "Error: Could not read file..."})
+
+        Returns error message string if error detected, None otherwise.
+        """
+        if not isinstance(result, dict):
+            return None
+        error = result.get("error")
+        if error:
+            return str(error)
+        return None
+
     def _exec(self, items: list[Any]) -> list[Any]:
-        """Override to support error_handling: continue."""
+        """Override to support error_handling: continue and detect errors in results.
+
+        Error detection handles two cases:
+        1. Exceptions raised during exec() - caught in try/except
+        2. Error key in result dict - checked after successful exec()
+        """
         self._errors = []
         results = []
         for i, item in enumerate(items):
             try:
-                # super()._exec gives us per-item retry logic!
+                # super(BatchNode, self)._exec gives us per-item retry logic from Node._exec!
                 result = super(BatchNode, self)._exec(item)
+
+                # Check if result indicates an error (node wrote to error key)
+                error_msg = self._extract_error(result)
+                if error_msg:
+                    if self.error_handling == "fail_fast":
+                        raise RuntimeError(f"Item {i} failed: {error_msg}")
+                    self._errors.append({"index": i, "item": item, "error": error_msg})
+
                 results.append(result)
             except Exception as e:
                 if self.error_handling == "fail_fast":
@@ -158,11 +193,23 @@ class PflowBatchNode(BatchNode):
         return item_shared.get(self.node_id, {})
 
     def post(self, shared: dict[str, Any], prep_res: list, exec_res: list) -> str:
-        """Aggregate results into shared store."""
+        """Aggregate results into shared store.
+
+        Success counting logic:
+        - Exception during exec() → result is None → not a success
+        - Result has error key → counted in self._errors → not a success
+        - Result is valid dict without error → success
+        """
+        # Count successes: non-None results without error keys
+        success_count = sum(
+            1 for r in exec_res
+            if r is not None and not self._extract_error(r)
+        )
+
         shared[self.node_id] = {
             "results": exec_res,
             "count": len(exec_res),
-            "success_count": len(exec_res) - len(self._errors),
+            "success_count": success_count,
             "error_count": len(self._errors),
             "errors": self._errors if self._errors else None
         }
@@ -181,13 +228,32 @@ class PflowBatchNode(BatchNode):
 | `test_batch_isolated_context` | Items don't pollute each other |
 | `test_batch_fail_fast_exception` | Exception stops execution |
 | `test_batch_continue_exception` | Exception recorded, continues |
-| `test_batch_fail_fast_error_prefix` | "Error:" detected, fails |
-| `test_batch_continue_error_prefix` | "Error:" recorded, continues |
+| `test_batch_fail_fast_error_in_result` | Result with error key triggers fail_fast |
+| `test_batch_continue_error_in_result` | Result with error key recorded, continues |
 | `test_batch_result_structure` | Output has results, count, success_count, error_count |
 | `test_batch_items_not_array` | ValueError for non-array |
 | `test_batch_items_none` | ValueError for None |
 | `test_batch_special_keys_shared` | `__llm_calls__` accumulates across items |
 | `test_batch_per_item_retry` | Transient failure retries before failing |
+| `test_batch_success_count_excludes_errors` | success_count excludes items with error key |
+| `test_batch_extract_error_helper` | `_extract_error()` correctly detects error key |
+
+### 2.2 Error Detection Clarification
+
+The spec mentions "Error:" prefix detection, but in practice nodes write errors to a dict. Here's how to interpret the spec's test criteria:
+
+| Spec Language | Actual Implementation |
+|---------------|----------------------|
+| "Item returns `Error:...`" | `result.get("error")` is truthy |
+| "Item result is `None`" | Exception was caught, result set to `None` |
+| "Error: prefix detected" | Check `result.get("error")` for any truthy value |
+| "Treated as success" | `result` is dict without error key (even if empty `{}`) |
+
+**Two error sources**:
+1. **Exceptions**: Caught in `_exec` try/except → result is `None`
+2. **Error in result dict**: Node completed but wrote error → result has `{"error": "..."}` key
+
+**Both are recorded in `self._errors` and counted in `error_count`.**
 
 ---
 
@@ -315,7 +381,7 @@ Step 6: Edge cases & polish
 
 ## Success Criteria
 
-From spec v1.1.0:
+From spec v1.2.0 (updated with v1.1 alterations):
 
 1. ✅ `batch` configuration added to IR schema
 2. ✅ Sequential batch execution works correctly
@@ -325,6 +391,8 @@ From spec v1.1.0:
 6. ✅ Isolated contexts prevent cross-item pollution
 7. ✅ Special keys (`__llm_calls__`) accumulate correctly
 8. ✅ Per-item retry logic works (from PocketFlow's Node._exec)
+9. ✅ Error detection works for both exceptions AND error keys in result dicts
+10. ✅ success_count correctly excludes items with errors (not just None results)
 
 ---
 
@@ -336,6 +404,8 @@ From spec v1.1.0:
 | Template resolution fails for item alias | Low | Test case #8, #26 verify |
 | Metrics show wrong data for batch | Medium | Document aggregate behavior |
 | Large batches cause memory issues | Low | Document O(n) constraint |
+| Node uses non-standard error key | Low | `_extract_error()` checks standard "error" key; can extend if needed |
+| Error detection misses edge cases | Low | Two-layer detection (exceptions + error key) covers all known patterns |
 
 ---
 
