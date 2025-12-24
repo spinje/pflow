@@ -101,7 +101,7 @@ items = ["item1", "item2", "item3"]
 
 # Results could be:
 # - "result1" (success)
-# - "Error: Failed on item2" (from exec_fallback after retries)  
+# - "Error: Failed on item2" (from exec_fallback after retries)
 # - "result3" (success)
 
 results = ["result1", "Error: Failed on item2", "result3"]
@@ -181,7 +181,7 @@ def post(self, shared, prep_res, exec_res):
     """Process batch results and separate successes from errors."""
     successes = []
     errors = []
-    
+
     for i, result in enumerate(exec_res):
         # Check for error using convention
         if isinstance(result, str) and result.startswith("Error:"):
@@ -189,11 +189,11 @@ def post(self, shared, prep_res, exec_res):
         else:
             # Success - result could be None, dict, str, anything
             successes.append({"index": i, "result": result, "item": prep_res[i]})
-    
+
     shared["batch_results"] = exec_res  # Full results
     shared["batch_successes"] = successes
     shared["batch_errors"] = errors
-    
+
     # Return action based on error presence
     if errors and not successes:
         return "all_failed"

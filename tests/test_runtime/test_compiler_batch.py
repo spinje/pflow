@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pocketflow import Node
 
 from pflow.registry.registry import Registry
 from pflow.runtime import compile_ir_to_flow
@@ -17,6 +16,7 @@ from pflow.runtime.batch_node import PflowBatchNode
 from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
 from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pocketflow import Node
 
 
 class ValueNode(Node):

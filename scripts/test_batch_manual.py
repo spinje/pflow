@@ -26,9 +26,7 @@ def main():
                 "id": "create_list",
                 "type": "shell",
                 "purpose": "Create a JSON array",
-                "params": {
-                    "command": 'echo \'["apple", "banana", "cherry"]\''
-                },
+                "params": {"command": 'echo \'["apple", "banana", "cherry"]\''},
             },
             {
                 "id": "parse_json",
@@ -50,7 +48,7 @@ def main():
     print("\n2. Running workflow...")
     shared = {}
     flow.run(shared)
-    print(f"   ✓ Workflow executed")
+    print("   ✓ Workflow executed")
     print(f"   create_list.stdout: {shared.get('create_list', {}).get('stdout', 'N/A')}")
     print(f"   parse_json.stdout: {shared.get('parse_json', {}).get('stdout', 'N/A')}")
 
@@ -102,7 +100,7 @@ def main():
     print(f"   Results: {results}")
 
     batch_node.post(test_shared, items, results)
-    print(f"   Final output:")
+    print("   Final output:")
     print(f"     - count: {test_shared['batch_test']['count']}")
     print(f"     - success_count: {test_shared['batch_test']['success_count']}")
     print(f"     - error_count: {test_shared['batch_test']['error_count']}")

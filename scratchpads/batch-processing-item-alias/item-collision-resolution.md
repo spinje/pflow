@@ -37,14 +37,14 @@ finally:
 
 #### 2. PocketFlow BatchNode (pocketflow/__init__.py:78-80)
 
-**Current implementation**: 
+**Current implementation**:
 ```python
 class BatchNode(Node):
     def _exec(self, items):
         return [super(BatchNode, self)._exec(i) for i in (items or [])]
 ```
 
-**Observation**: 
+**Observation**:
 - Does NOT modify shared store at all
 - Each item is passed to exec() directly as parameter
 - No "item" alias concept exists in base PocketFlow
@@ -117,14 +117,14 @@ def _run(self, shared):
     # Check for collision and save original
     had_original = self.item_alias in shared
     original_value = shared.get(self.item_alias) if had_original else None
-    
+
     try:
         # Process batch with temporary alias
         for item in items:
             shared[self.item_alias] = item
             result = self.inner_node._run(shared)
             results.append(result)
-        
+
         return results
     finally:
         # Restore original state
@@ -182,7 +182,7 @@ def _run(self, shared):
             f"Current value: {shared[self.item_alias]}\n"
             f"Choose a different item_alias to avoid collision."
         )
-    
+
     # Normal batch processing...
 ```
 
@@ -211,29 +211,29 @@ def _run(self, shared):
 ```python
 def _run(self, shared: dict[str, Any]) -> Any:
     """Execute batch processing with item alias."""
-    
+
     # Save original state (if collision exists)
     had_original = self.item_alias in shared
     original_value = shared.get(self.item_alias) if had_original else None
-    
+
     if had_original:
         logger.debug(
             f"Batch node '{self.node_id}': '{self.item_alias}' already exists in shared store, "
             "will restore after batch execution",
             extra={"node_id": self.node_id, "alias": self.item_alias}
         )
-    
+
     try:
         # Get items to process
         items = self._get_batch_items(shared)
-        
+
         # Process each item
         results = []
         for item in items:
             shared[self.item_alias] = item
             result = self.inner_node._run(shared)
             results.append(result)
-        
+
         return results
     finally:
         # Restore original state (defensive programming)

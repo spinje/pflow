@@ -1,21 +1,14 @@
-"""Batch processing node using PocketFlow's BatchNode pattern.
+"""Batch processing node with sequential and parallel execution.
 
 This module provides PflowBatchNode, which wraps any pflow node to process
-multiple items sequentially using isolated shared store contexts per item.
+multiple items. Supports both sequential and parallel execution modes.
 
 Key Design Decisions:
-- **Inherits from BatchNode**: Gains per-item retry logic for free via MRO trick
-- **Isolated context per item**: Each item gets `item_shared = dict(shared)` to prevent
-  cross-item pollution and prepare for parallel execution in Phase 2
-- **Error handling modes**: `fail_fast` (default) stops on first error; `continue`
-  processes all items and collects errors separately
-
-Usage:
-    The compiler wraps batch-configured nodes with PflowBatchNode:
-    ```python
-    if batch_config := node_data.get("batch"):
-        node = PflowBatchNode(node, node_id, batch_config)
-    ```
+- **Inherits from Node (not BatchNode)**: Cleaner design, avoids MRO tricks
+- **Thread-safe retry**: Uses local `retry` variable instead of `self.cur_retry`
+- **Deep copy for parallel**: Each thread gets its own node chain copy to avoid
+  TemplateAwareNodeWrapper race condition on `inner_node.params`
+- **Isolated context per item**: Each item gets `item_shared = dict(shared)`
 
 IR Syntax:
     ```json
@@ -25,6 +18,10 @@ IR Syntax:
       "batch": {
         "items": "${list_files.files}",
         "as": "file",
+        "parallel": true,
+        "max_concurrent": 5,
+        "max_retries": 3,
+        "retry_wait": 1.0,
         "error_handling": "continue"
       },
       "params": {"prompt": "Summarize: ${file}"}
@@ -41,28 +38,36 @@ Output Structure:
         "errors": [...]        # Error details (or None if no errors)
     }
     ```
+
+Thread Safety:
+    - Sequential mode: Single-threaded, no concerns
+    - Parallel mode:
+      - Each thread gets deep copy of node chain (isolates TemplateAwareNodeWrapper)
+      - Shallow copy of shared store (shares __llm_calls__ list, GIL-protected)
+      - Local retry counter (avoids self.cur_retry race condition)
 """
 
+import copy
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-from pocketflow import BatchNode
-
 from pflow.runtime.template_resolver import TemplateResolver
+from pocketflow import Node
 
 logger = logging.getLogger(__name__)
 
 
-class PflowBatchNode(BatchNode):
+class PflowBatchNode(Node):
     """Batch node using PocketFlow's prep/exec/post lifecycle with isolated contexts.
 
     This class wraps any pflow node to process multiple items. Each item gets an
     isolated shallow copy of the shared store, ensuring items don't pollute each
     other while preserving references to mutable tracking objects like `__llm_calls__`.
 
-    The MRO trick `super(BatchNode, self)._exec(item)` gives us per-item retry logic
-    from Node._exec() for free:
-        MRO: PflowBatchNode → BatchNode → Node → BaseNode → object
+    Inherits from Node directly (not BatchNode) to avoid the `self.cur_retry` race
+    condition in parallel execution. Implements thread-safe retry with local variables.
 
     Attributes:
         inner_node: The wrapped node to execute for each item
@@ -70,6 +75,10 @@ class PflowBatchNode(BatchNode):
         items_template: Template string to resolve items array (e.g., "${node.files}")
         item_alias: Variable name for current item in templates (default: "item")
         error_handling: Error mode - "fail_fast" or "continue"
+        parallel: Whether to execute items concurrently (default: False)
+        max_concurrent: Maximum concurrent workers when parallel=True (default: 10)
+        max_retries: Maximum retry attempts per item (default: 1, no retry)
+        retry_wait: Seconds to wait between retries (default: 0)
     """
 
     def __init__(self, inner_node: Any, node_id: str, batch_config: dict[str, Any]):
@@ -82,13 +91,25 @@ class PflowBatchNode(BatchNode):
                 - items (required): Template reference to items array
                 - as (optional): Variable name for current item (default: "item")
                 - error_handling (optional): "fail_fast" or "continue" (default: "fail_fast")
+                - parallel (optional): Enable concurrent execution (default: False)
+                - max_concurrent (optional): Max workers when parallel (default: 10)
+                - max_retries (optional): Max retry attempts per item (default: 1)
+                - retry_wait (optional): Seconds between retries (default: 0)
         """
         super().__init__()  # Initialize params, successors from BaseNode
         self.inner_node = inner_node
         self.node_id = node_id
+
+        # Batch configuration
         self.items_template = batch_config["items"]
         self.item_alias = batch_config.get("as", "item")
         self.error_handling = batch_config.get("error_handling", "fail_fast")
+
+        # Phase 2: Parallel execution config
+        self.parallel = batch_config.get("parallel", False)
+        self.max_concurrent = batch_config.get("max_concurrent", 10)
+        self.max_retries = batch_config.get("max_retries", 1)
+        self.retry_wait = batch_config.get("retry_wait", 0)
 
         # Instance state for current batch execution
         self._shared: dict[str, Any] = {}
@@ -107,8 +128,6 @@ class PflowBatchNode(BatchNode):
     def prep(self, shared: dict[str, Any]) -> list[Any]:
         """Resolve items template and return items list.
 
-        BatchNode will iterate over the returned list, calling exec() for each item.
-
         Args:
             shared: The workflow's shared store
 
@@ -118,7 +137,7 @@ class PflowBatchNode(BatchNode):
         Raises:
             ValueError: If items template doesn't resolve to a list
         """
-        # Store shared reference for use in exec()
+        # Store shared reference for use in _exec methods
         self._shared = shared
 
         # Extract variable path from template: "${x.y}" -> "x.y"
@@ -134,7 +153,7 @@ class PflowBatchNode(BatchNode):
             )
 
         if not isinstance(items, list):
-            raise ValueError(
+            raise TypeError(
                 f"Batch items must be an array, got {type(items).__name__}. "
                 f"Template '{self.items_template}' resolved to: {items!r}"
             )
@@ -150,11 +169,11 @@ class PflowBatchNode(BatchNode):
         """Extract error message from result dict if present.
 
         Nodes signal errors in two ways:
-        1. Exceptions (caught by retry logic, then re-raised or handled by exec_fallback)
-        2. Error key in result dict (e.g., {"error": "Error: Could not read file..."})
+        1. Exceptions (caught by retry logic)
+        2. Error key in result dict (e.g., {"error": "Could not read file..."})
 
         Args:
-            result: The result from exec() - typically a dict containing node outputs
+            result: The result from execution - typically a dict containing node outputs
 
         Returns:
             Error message string if error detected, None otherwise
@@ -166,88 +185,313 @@ class PflowBatchNode(BatchNode):
             return str(error)
         return None
 
-    def _exec(self, items: list[Any]) -> list[Any]:
-        """Override to support error_handling: continue and detect errors in results.
+    def _exec_single(self, idx: int, item: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Execute single item with thread-safe retry logic.
 
-        This override provides two layers of error detection:
-        1. Exceptions raised during exec() - caught in try/except
-        2. Error key in result dict - checked after successful exec()
+        Uses local `retry` variable instead of `self.cur_retry` to avoid race conditions
+        when multiple threads execute concurrently.
 
-        The MRO trick `super(BatchNode, self)._exec(item)` skips BatchNode._exec
-        and calls Node._exec directly, giving us per-item retry logic.
+        Args:
+            idx: Index of item in original list (for error reporting)
+            item: The item to process
+
+        Returns:
+            Tuple of (result, error_info):
+            - On success: (result_dict, None)
+            - On error: (None or partial_result, {"index": idx, "item": item, "error": str, "exception": Exception|None})
+        """
+        last_exception: Exception | None = None
+
+        for retry in range(self.max_retries):
+            try:
+                # Create isolated context for this item
+                item_shared = dict(self._shared)
+                item_shared[self.node_id] = {}
+                item_shared[self.item_alias] = item
+
+                # Execute inner node
+                self.inner_node._run(item_shared)
+
+                # Capture result from inner node's namespace
+                result = item_shared.get(self.node_id)
+                if result is None:
+                    result = {}
+                elif not isinstance(result, dict):
+                    result = {"value": result}
+
+                # Check for error in result dict
+                error_msg = self._extract_error(result)
+                if error_msg:
+                    # Error in result dict - no exception to preserve
+                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None})
+
+                return (result, None)
+
+            except Exception as e:
+                last_exception = e
+                if retry < self.max_retries - 1:
+                    if self.retry_wait > 0:
+                        time.sleep(self.retry_wait)
+                    logger.debug(
+                        f"Batch item {idx} retry {retry + 1}/{self.max_retries}: {e}",
+                        extra={
+                            "node_id": self.node_id,
+                            "item_index": idx,
+                            "retry": retry + 1,
+                        },
+                    )
+                    continue
+                break
+
+        # All retries exhausted - store the original exception for fail_fast re-raise
+        return (None, {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception})
+
+    def _exec_single_with_node(
+        self, idx: int, item: Any, item_shared: dict[str, Any], thread_node: Any
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Execute single item with provided node (for parallel execution with deep copy).
+
+        This is similar to _exec_single() but uses a pre-created isolated shared store
+        and a deep-copied node chain. Used by _exec_parallel() to avoid race conditions.
+
+        Args:
+            idx: Index of item in original list (for error reporting)
+            item: The item to process
+            item_shared: Pre-created isolated shared store for this item
+            thread_node: Deep-copied node chain for thread isolation
+
+        Returns:
+            Tuple of (result, error_info)
+        """
+        last_exception: Exception | None = None
+
+        for retry in range(self.max_retries):
+            try:
+                # Reset namespace for this retry (matches _exec_single behavior)
+                # This ensures partial writes from failed attempts don't persist
+                item_shared[self.node_id] = {}
+
+                # Execute the thread-local node copy
+                thread_node._run(item_shared)
+
+                # Capture result from node's namespace
+                result = item_shared.get(self.node_id)
+                if result is None:
+                    result = {}
+                elif not isinstance(result, dict):
+                    result = {"value": result}
+
+                # Check for error in result dict
+                error_msg = self._extract_error(result)
+                if error_msg:
+                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None})
+
+                return (result, None)
+
+            except Exception as e:
+                last_exception = e
+                if retry < self.max_retries - 1:
+                    if self.retry_wait > 0:
+                        time.sleep(self.retry_wait)
+                    logger.debug(
+                        f"Batch item {idx} retry {retry + 1}/{self.max_retries}: {e}",
+                        extra={
+                            "node_id": self.node_id,
+                            "item_index": idx,
+                            "retry": retry + 1,
+                        },
+                    )
+                    continue
+                break
+
+        return (None, {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception})
+
+    def _exec_sequential(self, items: list[Any]) -> list[dict[str, Any] | None]:
+        """Execute items sequentially using _exec_single.
+
+        Args:
+            items: List of items to process
+
+        Returns:
+            List of results in same order as input
+        """
+        results: list[dict[str, Any] | None] = []
+
+        for idx, item in enumerate(items):
+            result, error = self._exec_single(idx, item)
+            results.append(result)
+
+            if error:
+                self._errors.append(error)
+                if self.error_handling == "fail_fast":
+                    # Re-raise original exception if available, otherwise wrap in RuntimeError
+                    if error.get("exception") is not None:
+                        raise error["exception"]
+                    else:
+                        raise RuntimeError(f"Item {idx} failed: {error['error']}")
+
+        return results
+
+    def _exec(self, items: list[Any]) -> list[dict[str, Any] | None]:
+        """Execute batch processing - dispatches to sequential or parallel.
 
         Args:
             items: List of items from prep()
 
         Returns:
-            List of results in the same order as input items
+            List of results in same order as input
         """
         self._errors = []
-        results = []
 
-        for i, item in enumerate(items):
+        if not items:
+            return []
+
+        if self.parallel:
+            logger.debug(
+                f"Batch node '{self.node_id}' executing {len(items)} items in parallel "
+                f"(max_concurrent={self.max_concurrent})",
+                extra={
+                    "node_id": self.node_id,
+                    "parallel": True,
+                    "max_concurrent": self.max_concurrent,
+                },
+            )
+            return self._exec_parallel(items)
+        else:
+            logger.debug(
+                f"Batch node '{self.node_id}' executing {len(items)} items sequentially",
+                extra={"node_id": self.node_id, "parallel": False},
+            )
+            return self._exec_sequential(items)
+
+    def _collect_parallel_results(  # noqa: C901
+        self,
+        future_to_idx: dict,
+        items: list[Any],
+        results: list,
+        pending_errors: list,
+        should_stop: bool,
+    ) -> bool:
+        """Collect results from parallel futures as they complete.
+
+        Args:
+            future_to_idx: Mapping of futures to item indices
+            items: Original items list (for error reporting)
+            results: Results list to populate (modified in place)
+            pending_errors: Errors list to populate (modified in place)
+            should_stop: Whether we're already stopping
+
+        Returns:
+            Updated should_stop flag
+        """
+        for future in as_completed(future_to_idx):
+            if should_stop:
+                # Already stopping, just collect remaining results
+                try:
+                    idx, result, error = future.result()
+                    results[idx] = result
+                    if error:
+                        pending_errors.append(error)
+                except Exception as e:
+                    logger.debug(f"Exception collecting result during stop: {e}")
+                continue
+
             try:
-                # super(BatchNode, self)._exec gives us per-item retry logic from Node._exec!
-                # MRO: PflowBatchNode → BatchNode → Node → BaseNode
-                # This calls Node._exec(item) which includes retry loop
-                result = super(BatchNode, self)._exec(item)
+                idx, result, error = future.result()
+                results[idx] = result
 
-                # Check if result indicates an error (node wrote to error key)
-                error_msg = self._extract_error(result)
-                if error_msg:
+                if error:
+                    pending_errors.append(error)
                     if self.error_handling == "fail_fast":
-                        raise RuntimeError(f"Item {i} failed: {error_msg}")
-                    self._errors.append({"index": i, "item": item, "error": error_msg})
-
-                results.append(result)
+                        should_stop = True
+                        for f in future_to_idx:
+                            f.cancel()
 
             except Exception as e:
+                idx = future_to_idx[future]
+                pending_errors.append({
+                    "index": idx,
+                    "item": items[idx],
+                    "error": f"Executor error: {e}",
+                    "exception": e,
+                })
                 if self.error_handling == "fail_fast":
-                    raise
-                self._errors.append({"index": i, "item": item, "error": str(e)})
-                results.append(None)
+                    should_stop = True
+                    for f in future_to_idx:
+                        f.cancel()
+
+        return should_stop
+
+    def _exec_parallel(self, items: list[Any]) -> list[dict[str, Any] | None]:
+        """Execute items in parallel using ThreadPoolExecutor.
+
+        Each thread gets:
+        - Shallow copy of shared store (shares __llm_calls__ list for tracking)
+        - Deep copy of node chain (avoids TemplateAwareNodeWrapper race condition)
+
+        The deep copy is critical: TemplateAwareNodeWrapper mutates inner_node.params
+        during execution. Without isolation, threads would overwrite each other's params.
+
+        Args:
+            items: List of items to process
+
+        Returns:
+            List of results in same order as input (preserves ordering)
+
+        Note:
+            fail_fast cancellation only prevents new items from starting.
+            Already-running items will complete (LLM/HTTP calls can't be interrupted).
+        """
+        results: list[dict[str, Any] | None] = [None] * len(items)
+        pending_errors: list[dict[str, Any]] = []
+        should_stop = False
+
+        def process_item(idx: int, item: Any) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None]:
+            """Process single item in thread. Returns (index, result, error)."""
+            # Create isolated shared store (shallow copy shares __llm_calls__)
+            item_shared = dict(self._shared)
+            item_shared[self.node_id] = {}
+            item_shared[self.item_alias] = item
+
+            # CRITICAL: Deep copy node chain to avoid TemplateAwareNodeWrapper race condition
+            # Each thread gets its own copy of the wrapper chain
+            thread_node = copy.deepcopy(self.inner_node)
+
+            # Execute with thread-local node
+            result, error = self._exec_single_with_node(idx, item, item_shared, thread_node)
+            return (idx, result, error)
+
+        with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+            # Submit all items
+            future_to_idx = {executor.submit(process_item, idx, item): idx for idx, item in enumerate(items)}
+
+            # Collect results as they complete
+            should_stop = self._collect_parallel_results(future_to_idx, items, results, pending_errors, should_stop)
+
+        # Merge errors (single-threaded, safe)
+        self._errors.extend(pending_errors)
+
+        # Raise first error if fail_fast mode
+        if self.error_handling == "fail_fast" and pending_errors:
+            first_error = pending_errors[0]
+            if first_error.get("exception") is not None:
+                raise first_error["exception"]
+            else:
+                raise RuntimeError(f"Item {first_error['index']} failed: {first_error['error']}")
 
         return results
 
-    def exec(self, item: Any) -> dict[str, Any]:
-        """Process a single item with isolated context.
+    def exec(self, prep_res: Any) -> Any:
+        """Execute method required by Node interface.
 
-        Called by Node._exec() with retry logic (via the MRO trick in _exec).
-
-        This method:
-        1. Creates isolated shallow copy of shared store
-        2. Initializes empty namespace for this node
-        3. Injects item alias at root level for template resolution
-        4. Executes inner node with isolated context
-        5. Captures and returns the node's namespace output
-
-        Args:
-            item: Single item from the items array
-
-        Returns:
-            Dict containing the inner node's outputs (entire namespace)
+        Note: This is not used by our implementation. We override _exec() directly
+        to handle the full batch processing logic. This stub exists to satisfy
+        the Node interface if called directly.
         """
-        # Create isolated context - shallow copy shares mutable objects like __llm_calls__
-        item_shared = dict(self._shared)
-
-        # Initialize empty namespace for this node in the isolated context
-        item_shared[self.node_id] = {}
-
-        # Inject item alias at root level for template resolution
-        # This makes ${item} or ${file} (custom alias) available
-        item_shared[self.item_alias] = item
-
-        # Execute inner node with isolated context
-        # Inner node writes to item_shared[self.node_id] via NamespacedNodeWrapper
-        self.inner_node._run(item_shared)
-
-        # Capture result from inner node's namespace
-        result = item_shared.get(self.node_id)
-        if result is None:
-            return {}
-        if not isinstance(result, dict):
-            return {"value": result}
-        return result
+        # This should not be called - we override _exec() for batch processing
+        raise NotImplementedError(
+            "PflowBatchNode.exec() should not be called directly. Use _run() or _exec() for batch processing."
+        )
 
     def post(self, shared: dict[str, Any], prep_res: list, exec_res: list) -> str:
         """Aggregate results into shared store.
@@ -265,9 +509,7 @@ class PflowBatchNode(BatchNode):
             Action string ("default") for flow control
         """
         # Count successes: non-None results without error keys
-        success_count = sum(
-            1 for r in exec_res if r is not None and not self._extract_error(r)
-        )
+        success_count = sum(1 for r in exec_res if r is not None and not self._extract_error(r))
 
         # Write aggregated results to shared store
         shared[self.node_id] = {

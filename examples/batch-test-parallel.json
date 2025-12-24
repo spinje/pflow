@@ -13,10 +13,12 @@
     {
       "id": "greet_users",
       "type": "shell",
-      "purpose": "Greet each user by name",
+      "purpose": "Greet each user by name (parallel)",
       "batch": {
         "items": "${fetch_users.response}",
-        "as": "user"
+        "as": "user",
+        "parallel": true,
+        "max_concurrent": 5
       },
       "params": {
         "command": "echo \"Hello, ${user.name}!\""

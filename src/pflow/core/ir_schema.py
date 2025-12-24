@@ -115,7 +115,7 @@ class ValidationError(Exception):
 
 
 # JSON Schema for batch configuration on nodes
-# Enables sequential processing of multiple items through a single node
+# Enables sequential or parallel processing of multiple items through a single node
 BATCH_CONFIG_SCHEMA: dict[str, Any] = {
     "type": "object",
     "description": "Configuration for batch processing of multiple items",
@@ -136,6 +136,32 @@ BATCH_CONFIG_SCHEMA: dict[str, Any] = {
             "enum": ["fail_fast", "continue"],
             "default": "fail_fast",
             "description": "How to handle per-item errors: 'fail_fast' stops on first error, 'continue' processes all items",
+        },
+        # Phase 2: Parallel execution configuration
+        "parallel": {
+            "type": "boolean",
+            "default": False,
+            "description": "Enable concurrent execution of items (default: sequential)",
+        },
+        "max_concurrent": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100,
+            "default": 10,
+            "description": "Maximum concurrent workers when parallel=true (default: 10)",
+        },
+        "max_retries": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 1,
+            "description": "Maximum retry attempts per item (default: 1, no retry)",
+        },
+        "retry_wait": {
+            "type": "number",
+            "minimum": 0,
+            "default": 0,
+            "description": "Seconds to wait between retries (default: 0)",
         },
     },
     "required": ["items"],
