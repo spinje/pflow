@@ -35,7 +35,20 @@ Output Structure:
         "count": 3,            # Total items processed
         "success_count": 2,    # Items without errors
         "error_count": 1,      # Items with errors
-        "errors": [...]        # Error details (or None if no errors)
+        "errors": [...],       # Error details (or None if no errors)
+        "batch_metadata": {    # Execution metadata for tracing/debugging
+            "parallel": True,
+            "max_concurrent": 5,    # Only when parallel=True
+            "max_retries": 3,
+            "retry_wait": 1.0,      # Only when > 0
+            "execution_mode": "parallel",
+            "timing": {
+                "total_items_ms": 234.56,
+                "avg_item_ms": 78.19,
+                "min_item_ms": 45.23,
+                "max_item_ms": 123.45,
+            },
+        },
     }
     ```
 
@@ -114,6 +127,7 @@ class PflowBatchNode(Node):
         # Instance state for current batch execution
         self._shared: dict[str, Any] = {}
         self._errors: list[dict[str, Any]] = []
+        self._item_timings: list[float] = []  # Per-item execution times in ms
 
     def set_params(self, params: dict[str, Any]) -> None:
         """Forward params to inner node chain.
@@ -185,7 +199,7 @@ class PflowBatchNode(Node):
             return str(error)
         return None
 
-    def _exec_single(self, idx: int, item: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    def _exec_single(self, idx: int, item: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None, float]:
         """Execute single item with thread-safe retry logic.
 
         Uses local `retry` variable instead of `self.cur_retry` to avoid race conditions
@@ -196,10 +210,11 @@ class PflowBatchNode(Node):
             item: The item to process
 
         Returns:
-            Tuple of (result, error_info):
-            - On success: (result_dict, None)
-            - On error: (None or partial_result, {"index": idx, "item": item, "error": str, "exception": Exception|None})
+            Tuple of (result, error_info, duration_ms):
+            - On success: (result_dict, None, duration_ms)
+            - On error: (None or partial_result, {"index": idx, "item": item, "error": str, "exception": Exception|None}, duration_ms)
         """
+        start_time = time.perf_counter()
         last_exception: Exception | None = None
 
         for retry in range(self.max_retries):
@@ -221,11 +236,12 @@ class PflowBatchNode(Node):
 
                 # Check for error in result dict
                 error_msg = self._extract_error(result)
+                duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
                     # Error in result dict - no exception to preserve
-                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None})
+                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)
 
-                return (result, None)
+                return (result, None, duration_ms)
 
             except Exception as e:
                 last_exception = e
@@ -244,11 +260,16 @@ class PflowBatchNode(Node):
                 break
 
         # All retries exhausted - store the original exception for fail_fast re-raise
-        return (None, {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception})
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        return (
+            None,
+            {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception},
+            duration_ms,
+        )
 
     def _exec_single_with_node(
         self, idx: int, item: Any, item_shared: dict[str, Any], thread_node: Any
-    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, float]:
         """Execute single item with provided node (for parallel execution with deep copy).
 
         This is similar to _exec_single() but uses a pre-created isolated shared store
@@ -261,8 +282,9 @@ class PflowBatchNode(Node):
             thread_node: Deep-copied node chain for thread isolation
 
         Returns:
-            Tuple of (result, error_info)
+            Tuple of (result, error_info, duration_ms)
         """
+        start_time = time.perf_counter()
         last_exception: Exception | None = None
 
         for retry in range(self.max_retries):
@@ -283,10 +305,11 @@ class PflowBatchNode(Node):
 
                 # Check for error in result dict
                 error_msg = self._extract_error(result)
+                duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
-                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None})
+                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)
 
-                return (result, None)
+                return (result, None, duration_ms)
 
             except Exception as e:
                 last_exception = e
@@ -304,7 +327,12 @@ class PflowBatchNode(Node):
                     continue
                 break
 
-        return (None, {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception})
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        return (
+            None,
+            {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception},
+            duration_ms,
+        )
 
     def _exec_sequential(self, items: list[Any]) -> list[dict[str, Any] | None]:
         """Execute items sequentially using _exec_single.
@@ -318,8 +346,9 @@ class PflowBatchNode(Node):
         results: list[dict[str, Any] | None] = []
 
         for idx, item in enumerate(items):
-            result, error = self._exec_single(idx, item)
+            result, error, duration_ms = self._exec_single(idx, item)
             results.append(result)
+            self._item_timings.append(duration_ms)
 
             if error:
                 self._errors.append(error)
@@ -342,6 +371,7 @@ class PflowBatchNode(Node):
             List of results in same order as input
         """
         self._errors = []
+        self._item_timings = []
 
         if not items:
             return []
@@ -369,6 +399,7 @@ class PflowBatchNode(Node):
         future_to_idx: dict,
         items: list[Any],
         results: list,
+        timings: list,
         pending_errors: list,
         should_stop: bool,
     ) -> bool:
@@ -378,6 +409,7 @@ class PflowBatchNode(Node):
             future_to_idx: Mapping of futures to item indices
             items: Original items list (for error reporting)
             results: Results list to populate (modified in place)
+            timings: Timings list to populate (modified in place)
             pending_errors: Errors list to populate (modified in place)
             should_stop: Whether we're already stopping
 
@@ -388,8 +420,9 @@ class PflowBatchNode(Node):
             if should_stop:
                 # Already stopping, just collect remaining results
                 try:
-                    idx, result, error = future.result()
+                    idx, result, error, duration_ms = future.result()
                     results[idx] = result
+                    timings[idx] = duration_ms
                     if error:
                         pending_errors.append(error)
                 except Exception as e:
@@ -397,8 +430,9 @@ class PflowBatchNode(Node):
                 continue
 
             try:
-                idx, result, error = future.result()
+                idx, result, error, duration_ms = future.result()
                 results[idx] = result
+                timings[idx] = duration_ms
 
                 if error:
                     pending_errors.append(error)
@@ -415,6 +449,8 @@ class PflowBatchNode(Node):
                     "error": f"Executor error: {e}",
                     "exception": e,
                 })
+                # For executor errors, we don't have timing - use 0
+                timings[idx] = 0.0
                 if self.error_handling == "fail_fast":
                     should_stop = True
                     for f in future_to_idx:
@@ -443,11 +479,12 @@ class PflowBatchNode(Node):
             Already-running items will complete (LLM/HTTP calls can't be interrupted).
         """
         results: list[dict[str, Any] | None] = [None] * len(items)
+        timings: list[float] = [0.0] * len(items)
         pending_errors: list[dict[str, Any]] = []
         should_stop = False
 
-        def process_item(idx: int, item: Any) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None]:
-            """Process single item in thread. Returns (index, result, error)."""
+        def process_item(idx: int, item: Any) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None, float]:
+            """Process single item in thread. Returns (index, result, error, duration_ms)."""
             # Create isolated shared store (shallow copy shares __llm_calls__)
             item_shared = dict(self._shared)
             item_shared[self.node_id] = {}
@@ -458,15 +495,20 @@ class PflowBatchNode(Node):
             thread_node = copy.deepcopy(self.inner_node)
 
             # Execute with thread-local node
-            result, error = self._exec_single_with_node(idx, item, item_shared, thread_node)
-            return (idx, result, error)
+            result, error, duration_ms = self._exec_single_with_node(idx, item, item_shared, thread_node)
+            return (idx, result, error, duration_ms)
 
         with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
             # Submit all items
             future_to_idx = {executor.submit(process_item, idx, item): idx for idx, item in enumerate(items)}
 
             # Collect results as they complete
-            should_stop = self._collect_parallel_results(future_to_idx, items, results, pending_errors, should_stop)
+            should_stop = self._collect_parallel_results(
+                future_to_idx, items, results, timings, pending_errors, should_stop
+            )
+
+        # Store timings for batch metadata
+        self._item_timings = timings
 
         # Merge errors (single-threaded, safe)
         self._errors.extend(pending_errors)
@@ -511,6 +553,16 @@ class PflowBatchNode(Node):
         # Count successes: non-None results without error keys
         success_count = sum(1 for r in exec_res if r is not None and not self._extract_error(r))
 
+        # Calculate timing statistics
+        timing_stats: dict[str, float] | None = None
+        if self._item_timings:
+            timing_stats = {
+                "total_items_ms": round(sum(self._item_timings), 2),
+                "avg_item_ms": round(sum(self._item_timings) / len(self._item_timings), 2),
+                "min_item_ms": round(min(self._item_timings), 2),
+                "max_item_ms": round(max(self._item_timings), 2),
+            }
+
         # Write aggregated results to shared store
         shared[self.node_id] = {
             "results": exec_res,
@@ -518,6 +570,15 @@ class PflowBatchNode(Node):
             "success_count": success_count,
             "error_count": len(self._errors),
             "errors": self._errors if self._errors else None,
+            # Batch execution metadata for tracing/debugging
+            "batch_metadata": {
+                "parallel": self.parallel,
+                "max_concurrent": self.max_concurrent if self.parallel else None,
+                "max_retries": self.max_retries,
+                "retry_wait": self.retry_wait if self.retry_wait > 0 else None,
+                "execution_mode": "parallel" if self.parallel else "sequential",
+                "timing": timing_stats,
+            },
         }
 
         logger.debug(
@@ -526,6 +587,7 @@ class PflowBatchNode(Node):
                 "node_id": self.node_id,
                 "success_count": success_count,
                 "error_count": len(self._errors),
+                "parallel": self.parallel,
             },
         )
 

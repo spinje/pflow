@@ -1470,3 +1470,196 @@ class TestParallelEdgeCases:
         assert results_seq == results_par
         assert shared_seq["test_node"]["count"] == shared_par["test_node"]["count"]
         assert shared_seq["test_node"]["success_count"] == shared_par["test_node"]["success_count"]
+
+
+class TestBatchMetadata:
+    """Tests for batch_metadata in output (tracing enhancement)."""
+
+    def test_batch_metadata_present_in_output(self):
+        """batch_metadata field is present in output."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert "batch_metadata" in shared["test_node"]
+
+    def test_batch_metadata_sequential_mode(self):
+        """batch_metadata shows sequential execution details."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(
+            inner,
+            "test_node",
+            {"items": "${data}", "parallel": False, "max_retries": 2, "retry_wait": 0.5},
+        )
+
+        shared = {"data": ["a", "b"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        metadata = shared["test_node"]["batch_metadata"]
+        assert metadata["parallel"] is False
+        assert metadata["execution_mode"] == "sequential"
+        assert metadata["max_concurrent"] is None  # Not applicable for sequential
+        assert metadata["max_retries"] == 2
+        assert metadata["retry_wait"] == 0.5
+
+    def test_batch_metadata_parallel_mode(self):
+        """batch_metadata shows parallel execution details."""
+        inner = ParallelMockInnerNode("test_node")
+        batch = PflowBatchNode(
+            inner,
+            "test_node",
+            {"items": "${data}", "parallel": True, "max_concurrent": 5, "max_retries": 3},
+        )
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        metadata = shared["test_node"]["batch_metadata"]
+        assert metadata["parallel"] is True
+        assert metadata["execution_mode"] == "parallel"
+        assert metadata["max_concurrent"] == 5
+        assert metadata["max_retries"] == 3
+
+    def test_batch_metadata_timing_stats(self):
+        """batch_metadata includes timing statistics."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        timing = shared["test_node"]["batch_metadata"]["timing"]
+        assert timing is not None
+        assert "total_items_ms" in timing
+        assert "avg_item_ms" in timing
+        assert "min_item_ms" in timing
+        assert "max_item_ms" in timing
+
+        # Timing values should be non-negative
+        assert timing["total_items_ms"] >= 0
+        assert timing["avg_item_ms"] >= 0
+        assert timing["min_item_ms"] >= 0
+        assert timing["max_item_ms"] >= 0
+
+        # min <= avg <= max
+        assert timing["min_item_ms"] <= timing["avg_item_ms"]
+        assert timing["avg_item_ms"] <= timing["max_item_ms"]
+
+    def test_batch_metadata_timing_stats_parallel(self):
+        """batch_metadata timing works in parallel mode."""
+        inner = ParallelMockInnerNode("test_node", delay=0.01)
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 3})
+
+        shared = {"data": ["a", "b", "c", "d", "e"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        timing = shared["test_node"]["batch_metadata"]["timing"]
+        assert timing is not None
+        assert timing["total_items_ms"] > 0  # Should have measurable time
+        assert len(results) == 5
+
+    def test_batch_metadata_empty_list(self):
+        """batch_metadata timing is None for empty list."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": []}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        timing = shared["test_node"]["batch_metadata"]["timing"]
+        assert timing is None  # No items processed
+
+    def test_batch_metadata_retry_wait_omitted_when_zero(self):
+        """retry_wait is None when set to 0 (default)."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "retry_wait": 0})
+
+        shared = {"data": ["a"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        metadata = shared["test_node"]["batch_metadata"]
+        assert metadata["retry_wait"] is None
+
+    def test_batch_metadata_retry_wait_present_when_nonzero(self):
+        """retry_wait is present when > 0."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "retry_wait": 1.5})
+
+        shared = {"data": ["a"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        metadata = shared["test_node"]["batch_metadata"]
+        assert metadata["retry_wait"] == 1.5
+
+    def test_batch_metadata_captured_in_trace(self):
+        """batch_metadata is captured in workflow traces via shared_after.
+
+        This simulates what InstrumentedNodeWrapper does: it captures dict(shared)
+        after node execution and passes it to WorkflowTraceCollector.record_node_execution().
+        The batch_metadata should appear in the trace's shared_after field.
+        """
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+        inner = ParallelMockInnerNode("batch_node")
+        batch = PflowBatchNode(
+            inner,
+            "batch_node",
+            {"items": "${data}", "parallel": True, "max_concurrent": 3},
+        )
+
+        # Simulate workflow execution with trace collector
+        collector = WorkflowTraceCollector(workflow_name="test-batch")
+        shared = {"data": ["a", "b", "c"]}
+
+        # Capture shared_before (like InstrumentedNodeWrapper does)
+        shared_before = dict(shared)
+
+        # Execute batch node
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # Capture shared_after (like InstrumentedNodeWrapper does)
+        shared_after = dict(shared)
+
+        # Record trace event (simulating InstrumentedNodeWrapper._record_trace)
+        collector.record_node_execution(
+            node_id="batch_node",
+            node_type="ShellNode",  # Inner node type, not PflowBatchNode
+            duration_ms=100.0,
+            shared_before=shared_before,
+            shared_after=shared_after,
+            success=True,
+        )
+
+        # Verify batch_metadata appears in trace
+        assert len(collector.events) == 1
+        event = collector.events[0]
+
+        # The batch_metadata should be in shared_after under the node's namespace
+        assert "batch_node" in event["shared_after"]
+        assert "batch_metadata" in event["shared_after"]["batch_node"]
+
+        metadata = event["shared_after"]["batch_node"]["batch_metadata"]
+        assert metadata["parallel"] is True
+        assert metadata["max_concurrent"] == 3
+        assert metadata["execution_mode"] == "parallel"
+        assert metadata["timing"] is not None

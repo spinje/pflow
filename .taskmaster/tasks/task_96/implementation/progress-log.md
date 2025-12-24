@@ -736,3 +736,79 @@ Systematically verified:
 - Deep copy isolation works correctly ✅
 
 **Final test count**: 83 batch tests pass (82 + 1 new regression test).
+
+---
+
+## 2024-12-24 - Tracing Enhancement
+
+### Problem Identified
+
+Batch processing was invisible to the tracing system:
+- No per-item timing
+- No parallel vs sequential indicator
+- No batch size metadata
+- InstrumentedNodeWrapper sees batch as a single node execution
+
+### Solution: Enhance Batch Output
+
+Instead of modifying the tracing infrastructure, we enhanced `PflowBatchNode` output to include rich metadata that flows automatically into traces via `shared_after` capture.
+
+**Key insight**: `InstrumentedNodeWrapper._record_trace()` captures `dict(shared)` AFTER `post()` runs, so any metadata we add to `shared[node_id]` appears in traces automatically.
+
+### Implementation
+
+**1. Added per-item timing tracking:**
+- `_exec_single()` returns `(result, error, duration_ms)` instead of `(result, error)`
+- `_exec_single_with_node()` similarly updated
+- `_exec_sequential()` collects timings to `self._item_timings`
+- `_exec_parallel()` collects timings from threads
+
+**2. Enhanced `post()` output:**
+```json
+{
+  "results": [...],
+  "count": 10,
+  "success_count": 10,
+  "error_count": 0,
+  "errors": null,
+  "batch_metadata": {
+    "parallel": true,
+    "max_concurrent": 5,
+    "max_retries": 1,
+    "retry_wait": null,
+    "execution_mode": "parallel",
+    "timing": {
+      "total_items_ms": 234.56,
+      "avg_item_ms": 23.46,
+      "min_item_ms": 15.23,
+      "max_item_ms": 45.67
+    }
+  }
+}
+```
+
+**3. Added 8 tests in `TestBatchMetadata` class:**
+- `test_batch_metadata_present_in_output`
+- `test_batch_metadata_sequential_mode`
+- `test_batch_metadata_parallel_mode`
+- `test_batch_metadata_timing_stats`
+- `test_batch_metadata_timing_stats_parallel`
+- `test_batch_metadata_empty_list`
+- `test_batch_metadata_retry_wait_omitted_when_zero`
+- `test_batch_metadata_retry_wait_present_when_nonzero`
+
+### Benefits
+
+1. **Zero changes to tracing system** - uses existing `shared_after` capture
+2. **Backward compatible** - adds new fields, doesn't change existing ones
+3. **Rich debugging info** - timing stats, parallel mode, concurrency settings
+4. **Automatic integration** - appears in all traces by default
+
+### Verification
+
+- All 75 batch node tests pass
+- All 116 batch-related tests pass
+- `make check` passes
+- Manual verification shows metadata in both sequential and parallel modes
+
+**Final test count**: 116 batch-related tests (75 batch_node + 15 compiler + 26 schema).
