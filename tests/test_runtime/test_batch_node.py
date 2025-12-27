@@ -289,7 +289,7 @@ class TestErrorHandling:
         shared = {"data": ["a", "b"]}
         items = batch.prep(shared)
 
-        with pytest.raises(RuntimeError, match="Item 0 failed"):
+        with pytest.raises(RuntimeError, match=r"Batch 'test_node' failed at item \[0\]"):
             batch._exec(items)
 
     def test_continue_records_error_in_result(self):

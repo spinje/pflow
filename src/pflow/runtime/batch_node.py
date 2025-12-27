@@ -357,7 +357,7 @@ class PflowBatchNode(Node):
                     if error.get("exception") is not None:
                         raise error["exception"]
                     else:
-                        raise RuntimeError(f"Item {idx} failed: {error['error']}")
+                        raise RuntimeError(f"Batch '{self.node_id}' failed at item [{idx}]: {error['error']}")
 
         return results
 
@@ -519,7 +519,9 @@ class PflowBatchNode(Node):
             if first_error.get("exception") is not None:
                 raise first_error["exception"]
             else:
-                raise RuntimeError(f"Item {first_error['index']} failed: {first_error['error']}")
+                raise RuntimeError(
+                    f"Batch '{self.node_id}' failed at item [{first_error['index']}]: {first_error['error']}"
+                )
 
         return results
 

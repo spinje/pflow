@@ -91,18 +91,24 @@ def _get_output_controller(ctx: click.Context) -> OutputController:
 
 
 def _echo_trace(ctx: click.Context, message: str) -> None:
-    """Output trace file location message only in interactive mode.
+    """Output trace file location message.
 
-    Trace messages are informational, not errors, so they should be
-    suppressed in non-interactive mode (pipes, -p flag).
+    Shown in all modes EXCEPT:
+    - -p (print) mode: user explicitly wants only raw output
+    - JSON output mode: structured output only
+
+    Trace files are valuable for debugging in non-interactive contexts
+    like CI/CD, agents, and scripts.
 
     Args:
         ctx: Click context
         message: Trace message to display
     """
     output_controller = _get_output_controller(ctx)
-    if output_controller.is_interactive():
-        click.echo(message, err=True)
+    # Suppress in -p (print) or JSON modes - user wants only structured output
+    if output_controller.print_flag or output_controller.output_format == "json":
+        return
+    click.echo(message, err=True)
 
 
 def _read_stdin_data() -> tuple[str | None, StdinData | None]:
@@ -641,21 +647,82 @@ def _format_node_timing(duration_ms: int | float) -> str:
     return f"({int(duration_ms)}ms)" if duration_ms and duration_ms > 0 else "(<1ms)"
 
 
-def _format_node_status_line(node_id: str, status: str, duration_ms: int | float, cached: bool) -> str:
+def _format_node_status_line(step: dict[str, Any]) -> str:
     """Format complete node status line for display.
 
+    For batch nodes, shows item success/failure counts.
+    For regular nodes, shows standard status line.
+
     Args:
-        node_id: Node identifier
-        status: Execution status
-        duration_ms: Duration in milliseconds
-        cached: Whether result was cached
+        step: Execution step dict with node_id, status, duration_ms, cached,
+              and optional batch fields (is_batch, batch_total, batch_success, batch_errors)
 
     Returns:
         Formatted status line
     """
-    indicator = _get_status_indicator(status)
+    node_id = step.get("node_id", "unknown")
+    status = step.get("status", "unknown")
+    duration_ms = step.get("duration_ms", 0)
+    cached = step.get("cached", False)
+    repaired = step.get("repaired", False)
+
     timing = _format_node_timing(duration_ms)
-    return f"  {indicator} {node_id} {timing} cached" if cached else f"  {indicator} {node_id} {timing}"
+
+    # Build additional tags
+    tags = []
+    if cached:
+        tags.append("cached")
+    if repaired:
+        tags.append("repaired")
+    tag_str = f" [{', '.join(tags)}]" if tags else ""
+
+    # Check if this is a batch node
+    if step.get("is_batch"):
+        total = step.get("batch_total", 0)
+        success = step.get("batch_success", 0)
+        errors = step.get("batch_errors", 0)
+
+        if errors > 0:
+            # Partial success - warning indicator
+            return f"  ⚠ {node_id} {timing} - {success}/{total} items succeeded, {errors} failed{tag_str}"
+        else:
+            # Full success - checkmark
+            return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
+
+    # Regular node
+    indicator = _get_status_indicator(status)
+    return f"  {indicator} {node_id} {timing}{tag_str}"
+
+
+def _truncate_error_message(message: str, max_length: int = 200) -> str:
+    """Truncate error message to max length with ellipsis."""
+    if len(message) <= max_length:
+        return message
+    return message[: max_length - 3] + "..."
+
+
+def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
+    """Display batch errors section for all batch nodes with failures.
+
+    Args:
+        steps: List of execution step dicts
+    """
+    for step in steps:
+        if not step.get("is_batch") or step.get("batch_errors", 0) == 0:
+            continue
+
+        node_id = step.get("node_id", "unknown")
+        error_details = step.get("batch_error_details", [])
+        truncated = step.get("batch_errors_truncated", 0)
+
+        click.echo(f"\nBatch '{node_id}' errors:", err=True)
+        for err in error_details:
+            idx = err.get("index", "?")
+            msg = _truncate_error_message(str(err.get("error", "Unknown error")))
+            click.echo(f"  [{idx}] {msg}", err=True)
+
+        if truncated > 0:
+            click.echo(f"  ...and {truncated} more errors", err=True)
 
 
 def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
@@ -741,13 +808,11 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
     if steps:
         click.echo(f"Nodes executed ({total_nodes}):", err=True)
         for step in steps:
-            node_id = step.get("node_id", "unknown")
-            status = step.get("status", "unknown")
-            duration_ms_node = step.get("duration_ms", 0)
-            cached = step.get("cached", False)
-
-            status_line = _format_node_status_line(node_id, status, duration_ms_node, cached)
+            status_line = _format_node_status_line(step)
             click.echo(status_line, err=True)
+
+        # Show batch errors section if any batch nodes had failures
+        _display_batch_errors(steps)
 
     # Show cost if > 0
     _display_cost_summary(total_cost, formatted_result)

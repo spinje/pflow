@@ -812,3 +812,139 @@ Instead of modifying the tracing infrastructure, we enhanced `PflowBatchNode` ou
 - Manual verification shows metadata in both sequential and parallel modes
 
 **Final test count**: 116 batch-related tests (75 batch_node + 15 compiler + 26 schema).
+
+---
+
+## 2024-12-27 - Batch Error Display Implementation
+
+### Problem Statement
+
+When batch processing encounters errors in `continue` mode, the CLI output was confusing:
+- Vague warnings: "WARNING: Command failed with exit code 1" (which item?)
+- No summary: User must manually count successes/failures
+- Errors buried: Mixed in results array, hard to find
+- False confidence: Green checkmark (✓) even when items failed
+
+### Critical Discovery: Dual Display Paths
+
+**The insight that unlocked this fix**: CLI and MCP have SEPARATE display paths that both needed updating.
+
+```
+Shared Layer (format_success_as_text)           CLI-Specific (_display_execution_summary)
+       ↓                                                      ↓
+  Used by MCP                                          Used by CLI
+  execution_service.py                                  main.py
+```
+
+I initially updated only the formatter (`success_formatter.py`), but the CLI wasn't showing batch info because it has its own `_display_execution_summary()` function with its own `_format_node_status_line()`.
+
+**Lesson**: Always trace the ACTUAL code path, not what you assume based on architecture docs.
+
+### Implementation Architecture
+
+**Files modified:**
+
+| File | Purpose | Changes |
+|------|---------|---------|
+| `execution_state.py` | Build execution steps | Added batch metadata detection |
+| `success_formatter.py` | Format for MCP | Added `_format_batch_node_line()`, `_format_batch_errors_section()` |
+| `main.py` | CLI display | Updated `_format_node_status_line()`, added `_display_batch_errors()` |
+| `batch_node.py` | Batch execution | Improved fail_fast error message format |
+
+**Batch detection pattern:**
+```python
+# Reliable marker: batch_metadata key is unique to batch nodes
+if isinstance(node_output, dict) and "batch_metadata" in node_output:
+    step["is_batch"] = True
+    step["batch_total"] = node_output.get("count", 0)
+    ...
+```
+
+### Trace Visibility Decision
+
+**Original behavior**: Trace shown only in interactive mode (TTY).
+
+**New behavior**: Trace shown in all modes EXCEPT:
+- `-p` (print mode): User explicitly wants only raw output
+- `--output-format json`: Structured output only
+
+**Rationale**: Trace files are valuable for debugging in CI/CD, agents, and scripts. But -p/JSON modes are for machine consumption where extra output breaks parsing.
+
+```python
+def _echo_trace(ctx: click.Context, message: str) -> None:
+    output_controller = _get_output_controller(ctx)
+    if output_controller.print_flag or output_controller.output_format == "json":
+        return
+    click.echo(message, err=True)
+```
+
+### Output Specifications
+
+**Normal mode:**
+```
+✓ Workflow completed in 0.455s
+Nodes executed (2):
+  ✓ fetch_users (43ms)
+  ⚠ process (33ms) - 8/10 items succeeded, 2 failed
+
+Batch 'process' errors:
+  [1] Command failed with exit code 1
+  [4] Command failed with exit code 1
+
+Workflow output:
+...
+📊 Workflow trace saved: ~/.pflow/debug/workflow-trace-*.json
+```
+
+**-p mode:** Raw output only (no summary, no errors, no trace)
+
+**JSON mode:** Structured JSON with `execution.steps[].is_batch`, `batch_total`, etc.
+
+### Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Error cap | Max 5 displayed | Prevents overwhelming output with 50+ errors |
+| Truncation | 200 chars per error | Full stack traces would be unreadable |
+| Output stream | stderr for batch errors | Consistent with trace, warnings |
+| Indicator | ⚠ for partial success | Distinguishes from ✓ (full) and ❌ (failed) |
+
+### Tests Added
+
+Created `tests/test_execution/formatters/test_success_formatter.py` with 23 tests:
+- `TestBatchNodeLineFormatting`: 5 tests for node line formatting
+- `TestBatchErrorsSectionFormatting`: 6 tests for error section
+- `TestErrorMessageTruncation`: 3 tests for message truncation
+- `TestExecutionStepFormatting`: 2 tests for dispatch logic
+- `TestFormatSuccessAsText`: 3 integration tests
+- `TestNonBatchNodesUnchanged`: 4 regression tests
+
+### What Would Break This
+
+1. **Removing `batch_metadata` from batch output** - Detection would fail
+2. **Changing execution_state.py shared_storage access** - Batch fields wouldn't be populated
+3. **Removing either display path update** - CLI or MCP would show old format
+4. **Changing step field names** - Both display paths expect `is_batch`, `batch_total`, etc.
+
+### Final Verification
+
+| Test | Result |
+|------|--------|
+| Normal mode shows batch summary | ✅ |
+| Normal mode shows error section | ✅ |
+| -p mode shows only raw output | ✅ |
+| JSON mode has batch fields in steps | ✅ |
+| 114 batch tests pass | ✅ |
+| `make check` passes | ✅ |
+
+---
+
+## Current Test Counts
+
+| Category | Count |
+|----------|-------|
+| IR Schema (Phase 1 + 2) | 26 |
+| Batch Node | 83 |
+| Compiler Batch | 15 |
+| Success Formatter | 23 |
+| **Total Batch-Related** | **137** |

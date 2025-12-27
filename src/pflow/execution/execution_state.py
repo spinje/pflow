@@ -38,6 +38,14 @@ def build_execution_steps(
         - cached: Boolean indicating cache hit
         - repaired: Boolean indicating node was repaired (if applicable)
 
+        For batch nodes (detected via batch_metadata key in output):
+        - is_batch: True
+        - batch_total: Total items processed
+        - batch_success: Items without errors
+        - batch_errors: Items with errors
+        - batch_error_details: First 5 error dicts (index, item, error, exception)
+        - batch_errors_truncated: Count of additional errors beyond the 5 shown
+
     Example:
         >>> steps = build_execution_steps(workflow_ir, shared_storage, metrics)
         >>> steps[0]
@@ -46,6 +54,21 @@ def build_execution_steps(
             "status": "completed",
             "duration_ms": 150,
             "cached": False
+        }
+
+        # Batch node example:
+        >>> steps[1]
+        {
+            "node_id": "process-items",
+            "status": "completed",
+            "duration_ms": 500,
+            "cached": False,
+            "is_batch": True,
+            "batch_total": 10,
+            "batch_success": 8,
+            "batch_errors": 2,
+            "batch_error_details": [{"index": 1, "error": "..."}, ...],
+            "batch_errors_truncated": 0
         }
     """
     if not workflow_ir or "nodes" not in workflow_ir:
@@ -89,6 +112,19 @@ def build_execution_steps(
         # Mark repaired nodes
         if node_id in modified_nodes:
             step["repaired"] = True
+
+        # Add batch metadata if this is a batch node
+        # Batch nodes write to shared[node_id] with batch_metadata key
+        node_output = shared_storage.get(node_id, {})
+        if isinstance(node_output, dict) and "batch_metadata" in node_output:
+            step["is_batch"] = True
+            step["batch_total"] = node_output.get("count", 0)
+            step["batch_success"] = node_output.get("success_count", 0)
+            step["batch_errors"] = node_output.get("error_count", 0)
+            # Include error details for display (capped at 5 for readability)
+            errors = node_output.get("errors") or []
+            step["batch_error_details"] = errors[:5]
+            step["batch_errors_truncated"] = max(0, len(errors) - 5)
 
         steps.append(step)
 
