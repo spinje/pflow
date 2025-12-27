@@ -116,18 +116,99 @@ class TestNullDefaults:
         assert node.initial_params["input_value"] is None
         # In complex templates, None will become empty string during resolution
 
-    @pytest.mark.skip(reason="TODO: Re-enable when TemplateAwareNodeWrapper API is stabilized")
     def test_missing_variable_keeps_template(self):
-        """Test that unresolved templates are preserved for debugging.
+        """Test that unresolved templates are preserved for debugging in permissive mode.
 
-        This test validates that when template variables are not found in the
-        resolution context, the template string is preserved as-is for debugging
-        purposes rather than being replaced with an empty string or raising an error.
+        In permissive mode, when a template variable cannot be resolved, the template
+        string is preserved as-is (e.g., '${missing_var}') rather than being replaced
+        with an empty string. This allows debugging of template resolution issues.
+
+        Note: In strict mode (default), a ValueError is raised instead - see
+        test_missing_variable_raises_in_strict_mode for that behavior.
         """
-        # This test needs to be rewritten to match the current TemplateAwareNodeWrapper API
-        # The wrapper no longer exposes _resolve_templates as a public method
-        # and the initialization signature has changed.
-        pass
+        from unittest.mock import MagicMock
+
+        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+
+        # Create a mock inner node
+        mock_node = MagicMock()
+        mock_node.params = {}
+
+        # Capture params during execution (wrapper restores original params after _run)
+        captured_params = {}
+
+        def capture_params_during_execution(shared):
+            captured_params.update(mock_node.params)
+            return "default"
+
+        mock_node._run = MagicMock(side_effect=capture_params_during_execution)
+
+        # Create wrapper in permissive mode
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=mock_node,
+            node_id="test-node",
+            initial_params={},
+            template_resolution_mode="permissive",
+        )
+
+        # Set params with template that references missing variable
+        wrapper.set_params({"message": "${missing_variable}"})
+
+        # Run with empty shared store - should NOT raise in permissive mode
+        shared = {}
+        wrapper._run(shared)
+
+        # Inner node SHOULD have been called (permissive mode continues)
+        mock_node._run.assert_called_once()
+
+        # Template error should be stored in shared store
+        assert "__template_errors__" in shared
+        assert "test-node" in shared["__template_errors__"]
+        error_info = shared["__template_errors__"]["test-node"]
+        assert "missing_variable" in str(error_info.get("message", ""))
+
+        # The unresolved template should be preserved (passed to inner node as literal)
+        # We capture the params during execution since wrapper restores them after
+        assert captured_params.get("message") == "${missing_variable}"
+
+    def test_missing_variable_raises_in_strict_mode(self):
+        """Test that unresolved templates raise ValueError in strict mode.
+
+        In strict mode (the default), when a template variable cannot be resolved,
+        a ValueError is raised with a helpful error message. The template string
+        is preserved in the error message for debugging.
+        """
+        from unittest.mock import MagicMock
+
+        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+
+        # Create a mock inner node
+        mock_node = MagicMock()
+        mock_node.params = {}
+        mock_node._run = MagicMock(return_value="default")
+
+        # Create wrapper in strict mode (default)
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=mock_node,
+            node_id="test-node",
+            initial_params={},
+            template_resolution_mode="strict",
+        )
+
+        # Set params with template that references missing variable
+        wrapper.set_params({"message": "${missing_variable}"})
+
+        # Run with empty shared store - should raise ValueError in strict mode
+        shared = {}
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared)
+
+        # Verify error message contains helpful debugging info
+        error_msg = str(exc_info.value)
+        assert "missing_variable" in error_msg
+
+        # Inner node should NOT have been called (error raised before execution)
+        mock_node._run.assert_not_called()
 
     def test_null_value_type_preservation(self):
         """Test that different types including None are preserved correctly."""
