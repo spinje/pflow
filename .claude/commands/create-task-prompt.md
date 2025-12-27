@@ -1,3 +1,8 @@
+---
+description: Generate implementation prompt for a pflow task
+argument-hint: [task-id]
+---
+
 # Create Task Implementation Prompt - Meta-Prompt for AI Agents
 
 This command instructs an AI agent to generate a comprehensive implementation prompt for another AI agent who will implement a pflow task.
@@ -8,73 +13,40 @@ Inputs: $ARGUMENTS
 
 Available inputs:
 - `--task_id`: The ID of the task to create an implementation prompt for (required)
-- `--read_context`: Whether to read the context files from disk (default: false)
 
-> If you receive only a number (e.g., "21"), assume that is the task_id with read_context=false
-
-## 🚨 CRITICAL: File Reading Rules
-
-**NEVER read files unless `read_context` is explicitly set to true!**
-
-- If `read_context` is false or not specified → DO NOT read any files
-- If `read_context` is true → Read the files in `.taskmaster/tasks/<task_id>/starting-context/`
-- No exceptions to this rule
+> If you receive only a number (e.g., "21"), assume that is the task_id
 
 ## Your Task as the Prompt-Generating Agent
 
-You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a pflow task. Your primary source of information should be **your existing context window** - everything you already know from your conversation with the user.
+You are tasked with creating a comprehensive implementation prompt for another AI agent who will implement a pflow task. Use your existing context window knowledge.
 
 **Your output**: Generate the prompt and save it to `.taskmaster/tasks/task_{{task_id}}/task-{{task_id}}-implementation-prompt.md`
 
-### 🧠 Your Knowledge Sources
+### 🧠 Your Knowledge Source
 
-1. **Primary Source (ALWAYS)**: Your existing context window
-   - Task discussions you've had with the user
-   - Implementation details you've learned
-   - Architectural decisions you're aware of
-   - Patterns and anti-patterns you've discovered
-   - Any relevant context from your conversation
+**Your existing context window** - everything you already know from your conversation with the user:
+- Task discussions you've had with the user
+- Implementation details you've learned
+- Architectural decisions you're aware of
+- Patterns and anti-patterns you've discovered
 
-2. **Secondary Source (ONLY if read_context=true)**: Files on disk
-   - Read to supplement and verify your existing knowledge
-   - Fill gaps in your understanding
-   - Get precise specifications
+### Process
 
-### Path 1: DEFAULT Behavior (read_context=false)
-
-**Use your existing knowledge from the conversation to fill the template:**
-
-1. **Draw from your context window** - What do you already know about Task {{task_id}}?
-2. **Use LS tool** to list files in `.taskmaster/tasks/{{task_id}}/starting-context/` (DO NOT read them)
-3. **Fill in the template** using your existing knowledge and the file list
-4. **Be explicit about what you know** vs what the implementing agent needs to verify
-5. **NEVER make things up** - If you don't know something, mark it as `{{placeholder_name - TO BE VERIFIED}}`
-6. **Output a prompt** that acknowledges both what's known and what needs verification
-
-### Path 2: Enhanced Mode (read_context=true)
-
-**Combine your existing knowledge with file contents:**
-
-1. **Start with what you already know** from your context window
-2. **Use LS tool** to list files in `.taskmaster/tasks/{{task_id}}/starting-context/`
-3. **Read the files** you just listed
-4. **Merge your knowledge** - Use files to verify, correct, and expand your understanding
-5. **Fill the template completely** with the combined knowledge and explicit file list
-6. **Output a comprehensive prompt** ready for immediate use
+1. **Use your existing knowledge** from your context window
+2. **Fill the template completely** with your knowledge
+3. **Output a comprehensive prompt** ready for immediate use
 
 ### 🛑 Decision Points: When to STOP and ASK
 
 **Do NOT proceed with generating the prompt if:**
 
-1. You have NO knowledge of the task in your context window AND read_context=false
-2. The task_id doesn't match any task you've discussed
-3. Critical information is missing that you can't mark as "TO BE VERIFIED"
-4. You're unsure whether your understanding is correct
+1. The task_id doesn't match any task you've discussed
+2. Critical information is missing from your context
+3. You're unsure whether your understanding is correct
 
 **Instead, ask the user:**
-- "I don't have sufficient context about Task {{task_id}} in my current conversation. Should I read the context files (--read_context=true) or can you provide more information? Currently these are the ambiguous parts... go on to describe all the things you are not sure about along with a alternative options and recommendations"
 - "I'm not certain about [specific aspect]. Could you clarify before I generate the prompt?"
-- "Currently I have to make a lot of assumptions about the current state of the codebase. Should I deploy subagents to gather more information about [specific aspect] in the codebase?"
+- "Should I deploy subagents to gather more information about [specific aspect] in the codebase?"
 
 ### 📝 Quality Checks Before Output
 
@@ -85,58 +57,6 @@ Before generating the prompt, ask yourself:
 3. **Am I making any assumptions?** Verify or mark them
 4. **Is this enough to be useful?** If not, ask for clarification
 
-### Example Outputs
-
-**When you KNOW the task well (read_context=false):**
-```markdown
-# Task 21: Implement Workflow Input Declaration - Agent Instructions
-
-## The Problem You're Solving
-
-Workflows currently cannot declare their expected inputs, making validation impossible and usage unclear. Users get cryptic errors when required parameters are missing. [Based on our discussion about parameter validation issues]
-
-## Your Mission
-
-Implement input declaration for workflows in the IR schema, enabling workflows to specify required and optional parameters with types and defaults. [As we discussed in the context of improving workflow usability]
-
-[... continue with known information, marking uncertain areas ...]
-```
-
-**When you have LIMITED knowledge (read_context=false):**
-```markdown
-# Task 21: Workflow Input Enhancement - Agent Instructions
-
-## The Problem You're Solving
-
-Based on our discussion, this task relates to improving how workflows handle input parameters. You'll need to read the specification for the complete problem statement and requirements.
-
-## Your Mission
-
-Implement improvements to workflow input handling. The exact scope and requirements are detailed in the specification file in your starting-context folder.
-
-## Required Reading (IN THIS ORDER)
-
-### 1. FIRST: Understand the Epistemic Approach
-**File**: `.taskmaster/workflow/epistemic-manifesto.md`
-[... standard epistemic section ...]
-
-### 2. SECOND: Task Overview
-**File**: `.taskmaster/tasks/task_21/task_21.md`
-[... standard task overview ...]
-
-### 3. Read ALL Context Files
-**Directory**: `.taskmaster/tasks/task_21/starting-context/`
-
-**Files to read (in this order):**
-1. `workflow-input-comprehensive-context.md` - Deep understanding of the feature
-2. `task-21-spec.md` - The specification (FOLLOW THIS PRECISELY)
-3. `task-21-handover.md` - Important context from investigation phase
-4. `workflow-input-implementation-plan.md` - Step-by-step implementation guide
-
-**Instructions**: Read EACH file listed above in order. The specification (`task-21-spec.md`) contains all requirements and test criteria that MUST be met. After reading each file, pause to understand how it relates to the others.
-
-[... continue with what you do know from the conversation ...]
-```
 
 ## Template to Fill
 
@@ -562,8 +482,6 @@ Append deviation to progress log:
 
 ## How to Extract Information and Fill the Template
 
-### From Your Context Window (Primary Source):
-
 Reflect on your conversation and extract:
 - Problem descriptions and pain points discussed
 - Task objectives and goals mentioned
@@ -571,22 +489,9 @@ Reflect on your conversation and extract:
 - Implementation strategies considered
 - Warnings or pitfalls identified
 - Patterns and anti-patterns discovered
-
-### From Context Files (Only if read_context=true):
-
-1. **Problem Statement**: Look for sections explaining what's broken, missing, or needs improvement
-2. **Task Number and Title**: Usually in the filename or document header
-3. **Mission Statement**: First paragraph of spec or "Objective" section
-4. **Primary Context File**: Look for comprehensive context documents or main spec files
-5. **Key Outcomes**: Look for deliverables, components to build, or specific changes needed
-6. **Detailed Description**: "What You're Building" or "Overview" sections
-7. **Implementation Phases**: Break down from implementation plans or create logical phases
-8. **Technical Details**: Requirements, constraints, or technical considerations sections
-9. **Warnings**: Look for "gotchas", "pitfalls", or "lessons learned" sections
-10. **Key Decisions**: "Decisions Made" sections or handover documents
-11. **What NOT to Do**: Anti-patterns, things to avoid, or explicit "don't" statements
-12. **Success Criteria**: "Success Criteria", "Test Requirements", or "Acceptance Criteria" sections
-13. **Getting Started Steps**: First concrete actions from implementation plans
+- Key outcomes and deliverables
+- Success criteria discussed
+- What NOT to do (anti-patterns mentioned)
 
 ## Example Output
 
@@ -906,18 +811,17 @@ You're implementing a foundational feature that will unlock workflow composition
 Good luck! This feature will significantly enhance pflow's capabilities by enabling workflow reuse and composition. Think hard!
 ```
 
-> Note: This is an example of what your generated prompt should look like. The specific details above are from Task 20 and should NOT be copied. Extract the actual content from the task's context files.
+> Note: This is an example of what your generated prompt should look like. The specific details above are from Task 20 and should NOT be copied. Extract the actual content from your context window.
 
 ## Critical Reminders for the Prompt-Generating Agent
 
 1. **ALL placeholders must be replaced** - No `{{placeholder}}` should remain in your output
 2. **Progress log sections are CRITICAL** - Preserve these sections exactly as shown
-3. **Read ALL context files (when read_context=true)** - Don't skip any files in the starting-context folder when reading is enabled
-4. **Maintain template structure** - Keep all sections in the exact order shown
-5. **Include concrete examples** - Add code snippets from your knowledge where relevant
-6. **Success criteria must include** - Always add "make test passes" and "make check passes"
-7. **Epistemic manifesto is always first** - This must be the first item in the reading list
-8. **Extract, don't invent** - Pull content from your knowledge/context files rather than making it up
+3. **Maintain template structure** - Keep all sections in the exact order shown
+4. **Include concrete examples** - Add code snippets from your knowledge where relevant
+5. **Success criteria must include** - Always add "make test passes" and "make check passes"
+6. **Epistemic manifesto is always first** - This must be the first item in the reading list
+7. **Extract, don't invent** - Pull content from your knowledge rather than making it up
 
 ## What Makes a Good Implementation Prompt
 
@@ -943,10 +847,9 @@ After thinking extensively and planned the prompt write it to:
 
 ## 🔑 Key Principles to Remember
 
-1. **Context Window First**: Your existing knowledge from the conversation is your PRIMARY source
-2. **Never Read Without Permission**: DO NOT read files unless --read_context=true
-3. **Never Invent Information**: Mark unknowns as "TO BE VERIFIED" rather than guessing
-4. **Ask When Uncertain**: Better to ask for clarification than generate an unhelpful prompt
-5. **Be Explicit**: Clearly distinguish what you KNOW vs what needs verification
+1. **Use Your Context**: Draw from your existing knowledge from the conversation
+2. **Never Invent Information**: Mark unknowns as "TO BE VERIFIED" rather than guessing
+3. **Ask When Uncertain**: Better to ask for clarification than generate an unhelpful prompt
+4. **Be Explicit**: Clearly distinguish what you KNOW vs what needs verification
 
-Remember: The implementing agent will rely entirely on your generated prompt to complete the task successfully. Make it comprehensive, clear, and actionable - using the knowledge you already have.
+Remember: The implementing agent will rely entirely on your generated prompt to complete the task successfully. Make it comprehensive, clear, and actionable.

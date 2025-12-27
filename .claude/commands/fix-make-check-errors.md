@@ -1,3 +1,8 @@
+---
+description: Fix linting and type check errors
+argument-hint: [--use-parallel-subagents]
+---
+
 There are currently some make check errors that need to be fixed.
 
 You have been assigned to fix them.

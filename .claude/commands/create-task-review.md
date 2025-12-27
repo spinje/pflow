@@ -1,3 +1,8 @@
+---
+description: Generate post-implementation review document
+argument-hint: [task-id]
+---
+
 # Create Task Review - Meta-Prompt for Post-Implementation Documentation
 
 This command instructs an AI agent to generate a comprehensive task review document optimized for future AI agent consumption.

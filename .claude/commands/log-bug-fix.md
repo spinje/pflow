@@ -1,3 +1,7 @@
+---
+description: Log completed bug fix to knowledge base
+---
+
 You have just fixed a bug. You need to log the bug fix in the bug fix log and optionally add a new knowledge base entry (pitfall or pattern) to the knowledge base.
 
 The bug fix log is in the .taskmaster/bugfix/bugfix-log.md file.

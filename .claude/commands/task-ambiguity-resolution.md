@@ -1,3 +1,8 @@
+---
+description: Identify and resolve task ambiguities before implementation
+argument-hint: [task-id]
+---
+
 # Task Ambiguity Resolution - Meta-Prompt for AI Agents
 
 This command instructs an AI agent to identify and resolve ambiguities for a pflow task before implementation.
@@ -8,17 +13,8 @@ Inputs: $ARGUMENTS
 
 Available inputs:
 - `--task_id`: The ID of the task to analyze for ambiguities (required)
-- `--read_context`: Whether to read the context files from disk (default: false)
 
-> If you receive only a number (e.g., "17"), assume that is the task_id with read_context=false
-
-## 🚨 CRITICAL: File Reading Rules
-
-**NEVER read files unless `read_context` is explicitly set to true!**
-
-- If `read_context` is false or not specified → DO NOT read any files
-- If `read_context` is true → Read the files in `.taskmaster/tasks/<task_id>/starting-context/`
-- No exceptions to this rule
+> If you receive only a number (e.g., "17"), assume that is the task_id
 
 ## Your Task as the Ambiguity Resolution Agent
 
@@ -28,39 +24,25 @@ You are tasked with creating a comprehensive ambiguities resolution document for
 
 ### 🧠 Your Knowledge Sources
 
-1. **Primary Source (ALWAYS)**: Your existing context window
+1. **Your existing context window**
    - Task discussions you've had with the user
    - Implementation details you've learned
    - Architectural decisions you're aware of
    - Patterns and anti-patterns you've discovered
    - Any relevant context from your conversation
 
-2. **Secondary Source (ONLY if read_context=true)**: Files on disk
-   - Read to supplement and verify your existing knowledge
-   - Fill gaps in your understanding
-   - Get precise specifications and requirements
+2. **Parallel subagents** for codebase investigation
+   - Deploy to verify assumptions against actual code
+   - Gather specific implementation patterns
+   - Confirm integration points
 
-### Path 1: DEFAULT Behavior (read_context=false)
-
-**Use your existing knowledge from the conversation:**
+### Process
 
 1. **ULTRATHINK about what you know** - What do you already understand about Task {{task_id}}?
-2. **Use LS tool** to list files in `.taskmaster/tasks/{{task_id}}/starting-context/` (DO NOT read them)
-3. **Identify ambiguities** from your current knowledge
-4. **Mark unknowns** as `[TO BE VERIFIED from context files]`
-5. **Deploy parallel subagents** to gather specific codebase information (see Section below)
-6. **Output document** with clear markers for what needs verification
-
-### Path 2: Enhanced Mode (read_context=true)
-
-**Combine your existing knowledge with file contents:**
-
-1. **Start with what you already know** from your context window
-2. **Use LS tool** to list files in `.taskmaster/tasks/{{task_id}}/starting-context/`
-3. **Read ALL files** in the starting-context directory
-4. **Deploy parallel subagents** for deep codebase investigation
-5. **Merge all knowledge** to create comprehensive ambiguity resolutions
-6. **Output complete document** with all ambiguities resolved
+2. **Identify ambiguities** from your current knowledge
+3. **Deploy parallel subagents** to gather specific codebase information (see Section below)
+4. **Merge all knowledge** to create comprehensive ambiguity resolutions
+5. **Output complete document** with all ambiguities resolved
 
 ## 🔍 Step-by-Step Process
 
@@ -150,8 +132,8 @@ Before documenting ambiguities, thoroughly investigate:
 
 **Do NOT proceed with generating the ambiguities document if:**
 
-1. **No context exists**: You have NO knowledge of the task AND read_context=false
-2. **Task mismatch**: The task_id doesn't match any task you've discussed or know about through reading the context files
+1. **No context exists**: You have NO knowledge of the task in your context window
+2. **Task mismatch**: The task_id doesn't match any task you've discussed
 3. **Critical gaps**: Missing critical information that subagents cannot resolve
 4. **Fundamental uncertainty**: Core architectural decisions are completely unclear
 
@@ -164,9 +146,8 @@ Currently unclear:
 - [Specific aspect 2]: Multiple approaches possible: [option A] vs [option B]
 
 Should I:
-1. Read the context files (--read_context=true)?
-2. Deploy subagents to investigate [specific areas]?
-3. Or can you provide clarification on [specific questions]?"
+1. Deploy subagents to investigate [specific areas]?
+2. Or can you provide clarification on [specific questions]?"
 ```
 
 ## 📋 Quality Checks Before Output
@@ -198,7 +179,6 @@ Use this exact format for your ambiguities document:
 **Information Sources Used**:
 - Context window knowledge: [What you knew]
 - Subagent investigations: [What was discovered]
-- Context files: [If read_context=true]
 - Remaining unknowns: [What couldn't be determined]
 
 ## Background Context
@@ -345,7 +325,6 @@ Task {{task_id}} aims to [core purpose from your knowledge/investigation]. While
 **Information Sources Used**:
 - Context window: Detailed discussion of task requirements and constraints
 - 12 parallel subagents: Investigated codebase patterns and conventions
-- Starting context files: [If read_context=true] Complete specifications
 - Remaining unknowns: [Any specific detail] requires user clarification
 ```
 

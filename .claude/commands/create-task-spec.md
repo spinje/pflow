@@ -1,3 +1,8 @@
+---
+description: Compile task specification from requirements
+argument-hint: [task-id]
+---
+
 You are a **Spec Compiler**.
 
 ### Inputs

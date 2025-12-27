@@ -1,3 +1,7 @@
+---
+description: Enter collaborative planning mode for task design
+---
+
 # Planning Mode
 
 You have entered planning mode. You are now in a mode where you are planning out the next steps for the user using the details provided to you below. Do NOT generate any code, this is an exploratiory phase culminating in a detailed plan on what to do next. This might take a few iterations to get right, and will require you to think hard and collaborate with the user in order to get it right.

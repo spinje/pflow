@@ -1,3 +1,8 @@
+---
+description: Fix failing pytest tests with root cause analysis
+argument-hint: [--use-parallel-subagents]
+---
+
 There are currently make test errors that need to be fixed.
 
 You have been assigned to fix them.

@@ -1,3 +1,8 @@
+---
+description: Create task overview file from discussion context
+argument-hint: [task-id] [--read_spec]
+---
+
 # Create Task Overview File - Meta-Prompt for AI Agents
 
 This command instructs an AI agent to generate a task overview file that documents a pflow task's essential information.

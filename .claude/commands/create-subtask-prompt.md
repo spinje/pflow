@@ -1,3 +1,8 @@
+---
+description: Create implementation prompt for Task 17 subtask
+argument-hint: [subtask-number]
+---
+
 # Create Subtask Implementation Prompt - Meta-Prompt for AI Agents (Task 17)
 
 This command instructs an AI agent to generate a comprehensive implementation prompt for another AI agent who will implement a subtask of Task 17 (Natural Language Planner).

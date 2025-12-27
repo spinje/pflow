@@ -1,3 +1,7 @@
+---
+description: Create handoff memo for context transfer between agents
+argument-hint: [task-id]
+---
 
 Inputs: --taskId=$ARGUMENTS
 
