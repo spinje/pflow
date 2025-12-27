@@ -1,9 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "metadata": {
-    "name": "hello-world",
-    "description": "A simple workflow to demonstrate JSON format"
-  },
   "nodes": [
     {
       "id": "greeting",

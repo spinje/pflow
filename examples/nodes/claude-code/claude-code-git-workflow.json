@@ -1,6 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "description": "Advanced Claude Code workflow - analyze git changes and generate PR description",
   "nodes": [
     {
       "id": "git_diff",

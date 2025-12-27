@@ -1,9 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "metadata": {
-    "name": "read-and-process-file",
-    "description": "Read a file using MCP filesystem and process it"
-  },
   "nodes": [
     {
       "id": "read-config",
@@ -22,9 +18,8 @@
   ],
   "edges": [
     {
-      "source": "read-config",
-      "target": "parse-json",
-      "action": "default"
+      "from": "read-config",
+      "to": "parse-json"
     }
   ]
 }

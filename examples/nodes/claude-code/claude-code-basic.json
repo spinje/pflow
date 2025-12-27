@@ -1,6 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "description": "Basic Claude Code usage - simple code generation task",
   "nodes": [
     {
       "id": "generate",

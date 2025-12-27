@@ -1,6 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "description": "Claude Code with schema-driven output for structured code review",
   "nodes": [
     {
       "id": "read_code",
@@ -76,7 +75,7 @@
   ],
   "inputs": {
     "file_path": {
-      "type": "str",
+      "type": "string",
       "description": "Path to the Python file to review",
       "required": true
     }

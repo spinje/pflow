@@ -1,6 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "description": "Claude Code debugging assistant - analyze error and suggest fixes",
   "nodes": [
     {
       "id": "analyze_error",
@@ -57,18 +56,18 @@
   ],
   "inputs": {
     "error_message": {
-      "type": "str",
+      "type": "string",
       "description": "The error message to analyze",
       "required": true
     },
     "code_context": {
-      "type": "str",
+      "type": "string",
       "description": "Relevant code around the error",
       "required": false,
       "default": ""
     },
     "stack_trace": {
-      "type": "str",
+      "type": "string",
       "description": "Full stack trace if available",
       "required": false,
       "default": ""

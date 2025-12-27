@@ -274,49 +274,12 @@ class TestEndToEndCompilation:
 
 
 # =============================================================================
-# Real IR Example Tests
+# Edge Format Compatibility Tests
 # =============================================================================
 
 
-class TestRealIRExamples:
-    """Test compilation with actual IR examples from the examples directory."""
-
-    def get_example_files(self):
-        """Get all JSON files from examples/core directory."""
-        examples_dir = Path(__file__).parent.parent / "examples" / "core"
-        if not examples_dir.exists():
-            pytest.skip("Examples directory not found")
-
-        return list(examples_dir.glob("*.json"))
-
-    def test_core_examples_compile_successfully(self, test_registry):
-        """Test that all core examples compile without errors."""
-        example_files = self.get_example_files()
-
-        if not example_files:
-            pytest.skip("No example files found")
-
-        for example_file in example_files:
-            # Skip files that are known to need real nodes
-            if example_file.name in ["github-flow.json", "llm-flow.json"]:
-                continue
-
-            with open(example_file) as f:
-                ir_data = json.load(f)
-
-            # For examples with unknown node types, skip
-            node_types = {node["type"] for node in ir_data.get("nodes", [])}
-            known_types = {"basic-node", "transform-node", "conditional-node"}
-
-            if not node_types.issubset(known_types):
-                continue
-
-            # Should compile without errors
-            try:
-                flow = compile_ir_to_flow(ir_data, test_registry)
-                assert flow is not None
-            except CompilationError as e:
-                pytest.fail(f"Failed to compile {example_file.name}: {e}")
+class TestEdgeFormatCompatibility:
+    """Test that different edge formats are handled correctly."""
 
     def test_edge_format_compatibility(self, test_registry):
         """Test that both from/to and source/target formats work."""

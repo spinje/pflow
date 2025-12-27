@@ -1,8 +1,5 @@
 {
   "ir_version": "0.1.0",
-  "metadata": {
-    "description": "Main workflow that processes multiple texts using a sub-workflow"
-  },
   "nodes": [
     {
       "id": "process_title",
