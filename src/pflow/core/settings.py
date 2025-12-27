@@ -131,26 +131,25 @@ class SettingsManager:
         self._settings: Optional[PflowSettings] = None
         # Track base include_test_nodes from file to correctly handle env toggling
         self._base_include_test_nodes: Optional[bool] = None
-        # Lock for thread-safe load-modify-save operations
-        self._lock = threading.Lock()
+        # RLock for thread-safe operations (reentrant since set_env calls load)
+        self._lock = threading.RLock()
 
     def load(self) -> PflowSettings:
         """Load settings with environment variable overrides."""
-        if self._settings is None:
-            self._settings = self._load_from_file()
-            # Validate permissions after loading (defense-in-depth)
-            self._validate_permissions(self._settings)
-        # Use local reference to prevent TOCTOU race condition
-        # (another thread could set self._settings = None between reads)
-        settings = self._settings
-        if settings is not None:
+        with self._lock:
+            if self._settings is None:
+                self._settings = self._load_from_file()
+                # Validate permissions after loading (defense-in-depth)
+                self._validate_permissions(self._settings)
+            settings = self._settings
             # Always (re)apply env overrides to handle toggling without restart
             self._apply_env_overrides(settings)
-        return settings
+            return settings
 
     def reload(self) -> PflowSettings:
         """Force reload settings from file."""
-        self._settings = None
+        with self._lock:
+            self._settings = None
         return self.load()
 
     def _load_from_file(self) -> PflowSettings:
@@ -321,8 +320,9 @@ class SettingsManager:
             # Set restrictive permissions (owner read/write only)
             os.chmod(self.settings_path, stat.S_IRUSR | stat.S_IWUSR)  # 0o600
 
-            # Clear cache to force reload on next access
-            self._settings = None
+            # Clear cache to force reload on next access (protected by lock)
+            with self._lock:
+                self._settings = None
 
         except Exception:
             # Clean up temp file on failure
