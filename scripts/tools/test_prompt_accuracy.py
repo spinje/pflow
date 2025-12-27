@@ -465,15 +465,15 @@ def run_tests(
                 print(f"   Running with {parallel_workers} parallel workers (pytest-xdist)")
         except ImportError:
             # Parallel execution is required for LLM tests to avoid timeouts
-            print(f"\n❌ ERROR: pytest-xdist is required for parallel execution")
-            print(f"   The test suite would take 2+ minutes without parallelization.")
-            print(f"   Install it with: uv pip install pytest-xdist")
-            print(f"\n   Or add to pyproject.toml:")
-            print(f"   [dependency-groups]")
-            print(f"   dev = [")
-            print(f"       ...,")
-            print(f"       \"pytest-xdist>=3.0.0\",")
-            print(f"   ]")
+            print("\n❌ ERROR: pytest-xdist is required for parallel execution")
+            print("   The test suite would take 2+ minutes without parallelization.")
+            print("   Install it with: uv pip install pytest-xdist")
+            print("\n   Or add to pyproject.toml:")
+            print("   [dependency-groups]")
+            print("   dev = [")
+            print("       ...,")
+            print('       "pytest-xdist>=3.0.0",')
+            print("   ]")
             raise SystemExit(1)
 
     # Initialize parser and display if showing live results
@@ -539,10 +539,10 @@ def run_tests(
                 current_time = time.time()
                 if not warned_about_slow and (current_time - last_progress_time) > 30:
                     if parser and len(parser.results) == 0:
-                        print(f"\n⚠️  WARNING: No test results after 30 seconds!")
-                        print(f"   This usually means pytest-xdist isn't working properly.")
-                        print(f"   Tests might be running serially (2+ minutes) instead of parallel (10-20 seconds).")
-                        print(f"   Consider stopping with Ctrl+C and checking pytest-xdist installation.")
+                        print("\n⚠️  WARNING: No test results after 30 seconds!")
+                        print("   This usually means pytest-xdist isn't working properly.")
+                        print("   Tests might be running serially (2+ minutes) instead of parallel (10-20 seconds).")
+                        print("   Consider stopping with Ctrl+C and checking pytest-xdist installation.")
                         warned_about_slow = True
 
                 # Parse and display results in real-time
@@ -599,8 +599,8 @@ def run_tests(
                 # Warn if execution was suspiciously slow
                 if total > 5 and duration > 60:
                     print(f"\n⚠️  Tests took {duration:.1f} seconds - this is unusually slow!")
-                    print(f"   Expected: 10-20 seconds with parallel execution")
-                    print(f"   This suggests pytest-xdist may not be working correctly.")
+                    print("   Expected: 10-20 seconds with parallel execution")
+                    print("   This suggests pytest-xdist may not be working correctly.")
 
             # Create result object for compatibility
             class Result:

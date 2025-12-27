@@ -297,7 +297,6 @@ pflow/
 ├── src/pflow/            # Main implementation (CLI, nodes, planning, runtime)
 ├── pocketflow/           # Foundation framework (100-line core + extensive cookbook)
 ├── tests/                # Mirror structure test suite with comprehensive coverage
-├── tools/                # Developer tools (prompt accuracy testing)
 ├── .taskmaster/          # Task management and knowledge base
 ├── .claude/              # AI agent configurations
 ├── CLAUDE.md             # Root AI guidance document

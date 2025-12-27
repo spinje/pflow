@@ -160,7 +160,6 @@ pflow/
 ├── architecture/           # Architecture and design specifications
 ├── examples/               # Example workflows and usage patterns
 ├── scripts/                # Development and debugging scripts
-├── tools/                  # Developer tools and test utilities
 ├── pocketflow/             # Embedded PocketFlow framework
 │   ├── __init__.py         # Core PocketFlow classes (Node, Flow, Shared Store)
 │   ├── docs/               # PocketFlow documentation
