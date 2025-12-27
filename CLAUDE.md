@@ -470,25 +470,27 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 83: Pre-Release Security and Code Quality Audit
 - ✅ Task 93: Set Up Mintlify Documentation
 - ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
+- ✅ Task 96: Support Batch Processing in Workflows
 
 Next up:
-
 
 First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0):
-- ⏳ Task 96: Support Batch Processing in Workflows (data parallelism - uses existing PocketFlow BatchNode)
-- ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
+
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 
 Version (v0.8.0):
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
-- ⏳ Task 78: Save User Request History in Workflow Metadata
 - ⏳ Task 75: Execution Preview in Validation
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
+
+Version (v0.9.0):
+- ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
+- ⏳ Task 78: Save User Request History in Workflow Metadata
 
 Version (v1.0.0):
 - ⏳ Task 97: OAuth Authentication for Remote MCP Servers
@@ -510,6 +512,7 @@ Later:
 - ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
+- ⏳ Task 98: Architectural Refactor - First-Class IR Execution
 
 Deprecated Tasks?:
 - ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair and workflow iteratio

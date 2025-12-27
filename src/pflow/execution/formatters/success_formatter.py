@@ -283,7 +283,11 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
 
 
 def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None:
-    """Append execution step details to lines list."""
+    """Append execution step details to lines list.
+
+    For batch nodes with errors, also appends a batch errors section
+    showing failed item indices and error messages.
+    """
     if not execution or "steps" not in execution:
         return
 
@@ -295,9 +299,115 @@ def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None
         formatted_step = _format_execution_step(step)
         lines.append(formatted_step)
 
+    # Add batch errors section if any batch nodes had failures
+    batch_error_lines = _format_batch_errors_section(steps)
+    if batch_error_lines:
+        lines.extend(batch_error_lines)
+
+
+def _truncate_error_message(message: str, max_length: int = 200) -> str:
+    """Truncate error message to max length with ellipsis.
+
+    Args:
+        message: Error message to truncate
+        max_length: Maximum characters (default 200)
+
+    Returns:
+        Truncated message with "..." if over limit
+    """
+    if len(message) <= max_length:
+        return message
+    return message[: max_length - 3] + "..."
+
+
+def _format_batch_node_line(step: dict[str, Any]) -> str:
+    """Format a batch node's status line with summary.
+
+    Examples:
+        "  ✓ process (31ms) - 10/10 items succeeded"
+        "  ⚠ process (31ms) - 8/10 items succeeded, 2 failed"
+
+    Args:
+        step: Execution step dict with batch metadata
+
+    Returns:
+        Formatted status line string
+    """
+    node_id = step.get("node_id", "unknown")
+    duration = step.get("duration_ms") or 0
+    total = step.get("batch_total", 0)
+    success = step.get("batch_success", 0)
+    errors = step.get("batch_errors", 0)
+    cached = step.get("cached", False)
+    repaired = step.get("repaired", False)
+
+    # Build timing string
+    timing = f"({int(duration)}ms)"
+
+    # Build additional tags
+    tags = []
+    if cached:
+        tags.append("cached")
+    if repaired:
+        tags.append("repaired")
+    tag_str = f" [{', '.join(tags)}]" if tags else ""
+
+    if errors > 0:
+        # Partial success - warning indicator
+        return f"  ⚠ {node_id} {timing} - {success}/{total} items succeeded, {errors} failed{tag_str}"
+    else:
+        # Full success - checkmark
+        return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
+
+
+def _format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
+    """Format batch errors section for all batch nodes with failures.
+
+    Example output:
+        Batch 'process' errors:
+          [1] Command failed with exit code 1
+          [4] Connection timeout after 30s
+          ...and 3 more errors
+
+    Args:
+        steps: List of execution step dicts
+
+    Returns:
+        List of formatted lines (empty if no batch errors)
+    """
+    lines: list[str] = []
+
+    for step in steps:
+        if not step.get("is_batch") or step.get("batch_errors", 0) == 0:
+            continue
+
+        node_id = step.get("node_id", "unknown")
+        error_details = step.get("batch_error_details", [])
+        truncated = step.get("batch_errors_truncated", 0)
+
+        lines.append(f"\nBatch '{node_id}' errors:")
+        for err in error_details:
+            idx = err.get("index", "?")
+            msg = _truncate_error_message(str(err.get("error", "Unknown error")))
+            lines.append(f"  [{idx}] {msg}")
+
+        if truncated > 0:
+            lines.append(f"  ...and {truncated} more errors")
+
+    return lines
+
 
 def _format_execution_step(step: dict[str, Any]) -> str:
-    """Format a single execution step."""
+    """Format a single execution step.
+
+    For batch nodes, delegates to _format_batch_node_line() for enhanced display.
+    For regular nodes, shows standard status line.
+    """
+    # Check if this is a batch node
+    if step.get("is_batch"):
+        return _format_batch_node_line(step)
+
+    # Regular node formatting
     node_id = step.get("node_id", "unknown")
     status = step.get("status", "unknown")
     duration = step.get("duration_ms") or 0  # Handle explicit None

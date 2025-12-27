@@ -668,6 +668,26 @@ def _create_single_node(
         )
         node_instance = NamespacedNodeWrapper(node_instance, node_id)
 
+    # Apply batch wrapping if configured
+    # CRITICAL: Batch must be OUTSIDE namespace wrapper (between Namespace and Instrumented)
+    # This ensures item alias injection writes to root level: shared["item"] = x
+    # NOT to namespace: shared["node_id"]["item"] = x
+    batch_config = node_data.get("batch")
+    if batch_config:
+        from pflow.runtime.batch_node import PflowBatchNode
+
+        logger.debug(
+            f"Wrapping node '{node_id}' for batch processing",
+            extra={
+                "phase": "node_instantiation",
+                "node_id": node_id,
+                "items_template": batch_config.get("items"),
+                "item_alias": batch_config.get("as", "item"),
+                "error_handling": batch_config.get("error_handling", "fail_fast"),
+            },
+        )
+        node_instance = PflowBatchNode(node_instance, node_id, batch_config)
+
     # Always apply instrumentation wrapper to support all features:
     # - Progress callbacks (if __progress_callback__ is in shared storage)
     # - Metrics collection (if metrics_collector is provided)

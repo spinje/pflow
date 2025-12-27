@@ -415,6 +415,76 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 ---
 
+## Batch Processing Configuration
+
+Nodes can process arrays of items by adding an optional `batch` configuration. This enables data parallelism - running the same operation on multiple items.
+
+```json
+{
+  "id": "summarize-files",
+  "registry_id": "core/llm",
+  "params": {
+    "prompt": "Summarize: ${file.content}"
+  },
+  "batch": {
+    "items": "${list_files.files}",
+    "as": "file",
+    "parallel": true,
+    "max_concurrent": 5,
+    "error_handling": "continue"
+  }
+}
+```
+
+**Batch Configuration Fields:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `items` | string | (required) | Template reference to array (e.g., `${node.files}`) |
+| `as` | string | `"item"` | Variable name for current item in templates |
+| `parallel` | boolean | `false` | Enable concurrent execution |
+| `max_concurrent` | integer | `10` | Maximum concurrent workers (1-100) |
+| `max_retries` | integer | `1` | Retry attempts per item (1-10) |
+| `retry_wait` | number | `0` | Seconds between retries |
+| `error_handling` | string | `"fail_fast"` | `"fail_fast"` or `"continue"` |
+
+**Output Structure:**
+
+Batch nodes write aggregated results to the shared store:
+
+```json
+{
+  "results": [...],
+  "count": 10,
+  "success_count": 9,
+  "error_count": 1,
+  "errors": [{"index": 3, "item": {...}, "error": "..."}]
+}
+```
+
+**Execution Semantics:**
+
+- **Sequential mode** (`parallel: false`): Items processed one at a time in order
+- **Parallel mode** (`parallel: true`): Items processed concurrently up to `max_concurrent`
+- **Result ordering**: Results always match input order regardless of completion order
+- **Error handling**: `fail_fast` stops on first error; `continue` processes all items
+- **Retry**: Each item has independent retry logic with configurable wait time
+
+**Template Resolution:**
+
+The item alias (default: `item`) is injected into the shared store for each iteration:
+
+```json
+{
+  "batch": {"items": "${data.users}", "as": "user"},
+  "params": {"prompt": "Greet ${user.name} from ${user.city}"}
+}
+```
+
+> **Implementation**: See `src/pflow/runtime/batch_node.py` for the `PflowBatchNode` wrapper that implements batch processing.
+
+---
+
 ## Edge Object
 
 **Simple Sequential Transitions:**

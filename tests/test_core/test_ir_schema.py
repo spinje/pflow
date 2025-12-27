@@ -419,3 +419,508 @@ class TestEdgeCases:
         }
         # Should be valid - self-loops are allowed
         validate_ir(ir)
+
+
+class TestBatchConfig:
+    """Test validation of batch configuration on nodes."""
+
+    def test_valid_batch_config_minimal(self):
+        """Test valid batch config with only required 'items' field."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Summarize each file in parallel",
+                    "batch": {
+                        "items": "${files.list}",
+                    },
+                    "params": {"prompt": "Summarize: ${item}"},
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_valid_batch_config_all_fields(self):
+        """Test valid batch config with all optional fields."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Process each file with error handling",
+                    "batch": {
+                        "items": "${list_files.files}",
+                        "as": "current_file",
+                        "error_handling": "continue",
+                    },
+                    "params": {"prompt": "Process: ${current_file.content}"},
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_valid_batch_config_fail_fast(self):
+        """Test valid batch config with fail_fast error handling."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Process files, stop on first error",
+                    "batch": {
+                        "items": "${data}",
+                        "error_handling": "fail_fast",
+                    },
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_missing_items(self):
+        """Test error when batch config is missing required 'items' field."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Batch node missing items field",
+                    "batch": {
+                        "as": "item",  # Missing required 'items'
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "'items'" in str(exc_info.value)
+        assert "required" in str(exc_info.value).lower()
+
+    def test_batch_config_items_not_template(self):
+        """Test error when items is not a template reference."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Batch node with invalid items format",
+                    "batch": {
+                        "items": "not_a_template",  # Should be ${...}
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        # Pattern validation fails
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_invalid_as_identifier(self):
+        """Test error when 'as' is not a valid identifier."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Batch node with invalid as identifier",
+                    "batch": {
+                        "items": "${data}",
+                        "as": "123invalid",  # Invalid: starts with number
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_invalid_as_with_special_chars(self):
+        """Test error when 'as' contains special characters."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Batch node with special chars in as",
+                    "batch": {
+                        "items": "${data}",
+                        "as": "my-item",  # Invalid: contains hyphen
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_invalid_error_handling(self):
+        """Test error when error_handling is not valid enum value."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Batch node with invalid error handling",
+                    "batch": {
+                        "items": "${data}",
+                        "error_handling": "ignore",  # Invalid value
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_extra_properties_rejected(self):
+        """Test error when batch config has unknown properties."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Batch node with extra properties",
+                    "batch": {
+                        "items": "${data}",
+                        "unknown_field": "not_allowed",  # Unknown property
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_with_complex_template(self):
+        """Test valid batch config with complex nested template path."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Process nested data structure",
+                    "batch": {
+                        "items": "${api_response.data.items}",
+                        "as": "record",
+                    },
+                    "params": {"prompt": "Analyze: ${record.nested.field}"},
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_valid_as_identifiers(self):
+        """Test various valid Python identifier patterns for 'as' field."""
+        valid_identifiers = ["item", "x", "_private", "Item", "my_item", "item2", "_123"]
+        for identifier in valid_identifiers:
+            ir = {
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "batch_node",
+                        "type": "llm",
+                        "purpose": f"Test valid identifier: {identifier}",
+                        "batch": {
+                            "items": "${data}",
+                            "as": identifier,
+                        },
+                    }
+                ],
+            }
+            validate_ir(ir)  # Should not raise
+
+
+class TestBatchConfigPhase2:
+    """Test validation of Phase 2 batch configuration fields (parallel execution)."""
+
+    def test_batch_config_parallel_true(self):
+        """Test valid batch config with parallel execution enabled."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Process items in parallel",
+                    "batch": {
+                        "items": "${data}",
+                        "parallel": True,
+                    },
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_parallel_false(self):
+        """Test valid batch config with parallel explicitly false."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Process items sequentially",
+                    "batch": {
+                        "items": "${data}",
+                        "parallel": False,
+                    },
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_parallel_with_max_concurrent(self):
+        """Test valid batch config with parallel and max_concurrent."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Process items with limited concurrency",
+                    "batch": {
+                        "items": "${data}",
+                        "parallel": True,
+                        "max_concurrent": 5,
+                    },
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_max_concurrent_minimum(self):
+        """Test max_concurrent accepts minimum value of 1."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_concurrent": 1,
+                    },
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_max_concurrent_maximum(self):
+        """Test max_concurrent accepts maximum value of 100."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_concurrent": 100,
+                    },
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_max_concurrent_zero_invalid(self):
+        """Test max_concurrent rejects 0 (below minimum)."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_concurrent": 0,
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_max_concurrent_over_maximum_invalid(self):
+        """Test max_concurrent rejects values over 100."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_concurrent": 101,
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_max_retries_valid(self):
+        """Test max_retries accepts valid values (1-10)."""
+        for retries in [1, 5, 10]:
+            ir = {
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "batch_node",
+                        "type": "llm",
+                        "batch": {
+                            "items": "${data}",
+                            "max_retries": retries,
+                        },
+                    }
+                ],
+            }
+            validate_ir(ir)
+
+    def test_batch_config_max_retries_zero_invalid(self):
+        """Test max_retries rejects 0 (below minimum)."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_retries": 0,
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_max_retries_over_maximum_invalid(self):
+        """Test max_retries rejects values over 10."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_retries": 11,
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_retry_wait_valid(self):
+        """Test retry_wait accepts valid values (>= 0)."""
+        for wait in [0, 0.5, 1, 1.5, 10]:
+            ir = {
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "batch_node",
+                        "type": "llm",
+                        "batch": {
+                            "items": "${data}",
+                            "retry_wait": wait,
+                        },
+                    }
+                ],
+            }
+            validate_ir(ir)
+
+    def test_batch_config_retry_wait_negative_invalid(self):
+        """Test retry_wait rejects negative values."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "retry_wait": -1,
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_all_phase2_fields(self):
+        """Test valid batch config with all Phase 2 fields."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Full Phase 2 config",
+                    "batch": {
+                        "items": "${data}",
+                        "as": "record",
+                        "error_handling": "continue",
+                        "parallel": True,
+                        "max_concurrent": 5,
+                        "max_retries": 3,
+                        "retry_wait": 1.5,
+                    },
+                    "params": {"prompt": "Process: ${record}"},
+                }
+            ],
+        }
+        validate_ir(ir)
+
+    def test_batch_config_parallel_invalid_type(self):
+        """Test parallel rejects non-boolean values."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "parallel": "true",  # String instead of boolean
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path
+
+    def test_batch_config_max_concurrent_invalid_type(self):
+        """Test max_concurrent rejects non-integer values."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "batch": {
+                        "items": "${data}",
+                        "max_concurrent": 5.5,  # Float instead of integer
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "nodes[0]" in exc_info.value.path

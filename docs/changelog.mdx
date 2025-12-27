@@ -6,6 +6,35 @@ rss: true
 ---
 
 <Update label="December 2024" description="v0.7.0" tags={["New releases", "Improvements"]}>
+  ## Batch processing
+
+  Process arrays of items through a single node with built-in error handling and optional parallel execution.
+
+  **Features**
+  - Sequential or parallel execution modes
+  - Configurable concurrency limits (`max_concurrent`)
+  - Per-item retry with configurable wait time
+  - Error handling: fail-fast (stop on first error) or continue (process all items)
+  - Results preserve input order even in parallel mode
+
+  <Accordion title="Example">
+    ```json
+    {
+      "id": "summarize_files",
+      "type": "llm",
+      "batch": {
+        "items": "${list_files.files}",
+        "as": "file",
+        "parallel": true,
+        "max_concurrent": 5
+      },
+      "params": {
+        "prompt": "Summarize: ${file.content}"
+      }
+    }
+    ```
+  </Accordion>
+
   ## Unified LLM model support
 
   Configure which models pflow uses for discovery, filtering, and workflow execution.
@@ -83,10 +112,10 @@ rss: true
   <Accordion title="Limitations">
     - Currently supports macOS only
     - Shell commands run with user privileges (not sandboxed)
-    - No conditional branching or parallel execution yet
+    - No conditional branching yet
   </Accordion>
 
   <Accordion title="What's next">
-    See the [Roadmap](/roadmap) — conditional branching, parallel execution, and benchmarking coming soon.
+    See the [Roadmap](/roadmap) — conditional branching, task parallelism, and benchmarking coming soon.
   </Accordion>
 </Update>

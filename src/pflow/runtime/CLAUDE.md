@@ -36,6 +36,7 @@ The `src/pflow/runtime/` module is the **compilation and execution infrastructur
 ```
 src/pflow/runtime/
 ├── __init__.py                  # Module exports (3 public functions)
+├── batch_node.py               # Batch processing wrapper (530 lines)
 ├── compiler.py                  # Main IR→Flow compiler (1042 lines)
 ├── instrumented_wrapper.py      # Metrics, tracing, caching (1168 lines)
 ├── node_wrapper.py             # Template resolution wrapper (680 lines)
@@ -287,14 +288,18 @@ Template resolution at runtime using params
 ### Application Order
 
 ```python
-# Lines 543-571 in compiler.py (_create_single_node function)
+# Lines 543-571, 671-689 in compiler.py
 node = node_class()                              # 1. Base node
 node = TemplateAwareNodeWrapper(node, ...)       # 2. Template resolution (conditional)
 node = NamespacedNodeWrapper(node, ...)          # 3. Namespacing (if enabled)
-node = InstrumentedNodeWrapper(node, ...)        # 4. Instrumentation (ALWAYS applied)
+node = PflowBatchNode(node, ...)                 # 4. Batch processing (if batch config)
+node = InstrumentedNodeWrapper(node, ...)        # 5. Instrumentation (ALWAYS applied)
 ```
 
-**Important**: Template wrapper only applied if params contain `${...}` templates
+**Important**:
+- Template wrapper only applied if params contain `${...}` templates
+- Batch wrapper only applied if node has `batch` config in IR
+- Batch wrapper MUST be outside namespace (injects item alias at root level)
 
 ### _run() Interception Chain
 
@@ -304,11 +309,16 @@ InstrumentedNodeWrapper._run()
   ├─ Setup callbacks and LLM interception
   └─ Call: inner_node._run()
        ↓
+  PflowBatchNode._run() [if batch configured]
+  ├─ Resolve items template, iterate items
+  ├─ For each item: inject alias at root, create isolated context
+  └─ Call: inner_node._run() per item (parallel or sequential)
+       ↓
   NamespacedNodeWrapper._run()
   └─ Call: inner_node._run(NamespacedSharedStore)
        ↓
   TemplateAwareNodeWrapper._run()
-  ├─ Resolve templates
+  ├─ Resolve templates (including ${item} from batch)
   └─ Call: inner_node._run()
        ↓
   ActualNode._run()
