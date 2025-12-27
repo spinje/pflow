@@ -23,7 +23,7 @@ Structured data (JSON/CSV/XML) → `shell` node · Unstructured → `llm` node
 - **Passing `${node.result}` wholesale?** → Skip testing
 - **Async API?** → Try `Prefer: wait=60` header first
 - **JSON from shell?** → Auto-parses to objects
-- **Multiple API calls?** → Batch in one node
+- **Same operation per item?** → `batch` config (Batch Processing pattern)
 
 ### Core Philosophy - Understanding the WHY
 
@@ -173,6 +173,7 @@ Result: Formatted output includes both extracted data and original context
 **User wants**: "Process each file in a directory differently based on its type"
 **Why impossible**: Workflows can't create dynamic numbers of operations
 **Alternative**: "I'll create a workflow that processes ALL files in one batch operation, applying the same logic to each"
+**→ Solution**: `batch` config enables this. See Batch Processing pattern.
 
 #### ❌ No Conditional Logic
 **User wants**: "If the API returns error, retry 3 times, else process data"
@@ -1375,36 +1376,35 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
 }
 ```
 
-### Pattern: Batch Processing with Aggregation
+### Pattern: Batch Processing
+
+Same operation × N items. Add `batch` to any node:
 
 ```json
 {
-  "nodes": [
-    {
-      "id": "fetch-batch",
-      "type": "http",
-      "purpose": "Get all items to process",
-      "params": {"url": "${batch_url}"}
-    },
-    {
-      "id": "process-all",
-      "type": "llm",
-      "purpose": "Process entire batch at once",
-      "params": {
-        "prompt": "Process each item in this batch:\n${fetch-batch.response}\n\nFor each item:\n1. Validate data\n2. Calculate metrics\n3. Generate summary\n\nReturn as JSON array"
-      }
-    },
-    {
-      "id": "aggregate-results",
-      "type": "shell",
-      "purpose": "Calculate batch statistics",
-      "params": {
-        "stdin": "${process-all.response}",
-        "command": "jq '{total: length, successful: [.[] | select(.status == \"success\")] | length, failed: [.[] | select(.status == \"failed\")] | length, avg_score: [.[].score] | add/length}'"
-      }
-    }
-  ]
+  "id": "process-each",
+  "type": "llm",
+  "batch": {"items": "${source.files}"},
+  "params": {"prompt": "Analyze: ${item}"}
 }
+```
+
+Current item: `${item}`. Results: `${node.results}` (array in input order).
+
+**Options**:
+| Field | Default | Notes |
+|-------|---------|-------|
+| `items` | required | Template to source array |
+| `as` | `"item"` | Custom name: `"file"` → `${file}` |
+| `parallel` | `false` | Concurrent execution |
+| `max_concurrent` | `10` | 1-100; use 5-10 for LLM APIs (rate limits) |
+| `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
+
+**All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
+
+**Using results**:
+```json
+{"id": "report", "type": "llm", "params": {"prompt": "Summary of ${process-each.count} items:\n${process-each.results}"}}
 ```
 
 ## Part 7: Reality Checks & Troubleshooting
