@@ -568,11 +568,11 @@ assert action == "retry"  # PocketFlow handles the routing
 
 ### 7. Test Node Type Confusion
 **Problem**: `CompilationError: Node type 'basic-node' not found in registry`
-**Solution**: Use actual registered names: `test-node`, `test-node-retry`. Common aliases like `basic-node`, `transform-node` are conventions but not registered.
+**Solution**: For real registry tests, use actually registered nodes like `echo`, `shell`, `read-file`. For mocked tests, you can define any node names in your mock registry (e.g., `test-node`, `test-node-retry`). Common aliases like `basic-node`, `transform-node` are not registered.
 
 ### 8. Test Node Interface Inconsistency
 **Problem**: `KeyError: 'test_output'` when using wrong test node
-**Solution**: `ExampleNode` uses `test_input`/`test_output`, `RetryExampleNode` uses `retry_input`/`retry_output`. Check node interfaces before use.
+**Solution**: The `echo` node (the only test node in the real registry) uses `message`/`echo` keys. For mocked tests using `ExampleNode`, it uses `test_input`/`test_output`. Check node interfaces before use.
 
 ### 9. Click Interactive Testing Limitation
 **Problem**: Can't test interactive prompts (workflow save dialog) with CliRunner

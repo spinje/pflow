@@ -229,16 +229,16 @@ def test_import_node_class_real_node():
     # Create real registry instance
     registry = Registry()
 
-    # Ensure test node is registered (it should be from Task 5)
+    # Use the echo node which is the designated test node in src/pflow/nodes/test/echo.py
     nodes = registry.load()
-    if "test-node" in nodes:
-        # Import the real test node
-        result = import_node_class("test-node", registry)
+    if "echo" in nodes:
+        # Import the real echo node
+        result = import_node_class("echo", registry)
 
         # Verify it's a proper class
         assert isinstance(result, type)
         assert issubclass(result, BaseNode)
-        assert result.__name__ == "ExampleNode"
+        assert result.__name__ == "EchoNode"
     else:
-        # Skip test if registry doesn't have test nodes yet
-        pytest.skip("Test node not found in registry - run registry scan first")
+        # Skip test if registry doesn't have test nodes
+        pytest.skip("Echo node not found in registry")
