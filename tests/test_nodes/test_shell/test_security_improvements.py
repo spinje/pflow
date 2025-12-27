@@ -316,20 +316,11 @@ class TestCommandExecutionOrder:
 class TestComplexShellConstructs:
     """Test more complex shell constructs that developers actually use."""
 
-    @pytest.mark.skipif(
-        os.environ.get("SHELL", "").endswith("sh"), reason="Process substitution may not work in all shells"
-    )
-    def test_process_substitution(self):
-        """Test process substitution with <() syntax."""
-        shared = {}
-
-        # Compare two command outputs
-        run_shell_node(shared, command='diff <(echo "a") <(echo "b")', ignore_errors=True)
-        # diff should return non-zero when files differ
-        assert shared["exit_code"] != 0
-        # Some shells might not support process substitution
-        if shared["exit_code"] in [1, 2]:  # 1 = files differ, 2 = error
-            pass  # Either is acceptable
+    # NOTE: Process substitution <() is NOT tested because:
+    # - ShellNode uses subprocess.run(shell=True) which defaults to /bin/sh
+    # - /bin/sh doesn't support process substitution (bash/zsh only feature)
+    # - Testing "this fails" is not valuable test coverage
+    # If ShellNode adds bash support in the future, add test_process_substitution back
 
     def test_here_document(self):
         """Test here document functionality."""

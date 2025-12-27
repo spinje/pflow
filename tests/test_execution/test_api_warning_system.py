@@ -1,9 +1,7 @@
 """High-value tests for API warning detection system."""
 
 import json
-from unittest.mock import Mock, patch
-
-import pytest
+from unittest.mock import Mock
 
 from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
 
@@ -62,52 +60,53 @@ class TestCriticalAPIWarningScenarios:
         warning = wrapper._detect_api_warning(shared)
         assert warning is None, "Should not check 4xx responses (node handles it)"
 
-    @pytest.mark.skip(reason="Complex mocking - core functionality tested in other tests")
-    def test_non_repairable_flag_prevents_repair(self):
-        """Test that API warnings actually prevent repair attempts in workflow."""
-        from pflow.execution.workflow_execution import execute_workflow
+    def test_handle_non_repairable_error_adds_warnings_to_errors(self):
+        """Test that _handle_non_repairable_error converts warnings to errors.
 
-        # Create a workflow that would trigger API warning
-        workflow_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [{"id": "mock-api", "type": "test-node", "params": {}}],
-            "edges": [],
-        }
+        The non-repairable error flow:
+        1. Node detects API error (tested in test_slack_mcp_channel_not_found)
+        2. InstrumentedNodeWrapper sets __non_repairable_error__ flag
+        3. execute_workflow checks flag and calls _handle_non_repairable_error
+        4. _handle_non_repairable_error adds warnings to errors list
 
-        # Mock the executor to simulate API error
-        with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor_class:
-            mock_executor = Mock()
-            mock_executor_class.return_value = mock_executor
+        This test verifies step 4 - the conversion of warnings to errors.
+        """
+        from pflow.execution import ExecutionResult
+        from pflow.execution.workflow_execution import _handle_non_repairable_error
 
-            # First execution returns API error
-            mock_result = Mock()
-            mock_result.success = False
-            mock_result.errors = []
-            mock_result.shared_after = {
-                "__non_repairable_error__": True,  # Set by our API warning system
-                "__warnings__": {"mock-api": "API error: resource_not_found"},
-            }
-            mock_executor.execute_workflow.return_value = mock_result
+        # Create a result with non-repairable error flag and warnings
+        result = ExecutionResult(
+            success=False,
+            shared_after={
+                "__non_repairable_error__": True,
+                "__warnings__": {
+                    "send_response": "API error: channel_not_found",
+                    "another_node": "API error: rate_limited",
+                },
+            },
+            errors=[],
+            action_result="error",
+            node_count=2,
+            duration=1.0,
+            output_data=None,
+            metrics_summary=None,
+        )
 
-            # Mock repair service - it returns (success, repaired_ir, errors)
-            with patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair:
-                # Setup return value (but it shouldn't be called)
-                mock_repair.return_value = (False, workflow_ir, ["error"])
+        # Call the handler
+        handled_result = _handle_non_repairable_error(result)
 
-                result = execute_workflow(
-                    workflow_ir=workflow_ir,
-                    execution_params={},
-                    enable_repair=True,  # Repair is enabled
-                )
+        # Verify warnings were converted to non_repairable errors
+        assert len(handled_result.errors) == 2
 
-                # Verify repair was NOT attempted
-                mock_repair.assert_not_called()
+        error_messages = [e["message"] for e in handled_result.errors]
+        assert "channel_not_found" in error_messages[0] or "channel_not_found" in error_messages[1]
+        assert "rate_limited" in error_messages[0] or "rate_limited" in error_messages[1]
 
-                # Verify warnings were added to errors
-                assert any(
-                    err.get("category") == "non_repairable" and "resource_not_found" in err.get("message", "")
-                    for err in result.errors
-                )
+        # Verify all errors are marked non_repairable
+        for error in handled_result.errors:
+            assert error["category"] == "non_repairable"
+            assert error["fixable"] is False
+            assert error["source"] == "api"
 
     def test_no_false_positive_on_null_error(self):
         """Test that successful responses with error:null don't trigger warnings.

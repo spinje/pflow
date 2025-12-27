@@ -120,88 +120,107 @@ class TestNodeNameNormalization:
 
 
 class TestMCPToolNormalization:
-    """Test MCP tool name normalization."""
+    """Test MCP tool name normalization.
 
-    def test_describe_mcp_tool_full_format_with_hyphens(self, runner: click.testing.CliRunner) -> None:
+    These tests inject fake MCP nodes into the registry to test normalization
+    behavior without requiring actual MCP servers to be configured.
+    """
+
+    @pytest.fixture
+    def registry_with_mcp_nodes(self):
+        """Inject fake MCP nodes into the test registry.
+
+        Note: isolate_pflow_config fixture runs automatically (autouse=True)
+        and provides isolated registry paths for testing.
+        """
+        from pflow.registry import Registry
+
+        reg = Registry()
+        existing_nodes = reg.load()
+
+        # Add fake MCP nodes for testing normalization
+        # Note: interface format uses 'key' not 'name' for parameter names
+        fake_mcp_nodes = {
+            "mcp-slack-composio-SLACK_SEND_MESSAGE": {
+                "module": "pflow.nodes.mcp.mcp_node",
+                "class_name": "MCPNode",
+                "docstring": "Send a message via Slack",
+                "interface": {
+                    "description": "Send a message to a Slack channel",
+                    "inputs": [{"key": "channel", "type": "str", "description": "Channel to send to"}],
+                    "outputs": [{"key": "result", "type": "dict", "description": "API result"}],
+                    "actions": [],
+                },
+            },
+            "mcp-github-composio-GITHUB_CREATE_ISSUE": {
+                "module": "pflow.nodes.mcp.mcp_node",
+                "class_name": "MCPNode",
+                "docstring": "Create a GitHub issue",
+                "interface": {
+                    "description": "Create an issue in a GitHub repository",
+                    "inputs": [{"key": "repo", "type": "str", "description": "Repository name"}],
+                    "outputs": [{"key": "issue", "type": "dict", "description": "Created issue"}],
+                    "actions": [],
+                },
+            },
+            "mcp-filesystem-read_file": {
+                "module": "pflow.nodes.mcp.mcp_node",
+                "class_name": "MCPNode",
+                "docstring": "Read a file from filesystem",
+                "interface": {
+                    "description": "Read file contents",
+                    "inputs": [{"key": "path", "type": "str", "description": "File path"}],
+                    "outputs": [{"key": "content", "type": "str", "description": "File contents"}],
+                    "actions": [],
+                },
+            },
+        }
+
+        # Merge with existing nodes
+        merged = {**existing_nodes, **fake_mcp_nodes}
+        reg.save(merged)
+        return reg
+
+    def test_describe_mcp_tool_full_format_with_hyphens(
+        self, runner: click.testing.CliRunner, registry_with_mcp_nodes
+    ) -> None:
         """Handles MCP tool names with hyphens in full format.
 
         Registry stores: mcp-server-TOOL_NAME
         User types: mcp-server-TOOL-NAME (with hyphens)
         Should normalize to underscores
         """
-        # This test requires real MCP tools to be registered
-        # We'll use a conditional test based on what's available
-        result = runner.invoke(registry, ["list", "--json"])
-
-        if result.exit_code != 0:
-            pytest.skip("Registry not available")
-
-        import json
-
-        data = json.loads(result.output)
-        mcp_nodes = [n for n in data.get("nodes", []) if n["name"].startswith("mcp-")]
-
-        if not mcp_nodes:
-            pytest.skip("No MCP nodes available for testing")
-
-        # Take first MCP node and test normalization
-        first_mcp = mcp_nodes[0]["name"]
-
-        # Test with exact name
-        result_exact = runner.invoke(registry, ["describe", first_mcp])
+        # Test exact name works
+        result_exact = runner.invoke(registry, ["describe", "mcp-slack-composio-SLACK_SEND_MESSAGE"])
         assert result_exact.exit_code == 0
+        assert "SLACK_SEND_MESSAGE" in result_exact.output
 
-        # Test with hyphens converted (if it has underscores)
-        if "_" in first_mcp:
-            hyphenated = first_mcp.replace("_", "-")
-            result_hyphen = runner.invoke(registry, ["describe", hyphenated])
-            # Should succeed due to normalization
-            assert result_hyphen.exit_code == 0
+        # Test hyphenated version normalizes to underscore version
+        result_hyphen = runner.invoke(registry, ["describe", "mcp-slack-composio-SLACK-SEND-MESSAGE"])
+        assert result_hyphen.exit_code == 0
+        assert "SLACK" in result_hyphen.output
 
-    def test_describe_mcp_tool_short_form(self, runner: click.testing.CliRunner) -> None:
+    def test_describe_mcp_tool_short_form(self, runner: click.testing.CliRunner, registry_with_mcp_nodes) -> None:
         """Handles MCP tool short forms (just tool name).
 
         Short form: TOOL_NAME
         Full form: mcp-server-TOOL_NAME
         Should match if unique
         """
-        # Get list of MCP tools first
-        result = runner.invoke(registry, ["list", "--json"])
-
-        if result.exit_code != 0:
-            pytest.skip("Registry not available")
-
-        import json
-
-        data = json.loads(result.output)
-        mcp_nodes = [n for n in data.get("nodes", []) if n["name"].startswith("mcp-")]
-
-        if not mcp_nodes:
-            pytest.skip("No MCP nodes available for testing")
-
-        # Find a unique tool name (one that appears only once)
-        tool_names: dict[str, list[str]] = {}
-        for node in mcp_nodes:
-            # Extract tool name (last part after last hyphen)
-            parts = node["name"].split("-")
-            if len(parts) >= 3:  # mcp-server-tool format
-                tool_only = parts[-1]
-                tool_names.setdefault(tool_only, []).append(node["name"])
-
-        # Find a unique tool
-        unique_tools = {tool: full_names[0] for tool, full_names in tool_names.items() if len(full_names) == 1}
-
-        if not unique_tools:
-            pytest.skip("No unique MCP tools found for short form testing")
-
-        # Test with short form
-        tool_short, tool_full = next(iter(unique_tools.items()))
-        result = runner.invoke(registry, ["describe", tool_short])
-
-        # Should succeed if unique
+        # Test short form with underscores
+        result = runner.invoke(registry, ["describe", "SLACK_SEND_MESSAGE"])
         assert result.exit_code == 0
-        # Should show the full node name
-        assert tool_full in result.output or tool_short in result.output.lower()
+        assert "mcp-slack-composio-SLACK_SEND_MESSAGE" in result.output or "SLACK" in result.output
+
+        # Test short form with hyphens
+        result_hyphen = runner.invoke(registry, ["describe", "SLACK-SEND-MESSAGE"])
+        assert result_hyphen.exit_code == 0
+
+        # Test filesystem tool short form
+        result_fs = runner.invoke(registry, ["describe", "read_file"])
+        # This might be ambiguous with core read-file, check behavior
+        if result_fs.exit_code == 0:
+            assert "file" in result_fs.output.lower()
 
 
 class TestUnknownNodeError:
