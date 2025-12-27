@@ -474,16 +474,17 @@ The codebase is currently feature complete for MVP with these tasks completed:
 
 Next up:
 
+
 First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0):
-
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 
 Version (v0.8.0):
+- ⏳ Task 99: Expose pflow Nodes as MCP Tools to Claude Code Node
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 75: Execution Preview in Validation
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
