@@ -16,11 +16,6 @@
     ],
     "deny": []
   },
-  "statusLine": {
-    "type": "command",
-    "command": "bun .claude/status-lines/status-line.js",
-    "padding": 1
-  },
   "hooks": {
     "PreToolUse": [
       {
