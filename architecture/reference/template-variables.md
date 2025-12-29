@@ -575,16 +575,16 @@ TYPE_COMPATIBILITY_MATRIX = {
     "int": ["any", "int", "integer", "float", "number", "str", "string"],
     "float": ["any", "float", "number", "str", "string"],
     "bool": ["any", "bool", "boolean", "str", "string"],
-    "dict": ["any", "dict", "object"],
-    "list": ["any", "list", "array"],
+    "dict": ["any", "dict", "object", "str", "string"],  # dict serializes to JSON
+    "list": ["any", "list", "array", "str", "string"],   # list serializes to JSON
     "NoneType": ["any", "null", "none", "str", "string"],
 }
 ```
 
 **Interpretation**:
-- `str` can be used where `str`, `dict`, `list`, or `any` is expected (because of string serialization)
+- `str` can be used where `str`, `dict`, `list`, or `any` is expected (because of JSON auto-parsing)
 - `int` can be used where `int`, `float`, `number`, or `str` is expected
-- `dict` can **only** be used where `dict`, `object`, or `any` is expected
+- `dict` and `list` can be used where `str` is expected (auto-serializes to JSON)
 
 #### Type Inference
 
@@ -1390,6 +1390,60 @@ export PFLOW_TEMPLATE_RESOLUTION_MODE=permissive
   "max_items": "${fetch.count}"  // Preserves int type
 }
 ```
+
+### Shell Command Limitations
+
+When embedding arrays or dicts in shell commands, pflow serializes them to JSON. However, **certain characters in JSON can break shell parsing**:
+
+| Character | Problem |
+|-----------|---------|
+| `'` (apostrophe) | Breaks single-quoted strings |
+| `` ` `` (backtick) | Triggers command substitution |
+| `$(...)` | Triggers command substitution |
+
+#### Example Problem
+
+```json
+{
+  "command": "echo '${data}' | jq '.'"
+}
+```
+
+If `data = {"message": "it's working"}`, the command becomes:
+
+```bash
+echo '{"message": "it's working"}' | jq '.'
+#                    ^ Shell sees this as end of string!
+```
+
+**This will fail with a shell syntax error.**
+
+#### Safe Alternative: Use `stdin`
+
+For data that might contain shell-unsafe characters, use the `stdin` parameter:
+
+```json
+{
+  "id": "process",
+  "type": "shell",
+  "params": {
+    "stdin": "${data}",
+    "command": "jq '.message'"
+  }
+}
+```
+
+The `stdin` parameter passes data through a pipe, completely bypassing shell parsing.
+
+#### When JSON in Commands is Safe
+
+- Data you control (no user input)
+- Data without apostrophes, backticks, or `$` characters
+- Simple arrays of strings/numbers without special chars
+
+**pflow will warn** if it detects potentially unsafe JSON patterns in shell commands.
+
+---
 
 ### Migration from Old Syntax
 

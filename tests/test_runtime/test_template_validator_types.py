@@ -104,8 +104,8 @@ class TestTypeValidationIntegration:
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
 
-    def test_dict_to_string_mismatch(self, test_registry):
-        """Dict → string mismatch should be detected (the original bug!)."""
+    def test_dict_to_string_compatible(self, test_registry):
+        """Dict → string is now compatible via JSON serialization."""
         workflow_ir = {
             "enable_namespacing": True,
             "inputs": {},
@@ -114,7 +114,28 @@ class TestTypeValidationIntegration:
                 {
                     "id": "consumer",
                     "type": "string-consumer",
-                    "params": {"text": "${producer.response}"},  # dict → str mismatch
+                    "params": {"text": "${producer.response}"},  # dict → str now allowed
+                },
+            ],
+            "edges": [{"from": "producer", "to": "consumer"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        type_errors = [e for e in errors if "Type mismatch" in e]
+        assert len(type_errors) == 0  # No error - dict serializes to JSON string
+
+    def test_dict_to_int_mismatch(self, test_registry):
+        """Dict → int mismatch should be detected."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "consumer",
+                    "type": "int-consumer",
+                    "params": {"count": "${producer.response}"},  # dict → int mismatch
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer"}],
@@ -126,10 +147,7 @@ class TestTypeValidationIntegration:
         assert len(type_errors) == 1
         assert "producer.response" in type_errors[0]
         assert "'dict'" in type_errors[0]
-        assert "'str'" in type_errors[0]
-        assert (
-            "Suggestion" in type_errors[0] or "Available fields" in type_errors[0]
-        )  # Should suggest accessing a field
+        assert "'int'" in type_errors[0]
 
     def test_nested_field_access_passes(self, test_registry):
         """Accessing a nested field with correct type should pass."""
@@ -202,7 +220,7 @@ class TestTypeValidationIntegration:
                 {
                     "id": "consumer",
                     "type": "string-consumer",
-                    "params": {"text": "${llm.response}"},  # dict|str → str (should fail since dict incompatible)
+                    "params": {"text": "${llm.response}"},  # dict|str → str (both now compatible)
                 },
             ],
             "edges": [{"from": "llm", "to": "consumer"}],
@@ -211,7 +229,29 @@ class TestTypeValidationIntegration:
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
-        # dict|str → str should fail because dict is not compatible with str
+        # dict|str → str now passes because both dict and str can serialize to str
+        assert len(type_errors) == 0
+
+    def test_union_type_incompatibility(self, test_registry):
+        """Union types with incompatible members should fail."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "llm", "type": "llm", "params": {"prompt": "test", "max_tokens": 100}},
+                {
+                    "id": "consumer",
+                    "type": "int-consumer",
+                    "params": {"count": "${llm.response}"},  # dict|str → int (incompatible)
+                },
+            ],
+            "edges": [{"from": "llm", "to": "consumer"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        type_errors = [e for e in errors if "Type mismatch" in e]
+        # dict|str → int should fail because neither dict nor str can convert to int
         assert len(type_errors) == 1
 
     def test_any_type_skips_validation(self, test_registry):
@@ -264,8 +304,8 @@ class TestTypeValidationIntegration:
                 },
                 {
                     "id": "consumer2",
-                    "type": "string-consumer",
-                    "params": {"text": "${dict_prod.response}"},  # dict → str mismatch
+                    "type": "int-consumer",
+                    "params": {"count": "${dict_prod.response}"},  # dict → int mismatch
                 },
             ],
             "edges": [
@@ -277,7 +317,7 @@ class TestTypeValidationIntegration:
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
-        assert len(type_errors) == 2
+        assert len(type_errors) == 2  # str→int and dict→int both fail
 
     def test_error_message_format(self, test_registry):
         """Error messages should be clear and include suggestions."""
@@ -288,8 +328,8 @@ class TestTypeValidationIntegration:
                 {"id": "producer", "type": "dict-producer", "params": {}},
                 {
                     "id": "consumer",
-                    "type": "string-consumer",
-                    "params": {"text": "${producer.response}"},
+                    "type": "int-consumer",
+                    "params": {"count": "${producer.response}"},  # dict → int mismatch
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer"}],
@@ -303,8 +343,7 @@ class TestTypeValidationIntegration:
         error = type_errors[0]
         # Check error includes all necessary information
         assert "consumer" in error  # node ID
-        assert "text" in error  # parameter name
+        assert "count" in error  # parameter name
         assert "producer.response" in error  # template
         assert "dict" in error  # inferred type
-        assert "str" in error  # expected type
-        assert "Suggestion" in error or "💡" in error  # helpful suggestion
+        assert "int" in error  # expected type

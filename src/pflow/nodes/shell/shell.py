@@ -303,6 +303,48 @@ class ShellNode(Node):
                         extra={"phase": "prep", "var_name": var_name, "size": len(resolved_value)},
                     )
 
+    def _warn_shell_unsafe_json(self, command: str) -> None:
+        """Warn if command contains JSON that may break shell parsing.
+
+        When arrays/dicts are serialized to JSON and embedded in shell commands,
+        certain characters can break shell parsing:
+        - ' (apostrophe) breaks single-quoted strings
+        - ` (backtick) triggers command substitution
+        - $( triggers command substitution
+        - $VAR triggers variable expansion
+
+        Args:
+            command: The shell command to check
+        """
+        import re
+
+        # Shell-unsafe characters that commonly appear in JSON string values
+        unsafe_patterns = [
+            ("'", "apostrophe"),
+            ("`", "backtick"),
+            ("$(", "command substitution"),
+        ]
+
+        # Look for JSON-like patterns in the command (arrays or objects)
+        # Limit to 500 chars to prevent ReDoS on malicious input
+        # No DOTALL - only match within single lines for safety
+        json_pattern = r"\[.{0,500}?\]|\{.{0,500}?\}"
+        json_matches = re.findall(json_pattern, command)
+
+        for json_str in json_matches:
+            for char, name in unsafe_patterns:
+                if char in json_str:
+                    logger.warning(
+                        f"Command contains JSON with shell-unsafe characters (found: {name} '{char}'). "
+                        f"This may break shell parsing. Consider using 'stdin' parameter instead.",
+                        extra={
+                            "phase": "prep",
+                            "unsafe_char": char,
+                            "suggestion": "Use stdin parameter to pass complex data safely",
+                        },
+                    )
+                    return  # Only warn once per command (multiple issues may exist)
+
     def _adapt_stdin_to_string(self, stdin: Any) -> str | None:
         """Adapt any type to string suitable for subprocess stdin.
 
@@ -420,6 +462,9 @@ class ShellNode(Node):
 
         # Validate command templates for safety (detect JSON/structured data in commands)
         self._check_command_template_safety(command)
+
+        # Warn about JSON that might break shell parsing (apostrophes, backticks, etc.)
+        self._warn_shell_unsafe_json(command)
 
         # Check for obviously dangerous patterns
         command_lower = command.lower()
