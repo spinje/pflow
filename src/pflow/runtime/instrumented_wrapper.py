@@ -305,6 +305,15 @@ class InstrumentedNodeWrapper:
         # Check if node was modified during repair
         is_modified = self.node_id in shared.get("__modified_nodes__", [])
 
+        # Detect if this is a batch node by checking for batch_metadata in output
+        node_output = shared.get(self.node_id, {})
+        is_batch = isinstance(node_output, dict) and "batch_metadata" in node_output
+        batch_total = None
+        batch_success_count = None
+        if is_batch:
+            batch_total = node_output.get("count", 0)
+            batch_success_count = node_output.get("success_count", 0)
+
         # Never let callback errors break execution
         with contextlib.suppress(Exception):
             # Always use node_complete event to keep error on same line
@@ -317,6 +326,9 @@ class InstrumentedNodeWrapper:
                 ignore_errors=ignore_errors,
                 is_modified=is_modified,
                 is_error=(result == "error"),
+                is_batch=is_batch,
+                batch_total=batch_total,
+                batch_success_count=batch_success_count,
             )
 
     def _validate_llm_json_output(self, shared_before: dict[str, Any] | None, shared_after: dict[str, Any]) -> None:

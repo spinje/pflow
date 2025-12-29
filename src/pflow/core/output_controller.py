@@ -79,6 +79,30 @@ class OutputController:
         """
         click.echo(f"{indent}  {node_id}...", err=True, nl=False)
 
+    def _handle_batch_progress(
+        self,
+        node_id: str,
+        indent: str,
+        batch_current: int,
+        batch_total: int,
+        batch_success: bool,
+    ) -> None:
+        """Handle batch_progress event - update line in place.
+
+        Uses carriage return to overwrite the current line with updated progress.
+        Shows per-item success/failure status.
+
+        Args:
+            node_id: The node identifier
+            indent: Indentation string based on depth
+            batch_current: Number of items completed so far
+            batch_total: Total number of items to process
+            batch_success: Whether the just-completed item succeeded
+        """
+        status = click.style("✓", fg="green") if batch_success else click.style("✗", fg="red")
+        # Use \r to return to line start and overwrite
+        click.echo(f"\r{indent}  {node_id}... {batch_current}/{batch_total} {status}", err=True, nl=False)
+
     def _handle_node_complete(
         self,
         duration_ms: Optional[float],
@@ -86,6 +110,9 @@ class OutputController:
         ignore_errors: bool,
         is_modified: bool,
         is_error: bool,
+        is_batch: bool = False,
+        batch_total: Optional[int] = None,
+        batch_success_count: Optional[int] = None,
     ) -> None:
         """Handle node_complete event display.
 
@@ -95,10 +122,28 @@ class OutputController:
             ignore_errors: Whether errors are being ignored
             is_modified: Whether node was modified during repair
             is_error: Whether this is a fatal error
+            is_batch: Whether this is a batch node completion
+            batch_total: Total items in batch (for batch nodes)
+            batch_success_count: Number of successful items (for batch nodes)
         """
         if is_error:
-            # Fatal error - the shell node already logged the error message
-            # Don't print anything else as the line is already broken
+            if is_batch:
+                # For batch errors, complete the line with error indicator
+                click.echo(click.style(" FAILED", fg="red"), err=True)
+            # For non-batch errors, shell node already logged - return to avoid double output
+            return
+
+        if is_batch:
+            # Batch node: progress already showed count/status, just add timing
+            if duration_ms is not None:
+                timing_text = click.style(f" {duration_ms / 1000:.1f}s", fg="green")
+                if is_modified:
+                    mod_text = click.style(" [repaired]", fg="cyan")
+                    click.echo(f"{timing_text}{mod_text}", err=True)
+                else:
+                    click.echo(timing_text, err=True)
+            else:
+                click.echo("", err=True)  # Just newline to complete the line
             return
 
         if error_message and ignore_errors:
@@ -161,18 +206,29 @@ class OutputController:
             ignore_errors: bool = False,
             is_modified: bool = False,
             is_error: bool = False,
+            # Batch progress parameters
+            batch_current: Optional[int] = None,
+            batch_total: Optional[int] = None,
+            batch_success: Optional[bool] = None,
+            is_batch: bool = False,
+            batch_success_count: Optional[int] = None,
         ) -> None:
             """Display progress for node execution.
 
             Args:
                 node_id: The node identifier or count for workflow_start
-                event: Event type (node_start, node_complete, node_cached, workflow_start, node_error)
+                event: Event type (node_start, node_complete, node_cached, workflow_start, batch_progress)
                 duration_ms: Execution duration in milliseconds (for complete events)
                 depth: Nesting depth for indentation
                 error_message: Error message for failed nodes
                 ignore_errors: Whether errors are being ignored (warning vs error)
                 is_modified: Whether node was modified during repair
                 is_error: Whether this is a fatal error
+                batch_current: Items completed so far (for batch_progress)
+                batch_total: Total items in batch (for batch_progress and node_complete)
+                batch_success: Whether just-completed item succeeded (for batch_progress)
+                is_batch: Whether this is a batch node (for node_complete)
+                batch_success_count: Number of successful items (for node_complete)
             """
             indent = "  " * depth
 
@@ -180,7 +236,19 @@ class OutputController:
             if event == "node_start":
                 self._handle_node_start(node_id, indent)
             elif event == "node_complete":
-                self._handle_node_complete(duration_ms, error_message, ignore_errors, is_modified, is_error)
+                self._handle_node_complete(
+                    duration_ms,
+                    error_message,
+                    ignore_errors,
+                    is_modified,
+                    is_error,
+                    is_batch=is_batch,
+                    batch_total=batch_total,
+                    batch_success_count=batch_success_count,
+                )
+            elif event == "batch_progress":
+                if batch_current is not None and batch_total is not None and batch_success is not None:
+                    self._handle_batch_progress(node_id, indent, batch_current, batch_total, batch_success)
             elif event == "node_cached":
                 self._handle_node_cached()
             elif event == "node_warning":

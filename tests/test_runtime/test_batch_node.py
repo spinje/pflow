@@ -1875,3 +1875,183 @@ class TestBatchMetadata:
         assert metadata["max_concurrent"] == 3
         assert metadata["execution_mode"] == "parallel"
         assert metadata["timing"] is not None
+
+
+class TestBatchProgressCallbacks:
+    """Test progress callback invocation during batch execution."""
+
+    def test_sequential_batch_calls_progress_callback(self):
+        """Progress callback called after each item in sequential mode."""
+        events: list[dict] = []
+
+        def track_callback(
+            node_id: str,
+            event: str,
+            duration_ms: float | None = None,
+            depth: int = 0,
+            **kwargs,
+        ):
+            events.append({
+                "node_id": node_id,
+                "event": event,
+                "duration_ms": duration_ms,
+                "depth": depth,
+                "batch_current": kwargs.get("batch_current"),
+                "batch_total": kwargs.get("batch_total"),
+                "batch_success": kwargs.get("batch_success"),
+            })
+
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {
+            "data": ["a", "b", "c"],
+            "__progress_callback__": track_callback,
+        }
+
+        items = batch.prep(shared)
+        batch._exec(items)
+
+        # Verify progress events
+        progress_events = [e for e in events if e["event"] == "batch_progress"]
+        assert len(progress_events) == 3
+
+        # Check first item
+        assert progress_events[0]["batch_current"] == 1
+        assert progress_events[0]["batch_total"] == 3
+        assert progress_events[0]["batch_success"] is True
+        assert progress_events[0]["node_id"] == "test_node"
+
+        # Check last item
+        assert progress_events[2]["batch_current"] == 3
+        assert progress_events[2]["batch_total"] == 3
+
+    def test_sequential_batch_shows_item_failure(self):
+        """Progress callback shows batch_success=False for failed items."""
+        events: list[dict] = []
+
+        def track_callback(node_id, event, duration_ms=None, depth=0, **kwargs):
+            if event == "batch_progress":
+                events.append({
+                    "batch_current": kwargs.get("batch_current"),
+                    "batch_success": kwargs.get("batch_success"),
+                })
+
+        inner = MockInnerNode("test_node", behavior="error_in_result")
+        inner.error_index = 1  # Second item will have error in result
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {
+            "data": ["a", "b", "c"],
+            "__progress_callback__": track_callback,
+        }
+
+        items = batch.prep(shared)
+        batch._exec(items)
+
+        # Verify failure is reported
+        assert len(events) == 3
+        assert events[0]["batch_success"] is True  # Item 0 succeeded
+        assert events[1]["batch_success"] is False  # Item 1 failed (error in result)
+        assert events[2]["batch_success"] is True  # Item 2 succeeded
+
+    def test_parallel_batch_calls_progress_callback(self):
+        """Progress callback called as items complete in parallel mode."""
+        events: list[dict] = []
+
+        def track_callback(node_id, event, duration_ms=None, depth=0, **kwargs):
+            if event == "batch_progress":
+                events.append({
+                    "batch_current": kwargs.get("batch_current"),
+                    "batch_total": kwargs.get("batch_total"),
+                    "batch_success": kwargs.get("batch_success"),
+                })
+
+        inner = ParallelMockInnerNode("test_node", delay=0.01)
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 3})
+
+        shared = {
+            "data": ["a", "b", "c", "d", "e"],
+            "__progress_callback__": track_callback,
+        }
+
+        items = batch.prep(shared)
+        batch._exec(items)
+
+        # All items should be reported
+        assert len(events) == 5
+
+        # batch_current should be incremented (1, 2, 3, 4, 5 - order may vary)
+        currents = sorted([e["batch_current"] for e in events])
+        assert currents == [1, 2, 3, 4, 5]
+
+        # All should have same total
+        assert all(e["batch_total"] == 5 for e in events)
+
+        # All should succeed
+        assert all(e["batch_success"] is True for e in events)
+
+    def test_callback_exception_ignored(self):
+        """Exceptions in progress callback don't break batch execution."""
+        call_count = 0
+
+        def broken_callback(node_id, event, duration_ms=None, depth=0, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("Callback error")
+
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {
+            "data": ["a", "b", "c"],
+            "__progress_callback__": broken_callback,
+        }
+
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # Callback was called despite raising exceptions
+        assert call_count == 3
+
+        # Batch completed successfully
+        assert shared["test_node"]["success_count"] == 3
+
+    def test_no_callback_when_not_provided(self):
+        """Batch works correctly when no callback is provided."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": ["a", "b", "c"]}  # No __progress_callback__
+
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # Should complete without errors
+        assert shared["test_node"]["success_count"] == 3
+
+    def test_callback_receives_depth(self):
+        """Progress callback receives correct depth from shared store."""
+        events: list[dict] = []
+
+        def track_callback(node_id, event, duration_ms=None, depth=0, **kwargs):
+            if event == "batch_progress":
+                events.append({"depth": depth})
+
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {
+            "data": ["a", "b"],
+            "__progress_callback__": track_callback,
+            "_pflow_depth": 2,  # Simulate nested workflow
+        }
+
+        items = batch.prep(shared)
+        batch._exec(items)
+
+        # All events should have depth=2
+        assert len(events) == 2
+        assert all(e["depth"] == 2 for e in events)

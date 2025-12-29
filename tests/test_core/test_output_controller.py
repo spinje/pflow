@@ -331,3 +331,195 @@ class TestOutputController:
 
         callback("write_file", "node_complete", duration_ms=100)
         assert mock_echo.call_args_list[-1] == ((" ✓ 0.1s",), {"err": True})
+
+
+class TestBatchProgressDisplay:
+    """Tests for batch progress event handling."""
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_progress_updates_line_in_place(self, mock_echo, mock_style):
+        """batch_progress event uses carriage return to update line."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        # Simulate batch execution
+        callback("process", "node_start")
+        mock_echo.reset_mock()
+
+        callback(
+            "process",
+            "batch_progress",
+            duration_ms=100,
+            depth=0,
+            batch_current=1,
+            batch_total=3,
+            batch_success=True,
+        )
+
+        # Check that carriage return is used to update in place
+        call_args = mock_echo.call_args
+        assert "\r" in call_args[0][0]
+        assert "1/3" in call_args[0][0]
+        assert call_args[1].get("nl") is False
+        assert call_args[1].get("err") is True
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_progress_shows_success_indicator(self, mock_echo, mock_style):
+        """batch_progress shows ✓ for successful items."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        callback(
+            "process",
+            "batch_progress",
+            batch_current=2,
+            batch_total=5,
+            batch_success=True,
+        )
+
+        call_args = mock_echo.call_args[0][0]
+        assert "2/5" in call_args
+        assert "✓" in call_args
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_progress_shows_failure_indicator(self, mock_echo, mock_style):
+        """batch_progress shows ✗ for failed items."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        callback(
+            "process",
+            "batch_progress",
+            batch_current=3,
+            batch_total=5,
+            batch_success=False,
+        )
+
+        call_args = mock_echo.call_args[0][0]
+        assert "3/5" in call_args
+        assert "✗" in call_args
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_node_complete_for_batch_only_shows_timing(self, mock_echo, mock_style):
+        """node_complete for batch nodes only shows timing, not duplicate checkmark."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        callback(
+            "process",
+            "node_complete",
+            duration_ms=2500,
+            is_batch=True,
+            batch_total=8,
+            batch_success_count=8,
+        )
+
+        # Should just show timing (progress already showed the checkmark)
+        call_args = mock_echo.call_args[0][0]
+        assert "2.5s" in call_args
+        # Should NOT have a checkmark prefix (just timing)
+        assert not call_args.strip().startswith("✓")
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_error_completion_shows_failed(self, mock_echo, mock_style):
+        """node_complete for batch with is_error shows FAILED."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        callback(
+            "process",
+            "node_complete",
+            duration_ms=1000,
+            is_batch=True,
+            is_error=True,
+        )
+
+        call_args = mock_echo.call_args[0][0]
+        assert "FAILED" in call_args
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_progress_respects_depth_indentation(self, mock_echo, mock_style):
+        """batch_progress event respects depth for indentation."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        # depth=1 means one level of indentation (2 spaces)
+        callback(
+            "process",
+            "batch_progress",
+            depth=1,
+            batch_current=1,
+            batch_total=3,
+            batch_success=True,
+        )
+
+        call_args = mock_echo.call_args[0][0]
+        # Should have extra indentation
+        assert "    process" in call_args  # 4 spaces (2 base + 2 for depth)
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_complete_workflow_flow(self, mock_echo, mock_style):
+        """Test complete batch workflow execution flow."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        # Start batch node
+        callback("convert-sections", "node_start")
+        assert "convert-sections..." in mock_echo.call_args[0][0]
+
+        # Progress updates
+        callback(
+            "convert-sections",
+            "batch_progress",
+            batch_current=1,
+            batch_total=8,
+            batch_success=True,
+        )
+        assert "1/8" in mock_echo.call_args[0][0]
+
+        callback(
+            "convert-sections",
+            "batch_progress",
+            batch_current=8,
+            batch_total=8,
+            batch_success=True,
+        )
+        assert "8/8" in mock_echo.call_args[0][0]
+
+        # Complete with timing
+        callback(
+            "convert-sections",
+            "node_complete",
+            duration_ms=24900,
+            is_batch=True,
+            batch_total=8,
+            batch_success_count=8,
+        )
+        assert "24.9s" in mock_echo.call_args[0][0]
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_batch_progress_missing_params_ignored(self, mock_echo, mock_style):
+        """batch_progress with missing params doesn't crash."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        # Missing batch_success - should be handled gracefully (not crash)
+        callback(
+            "process",
+            "batch_progress",
+            batch_current=1,
+            batch_total=3,
+            # batch_success intentionally omitted
+        )
+
+        # Should not have called _handle_batch_progress (validation fails)
+        # The call should have been made for node_start tracking, not batch_progress
+        # Since all params must be present, no output should occur for batch_progress
