@@ -948,3 +948,70 @@ Created `tests/test_execution/formatters/test_success_formatter.py` with 23 test
 | Compiler Batch | 15 |
 | Success Formatter | 23 |
 | **Total Batch-Related** | **137** |
+
+---
+
+## 2024-12-29 - Post-Implementation Bug Fix: JSON Auto-Parsing for batch.items
+
+### Issue Discovered
+
+GitHub Issue #13: When using `batch.items` with output from a shell node that produces a JSON array, the batch processor fails:
+
+```
+TypeError: Batch items must be an array, got str.
+Template '${create-array.stdout}' resolved to: '["item1", "item2", "item3"]'
+```
+
+### Root Cause
+
+Shell nodes always output text (stdout is a string). When that text is a valid JSON array like `["a", "b", "c"]`, the batch processor received it as a **string**, not a parsed Python list.
+
+The node parameter system (`node_wrapper.py:746-781`) already handles this case - it auto-parses JSON strings when the target parameter expects `dict` or `list`. But `batch.items` didn't have this auto-parsing.
+
+### Fix Applied
+
+**Commit**: `b9a2d2a` - "fix: batch.items auto-parses JSON strings from shell output"
+
+Added JSON auto-parsing in `batch_node.py:prep()` method (lines 164-191) following the proven pattern from `node_wrapper.py`:
+
+1. Check if resolved `items` is a string
+2. Strip whitespace (shell outputs often have trailing `\n`)
+3. Security check: 10MB size limit
+4. Quick check: if string starts with `[`, attempt `json.loads()`
+5. Type validation: only use parsed result if it's a list
+6. Graceful fallback: if parsing fails, keep as string (existing error handling works)
+
+### Defense-in-Depth: Type Coercion for Batch Config
+
+Also added type coercion helpers for batch config fields (`parallel`, `max_concurrent`, `max_retries`, `retry_wait`):
+
+- `_coerce_bool()` - Handles "true"/"false" strings correctly (unlike Python's `bool()`)
+- `_coerce_int()` - Coerces string numbers with warning
+- `_coerce_float()` - Coerces string numbers with warning
+
+This protects against edge cases where invalid types might bypass schema validation.
+
+### Tests Added
+
+| Test Class | Tests | Purpose |
+|------------|-------|---------|
+| `TestItemsJsonAutoParsing` | 10 | JSON string parsing, edge cases, error handling |
+| `TestConfigTypeCoercion` | 15 | Type coercion for all config fields |
+
+### Key Design Decision: Why NOT Node-to-Node Primitive Coercion?
+
+We deliberately did NOT add primitive type coercion (str→int, str→float, str→bool) for node-to-node data flow because:
+
+1. **Data loss risk**: `"007"` → `7` loses leading zeros
+2. **Precision risk**: Large integers could lose precision
+3. **Boolean ambiguity**: What strings should become True/False?
+4. **YAGNI**: Theoretical problem not yet encountered in practice
+
+The batch.items JSON fix is safe because JSON arrays are unambiguous - `'["a","b"]'` is clearly meant to be a list. Primitive coercion is risky because `"007"` might be intentionally a string.
+
+### Updated Test Counts
+
+| Category | Count |
+|----------|-------|
+| Batch Node (was 86) | **101** |
+| **New tests added** | **+25** |
