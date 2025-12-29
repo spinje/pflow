@@ -181,6 +181,19 @@ def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
     nodes_by_id = {node["id"]: node for node in workflow_ir.get("nodes", [])}
     declared_inputs = set(workflow_ir.get("inputs", {}).keys())
 
+    # Extract batch item aliases - these are valid variable references within batch nodes
+    # Note: This is a permissive check - we allow batch aliases globally rather than
+    # tracking which node each template belongs to. Runtime will catch invalid usage.
+    batch_item_aliases: set[str] = set()
+    for node in workflow_ir.get("nodes", []):
+        batch_config = node.get("batch")
+        if batch_config:
+            item_alias = batch_config.get("as", "item")
+            batch_item_aliases.add(item_alias)
+
+    # Combine declared inputs with batch item aliases for validation
+    valid_simple_refs = declared_inputs | batch_item_aliases
+
     # Build execution order
     try:
         node_order = build_execution_order(workflow_ir)
@@ -200,7 +213,7 @@ def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
                 for match in re.finditer(r"\$\{([^}]+)\}", param_value):
                     ref = match.group(1)
                     error = _validate_template_reference(
-                        ref, node_id, param_name, node_position, nodes_by_id, node_positions, declared_inputs
+                        ref, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
                     )
                     if error:
                         errors.append(error)

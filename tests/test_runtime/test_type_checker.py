@@ -39,9 +39,15 @@ class TestTypeCompatibility:
         """str cannot be used as int."""
         assert is_type_compatible("str", "int") is False
 
-    def test_dict_to_str_incompatible(self):
-        """dict cannot be used as str (the original bug!)."""
-        assert is_type_compatible("dict", "str") is False
+    def test_dict_to_str_compatible(self):
+        """dict can be serialized to str (JSON serialization)."""
+        assert is_type_compatible("dict", "str") is True
+
+    def test_list_to_str_compatible(self):
+        """list can be serialized to str (JSON serialization)."""
+        assert is_type_compatible("list", "str") is True
+        assert is_type_compatible("array", "str") is True
+        assert is_type_compatible("array", "string") is True
 
     def test_bool_to_str_compatible(self):
         """bool can be stringified."""
@@ -52,11 +58,14 @@ class TestTypeCompatibility:
         # str|any -> str: both str and any are compatible with str
         assert is_type_compatible("str|any", "str") is True
 
-        # dict|str -> str: dict is NOT compatible with str
-        assert is_type_compatible("dict|str", "str") is False
+        # dict|str -> str: both dict and str can serialize to str
+        assert is_type_compatible("dict|str", "str") is True
 
         # int|float -> float: both int and float compatible with float
         assert is_type_compatible("int|float", "float") is True
+
+        # dict|str -> int: dict/str cannot convert to int
+        assert is_type_compatible("dict|str", "int") is False
 
     def test_union_target_any_must_match(self):
         """With union target, source must match ANY target type."""
@@ -66,8 +75,11 @@ class TestTypeCompatibility:
         # int -> str|int: int matches int in union
         assert is_type_compatible("int", "str|int") is True
 
-        # dict -> str|int: dict matches neither
-        assert is_type_compatible("dict", "str|int") is False
+        # dict -> str|int: dict can serialize to str
+        assert is_type_compatible("dict", "str|int") is True
+
+        # dict -> int|float: dict cannot convert to numeric types
+        assert is_type_compatible("dict", "int|float") is False
 
         # int -> int|float: int matches both
         assert is_type_compatible("int", "int|float") is True
@@ -76,16 +88,20 @@ class TestTypeCompatibility:
         """Complex union type compatibility."""
         # dict|str source, str|int target
         # For each source type, check if compatible with any target type:
-        # - dict: compatible with int? No. compatible with str? No.
-        # - str: compatible with int? No. compatible with str? Yes!
-        # Result: False (dict is not compatible)
-        assert is_type_compatible("dict|str", "str|int") is False
+        # - dict: compatible with str? Yes (JSON serialization)
+        # - str: compatible with str? Yes
+        # Result: True (all source types compatible)
+        assert is_type_compatible("dict|str", "str|int") is True
 
         # str|any source, str|int target
         # - str: compatible with str|int? Yes
         # - any: compatible with str|int? Yes
         # Result: True
         assert is_type_compatible("str|any", "str|int") is True
+
+        # dict|list source, int|float target
+        # Neither dict nor list can convert to numeric types
+        assert is_type_compatible("dict|list", "int|float") is False
 
 
 class TestTemplateTypeInference:

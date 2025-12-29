@@ -329,3 +329,111 @@ class TestValidateDataFlow:
         assert len(errors) == 1
         assert "undefined_input" in errors[0]
         assert "fetch" in errors[0]
+
+
+class TestBatchDataFlowValidation:
+    """Test batch-specific data flow validation."""
+
+    def test_batch_item_alias_default_valid(self):
+        """${item} should be valid when node has batch config."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process: ${item}"},
+                }
+            ],
+            "edges": [],
+            "inputs": {"items": {"type": "array"}},
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_item_alias_custom_valid(self):
+        """Custom alias via batch.as should be valid."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${records}", "as": "record"},
+                    "params": {"prompt": "Process: ${record}"},
+                }
+            ],
+            "edges": [],
+            "inputs": {"records": {"type": "array"}},
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_item_alias_wrong_name_fails(self):
+        """Using wrong alias name should fail validation."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}", "as": "record"},
+                    # Using ${item} when alias is "record" - should fail
+                    "params": {"prompt": "Process: ${item}"},
+                }
+            ],
+            "edges": [],
+            "inputs": {"items": {"type": "array"}},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) > 0
+        assert any("item" in e for e in errors)
+
+    def test_multiple_batch_nodes_different_aliases(self):
+        """Multiple batch nodes with different aliases should all be valid."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process-a",
+                    "type": "llm",
+                    "batch": {"items": "${items_a}", "as": "item_a"},
+                    "params": {"prompt": "A: ${item_a}"},
+                },
+                {
+                    "id": "process-b",
+                    "type": "llm",
+                    "batch": {"items": "${items_b}", "as": "item_b"},
+                    "params": {"prompt": "B: ${item_b}"},
+                },
+            ],
+            "edges": [{"from": "process-a", "to": "process-b"}],
+            "inputs": {
+                "items_a": {"type": "array"},
+                "items_b": {"type": "array"},
+            },
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_with_node_output_reference(self):
+        """Batch nodes should allow referencing previous node outputs."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "http",
+                    "params": {"url": "${api_url}"},
+                },
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process ${item} from ${fetch.response}"},
+                },
+            ],
+            "edges": [{"from": "fetch", "to": "process"}],
+            "inputs": {
+                "api_url": {"type": "string"},
+                "items": {"type": "array"},
+            },
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"

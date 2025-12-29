@@ -421,3 +421,224 @@ class TestRealWorldScenarios:
         params = {"repo": "pflow", "issue_number": "123"}
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0
+
+
+class TestBatchTemplateValidation:
+    """Tests for batch processing template validation."""
+
+    def test_batch_item_alias_default_recognized(self):
+        """${item} should be valid when node has batch config."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}", "parallel": True},
+                    "params": {"prompt": "Process: ${item}"},
+                }
+            ],
+            "edges": [],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"items": ["a", "b", "c"]}, registry
+        )
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_batch_item_alias_custom_recognized(self):
+        """Custom alias via batch.as should be valid."""
+        workflow_ir = {
+            "inputs": {"records": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${records}", "as": "record"},
+                    "params": {"prompt": "Process record: ${record}"},
+                }
+            ],
+            "edges": [],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"records": ["a", "b"]}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_batch_outputs_recognized(self):
+        """${node.results}, ${node.count}, etc. should be valid for batch nodes."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "combine",
+                    "type": "llm",
+                    "params": {"prompt": "Combine ${process.count} results: ${process.results}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "combine"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_all_batch_outputs_available(self):
+        """All batch outputs should be available: results, count, success_count, error_count, errors, batch_metadata."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "batch-node",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "${item}"},
+                },
+                {
+                    "id": "report",
+                    "type": "llm",
+                    "params": {
+                        "prompt": (
+                            "Results: ${batch-node.results}\n"
+                            "Count: ${batch-node.count}\n"
+                            "Success: ${batch-node.success_count}\n"
+                            "Errors: ${batch-node.error_count}\n"
+                            "Error details: ${batch-node.errors}\n"
+                            "Metadata: ${batch-node.batch_metadata}"
+                        )
+                    },
+                },
+            ],
+            "edges": [{"from": "batch-node", "to": "report"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": []}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_batch_items_template_validated(self):
+        """Templates in batch.items should be extracted and validated."""
+        workflow_ir = {
+            "inputs": {"data": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${data}"},
+                    "params": {"prompt": "${item}"},
+                }
+            ],
+            "edges": [],
+        }
+
+        registry = create_mock_registry()
+
+        # With data provided - should pass (data is used in batch.items)
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_batch_items_invalid_template_fails(self):
+        """Invalid template in batch.items should fail validation."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${nonexistent_array}"},
+                    "params": {"prompt": "${item}"},
+                }
+            ],
+            "edges": [],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        assert len(errors) > 0
+        assert any("nonexistent_array" in e for e in errors)
+
+    def test_batch_does_not_expose_inner_outputs(self):
+        """${node.response} should NOT be valid for batch node (it's wrapped in results)."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "${item}"},
+                },
+                {
+                    "id": "use-wrong-output",
+                    "type": "llm",
+                    # Trying to use inner node output directly (wrong!)
+                    "params": {"prompt": "Response: ${process.response}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "use-wrong-output"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        # Should fail because batch node doesn't expose 'response' directly
+        assert len(errors) > 0
+        assert any("response" in e for e in errors)
+
+    def test_non_batch_node_unchanged(self):
+        """Non-batch nodes should work exactly as before."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
+                {
+                    "id": "summarize",
+                    "type": "llm",
+                    "params": {"prompt": "Summarize: ${transcript_data.text}"},
+                },
+            ],
+            "edges": [{"from": "fetch", "to": "summarize"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"url": "https://youtube.com"}, registry
+        )
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_mixed_batch_and_non_batch_nodes(self):
+        """Workflow with both batch and non-batch nodes should validate correctly."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                # Non-batch node first
+                {"id": "fetch", "type": "youtube-transcript", "params": {"url": "${url}"}},
+                # Batch node
+                {
+                    "id": "process-each",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process ${item} with context: ${transcript_data.title}"},
+                },
+                # Non-batch node using batch output
+                {
+                    "id": "combine",
+                    "type": "llm",
+                    "params": {"prompt": "Combined ${process-each.count} results: ${process-each.results}"},
+                },
+            ],
+            "edges": [
+                {"from": "fetch", "to": "process-each"},
+                {"from": "process-each", "to": "combine"},
+            ],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"url": "https://youtube.com", "items": ["a", "b"]}, registry
+        )
+        assert len(errors) == 0, f"Unexpected errors: {errors}"

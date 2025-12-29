@@ -100,7 +100,7 @@ fetch-data → process-data → save-results
       "id": "step3-extract",
       "type": "shell",
       "params": {
-        "stdin": "${step1-fetch.response}",  // Can access step1 even though step2 is between
+        "stdin": "${step1-fetch.response}",  // Pipes data into command (like: echo $data | jq)
         "command": "jq '.items'"
       }
     },
@@ -1028,8 +1028,8 @@ Common mistake: Using jq for extraction creates unnecessary nodes. Templates han
       }
     },
 
-    // In shell commands (be careful with escaping)
-    "command": "echo '${data}' | jq '.items[0:${limit}]'",
+    // In shell commands - use pflow variables directly (they resolve before shell runs)
+    "command": "mkdir -p ${output_dir}/images && echo '${data}' | jq '.items[0:${limit}]'",
 
     // Direct values (no template)
     "method": "POST",
