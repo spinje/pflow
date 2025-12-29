@@ -1808,6 +1808,62 @@ class TestParallelThreadSafety:
         # Results should still work
         assert len(shared["test_node"]["results"]) == 3
 
+    def test_multiple_batch_nodes_share_llm_calls_list(self):
+        """Multiple batch nodes in same workflow append to same __llm_calls__ list.
+
+        Simulates a workflow with two batch nodes running sequentially.
+        Both should append their LLM usage to the shared __llm_calls__ list.
+        """
+
+        class MockLLMNode:
+            def __init__(self, node_id: str, model: str):
+                self.node_id = node_id
+                self.model = model
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                shared["llm_usage"] = {
+                    "model": self.model,
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                }
+                shared[self.node_id] = {"response": f"processed: {item}"}
+                return "default"
+
+        # First batch node
+        inner1 = MockLLMNode("summarize", "model-a")
+        batch1 = PflowBatchNode(inner1, "summarize", {"items": "${docs}", "parallel": False})
+
+        # Second batch node
+        inner2 = MockLLMNode("translate", "model-b")
+        batch2 = PflowBatchNode(inner2, "translate", {"items": "${docs}", "parallel": False})
+
+        # Shared store with items
+        shared = {"docs": ["doc1", "doc2"]}
+
+        # Execute first batch
+        items1 = batch1.prep(shared)
+        results1 = batch1._exec(items1)
+        batch1.post(shared, items1, results1)
+
+        # Execute second batch (same shared store)
+        items2 = batch2.prep(shared)
+        results2 = batch2._exec(items2)
+        batch2.post(shared, items2, results2)
+
+        # Should have 4 LLM calls total (2 from each batch)
+        assert len(shared["__llm_calls__"]) == 4
+
+        # First 2 calls from batch1
+        assert shared["__llm_calls__"][0]["node_id"] == "summarize"
+        assert shared["__llm_calls__"][0]["model"] == "model-a"
+        assert shared["__llm_calls__"][1]["node_id"] == "summarize"
+
+        # Last 2 calls from batch2
+        assert shared["__llm_calls__"][2]["node_id"] == "translate"
+        assert shared["__llm_calls__"][2]["model"] == "model-b"
+        assert shared["__llm_calls__"][3]["node_id"] == "translate"
+
     def test_llm_calls_contain_all_required_fields_for_metrics(self):
         """LLM call records contain all fields needed for cost calculation.
 
