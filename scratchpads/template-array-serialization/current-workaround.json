@@ -1,0 +1,28 @@
+{
+  "_comment": "Current workaround - use stdin for arrays, only one array possible per node",
+  "inputs": {
+    "items": {
+      "type": "array",
+      "required": true,
+      "description": "Array of items to process"
+    }
+  },
+  "nodes": [
+    {
+      "id": "process-array",
+      "type": "shell",
+      "purpose": "This works - array passed via stdin, not embedded in command",
+      "params": {
+        "stdin": "${items}",
+        "command": "jq 'length'"
+      }
+    }
+  ],
+  "edges": [],
+  "outputs": {
+    "count": {
+      "source": "${process-array.stdout}",
+      "description": "Number of items"
+    }
+  }
+}

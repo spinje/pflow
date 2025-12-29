@@ -1,0 +1,63 @@
+{
+  "_comment": "Real-world scenario: need TWO arrays in one shell command - currently impossible",
+  "_problem": "After batch processing images with vision, we have two arrays: (1) image paths and (2) descriptions. We need to combine them into a mapping. But stdin only accepts one value, and embedding arrays in command strings fails.",
+  "inputs": {
+    "images_dir": {
+      "type": "string",
+      "required": true
+    }
+  },
+  "nodes": [
+    {
+      "id": "list-images",
+      "type": "shell",
+      "purpose": "Get list of image files as JSON array",
+      "params": {
+        "command": "find '${images_dir}' -type f -name '*.png' | jq -R -s 'split(\"\\n\") | map(select(length > 0))'"
+      }
+    },
+    {
+      "id": "describe-images",
+      "type": "llm",
+      "purpose": "Describe each image with vision",
+      "batch": {
+        "items": "${list-images.stdout}",
+        "parallel": true,
+        "max_concurrent": 10
+      },
+      "params": {
+        "prompt": "Describe this image in 2-3 sentences.",
+        "images": [
+          "${item}"
+        ],
+        "model": "gemini-3-flash-preview"
+      }
+    },
+    {
+      "id": "build-mapping",
+      "type": "shell",
+      "purpose": "THIS FAILS - need both arrays but can only use one via stdin",
+      "_problem": "Cannot use ${describe-images.results} in command string because it's an array",
+      "params": {
+        "stdin": "${list-images.stdout}",
+        "command": "jq --argjson descriptions '${describe-images.results}' 'to_entries | map({key: .value, value: $descriptions[.key].response}) | from_entries'"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "list-images",
+      "to": "describe-images"
+    },
+    {
+      "from": "describe-images",
+      "to": "build-mapping"
+    }
+  ],
+  "outputs": {
+    "mapping": {
+      "source": "${build-mapping.stdout}",
+      "description": "Mapping of image paths to descriptions"
+    }
+  }
+}

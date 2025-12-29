@@ -1,0 +1,27 @@
+{
+  "_comment": "Minimal reproduction of template array-in-string-context issue",
+  "inputs": {
+    "items": {
+      "type": "array",
+      "required": true,
+      "description": "Array of items to process"
+    }
+  },
+  "nodes": [
+    {
+      "id": "process-array",
+      "type": "shell",
+      "purpose": "This fails because ${items} is an array but command expects string",
+      "params": {
+        "command": "echo '${items}' | jq 'length'"
+      }
+    }
+  ],
+  "edges": [],
+  "outputs": {
+    "count": {
+      "source": "${process-array.stdout}",
+      "description": "Number of items"
+    }
+  }
+}
