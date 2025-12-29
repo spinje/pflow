@@ -360,3 +360,42 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
   - Stalled processes
 - **Better approach**: Set `SIGPIPE` to `SIG_DFL` and centralize printing through a `safe_output()` that catches `BrokenPipeError`/EPIPE and exits cleanly.
 - **Key Lesson**: Pipe-robust CLIs must be explicit about SIGPIPE and write failures.
+
+---
+
+## Pitfall: Wrappers That Change Output Structure Must Update Validation Systems
+- **Date**: 2025-12-29
+- **Discovered in**: Batch validation bug fix (GitHub #15)
+- **What we tried**: Added batch processing (Task 96) which wraps nodes and changes their output structure, without updating template validation
+- **Why it seemed good**: Batch wrapper worked correctly at runtime - tests passed, workflows executed properly
+- **Why it failed**: Template validation happens at compile-time using static analysis. It has no knowledge of runtime wrappers that transform output structures.
+- **Symptoms**:
+  - Valid batch workflows fail validation with confusing errors
+  - `${item}` reported as "undefined input" even though it works at runtime
+  - `${node.results}` fails with suggestion to use `${node.response}` (wrong!)
+  - `batch.items` templates not recognized, causing "unused input" warnings
+- **Better approach**: When adding wrappers that change node output structure, audit ALL validation systems:
+  1. `template_validator.py` - Static template extraction and output recognition
+  2. `workflow_data_flow.py` - Data flow and execution order validation
+  3. Any other compile-time validation that reasons about node outputs
+- **Example of failure**:
+  ```python
+  # batch_node.py - Runtime correctly produces:
+  shared[node_id] = {
+      "results": [...],  # Array of results
+      "count": N,
+      "success_count": N,
+      # etc.
+  }
+  # Also injects: shared["item"] = current_item
+
+  # BUT template_validator.py still thinks the node outputs:
+  # {"response": "...", "llm_usage": {...}}  # From base llm node
+  # Because it only queries registry for static interface metadata
+
+  # FIX: Detect batch config and register batch outputs instead:
+  if batch_config:
+      # Register batch outputs (results, count, etc.)
+      # Register item alias as available variable
+  ```
+- **Key Lesson**: Runtime wrappers and compile-time validation are separate systems with separate data sources. Registry metadata describes unwrapped nodes. Any wrapper that transforms outputs needs corresponding validation updates.
