@@ -51,10 +51,10 @@ TYPE_COMPATIBILITY_MATRIX = {
     "number": ["any", "float", "number", "int", "integer", "str", "string"],  # number (generic numeric) → int/float/str
     "bool": ["any", "bool", "boolean", "str", "string"],  # bool can stringify
     "boolean": ["any", "bool", "boolean", "str", "string"],  # Alias for bool
-    "dict": ["any", "dict", "object"],
-    "object": ["any", "dict", "object"],  # Alias for dict
-    "list": ["any", "list", "array"],
-    "array": ["any", "list", "array"],  # Alias for list
+    "dict": ["any", "dict", "object", "str", "string"],  # dict can serialize to JSON string
+    "object": ["any", "dict", "object", "str", "string"],  # Alias for dict
+    "list": ["any", "list", "array", "str", "string"],  # list can serialize to JSON string
+    "array": ["any", "list", "array", "str", "string"],  # Alias for list
 }
 
 

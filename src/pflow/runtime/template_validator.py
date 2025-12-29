@@ -688,7 +688,7 @@ class TemplateValidator:
         Returns:
             Dict mapping variable names to their full structure/type info
         """
-        node_outputs = {}
+        node_outputs: dict[str, dict[str, Any]] = {}
         enable_namespacing = workflow_ir.get("enable_namespacing", True)
 
         for node in workflow_ir.get("nodes", []):
