@@ -508,7 +508,7 @@ pflow ./my-workflow.json --auto-repair
 
 ### Saved Workflow Execution
 ```bash
-pflow github-analyzer repo=anthropics/pflow
+pflow github-analyzer repo=spinje/pflow
 pflow my-saved-workflow  # Trace saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 ```
 

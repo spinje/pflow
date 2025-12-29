@@ -91,7 +91,7 @@ def get_test_cases() -> list[MappingTestCase]:
         ),
         MappingTestCase(
             name="multiple_types",
-            user_input="Generate changelog from last 30 closed issues in anthropic/pflow repo",
+            user_input="Generate changelog from last 30 closed issues in spinje/pflow repo",
             workflow_inputs={
                 "repo_owner": InputSpec("string", required=True, description="Repository owner"),
                 "repo_name": InputSpec("string", required=True, description="Repository name"),
@@ -99,7 +99,7 @@ def get_test_cases() -> list[MappingTestCase]:
                 "issue_state": InputSpec("string", required=True, description="Issue state filter"),
             },
             expected_extracted={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "issue_count": 30,
                 "issue_state": "closed",

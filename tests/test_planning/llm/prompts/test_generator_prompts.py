@@ -34,7 +34,7 @@ class TestGeneratorPromptEffectiveness:
         shared = {
             "user_input": "Create changelog for repo since date with limit",
             "discovered_params": {
-                "repository": "anthropic/pflow",
+                "repository": "spinje/pflow",
                 "since_date": "2024-01-01",
                 "max_commits": "100",
             },
@@ -74,7 +74,7 @@ class TestGeneratorPromptEffectiveness:
             workflow_str = json.dumps(workflow)
 
             # Should not contain hardcoded discovered values
-            assert '"anthropic/pflow"' not in workflow_str or "$" in workflow_str
+            assert '"spinje/pflow"' not in workflow_str or "$" in workflow_str
             assert '"2024-01-01"' not in workflow_str or "$" in workflow_str
             assert '"100"' not in workflow_str or "$" in workflow_str
 

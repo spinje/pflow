@@ -631,9 +631,9 @@ def get_test_cases():
         # Test 1: North Star Example - Generate Changelog
         WorkflowTestCase(
             name="changelog_from_issues",
-            user_input="Get the last 20 closed issues from github repo anthropic/pflow, group them into sections (Features, Bugs, Documentation) based on their labels, create a markdown changelog with '## Version X.Y.Z' header and bullet points for each issue showing number and title, write to CHANGELOG.md, then commit with message 'Update changelog for release'",
+            user_input="Get the last 20 closed issues from github repo spinje/pflow, group them into sections (Features, Bugs, Documentation) based on their labels, create a markdown changelog with '## Version X.Y.Z' header and bullet points for each issue showing number and title, write to CHANGELOG.md, then commit with message 'Update changelog for release'",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "issue_limit": "20",
                 "changelog_file": "CHANGELOG.md",
@@ -655,9 +655,9 @@ def get_test_cases():
         # Test 2: Multi-Repository Dependency Security Audit (HARDER)
         WorkflowTestCase(
             name="security_audit_pipeline",
-            user_input="Check if package.json exists using 'test -f package.json', if it exists run 'npm audit --json'. Check if requirements.txt exists using 'test -f requirements.txt', if it exists run 'pip-audit requirements.txt --format json'. Run 'trivy fs . --format json --scanners vuln' for overall scan. Get GitHub issues with label 'security' or 'vulnerability' from repo anthropic/pflow. Parse all security reports extracting critical and high severity issues, correlate with GitHub issues, generate unified security report with vulnerabilities by severity and affected packages grouped by ecosystem. Write report to security-audit.md and machine-readable vulnerabilities.json.",
+            user_input="Check if package.json exists using 'test -f package.json', if it exists run 'npm audit --json'. Check if requirements.txt exists using 'test -f requirements.txt', if it exists run 'pip-audit requirements.txt --format json'. Run 'trivy fs . --format json --scanners vuln' for overall scan. Get GitHub issues with label 'security' or 'vulnerability' from repo spinje/pflow. Parse all security reports extracting critical and high severity issues, correlate with GitHub issues, generate unified security report with vulnerabilities by severity and affected packages grouped by ecosystem. Write report to security-audit.md and machine-readable vulnerabilities.json.",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "report_file": "security-audit.md",
                 "json_file": "vulnerabilities.json",
@@ -753,9 +753,9 @@ def get_test_cases():
         # Test 7: Comprehensive Repository Analytics Pipeline (HARDER)
         WorkflowTestCase(
             name="repository_analytics_pipeline",
-            user_input="Generate complete repository analytics: Run 'git log --since=\"30 days ago\" --pretty=format:\"%H|%an|%ae|%at|%s\" --numstat' for detailed commit history. Run 'git shortlog -sn --since=\"30 days ago\"' for contributor stats. Run 'cloc . --json --exclude-dir=node_modules,venv,.git' for code metrics. Run 'find . -type f -name \"*.md\" | wc -l' for documentation count. Get last 100 issues (both open and closed) from GitHub repo anthropic/pflow. Get all pull requests from last 30 days. Analyze commit patterns, calculate average time between commits, identify top contributors, calculate issue closure rate, PR merge rate, lines of code by language. Generate comprehensive analytics report with sections for velocity metrics, contributor analytics, code composition, issue/PR statistics. Write main report to analytics-report.md and data visualization file to analytics-data.json. Create branch 'analytics-$(date +%Y%m%d)', commit both files with message 'Analytics report $(date +%Y-%m-%d)', create PR requesting review.",
+            user_input="Generate complete repository analytics: Run 'git log --since=\"30 days ago\" --pretty=format:\"%H|%an|%ae|%at|%s\" --numstat' for detailed commit history. Run 'git shortlog -sn --since=\"30 days ago\"' for contributor stats. Run 'cloc . --json --exclude-dir=node_modules,venv,.git' for code metrics. Run 'find . -type f -name \"*.md\" | wc -l' for documentation count. Get last 100 issues (both open and closed) from GitHub repo spinje/pflow. Get all pull requests from last 30 days. Analyze commit patterns, calculate average time between commits, identify top contributors, calculate issue closure rate, PR merge rate, lines of code by language. Generate comprehensive analytics report with sections for velocity metrics, contributor analytics, code composition, issue/PR statistics. Write main report to analytics-report.md and data visualization file to analytics-data.json. Create branch 'analytics-$(date +%Y%m%d)', commit both files with message 'Analytics report $(date +%Y-%m-%d)', create PR requesting review.",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "report_file": "analytics-report.md",
                 "data_file": "analytics-data.json",
@@ -835,8 +835,8 @@ def get_test_cases():
         # Test 9: GitHub Slack Notifier
         WorkflowTestCase(
             name="github_slack_notifier",
-            user_input="Get issues closed in the last 7 days from github repo anthropic/pflow, create a summary showing total count, list of issue titles with numbers, and top contributors, post to slack channel updates with heading 'Weekly Closed Issues Report'",
-            discovered_params={"repo_owner": "anthropic", "repo_name": "pflow", "channel_id": "updates"},
+            user_input="Get issues closed in the last 7 days from github repo spinje/pflow, create a summary showing total count, list of issue titles with numbers, and top contributors, post to slack channel updates with heading 'Weekly Closed Issues Report'",
+            discovered_params={"repo_owner": "spinje", "repo_name": "pflow", "channel_id": "updates"},
             browsed_node_ids=["github-list-issues", "llm", "mcp-slack-slack_post_message"],
             validation_errors=None,
             expected_nodes=["github-list-issues", "llm", "mcp-slack-slack_post_message"],
@@ -853,9 +853,9 @@ def get_test_cases():
         # Test 10: Automated Test Failure Analysis Pipeline (HARDER)
         WorkflowTestCase(
             name="test_failure_analysis",
-            user_input="Run 'npm test -- --json --outputFile=test-results.json' to execute tests. Read test-results.json and parse to identify all failing tests. Run 'git log --since=\"7 days ago\" --oneline' to find recent changes. Run 'git blame --show-stats' to get overall contribution stats. Search GitHub issues for 'test failure' or 'broken test' in repo anthropic/pflow. Search GitHub PRs with label 'bug' or 'test'. Analyze failure patterns and correlate with recent repository activity. Generate detailed failure analysis report including: list of failing tests, recent commits that may be related, active issues and PRs about tests, recommendations for fixes. Write main report to test-analysis.md, create summary as test-failures.csv, post key findings to Slack channel 'testing'.",
+            user_input="Run 'npm test -- --json --outputFile=test-results.json' to execute tests. Read test-results.json and parse to identify all failing tests. Run 'git log --since=\"7 days ago\" --oneline' to find recent changes. Run 'git blame --show-stats' to get overall contribution stats. Search GitHub issues for 'test failure' or 'broken test' in repo spinje/pflow. Search GitHub PRs with label 'bug' or 'test'. Analyze failure patterns and correlate with recent repository activity. Generate detailed failure analysis report including: list of failing tests, recent commits that may be related, active issues and PRs about tests, recommendations for fixes. Write main report to test-analysis.md, create summary as test-failures.csv, post key findings to Slack channel 'testing'.",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "test_results_file": "test-results.json",
                 "report_file": "test-analysis.md",
@@ -914,9 +914,9 @@ def get_test_cases():
         # Test 11: Full Release Pipeline (Complex)
         WorkflowTestCase(
             name="full_release_pipeline",
-            user_input="Get the latest git tag, then use that tag to get all commits since that tag with git-log, generate release notes grouping commits by type (feat/fix/docs), use shell to create git tag v1.3.0 and push it, use shell to run 'gh release create v1.3.0 --notes-file release-notes.md', append the release notes to CHANGELOG.md with ## v1.3.0 header, commit with message 'Release v1.3.0', create PR to main branch for repo anthropic/pflow",
+            user_input="Get the latest git tag, then use that tag to get all commits since that tag with git-log, generate release notes grouping commits by type (feat/fix/docs), use shell to create git tag v1.3.0 and push it, use shell to run 'gh release create v1.3.0 --notes-file release-notes.md', append the release notes to CHANGELOG.md with ## v1.3.0 header, commit with message 'Release v1.3.0', create PR to main branch for repo spinje/pflow",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "new_tag": "v1.3.0",
                 "changelog_file": "CHANGELOG.md",
@@ -961,9 +961,9 @@ def get_test_cases():
         # Test 12: Issue Triage Automation (Complex)
         WorkflowTestCase(
             name="issue_triage_automation",
-            user_input="Get 50 open issues from github repo anthropic/pflow, categorize as high priority if labeled 'bug' or 'security', medium if 'enhancement', low otherwise, group by days since creation (0-7, 8-30, 30+), create markdown report with tables for each priority level and recommendations for issues older than 30 days, save to triage-$(date +%Y-%m-%d).md using shell for date, commit with message 'Triage report for $(date +%Y-%m-%d)', create PR to main branch",
+            user_input="Get 50 open issues from github repo spinje/pflow, categorize as high priority if labeled 'bug' or 'security', medium if 'enhancement', low otherwise, group by days since creation (0-7, 8-30, 30+), create markdown report with tables for each priority level and recommendations for issues older than 30 days, save to triage-$(date +%Y-%m-%d).md using shell for date, commit with message 'Triage report for $(date +%Y-%m-%d)', create PR to main branch",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "issue_limit": "50",
             },
@@ -997,9 +997,9 @@ def get_test_cases():
         # Test 13: Codebase Quality Report (Complex)
         WorkflowTestCase(
             name="codebase_quality_report",
-            user_input="Run 'npm run lint' and capture output, run 'npm test -- --coverage --json' to get coverage percentage, run 'npx complexity-report src/ --format json' to analyze complexity, get last 10 open bugs from github repo anthropic/pflow, combine all results into a markdown quality report with sections for each metric, save to quality-report.md, checkout quality-reports branch, commit with message 'Quality report $(date +%Y-%m-%d)', push to origin, create PR to main",
+            user_input="Run 'npm run lint' and capture output, run 'npm test -- --coverage --json' to get coverage percentage, run 'npx complexity-report src/ --format json' to analyze complexity, get last 10 open bugs from github repo spinje/pflow, combine all results into a markdown quality report with sections for each metric, save to quality-report.md, checkout quality-reports branch, commit with message 'Quality report $(date +%Y-%m-%d)', push to origin, create PR to main",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "branch_name": "quality-reports",
                 "report_file": "quality-report.md",
@@ -1082,9 +1082,9 @@ def get_test_cases():
         # Test 15: Validation Recovery Test (Edge)
         WorkflowTestCase(
             name="validation_recovery_test",
-            user_input="Get open issues from github repo anthropic/pflow, analyze their labels and age to identify stale issues (>60 days without activity), generate a markdown report listing stale issues with recommendations for closure or follow-up, save to stale-issues-report.md",
+            user_input="Get open issues from github repo spinje/pflow, analyze their labels and age to identify stale issues (>60 days without activity), generate a markdown report listing stale issues with recommendations for closure or follow-up, save to stale-issues-report.md",
             discovered_params={
-                "repo_owner": "anthropic",
+                "repo_owner": "spinje",
                 "repo_name": "pflow",
                 "report_file": "stale-issues-report.md",
             },

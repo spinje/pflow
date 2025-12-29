@@ -71,8 +71,8 @@ User input: "Process 30 items with charts enabled"
 
 ### Multiple Required Parameters
 Workflow expects: `repo_owner (string, required)`, `repo_name (string, required)`, `issue_state (string, required)`
-User input: "Get closed issues from anthropic/pflow"
-→ **Extracted**: `{"repo_owner": "anthropic", "repo_name": "pflow", "issue_state": "closed"}`
+User input: "Get closed issues from spinje/pflow"
+→ **Extracted**: `{"repo_owner": "spinje", "repo_name": "pflow", "issue_state": "closed"}`
 → **Missing**: `[]`
 
 ### All Parameters Missing

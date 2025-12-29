@@ -334,7 +334,7 @@ class TestDisplayRerunCommands:
         """Test display with realistic pflow workflow names and parameters."""
         # Using actual pflow-style workflow name and realistic parameters
         params = {
-            "repository": "anthropics/pflow",
+            "repository": "spinje/pflow",
             "since_date": "2024-01-01",
             "output_file": "CHANGELOG.md",
             "include_prs": True,
@@ -348,7 +348,7 @@ class TestDisplayRerunCommands:
         # Verify realistic workflow name is used
         assert "github-changelog-generator" in rerun_line
         # Verify all parameters are present
-        assert "repository=anthropics/pflow" in rerun_line
+        assert "repository=spinje/pflow" in rerun_line
         assert "since_date=2024-01-01" in rerun_line
         assert "output_file=CHANGELOG.md" in rerun_line
         assert "include_prs=true" in rerun_line  # Boolean lowercase

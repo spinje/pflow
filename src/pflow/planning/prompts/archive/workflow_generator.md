@@ -221,7 +221,7 @@ Notice how:
 - Right: Use ${generate_content.response}
 
 ❌ **DON'T hardcode discovered values**
-- Wrong: "anthropic/pflow" in params
+- Wrong: "spinje/pflow" in params
 - Right: Use ${repo_owner}/${repo_name}
 
 ❌ **DON'T skip steps in complex workflows**

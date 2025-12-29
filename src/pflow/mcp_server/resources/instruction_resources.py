@@ -227,7 +227,7 @@ Use these CLI tools to discover what you need:
 If the file is missing:
 1. Check if `~/.pflow/instructions/` directory exists
 2. Reinstall pflow: `pip install --upgrade pflow`
-3. File an issue if problem persists: https://github.com/anthropics/pflow/issues
+3. File an issue if problem persists: https://github.com/spinje/pflow/issues
 
 ## Troubleshooting
 

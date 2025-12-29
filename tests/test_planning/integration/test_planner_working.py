@@ -82,7 +82,7 @@ class TestPlannerWorking:
 
         # Create shared store with user input
         shared = {
-            "user_input": "create a changelog for anthropics/pflow repo since 2024-01-01 with max 50 issues and save to CHANGELOG.md",
+            "user_input": "create a changelog for spinje/pflow repo since 2024-01-01 with max 50 issues and save to CHANGELOG.md",
             "workflow_manager": test_manager,
         }
 
@@ -109,7 +109,7 @@ class TestPlannerWorking:
             param_response = Mock()
             param_data = {
                 "extracted": {  # Changed from "parameters" to "extracted"
-                    "repo": "anthropics/pflow",  # Direct values, not nested dicts
+                    "repo": "spinje/pflow",  # Direct values, not nested dicts
                     "since_date": "2024-01-01",
                     "limit": "50",
                     "output_path": "CHANGELOG.md",
@@ -145,7 +145,7 @@ class TestPlannerWorking:
 
         # Check execution params
         assert output["execution_params"] is not None
-        assert output["execution_params"]["repo"] == "anthropics/pflow"
+        assert output["execution_params"]["repo"] == "spinje/pflow"
         assert output["execution_params"]["since_date"] == "2024-01-01"
         assert output["execution_params"]["limit"] == "50"
         assert output["execution_params"]["output_path"] == "CHANGELOG.md"
@@ -160,7 +160,7 @@ class TestPlannerWorking:
         assert shared["discovery_result"]["workflow_name"] == "generate-changelog"
 
         assert "extracted_params" in shared
-        assert shared["extracted_params"]["repo"] == "anthropics/pflow"
+        assert shared["extracted_params"]["repo"] == "spinje/pflow"
 
     def test_path_a_with_missing_required_params(self, tmp_path, changelog_workflow):
         """Test Path A with missing required parameters."""

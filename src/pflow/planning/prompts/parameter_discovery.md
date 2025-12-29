@@ -68,8 +68,8 @@ For each identified parameter:
 - "Create PR with title 'Fix bug in parser' and description from pr_desc.md"
   → `{"title": "Fix bug in parser", "description_file": "pr_desc.md"}`
 
-- "Get issue #123 from anthropic/pflow repository"
-  → `{"issue_number": "123", "repo": "anthropic/pflow"}`
+- "Get issue #123 from spinje/pflow repository"
+  → `{"issue_number": "123", "repo": "spinje/pflow"}`
 
 - "Fetch weather data for New York City using metric units"
   → `{"location": "New York City", "units": "metric"}`
