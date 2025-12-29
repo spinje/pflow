@@ -233,6 +233,13 @@ class PflowBatchNode(Node):
         # Store shared reference for use in _exec methods
         self._shared = shared
 
+        # Ensure __llm_calls__ exists before batch execution starts.
+        # This is critical: shallow copy in item contexts will share this list reference,
+        # allowing _capture_item_llm_usage to append LLM usage data that persists
+        # after each item's context is discarded.
+        if "__llm_calls__" not in shared:
+            shared["__llm_calls__"] = []
+
         # Extract variable path from template: "${x.y}" -> "x.y"
         var_path = self.items_template.strip()[2:-1]
 
@@ -307,6 +314,37 @@ class PflowBatchNode(Node):
             return str(error)
         return None
 
+    def _capture_item_llm_usage(self, item_shared: dict[str, Any], idx: int) -> None:
+        """Capture llm_usage from item context and append to shared __llm_calls__.
+
+        When batch executes an inner LLM node, the node writes llm_usage to the
+        item's isolated context. This method captures that data before the context
+        is discarded, appending it to the shared __llm_calls__ list for cost tracking.
+
+        Args:
+            item_shared: The isolated shared store for this batch item
+            idx: The index of this item in the batch (for tracing)
+        """
+        llm_usage = None
+
+        # Check root level (for non-namespaced inner nodes)
+        if "llm_usage" in item_shared:
+            llm_usage = item_shared["llm_usage"]
+        # Check namespaced location (when inner node uses namespacing)
+        elif self.node_id in item_shared and isinstance(item_shared[self.node_id], dict):
+            llm_usage = item_shared[self.node_id].get("llm_usage")
+
+        if llm_usage and isinstance(llm_usage, dict):
+            # Copy the usage data and add batch context
+            llm_call_data = llm_usage.copy()
+            llm_call_data["node_id"] = self.node_id
+            llm_call_data["batch_item_index"] = idx
+
+            # Append to shared __llm_calls__ list (GIL-protected for thread safety)
+            llm_calls = self._shared.get("__llm_calls__")
+            if isinstance(llm_calls, list):
+                llm_calls.append(llm_call_data)
+
     def _exec_single(self, idx: int, item: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None, float]:
         """Execute single item with thread-safe retry logic.
 
@@ -334,6 +372,9 @@ class PflowBatchNode(Node):
 
                 # Execute inner node
                 self.inner_node._run(item_shared)
+
+                # Capture LLM usage from item context before it's discarded
+                self._capture_item_llm_usage(item_shared, idx)
 
                 # Capture result from inner node's namespace
                 result = item_shared.get(self.node_id)
@@ -403,6 +444,11 @@ class PflowBatchNode(Node):
 
                 # Execute the thread-local node copy
                 thread_node._run(item_shared)
+
+                # Capture LLM usage from item context before it's discarded
+                # Note: self._capture_item_llm_usage appends to self._shared["__llm_calls__"]
+                # which is the same list object referenced by item_shared (shallow copy)
+                self._capture_item_llm_usage(item_shared, idx)
 
                 # Capture result from node's namespace
                 result = item_shared.get(self.node_id)
