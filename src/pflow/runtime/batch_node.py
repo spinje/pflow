@@ -60,6 +60,7 @@ Thread Safety:
       - Local retry counter (avoids self.cur_retry race condition)
 """
 
+import contextlib
 import copy
 import json
 import logging
@@ -451,11 +452,29 @@ class PflowBatchNode(Node):
             List of results in same order as input
         """
         results: list[dict[str, Any] | None] = []
+        total = len(items)
+
+        # Get progress callback from shared store for batch progress reporting
+        callback = self._shared.get("__progress_callback__")
+        depth = self._shared.get("_pflow_depth", 0)
 
         for idx, item in enumerate(items):
             result, error, duration_ms = self._exec_single(idx, item)
             results.append(result)
             self._item_timings.append(duration_ms)
+
+            # Report batch progress after each item
+            if callable(callback):
+                with contextlib.suppress(Exception):
+                    callback(
+                        self.node_id,
+                        "batch_progress",
+                        duration_ms,
+                        depth,
+                        batch_current=idx + 1,
+                        batch_total=total,
+                        batch_success=(error is None),
+                    )
 
             if error:
                 self._errors.append(error)
@@ -523,6 +542,12 @@ class PflowBatchNode(Node):
         Returns:
             Updated should_stop flag
         """
+        # Get progress callback for batch progress reporting
+        callback = self._shared.get("__progress_callback__")
+        depth = self._shared.get("_pflow_depth", 0)
+        total = len(future_to_idx)
+        completed_count = 0
+
         for future in as_completed(future_to_idx):
             if should_stop:
                 # Already stopping, just collect remaining results
@@ -530,16 +555,44 @@ class PflowBatchNode(Node):
                     idx, result, error, duration_ms = future.result()
                     results[idx] = result
                     timings[idx] = duration_ms
+                    completed_count += 1
                     if error:
                         pending_errors.append(error)
+                    # Still report progress even when stopping
+                    if callable(callback):
+                        with contextlib.suppress(Exception):
+                            callback(
+                                self.node_id,
+                                "batch_progress",
+                                duration_ms,
+                                depth,
+                                batch_current=completed_count,
+                                batch_total=total,
+                                batch_success=(error is None),
+                            )
                 except Exception as e:
                     logger.debug(f"Exception collecting result during stop: {e}")
+                    completed_count += 1
                 continue
 
             try:
                 idx, result, error, duration_ms = future.result()
                 results[idx] = result
                 timings[idx] = duration_ms
+                completed_count += 1
+
+                # Report batch progress after each item completes
+                if callable(callback):
+                    with contextlib.suppress(Exception):
+                        callback(
+                            self.node_id,
+                            "batch_progress",
+                            duration_ms,
+                            depth,
+                            batch_current=completed_count,
+                            batch_total=total,
+                            batch_success=(error is None),
+                        )
 
                 if error:
                     pending_errors.append(error)
@@ -558,6 +611,19 @@ class PflowBatchNode(Node):
                 })
                 # For executor errors, we don't have timing - use 0
                 timings[idx] = 0.0
+                completed_count += 1
+                # Report progress for executor errors too
+                if callable(callback):
+                    with contextlib.suppress(Exception):
+                        callback(
+                            self.node_id,
+                            "batch_progress",
+                            0.0,
+                            depth,
+                            batch_current=completed_count,
+                            batch_total=total,
+                            batch_success=False,
+                        )
                 if self.error_handling == "fail_fast":
                     should_stop = True
                     for f in future_to_idx:

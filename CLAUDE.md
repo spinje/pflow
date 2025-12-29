@@ -513,6 +513,8 @@ Later:
 - ⏳ Task 64: MCP Orchestration with long running servers
 - ⏳ Task 79: Show tool definitions as structured JSON
 - ⏳ Task 98: Architectural Refactor - First-Class IR Execution
+- ⏳ Task 100: Implement Reduce/Fold Mode for Batch Processing
+- ⏳ Task 101: Shell Node File Input Parameter for Safe Data Passing
 
 Deprecated Tasks?:
 - ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair and workflow iteratio

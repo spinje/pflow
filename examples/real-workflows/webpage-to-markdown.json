@@ -1,0 +1,211 @@
+{
+  "inputs": {
+    "url": {
+      "type": "string",
+      "required": true,
+      "description": "Webpage URL to scrape"
+    },
+    "output_dir": {
+      "type": "string",
+      "required": true,
+      "description": "Directory to save markdown and images"
+    },
+    "describe_images": {
+      "type": "boolean",
+      "required": false,
+      "default": false,
+      "description": "Use vision AI to describe images and embed descriptions in markdown"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch-html",
+      "type": "http",
+      "purpose": "Fetch raw HTML from the webpage",
+      "params": {
+        "url": "${url}"
+      }
+    },
+    {
+      "id": "extract-title",
+      "type": "shell",
+      "purpose": "Extract page title from HTML",
+      "params": {
+        "stdin": "${fetch-html.response}",
+        "command": "python3 -c \"import sys,re,html; h=sys.stdin.read(); m=re.search(r'<h1[^>]*>([^<]+)</h1>',h,re.I) or re.search(r'<title>([^|<]+)',h,re.I); print(html.unescape(m.group(1).strip()) if m else '')\""
+      }
+    },
+    {
+      "id": "split-html",
+      "type": "shell",
+      "purpose": "Split HTML into logical sections for parallel processing",
+      "params": {
+        "stdin": "${fetch-html.response}",
+        "command": "python3 -c \"import sys,json,re; html=sys.stdin.read(); article=re.search(r'<article[^>]*>(.*?)</article>',html,re.DOTALL|re.IGNORECASE); content=article.group(1) if article else re.search(r'<body[^>]*>(.*?)</body>',html,re.DOTALL|re.IGNORECASE).group(1) if re.search(r'<body[^>]*>(.*?)</body>',html,re.DOTALL|re.IGNORECASE) else html; parts=re.split(r'(?=<h[23][^>]*>)',content,flags=re.IGNORECASE); sections=[p.strip() for p in parts if len(p.strip())>100]; sections=sections if sections else [content]; print(json.dumps(sections))\""
+      }
+    },
+    {
+      "id": "convert-sections",
+      "type": "llm",
+      "purpose": "Convert each HTML section to markdown in parallel",
+      "batch": {
+        "items": "${split-html.stdout}",
+        "parallel": true,
+        "max_concurrent": 50
+      },
+      "params": {
+        "prompt": "Convert this HTML to clean markdown. Ignore any scripts, CSS, navigation, ads, or non-content elements. Preserve all image references using markdown syntax ![alt](url). Keep original image URLs exactly as they appear.\n\nHTML:\n${item}",
+        "temperature": 0.1,
+        "model": "gemini-3-flash-preview"
+      }
+    },
+    {
+      "id": "stitch-markdown",
+      "type": "shell",
+      "purpose": "Combine markdown sections and ensure title heading exists",
+      "params": {
+        "stdin": "${convert-sections.results}",
+        "command": "title='${extract-title.stdout}'; content=$(jq -r '.[] | .response'); if [ -n \"$title\" ]; then echo \"# $title\"; echo; fi; echo \"$content\""
+      }
+    },
+    {
+      "id": "extract-content-images",
+      "type": "shell",
+      "purpose": "Extract content image URLs, filtering out ads and tracking",
+      "params": {
+        "stdin": "${stitch-markdown.stdout}",
+        "command": "grep -oE '!\\[[^]]*\\]\\([^)]+\\)' | grep -oE '\\([^)]+\\)' | tr -d '()' | grep -v -E '(doubleclick|pixel|tracker|analytics|beacon|ads)' | jq -R -s 'split(\"\\n\") | map(select(length > 0))'"
+      }
+    },
+    {
+      "id": "download-images",
+      "type": "shell",
+      "purpose": "Download images and output JSON mapping",
+      "params": {
+        "command": "mkdir -p '${output_dir}/images' && echo '${extract-content-images.stdout}' | jq -r '.[]' 2>/dev/null | while read -r original_url; do if [[ \"$original_url\" == *\"/_next/image\"* ]]; then download_url=$(echo \"$original_url\" | sed 's/.*url=\\([^&]*\\).*/\\1/' | python3 -c 'import sys,urllib.parse;print(urllib.parse.unquote(sys.stdin.read().strip()))'); else download_url=\"$original_url\"; fi; filename=$(basename \"$download_url\" | cut -d'?' -f1); local_path=\"${output_dir}/images/$filename\"; curl -sL --max-time 30 \"$download_url\" -o \"$local_path\" 2>/dev/null && echo \"{\\\"original_url\\\": \\\"$original_url\\\", \\\"filename\\\": \\\"$filename\\\"}\"; done | jq -s '.'",
+        "timeout": 120
+      }
+    },
+    {
+      "id": "list-for-vision",
+      "type": "shell",
+      "purpose": "List images for vision (empty if disabled, excludes SVG/ICO)",
+      "params": {
+        "stdin": "${download-images.stdout}",
+        "command": "if [ '${describe_images}' = 'true' ] || [ '${describe_images}' = 'True' ]; then jq '[.[] | select(.filename | test(\"\\\\.(svg|ico)$\"; \"i\") | not)]'; else echo '[]'; fi"
+      }
+    },
+    {
+      "id": "describe-images",
+      "type": "llm",
+      "purpose": "Describe each image using vision AI",
+      "batch": {
+        "items": "${list-for-vision.stdout}",
+        "parallel": true,
+        "max_concurrent": 10,
+        "error_handling": "continue"
+      },
+      "params": {
+        "prompt": "Describe this image concisely for someone who cannot see it. Focus on: what it shows, any text/labels, and key information conveyed. If it's a diagram or flowchart, describe the structure and relationships. 2-3 sentences max.",
+        "images": [
+          "${output_dir}/images/${item.filename}"
+        ],
+        "model": "gemini-3-flash-preview"
+      }
+    },
+    {
+      "id": "save-initial-markdown",
+      "type": "shell",
+      "purpose": "Write markdown to final output file",
+      "params": {
+        "stdin": "${stitch-markdown.stdout}",
+        "command": "cat > '${output_dir}/article.md' && echo 'saved'"
+      }
+    },
+    {
+      "id": "save-vision-results",
+      "type": "shell",
+      "purpose": "Save vision results to temp file",
+      "params": {
+        "stdin": "${describe-images.results}",
+        "command": "cat > /tmp/pflow-vision-results.json && echo '${download-images.stdout}' > /tmp/pflow-images.json && echo '${list-for-vision.stdout}' > /tmp/pflow-vision-list.json && echo 'saved'"
+      }
+    },
+    {
+      "id": "combine-image-data",
+      "type": "shell",
+      "purpose": "Merge image info with descriptions, base64 encode descriptions",
+      "params": {
+        "command": "jq -s '.[0] as $imgs | .[1] as $vis | .[2] as $res | $imgs | to_entries | map(.value + {description_b64: ((.value.filename) as $fn | ($vis | to_entries | map(select(.value.filename == $fn)) | .[0].key) as $idx | if $idx != null and $idx < ($res | length) then ($res[$idx].response // \"\" | @base64) else \"\" end)})' /tmp/pflow-images.json /tmp/pflow-vision-list.json /tmp/pflow-vision-results.json"
+      }
+    },
+    {
+      "id": "apply-replacements",
+      "type": "shell",
+      "purpose": "Replace URLs and insert descriptions (sequential batch)",
+      "batch": {
+        "items": "${combine-image-data.stdout}",
+        "parallel": false
+      },
+      "params": {
+        "command": "file='${output_dir}/article.md'; orig='${item.original_url}'; fname='${item.filename}'; desc_b64='${item.description_b64}'; sed -i '' \"s|$orig|./images/$fname|g\" \"$file\"; if [ -n \"$desc_b64\" ]; then desc=$(echo \"$desc_b64\" | base64 -d); escaped_desc=$(printf '%s' \"$desc\" | sed 's/[&/\\]/\\\\&/g'); perl -i -pe \"s|(\\\\!\\\\[[^\\\\]]*\\\\]\\\\(\\\\./images/$fname\\\\))|\\$1\\n\\n> *$escaped_desc*\\n|\" \"$file\"; fi; echo 'done'"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "fetch-html",
+      "to": "extract-title"
+    },
+    {
+      "from": "extract-title",
+      "to": "split-html"
+    },
+    {
+      "from": "split-html",
+      "to": "convert-sections"
+    },
+    {
+      "from": "convert-sections",
+      "to": "stitch-markdown"
+    },
+    {
+      "from": "stitch-markdown",
+      "to": "extract-content-images"
+    },
+    {
+      "from": "extract-content-images",
+      "to": "download-images"
+    },
+    {
+      "from": "download-images",
+      "to": "list-for-vision"
+    },
+    {
+      "from": "list-for-vision",
+      "to": "describe-images"
+    },
+    {
+      "from": "describe-images",
+      "to": "save-initial-markdown"
+    },
+    {
+      "from": "save-initial-markdown",
+      "to": "save-vision-results"
+    },
+    {
+      "from": "save-vision-results",
+      "to": "combine-image-data"
+    },
+    {
+      "from": "combine-image-data",
+      "to": "apply-replacements"
+    }
+  ],
+  "outputs": {
+    "markdown_path": {
+      "source": "${output_dir}/article.md",
+      "description": "Path to the saved markdown file"
+    }
+  }
+}
