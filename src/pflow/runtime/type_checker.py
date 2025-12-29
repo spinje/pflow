@@ -12,21 +12,28 @@ from pflow.registry.registry import Registry
 # Type compatibility matrix
 # source_type -> list of compatible target types
 #
-# Note on str → dict/list compatibility (auto-parse feature):
-#   This allows compile-time validation to pass for patterns like:
-#     ${shell.stdout} (type: str) → values (type: list) parameter
+# BIDIRECTIONAL JSON compatibility for dict/list ↔ str:
 #
-#   Runtime behavior (see node_wrapper.py:746-780):
-#   - Simple templates (${var}) with JSON strings auto-parse to dict/list
-#   - Complex templates (" ${var}") stay as strings (escape hatch)
-#   - Auto-parsing only happens when:
-#     1. Template is simple (${var}, not "text ${var}")
-#     2. String looks like JSON (starts with { or [)
-#     3. String size ≤ 10MB (security limit)
-#     4. Parsed type matches expected type
-#   - Graceful fallback: invalid JSON stays as string, validation catches it
+#   Direction 1: str → dict/list (auto-parse feature)
+#     Allows: ${shell.stdout} (type: str) → values (type: list) parameter
+#     Runtime behavior (see node_wrapper.py:746-780):
+#     - Simple templates (${var}) with JSON strings auto-parse to dict/list
+#     - Complex templates ("text ${var}") stay as strings (escape hatch)
+#     - Auto-parsing only happens when:
+#       1. Template is simple (${var}, not "text ${var}")
+#       2. String looks like JSON (starts with { or [)
+#       3. String size ≤ 10MB (security limit)
+#       4. Parsed type matches expected type
+#     - Graceful fallback: invalid JSON stays as string, validation catches it
 #
-#   This enables shell+jq → MCP workflows without requiring LLM steps.
+#   Direction 2: dict/list → str (auto-serialize feature)
+#     Allows: ${node.results} (type: list) → command (type: str) parameter
+#     Runtime behavior (see template_resolver.py:_convert_to_string):
+#     - Complex templates ("echo ${var}") serialize dict/list to JSON
+#     - Simple templates (${var} alone) preserve type (runtime check blocks)
+#     - Enables embedding arrays/objects in shell commands, prompts, etc.
+#
+#   This bidirectional compatibility enables shell+jq → MCP workflows.
 TYPE_COMPATIBILITY_MATRIX = {
     "any": [
         "any",
@@ -51,9 +58,9 @@ TYPE_COMPATIBILITY_MATRIX = {
     "number": ["any", "float", "number", "int", "integer", "str", "string"],  # number (generic numeric) → int/float/str
     "bool": ["any", "bool", "boolean", "str", "string"],  # bool can stringify
     "boolean": ["any", "bool", "boolean", "str", "string"],  # Alias for bool
-    "dict": ["any", "dict", "object", "str", "string"],  # dict can serialize to JSON string
+    "dict": ["any", "dict", "object", "str", "string"],  # dict ↔ str bidirectional (parse/serialize JSON)
     "object": ["any", "dict", "object", "str", "string"],  # Alias for dict
-    "list": ["any", "list", "array", "str", "string"],  # list can serialize to JSON string
+    "list": ["any", "list", "array", "str", "string"],  # list ↔ str bidirectional (parse/serialize JSON)
     "array": ["any", "list", "array", "str", "string"],  # Alias for list
 }
 

@@ -326,23 +326,24 @@ class ShellNode(Node):
         ]
 
         # Look for JSON-like patterns in the command (arrays or objects)
-        # This regex finds content that looks like JSON arrays or objects
-        json_pattern = r"\[.*?\]|\{.*?\}"
-        json_matches = re.findall(json_pattern, command, re.DOTALL)
+        # Limit to 500 chars to prevent ReDoS on malicious input
+        # No DOTALL - only match within single lines for safety
+        json_pattern = r"\[.{0,500}?\]|\{.{0,500}?\}"
+        json_matches = re.findall(json_pattern, command)
 
         for json_str in json_matches:
             for char, name in unsafe_patterns:
                 if char in json_str:
                     logger.warning(
-                        f"Command contains JSON with {name} ('{char}') which may break shell parsing. "
-                        f"Consider using 'stdin' parameter instead for reliable data passing.",
+                        f"Command contains JSON with shell-unsafe characters (found: {name} '{char}'). "
+                        f"This may break shell parsing. Consider using 'stdin' parameter instead.",
                         extra={
                             "phase": "prep",
                             "unsafe_char": char,
                             "suggestion": "Use stdin parameter to pass complex data safely",
                         },
                     )
-                    return  # Only warn once per command
+                    return  # Only warn once per command (multiple issues may exist)
 
     def _adapt_stdin_to_string(self, stdin: Any) -> str | None:
         """Adapt any type to string suitable for subprocess stdin.
