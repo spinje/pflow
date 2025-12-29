@@ -1,5 +1,109 @@
 <!-- ===== BUGFIX ENTRY START ===== -->
 
+## [BUGFIX] Batch processing fails when items come from shell node JSON output — 2025-12-29
+
+Meta:
+- id: BF-20251229-batch-json-items
+- area: runtime
+- severity: incorrect-output
+- status: fixed
+- versions: uncommitted (working tree)
+- affects: batch processing, shell→batch patterns, parallel workflow execution
+- owner: ai-agent
+- links: src/pflow/runtime/batch_node.py, tests/test_runtime/test_batch_node.py, scratchpads/batch-json-parsing/bug-report.md
+- session_id: current
+
+Summary:
+- Problem: `batch.items` from shell node output fails with "Batch items must be an array, got str" even when the string is valid JSON
+- Root cause: Shell nodes always output text (stdout is string); batch processor expected already-parsed Python list but had no JSON auto-parsing
+- Fix: Added JSON auto-parsing in `batch_node.py:prep()` following proven pattern from `node_wrapper.py`; added type coercion for batch config as defense-in-depth
+
+Repro:
+- Steps:
+  1) Create workflow with shell node outputting JSON array
+  2) Use that output as batch.items
+  3) Batch processor rejects the JSON string
+- Commands:
+  ```bash
+  cat > /tmp/batch-test.json << 'EOF'
+  {
+    "nodes": [
+      {"id": "create-array", "type": "shell", "params": {"command": "echo '[\"a\", \"b\", \"c\"]'"}},
+      {"id": "process", "type": "shell", "batch": {"items": "${create-array.stdout}"}, "params": {"command": "echo ${item}"}}
+    ],
+    "edges": [{"from": "create-array", "to": "process"}]
+  }
+  EOF
+  uv run pflow /tmp/batch-test.json
+  # Before: TypeError: Batch items must be an array, got str
+  # After: Successfully processes a, b, c
+  ```
+- Expected vs actual:
+  - Expected: JSON string auto-parsed to list, batch processes items
+  - Actual: TypeError because string is not a list
+
+Implementation:
+- Changed files:
+  - `src/pflow/runtime/batch_node.py`:
+    - Added `json` import
+    - Added JSON auto-parsing in `prep()` (lines 164-191): strips whitespace, checks 10MB limit, parses if starts with `[`
+    - Added `_coerce_bool()`, `_coerce_int()`, `_coerce_float()` helper methods (lines 133-208)
+    - Updated config extraction to use type coercion with warnings (lines 122-126)
+  - `tests/test_runtime/test_batch_node.py`:
+    - Added `TestItemsJsonAutoParsing` class with 10 tests
+    - Added `TestConfigTypeCoercion` class with 15 tests
+- Key edits:
+  - JSON parsing follows proven pattern from `node_wrapper.py:746-781`
+  - Type coercion logs warnings when coercing (visible issues, not silent)
+  - Boolean coercion handles "true"/"false"/"yes"/"no" correctly (unlike Python's `bool()`)
+  - All coercion methods have graceful fallback to defaults
+- Tests: 25 new tests; 101 total batch tests pass; 3649 total tests pass
+
+Verification:
+- Manual:
+  ```bash
+  # JSON array string is now parsed
+  uv run pytest tests/test_runtime/test_batch_node.py::TestItemsJsonAutoParsing -v
+  # 10 passed
+
+  # Type coercion works with warnings
+  uv run pytest tests/test_runtime/test_batch_node.py::TestConfigTypeCoercion -v
+  # 15 passed
+
+  # Full suite
+  make test && make check
+  # 3649 passed, all checks pass
+  ```
+- CI: All 3649 tests pass; ruff, mypy, deptry all pass
+
+Risks & rollbacks:
+- Risk flags: JSON parsing could theoretically parse unintended data, but `startswith("[")` check and type validation prevent this
+- Rollback plan: Remove JSON parsing block in `prep()` (lines 164-191); remove coercion helpers (lines 133-208)
+
+Lessons & heuristics:
+- Lessons learned:
+  - **Pattern reuse**: JSON auto-parsing already existed in `node_wrapper.py` for node params; same pattern applied to batch.items
+  - **Consistency matters**: batch.items should behave like node params (both now auto-parse JSON)
+  - **Defense-in-depth vs YAGNI**: Added batch config type coercion (defense), but deliberately did NOT add node-to-node primitive coercion (YAGNI)
+  - **Safe vs unsafe coercion**: JSON array parsing is safe (unambiguous), primitive str→int coercion is risky (data loss: "007"→7, precision loss)
+  - **Boolean edge case**: Python's `bool("false")` returns `True`; need explicit string handling for proper JSON-style boolean parsing
+- Heuristics to detect recurrence:
+  - Grep for `isinstance(x, list)` checks after template resolution - may need JSON parsing
+  - Check if new batch-like features handle shell output (always strings)
+  - Look for inconsistency between how node params and other template sources handle types
+- Related pitfalls: Shell output is always string; any component expecting structured data needs JSON parsing
+
+Follow-ups:
+- Consider documenting shell→batch pattern in user docs
+- Monitor if node-to-node primitive coercion becomes a real issue (currently YAGNI)
+
+Implementer details:
+- Claude Code Session ID: current
+
+<!-- ===== BUGFIX ENTRY END ===== -->
+
+<!-- ===== BUGFIX ENTRY START ===== -->
+
 ## [BUGFIX] LLM node swallows exception details; trace shows incorrect success status — 2025-12-20
 
 Meta:

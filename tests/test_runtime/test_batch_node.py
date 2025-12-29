@@ -416,6 +416,122 @@ class TestItemsResolution:
             batch.prep(shared)
 
 
+class TestItemsJsonAutoParsing:
+    """Tests for JSON string auto-parsing in batch.items.
+
+    Shell nodes output text to stdout. When that text is valid JSON,
+    batch processing should auto-parse it to enable shell → batch patterns.
+    """
+
+    def test_json_array_string_parsed(self):
+        """JSON array string is auto-parsed to list."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${shell.stdout}"})
+
+        # Shell node outputs JSON as a string
+        shared = {"shell": {"stdout": '["item1", "item2", "item3"]'}}
+        items = batch.prep(shared)
+
+        assert items == ["item1", "item2", "item3"]
+        assert len(items) == 3
+
+    def test_json_array_with_trailing_newline(self):
+        """JSON string with trailing newline (common shell output) is parsed."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${cmd.stdout}"})
+
+        # Shell output typically has trailing newline
+        shared = {"cmd": {"stdout": '["a", "b"]\n'}}
+        items = batch.prep(shared)
+
+        assert items == ["a", "b"]
+
+    def test_json_array_with_whitespace(self):
+        """JSON string with leading/trailing whitespace is parsed."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": '  \n  ["x", "y", "z"]  \n  '}
+        items = batch.prep(shared)
+
+        assert items == ["x", "y", "z"]
+
+    def test_json_complex_objects_parsed(self):
+        """JSON array of objects is parsed correctly."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${split.sections}"})
+
+        json_str = '[{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]'
+        shared = {"split": {"sections": json_str}}
+        items = batch.prep(shared)
+
+        assert items == [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
+        assert items[0]["name"] == "first"
+
+    def test_invalid_json_fails_with_type_error(self):
+        """Invalid JSON string fails at type check with clear error."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        # Invalid JSON - missing closing bracket
+        shared = {"data": '["item1", "item2"'}
+
+        with pytest.raises(TypeError, match="Batch items must be an array, got str"):
+            batch.prep(shared)
+
+    def test_json_object_fails_with_type_error(self):
+        """JSON object string (not array) fails at type check."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        # Valid JSON but not an array
+        shared = {"data": '{"key": "value"}'}
+
+        with pytest.raises(TypeError, match="Batch items must be an array, got str"):
+            batch.prep(shared)
+
+    def test_non_json_string_fails_with_type_error(self):
+        """Non-JSON string fails at type check."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": "just a plain string"}
+
+        with pytest.raises(TypeError, match="Batch items must be an array, got str"):
+            batch.prep(shared)
+
+    def test_already_list_not_affected(self):
+        """Already-parsed list is not affected by JSON parsing logic."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        # Already a Python list (not a JSON string)
+        shared = {"data": ["already", "a", "list"]}
+        items = batch.prep(shared)
+
+        assert items == ["already", "a", "list"]
+
+    def test_empty_json_array_parsed(self):
+        """Empty JSON array string is parsed correctly."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": "[]"}
+        items = batch.prep(shared)
+
+        assert items == []
+
+    def test_nested_json_arrays_parsed(self):
+        """Nested JSON arrays are parsed correctly."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": "[[1, 2], [3, 4], [5, 6]]"}
+        items = batch.prep(shared)
+
+        assert items == [[1, 2], [3, 4], [5, 6]]
+
+
 class TestComplexItems:
     """Tests with complex item objects."""
 
@@ -874,6 +990,102 @@ class TestPhase2ConfigDefaults:
         """Custom retry_wait from config is used."""
         batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": 1.5})
         assert batch.retry_wait == 1.5
+
+
+class TestConfigTypeCoercion:
+    """Tests for type coercion of batch config values.
+
+    Defense-in-depth: if invalid types bypass schema validation,
+    batch config should still work with sensible coercion and warnings.
+    """
+
+    def test_parallel_string_true_coerced(self):
+        """String 'true' is coerced to boolean True."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "true"})
+        assert batch.parallel is True
+
+    def test_parallel_string_false_coerced(self):
+        """String 'false' is coerced to boolean False."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "false"})
+        assert batch.parallel is False
+
+    def test_parallel_string_yes_coerced(self):
+        """String 'yes' is coerced to boolean True."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "YES"})
+        assert batch.parallel is True
+
+    def test_parallel_string_invalid_uses_default(self):
+        """Invalid string for parallel uses default (False)."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "invalid"})
+        assert batch.parallel is False
+
+    def test_parallel_int_1_coerced_to_true(self):
+        """Integer 1 is coerced to boolean True."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": 1})
+        assert batch.parallel is True
+
+    def test_parallel_int_0_coerced_to_false(self):
+        """Integer 0 is coerced to boolean False."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": 0})
+        assert batch.parallel is False
+
+    def test_max_concurrent_string_coerced(self):
+        """String '5' is coerced to integer 5."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": "5"})
+        assert batch.max_concurrent == 5
+
+    def test_max_concurrent_float_coerced(self):
+        """Float 5.9 is coerced to integer 5."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": 5.9})
+        assert batch.max_concurrent == 5
+
+    def test_max_concurrent_invalid_uses_default(self):
+        """Invalid string for max_concurrent uses default (10)."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": "invalid"})
+        assert batch.max_concurrent == 10
+
+    def test_max_retries_string_coerced(self):
+        """String '3' is coerced to integer 3."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_retries": "3"})
+        assert batch.max_retries == 3
+
+    def test_max_retries_invalid_uses_default(self):
+        """Invalid string for max_retries uses default (1)."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_retries": "invalid"})
+        assert batch.max_retries == 1
+
+    def test_retry_wait_string_coerced(self):
+        """String '1.5' is coerced to float 1.5."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": "1.5"})
+        assert batch.retry_wait == 1.5
+
+    def test_retry_wait_int_coerced(self):
+        """Integer 2 is coerced to float 2.0."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": 2})
+        assert batch.retry_wait == 2.0
+
+    def test_retry_wait_invalid_uses_default(self):
+        """Invalid string for retry_wait uses default (0.0)."""
+        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": "invalid"})
+        assert batch.retry_wait == 0.0
+
+    def test_native_types_not_warned(self, caplog):
+        """Native types (bool, int, float) don't trigger warnings."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            batch = PflowBatchNode(
+                MockInnerNode("n"),
+                "n",
+                {"items": "${x}", "parallel": True, "max_concurrent": 5, "max_retries": 3, "retry_wait": 1.5},
+            )
+
+        # No warnings should be logged for correct types
+        assert batch.parallel is True
+        assert batch.max_concurrent == 5
+        assert batch.max_retries == 3
+        assert batch.retry_wait == 1.5
+        assert len([r for r in caplog.records if "coercing" in r.message.lower()]) == 0
 
 
 class TestParallelExecution:

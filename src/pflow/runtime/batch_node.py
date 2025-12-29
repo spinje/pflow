@@ -61,6 +61,7 @@ Thread Safety:
 """
 
 import copy
+import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -118,16 +119,93 @@ class PflowBatchNode(Node):
         self.item_alias = batch_config.get("as", "item")
         self.error_handling = batch_config.get("error_handling", "fail_fast")
 
-        # Phase 2: Parallel execution config
-        self.parallel = batch_config.get("parallel", False)
-        self.max_concurrent = batch_config.get("max_concurrent", 10)
-        self.max_retries = batch_config.get("max_retries", 1)
-        self.retry_wait = batch_config.get("retry_wait", 0)
+        # Phase 2: Parallel execution config (with type coercion for robustness)
+        self.parallel = self._coerce_bool(batch_config.get("parallel", False), "parallel", default=False)
+        self.max_concurrent = self._coerce_int(batch_config.get("max_concurrent", 10), "max_concurrent", default=10)
+        self.max_retries = self._coerce_int(batch_config.get("max_retries", 1), "max_retries", default=1)
+        self.retry_wait = self._coerce_float(batch_config.get("retry_wait", 0), "retry_wait", default=0.0)
 
         # Instance state for current batch execution
         self._shared: dict[str, Any] = {}
         self._errors: list[dict[str, Any]] = []
         self._item_timings: list[float] = []  # Per-item execution times in ms
+
+    def _coerce_bool(self, value: Any, field: str, default: bool) -> bool:
+        """Coerce value to boolean with proper string handling.
+
+        Handles JSON-style boolean strings ("true"/"false") correctly,
+        unlike Python's bool() which treats any non-empty string as True.
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lower = value.lower().strip()
+            if lower in ("true", "1", "yes"):
+                logger.warning(
+                    f"Batch config '{field}' is string '{value}', coercing to True. "
+                    "Use boolean type in IR for correctness.",
+                    extra={"node_id": self.node_id, "field": field, "value": value},
+                )
+                return True
+            if lower in ("false", "0", "no", ""):
+                logger.warning(
+                    f"Batch config '{field}' is string '{value}', coercing to False. "
+                    "Use boolean type in IR for correctness.",
+                    extra={"node_id": self.node_id, "field": field, "value": value},
+                )
+                return False
+            # Unknown string - log and use default
+            logger.warning(
+                f"Batch config '{field}' has invalid string '{value}', using default {default}",
+                extra={"node_id": self.node_id, "field": field, "value": value},
+            )
+            return default
+        # Other types (int, etc.) - use Python's truthiness
+        return bool(value)
+
+    def _coerce_int(self, value: Any, field: str, default: int) -> int:
+        """Coerce value to integer with warning on type mismatch."""
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        if isinstance(value, float):
+            return int(value)
+        if isinstance(value, str):
+            try:
+                result = int(value)
+                logger.warning(
+                    f"Batch config '{field}' is string '{value}', coercing to {result}. "
+                    "Use integer type in IR for correctness.",
+                    extra={"node_id": self.node_id, "field": field, "value": value},
+                )
+                return result
+            except ValueError:
+                logger.warning(
+                    f"Batch config '{field}' has invalid value '{value}', using default {default}",
+                    extra={"node_id": self.node_id, "field": field, "value": value},
+                )
+                return default
+        return default
+
+    def _coerce_float(self, value: Any, field: str, default: float) -> float:
+        """Coerce value to float with warning on type mismatch."""
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                result = float(value)
+                logger.warning(
+                    f"Batch config '{field}' is string '{value}', coercing to {result}. "
+                    "Use numeric type in IR for correctness.",
+                    extra={"node_id": self.node_id, "field": field, "value": value},
+                )
+                return result
+            except ValueError:
+                logger.warning(
+                    f"Batch config '{field}' has invalid value '{value}', using default {default}",
+                    extra={"node_id": self.node_id, "field": field, "value": value},
+                )
+                return default
+        return default
 
     def set_params(self, params: dict[str, Any]) -> None:
         """Forward params to inner node chain.
@@ -159,6 +237,35 @@ class PflowBatchNode(Node):
 
         # Resolve items from shared store
         items = TemplateResolver.resolve_value(var_path, shared)
+
+        # Auto-parse JSON strings (enables shell → batch patterns)
+        # Shell nodes output text; if that text is valid JSON array, parse it
+        if isinstance(items, str):
+            trimmed = items.strip()  # Handle shell output newlines
+
+            # Security: Prevent memory exhaustion from large JSON
+            MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
+            if len(trimmed) > MAX_JSON_SIZE:
+                logger.warning(
+                    f"Batch items string is {len(trimmed)} bytes, "
+                    f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
+                    extra={"node_id": self.node_id, "size": len(trimmed)},
+                )
+            elif trimmed.startswith("["):  # Quick check: looks like JSON array?
+                try:
+                    parsed = json.loads(trimmed)
+                    if isinstance(parsed, list):
+                        items = parsed
+                        logger.debug(
+                            "Auto-parsed JSON string to list for batch.items",
+                            extra={"node_id": self.node_id, "item_count": len(items)},
+                        )
+                except (json.JSONDecodeError, ValueError):
+                    # Not valid JSON - will fail at type check with clear error
+                    logger.debug(
+                        "Failed to parse batch.items as JSON, keeping as string",
+                        extra={"node_id": self.node_id},
+                    )
 
         if items is None:
             raise ValueError(
