@@ -8,7 +8,7 @@ workflow execution begins.
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any, ClassVar, Optional
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
@@ -663,6 +663,16 @@ class TemplateValidator:
     # Now supports array notation: ${node[0].field}, ${node.field[0].subfield}
     _PERMISSIVE_PATTERN = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}")
 
+    # Batch output definitions matching PflowBatchNode.post() structure
+    _BATCH_OUTPUTS: ClassVar[list[dict[str, str]]] = [
+        {"key": "results", "type": "array", "description": "Array of results in input order"},
+        {"key": "count", "type": "number", "description": "Total items processed"},
+        {"key": "success_count", "type": "number", "description": "Items that succeeded"},
+        {"key": "error_count", "type": "number", "description": "Items that failed"},
+        {"key": "errors", "type": "array", "description": "Error details (null if none)"},
+        {"key": "batch_metadata", "type": "dict", "description": "Execution statistics"},
+    ]
+
     @staticmethod
     def _extract_node_outputs(workflow_ir: dict[str, Any], registry: Registry) -> dict[str, Any]:
         """Extract full output structures from nodes using interface metadata.
@@ -670,6 +680,10 @@ class TemplateValidator:
         When namespacing is enabled, outputs are registered under both:
         - The original key (for backward compatibility checks)
         - The namespaced path "node_id.output_key"
+
+        For batch nodes, registers batch-specific outputs (results, count, etc.)
+        instead of the inner node's normal outputs, and adds the item alias
+        as an available variable.
 
         Returns:
             Dict mapping variable names to their full structure/type info
@@ -683,45 +697,110 @@ class TemplateValidator:
             if not node_type or not node_id:
                 continue
 
-            # Get node metadata from registry
-            nodes_metadata = registry.get_nodes_metadata([node_type])
-            if node_type not in nodes_metadata:
-                raise ValueError(f"Unknown node type: {node_type}")
+            # Check for batch configuration
+            batch_config = node.get("batch")
 
-            interface = nodes_metadata[node_type]["interface"]
+            if batch_config:
+                # Batch node: register batch outputs instead of normal outputs
+                TemplateValidator._register_batch_outputs(node_outputs, node_id, node_type, enable_namespacing)
 
-            # Extract outputs with full structure
-            for output in interface["outputs"]:
-                if isinstance(output, str):
-                    # Simple format: just the key, no structure
-                    output_info = {"type": "any", "node_id": node_id, "node_type": node_type}
-
-                    # Register under original key for backward compatibility
-                    node_outputs[output] = output_info
-
-                    # If namespacing is enabled, also register under node_id.output
-                    if enable_namespacing:
-                        namespaced_key = f"{node_id}.{output}"
-                        node_outputs[namespaced_key] = output_info
-                else:
-                    # Rich format: includes type and structure
-                    key = output["key"]
-                    output_info = {
-                        "type": output.get("type", "any"),
-                        "structure": output.get("structure", {}),
-                        "node_id": node_id,
-                        "node_type": node_type,
-                    }
-
-                    # Register under original key for backward compatibility
-                    node_outputs[key] = output_info
-
-                    # If namespacing is enabled, also register under node_id.output
-                    if enable_namespacing:
-                        namespaced_key = f"{node_id}.{key}"
-                        node_outputs[namespaced_key] = output_info
+                # Register the item alias as an available variable
+                item_alias = batch_config.get("as", "item")
+                node_outputs[item_alias] = {
+                    "type": "any",
+                    "description": f"Current batch item during iteration (from node '{node_id}')",
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "is_batch_item": True,
+                }
+            else:
+                # Non-batch node: extract outputs from registry interface
+                TemplateValidator._register_node_outputs_from_registry(
+                    node_outputs, node_id, node_type, enable_namespacing, registry
+                )
 
         return node_outputs
+
+    @staticmethod
+    def _register_batch_outputs(
+        node_outputs: dict[str, Any],
+        node_id: str,
+        node_type: str,
+        enable_namespacing: bool,
+    ) -> None:
+        """Register batch-specific outputs for a node with batch configuration.
+
+        Batch nodes wrap their inner node's outputs in a structured result with:
+        - results: Array of per-item results
+        - count: Total items processed
+        - success_count/error_count: Success/failure counts
+        - errors: Error details if any
+        - batch_metadata: Execution statistics
+        """
+        for output in TemplateValidator._BATCH_OUTPUTS:
+            key = output["key"]
+            output_info = {
+                "type": output["type"],
+                "description": output["description"],
+                "node_id": node_id,
+                "node_type": node_type,
+                "is_batch_output": True,
+            }
+
+            # Register under original key for backward compatibility
+            node_outputs[key] = output_info
+
+            # If namespacing is enabled, also register under node_id.output
+            if enable_namespacing:
+                namespaced_key = f"{node_id}.{key}"
+                node_outputs[namespaced_key] = output_info
+
+    @staticmethod
+    def _register_node_outputs_from_registry(
+        node_outputs: dict[str, Any],
+        node_id: str,
+        node_type: str,
+        enable_namespacing: bool,
+        registry: Registry,
+    ) -> None:
+        """Register outputs from registry interface metadata for non-batch nodes."""
+        # Get node metadata from registry
+        nodes_metadata = registry.get_nodes_metadata([node_type])
+        if node_type not in nodes_metadata:
+            raise ValueError(f"Unknown node type: {node_type}")
+
+        interface = nodes_metadata[node_type]["interface"]
+
+        # Extract outputs with full structure
+        for output in interface["outputs"]:
+            if isinstance(output, str):
+                # Simple format: just the key, no structure
+                output_info = {"type": "any", "node_id": node_id, "node_type": node_type}
+
+                # Register under original key for backward compatibility
+                node_outputs[output] = output_info
+
+                # If namespacing is enabled, also register under node_id.output
+                if enable_namespacing:
+                    namespaced_key = f"{node_id}.{output}"
+                    node_outputs[namespaced_key] = output_info
+            else:
+                # Rich format: includes type and structure
+                key = output["key"]
+                output_info = {
+                    "type": output.get("type", "any"),
+                    "structure": output.get("structure", {}),
+                    "node_id": node_id,
+                    "node_type": node_type,
+                }
+
+                # Register under original key for backward compatibility
+                node_outputs[key] = output_info
+
+                # If namespacing is enabled, also register under node_id.output
+                if enable_namespacing:
+                    namespaced_key = f"{node_id}.{key}"
+                    node_outputs[namespaced_key] = output_info
 
     @staticmethod
     def _validate_template_path(
@@ -923,7 +1002,7 @@ class TemplateValidator:
         return errors
 
     @staticmethod
-    def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:
+    def _extract_all_templates(workflow_ir: dict[str, Any]) -> set[str]:  # noqa: C901
         """Extract all template variables from workflow.
 
         Scans all node parameters for template variables.
@@ -963,6 +1042,13 @@ class TemplateValidator:
 
             for param_key, param_value in params.items():
                 extract_from_value(param_value, node_id, param_key)
+
+            # Also extract templates from batch.items if present
+            batch_config = node.get("batch")
+            if batch_config:
+                items_template = batch_config.get("items")
+                if items_template:
+                    extract_from_value(items_template, node_id, "batch.items")
 
         return templates
 
