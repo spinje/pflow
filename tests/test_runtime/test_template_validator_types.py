@@ -621,3 +621,50 @@ class TestShellCommandValidationTiming:
             )
 
         assert "stdin" in str(exc_info.value).lower()
+
+    def test_dict_in_shell_command_without_validation_fails_at_runtime(self):
+        """Without validation, dict in command causes runtime shell error.
+
+        Documents expected behavior when validation is bypassed.
+        The shell node cannot detect the problem (templates already resolved),
+        so users get a cryptic shell syntax error instead of our helpful message.
+
+        This is why validation should always be enabled for user-facing workflows.
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime.compiler import compile_ir_to_flow
+
+        workflow_ir = {
+            "inputs": {"data": {"type": "object", "required": True}},
+            "nodes": [
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # JSON with apostrophe will break shell quoting
+                    "params": {"command": "echo '${data}'"},
+                }
+            ],
+            "edges": [],
+            "outputs": {},
+        }
+
+        registry = Registry()
+
+        # Compilation succeeds with validate=False
+        flow = compile_ir_to_flow(
+            workflow_ir,
+            registry=registry,
+            initial_params={"data": {"msg": "it's broken"}},  # Apostrophe in data
+            validate=False,  # Bypass validation
+        )
+
+        # Execution fails at shell level with cryptic error
+        shared = {}
+        result = flow.run(shared)
+
+        # Shell fails due to quote escaping issues
+        assert result == "error"
+        assert shared["shell-node"]["exit_code"] != 0
+        # The error is a shell syntax error, not our helpful message
+        stderr = shared["shell-node"]["stderr"].lower()
+        assert "unexpected" in stderr or "syntax" in stderr or "eof" in stderr

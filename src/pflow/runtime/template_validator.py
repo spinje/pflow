@@ -1181,7 +1181,10 @@ class TemplateValidator:
             List of errors for structured data in shell commands
         """
         errors = []
-        BLOCKED_TYPES = {"dict", "object", "list", "array"}
+        # Types that cannot be safely embedded in shell command strings.
+        # Includes both Python type names (dict, list) and JSON Schema names (object, array)
+        # since workflow IR may use either convention.
+        SHELL_BLOCKED_TYPES = {"dict", "object", "list", "array"}
 
         for node in workflow_ir.get("nodes", []):
             node_type = node.get("type")
@@ -1209,10 +1212,12 @@ class TemplateValidator:
                 if not inferred_type:
                     continue
 
-                # Check if any type in a union is blocked
-                # For union types like "dict|str", check each component
+                # Conservative approach for union types: block if ANY component is blocked.
+                # E.g., "dict|str" could be a dict at runtime, so we block it for safety.
+                # This prevents silent failures where the value happens to be a dict
+                # and breaks shell parsing with cryptic errors.
                 type_parts = inferred_type.split("|")
-                blocked_parts = [t.strip() for t in type_parts if t.strip() in BLOCKED_TYPES]
+                blocked_parts = [t.strip() for t in type_parts if t.strip() in SHELL_BLOCKED_TYPES]
 
                 if blocked_parts:
                     blocked_templates.append((template, blocked_parts[0]))
