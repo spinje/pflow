@@ -36,7 +36,7 @@ The `src/pflow/runtime/` module is the **compilation and execution infrastructur
 ```
 src/pflow/runtime/
 ├── __init__.py                  # Module exports (3 public functions)
-├── batch_node.py               # Batch processing wrapper (530 lines)
+├── batch_node.py               # Batch processing wrapper (sequential/parallel)
 ├── compiler.py                  # Main IR→Flow compiler (1042 lines)
 ├── instrumented_wrapper.py      # Metrics, tracing, caching (1168 lines)
 ├── node_wrapper.py             # Template resolution wrapper (680 lines)
@@ -139,6 +139,19 @@ shared["__cache_hits__"] = []  # Nodes that hit cache (for JSON output)
 - Type validation prevents dict/list → str mismatches (uses registry metadata, shows fix suggestions)
 - Strict mode (default): Template/type errors fatal (triggers repair)
 - Permissive mode: Warnings only, stores errors in `__template_errors__`
+
+#### 2.4 PflowBatchNode (`batch_node.py`)
+
+**Purpose**: Batch processing wrapper that executes inner nodes over multiple items.
+
+**Key Features**:
+- Sequential and parallel execution modes
+- Isolated item context (shallow copy of shared store per item)
+- Deep copies node chain for parallel mode (thread safety)
+- Per-item retry logic with configurable wait
+- `fail_fast` or `continue` error handling modes
+
+**Critical Behavior - LLM Cost Tracking**: Batch initializes `__llm_calls__` list in `prep()` and captures `llm_usage` from each item's isolated context via `_capture_item_llm_usage()`. This is called in `_exec_single` (sequential) OR `_exec_single_with_node` (parallel) - never both. Captures from both root (`item_shared["llm_usage"]`) and namespaced (`item_shared[node_id]["llm_usage"]`) locations. Without this, LLM costs would be lost when the item context is discarded.
 
 ### 3. Template System
 
@@ -305,14 +318,12 @@ node = InstrumentedNodeWrapper(node, ...)        # 5. Instrumentation (ALWAYS ap
 
 ```
 InstrumentedNodeWrapper._run()
-  ├─ Check cache (MD5 hash validation)
-  ├─ Setup callbacks and LLM interception
+  ├─ Check cache, setup callbacks
   └─ Call: inner_node._run()
        ↓
   PflowBatchNode._run() [if batch configured]
-  ├─ Resolve items template, iterate items
-  ├─ For each item: inject alias at root, create isolated context
-  └─ Call: inner_node._run() per item (parallel or sequential)
+  ├─ For each item: create isolated context, execute inner node
+  └─ Capture LLM usage from each item context before discarding
        ↓
   NamespacedNodeWrapper._run()
   └─ Call: inner_node._run(NamespacedSharedStore)
