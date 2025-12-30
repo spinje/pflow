@@ -1231,13 +1231,11 @@ class TemplateValidator:
                         f"(quotes, backticks, $() cause errors).\n\n"
                         f"CURRENT (breaks):\n"
                         f'  "command": "{display_cmd}"\n\n'
-                        f"FIX: Move data to stdin, keep command simple:\n"
-                        f"  {{\n"
-                        f'    "stdin": "${{{template}}}",\n'
-                        f'    "command": "<your-command-here>"  // receives data via stdin\n'
-                        f"  }}\n\n"
-                        f"Example: To process JSON, use:\n"
-                        f'  "stdin": "${{{template}}}", "command": "jq \'.field\'"'
+                        f"FIX OPTIONS:\n\n"
+                        f"1. Access specific fields (if they're strings/numbers):\n"
+                        f"   ${{{template}.fieldname}}, ${{{template}.count}}, etc.\n\n"
+                        f"2. Use stdin for the whole object:\n"
+                        f'   {{"stdin": "${{{template}}}", "command": "jq \'.field\'"}}'
                     )
                 else:
                     # Multiple templates - need different approach
