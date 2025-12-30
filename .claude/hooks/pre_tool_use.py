@@ -32,22 +32,24 @@ def is_dangerous_rm_command(command):
             return True
     
     # Pattern 2: Check for rm with recursive flag targeting dangerous paths
+    # Note: We check for -r flag right after rm (not hyphens in filenames)
     dangerous_paths = [
-        r'/',           # Root directory
-        r'/\*',         # Root with wildcard
-        r'~',           # Home directory
-        r'~/',          # Home directory path
-        r'\$HOME',      # Home environment variable
-        r'\.\.',        # Parent directory references
-        r'\*',          # Wildcards in general rm -rf context
-        r'\.',          # Current directory
-        r'\.\s*$',      # Current directory at end of command
+        r'^/',          # Root directory
+        r'^/\*',        # Root with wildcard
+        r'^\.\.',       # Parent directory references
+        r'^\*',         # Wildcards
+        r'^\.$',        # Current directory only
     ]
-    
-    if re.search(r'\brm\s+.*-[a-z]*r', normalized):  # If rm has recursive flag
-        for path in dangerous_paths:
-            if re.search(path, normalized):
-                return True
+
+    # Match rm with -r flag (flag must be right after rm, not a hyphen in filename)
+    if re.search(r'\brm\s+-[a-z]*r', normalized):  # If rm has recursive flag
+        # Extract paths from command (after the flags)
+        path_match = re.search(r'\brm\s+(?:-[a-z]+\s+)*(.+)', normalized)
+        if path_match:
+            paths_str = path_match.group(1)
+            for path in dangerous_paths:
+                if re.search(path, paths_str):
+                    return True
     
     return False
 
