@@ -479,6 +479,8 @@ First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0):
+- ⏳ Task 103: Preserve Inline Object Type in Template Resolution
+- ⏳ Task 104: Implement Python Script Node for Data Transformation
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 - ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation

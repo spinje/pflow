@@ -1,41 +1,20 @@
-"""Test command template validation (Issue #2 defensive checks)."""
+"""Test command template validation (Issue #2 defensive checks).
 
-import pytest
+Note: dict/list detection in shell commands is now done at template validation time
+(in template_validator.py), not at shell node runtime. These tests verify shell node
+still handles safe cases correctly.
+"""
 
 from src.pflow.nodes.shell.shell import ShellNode
 
 
 class TestCommandTemplateValidation:
-    """Test that problematic command templates are detected."""
+    """Test that shell commands handle various input types correctly.
 
-    def test_dict_in_command_raises_error(self):
-        """Dict/JSON object in command should error with helpful message."""
-        node = ShellNode()
-        node.set_params({
-            "command": "echo '${data}' | jq",
-            "data": {"key": "value"},  # This gets resolved by wrapper
-        })
-        shared = {}
-
-        with pytest.raises(ValueError) as exc_info:
-            node.run(shared)
-
-        error_msg = str(exc_info.value)
-        assert "structured data" in error_msg
-        assert "stdin" in error_msg.lower()  # Should suggest stdin
-        assert "data" in error_msg  # Should mention the variable name
-
-    def test_list_in_command_raises_error(self):
-        """List/array in command should error with helpful message."""
-        node = ShellNode()
-        node.set_params({"command": "echo '${items}' | jq", "items": [1, 2, 3]})
-        shared = {}
-
-        with pytest.raises(ValueError) as exc_info:
-            node.run(shared)
-
-        assert "structured data" in str(exc_info.value)
-        assert "list" in str(exc_info.value)
+    Note: Blocking dict/list in shell commands is now done at validation time
+    by template_validator._validate_shell_command_types(), not at shell node runtime.
+    These tests verify shell node execution behavior for allowed cases.
+    """
 
     def test_simple_string_in_command_allowed(self):
         """Simple strings in command should work fine."""

@@ -168,6 +168,10 @@ class TemplateValidator:
         type_errors = TemplateValidator._validate_template_types(workflow_ir, node_outputs, registry)
         errors.extend(type_errors)
 
+        # Block structured data (dict/list) in shell command parameters
+        shell_errors = TemplateValidator._validate_shell_command_types(workflow_ir, node_outputs)
+        errors.extend(shell_errors)
+
         if errors:
             logger.warning(
                 f"Template validation found {len(errors)} errors", extra={"error_count": len(errors), "errors": errors}
@@ -1155,6 +1159,106 @@ class TemplateValidator:
                             )
 
                         errors.append(error_msg)
+
+        return errors
+
+    @staticmethod
+    def _validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[str]:
+        """Block dict/list types in shell command parameters.
+
+        Shell commands cannot safely handle JSON embedded in command strings
+        due to shell escaping issues. This check runs BEFORE template resolution
+        to catch the problem at validation time rather than runtime.
+
+        The general type checker allows dict/list → str (for LLM prompts, HTTP bodies),
+        but shell commands are special - embedded JSON breaks shell parsing.
+
+        Args:
+            workflow_ir: Workflow IR
+            node_outputs: Node output metadata from registry
+
+        Returns:
+            List of errors for structured data in shell commands
+        """
+        errors = []
+        # Types that cannot be safely embedded in shell command strings.
+        # Includes both Python type names (dict, list) and JSON Schema names (object, array)
+        # since workflow IR may use either convention.
+        SHELL_BLOCKED_TYPES = {"dict", "object", "list", "array"}
+
+        for node in workflow_ir.get("nodes", []):
+            node_type = node.get("type")
+            node_id = node.get("id")
+
+            # Only check shell nodes
+            if node_type != "shell":
+                continue
+
+            params = node.get("params", {})
+            command = params.get("command", "")
+
+            # Skip if command has no templates
+            if not isinstance(command, str) or not TemplateResolver.has_templates(command):
+                continue
+
+            # Check each template in the command and collect blocked ones
+            templates = TemplateResolver.extract_variables(command)
+            blocked_templates: list[tuple[str, str]] = []  # (template, type)
+
+            for template in templates:
+                inferred_type = infer_template_type(template, workflow_ir, node_outputs)
+
+                # Skip if cannot infer type (will be caught by path validation)
+                if not inferred_type:
+                    continue
+
+                # Conservative approach for union types: block if ANY component is blocked.
+                # E.g., "dict|str" could be a dict at runtime, so we block it for safety.
+                # This prevents silent failures where the value happens to be a dict
+                # and breaks shell parsing with cryptic errors.
+                type_parts = inferred_type.split("|")
+                blocked_parts = [t.strip() for t in type_parts if t.strip() in SHELL_BLOCKED_TYPES]
+
+                if blocked_parts:
+                    blocked_templates.append((template, blocked_parts[0]))
+
+            # Generate a single consolidated error if any templates are blocked
+            if blocked_templates:
+                display_cmd = command if len(command) <= 60 else command[:57] + "..."
+
+                if len(blocked_templates) == 1:
+                    # Single template - simple case
+                    template, blocked_type = blocked_templates[0]
+                    errors.append(
+                        f"Shell node '{node_id}': cannot use ${{{template}}} (type: {blocked_type}) "
+                        f"in command parameter.\n\n"
+                        f"PROBLEM: {blocked_type} data embedded in shell commands breaks parsing "
+                        f"(quotes, backticks, $() cause errors).\n\n"
+                        f"CURRENT (breaks):\n"
+                        f'  "command": "{display_cmd}"\n\n'
+                        f"FIX OPTIONS:\n\n"
+                        f"1. Access specific fields (if they're strings/numbers):\n"
+                        f"   ${{{template}.fieldname}}, ${{{template}.count}}, etc.\n\n"
+                        f"2. Use stdin for the whole object:\n"
+                        f'   {{"stdin": "${{{template}}}", "command": "jq \'.field\'"}}'
+                    )
+                else:
+                    # Multiple templates - need different approach
+                    template_list = ", ".join(f"${{{t}}} ({typ})" for t, typ in blocked_templates)
+                    errors.append(
+                        f"Shell node '{node_id}': multiple structured data templates in command: "
+                        f"{template_list}\n\n"
+                        f"PROBLEM: Shell commands can only receive ONE data source via stdin.\n\n"
+                        f"CURRENT (breaks):\n"
+                        f'  "command": "{display_cmd}"\n\n'
+                        f"FIX OPTIONS:\n\n"
+                        f"1. Use temp files - write each data source to a file, then read in shell:\n"
+                        f'   {{"id": "save-a", "type": "write-file", "params": {{"path": "/tmp/a.json", "content": "${{data-a}}"}}}}\n'
+                        f'   {{"id": "save-b", "type": "write-file", "params": {{"path": "/tmp/b.json", "content": "${{data-b}}"}}}}\n'
+                        f'   {{"id": "process", "type": "shell", "params": {{"command": "jq -s \'.[0] * .[1]\' /tmp/a.json /tmp/b.json"}}}}\n\n'
+                        f"2. Process each data source in separate shell nodes, combine results after\n\n"
+                        f"3. Pass one via stdin, reference another via file"
+                    )
 
         return errors
 

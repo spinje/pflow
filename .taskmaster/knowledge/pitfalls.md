@@ -420,3 +420,46 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
       # Register item alias as available variable
   ```
 - **Key Lesson**: Runtime wrappers and compile-time validation are separate systems with separate data sources. Registry metadata describes unwrapped nodes. Any wrapper that transforms outputs needs corresponding validation updates.
+
+---
+
+## Pitfall: Template Type Validation in Node prep() is Dead Code
+- **Date**: 2025-12-30
+- **Discovered in**: Shell node dict/list validation bug fix
+- **What we tried**: Adding runtime checks in shell node's `prep()` method to detect when template variables resolve to dict/list (which breaks shell parsing)
+- **Why it seemed good**: The check extracted template variables from the command and checked their types in `self.params` - seemed straightforward
+- **Why it failed**: The wrapper chain resolves templates BEFORE `prep()` runs. By the time the node sees the command, `${data}` has already become `{"key": "value"}` - there are no template variables left to extract.
+- **Symptoms**:
+  - `TemplateResolver.extract_variables(command)` returns empty set (templates already resolved)
+  - Type checks never trigger because `var_name in self.params` is false
+  - Dangerous dict/list values pass through to shell, causing runtime failures
+  - False positives from regex-based fallback that can't distinguish JSON from shell syntax
+- **Root cause**: Wrapper chain execution order:
+  ```
+  TemplateAwareNodeWrapper._run()   ← Templates resolved HERE
+    └─> InnerNode._run()
+        └─> prep()                   ← Your check runs HERE (too late!)
+  ```
+- **Better approach**: Validate template types at compile time in `template_validator.py`, BEFORE template resolution happens. This layer has access to type metadata from the registry.
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS - Dead code in node's prep()
+  def prep(self, shared):
+      command = self.params.get("command")  # Already resolved: "echo '{"key": "value"}'"
+      template_vars = TemplateResolver.extract_variables(command)  # Returns empty set!
+      for var in template_vars:  # Never executes
+          if isinstance(self.params[var], dict):
+              raise ValueError("...")  # Never reached
+
+  # DO THIS - Validate at compile time in template_validator.py
+  def _validate_shell_command_types(workflow_ir, node_outputs):
+      for node in workflow_ir.get("nodes", []):
+          if node.get("type") == "shell":
+              command = node.get("params", {}).get("command", "")
+              templates = TemplateResolver.extract_variables(command)  # Still present!
+              for template in templates:
+                  inferred_type = infer_template_type(template, workflow_ir, node_outputs)
+                  if inferred_type in {"dict", "list", "array", "object"}:
+                      errors.append(f"Shell command cannot use {template}...")
+  ```
+- **Key Lesson**: The wrapper chain architecture means nodes see fully-resolved values. Any validation that needs to reason about template types MUST happen at compile time (in template_validator.py or compiler.py), not at node runtime.
