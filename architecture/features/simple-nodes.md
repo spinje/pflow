@@ -91,15 +91,15 @@ class GitHubGetIssueNode(Node):  # Use Node for retry support
     name = "github-get-issue"  # Optional explicit name
 
     def prep(self, shared):
-        # Check shared store first (dynamic), then params (static)
-        issue_number = shared.get("issue_number") or self.params.get("issue_number")
+        # Read from params (template resolution handles shared store wiring)
+        issue_number = self.params.get("issue_number")
         if not issue_number:
-            raise ValueError("issue_number must be in shared store or params")
+            raise ValueError("issue_number parameter is required")
 
-        # Repository can come from shared or params
-        repo = shared.get("repo") or self.params.get("repo")
+        # Repository from params
+        repo = self.params.get("repo")
         if not repo:
-            raise ValueError("repo must be in shared store or params")
+            raise ValueError("repo parameter is required")
 
         return (issue_number, repo)
 

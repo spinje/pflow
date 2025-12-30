@@ -318,14 +318,14 @@ class GitHubGetIssueNode(BaseNode):
     name = "github-get-issue"
 
     def prep(self, shared):
-        # Check shared first, then params
-        issue_number = shared.get("issue_number", self.params.get("issue_number"))
-        repo = shared.get("repo", self.params.get("repo"))
+        # Read from params (template resolution handles shared store wiring)
+        issue_number = self.params.get("issue_number")
+        repo = self.params.get("repo")
 
         if not issue_number:
-            raise ValueError("Missing required input: issue_number")
+            raise ValueError("Missing required parameter: issue_number")
         if not repo:
-            raise ValueError("Missing required input: repo")
+            raise ValueError("Missing required parameter: repo")
 
         return {"issue_number": issue_number, "repo": repo}
 

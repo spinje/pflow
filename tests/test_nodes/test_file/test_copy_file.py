@@ -20,7 +20,8 @@ class TestCopyFileNode:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             node = CopyFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -49,7 +50,8 @@ class TestCopyFileNode:
             dest_path = os.path.join(tmpdir, "subdir", "nested", "dest.txt")
 
             node = CopyFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -76,7 +78,8 @@ class TestCopyFileNode:
                 f.write("Existing content")
 
             node = CopyFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             # BEHAVIOR: Copy should fail and preserve existing content
             action = node.run(shared)
@@ -101,7 +104,8 @@ class TestCopyFileNode:
                 f.write("Old content")
 
             node = CopyFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path, "overwrite": True}
+            node.set_params({"source_path": source_path, "dest_path": dest_path, "overwrite": True})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -125,7 +129,8 @@ class TestCopyFileNode:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             node = CopyFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             # BEHAVIOR: Should provide helpful error message
             action = node.run(shared)

@@ -20,9 +20,9 @@ class EchoNode(Node):
     - Testing without external dependencies
 
     Interface:
-    - Reads: shared["message"]: str  # Message to echo (falls back to params["message"], default: "Hello, World!")
-    - Reads: shared["count"]: int  # Number of times to repeat (falls back to params["count"], default: 1)
-    - Reads: shared["data"]: Any  # Any data to pass through unchanged (falls back to params["data"], optional)
+    - Params: message: str  # Message to echo (default: "Hello, World!")
+    - Params: count: int  # Number of times to repeat (default: 1)
+    - Params: data: Any  # Any data to pass through unchanged (optional)
     - Writes: shared["echo"]: str  # The echoed message
     - Writes: shared["data"]: Any  # The passed-through data (if provided)
     - Writes: shared["metadata"]: dict  # Information about the echo operation
@@ -41,10 +41,10 @@ class EchoNode(Node):
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Prepare echo operation."""
-        # Use parameter fallback pattern: shared -> params -> default
-        message = shared.get("message") or self.params.get("message") or "Hello, World!"
-        count = shared.get("count") or self.params.get("count") or 1
-        data = shared.get("data") or self.params.get("data")
+        # Get parameters with defaults
+        message = self.params.get("message", "Hello, World!")
+        count = self.params.get("count", 1)
+        data = self.params.get("data")
 
         # Get params (these are only in params, not shared)
         prefix = self.params.get("prefix", "")

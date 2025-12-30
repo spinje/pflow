@@ -296,11 +296,11 @@ def test_real_git_operations(tmp_path):
 8. **git-stash**: Stash changes
 9. **git-rebase**: Rebase branches
 
-### Future Enhancement: Working Directory Parameter
+### Working Directory Parameter Pattern
 ```python
-# Proposed pattern for all git nodes
+# Standard pattern for all git nodes
 def prep(self, shared):
-    working_dir = shared.get("working_directory") or self.params.get("working_directory")
+    working_dir = self.params.get("working_directory")
     if working_dir:
         working_dir = os.path.abspath(os.path.expanduser(working_dir))
         if not os.path.isdir(working_dir):

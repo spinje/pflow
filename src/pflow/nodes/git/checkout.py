@@ -21,12 +21,12 @@ class GitCheckoutNode(Node):
     Create or switch to a git branch.
 
     Interface:
-    - Reads: shared["branch"]: str  # Branch name to create or switch to
-    - Reads: shared["create"]: bool  # Create new branch (optional, default: false)
-    - Reads: shared["base"]: str  # Base branch for new branch (optional, default: current branch)
-    - Reads: shared["force"]: bool  # Force create even if exists (optional, default: false)
-    - Reads: shared["stash"]: bool  # Auto-stash uncommitted changes (optional, default: false)
-    - Reads: shared["working_directory"]: str  # Directory to run git commands (optional, default: current directory)
+    - Params: branch: str  # Branch name to create or switch to
+    - Params: create: bool  # Create new branch (optional, default: false)
+    - Params: base: str  # Base branch for new branch (optional, default: current branch)
+    - Params: force: bool  # Force create even if exists (optional, default: false)
+    - Params: stash: bool  # Auto-stash uncommitted changes (optional, default: false)
+    - Params: working_directory: str  # Directory to run git commands (optional, default: current directory)
     - Writes: shared["current_branch"]: str  # Name of the branch after checkout
     - Writes: shared["previous_branch"]: str  # Name of the branch before checkout
     - Writes: shared["branch_created"]: bool  # Whether a new branch was created
@@ -191,11 +191,11 @@ class GitCheckoutNode(Node):
         return "stash@{0}" if "Saved working directory" in result.stdout else ""
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract branch parameters from shared store or parameters."""
-        # Get branch name from shared or params
-        branch = shared.get("branch") or self.params.get("branch")
+        """Extract branch parameters from parameters."""
+        # Get branch name from params
+        branch = self.params.get("branch")
         if not branch:
-            raise ValueError("Branch name is required. Provide it in shared['branch'] or as a parameter.")
+            raise ValueError("Branch name is required. Provide it as a parameter.")
 
         # Validate branch name (basic sanitization)
         if not re.match(r"^[\w\-/.]+$", branch):
@@ -204,13 +204,13 @@ class GitCheckoutNode(Node):
             )
 
         # Get operation flags
-        create = shared.get("create") or self.params.get("create", False)
-        base = shared.get("base") or self.params.get("base")
-        force = shared.get("force") or self.params.get("force", False)
-        stash = shared.get("stash") or self.params.get("stash", False)
+        create = self.params.get("create", False)
+        base = self.params.get("base")
+        force = self.params.get("force", False)
+        stash = self.params.get("stash", False)
 
         # Get working directory
-        cwd = shared.get("working_directory") or self.params.get("working_directory", ".")
+        cwd = self.params.get("working_directory", ".")
         cwd = Path(cwd).expanduser().resolve()
 
         # Get protected branches list

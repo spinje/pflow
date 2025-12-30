@@ -1,0 +1,51 @@
+{
+  "inputs": {
+    "test": {
+      "type": "string",
+      "required": false,
+      "default": "test"
+    }
+  },
+  "nodes": [
+    {
+      "id": "setup",
+      "type": "shell",
+      "purpose": "Setup step",
+      "params": {
+        "command": "echo 'setup done'"
+      }
+    },
+    {
+      "id": "images",
+      "type": "shell",
+      "purpose": "THIS NODE NAME CAUSES THE BUG - it collides with LLM's 'images' param",
+      "params": {
+        "command": "echo '[\"https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png\"]'"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "purpose": "This node fails because shared['images'] returns the namespace dict",
+      "batch": {
+        "items": "${images.stdout}",
+        "error_handling": "continue"
+      },
+      "params": {
+        "prompt": "Describe this image briefly",
+        "images": "${item}",
+        "model": "gemini-2.0-flash"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "setup",
+      "to": "images"
+    },
+    {
+      "from": "images",
+      "to": "analyze"
+    }
+  ]
+}

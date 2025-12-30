@@ -1,9 +1,9 @@
 """General-purpose LLM node for text processing.
 
 Interface:
-- Reads: shared["prompt"]: str  # Text prompt to send to model
-- Reads: shared["system"]: str  # System prompt (optional)
-- Reads: shared["images"]: list[str]  # Image URLs or file paths (optional)
+- Params: prompt: str  # Text prompt to send to model
+- Params: system: str  # System prompt (optional)
+- Params: images: list[str]  # Image URLs or file paths (optional)
 - Writes: shared["response"]: Any  # Model's response (auto-parsed JSON or string)
 - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
 - Params: model: str  # Model to use (optional - use default unless user requests specific model)
@@ -43,9 +43,9 @@ class LLMNode(Node):
     For example, if you need to create both unstructured and structured data, you should use two different LLM nodes not one node that does both.
 
     Interface:
-    - Reads: shared["prompt"]: str  # Text prompt to send to model
-    - Reads: shared["system"]: str  # System prompt (optional)
-    - Reads: shared["images"]: list[str]  # Image URLs or file paths (optional)
+    - Params: prompt: str  # Text prompt to send to model
+    - Params: system: str  # System prompt (optional)
+    - Params: images: list[str]  # Image URLs or file paths (optional)
     - Writes: shared["response"]: any  # Model's response (auto-parsed JSON or string)
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
@@ -101,27 +101,26 @@ class LLMNode(Node):
             return response
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract and prepare inputs from shared store with parameter fallback."""
-        # Extract from shared store with parameter fallback
-        prompt = shared.get("prompt") or self.params.get("prompt")
+        """Extract and prepare inputs from parameters."""
+        # Extract from params (template resolution handles shared store wiring)
+        prompt = self.params.get("prompt")
 
         if not prompt:
             raise ValueError(
-                "LLM node requires 'prompt' in shared store or parameters. "
-                "Please ensure previous nodes set shared['prompt'] "
-                "or provide --prompt parameter."
+                "LLM node requires 'prompt' parameter. "
+                'Use template syntax like "prompt": "${previous_node.output}" '
+                "to wire data from other nodes."
             )
 
-        # System also uses fallback pattern
-        system = shared.get("system") or self.params.get("system")
+        # System prompt from params
+        system = self.params.get("system")
 
         # Temperature with clamping
         temperature = self.params.get("temperature", 1.0)
         temperature = max(0.0, min(2.0, temperature))
 
-        # Process images with parameter fallback
-        # Use explicit key check to handle empty list correctly
-        images = shared.get("images") if "images" in shared else self.params.get("images", [])
+        # Process images from params
+        images = self.params.get("images", [])
 
         # Ensure images is a list
         if not isinstance(images, list):

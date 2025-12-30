@@ -17,8 +17,8 @@ class GetIssueNode(Node):
     Get GitHub issue details.
 
     Interface:
-    - Reads: shared["issue_number"]: str  # Issue number to fetch
-    - Reads: shared["repo"]: str  # Repository in owner/repo format (optional, default: current repo)
+    - Params: issue_number: str  # Issue number to fetch
+    - Params: repo: str  # Repository in owner/repo format (optional, default: current repo)
     - Writes: shared["issue_data"]: dict  # Complete issue details
         - number: int  # Issue number
         - title: str  # Issue title
@@ -59,8 +59,8 @@ class GetIssueNode(Node):
         if auth_result.returncode != 0:
             raise ValueError("GitHub CLI not authenticated. Please run 'gh auth login' to authenticate with GitHub.")
 
-        # Extract issue number with fallback: shared → params → error
-        issue_number = shared.get("issue_number") or self.params.get("issue_number")
+        # Extract issue number from params
+        issue_number = self.params.get("issue_number")
         if not issue_number:
             raise ValueError(
                 "GitHub issue node requires 'issue_number' in shared store or parameters. "
@@ -68,8 +68,8 @@ class GetIssueNode(Node):
                 "or provide --issue-number parameter."
             )
 
-        # Extract repo with fallback: shared → params → None (gh CLI uses current repo)
-        repo = shared.get("repo") or self.params.get("repo")
+        # Extract repo from params (gh CLI uses current repo if None)
+        repo = self.params.get("repo")
 
         return {
             "issue_number": str(issue_number),  # Ensure string for CLI

@@ -32,7 +32,8 @@ class TestGitStatusIntegration:
     def test_clean_repository(self, temp_git_repo):
         """Test GitStatusNode with a clean repository."""
         node = GitStatusNode()
-        shared = {"working_directory": str(temp_git_repo)}
+        node.params = {"working_directory": str(temp_git_repo)}
+        shared = {}
 
         # Execute the node workflow
         prep_res = node.prep(shared)
@@ -59,7 +60,8 @@ class TestGitStatusIntegration:
         (temp_git_repo / "file2.py").write_text("print('hello')")
 
         node = GitStatusNode()
-        shared = {"working_directory": str(temp_git_repo)}
+        node.params = {"working_directory": str(temp_git_repo)}
+        shared = {}
 
         # Execute the node workflow
         prep_res = node.prep(shared)
@@ -80,7 +82,8 @@ class TestGitStatusIntegration:
         subprocess.run(["git", "add", "staged.txt"], cwd=temp_git_repo, check=True)
 
         node = GitStatusNode()
-        shared = {"working_directory": str(temp_git_repo)}
+        node.params = {"working_directory": str(temp_git_repo)}
+        shared = {}
 
         # Execute the node workflow
         prep_res = node.prep(shared)
@@ -105,7 +108,8 @@ class TestGitStatusIntegration:
         (temp_git_repo / "committed.txt").write_text("modified")
 
         node = GitStatusNode()
-        shared = {"working_directory": str(temp_git_repo)}
+        node.params = {"working_directory": str(temp_git_repo)}
+        shared = {}
 
         # Execute the node workflow
         prep_res = node.prep(shared)
@@ -143,7 +147,8 @@ class TestGitStatusIntegration:
         subprocess.run(["git", "add", "staged_mod.txt"], cwd=temp_git_repo, check=True)
 
         node = GitStatusNode()
-        shared = {"working_directory": str(temp_git_repo)}
+        node.params = {"working_directory": str(temp_git_repo)}
+        shared = {}
 
         # Execute the node workflow
         prep_res = node.prep(shared)
@@ -162,7 +167,8 @@ class TestGitStatusIntegration:
         """Test GitStatusNode when not in a git repository."""
         with tempfile.TemporaryDirectory() as tmpdir:
             node = GitStatusNode()
-            shared = {"working_directory": tmpdir}
+            node.params = {"working_directory": tmpdir}
+            shared = {}
 
             # Execute the node workflow
             prep_res = node.prep(shared)
@@ -186,7 +192,8 @@ class TestGitStatusIntegration:
         pflow_repo = Path(__file__).parent.parent.parent  # Go up to pflow root
 
         node = GitStatusNode()
-        shared = {"working_directory": str(pflow_repo)}
+        node.params = {"working_directory": str(pflow_repo)}
+        shared = {}
 
         # Execute the node workflow
         prep_res = node.prep(shared)

@@ -14,14 +14,13 @@ Test Coverage Summary (21 criteria):
 11. ✅ 500 status → error action
 12. ✅ Timeout exception → ValueError raised
 13. ✅ Connection error → ValueError raised
-14. ✅ Parameter fallback shared → params used
-15. ✅ Parameter fallback params → default used
-16. ✅ exec_fallback timeout → actionable message
-17. ✅ exec_fallback 401 → HTTP error (not exception)
-18. ✅ exec_fallback 404 → HTTP error (not exception)
-19. ✅ Response stored in shared → all keys present
-20. ✅ Large payload handling → processes successfully
-21. ✅ Empty response handling → empty string returned
+14. ✅ Parameter fallback params → default used
+15. ✅ exec_fallback timeout → actionable message
+16. ✅ exec_fallback 401 → HTTP error (not exception)
+17. ✅ exec_fallback 404 → HTTP error (not exception)
+18. ✅ Response stored in shared → all keys present
+19. ✅ Large payload handling → processes successfully
+20. ✅ Empty response handling → empty string returned
 
 Additional Coverage:
 - Custom headers support
@@ -35,6 +34,9 @@ Additional Coverage:
 - General request exception handling
 - Non-request exception handling
 - Multiple auth methods together
+
+Note: All tests now use the parameter-only pattern (node.set_params())
+rather than the shared store fallback pattern, matching the updated HTTP node implementation.
 """
 
 import json
@@ -56,13 +58,12 @@ class TestHttpNode:
         """Test that missing URL raises ValueError with helpful message."""
         node = HttpNode()
         node.set_params({})  # No url in params
-        shared = {}  # No url in shared
+        shared = {}
 
         with pytest.raises(ValueError) as exc_info:
             node.run(shared)
 
-        assert "HTTP node requires 'url'" in str(exc_info.value)
-        assert "shared store or parameters" in str(exc_info.value)
+        assert "HTTP node requires 'url' parameter" in str(exc_info.value)
 
     # Test Criteria 2: GET request without body → method set to GET
     def test_auto_detect_get_method(self):
@@ -76,7 +77,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data"}
+            node.set_params({"url": "https://api.example.com/data"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -101,7 +103,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data", "body": {"name": "test", "value": 123}}
+            node.set_params({"url": "https://api.example.com/data", "body": {"name": "test", "value": 123}})
+            shared = {}
 
             action = node.run(shared)
 
@@ -125,8 +128,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/protected"}
-            node.set_params({"auth_token": "secret-token-123"})
+            node.set_params({"url": "https://api.example.com/protected", "auth_token": "secret-token-123"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -148,8 +151,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data"}
-            node.set_params({"api_key": "my-api-key-456"})
+            node.set_params({"url": "https://api.example.com/data", "api_key": "my-api-key-456"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -171,7 +174,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data", "body": {"key": "value", "number": 42}}
+            node.set_params({"url": "https://api.example.com/data", "body": {"key": "value", "number": 42}})
+            shared = {}
 
             action = node.run(shared)
 
@@ -195,7 +199,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data"}
+            node.set_params({"url": "https://api.example.com/data"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -215,7 +220,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/text"}
+            node.set_params({"url": "https://api.example.com/text"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -235,7 +241,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data"}
+            node.set_params({"url": "https://api.example.com/data"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -255,7 +262,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/missing"}
+            node.set_params({"url": "https://api.example.com/missing"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -276,7 +284,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/broken"}
+            node.set_params({"url": "https://api.example.com/broken"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -292,7 +301,8 @@ class TestHttpNode:
             mock_request.side_effect = Timeout("Request timed out")
 
             node = HttpNode(wait=0)  # Set wait=0 to speed up test
-            shared = {"url": "https://api.example.com/slow", "timeout": 5}
+            node.set_params({"url": "https://api.example.com/slow", "timeout": 5})
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)
@@ -309,7 +319,8 @@ class TestHttpNode:
             mock_request.side_effect = RequestsConnectionError("Connection refused")
 
             node = HttpNode(wait=0)  # Set wait=0 to speed up test
-            shared = {"url": "https://api.example.com/offline"}
+            node.set_params({"url": "https://api.example.com/offline"})
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)
@@ -318,31 +329,6 @@ class TestHttpNode:
             assert "Could not connect to https://api.example.com/offline" in error_msg
             assert "check the URL is correct" in error_msg
             assert "service is running" in error_msg
-
-    # Test Criteria 14: Parameter fallback shared → params used
-    def test_parameter_fallback_from_shared(self):
-        """Test that parameters from shared take precedence over params."""
-        with patch("requests.request") as mock_request:
-            mock_response = Mock()
-            mock_response.status_code = 200
-            mock_response.text = "OK"
-            mock_response.headers = {"content-type": "text/plain"}
-            mock_response.elapsed = timedelta(seconds=0.1)
-            mock_request.return_value = mock_response
-
-            node = HttpNode()
-            node.set_params({"url": "https://params.example.com", "method": "PUT", "timeout": 10})
-            shared = {"url": "https://shared.example.com", "method": "GET", "timeout": 20}
-
-            action = node.run(shared)
-
-            assert action == "default"
-            # Verify shared values were used
-            mock_request.assert_called_once()
-            call_args = mock_request.call_args
-            assert call_args[1]["url"] == "https://shared.example.com"
-            assert call_args[1]["method"] == "GET"
-            assert call_args[1]["timeout"] == 20
 
     # Test Criteria 15: Parameter fallback params → default used
     def test_parameter_fallback_to_params(self):
@@ -397,7 +383,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/auth"}
+            node.set_params({"url": "https://api.example.com/auth"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -418,7 +405,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/missing"}
+            node.set_params({"url": "https://api.example.com/missing"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -439,7 +427,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/create"}
+            node.set_params({"url": "https://api.example.com/create"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -471,7 +460,8 @@ class TestHttpNode:
             node = HttpNode()
             # Also test with large request body
             large_body = {"data": "x" * 10000}
-            shared = {"url": "https://api.example.com/large", "body": large_body}
+            node.set_params({"url": "https://api.example.com/large", "body": large_body})
+            shared = {}
 
             action = node.run(shared)
 
@@ -495,7 +485,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/delete"}
+            node.set_params({"url": "https://api.example.com/delete"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -516,10 +507,11 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {
+            node.set_params({
                 "url": "https://api.example.com/data",
                 "headers": {"X-Custom-Header": "custom-value", "User-Agent": "pflow/1.0"},
-            }
+            })
+            shared = {}
 
             action = node.run(shared)
 
@@ -540,7 +532,11 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/search", "params": {"q": "test query", "page": 2, "limit": 10}}
+            node.set_params({
+                "url": "https://api.example.com/search",
+                "params": {"q": "test query", "page": 2, "limit": 10},
+            })
+            shared = {}
 
             action = node.run(shared)
 
@@ -560,7 +556,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/raw", "body": "raw text data", "method": "POST"}
+            node.set_params({"url": "https://api.example.com/raw", "body": "raw text data", "method": "POST"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -581,8 +578,12 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            node.set_params({"api_key": "secret-key", "api_key_header": "X-Custom-Auth"})
-            shared = {"url": "https://api.example.com/data"}
+            node.set_params({
+                "url": "https://api.example.com/data",
+                "api_key": "secret-key",
+                "api_key_header": "X-Custom-Auth",
+            })
+            shared = {}
 
             action = node.run(shared)
 
@@ -604,7 +605,8 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/bad-json"}
+            node.set_params({"url": "https://api.example.com/bad-json"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -629,7 +631,8 @@ class TestHttpNode:
             ]
 
             node = HttpNode(max_retries=3, wait=0.01)  # Fast retries for testing
-            shared = {"url": "https://api.example.com/flaky"}
+            node.set_params({"url": "https://api.example.com/flaky"})
+            shared = {}
 
             action = node.run(shared)
 
@@ -646,7 +649,8 @@ class TestHttpNode:
             mock_request.side_effect = RequestsConnectionError("Connection failed")
 
             node = HttpNode(max_retries=3, wait=0.01)  # Fast retries for testing
-            shared = {"url": "https://api.example.com/always-fails"}
+            node.set_params({"url": "https://api.example.com/always-fails"})
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)
@@ -667,11 +671,12 @@ class TestHttpNode:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {
+            node.set_params({
                 "url": "https://api.example.com/data",
                 "method": "PUT",  # Explicit method
                 "body": {"data": "test"},  # Would normally trigger POST
-            }
+            })
+            shared = {}
 
             action = node.run(shared)
 
@@ -686,7 +691,8 @@ class TestHttpNode:
             mock_request.side_effect = RequestException("General request error")
 
             node = HttpNode(wait=0)  # Set wait=0 to speed up test
-            shared = {"url": "https://api.example.com/error"}
+            node.set_params({"url": "https://api.example.com/error"})
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)
@@ -700,7 +706,8 @@ class TestHttpNode:
             mock_request.side_effect = RuntimeError("Unexpected error")
 
             node = HttpNode(wait=0)  # Set wait=0 to speed up test
-            shared = {"url": "https://api.example.com/unexpected"}
+            node.set_params({"url": "https://api.example.com/unexpected"})
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)
@@ -712,8 +719,12 @@ class TestHttpNode:
     def test_auth_methods_are_mutually_exclusive(self):
         """Test that auth_token and api_key are mutually exclusive."""
         node = HttpNode()
-        node.set_params({"auth_token": "bearer-token", "api_key": "api-key-value"})
-        shared = {"url": "https://api.example.com/dual-auth"}
+        node.set_params({
+            "url": "https://api.example.com/dual-auth",
+            "auth_token": "bearer-token",
+            "api_key": "api-key-value",
+        })
+        shared = {}
 
         # Should raise ValueError when both are provided
         with pytest.raises(ValueError, match="Cannot specify both auth_token and api_key"):
@@ -722,7 +733,8 @@ class TestHttpNode:
     def test_invalid_method_raises_error(self):
         """Test that invalid HTTP method raises ValueError."""
         node = HttpNode()
-        shared = {"url": "https://api.example.com/test", "method": "INVALID"}
+        node.set_params({"url": "https://api.example.com/test", "method": "INVALID"})
+        shared = {}
 
         with pytest.raises(ValueError, match="Invalid HTTP method 'INVALID'"):
             node.prep(shared)
@@ -732,17 +744,20 @@ class TestHttpNode:
         node = HttpNode()
 
         # Negative timeout
-        shared = {"url": "https://api.example.com/test", "timeout": -5}
+        node.set_params({"url": "https://api.example.com/test", "timeout": -5})
+        shared = {}
         with pytest.raises(ValueError, match="Timeout must be a positive integer"):
             node.prep(shared)
 
         # Zero timeout
-        shared = {"url": "https://api.example.com/test", "timeout": 0}
+        node.set_params({"url": "https://api.example.com/test", "timeout": 0})
+        shared = {}
         with pytest.raises(ValueError, match="Timeout must be a positive integer"):
             node.prep(shared)
 
         # Non-integer timeout
-        shared = {"url": "https://api.example.com/test", "timeout": "not_a_number"}
+        node.set_params({"url": "https://api.example.com/test", "timeout": "not_a_number"})
+        shared = {}
         with pytest.raises(ValueError, match="Timeout must be a positive integer"):
             node.prep(shared)
 
@@ -750,8 +765,8 @@ class TestHttpNode:
         """Test that providing headers doesn't mutate the original dict."""
         original_headers = {"X-Custom": "value"}
         node = HttpNode()
-        node.set_params({"api_key": "test-key"})
-        shared = {"url": "https://api.example.com/test", "headers": original_headers}
+        node.set_params({"url": "https://api.example.com/test", "headers": original_headers, "api_key": "test-key"})
+        shared = {}
 
         # Run prep which should add auth headers
         prep_result = node.prep(shared)

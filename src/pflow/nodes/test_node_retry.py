@@ -19,7 +19,7 @@ class RetryExampleNode(Node):
     with built-in retry logic should be structured.
 
     Interface:
-    - Reads: shared["retry_input"]: str  # Input data for retry testing
+    - Params: retry_input: str  # Input data for retry testing
     - Writes: shared["retry_output"]: str  # Result after processing with retry support
     - Params: max_retries: int  # Maximum number of retry attempts (default: 3)
     - Actions: default, retry_failed

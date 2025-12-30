@@ -38,7 +38,8 @@ class TestGetIssueNode:
     def test_prep_validates_issue_number(self):
         """Test prep requires issue_number."""
         node = GetIssueNode()
-        shared = {}  # Missing issue_number
+        node.params = {}  # Missing issue_number
+        shared = {}
 
         # Mock successful auth
         with patch("subprocess.run") as mock_run:
@@ -47,29 +48,18 @@ class TestGetIssueNode:
             with pytest.raises(ValueError, match="requires 'issue_number'"):
                 node.prep(shared)
 
-    def test_prep_extracts_inputs_with_fallback(self):
-        """Test prep extracts inputs with parameter fallback."""
+    def test_prep_extracts_inputs_from_params(self):
+        """Test prep extracts inputs from parameters."""
         node = GetIssueNode()
-        node.params = {"issue_number": "456", "repo": "fallback/repo"}
-
-        # Test shared takes precedence
-        shared = {"issue_number": "123", "repo": "owner/repo"}
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            prep_res = node.prep(shared)
-
-            assert prep_res["issue_number"] == "123"
-            assert prep_res["repo"] == "owner/repo"
-
-        # Test fallback to params
+        node.params = {"issue_number": "456", "repo": "owner/repo"}
         shared = {}
+
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             prep_res = node.prep(shared)
 
             assert prep_res["issue_number"] == "456"
-            assert prep_res["repo"] == "fallback/repo"
+            assert prep_res["repo"] == "owner/repo"
 
     def test_exec_builds_correct_command(self):
         """Test exec builds correct gh command."""
@@ -207,7 +197,8 @@ class TestGetIssueNode:
         hanging processes (timeout), and ensure proper output handling.
         """
         node = GetIssueNode()
-        shared = {"issue_number": "123", "repo": "owner/repo"}
+        node.params = {"issue_number": "123", "repo": "owner/repo"}
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             # Mock auth check and main command
@@ -273,7 +264,8 @@ class TestGetIssueNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"issue_number": "123", "repo": "owner/repo"}
+            node.params = {"issue_number": "123", "repo": "owner/repo"}
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry
@@ -310,7 +302,8 @@ class TestGetIssueNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"issue_number": "999", "repo": "owner/repo"}
+            node.params = {"issue_number": "999", "repo": "owner/repo"}
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)

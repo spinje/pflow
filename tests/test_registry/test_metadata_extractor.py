@@ -153,14 +153,15 @@ class TestMetadataExtractorBehavior:
 
         # Test that real nodes are handled correctly
         assert result["description"] != "No description"
-        assert len(result["inputs"]) > 0
+        # All inputs are now params (no more Reads: shared["key"] pattern)
+        assert len(result["params"]) > 0
 
-        # Should have file_path input
-        assert any(inp["key"] == "file_path" for inp in result["inputs"])
+        # Should have file_path param
+        assert any(p["key"] == "file_path" for p in result["params"])
 
         # Should have type information (enhanced format)
-        file_path_input = next(inp for inp in result["inputs"] if inp["key"] == "file_path")
-        assert file_path_input["type"] == "str"
+        file_path_param = next(p for p in result["params"] if p["key"] == "file_path")
+        assert file_path_param["type"] == "str"
 
     def test_backward_compatibility_with_simple_format(self):
         """Test that simple format is converted to rich format."""

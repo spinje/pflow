@@ -18,7 +18,8 @@ class TestWriteFileNode:
             file_path = os.path.join(tmpdir, "test.txt")
 
             node = WriteFileNode()
-            shared = {"content": "Test content\nLine 2", "file_path": file_path}
+            node.set_params({"content": "Test content\nLine 2", "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -41,7 +42,8 @@ class TestWriteFileNode:
             file_path = os.path.join(tmpdir, "nested", "deep", "file.txt")
 
             node = WriteFileNode()
-            shared = {"content": "Nested content", "file_path": file_path}
+            node.set_params({"content": "Nested content", "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -68,7 +70,8 @@ class TestWriteFileNode:
             tilde_path = "~/stories/cat_story.md"
 
             node = WriteFileNode()
-            shared = {"content": "Once upon a time, there was a clever cat...", "file_path": tilde_path}
+            node.set_params({"content": "Once upon a time, there was a clever cat...", "file_path": tilde_path})
+            shared = {}
 
             # Run the node
             prep_res = node.prep(shared)
@@ -99,8 +102,8 @@ class TestWriteFileNode:
 
         try:
             node = WriteFileNode()
-            node.set_params({"append": True})
-            shared = {"content": "Appended content", "file_path": temp_path}
+            node.set_params({"append": True, "content": "Appended content", "file_path": temp_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -125,7 +128,8 @@ class TestWriteFileNode:
 
         try:
             node = WriteFileNode()
-            shared = {"content": "New content", "file_path": temp_path}
+            node.set_params({"content": "New content", "file_path": temp_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -144,10 +148,11 @@ class TestWriteFileNode:
             file_path = os.path.join(tmpdir, "empty.txt")
 
             node = WriteFileNode()
-            shared = {
+            node.set_params({
                 "content": "",  # Empty string
                 "file_path": file_path,
-            }
+            })
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -165,7 +170,8 @@ class TestWriteFileNode:
             file_path = os.path.join(tmpdir, "utf16.txt")
 
             node = WriteFileNode()
-            shared = {"content": "UTF-16 content", "file_path": file_path, "encoding": "utf-16"}
+            node.set_params({"content": "UTF-16 content", "file_path": file_path, "encoding": "utf-16"})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -180,17 +186,19 @@ class TestWriteFileNode:
         """Test error when content is missing."""
         node = WriteFileNode()
         with tempfile.NamedTemporaryFile() as tmp:
-            shared = {"file_path": tmp.name}
+            node.set_params({"file_path": tmp.name})
+            shared = {}
 
-            with pytest.raises(ValueError, match="Missing required 'content'"):
+            with pytest.raises(ValueError, match="Missing required 'content' parameter"):
                 node.prep(shared)
 
     def test_missing_file_path(self):
         """Test error when file_path is missing."""
         node = WriteFileNode()
-        shared = {"content": "Test"}
+        node.set_params({"content": "Test"})
+        shared = {}
 
-        with pytest.raises(ValueError, match="Missing required 'file_path'"):
+        with pytest.raises(ValueError, match="Missing required 'file_path' parameter"):
             node.prep(shared)
 
     def test_params_fallback(self):
@@ -229,7 +237,8 @@ class TestWriteFileNode:
             base64_content = base64.b64encode(binary_data).decode("ascii")
 
             node = WriteFileNode()
-            shared = {"content": base64_content, "content_is_binary": True, "file_path": file_path}
+            node.set_params({"content": base64_content, "content_is_binary": True, "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -258,7 +267,8 @@ class TestWriteFileNode:
             base64_chunk1 = base64.b64encode(chunk1).decode("ascii")
 
             node = WriteFileNode()
-            shared = {"content": base64_chunk1, "content_is_binary": True, "file_path": file_path}
+            node.set_params({"content": base64_chunk1, "content_is_binary": True, "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -269,8 +279,13 @@ class TestWriteFileNode:
             base64_chunk2 = base64.b64encode(chunk2).decode("ascii")
 
             node_append = WriteFileNode()
-            node_append.set_params({"append": True})
-            shared_append = {"content": base64_chunk2, "content_is_binary": True, "file_path": file_path}
+            node_append.set_params({
+                "append": True,
+                "content": base64_chunk2,
+                "content_is_binary": True,
+                "file_path": file_path,
+            })
+            shared_append = {}
 
             prep_res = node_append.prep(shared_append)
             exec_res = node_append.exec(prep_res)
@@ -296,11 +311,12 @@ class TestWriteFileNode:
             file_path = os.path.join(tmpdir, "text.txt")
 
             node = WriteFileNode()
-            shared = {
+            node.set_params({
                 "content": "Plain text content\nLine 2",
                 "file_path": file_path,
                 # No content_is_binary flag - should default to text mode
-            }
+            })
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -325,7 +341,8 @@ class TestWriteFileNode:
             file_path = os.path.join(tmpdir, "invalid.bin")
 
             node = WriteFileNode()
-            shared = {"content": "not-valid-base64!@#$%", "content_is_binary": True, "file_path": file_path}
+            node.set_params({"content": "not-valid-base64!@#$%", "content_is_binary": True, "file_path": file_path})
+            shared = {}
 
             with pytest.raises(ValueError, match="Invalid base64 content"):
                 node.prep(shared)
@@ -343,11 +360,12 @@ class TestWriteFileNode:
             base64_string = base64.b64encode(b"test data").decode("ascii")
 
             node = WriteFileNode()
-            shared = {
+            node.set_params({
                 "content": base64_string,
                 "content_is_binary": False,  # Explicitly False
                 "file_path": file_path,
-            }
+            })
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -378,11 +396,12 @@ class TestWriteFileNode:
             http_flag = True
 
             node = WriteFileNode()
-            shared = {
+            node.set_params({
                 "content": http_response,  # From ${download.response}
                 "content_is_binary": http_flag,  # From ${download.response_is_binary}
                 "file_path": file_path,
-            }
+            })
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -412,7 +431,8 @@ class TestWriteFileNode:
             test_dict = {"name": "John", "age": 30, "active": True, "tags": ["dev", "python"]}
 
             node = WriteFileNode()
-            shared = {"content": test_dict, "file_path": file_path}
+            node.set_params({"content": test_dict, "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -446,7 +466,8 @@ class TestWriteFileNode:
             test_list = ["item1", "item2", {"nested": "value"}]
 
             node = WriteFileNode()
-            shared = {"content": test_list, "file_path": file_path}
+            node.set_params({"content": test_list, "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -473,7 +494,8 @@ class TestWriteFileNode:
             test_string = "Just a plain string with some text"
 
             node = WriteFileNode()
-            shared = {"content": test_string, "file_path": file_path}
+            node.set_params({"content": test_string, "file_path": file_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)

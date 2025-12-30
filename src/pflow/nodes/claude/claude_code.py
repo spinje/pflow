@@ -6,8 +6,8 @@ gets converted to system prompt instructions, enabling structured outputs from C
 unstructured text generation.
 
 Interface:
-- Reads: shared["prompt"]: str  # The prompt to send to Claude (required)
-- Reads: shared["output_schema"]: dict  # JSON schema for structured outputs (optional)
+- Params: prompt: str  # The prompt to send to Claude (required)
+- Params: output_schema: dict  # JSON schema for structured outputs (optional)
 - Writes: shared["result"]: any  # Response - string or dict with schema keys
 - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
 - Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage, session_id)
@@ -95,8 +95,8 @@ class ClaudeCodeNode(Node):
                   "score": {"type": "int", "description": "Security score 1-10"}}
 
     Interface:
-    - Reads: shared["prompt"]: str  # The prompt to send to Claude (required)
-    - Reads: shared["output_schema"]: dict  # Schema for structured outputs (optional): {"field": {"type": "str", "description": "..."}}
+    - Params: prompt: str  # The prompt to send to Claude (required)
+    - Params: output_schema: dict  # Schema for structured outputs (optional): {"field": {"type": "str", "description": "..."}}
     - Writes: shared["result"]: any  # Response - string without schema, dict with schema
     - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
     - Writes: shared["_claude_metadata"]: dict  # Execution metadata
@@ -332,10 +332,10 @@ class ClaudeCodeNode(Node):
             ValueError: If required parameters are missing or invalid
         """
         # Validate prompt
-        prompt = self._validate_prompt(shared.get("prompt") or self.params.get("prompt"))
+        prompt = self._validate_prompt(self.params.get("prompt"))
 
         # Validate optional parameters
-        output_schema = self._validate_schema(shared.get("output_schema") or self.params.get("output_schema"))
+        output_schema = self._validate_schema(self.params.get("output_schema"))
         cwd = self._validate_cwd(self.params.get("cwd"))
 
         # Get model with fallback

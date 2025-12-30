@@ -11,10 +11,11 @@ from src.pflow.nodes.git.commit import GitCommitNode
 class TestGitCommitNode:
     """Test suite for GitCommitNode."""
 
-    def test_prep_extracts_message_from_shared(self):
-        """Test that prep extracts commit message from shared store."""
+    def test_prep_extracts_message_from_params(self):
+        """Test that prep extracts commit message from params."""
         node = GitCommitNode()
-        shared = {"message": "Test commit message", "files": ["file1.txt", "file2.txt"]}
+        node.params = {"message": "Test commit message", "files": ["file1.txt", "file2.txt"]}
+        shared = {}
 
         result = node.prep(shared)
 
@@ -36,7 +37,8 @@ class TestGitCommitNode:
     def test_prep_defaults_files_to_dot(self):
         """Test that prep defaults files to ['.'] when not provided."""
         node = GitCommitNode()
-        shared = {"message": "Test commit"}
+        node.params = {"message": "Test commit"}
+        shared = {}
 
         result = node.prep(shared)
 
@@ -45,7 +47,8 @@ class TestGitCommitNode:
     def test_prep_converts_string_files_to_list(self):
         """Test that prep converts string files to list."""
         node = GitCommitNode()
-        shared = {"message": "Test commit", "files": "single_file.txt"}
+        node.params = {"message": "Test commit", "files": "single_file.txt"}
+        shared = {}
 
         result = node.prep(shared)
 
@@ -214,7 +217,8 @@ class TestGitCommitNode:
         hanging processes (timeout), and ensure proper output handling.
         """
         node = GitCommitNode()
-        shared = {"message": "Security test commit", "files": ["test.txt"]}
+        node.params = {"message": "Security test commit", "files": ["test.txt"]}
+        shared = {}
 
         # Mock successful git add and commit
         add_result = MagicMock(returncode=0, stdout="", stderr="")
@@ -278,7 +282,8 @@ class TestGitCommitNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"message": "Test commit", "files": ["file.txt"]}
+            node.params = {"message": "Test commit", "files": ["file.txt"]}
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry
@@ -316,7 +321,8 @@ class TestGitCommitNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"message": "Test commit", "files": ["."]}
+            node.params = {"message": "Test commit", "files": ["."]}
+            shared = {}
 
             # The exec_fallback returns a dict with error info, not raising an exception
             action = node.run(shared)

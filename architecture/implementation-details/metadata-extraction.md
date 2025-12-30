@@ -100,9 +100,9 @@ class ReadFileNode(Node):
     """
 
     def prep(self, shared):
-        # Check shared store first, then params
-        file_path = shared.get("file_path") or self.params.get("file_path")
-        encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
+        # Read from params (template resolution handles shared store wiring)
+        file_path = self.params.get("file_path")
+        encoding = self.params.get("encoding", "utf-8")
         return (file_path, encoding)
 
     def exec(self, prep_res):

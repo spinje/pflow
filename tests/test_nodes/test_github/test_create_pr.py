@@ -15,7 +15,8 @@ class TestGitHubCreatePRNode:
     def test_prep_validates_authentication(self):
         """Test that prep checks GitHub CLI authentication."""
         node = GitHubCreatePRNode()
-        shared = {"title": "Test PR", "body": "Test body", "head": "feature-branch", "base": "main"}
+        node.params = {"title": "Test PR", "body": "Test body", "head": "feature-branch", "base": "main"}
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             # Mock auth check failure
@@ -32,7 +33,8 @@ class TestGitHubCreatePRNode:
         node = GitHubCreatePRNode()
 
         # Test missing title
-        shared = {"body": "Test body", "head": "feature-branch"}
+        node.params = {"body": "Test body", "head": "feature-branch"}
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)  # Auth success
@@ -41,7 +43,8 @@ class TestGitHubCreatePRNode:
                 node.prep(shared)
 
         # Test missing head branch
-        shared = {"title": "Test PR", "body": "Test body"}
+        node.params = {"title": "Test PR", "body": "Test body"}
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)  # Auth success
@@ -49,8 +52,8 @@ class TestGitHubCreatePRNode:
             with pytest.raises(ValueError, match="requires 'head' branch"):
                 node.prep(shared)
 
-    def test_prep_uses_parameter_fallback(self):
-        """Test that prep falls back to parameters when shared values missing."""
+    def test_prep_uses_parameters(self):
+        """Test that prep uses parameters."""
         node = GitHubCreatePRNode()
         node.params = {
             "title": "Param Title",
@@ -59,8 +62,7 @@ class TestGitHubCreatePRNode:
             "base": "develop",
             "repo": "owner/repo",
         }
-
-        shared = {}  # Empty shared store
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = Mock(returncode=0)  # Auth success
@@ -74,21 +76,6 @@ class TestGitHubCreatePRNode:
                 "base": "develop",
                 "repo": "owner/repo",
             }
-
-    def test_prep_shared_overrides_params(self):
-        """Test that shared store values override parameters."""
-        node = GitHubCreatePRNode()
-        node.params = {"title": "Param Title", "head": "param-branch"}
-
-        shared = {"title": "Shared Title", "head": "shared-branch"}
-
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = Mock(returncode=0)  # Auth success
-
-            result = node.prep(shared)
-
-            assert result["title"] == "Shared Title"
-            assert result["head"] == "shared-branch"
 
     def test_exec_two_step_process(self):
         """Test the critical two-step PR creation process."""
@@ -299,7 +286,13 @@ class TestGitHubCreatePRNode:
     def test_integration_full_workflow(self):
         """Test complete workflow from prep to post."""
         node = GitHubCreatePRNode()
-        shared = {"title": "Integration Test PR", "body": "This is a test", "head": "feature-xyz", "base": "develop"}
+        node.params = {
+            "title": "Integration Test PR",
+            "body": "This is a test",
+            "head": "feature-xyz",
+            "base": "develop",
+        }
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             # Mock successful auth check
@@ -340,13 +333,14 @@ class TestGitHubCreatePRNode:
         hanging processes (timeout), and ensure proper output handling.
         """
         node = GitHubCreatePRNode()
-        shared = {
+        node.params = {
             "title": "Security Test PR",
             "body": "Testing security flags",
             "head": "feature-branch",
             "base": "main",
             "repo": "owner/repo",
         }
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             # Mock auth check, PR creation, and PR view
@@ -434,13 +428,14 @@ class TestGitHubCreatePRNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {
+            node.params = {
                 "title": "Test PR",
                 "body": "Test body",
                 "head": "feature-branch",
                 "base": "main",
                 "repo": "owner/repo",
             }
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry
@@ -477,13 +472,14 @@ class TestGitHubCreatePRNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {
+            node.params = {
                 "title": "Test PR",
                 "body": "Test body",
                 "head": "feature-branch",
                 "base": "main",
                 "repo": "owner/repo",
             }
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)

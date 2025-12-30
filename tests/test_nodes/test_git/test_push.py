@@ -11,10 +11,11 @@ from src.pflow.nodes.git.push import GitPushNode
 class TestGitPushNode:
     """Test suite for GitPushNode."""
 
-    def test_prep_extracts_branch_and_remote_from_shared(self):
-        """Test that prep extracts branch and remote from shared store."""
+    def test_prep_extracts_branch_and_remote_from_params(self):
+        """Test that prep extracts branch and remote from params."""
         node = GitPushNode()
-        shared = {"branch": "feature/test", "remote": "upstream"}
+        node.params = {"branch": "feature/test", "remote": "upstream"}
+        shared = {}
 
         result = node.prep(shared)
 
@@ -247,7 +248,8 @@ class TestGitPushNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"branch": "main", "remote": "origin"}
+            node.params = {"branch": "main", "remote": "origin"}
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry
@@ -282,7 +284,8 @@ class TestGitPushNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"branch": "main", "remote": "origin"}
+            node.params = {"branch": "main", "remote": "origin"}
+            shared = {}
 
             # The node will return normally since exec_fallback handles the error
             action = node.run(shared)

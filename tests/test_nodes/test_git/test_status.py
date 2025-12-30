@@ -35,28 +35,12 @@ class TestGitStatusNode:
         # Should resolve to current directory
         assert result == str(Path(".").resolve())
 
-    def test_prep_with_shared_directory(self, git_status_node, shared_store):
-        """Test prep with directory from shared store."""
-        test_dir = Path.cwd() / "test_dir"
-        shared_store["working_directory"] = str(test_dir)
-        result = git_status_node.prep(shared_store)
-        assert result == str(test_dir.resolve())
-
     def test_prep_with_params_directory(self, git_status_node, shared_store):
         """Test prep with directory from params."""
         params_dir = Path.cwd() / "params_dir"
         git_status_node.params = {"working_directory": str(params_dir)}
         result = git_status_node.prep(shared_store)
         assert result == str(params_dir.resolve())
-
-    def test_prep_shared_overrides_params(self, git_status_node, shared_store):
-        """Test that shared store overrides params."""
-        shared_dir = Path.cwd() / "shared_dir"
-        params_dir = Path.cwd() / "params_dir"
-        shared_store["working_directory"] = str(shared_dir)
-        git_status_node.params = {"working_directory": str(params_dir)}
-        result = git_status_node.prep(shared_store)
-        assert result == str(shared_dir.resolve())
 
     @patch("subprocess.run")
     def test_exec_clean_repo(self, mock_run, git_status_node):

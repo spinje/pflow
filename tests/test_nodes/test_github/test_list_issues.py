@@ -52,52 +52,50 @@ class TestListIssuesNode:
             mock_run.return_value = MagicMock(returncode=0)
 
             # Test clamping to minimum
-            shared = {"limit": -5}
+            node.params = {"limit": -5}
+            shared = {}
             result = node.prep(shared)
             assert result["limit"] == 1
 
             # Test clamping to maximum
-            shared = {"limit": 200}
+            node.params = {"limit": 200}
+            shared = {}
             result = node.prep(shared)
             assert result["limit"] == 100
 
             # Test valid range
-            shared = {"limit": 50}
+            node.params = {"limit": 50}
+            shared = {}
             result = node.prep(shared)
             assert result["limit"] == 50
 
             # Test invalid type
-            shared = {"limit": "not_a_number"}
+            node.params = {"limit": "not_a_number"}
+            shared = {}
             with pytest.raises(ValueError) as exc_info:
                 node.prep(shared)
             assert "Invalid limit value" in str(exc_info.value)
             assert "Must be an integer between 1 and 100" in str(exc_info.value)
 
-    def test_prep_parameter_fallback(self):
-        """Test the fallback order: shared → params → defaults."""
+    def test_prep_uses_params_and_defaults(self):
+        """Test that prep uses params and defaults."""
         node = ListIssuesNode()
 
         with patch("subprocess.run") as mock_run:
             # Simulate successful authentication
             mock_run.return_value = MagicMock(returncode=0)
 
-            # Test shared takes precedence
+            # Test params are used
             node.params = {"repo": "param/repo", "state": "closed", "limit": 10}
-            shared = {"repo": "shared/repo", "state": "all", "limit": 20}
-            result = node.prep(shared)
-            assert result["repo"] == "shared/repo"
-            assert result["state"] == "all"
-            assert result["limit"] == 20
-
-            # Test params fallback when shared is empty
             shared = {}
             result = node.prep(shared)
             assert result["repo"] == "param/repo"
             assert result["state"] == "closed"
             assert result["limit"] == 10
 
-            # Test defaults when neither shared nor params have values
+            # Test defaults when params are empty
             node.params = {}
+            shared = {}
             result = node.prep(shared)
             assert result["repo"] is None
             assert result["state"] == "open"
@@ -208,7 +206,8 @@ class TestListIssuesNode:
         hanging processes (timeout), and ensure proper output handling.
         """
         node = ListIssuesNode()
-        shared = {"repo": "owner/repo", "state": "open", "limit": 10}
+        node.params = {"repo": "owner/repo", "state": "open", "limit": 10}
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             # Mock auth check and main command
@@ -269,7 +268,8 @@ class TestListIssuesNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"repo": "owner/repo", "state": "open", "limit": 10}
+            node.params = {"repo": "owner/repo", "state": "open", "limit": 10}
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry
@@ -305,7 +305,8 @@ class TestListIssuesNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"repo": "owner/repo", "state": "open", "limit": 30}
+            node.params = {"repo": "owner/repo", "state": "open", "limit": 30}
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)
@@ -407,26 +408,22 @@ class TestListIssuesNode:
         assert node._normalize_date("   ") is None
 
     def test_prep_extracts_since_parameter(self):
-        """Test that prep correctly extracts the since parameter with proper fallback."""
+        """Test that prep correctly extracts the since parameter from params."""
         node = ListIssuesNode()
 
         with patch("subprocess.run") as mock_run:
             # Mock successful authentication
             mock_run.return_value = MagicMock(returncode=0)
 
-            # Test shared takes precedence
+            # Test with since parameter
             node.params = {"since": "2025-08-01"}
-            shared = {"since": "2025-08-15"}
-            result = node.prep(shared)
-            assert result["since"] == "2025-08-15"
-
-            # Test params fallback when shared is empty
             shared = {}
             result = node.prep(shared)
             assert result["since"] == "2025-08-01"
 
             # Test no since parameter
             node.params = {}
+            shared = {}
             result = node.prep(shared)
             assert result["since"] is None
 
@@ -445,17 +442,20 @@ class TestListIssuesNode:
                 mock_datetime.strptime = datetime.strptime
 
                 # Test relative date normalization
-                shared = {"since": "7 days ago"}
+                node.params = {"since": "7 days ago"}
+                shared = {}
                 result = node.prep(shared)
                 assert result["since"] == "2025-08-17"
 
                 # Test ISO datetime normalization
-                shared = {"since": "2025-08-20T15:30:00"}
+                node.params = {"since": "2025-08-20T15:30:00"}
+                shared = {}
                 result = node.prep(shared)
                 assert result["since"] == "2025-08-20"
 
                 # Test already normalized date
-                shared = {"since": "2025-08-20"}
+                node.params = {"since": "2025-08-20"}
+                shared = {}
                 result = node.prep(shared)
                 assert result["since"] == "2025-08-20"
 
@@ -612,7 +612,8 @@ class TestListIssuesNode:
                 mock_datetime.strptime = datetime.strptime
 
                 # Run the node with relative date
-                shared = {"repo": "owner/repo", "state": "open", "limit": 10, "since": "7 days ago"}
+                node.params = {"repo": "owner/repo", "state": "open", "limit": 10, "since": "7 days ago"}
+                shared = {}
                 action = node.run(shared)
 
                 # Verify success
@@ -698,7 +699,8 @@ class TestListIssuesNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"repo": "owner/repo", "state": "open", "limit": 10, "since": "2025-08-15"}
+            node.params = {"repo": "owner/repo", "state": "open", "limit": 10, "since": "2025-08-15"}
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry

@@ -41,7 +41,8 @@ class TestFileNodeRetryBehavior:
         try:
             node = ReadFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             # Simulate transient permission issues that resolve
             original_open = open
@@ -76,8 +77,9 @@ class TestFileNodeRetryBehavior:
         try:
             node = DeleteFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
+            node.set_params({"file_path": temp_path})
             # Missing required confirmation - this is a validation error
-            shared = {"file_path": temp_path, "confirm_delete": False}
+            shared = {"confirm_delete": False}
 
             start_time = time.time()
             action = node.run(shared)
@@ -102,9 +104,10 @@ class TestFileNodeRetryBehavior:
         """
         node = ReadFileNode()
         node.wait = 0  # Speed up tests by removing retry delays
+        node.set_params({"file_path": "/nonexistent/path/file.txt"})
 
         # Test with missing file
-        shared = {"file_path": "/nonexistent/path/file.txt"}
+        shared = {}
         action = node.run(shared)
 
         assert action == "error"
@@ -128,7 +131,8 @@ class TestFileNodeRetryBehavior:
                 """Simulate concurrent access to same file."""
                 node = ReadFileNode()
                 node.wait = 0  # Speed up tests by removing retry delays
-                shared = {"file_path": temp_path}
+                node.set_params({"file_path": temp_path})
+                shared = {}
                 action = node.run(shared)
                 results.append((action, shared.get("content", ""), shared.get("error", "")))
 
@@ -161,7 +165,8 @@ class TestFileNodeRetryBehavior:
 
             node = WriteFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
-            shared = {"file_path": target_path, "content": "test content"}
+            node.set_params({"file_path": target_path, "content": "test content"})
+            shared = {}
 
             # Simulate system under memory pressure by making atomic write fail initially
             original_mkstemp = tempfile.mkstemp
@@ -200,7 +205,8 @@ class TestFileNodeRetryBehavior:
 
             node = CopyFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             # Simulate resource contention by temporarily making copy fail
             import shutil
@@ -243,7 +249,8 @@ class TestFileNodeRetryBehavior:
 
             node = MoveFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             action = node.run(shared)
 
@@ -271,7 +278,8 @@ class TestFileNodeRetryBehavior:
         try:
             node = DeleteFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
-            shared = {"file_path": temp_path, "confirm_delete": True}
+            node.set_params({"file_path": temp_path})
+            shared = {"confirm_delete": True}
 
             # Simulate file being temporarily locked by another process
             original_remove = os.remove
@@ -319,7 +327,8 @@ class TestFileNodeRetryBehavior:
             # Create directory instead of file
             os.makedirs(source_path)
 
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node1.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
             action = node1.run(shared)
 
             # BEHAVIOR: Configuration errors should fail with descriptive message
@@ -350,8 +359,9 @@ class TestFileNodeRetryBehavior:
                 # Always fail to test retry behavior
                 raise OSError("Temporary system error")
 
+            node2.set_params({"source_path": source_path, "dest_path": dest_path})
             with patch("shutil.copy2", side_effect=failing_copy):
-                shared = {"source_path": source_path, "dest_path": dest_path}
+                shared = {}
                 action = node2.run(shared)
 
             # BEHAVIOR: System errors should trigger retries and eventually fail
@@ -379,7 +389,8 @@ class TestFileNodeRetryBehavior:
             with open(source_path, "w") as f:
                 f.write("test success content")
 
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node3.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
             action = node3.run(shared)
 
             # BEHAVIOR: Successful operations should work without retries
@@ -400,7 +411,8 @@ class TestFileNodeRetryBehavior:
         try:
             node = ReadFileNode()
             node.wait = 0  # Speed up tests by removing retry delays
-            shared = {"file_path": temp_path, "encoding": "utf-8"}
+            node.set_params({"file_path": temp_path, "encoding": "utf-8"})
+            shared = {}
 
             action = node.run(shared)
 

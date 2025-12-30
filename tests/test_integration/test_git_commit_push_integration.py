@@ -27,18 +27,22 @@ class TestGitIntegration:
         test_file.write_text("Hello, World!")
 
         # Set up shared store
-        shared = {"working_directory": str(repo_dir)}
+        shared = {}
 
         # Run GitStatusNode to see untracked files
         status_node = GitStatusNode()
+        status_node.params = {"working_directory": str(repo_dir)}
         status_node.run(shared)
 
         assert "test.txt" in shared["git_status"]["untracked"]
 
         # Run GitCommitNode to commit the file
         commit_node = GitCommitNode()
-        shared["message"] = "Initial commit"
-        shared["files"] = ["."]
+        commit_node.params = {
+            "working_directory": str(repo_dir),
+            "message": "Initial commit",
+            "files": ["."],
+        }
         commit_node.run(shared)
 
         assert shared["commit_sha"] != ""
@@ -66,10 +70,15 @@ class TestGitIntegration:
         test_file.write_text("Hello, World!")
 
         # Set up shared store
-        shared = {"working_directory": str(repo_dir), "message": "Test commit", "files": ["test.txt"]}
+        shared = {}
 
         # Run commit node
         commit_node = GitCommitNode()
+        commit_node.params = {
+            "working_directory": str(repo_dir),
+            "message": "Test commit",
+            "files": ["test.txt"],
+        }
         commit_node.run(shared)
 
         # Verify commit was created
@@ -100,10 +109,15 @@ class TestGitIntegration:
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=repo_dir, check=True)
 
         # Set up shared store
-        shared = {"working_directory": str(repo_dir), "message": "Nothing to commit", "files": ["."]}
+        shared = {}
 
         # Run GitCommitNode - should handle nothing to commit
         commit_node = GitCommitNode()
+        commit_node.params = {
+            "working_directory": str(repo_dir),
+            "message": "Nothing to commit",
+            "files": ["."],
+        }
         commit_node.run(shared)
 
         # Check that it handled the case gracefully
@@ -117,10 +131,15 @@ class TestGitIntegration:
 
         mock_run.return_value = push_result
 
-        shared = {"working_directory": "/test/repo", "branch": "main", "remote": "origin"}
+        shared = {}
 
         # Run push node
         push_node = GitPushNode()
+        push_node.params = {
+            "working_directory": "/test/repo",
+            "branch": "main",
+            "remote": "origin",
+        }
         push_node.run(shared)
 
         # Should not raise exception, but indicate failure

@@ -19,10 +19,10 @@ class ListIssuesNode(Node):
     List GitHub repository issues.
 
     Interface:
-    - Reads: shared["repo"]: str  # Repository in owner/repo format (optional, default: current repo)
-    - Reads: shared["state"]: str  # Issue state: open, closed, all (optional, default: open)
-    - Reads: shared["limit"]: int  # Maximum issues to return (optional, default: 30)
-    - Reads: shared["since"]: str  # Filter issues created after this date (optional)
+    - Params: repo: str  # Repository in owner/repo format (optional, default: current repo)
+    - Params: state: str  # Issue state: open, closed, all (optional, default: open)
+    - Params: limit: int  # Maximum issues to return (optional, default: 30)
+    - Params: since: str  # Filter issues created after this date (optional)
         # Accepts: ISO date (2025-08-20), relative (7 days ago), or YYYY-MM-DD
     - Writes: shared["issues"]: list[dict]  # Array of issue objects
         - number: int  # Issue number
@@ -142,18 +142,18 @@ class ListIssuesNode(Node):
         if auth_result.returncode != 0:
             raise ValueError("GitHub CLI not authenticated. Please run 'gh auth login' to authenticate with GitHub.")
 
-        # Extract repo with fallback: shared → params → None (gh CLI uses current repo)
-        repo = shared.get("repo") or self.params.get("repo")
+        # Extract repo from params (gh CLI uses current repo if None)
+        repo = self.params.get("repo")
 
-        # Extract state with fallback: shared → params → default
-        state = shared.get("state") or self.params.get("state", "open")
+        # Extract state from params with default
+        state = self.params.get("state", "open")
         # Validate state
         valid_states = ["open", "closed", "all"]
         if state not in valid_states:
             raise ValueError(f"Invalid issue state '{state}'. Must be one of: {', '.join(valid_states)}")
 
-        # Extract limit with fallback: shared → params → default
-        limit = shared.get("limit") or self.params.get("limit", 30)
+        # Extract limit from params with default
+        limit = self.params.get("limit", 30)
         # Validate and clamp limit to valid range
         try:
             limit = int(limit)
@@ -166,8 +166,8 @@ class ListIssuesNode(Node):
         elif limit > 100:
             limit = 100
 
-        # Extract since with fallback: shared → params → None
-        since = shared.get("since") or self.params.get("since")
+        # Extract since from params
+        since = self.params.get("since")
 
         # Normalize date if provided
         normalized_since = None

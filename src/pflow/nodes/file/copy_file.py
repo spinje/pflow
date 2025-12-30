@@ -25,9 +25,9 @@ class CopyFileNode(Node):
     and creating parent directories as needed. Supports overwrite control.
 
     Interface:
-    - Reads: shared["source_path"]: str  # Source file path
-    - Reads: shared["dest_path"]: str  # Destination file path
-    - Reads: shared["overwrite"]: bool  # Whether to overwrite existing files (optional, default: false)
+    - Params: source_path: str  # Source file path
+    - Params: dest_path: str  # Destination file path
+    - Params: overwrite: bool  # Whether to overwrite existing files (optional, default: false)
     - Writes: shared["copied"]: bool  # True if copy succeeded
     - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
@@ -43,14 +43,14 @@ class CopyFileNode(Node):
     def prep(self, shared: dict) -> tuple[str, str, bool]:
         """Extract source path, destination path, and overwrite flag from shared store or params."""
         # Source path is required
-        source_path = shared.get("source_path") or self.params.get("source_path")
+        source_path = self.params.get("source_path")
         if not source_path:
-            raise ValueError("Missing required 'source_path' in shared store or params")
+            raise ValueError("Missing required 'source_path' parameter")
 
         # Destination path is required
-        dest_path = shared.get("dest_path") or self.params.get("dest_path")
+        dest_path = self.params.get("dest_path")
         if not dest_path:
-            raise ValueError("Missing required 'dest_path' in shared store or params")
+            raise ValueError("Missing required 'dest_path' parameter")
 
         # Normalize paths
         source_path = os.path.expanduser(source_path)

@@ -18,11 +18,11 @@ class GitHubCreatePRNode(Node):
     Create a GitHub pull request.
 
     Interface:
-    - Reads: shared["title"]: str  # PR title
-    - Reads: shared["body"]: str  # PR description (optional, default: empty)
-    - Reads: shared["head"]: str  # Head branch name
-    - Reads: shared["base"]: str  # Base branch name (optional, default: main)
-    - Reads: shared["repo"]: str  # Repository (optional, default: current repo)
+    - Params: title: str  # PR title
+    - Params: body: str  # PR description (optional, default: empty)
+    - Params: head: str  # Head branch name
+    - Params: base: str  # Base branch name (optional, default: main)
+    - Params: repo: str  # Repository (optional, default: current repo)
     - Writes: shared["pr_data"]: dict  # Pull request details
         - number: int  # PR number
         - url: str  # PR URL
@@ -52,8 +52,8 @@ class GitHubCreatePRNode(Node):
         if auth_result.returncode != 0:
             raise ValueError("GitHub CLI not authenticated. Please run 'gh auth login' to authenticate with GitHub.")
 
-        # Extract required fields with fallback: shared → params → error
-        title = shared.get("title") or self.params.get("title")
+        # Extract required fields from params
+        title = self.params.get("title")
         if not title:
             raise ValueError(
                 "GitHub PR creation requires 'title' in shared store or parameters. "
@@ -61,9 +61,9 @@ class GitHubCreatePRNode(Node):
                 "or provide --title parameter."
             )
 
-        body = shared.get("body") or self.params.get("body", "")
+        body = self.params.get("body", "")
 
-        head = shared.get("head") or self.params.get("head")
+        head = self.params.get("head")
         if not head:
             raise ValueError(
                 "GitHub PR creation requires 'head' branch in shared store or parameters. "
@@ -72,8 +72,8 @@ class GitHubCreatePRNode(Node):
             )
 
         # Extract optional fields with defaults
-        base = shared.get("base") or self.params.get("base", "main")
-        repo = shared.get("repo") or self.params.get("repo")
+        base = self.params.get("base", "main")
+        repo = self.params.get("repo")
 
         return {"title": str(title), "body": str(body), "head": str(head), "base": str(base), "repo": repo}
 

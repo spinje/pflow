@@ -348,36 +348,31 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-## Pattern: Truthiness-Safe Parameter Fallback
-- **Date**: 2025-06-29
-- **Discovered in**: Task 11.1
-- **Problem**: Python's `or` operator treats empty strings, 0, False, and None as falsy, causing incorrect fallbacks when these are valid values
-- **Solution**: Check for key existence explicitly instead of relying on truthiness
+## Pattern: Parameter-Only Access (CURRENT)
+- **Date**: 2025-12-30
+- **Supersedes**: "Truthiness-Safe Parameter Fallback", "Shared Store Inputs as Automatic Parameter Fallbacks"
+- **Problem**: The old fallback pattern `shared.get("x") or self.params.get("x")` caused namespace collision bugs where node IDs or workflow inputs matching parameter names would override template-resolved values
+- **Solution**: Nodes read ALL inputs from `self.params`. The template system (`${variable}`) handles wiring shared store data into params before execution.
 - **Example**:
   ```python
-  # DON'T DO THIS - treats empty string as missing
-  content = shared.get("content") or self.params.get("content")
-  if content is None:
-      raise ValueError("Missing content")
+  # CURRENT PATTERN - params only
+  def prep(self, shared):
+      content = self.params.get("content")
+      if content is None:
+          raise ValueError("Missing required 'content' parameter")
 
-  # DO THIS - properly handles empty string as valid
-  if "content" in shared:
-      content = shared["content"]
-  elif "content" in self.params:
-      content = self.params["content"]
-  else:
-      raise ValueError("Missing required 'content'")
+      file_path = self.params.get("file_path")
+      encoding = self.params.get("encoding", "utf-8")
+
+      return (file_path, content, encoding)
   ```
-- **When to use**: Always when parameters could have valid falsy values:
-  - Text content that could be empty strings
-  - Numbers that could be 0
-  - Booleans that need to distinguish False from missing
-  - Any optional parameter with a falsy default
+- **When to use**: Always. This is the universal pattern for all nodes.
 - **Benefits**:
-  - Correctly handles all valid Python values
-  - Clear distinction between "not provided" and "provided as falsy"
-  - Prevents subtle bugs in parameter handling
-  - More explicit about intent
+  - No namespace collision bugs (node IDs can match param names safely)
+  - Falsy values (0, False, "", None) are preserved correctly
+  - Explicit data flow via templates in IR
+  - Simpler, more predictable behavior
+- **See also**: Decision record in `.taskmaster/knowledge/decisions.md` - "Parameter-Only Pattern"
 
 ---
 
@@ -385,22 +380,22 @@ A consolidated collection of successful patterns and approaches discovered durin
 - **Date**: 2025-06-29
 - **Discovered in**: Task 11.2
 - **Problem**: Destructive operations (delete, overwrite) need safety mechanisms that can't be accidentally triggered by default parameters or config files
-- **Solution**: Require safety confirmation flags to be explicitly set in shared store, with no fallback to params
+- **Solution**: Require safety confirmation flags to be explicitly set in shared store (not via params/templates)
 - **Example**:
   ```python
   def prep(self, shared: dict) -> tuple[str, bool]:
-      # File path can come from shared or params
-      file_path = shared.get("file_path") or self.params.get("file_path")
+      # File path comes from params (via template resolution)
+      file_path = self.params.get("file_path")
       if not file_path:
-          raise ValueError("Missing required 'file_path'")
+          raise ValueError("Missing required 'file_path' parameter")
 
-      # Safety flag MUST come from shared store only
+      # Safety flag MUST come from shared store only (security requirement)
       if "confirm_delete" not in shared:
           raise ValueError("Missing required 'confirm_delete' in shared store. "
                          "This safety flag must be explicitly set in shared store.")
 
       confirm_delete = shared["confirm_delete"]
-      # Note: We do NOT fallback to self.params here
+      # Note: This is the ONLY case where we read directly from shared store
 
       return (str(file_path), bool(confirm_delete))
   ```
@@ -835,92 +830,38 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-## Pattern: Shared Store Inputs as Automatic Parameter Fallbacks
+## Pattern: Shared Store Inputs as Automatic Parameter Fallbacks (DEPRECATED)
 - **Date**: 2025-01-10
-- **Discovered in**: Task 16 context builder design
-- **Problem**: Nodes need to accept data from either the shared store (for inter-node communication) or parameters (for direct user configuration), leading to redundant specification in node interfaces
-- **Solution**: Establish a universal pattern where ALL shared store inputs automatically work as parameter fallbacks, eliminating the need to document them twice
+- **Deprecated**: 2025-12-30
+- **Superseded by**: "Parameter-Only Access" pattern (see above)
+- **Reason for deprecation**: This pattern caused namespace collision bugs where node IDs or workflow inputs matching parameter names would override template-resolved values. The template system now handles all data wiring explicitly.
+- **Migration**: Replace `shared.get("x") or self.params.get("x")` with `self.params.get("x")`
+- **See**: Decision record in `.taskmaster/knowledge/decisions.md` - "Parameter-Only Pattern"
+
+---
+
+## Pattern: Template-Based Data Flow (CURRENT)
+- **Date**: 2025-12-30
+- **Discovered in**: Namespace collision bug fix
+- **Problem**: Inter-node communication needed explicit wiring without implicit shared store lookups
+- **Solution**: Use template variables (`${variable}`) in IR to explicitly wire data between nodes. The runtime resolves templates into params before node execution.
 - **Example**:
-  ```python
-  class WriteFileNode(Node):
-      """
-      Interface:
-      - Reads: shared["file_path"], shared["content"], shared["encoding"]
-      - Writes: shared["written"], shared["error"]
-      - Params: append  # ONLY exclusive params listed!
-      """
-
-      def prep(self, shared: dict) -> tuple[str, str, str, bool]:
-          # Default pattern: Use "or" for most inputs
-          file_path = shared.get("file_path") or self.params.get("file_path")
-          if not file_path:
-              raise ValueError("Missing required 'file_path' in shared store or params")
-
-          # Truthiness-safe: Only when empty strings are valid values
-          if "content" in shared:
-              content = shared["content"]
-          elif "content" in self.params:
-              content = self.params["content"]
-          else:
-              raise ValueError("Missing required 'content' in shared store or params")
-
-          # Optional with default: Use "or" with default value
-          encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
-
-          # Exclusive param: Never check shared store
-          append = self.params.get("append", False)
-
-          return (file_path, content, encoding, append)
-
-      def exec(self, prep_res: tuple[str, str, str, bool]) -> str:
-          file_path, content, encoding, append = prep_res
-          # Pure computation - let exceptions bubble up for retry
-
-          mode = "a" if append else "w"
-          with open(file_path, mode, encoding=encoding) as f:
-              f.write(content)
-
-          return f"Successfully wrote to '{file_path}'"
-
-      def post(self, shared: dict, prep_res: Any, exec_res: str) -> str:
-          shared["written"] = exec_res
-          return "default"
+  ```json
+  {
+    "nodes": [
+      {"id": "fetch", "type": "http", "params": {"url": "https://api.example.com"}},
+      {"id": "process", "type": "llm", "params": {"prompt": "Summarize: ${fetch.response}"}}
+    ]
+  }
   ```
-- **Key Insight**: Every value in "Reads" is automatically a valid parameter - no need to document it twice!
-- **The Pattern**:
-  ```python
-  # DEFAULT: Use "or" syntax for most inputs
-  value = shared.get("key") or self.params.get("key")
-  if not value:
-      raise ValueError("Missing required 'key' in shared store or params")
-
-  # OPTIONAL: With default value
-  value = shared.get("key") or self.params.get("key", "default")
-
-  # TRUTHINESS-SAFE: Only when empty/0/False are valid values
-  if "content" in shared:
-      content = shared["content"]
-  elif "content" in self.params:
-      content = self.params["content"]
-  else:
-      raise ValueError("Missing required 'content'")
-  ```
-- **Documentation Impact**:
-  - **Before**: `Reads: shared["file"], Params: file (as fallback), verbose`
-  - **After**: `Reads: shared["file"], Params: verbose` ✨
-- **Context Builder Implementation**:
-  ```python
-  # Filter out params that are already inputs
-  exclusive_params = [p for p in metadata['params'] if p not in metadata['inputs']]
-  # Only show these exclusive params in documentation
-  ```
-- **When to use**: ALWAYS - this is a core pflow architectural decision
+  The template `${fetch.response}` is resolved from `shared["fetch"]["response"]` and placed into `params["prompt"]` before the LLM node executes.
+- **Key Insight**: All data flow is declared in IR via templates - no implicit connections based on naming
+- **When to use**: Always for inter-node data flow
 - **Benefits**:
-  - No redundant documentation
-  - Cleaner node interfaces
-  - Planner only thinks about data flow
-  - Users can override any input with --param at runtime
-  - Consistent behavior across all nodes
+  - No namespace collision bugs
+  - Explicit, visible data dependencies
+  - Self-documenting workflows
+  - Templates can transform data (e.g., `"url": "https://api.com/${path}"`)
 
 ---
 

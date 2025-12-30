@@ -410,6 +410,62 @@ A chronological record of significant architectural and design decisions made du
 
 <!-- New decisions are appended below this line -->
 
+## Decision: Remove Shared Store Fallback Pattern - Nodes Read From Params Only
+- **Date**: 2025-12-30
+- **Made during**: Namespace Collision Bug Fix
+- **Status**: Accepted
+- **Context**: A critical bug was discovered where node IDs or workflow inputs matching parameter names caused silent failures. For example, a node named `images` would create `shared["images"] = {stdout: ...}`, and the LLM node's fallback pattern `shared.get("images") or self.params.get("images")` would find this namespace dict instead of the template-resolved image URL, causing cryptic errors like "Image must be a string, got: dict".
+
+  Investigation revealed the "shared store takes precedence" fallback pattern was:
+  1. **Not from PocketFlow** - PocketFlow treats params and shared store as completely separate channels
+  2. **Introduced in Task 11** (first file nodes) with no documented rationale
+  3. **Redundant with template resolution** - templates like `${var}` already wire shared store values into params
+  4. **In conflict with namespacing** (Task 9) which creates `shared[node_id]` dicts at root level
+
+- **Alternatives considered**:
+  1. **Filter node namespaces from visibility** - Modify `NamespacedSharedStore.keys()` and `__contains__()` to hide node namespace dicts using heuristics
+     - Pros: No node code changes, backward compatible
+     - Cons: Heuristic-based (needs maintenance), doesn't fix semantic issue, preserves confusing architecture
+  2. **Invert priority (params first, then shared)** - Change to `self.params.get("x") or shared.get("x")`
+     - Pros: Template-resolved values take precedence, fixes the bug
+     - Cons: Still has implicit fallback behavior, naming coincidences still create connections
+  3. **Remove fallback entirely (params only)** - Nodes read only from `self.params`
+     - Pros: Explicit data flow, no implicit connections, aligns with PocketFlow philosophy, templates are the single wiring mechanism
+     - Cons: Requires updating all nodes and tests, removes "convenience" of same-name wiring
+  4. **Add collision detection** - Error at compile time when names collide
+     - Pros: Explicit error with fix suggestion
+     - Cons: Only addresses symptom, not root cause
+
+- **Decision**: Remove the shared store fallback pattern entirely - nodes read only from `self.params`
+- **Rationale**:
+  - **Aligns with PocketFlow's design philosophy**: Params for static configuration, shared store for explicit inter-node data flow
+  - **Templates are the proper wiring mechanism**: `"input": "${node.output}"` explicitly declares data dependencies
+  - **Eliminates entire class of bugs**: No implicit connections means no namespace collisions
+  - **Simpler mental model**: Params contain resolved values, period. No magic based on naming.
+  - **Redundancy removed**: The fallback was created before templates existed; now templates handle all data wiring
+  - **No users yet**: Per CLAUDE.md, we have no production users, so this isn't a breaking change concern
+  - **Explicit > Implicit**: If you want data from shared store, use a template. If you hardcode a value, it stays hardcoded.
+
+- **Consequences**:
+  - Updated ~60 parameters across 20 node implementations
+  - Changed pattern from `shared.get("x") or self.params.get("x")` to `self.params.get("x")`
+  - Updated all documentation (CLAUDE.md files, architecture docs, node reference)
+  - Updated ~150 tests that relied on shared store fallback behavior
+  - Templates like `${var}` are now the ONLY way to wire shared store data to nodes
+  - Workflow inputs must be explicitly wired: `"url": "${input_url}"` instead of implicit same-name matching
+  - Error messages updated from "shared store or params" to just "parameter"
+  - Sets precedent: new features should favor explicit over implicit behavior
+
+- **Implementation Details**:
+  - Three pattern variants were replaced:
+    1. `shared.get("x") or self.params.get("x")` → `self.params.get("x")`
+    2. `shared.get("x") if "x" in shared else self.params.get("x")` → `self.params.get("x")`
+    3. `if "x" in shared: ... elif "x" in self.params: ...` → `self.params.get("x")`
+  - Tests that explicitly tested "shared takes precedence" were removed
+  - Tests that put data in shared store expecting nodes to read it now use `node.set_params()` or `node.params = {}`
+
+- **Review date**: After MVP completion (to validate the explicit approach works well in practice)
+
 
 ---
 

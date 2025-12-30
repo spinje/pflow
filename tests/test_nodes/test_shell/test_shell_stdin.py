@@ -18,27 +18,28 @@ class TestShellStdinParameterFallback:
         assert action == "default"
         assert shared["stdout"] == "hello from params"
 
-    def test_stdin_from_shared_only(self):
-        """Stdin should work when provided via shared (existing behavior)."""
+    def test_stdin_not_read_from_shared_store(self):
+        """Stdin in shared store should NOT be read by node (removed fallback)."""
         node = ShellNode()
         node.set_params({"command": "cat"})
         shared = {"stdin": "hello from shared"}
 
         action = node.run(shared)
 
+        # Node should NOT read stdin from shared store
         assert action == "default"
-        assert shared["stdout"] == "hello from shared"
+        assert shared["stdout"] == ""  # No stdin provided to cat
 
-    def test_stdin_shared_takes_precedence(self):
-        """Shared should take precedence over params (OR behavior)."""
+    def test_stdin_from_params_not_overridden_by_shared(self):
+        """Stdin from params should be used (shared store is ignored)."""
         node = ShellNode()
         node.set_params({"command": "cat", "stdin": "from params"})
-        shared = {"stdin": "from shared"}
+        shared = {"stdin": "from shared"}  # This should be ignored
 
         action = node.run(shared)
 
         assert action == "default"
-        assert shared["stdout"] == "from shared"  # Shared wins
+        assert shared["stdout"] == "from params"  # Params value used
 
     def test_stdin_with_template_resolution(self):
         """Template variables in stdin should resolve correctly."""

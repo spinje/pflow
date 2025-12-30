@@ -148,16 +148,17 @@ class TestLLMNodeIntegration:
         assert isinstance(usage["cache_creation_input_tokens"], (int, float))
         assert isinstance(usage["cache_read_input_tokens"], (int, float))
 
-    def test_fallback_from_shared_store(self):
-        """Test that prompt and system fallback from shared store."""
+    def test_prompt_and_system_from_params(self):
+        """Test that prompt and system are read from params."""
         node = LLMNode()
-        node.set_params({"model": "gpt-4o-mini", "max_tokens": 30, "system": "Param system - should be overridden"})
-
-        # Both prompt and system in shared store
-        shared = {
+        node.set_params({
+            "model": "gpt-4o-mini",
+            "max_tokens": 30,
             "prompt": "Just say 'yes' if you understand",
             "system": "You are a helpful assistant. Always be concise.",
-        }
+        })
+
+        shared = {}
 
         action = node.run(shared)
 

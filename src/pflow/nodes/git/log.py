@@ -20,13 +20,13 @@ class GitLogNode(Node):
     Retrieve git commit history with filtering options.
 
     Interface:
-    - Reads: shared["since"]: str  # Start date/tag/SHA (optional, e.g., "2024-01-01", "v1.0.0", "abc1234")
-    - Reads: shared["until"]: str  # End date/tag/SHA (optional, default: HEAD)
-    - Reads: shared["limit"]: int  # Maximum number of commits (optional, default: 20)
-    - Reads: shared["author"]: str  # Filter by author email/name (optional)
-    - Reads: shared["grep"]: str  # Filter commits by message content (optional)
-    - Reads: shared["path"]: str  # Filter by file path (optional)
-    - Reads: shared["working_directory"]: str  # Directory to run git commands (optional, default: current directory)
+    - Params: since: str  # Start date/tag/SHA (optional, e.g., "2024-01-01", "v1.0.0", "abc1234")
+    - Params: until: str  # End date/tag/SHA (optional, default: HEAD)
+    - Params: limit: int  # Maximum number of commits (optional, default: 20)
+    - Params: author: str  # Filter by author email/name (optional)
+    - Params: grep: str  # Filter commits by message content (optional)
+    - Params: path: str  # Filter by file path (optional)
+    - Params: working_directory: str  # Directory to run git commands (optional, default: current directory)
     - Writes: shared["commits"]: list[dict]  # List of commit objects
         - sha: str  # Full commit SHA
         - short_sha: str  # Short SHA (7 chars)
@@ -50,20 +50,17 @@ class GitLogNode(Node):
         super().__init__(max_retries=2, wait=0.5)
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract parameters from shared store or node parameters."""
-        # Get parameters with fallback pattern
-        since = shared.get("since") or self.params.get("since")
-        until = shared.get("until") or self.params.get("until")
-        # Special handling for limit since 0 is falsy but invalid
-        limit = shared.get("limit")
-        if limit is None:
-            limit = self.params.get("limit", 20)
-        author = shared.get("author") or self.params.get("author")
-        grep = shared.get("grep") or self.params.get("grep")
-        path = shared.get("path") or self.params.get("path")
+        """Extract parameters from node parameters."""
+        # Get parameters from params
+        since = self.params.get("since")
+        until = self.params.get("until")
+        limit = self.params.get("limit", 20)
+        author = self.params.get("author")
+        grep = self.params.get("grep")
+        path = self.params.get("path")
 
         # Get working directory
-        cwd = shared.get("working_directory") or self.params.get("working_directory", ".")
+        cwd = self.params.get("working_directory", ".")
         cwd = Path(cwd).expanduser().resolve()
 
         # Validate limit

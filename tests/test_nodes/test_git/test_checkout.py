@@ -50,14 +50,14 @@ class TestGitCheckoutNode:
 
     def test_prep_validates_branch_name(self, git_checkout_node, shared_store):
         """Test that prep validates branch names."""
-        shared_store["branch"] = "invalid@branch!"
+        git_checkout_node.params = {"branch": "invalid@branch!"}
         with pytest.raises(ValueError) as exc_info:
             git_checkout_node.prep(shared_store)
         assert "Invalid branch name" in str(exc_info.value)
 
     def test_prep_with_valid_branch(self, git_checkout_node, shared_store):
         """Test prep with valid branch name."""
-        shared_store["branch"] = "feature/test-branch"
+        git_checkout_node.params = {"branch": "feature/test-branch"}
         result = git_checkout_node.prep(shared_store)
 
         assert result["branch"] == "feature/test-branch"
@@ -70,14 +70,14 @@ class TestGitCheckoutNode:
 
     def test_prep_with_all_parameters(self, git_checkout_node, shared_store):
         """Test prep with all parameters specified."""
-        shared_store.update({
+        git_checkout_node.params = {
             "branch": "feature/new",
             "create": True,
             "base": "develop",
             "force": True,
             "stash": True,
             "working_directory": "/test/repo",
-        })
+        }
 
         result = git_checkout_node.prep(shared_store)
 
@@ -90,8 +90,7 @@ class TestGitCheckoutNode:
 
     def test_prep_with_custom_protected_branches(self, git_checkout_node, shared_store):
         """Test prep with custom protected branches."""
-        shared_store["branch"] = "test"
-        git_checkout_node.params = {"protected_branches": ["release", "hotfix"]}
+        git_checkout_node.params = {"branch": "test", "protected_branches": ["release", "hotfix"]}
 
         result = git_checkout_node.prep(shared_store)
 
@@ -757,7 +756,8 @@ class TestGitCheckoutNodeIntegration:
 
         # Test checkout node
         node = GitCheckoutNode()
-        shared = {"branch": "feature/test", "create": True, "working_directory": str(tmp_path)}
+        node.params = {"branch": "feature/test", "create": True, "working_directory": str(tmp_path)}
+        shared = {}
 
         node.run(shared)
 
@@ -849,8 +849,7 @@ class TestGitCheckoutNodeSecurity:
 
             mock_run.side_effect = side_effect
 
-            shared_store["branch"] = "feature"
-            shared_store["working_directory"] = "/test/repo"
+            git_checkout_node.params = {"branch": "feature", "working_directory": "/test/repo"}
 
             action = git_checkout_node.run(shared_store)
 
@@ -882,8 +881,7 @@ class TestGitCheckoutNodeSecurity:
 
             mock_run.side_effect = side_effect
 
-            shared_store["branch"] = "feature"
-            shared_store["working_directory"] = "/not/a/repo"
+            git_checkout_node.params = {"branch": "feature", "working_directory": "/not/a/repo"}
 
             # exec_fallback returns a dict with error info, post() returns "error" action
             action = git_checkout_node.run(shared_store)
