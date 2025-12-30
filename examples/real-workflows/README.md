@@ -62,10 +62,24 @@ With `describe_images=true`, each image gets a vision-generated description:
 
 ### Performance
 
-| Mode | Time | Cost | Use Case |
-|------|------|------|----------|
-| Basic | ~17s | ~$0.01 | Fast conversion |
-| With vision | ~24s | ~$0.02 | AI-readable content |
+| Article | Time | Sections | Size | Images | Cost |
+|---------|------|----------|------|--------|------|
+| [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) | 19.3s | 38 | 29KB | 7 | $0.11 |
+| [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) | 16.8s | 19 | 20KB | 8 | $0.06 |
+| [Code Mode: MCP](https://blog.cloudflare.com/code-mode/) | 18.6s | 17 | 20KB | 4 | $0.08 |
+
+*Tested 2024-12-30 using gemini-3-flash-preview.*
+
+#### Vision Cost Breakdown
+
+| Metric | Value |
+|--------|-------|
+| Cost per image | ~$0.003 |
+| Avg input tokens | 1,134 (image data) |
+| Avg output tokens | 593 (description) |
+| Time overhead | ~7s (parallel) |
+
+Vision descriptions are surprisingly cheap—the base HTML→markdown conversion costs 20-40x more than describing all images.
 
 ### Why It's Fast
 

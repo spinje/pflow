@@ -62,10 +62,10 @@
     {
       "id": "stitch-markdown",
       "type": "shell",
-      "purpose": "Combine markdown sections and ensure title heading exists",
+      "purpose": "Combine markdown sections, normalize headers and spacing",
       "params": {
         "stdin": "${convert-sections.results}",
-        "command": "title='${extract-title.stdout}'; content=$(jq -r '.[] | .response'); if [ -n \"$title\" ]; then echo \"# $title\"; echo; fi; echo \"$content\""
+        "command": "title='${extract-title.stdout}'; content=$(jq -r '.[] | .response'); (if [ -n \"$title\" ]; then echo \"# $title\"; fi; echo \"$content\") | perl -0777 -ne '$h=0;@o=();for(split/\\n/){next if/^# [^#]/&&$h;$h=1 if/^# [^#]/;push@o,$_}$_=join\"\\n\",@o;s/([^\\n])\\n*(#{2,3} )/$1\\n\\n$2/g;s/^(# [^\\n]+)\\n*/$1\\n\\n/;print'"
       }
     },
     {
