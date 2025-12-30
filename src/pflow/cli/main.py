@@ -2739,9 +2739,14 @@ def _setup_signals() -> None:
     # Register signal handler for Ctrl+C
     signal.signal(signal.SIGINT, handle_sigint)
 
-    # Handle broken pipe for shell compatibility
+    # Handle broken pipe gracefully
+    # NOTE: Using SIG_IGN instead of SIG_DFL to prevent subprocess SIGPIPE from killing
+    # the parent process. When a subprocess doesn't consume all stdin (e.g., shell command
+    # that uses 'echo' instead of reading from pipe), SIG_DFL would terminate Python with
+    # exit code 141. SIG_IGN allows subprocess.run() to handle this gracefully.
+    # See: https://github.com/spinje/pflow/issues/25
     if hasattr(signal, "SIGPIPE"):
-        signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 
 def _check_mcp_sync_needed(config_path: Path, registry: Any, servers: list[str]) -> tuple[bool, str]:
