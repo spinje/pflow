@@ -10,9 +10,9 @@ from pflow.nodes.llm import LLMNode
 class TestLLMNode:
     """Test suite for LLMNode covering all specification criteria."""
 
-    # Test Criteria 1: prompt in shared → prompt extracted correctly
-    def test_prompt_from_shared(self):
-        """Test that prompt is extracted from shared store."""
+    # Test Criteria 1: prompt in params → prompt extracted correctly
+    def test_prompt_from_params(self):
+        """Test that prompt is extracted from params."""
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_response = Mock()
             mock_response.text.return_value = "Test response"
@@ -23,18 +23,18 @@ class TestLLMNode:
             mock_get_model.return_value = mock_model
 
             node = LLMNode()
-            node.set_params({})
-            shared = {"prompt": "Test prompt from shared"}
+            node.set_params({"prompt": "Test prompt from params"})
+            shared = {}
 
             action = node.run(shared)
 
             assert action == "default"
             assert shared["response"] == "Test response"
-            mock_model.prompt.assert_called_with("Test prompt from shared", stream=False, temperature=1.0)
+            mock_model.prompt.assert_called_with("Test prompt from params", stream=False, temperature=1.0)
 
-    # Test Criteria 2: prompt not in shared but in params → prompt extracted from params
-    def test_prompt_from_params_fallback(self):
-        """Test that prompt falls back to params when not in shared."""
+    # Test Criteria 2: prompt with direct params assignment → prompt extracted correctly
+    def test_prompt_with_direct_params_assignment(self):
+        """Test that prompt works with direct params assignment."""
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_response = Mock()
             mock_response.text.return_value = "Param response"
@@ -45,8 +45,8 @@ class TestLLMNode:
             mock_get_model.return_value = mock_model
 
             node = LLMNode()
-            node.set_params({"prompt": "Test prompt from params"})
-            shared = {}  # No prompt in shared
+            node.params = {"prompt": "Test prompt from params"}
+            shared = {}
 
             action = node.run(shared)
 
@@ -59,13 +59,13 @@ class TestLLMNode:
         """Test that missing prompt raises ValueError with helpful message."""
         node = LLMNode()
         node.set_params({})  # No prompt in params
-        shared = {}  # No prompt in shared
+        shared = {}
 
         with pytest.raises(ValueError) as exc_info:
             node.run(shared)
 
         assert "LLM node requires 'prompt'" in str(exc_info.value)
-        assert "shared store or parameters" in str(exc_info.value)
+        assert "parameter" in str(exc_info.value)
 
     # Test Criteria 4: model parameter used → llm.get_model called with correct model
     def test_model_parameter_used(self):
@@ -466,12 +466,12 @@ class TestLLMNode:
 
             assert shared["llm_usage"] == {}  # Empty dict, not None
 
-    # Additional test: System parameter fallback pattern
-    def test_system_parameter_fallback(self):
-        """Test that system parameter uses fallback pattern (shared first, then params)."""
+    # Additional test: System parameter from params
+    def test_system_parameter_from_params(self):
+        """Test that system parameter is read from params."""
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_response = Mock()
-            mock_response.text.return_value = "System from shared"
+            mock_response.text.return_value = "System response"
             mock_response.usage.return_value = None
 
             mock_model = Mock()
@@ -480,11 +480,11 @@ class TestLLMNode:
 
             node = LLMNode()
             node.set_params({"prompt": "Test", "system": "Param system"})
-            shared = {"system": "Shared system"}  # System in shared takes precedence
+            shared = {}
 
             node.run(shared)
 
-            mock_model.prompt.assert_called_with("Test", stream=False, temperature=1.0, system="Shared system")
+            mock_model.prompt.assert_called_with("Test", stream=False, temperature=1.0, system="Param system")
 
     # Additional test: Retry behavior
     def test_retry_behavior_on_transient_failure(self):

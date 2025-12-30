@@ -1,0 +1,33 @@
+{
+  "inputs": {
+    "url": {
+      "type": "string",
+      "required": true,
+      "description": "BUG: This input name collides with HTTP node's url parameter"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "purpose": "Fetch via Jina Reader",
+      "params": {
+        "url": "https://r.jina.ai/${url}"
+      }
+    },
+    {
+      "id": "check",
+      "type": "shell",
+      "params": {
+        "stdin": "${fetch.response}",
+        "command": "head -3"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "fetch",
+      "to": "check"
+    }
+  ]
+}

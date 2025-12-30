@@ -27,7 +27,8 @@ class TestIntegration:
 
             # Read with ReadFileNode
             read_node = ReadFileNode()
-            shared = {"file_path": source_path}
+            read_node.set_params({"file_path": source_path})
+            shared = {}
 
             prep_res = read_node.prep(shared)
             exec_res = read_node.exec(prep_res)
@@ -39,7 +40,7 @@ class TestIntegration:
             # Write to new file (note: it will include line numbers)
             dest_path = os.path.join(tmpdir, "dest.txt")
             write_node = WriteFileNode()
-            shared["file_path"] = dest_path
+            write_node.set_params({"file_path": dest_path, "content": shared["content"]})
 
             prep_res = write_node.prep(shared)
             exec_res = write_node.exec(prep_res)
@@ -53,7 +54,8 @@ class TestIntegration:
         """Test that errors are properly propagated."""
         # Try to read non-existent file
         read_node = ReadFileNode()
-        shared = {"file_path": "/non/existent/path.txt"}
+        read_node.set_params({"file_path": "/non/existent/path.txt"})
+        shared = {}
 
         # Use node.run() for full lifecycle with error handling
         action = read_node.run(shared)
@@ -66,10 +68,10 @@ class TestIntegration:
         with tempfile.NamedTemporaryFile(delete=False) as tmp:
             temp_path = tmp.name
         try:
-            shared["file_path"] = temp_path
+            write_node.set_params({"file_path": temp_path})
             # Note: content is missing, should fail in prep
 
-            with pytest.raises(ValueError, match="Missing required 'content'"):
+            with pytest.raises(ValueError, match="Missing required 'content' parameter"):
                 write_node.prep(shared)
         finally:
             # Clean up temp file if it exists
@@ -97,7 +99,8 @@ class TestFileNodeIntegration:
 
             try:
                 node = ReadFileNode()
-                shared = {"file_path": rel_path}
+                node.set_params({"file_path": rel_path})
+                shared = {}
 
                 prep_res = node.prep(shared)
                 # prep_res should contain normalized absolute path
@@ -134,8 +137,7 @@ class TestFileNodeIntegration:
             # Step 1: Copy to backup
             copy_node = CopyFileNode()
             backup_path = os.path.join(tmpdir, "backup.txt")
-            shared["source_path"] = original_path
-            shared["dest_path"] = backup_path
+            copy_node.set_params({"source_path": original_path, "dest_path": backup_path})
 
             prep_res = copy_node.prep(shared)
             exec_res = copy_node.exec(prep_res)
@@ -147,8 +149,7 @@ class TestFileNodeIntegration:
             # Step 2: Move original to new location
             move_node = MoveFileNode()
             new_path = os.path.join(tmpdir, "new_location.txt")
-            shared["source_path"] = original_path
-            shared["dest_path"] = new_path
+            move_node.set_params({"source_path": original_path, "dest_path": new_path})
 
             prep_res = move_node.prep(shared)
             exec_res = move_node.exec(prep_res)
@@ -160,7 +161,7 @@ class TestFileNodeIntegration:
 
             # Step 3: Delete the backup
             delete_node = DeleteFileNode()
-            shared["file_path"] = backup_path
+            delete_node.set_params({"file_path": backup_path})
             shared["confirm_delete"] = True
 
             prep_res = delete_node.prep(shared)

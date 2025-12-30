@@ -19,7 +19,8 @@ class TestReadFileNode:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             # Execute node lifecycle
             prep_res = node.prep(shared)
@@ -42,7 +43,8 @@ class TestReadFileNode:
         - Fixed string assertion fragility by checking semantic meaning
         """
         node = ReadFileNode()
-        shared = {"file_path": "/non/existent/file.txt"}
+        node.set_params({"file_path": "/non/existent/file.txt"})
+        shared = {}
 
         # BEHAVIOR: Should provide helpful error message
         action = node.run(shared)
@@ -62,7 +64,8 @@ class TestReadFileNode:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path, "encoding": "utf-16"}
+            node.set_params({"file_path": temp_path, "encoding": "utf-16"})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -92,7 +95,8 @@ class TestReadFileNode:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             # NEW BEHAVIOR: Should fallback to binary, not error
             action = node.run(shared)
@@ -114,7 +118,8 @@ class TestReadFileNode:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -150,7 +155,7 @@ class TestReadFileNode:
         node = ReadFileNode()
         shared = {}
 
-        with pytest.raises(ValueError, match="Missing required 'file_path'"):
+        with pytest.raises(ValueError, match="Missing required 'file_path' parameter"):
             node.prep(shared)
 
     def test_line_numbers_multiline(self):
@@ -162,7 +167,8 @@ class TestReadFileNode:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)

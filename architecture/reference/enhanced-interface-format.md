@@ -126,25 +126,24 @@ Interface:
 - Writes: shared["sum"]: int, shared["product"]: int  # Results
 ```
 
-## The Exclusive Params Pattern
+## The Params Pattern
 
-**Important**: Parameters that are already listed in `Reads` should NOT be repeated in `Params`. Every input is automatically available as a parameter fallback.
+**Important**: All node inputs come from `self.params`. The template system handles wiring shared store data into params before execution.
 
-### Example: Exclusive Parameters
+### Example: Node Parameters
 
 ```python
 Interface:
-- Reads: shared["content"]: str  # Content to write
-- Reads: shared["file_path"]: str  # Destination file path
-- Writes: shared["success"]: bool  # True if written successfully
+- Params: content: str  # Content to write (required)
+- Params: file_path: str  # Destination file path (required)
 - Params: append: bool  # Append mode (default: false)
-# Note: content and file_path are NOT in Params - they're automatic fallbacks!
+- Writes: shared["success"]: bool  # True if written successfully
 ```
 
 In this example:
-- `content` and `file_path` are inputs AND automatic parameter fallbacks
-- Only `append` is listed in Params because it's not an input
-- The node can be called with `params={"file_path": "...", "content": "...", "append": True}`
+- `content`, `file_path`, and `append` are all in Params
+- The node reads from `self.params.get("content")`, `self.params.get("file_path")`, etc.
+- Template variables like `${previous_node.output}` resolve into params before execution
 
 ## Structure Documentation
 

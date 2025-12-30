@@ -24,8 +24,8 @@ class DeleteFileNode(Node):
     Treats non-existent files as success for idempotent behavior.
 
     Interface:
-    - Reads: shared["file_path"]: str  # Path to the file to delete
-    - Reads: shared["confirm_delete"]: bool  # Must be true to confirm deletion
+    - Params: file_path: str  # Path to delete
+    - Shared: confirm_delete: bool  # MUST be set in shared store (security requirement)
     - Writes: shared["deleted"]: bool  # True if delete succeeded
     - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), error (failure)
@@ -45,9 +45,9 @@ class DeleteFileNode(Node):
     def prep(self, shared: dict) -> tuple[str, bool]:
         """Extract file path and confirmation flag from shared store."""
         # File path is required
-        file_path = shared.get("file_path") or self.params.get("file_path")
+        file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("Missing required 'file_path' in shared store or params")
+            raise ValueError("Missing required 'file_path' parameter")
 
         # Normalize the path
         file_path = os.path.expanduser(file_path)

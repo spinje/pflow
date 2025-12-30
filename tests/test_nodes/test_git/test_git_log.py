@@ -33,13 +33,13 @@ class TestGitLogNode:
         assert result["path"] is None
         assert Path(result["working_directory"]).is_absolute()
 
-    def test_prep_with_shared_values(self):
-        """Test prep extracts values from shared store."""
+    def test_prep_with_params_values(self):
+        """Test prep extracts values from params."""
         import tempfile
 
         node = GitLogNode()
         with tempfile.TemporaryDirectory() as tmpdir:
-            shared = {
+            node.params = {
                 "since": "v1.0.0",
                 "until": "HEAD",
                 "limit": 50,
@@ -48,6 +48,7 @@ class TestGitLogNode:
                 "path": "src/",
                 "working_directory": tmpdir,
             }
+            shared = {}
 
             result = node.prep(shared)
 
@@ -76,17 +77,20 @@ class TestGitLogNode:
         node = GitLogNode()
 
         # Test non-integer
-        shared = {"limit": "invalid"}
+        node.params = {"limit": "invalid"}
+        shared = {}
         with pytest.raises(ValueError, match="Invalid limit"):
             node.prep(shared)
 
         # Test negative
-        shared = {"limit": -1}
+        node.params = {"limit": -1}
+        shared = {}
         with pytest.raises(ValueError, match="Invalid limit"):
             node.prep(shared)
 
         # Test zero
-        shared = {"limit": 0}
+        node.params = {"limit": 0}
+        shared = {}
         with pytest.raises(ValueError, match="Invalid limit"):
             node.prep(shared)
 

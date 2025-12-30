@@ -14,12 +14,12 @@ class HttpNode(Node):
     Make HTTP requests to APIs and web services.
 
     Interface:
-    - Reads: shared["url"]: str  # API endpoint to call
-    - Reads: shared["method"]: str  # HTTP method (optional)
-    - Reads: shared["body"]: dict|str  # Request payload (optional)
-    - Reads: shared["headers"]: dict  # Additional headers (optional)
-    - Reads: shared["params"]: dict  # Query parameters (optional)
-    - Reads: shared["timeout"]: int  # Request timeout in seconds (optional)
+    - Params: url: str  # API endpoint to call
+    - Params: method: str  # HTTP method (optional)
+    - Params: body: dict|str  # Request payload (optional)
+    - Params: headers: dict  # Additional headers (optional)
+    - Params: params: dict  # Query parameters (optional)
+    - Params: timeout: int  # Request timeout in seconds (optional)
     - Writes: shared["response"]: dict|str  # Response data (JSON parsed, raw text, or base64-encoded binary)
     - Writes: shared["response_is_binary"]: bool  # True if response is binary data
     - Writes: shared["status_code"]: int  # HTTP status code
@@ -45,25 +45,25 @@ class HttpNode(Node):
         super().__init__(max_retries=max_retries, wait=wait)
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
-        """Extract and validate parameters with fallback pattern."""
+        """Extract and validate HTTP request parameters."""
         # Required parameter
-        url = shared.get("url") or self.params.get("url")
+        url = self.params.get("url")
         if not url:
-            raise ValueError("HTTP node requires 'url' in shared store or parameters")
+            raise ValueError("HTTP node requires 'url' parameter")
 
-        # Optional parameters with presence checks to handle falsy values properly
-        method = shared.get("method") if "method" in shared else self.params.get("method")
-        body = shared.get("body") if "body" in shared else self.params.get("body")
+        # Optional parameters
+        method = self.params.get("method")
+        body = self.params.get("body")
 
         # Headers: copy to avoid mutating caller's dict
-        base_headers = shared.get("headers") if "headers" in shared else self.params.get("headers", {})
+        base_headers = self.params.get("headers", {})
         headers = dict(base_headers) if base_headers else {}
 
         # Query parameters
-        params = shared.get("params") if "params" in shared else self.params.get("params")
+        params = self.params.get("params")
 
         # Timeout with validation
-        raw_timeout = shared.get("timeout") if "timeout" in shared else self.params.get("timeout", 30)
+        raw_timeout = self.params.get("timeout", 30)
         if raw_timeout is None:
             timeout = 30  # Default timeout
         else:
@@ -85,8 +85,8 @@ class HttpNode(Node):
             raise ValueError(f"Invalid HTTP method '{method}'. Allowed: {', '.join(sorted(valid_methods))}")
 
         # Authentication - check for mutual exclusivity per spec
-        auth_token = shared.get("auth_token") or self.params.get("auth_token")
-        api_key = shared.get("api_key") or self.params.get("api_key")
+        auth_token = self.params.get("auth_token")
+        api_key = self.params.get("api_key")
 
         if auth_token and api_key:
             raise ValueError("Cannot specify both auth_token and api_key - they are mutually exclusive")

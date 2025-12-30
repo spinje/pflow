@@ -20,11 +20,11 @@ class SimpleOutputNode(Node):
 
 
 class SimpleReaderNode(Node):
-    """Test node that reads from shared store."""
+    """Test node that reads from params (template resolution handles shared store wiring)."""
 
     def prep(self, shared):
-        # Use fallback pattern
-        return shared.get("output") or self.params.get("output")
+        # Read from params only
+        return self.params.get("output")
 
     def exec(self, prep_res):
         return f"Read: {prep_res}"
@@ -179,8 +179,8 @@ def test_namespacing_enabled_by_default(tmp_path):
         compiler_module.import_node_class = original_import
 
 
-def test_namespacing_with_cli_inputs(tmp_path):
-    """Test that CLI inputs at root level are still accessible with namespacing."""
+def test_namespacing_with_cli_inputs_via_template(tmp_path):
+    """Test that CLI inputs at root level are wired to nodes via templates."""
     # Create registry with test node
     registry_path = tmp_path / "test_registry.json"
     registry = Registry(registry_path)
@@ -215,19 +215,23 @@ def test_namespacing_with_cli_inputs(tmp_path):
             "ir_version": "0.1.0",
             "enable_namespacing": True,
             "nodes": [
-                {"id": "reader", "type": "test-reader"},  # No params, will read from shared
+                {
+                    "id": "reader",
+                    "type": "test-reader",
+                    "params": {"output": "${cli_output}"},  # Template wires CLI input to params
+                },
             ],
             "edges": [],  # Empty edges array required
         }
 
         flow = compile_ir_to_flow(workflow_ir, registry, validate=False)
 
-        # Simulate CLI putting data at root level
-        shared = {"output": "cli_data"}
+        # Simulate CLI putting data at root level (with different name to avoid any confusion)
+        shared = {"cli_output": "cli_data"}
         flow.run(shared)
 
-        # Reader should be able to read CLI input from root
-        assert shared["reader"]["result"] == "Read: cli_data", "Should read CLI data from root"
+        # Reader should receive CLI input via template resolution
+        assert shared["reader"]["result"] == "Read: cli_data", "Should read CLI data via template"
 
     finally:
         compiler_module.import_node_class = original_import

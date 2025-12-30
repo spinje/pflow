@@ -11,23 +11,25 @@ Before implementing any node, you should understand:
 
 ## Common Implementation Patterns
 
-### Check Shared Store First Pattern
+### Parameter-Only Pattern
 
-All nodes should check the shared store for input values before falling back to parameters. This enables dynamic data flow between nodes:
+All nodes should read input values from `self.params`. The template system handles wiring shared store data into params before node execution:
 
 ```python
 def prep(self, shared):
-    # Check shared store first (dynamic), then params (static)
-    value = shared.get("key") or self.params.get("key")
+    # Read from params (template resolution handles shared store wiring)
+    value = self.params.get("key")
     if not value:
-        raise ValueError("key must be in shared store or params")
+        raise ValueError("key parameter is required")
     return value
 ```
 
 This pattern allows nodes to:
-- Accept dynamic input from previous nodes via shared store
-- Fall back to static CLI parameters when run independently
+- Receive template-resolved values via params (e.g., `"input": "${previous_node.output}"`)
+- Accept static configuration when templates are not used
 - Provide clear error messages when required inputs are missing
+
+The template system (`${variable}`) provides explicit data flow declaration in the workflow IR, making data dependencies clear and predictable.
 
 ### Node Lifecycle Implementation
 
@@ -48,8 +50,8 @@ class MyNode(BaseNode):  # or Node
     """
 
     def prep(self, shared):
-        """Prepare phase: gather inputs from shared store and params."""
-        # Implement shared store first pattern
+        """Prepare phase: gather inputs from params."""
+        # Read from params (template resolution handles shared store wiring)
         pass
 
     def exec(self, prep_res):
@@ -69,9 +71,9 @@ Nodes should provide clear, actionable error messages:
 
 ```python
 def prep(self, shared):
-    required_field = shared.get("field") or self.params.get("field")
+    required_field = self.params.get("field")
     if not required_field:
-        raise ValueError("field must be in shared store or params")
+        raise ValueError("Required parameter 'field' not provided")
 
     # Validate input format
     if not isinstance(required_field, str):
@@ -150,16 +152,16 @@ Security Note: Config files can contain sensitive data - handle with care.
    - Format: `action_name (description)`
    - Default action should always be included
 
-### Parameter Priority Pattern
+### Parameter-Only Pattern
 
-Parameters can come from either the shared store OR node params, with shared store taking priority:
+Nodes read all input values from `self.params`. The template system resolves `${variable}` references from the shared store into params before node execution:
 
 ```python
 def prep(self, shared):
-    # Shared store value takes precedence
-    value = shared.get("key") or self.params.get("key")
+    # Read from params (template-resolved values are already here)
+    value = self.params.get("key")
     if not value:
-        raise ValueError("key must be in shared store or params")
+        raise ValueError("Required parameter 'key' not provided")
 ```
 
 ## Node Type Reference

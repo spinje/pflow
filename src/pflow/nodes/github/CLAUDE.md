@@ -63,7 +63,7 @@ def prep(self, shared):
     if result.returncode != 0:
         raise ValueError("GitHub CLI not authenticated. Run 'gh auth login' first.")
 
-    issue = shared.get("issue_number") or self.params.get("issue_number")
+    issue = self.params.get("issue_number")
     return {"issue": issue}
 ```
 
@@ -99,15 +99,15 @@ def exec(self, prep_res):
     return json.loads(result.stdout)
 ```
 
-### 2. Parameter Fallback Pattern
+### 2. Parameter-Only Pattern
 ```python
 def prep(self, shared):
-    # Automatic fallback: shared → params → error/default
-    issue = shared.get("issue_number") or self.params.get("issue_number")
-    repo = shared.get("repo") or self.params.get("repo")  # Optional - can be None
+    # Read from params (template resolution handles shared store wiring)
+    issue = self.params.get("issue_number")
+    repo = self.params.get("repo")  # Optional - can be None
 
     if not issue:
-        raise ValueError("Missing required 'issue_number'")
+        raise ValueError("Missing required 'issue_number' parameter")
 
     return {"issue": issue, "repo": repo}
 ```

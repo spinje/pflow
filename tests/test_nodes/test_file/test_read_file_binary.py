@@ -28,7 +28,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             action = node.run(shared)
 
@@ -68,7 +69,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             # Should NOT crash - should fallback to binary
             action = node.run(shared)
@@ -102,7 +104,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             node.run(shared)
 
@@ -129,7 +132,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             node.run(shared)
 
@@ -152,7 +156,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             node.run(shared)
 
@@ -178,7 +183,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             action = node.run(shared)
 
@@ -208,7 +214,8 @@ class TestReadFileBinarySupport:
 
         try:
             node = ReadFileNode()
-            shared = {"file_path": temp_path}
+            node.set_params({"file_path": temp_path})
+            shared = {}
 
             node.run(shared)
 
@@ -243,7 +250,8 @@ class TestReadFileBinarySupport:
 
             try:
                 node = ReadFileNode()
-                shared = {"file_path": temp_path}
+                node.set_params({"file_path": temp_path})
+                shared = {}
 
                 action = node.run(shared)
 

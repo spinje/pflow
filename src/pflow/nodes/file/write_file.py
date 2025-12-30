@@ -27,13 +27,13 @@ class WriteFileNode(Node):
     as needed. Supports both write and append modes.
 
     Interface:
-    - Reads: shared["content"]: str  # Content to write to the file (text or base64-encoded binary)
-    - Reads: shared["content_is_binary"]: bool  # True if content is base64-encoded binary (optional, default: false)
-    - Reads: shared["file_path"]: str  # Path to the file to write
-    - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+    - Params: content: str  # Content to write to the file (text or base64-encoded binary)
+    - Params: content_is_binary: bool  # True if content is base64-encoded binary (optional, default: false)
+    - Params: file_path: str  # Path to the file to write
+    - Params: encoding: str  # File encoding (optional, default: utf-8)
+    - Params: append: bool  # Append to file instead of overwriting (default: false)
     - Writes: shared["written"]: bool  # True if write succeeded
     - Writes: shared["error"]: str  # Error message if operation failed
-    - Params: append: bool  # Append to file instead of overwriting (default: false)
     - Actions: default (success), error (failure)
 
     Security Note: This node can write to ANY accessible path on the system.
@@ -49,18 +49,15 @@ class WriteFileNode(Node):
 
     def prep(self, shared: dict) -> tuple[str | bytes, str, str, bool, bool]:
         """Extract content, file path, encoding, and mode from shared store or params."""
-        # Content is required - check shared first, then params
-        if "content" in shared:
-            content = shared["content"]
-        elif "content" in self.params:
-            content = self.params["content"]
-        else:
-            raise ValueError("Missing required 'content' in shared store or params")
+        # Content is required
+        content = self.params.get("content")
+        if content is None:
+            raise ValueError("Missing required 'content' parameter")
 
         # File path is required
-        file_path = shared.get("file_path") or self.params.get("file_path")
+        file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("Missing required 'file_path' in shared store or params")
+            raise ValueError("Missing required 'file_path' parameter")
 
         # Normalize the path
         file_path = os.path.expanduser(file_path)  # Expand ~
@@ -68,13 +65,13 @@ class WriteFileNode(Node):
         file_path = os.path.normpath(file_path)  # Clean up separators
 
         # Get encoding with UTF-8 default
-        encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
+        encoding = self.params.get("encoding", "utf-8")
 
         # Get append mode (default False)
         append = self.params.get("append", False)
 
-        # Check for binary flag (NEW)
-        is_binary = shared.get("content_is_binary") or self.params.get("content_is_binary", False)
+        # Check for binary flag
+        is_binary = self.params.get("content_is_binary", False)
 
         if is_binary and isinstance(content, str):
             # Decode base64 to bytes

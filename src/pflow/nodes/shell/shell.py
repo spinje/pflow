@@ -97,7 +97,7 @@ class ShellNode(Node):
     command templates and error with a helpful message guiding you to use stdin instead.
 
     Interface:
-    - Reads: shared["stdin"]: any  # Optional input data for the command (dict/list auto-serialized to JSON)
+    - Params: stdin: any  # Optional input data for the command (dict/list auto-serialized to JSON)
     - Writes: shared["stdout"]: str  # Command standard output (text or base64-encoded binary)
     - Writes: shared["stdout_is_binary"]: bool  # True if stdout is binary data
     - Writes: shared["stderr"]: str  # Command error output (text or base64-encoded binary)
@@ -485,8 +485,8 @@ class ShellNode(Node):
                     )
                 break  # Only log once per command
 
-        # Get optional stdin from shared store or params (template fallback)
-        stdin = shared.get("stdin") or self.params.get("stdin")
+        # Get optional stdin from params
+        stdin = self.params.get("stdin")
 
         # Adapt stdin to string (handle any type from templates)
         stdin = self._adapt_stdin_to_string(stdin)

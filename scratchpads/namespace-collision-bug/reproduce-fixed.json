@@ -1,0 +1,51 @@
+{
+  "inputs": {
+    "test": {
+      "type": "string",
+      "required": false,
+      "default": "test"
+    }
+  },
+  "nodes": [
+    {
+      "id": "setup",
+      "type": "shell",
+      "purpose": "Setup step",
+      "params": {
+        "command": "echo 'setup done'"
+      }
+    },
+    {
+      "id": "extract-images",
+      "type": "shell",
+      "purpose": "FIXED: Renamed from 'images' to 'extract-images' to avoid collision",
+      "params": {
+        "command": "echo '[\"https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png\"]'"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "purpose": "Now works because no collision with 'images' param",
+      "batch": {
+        "items": "${extract-images.stdout}",
+        "error_handling": "continue"
+      },
+      "params": {
+        "prompt": "Describe this image briefly",
+        "images": "${item}",
+        "model": "gemini-2.0-flash"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "setup",
+      "to": "extract-images"
+    },
+    {
+      "from": "extract-images",
+      "to": "analyze"
+    }
+  ]
+}

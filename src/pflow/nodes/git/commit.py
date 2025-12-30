@@ -21,9 +21,9 @@ class GitCommitNode(Node):
     Create a git commit.
 
     Interface:
-    - Reads: shared["message"]: str  # Commit message
-    - Reads: shared["files"]: list[str]  # Files to add (optional, default: ["."])
-    - Reads: shared["working_directory"]: str  # Directory to run git commands (optional, default: current directory)
+    - Params: message: str  # Commit message
+    - Params: files: list[str]  # Files to add (optional, default: ["."])
+    - Params: working_directory: str  # Directory to run git commands (optional, default: current directory)
     - Writes: shared["commit_sha"]: str  # Commit SHA
     - Writes: shared["commit_message"]: str  # Commit message (echoed)
     - Actions: default (always)
@@ -38,21 +38,21 @@ class GitCommitNode(Node):
         super().__init__(max_retries=2, wait=0.5)
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract commit message and files from shared store or parameters."""
-        # Get commit message from shared or params
-        message = shared.get("message") or self.params.get("message")
+        """Extract commit message and files from parameters."""
+        # Get commit message from params
+        message = self.params.get("message")
         if not message:
-            raise ValueError("Commit message is required. Provide it in shared['message'] or as a parameter.")
+            raise ValueError("Commit message is required. Provide it as a parameter.")
 
-        # Get files to add from shared or params, default to ["."]
-        files = shared.get("files") or self.params.get("files", ["."])
+        # Get files to add from params, default to ["."]
+        files = self.params.get("files", ["."])
 
         # Ensure files is a list
         if isinstance(files, str):
             files = [files]
 
-        # Get working directory from shared or params, default to current directory
-        cwd = shared.get("working_directory") or self.params.get("working_directory", ".")
+        # Get working directory from params, default to current directory
+        cwd = self.params.get("working_directory", ".")
         cwd = Path(cwd).expanduser().resolve()
 
         logger.debug(

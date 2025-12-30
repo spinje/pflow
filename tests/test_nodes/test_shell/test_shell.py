@@ -62,10 +62,10 @@ class TestShellNodeBasicExecution:
 
     def test_command_with_stdin_input(self):
         """Test passing data through stdin to commands."""
-        shared = {"stdin": "hello from stdin"}
+        shared = {}
 
         # Use cat to echo stdin
-        run_shell_node(shared, command="cat")
+        run_shell_node(shared, command="cat", stdin="hello from stdin")
 
         assert shared["stdout"] == "hello from stdin"
         assert shared["exit_code"] == 0
@@ -73,10 +73,10 @@ class TestShellNodeBasicExecution:
     def test_multiline_stdin_input(self):
         """Test passing multiline data through stdin."""
         # Add trailing newline to ensure wc counts all lines
-        shared = {"stdin": "line1\nline2\nline3\n"}
+        shared = {}
 
         # Count lines using wc
-        run_shell_node(shared, command="wc -l")
+        run_shell_node(shared, command="wc -l", stdin="line1\nline2\nline3\n")
 
         # wc -l should return 3 (with possible leading/trailing spaces)
         output = shared["stdout"].strip()
@@ -471,10 +471,10 @@ class TestShellNodePracticalScenarios:
     def test_grep_from_stdin(self):
         """Test using grep with stdin input."""
         # node = ShellNode()
-        shared = {"stdin": "apple\nbanana\ncherry\napricot"}
+        shared = {}
 
         # Grep for lines containing 'a'
-        run_shell_node(shared, command='grep "a"')
+        run_shell_node(shared, command='grep "a"', stdin="apple\nbanana\ncherry\napricot")
 
         assert "apple" in shared["stdout"]
         assert "banana" in shared["stdout"]

@@ -6,7 +6,8 @@ from pflow.nodes.test.echo import EchoNode
 def test_echo_basic():
     """Test basic echo functionality."""
     node = EchoNode()
-    shared = {"message": "Hello"}
+    node.params = {"message": "Hello"}
+    shared = {}
 
     prep_res = node.prep(shared)
     exec_res = node.exec(prep_res)
@@ -22,7 +23,8 @@ def test_echo_basic():
 def test_echo_with_count():
     """Test echo with repetition."""
     node = EchoNode()
-    shared = {"message": "Hi", "count": 3}
+    node.params = {"message": "Hi", "count": 3}
+    shared = {}
 
     prep_res = node.prep(shared)
     exec_res = node.exec(prep_res)
@@ -36,8 +38,8 @@ def test_echo_with_count():
 def test_echo_with_prefix_suffix():
     """Test echo with prefix and suffix."""
     node = EchoNode()
-    node.params = {"prefix": "[", "suffix": "]"}
-    shared = {"message": "Test"}
+    node.params = {"message": "Test", "prefix": "[", "suffix": "]"}
+    shared = {}
 
     prep_res = node.prep(shared)
     exec_res = node.exec(prep_res)
@@ -50,8 +52,8 @@ def test_echo_with_prefix_suffix():
 def test_echo_uppercase():
     """Test echo with uppercase transformation."""
     node = EchoNode()
-    node.params = {"uppercase": True}
-    shared = {"message": "hello world"}
+    node.params = {"message": "hello world", "uppercase": True}
+    shared = {}
 
     prep_res = node.prep(shared)
     exec_res = node.exec(prep_res)
@@ -65,7 +67,8 @@ def test_echo_pass_through_data():
     """Test echo passes through arbitrary data."""
     node = EchoNode()
     test_data = {"key": "value", "number": 42}
-    shared = {"message": "Test", "data": test_data}
+    node.params = {"message": "Test", "data": test_data}
+    shared = {}
 
     prep_res = node.prep(shared)
     exec_res = node.exec(prep_res)
@@ -91,8 +94,8 @@ def test_echo_default_message():
 def test_echo_combined_transformations():
     """Test echo with multiple transformations."""
     node = EchoNode()
-    node.params = {"prefix": ">>> ", "suffix": " <<<", "uppercase": True}
-    shared = {"message": "test", "count": 2}
+    node.params = {"message": "test", "count": 2, "prefix": ">>> ", "suffix": " <<<", "uppercase": True}
+    shared = {}
 
     prep_res = node.prep(shared)
     exec_res = node.exec(prep_res)

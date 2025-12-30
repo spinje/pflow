@@ -235,7 +235,7 @@ class TestStdinEncoding:
         Real scenario: echo "data" piped to stdin → TypeError: expected bytes.
         """
         node = ShellNode()
-        node.set_params({"command": "cat"})
+        node.set_params({"command": "cat", "stdin": "input data"})
 
         with patch("subprocess.run") as mock_run:
             mock_result = Mock()
@@ -244,7 +244,7 @@ class TestStdinEncoding:
             mock_result.returncode = 0
             mock_run.return_value = mock_result
 
-            shared = {"stdin": "input data"}
+            shared = {}
             action = node.run(shared)
 
             # Verify stdin was encoded

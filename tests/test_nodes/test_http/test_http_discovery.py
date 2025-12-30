@@ -34,13 +34,12 @@ def test_http_node_discovered():
         assert "params" in interface
 
         # Verify critical interface elements
-        inputs = interface["inputs"]
-        assert any("url" in i["key"] for i in inputs), "URL not found in inputs"
+        # All inputs are now params (no more Reads: shared["key"] pattern)
+        params = interface["params"]
+        assert any("url" in p["key"] for p in params), "URL not found in params"
+        assert any("auth_token" in p["key"] for p in params), "auth_token not found in params"
+        assert any("api_key" in p["key"] for p in params), "api_key not found in params"
 
         outputs = interface["outputs"]
         assert any("response" in o["key"] for o in outputs), "Response not found in outputs"
         assert any("status_code" in o["key"] for o in outputs), "Status code not found in outputs"
-
-        params = interface["params"]
-        assert any("auth_token" in p["key"] for p in params), "auth_token not found in params"
-        assert any("api_key" in p["key"] for p in params), "api_key not found in params"

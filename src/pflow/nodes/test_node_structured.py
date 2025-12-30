@@ -18,7 +18,7 @@ class StructuredExampleNode(Node):
     for testing the structure parsing functionality.
 
     Interface:
-    - Reads: shared["user_id"]: str  # User ID to fetch data for
+    - Params: user_id: str  # User ID to fetch data for
     - Writes: shared["user_data"]: dict  # User information
         - id: str  # User ID
         - profile: dict  # User profile information

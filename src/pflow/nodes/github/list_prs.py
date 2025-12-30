@@ -17,9 +17,9 @@ class ListPrsNode(Node):
     List GitHub repository pull requests.
 
     Interface:
-    - Reads: shared["repo"]: str  # Repository in owner/repo format (optional, default: current repo)
-    - Reads: shared["state"]: str  # PR state: open, closed, merged, all (optional, default: open)
-    - Reads: shared["limit"]: int  # Maximum PRs to return (optional, default: 30)
+    - Params: repo: str  # Repository in owner/repo format (optional, default: current repo)
+    - Params: state: str  # PR state: open, closed, merged, all (optional, default: open)
+    - Params: limit: int  # Maximum PRs to return (optional, default: 30)
     - Writes: shared["prs"]: list[dict]  # Array of PR objects
         - number: int  # PR number
         - title: str  # PR title
@@ -57,18 +57,18 @@ class ListPrsNode(Node):
         if auth_result.returncode != 0:
             raise ValueError("GitHub CLI not authenticated. Please run 'gh auth login' to authenticate with GitHub.")
 
-        # Extract repo with fallback: shared → params → None (gh CLI uses current repo)
-        repo = shared.get("repo") or self.params.get("repo")
+        # Extract repo from params (gh CLI uses current repo if None)
+        repo = self.params.get("repo")
 
-        # Extract state with fallback: shared → params → default
-        state = shared.get("state") or self.params.get("state", "open")
+        # Extract state from params with default
+        state = self.params.get("state", "open")
         # Validate state - PRs have different states than issues
         valid_states = ["open", "closed", "merged", "all"]
         if state not in valid_states:
             raise ValueError(f"Invalid PR state '{state}'. Must be one of: {', '.join(valid_states)}")
 
-        # Extract limit with fallback: shared → params → default
-        limit = shared.get("limit") or self.params.get("limit", 30)
+        # Extract limit from params with default
+        limit = self.params.get("limit", 30)
         # Validate and clamp limit to valid range
         try:
             limit = int(limit)

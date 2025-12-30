@@ -23,8 +23,8 @@ class ReadFileNode(Node):
     following the Tutorial-Cursor pattern for file display.
 
     Interface:
-    - Reads: shared["file_path"]: str  # Path to the file to read
-    - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+    - Params: file_path: str  # Path to the file to read
+    - Params: encoding: str  # File encoding (optional, default: utf-8)
     - Writes: shared["content"]: str  # File contents (with line numbers for text, base64-encoded for binary)
     - Writes: shared["content_is_binary"]: bool  # True if content is binary data
     - Writes: shared["file_path"]: str  # Path that was read
@@ -41,10 +41,10 @@ class ReadFileNode(Node):
 
     def prep(self, shared: dict) -> tuple[str, str]:
         """Extract file path and encoding from shared store or params."""
-        # Check shared store first, then params
-        file_path = shared.get("file_path") or self.params.get("file_path")
+        # Get file path from params
+        file_path = self.params.get("file_path")
         if not file_path:
-            raise ValueError("Missing required 'file_path' in shared store or params")
+            raise ValueError("Missing required 'file_path' parameter")
 
         # Normalize the path
         file_path = os.path.expanduser(file_path)  # Expand ~
@@ -52,7 +52,7 @@ class ReadFileNode(Node):
         file_path = os.path.normpath(file_path)  # Clean up separators
 
         # Get encoding with UTF-8 default
-        encoding = shared.get("encoding") or self.params.get("encoding", "utf-8")
+        encoding = self.params.get("encoding", "utf-8")
 
         logger.debug("Preparing to read file", extra={"file_path": file_path, "encoding": encoding, "phase": "prep"})
         return (str(file_path), encoding)

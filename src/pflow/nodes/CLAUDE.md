@@ -145,40 +145,32 @@ See `architecture/reference/enhanced-interface-format.md` for more details of th
 2. **Type annotations**: Always include `: type` after the key
 3. **Descriptions**: Use `# Description` after the type
 4. **Optional/defaults**: Document in description like `(optional, default: value)`
-5. **Exclusive params pattern**: Only list params that are NOT in Reads
-   - Every value in Reads is automatically a parameter fallback
-   - Don't list `file_path` in Params if it's already in Reads!
-6. **Parameter Fallback**: Every value in Reads is automatically a parameter fallback
+5. **All inputs in Params**: Node inputs come from `self.params`, not shared store
+6. **Writes for outputs**: Node outputs go to shared store via `shared["key"]`
 
-### Example with Exclusive Params:
+### Example Interface:
 
 ```python
 Interface:
-- Reads: shared["content"]: str  # Content to write
-- Reads: shared["file_path"]: str  # Path to the file
-- Writes: shared["written"]: bool  # True if succeeded
-- Params: append: bool  # Append instead of overwrite (default: false)
-# Note: content and file_path are NOT in Params - they're automatic fallbacks!
+- Params: file_path: str  # Path to the file to read (required)
+- Params: encoding: str  # File encoding (optional, default: utf-8)
+- Writes: shared["content"]: str  # File contents read from file
+- Writes: shared["error"]: str  # Error message if operation failed
+- Actions: default (success), error (failure)
 ```
 
-Do not define params that are already in Reads:
-```python
-- Reads: shared["content"]: str  # Content to write
-- Params: content: str  # Do not define this param, it is already in Reads
-```
+### Parameter-Only Pattern
 
-### Parameter Fallback
-
-This pattern should be universally used for ALL nodes.This means that for all values read from shared, they are automatically a parameter fallback.
-
-Do NOT do:
-```python
-file_path = shared.get("file_path"); # This breaks the parameter fallback pattern
-```
+All node inputs should come from `self.params`, NOT from the shared store. The runtime uses template resolution to inject values from the shared store into node params before execution.
 
 Do:
 ```python
-file_path = shared.get("file_path") or self.params.get("file_path") # Always do this
+file_path = self.params.get("file_path")  # Correct - params only
+```
+
+Do NOT do:
+```python
+file_path = shared.get("file_path") or self.params.get("file_path")  # Wrong - shared store fallback
 ```
 
 ## Creating New Nodes

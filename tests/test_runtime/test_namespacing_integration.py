@@ -35,7 +35,7 @@ def test_namespacing_with_workflow_inputs(tmp_path):
         """Simple echo node for testing."""
 
         def prep(self, shared):
-            data = shared.get("data") or self.params.get("data", "no_data")
+            data = self.params.get("data", "no_data")
             return data
 
         def exec(self, prep_res):
@@ -113,7 +113,7 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
 
     class ApiCallNode(Node):
         def prep(self, shared):
-            url = shared.get("url") or self.params.get("url")
+            url = self.params.get("url")
             return url
 
         def exec(self, prep_res):
@@ -126,8 +126,8 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
 
     class CombineNode(Node):
         def prep(self, shared):
-            data1 = shared.get("data1") or self.params.get("data1")
-            data2 = shared.get("data2") or self.params.get("data2")
+            data1 = self.params.get("data1")
+            data2 = self.params.get("data2")
             return (data1, data2)
 
         def exec(self, prep_res):

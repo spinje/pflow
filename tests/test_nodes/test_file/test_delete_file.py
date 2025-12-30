@@ -19,7 +19,8 @@ class TestDeleteFileNode:
                 f.write("Test content")
 
             node = DeleteFileNode()
-            shared = {"file_path": file_path, "confirm_delete": True}
+            node.set_params({"file_path": file_path})
+            shared = {"confirm_delete": True}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -48,7 +49,8 @@ class TestDeleteFileNode:
                 f.write("Test content")
 
             node = DeleteFileNode()
-            shared = {"file_path": file_path, "confirm_delete": False}
+            node.set_params({"file_path": file_path})
+            shared = {"confirm_delete": False}
 
             # BEHAVIOR: Should fail for safety and preserve file
             action = node.run(shared)
@@ -69,7 +71,8 @@ class TestDeleteFileNode:
                 f.write("Test content")
 
             node = DeleteFileNode()
-            shared = {"file_path": file_path}  # No confirm_delete
+            node.set_params({"file_path": file_path})
+            shared = {}  # No confirm_delete
 
             with pytest.raises(ValueError, match="Missing required 'confirm_delete'"):
                 node.prep(shared)
@@ -80,7 +83,8 @@ class TestDeleteFileNode:
             file_path = os.path.join(tmpdir, "missing.txt")
 
             node = DeleteFileNode()
-            shared = {"file_path": file_path, "confirm_delete": True}
+            node.set_params({"file_path": file_path})
+            shared = {"confirm_delete": True}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)

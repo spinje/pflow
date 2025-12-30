@@ -20,9 +20,9 @@ class GitPushNode(Node):
     Push commits to remote repository.
 
     Interface:
-    - Reads: shared["branch"]: str  # Branch to push (optional, default: HEAD)
-    - Reads: shared["remote"]: str  # Remote name (optional, default: origin)
-    - Reads: shared["working_directory"]: str  # Directory to run git commands (optional, default: current directory)
+    - Params: branch: str  # Branch to push (optional, default: HEAD)
+    - Params: remote: str  # Remote name (optional, default: origin)
+    - Params: working_directory: str  # Directory to run git commands (optional, default: current directory)
     - Writes: shared["push_result"]: dict  # Push operation results
         - success: bool  # Whether push succeeded
         - branch: str  # Branch that was pushed
@@ -39,15 +39,15 @@ class GitPushNode(Node):
         super().__init__(max_retries=2, wait=1.0)
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract branch and remote from shared store or parameters."""
-        # Get branch from shared or params, default to HEAD
-        branch = shared.get("branch") or self.params.get("branch", "HEAD")
+        """Extract branch and remote from parameters."""
+        # Get branch from params, default to HEAD
+        branch = self.params.get("branch", "HEAD")
 
-        # Get remote from shared or params, default to origin
-        remote = shared.get("remote") or self.params.get("remote", "origin")
+        # Get remote from params, default to origin
+        remote = self.params.get("remote", "origin")
 
-        # Get working directory from shared or params, default to current directory
-        cwd = shared.get("working_directory") or self.params.get("working_directory", ".")
+        # Get working directory from params, default to current directory
+        cwd = self.params.get("working_directory", ".")
         cwd = Path(cwd).expanduser().resolve()
 
         logger.debug(

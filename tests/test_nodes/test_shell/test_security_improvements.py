@@ -374,10 +374,14 @@ class TestRealWorldPipelines:
 
     def test_grep_count_pipeline(self):
         """Test a real grep | wc -l pipeline."""
-        shared = {"stdin": "error: file not found\ninfo: starting\nerror: timeout\ninfo: done"}
+        shared = {}
 
         # Count error lines
-        run_shell_node(shared, command='grep "error" | wc -l')
+        run_shell_node(
+            shared,
+            command='grep "error" | wc -l',
+            stdin="error: file not found\ninfo: starting\nerror: timeout\ninfo: done",
+        )
         assert "2" in shared["stdout"].strip()
 
     def test_awk_field_extraction(self):

@@ -470,6 +470,7 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 93: Set Up Mintlify Documentation
 - ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 - ✅ Task 96: Support Batch Processing in Workflows
+- ✅ Task 102: Remove Parameter Fallback Pattern
 
 Next up:
 

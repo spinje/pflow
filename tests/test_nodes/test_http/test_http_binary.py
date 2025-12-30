@@ -38,7 +38,8 @@ class TestHttpBinarySupport:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://example.com/image.png", "method": "GET"}
+            node.params = {"url": "https://example.com/image.png", "method": "GET"}
+            shared = {}
             action = node.run(shared)
 
             # Verify binary was detected and handled correctly
@@ -66,7 +67,8 @@ class TestHttpBinarySupport:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://example.com/image.png", "method": "GET"}
+            node.params = {"url": "https://example.com/image.png", "method": "GET"}
+            shared = {}
             node.run(shared)
 
             # If we used .text, decoded data would be garbage
@@ -101,7 +103,8 @@ class TestHttpBinarySupport:
                 mock_request.return_value = mock_response
 
                 node = HttpNode()
-                shared = {"url": "https://example.com/file", "method": "GET"}
+                node.params = {"url": "https://example.com/file", "method": "GET"}
+                shared = {}
                 node.run(shared)
 
                 assert shared["response_is_binary"] is True, f"{content_type} should be detected as binary"
@@ -124,7 +127,8 @@ class TestHttpBinarySupport:
                 mock_request.return_value = mock_response
 
                 node = HttpNode()
-                shared = {"url": "https://example.com/file.txt", "method": "GET"}
+                node.params = {"url": "https://example.com/file.txt", "method": "GET"}
+                shared = {}
                 node.run(shared)
 
                 assert shared["response_is_binary"] is False, f"{content_type} should NOT be detected as binary"
@@ -145,7 +149,8 @@ class TestHttpBinarySupport:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://api.example.com/data", "method": "GET"}
+            node.params = {"url": "https://api.example.com/data", "method": "GET"}
+            shared = {}
             node.run(shared)
 
             # Verify JSON handling unchanged
@@ -169,7 +174,8 @@ class TestHttpBinarySupport:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://example.com/image.png", "method": "GET"}
+            node.params = {"url": "https://example.com/image.png", "method": "GET"}
+            shared = {}
             node.run(shared)
 
             assert shared["response_is_binary"] is True
@@ -194,7 +200,8 @@ class TestHttpBinarySupport:
             mock_request.return_value = mock_response
 
             node = HttpNode()
-            shared = {"url": "https://example.com/data.bin", "method": "GET"}
+            node.params = {"url": "https://example.com/data.bin", "method": "GET"}
+            shared = {}
             node.run(shared)
 
             # Verify round-trip: original → base64 → decoded = original

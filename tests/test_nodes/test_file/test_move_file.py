@@ -20,7 +20,8 @@ class TestMoveFileNode:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             node = MoveFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -50,7 +51,8 @@ class TestMoveFileNode:
             dest_path = os.path.join(tmpdir, "subdir", "nested", "dest.txt")
 
             node = MoveFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             prep_res = node.prep(shared)
             exec_res = node.exec(prep_res)
@@ -78,7 +80,8 @@ class TestMoveFileNode:
                 f.write("Existing content")
 
             node = MoveFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             # BEHAVIOR: Move should fail and preserve both files
             action = node.run(shared)
@@ -107,7 +110,8 @@ class TestMoveFileNode:
             dest_path = os.path.join(tmpdir, "dest.txt")
 
             node = MoveFileNode()
-            shared = {"source_path": source_path, "dest_path": dest_path}
+            node.set_params({"source_path": source_path, "dest_path": dest_path})
+            shared = {}
 
             # BEHAVIOR: Should provide helpful error message
             action = node.run(shared)

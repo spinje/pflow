@@ -30,9 +30,9 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ### Best Practice Pattern:
 
-> **Implementation**: See [Node Reference](../reference/node-reference.md#check-shared-store-first-pattern) for the recommended pattern of checking shared store first, then params
+> **Implementation**: See [Node Reference](../reference/node-reference.md#parameter-only-pattern) for the recommended pattern
 
-**Shared store takes precedence** - this allows dynamic workflow data to override static configuration when needed.
+**Parameters take precedence** - nodes read from `self.params` which contains template-resolved values. The template system (`${variable}`) handles wiring shared store data into params before node execution. This provides explicit, predictable data flow.
 
 ## Template Variable Resolution
 

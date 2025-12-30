@@ -75,52 +75,50 @@ class TestListPrsNode:
             mock_run.return_value = MagicMock(returncode=0)
 
             # Test clamping to minimum
-            shared = {"limit": -5}
+            node.params = {"limit": -5}
+            shared = {}
             result = node.prep(shared)
             assert result["limit"] == 1
 
             # Test clamping to maximum
-            shared = {"limit": 200}
+            node.params = {"limit": 200}
+            shared = {}
             result = node.prep(shared)
             assert result["limit"] == 100
 
             # Test valid range
-            shared = {"limit": 50}
+            node.params = {"limit": 50}
+            shared = {}
             result = node.prep(shared)
             assert result["limit"] == 50
 
             # Test invalid type
-            shared = {"limit": "not_a_number"}
+            node.params = {"limit": "not_a_number"}
+            shared = {}
             with pytest.raises(ValueError) as exc_info:
                 node.prep(shared)
             assert "Invalid limit value" in str(exc_info.value)
             assert "Must be an integer between 1 and 100" in str(exc_info.value)
 
-    def test_prep_parameter_fallback(self):
-        """Test the fallback order: shared → params → defaults."""
+    def test_prep_uses_params_and_defaults(self):
+        """Test that prep uses params and defaults."""
         node = ListPrsNode()
 
         with patch("subprocess.run") as mock_run:
             # Simulate successful authentication
             mock_run.return_value = MagicMock(returncode=0)
 
-            # Test shared takes precedence
+            # Test params are used
             node.params = {"repo": "param/repo", "state": "closed", "limit": 10}
-            shared = {"repo": "shared/repo", "state": "merged", "limit": 20}
-            result = node.prep(shared)
-            assert result["repo"] == "shared/repo"
-            assert result["state"] == "merged"
-            assert result["limit"] == 20
-
-            # Test params fallback when shared is empty
             shared = {}
             result = node.prep(shared)
             assert result["repo"] == "param/repo"
             assert result["state"] == "closed"
             assert result["limit"] == 10
 
-            # Test defaults when neither shared nor params have values
+            # Test defaults when params are empty
             node.params = {}
+            shared = {}
             result = node.prep(shared)
             assert result["repo"] is None
             assert result["state"] == "open"
@@ -309,7 +307,8 @@ class TestListPrsNode:
         hanging processes (timeout), and ensure proper output handling.
         """
         node = ListPrsNode()
-        shared = {"repo": "owner/repo", "state": "open", "limit": 10}
+        node.params = {"repo": "owner/repo", "state": "open", "limit": 10}
+        shared = {}
 
         with patch("subprocess.run") as mock_run:
             # Mock auth check and main command
@@ -398,7 +397,8 @@ class TestListPrsNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"repo": "owner/repo", "state": "open", "limit": 10}
+            node.params = {"repo": "owner/repo", "state": "open", "limit": 10}
+            shared = {}
             action = node.run(shared)
 
             # Should succeed after retry
@@ -437,7 +437,8 @@ class TestListPrsNode:
 
             mock_run.side_effect = side_effect
 
-            shared = {"repo": "owner/repo", "state": "open", "limit": 30}
+            node.params = {"repo": "owner/repo", "state": "open", "limit": 30}
+            shared = {}
 
             with pytest.raises(ValueError) as exc_info:
                 node.run(shared)

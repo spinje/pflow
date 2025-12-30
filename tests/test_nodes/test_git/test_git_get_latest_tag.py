@@ -31,7 +31,8 @@ class TestGitGetLatestTagNode:
     def test_prep_with_pattern(self):
         """Test prep with pattern filter."""
         node = GitGetLatestTagNode()
-        shared = {"pattern": "v*"}
+        node.params = {"pattern": "v*"}
+        shared = {}
 
         result = node.prep(shared)
 
@@ -44,7 +45,8 @@ class TestGitGetLatestTagNode:
 
         node = GitGetLatestTagNode()
         with tempfile.TemporaryDirectory() as tmpdir:
-            shared = {"working_directory": tmpdir}
+            node.params = {"working_directory": tmpdir}
+            shared = {}
 
             result = node.prep(shared)
 
@@ -69,7 +71,8 @@ class TestGitGetLatestTagNode:
         # Prep just passes through the pattern
         patterns = ["v* ; rm -rf", "tag | echo", "tag & ls"]
         for pattern in patterns:
-            shared = {"pattern": pattern}
+            node.params = {"pattern": pattern}
+            shared = {}
             result = node.prep(shared)
             assert result["pattern"] == pattern  # Prep doesn't validate
 

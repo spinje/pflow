@@ -21,7 +21,7 @@ class GitStatusNode(Node):
     Get git repository status.
 
     Interface:
-    - Reads: shared["working_directory"]: str  # Directory to check status (optional, default: current directory)
+    - Params: working_directory: str  # Directory to check status (optional, default: current directory)
     - Writes: shared["git_status"]: dict  # Repository status information
         - modified: list[str]  # Modified files
         - untracked: list[str]  # Untracked files
@@ -41,9 +41,9 @@ class GitStatusNode(Node):
         super().__init__(max_retries=2, wait=0.5)
 
     def prep(self, shared: dict[str, Any]) -> str:
-        """Extract working directory from shared store or use current directory."""
-        # Get working directory from shared or params, default to current directory
-        cwd = shared.get("working_directory") or self.params.get("working_directory", ".")
+        """Extract working directory from parameters or use current directory."""
+        # Get working directory from params, default to current directory
+        cwd = self.params.get("working_directory", ".")
 
         # Normalize the path
         cwd = Path(cwd).expanduser().resolve()

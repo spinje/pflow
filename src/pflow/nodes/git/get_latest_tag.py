@@ -20,8 +20,8 @@ class GitGetLatestTagNode(Node):
     Get the latest git tag from the repository.
 
     Interface:
-    - Reads: shared["pattern"]: str  # Tag pattern filter (optional, e.g., "v*", "release-*")
-    - Reads: shared["working_directory"]: str  # Directory to run git commands (optional, default: current directory)
+    - Params: pattern: str  # Tag pattern filter (optional, e.g., "v*", "release-*")
+    - Params: working_directory: str  # Directory to run git commands (optional, default: current directory)
     - Writes: shared["latest_tag"]: dict  # Latest tag information
         - name: str  # Tag name (e.g., "v1.2.3")
         - sha: str  # Commit SHA the tag points to
@@ -41,12 +41,12 @@ class GitGetLatestTagNode(Node):
         super().__init__(max_retries=2, wait=0.5)
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Extract parameters from shared store or node parameters."""
+        """Extract parameters from node parameters."""
         # Get pattern filter (optional)
-        pattern = shared.get("pattern") or self.params.get("pattern")
+        pattern = self.params.get("pattern")
 
         # Get working directory
-        cwd = shared.get("working_directory") or self.params.get("working_directory", ".")
+        cwd = self.params.get("working_directory", ".")
         cwd = Path(cwd).expanduser().resolve()
 
         logger.debug(
