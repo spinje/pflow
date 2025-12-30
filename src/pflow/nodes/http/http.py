@@ -45,7 +45,7 @@ class HttpNode(Node):
         super().__init__(max_retries=max_retries, wait=wait)
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
-        """Extract and validate parameters with fallback pattern."""
+        """Extract and validate HTTP request parameters."""
         # Required parameter
         url = self.params.get("url")
         if not url:
