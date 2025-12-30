@@ -437,3 +437,77 @@ class TestBatchDataFlowValidation:
         }
         errors = validate_data_flow(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_item_dotted_reference_valid(self):
+        """Dotted batch item references like ${item.field} should be valid.
+
+        This is a regression test for the bug where batch aliases were checked
+        for simple refs but not for dotted refs, causing workflows with
+        ${item.name} or ${item.nested.path} to fail validation incorrectly.
+        """
+        workflow = {
+            "ir_version": "1.0.0",
+            "nodes": [
+                {"id": "source", "type": "shell", "params": {"command": 'echo \'[{"name":"test"}]\''}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "batch": {"items": "${source.stdout}"},
+                    "params": {"command": "echo ${item.name}"},
+                },
+            ],
+            "edges": [{"from": "source", "to": "process"}],
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_item_deeply_nested_dotted_reference(self):
+        """Deeply nested dotted refs like ${item.a.b.c} should be valid."""
+        workflow = {
+            "nodes": [
+                {"id": "source", "type": "shell", "params": {"command": 'echo \'[{"a":{"b":{"c":1}}}]\''}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "batch": {"items": "${source.stdout}"},
+                    "params": {"command": "echo ${item.a.b.c}"},
+                },
+            ],
+            "edges": [{"from": "source", "to": "process"}],
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_custom_alias_dotted_reference(self):
+        """Custom alias with dotted ref like ${record.field} should be valid."""
+        workflow = {
+            "nodes": [
+                {"id": "source", "type": "shell", "params": {"command": "echo '[{\"x\":1}]'"}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "batch": {"items": "${source.stdout}", "as": "record"},
+                    "params": {"command": "echo ${record.x}"},
+                },
+            ],
+            "edges": [{"from": "source", "to": "process"}],
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_multiple_dotted_references_in_command(self):
+        """Multiple dotted refs in same command should all be valid."""
+        workflow = {
+            "nodes": [
+                {"id": "source", "type": "shell", "params": {"command": "echo data"}},
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "batch": {"items": "${source.stdout}"},
+                    "params": {"command": "process ${item.original_url} ${item.filename} ${item.description}"},
+                },
+            ],
+            "edges": [{"from": "source", "to": "process"}],
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Unexpected errors: {errors}"

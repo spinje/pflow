@@ -136,8 +136,8 @@ def _validate_template_reference(
         parts = ref.split(".", 1)
         ref_node_id = parts[0]
 
-        # Check if referenced node exists
-        if ref_node_id not in nodes_by_id:
+        # Check if referenced node exists (also allow batch aliases like "item")
+        if ref_node_id not in nodes_by_id and ref_node_id not in declared_inputs:
             return f"Node '{node_id}' references non-existent node '{ref_node_id}' in parameter '{param_name}'"
         # Check if referenced node comes before this node
         elif ref_node_id in node_positions:
