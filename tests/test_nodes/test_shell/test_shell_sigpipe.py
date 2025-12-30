@@ -3,7 +3,7 @@
 This module tests the fix for a critical bug where shell commands that don't
 consume their stdin would cause Python to terminate with exit code 141 (SIGPIPE).
 
-The Bug (fixed in PR #XXX):
+The Bug (fixed in PR #26):
 --------------------------
 When a shell node received large stdin data (>16KB) and the command didn't read
 the stdin (e.g., `echo '[]'` instead of `grep | jq`), Python's subprocess.run()
