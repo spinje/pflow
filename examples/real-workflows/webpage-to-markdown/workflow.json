@@ -1,0 +1,111 @@
+{
+  "inputs": {
+    "target_url": {
+      "type": "string",
+      "required": true,
+      "description": "Webpage URL to convert"
+    },
+    "output_file": {
+      "type": "string",
+      "required": false,
+      "default": "/tmp/pflow-article.md",
+      "description": "Output file path"
+    },
+    "describe_images": {
+      "type": "boolean",
+      "required": false,
+      "default": true,
+      "description": "Use vision AI to extract content from images"
+    }
+  },
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "purpose": "Fetch markdown via Jina Reader",
+      "params": {
+        "url": "https://r.jina.ai/${target_url}"
+      }
+    },
+    {
+      "id": "extract-images",
+      "type": "shell",
+      "purpose": "Extract image URLs from markdown",
+      "params": {
+        "stdin": "${fetch.response}",
+        "command": "case '${describe_images}' in *[Ff]alse*) echo '[]' ;; *) grep 'Image [0-9]' | grep -o 'https://[^)]*' | jq -Rs 'split(\"\\n\") | map(select(. != \"\"))' ;; esac"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "purpose": "Analyze each image with vision",
+      "batch": {
+        "items": "${extract-images.stdout}",
+        "parallel": true,
+        "max_concurrent": 10,
+        "error_handling": "continue"
+      },
+      "params": {
+        "prompt": "Extract the information from this image. No analysis or summary - just the content.\n\n- Diagram/flowchart: mermaid code only (```mermaid block)\n- Chart/graph: data values and labels\n- Screenshot: visible text and UI elements\n- Decorative: say 'decorative'\n\nBe direct. No commentary.",
+        "images": "${item}",
+        "model": "gemini-3-flash-preview"
+      }
+    },
+    {
+      "id": "format-analyses",
+      "type": "shell",
+      "purpose": "Format image analyses as markdown sections",
+      "params": {
+        "stdin": "${analyze.results}",
+        "command": "jq -r 'to_entries | map(\"### Image \" + (.key + 1 | tostring) + \"\\n\" + .value.response + \"\\n\") | join(\"\\n\")'"
+      }
+    },
+    {
+      "id": "save-article",
+      "type": "write-file",
+      "purpose": "Save the article markdown",
+      "params": {
+        "file_path": "${output_file}",
+        "content": "${fetch.response}"
+      }
+    },
+    {
+      "id": "append-analyses",
+      "type": "shell",
+      "purpose": "Append image analyses to file",
+      "params": {
+        "stdin": "${format-analyses.stdout}",
+        "command": "echo '' >> '${output_file}' && echo '---' >> '${output_file}' && echo '' >> '${output_file}' && echo '## Image Details' >> '${output_file}' && echo '' >> '${output_file}' && cat >> '${output_file}' && echo '${output_file}'"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "fetch",
+      "to": "extract-images"
+    },
+    {
+      "from": "extract-images",
+      "to": "analyze"
+    },
+    {
+      "from": "analyze",
+      "to": "format-analyses"
+    },
+    {
+      "from": "format-analyses",
+      "to": "save-article"
+    },
+    {
+      "from": "save-article",
+      "to": "append-analyses"
+    }
+  ],
+  "outputs": {
+    "file_path": {
+      "source": "${output_file}",
+      "description": "Path to the saved markdown file"
+    }
+  }
+}

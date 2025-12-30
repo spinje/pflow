@@ -2,95 +2,107 @@
 
 Production-ready workflows demonstrating pflow capabilities.
 
-## Webpage to Markdown
+## Webpage to AI-Readable Markdown
 
-Converts any webpage into clean, portable markdown with locally-stored images. Optionally uses vision AI to describe images for accessibility.
+Converts any webpage into clean markdown with image content extracted via vision AI. Unlike basic scrapers that lose visual information, this workflow makes diagrams, charts, and screenshots fully accessible to AI agents.
 
-### Run
+**The problem**: Built-in web fetch tools give summaries. AI agents working on implementation need the full picture—every code example, every diagram explained.
+
+**The solution**: Use Jina Reader for the commodity work (free, instant), then add intelligence with vision AI to extract information from images.
+
+### Quick Start
 
 ```bash
-# Basic usage (no image descriptions)
-pflow examples/real-workflows/webpage-to-markdown.json \
-  url="https://www.anthropic.com/engineering/claude-code-best-practices" \
-  output_dir="./output"
-
-# With vision-powered image descriptions
-pflow examples/real-workflows/webpage-to-markdown.json \
-  url="https://www.anthropic.com/engineering/claude-code-best-practices" \
-  output_dir="./output" \
-  describe_images=true
+pflow examples/real-workflows/webpage-to-markdown/workflow.json \
+  target_url="https://www.anthropic.com/engineering/building-effective-agents"
 ```
 
-### Output
+### How It Works
 
 ```
-./output/
-├── article.md          # Clean markdown with local image refs
-└── images/
-    ├── image1.png
-    ├── image2.svg
-    └── ...
+┌─────────────┐    ┌─────────────────┐    ┌──────────────┐
+│  HTTP Node  │───▶│ Extract Images  │───▶│ Vision AI    │
+│ (Jina API)  │    │ (grep/jq)       │    │ (parallel)   │
+└─────────────┘    └─────────────────┘    └──────────────┘
+       │                                         │
+       ▼                                         ▼
+┌─────────────────────────────────────────────────────────┐
+│              Markdown + Image Details Section           │
+└─────────────────────────────────────────────────────────┘
 ```
 
-With `describe_images=true`, each image gets a vision-generated description:
+6 nodes. No inline Python. Simple enough for an AI agent to create.
 
-```markdown
-![Claude Code interface](./images/screenshot.png)
+### Example Output
 
-> *A terminal interface showing the Claude Code permission rules menu,
-> listing authorized bash commands and tools the AI can execute...*
+The workflow appends an "Image Details" section with extracted content:
+
+**Diagrams → Mermaid code:**
+```mermaid
+sequenceDiagram
+    participant User
+    participant API
+    participant Claude
+    User->>API: Request
+    API->>Claude: Sampling
+    Claude->>API: Response with tool call
 ```
 
-### Features
+**Charts → Data values:**
+```
+Context Usage Comparison:
+- Traditional: 77.2k/200k tokens (61.4% free)
+- With Tool Search: 8.7k/200k tokens (95.65% free)
+```
 
-- Extracts article content (prefers `<article>` tag, falls back to `<body>`)
-- Splits at `<h2>` and `<h3>` headings for fine-grained parallelism
-- Processes up to 50 sections concurrently
-- Filters out ad/tracking images (doubleclick, pixel, tracker, etc.)
-- Decodes Next.js optimized image URLs (`/_next/image?url=...`)
-- Adds page title as H1 heading
-- Downloads images locally and rewrites markdown references
-- **Optional**: Vision AI describes images for accessibility/AI consumption
+### Performance
+
+| Article | Images | Time | Cost |
+|---------|--------|------|------|
+| [Advanced Tool Use](https://www.anthropic.com/engineering/advanced-tool-use) | 2 | 7s | $0.006 |
+| [Building Effective Agents](https://www.anthropic.com/engineering/building-effective-agents) | 8 | 18s | $0.033 |
+| [Claude Think Tool](https://www.anthropic.com/engineering/claude-think-tool) | 2 | 45s | $0.008 |
+| [Contextual Retrieval](https://www.anthropic.com/engineering/contextual-retrieval) | 6 | 29s | $0.048 |
+
+*Using gemini-3-flash-preview. Jina fetch is free.*
 
 ### Parameters
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `url` | string | yes | - | Webpage URL to convert |
-| `output_dir` | string | yes | - | Directory for markdown and images |
-| `describe_images` | boolean | no | false | Use vision AI for image descriptions |
+| `target_url` | string | yes | - | Webpage URL to convert |
+| `output_file` | string | no | `/tmp/pflow-article.md` | Output file path |
+| `describe_images` | boolean | no | `true` | Use vision AI to extract content from images |
 
-### Performance
+**Skip image analysis** (faster, free):
+```bash
+pflow examples/real-workflows/webpage-to-markdown/workflow.json \
+  target_url="https://example.com/article" \
+  describe_images=false
+```
 
-| Article | Time | Sections | Size | Images | Cost |
-|---------|------|----------|------|--------|------|
-| [Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices) | 19.3s | 38 | 29KB | 7 | $0.11 |
-| [Building effective agents](https://www.anthropic.com/engineering/building-effective-agents) | 16.8s | 19 | 20KB | 8 | $0.06 |
-| [Code Mode: MCP](https://blog.cloudflare.com/code-mode/) | 18.6s | 17 | 20KB | 4 | $0.08 |
+### Why This Workflow?
 
-*Tested 2024-12-30 using gemini-3-flash-preview.*
+**vs. just using `curl r.jina.ai/URL`:**
+- Jina gives you markdown—but images are just URLs
+- This workflow extracts what's IN the images via vision AI
+- Diagrams become mermaid code, charts become data values
 
-#### Vision Cost Breakdown
+**vs. the complex 13-node version:**
+- Same result, 6 nodes instead of 13
+- $0.006 instead of $0.11
+- Leverages Jina instead of reinventing scraping
 
-| Metric | Value |
-|--------|-------|
-| Cost per image | ~$0.003 |
-| Avg input tokens | 1,134 (image data) |
-| Avg output tokens | 593 (description) |
-| Time overhead | ~7s (parallel) |
+### Files
 
-Vision descriptions are surprisingly cheap—the base HTML→markdown conversion costs 20-40x more than describing all images.
+```
+webpage-to-markdown/
+├── workflow.json    # The 6-node workflow
+└── prompt.md        # Prompt to reproduce this workflow
+```
 
-### Why It's Fast
-
-1. **Shell preprocessing** - Extracts only `<article>` content, reducing tokens by ~90%
-2. **Fine-grained splitting** - Splits at h2+h3 level for smaller chunks (~635 tokens avg)
-3. **High parallelism** - 50 concurrent LLM calls process all sections simultaneously
-4. **Shell-based extraction** - Image URL extraction uses regex, not LLM
-5. **Parallel vision** - Image descriptions run 10 concurrent calls
-
-### Use Cases
-
-**For humans**: Clean, offline-readable articles with local images
-
-**For AI agents**: Full context including image descriptions - unlike built-in web scrapers that lose visual information or only provide summaries
+Example outputs (in parent folder):
+- `output-example.md` - Advanced Tool Use article
+- `output-building-effective-agents.md` - 8 diagrams with mermaid
+- `output-contextual-retrieval.md` - Charts with data extraction
+- `jina-output-example.md` - Raw Jina output for comparison
