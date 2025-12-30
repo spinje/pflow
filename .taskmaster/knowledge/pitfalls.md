@@ -349,17 +349,38 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
-## Pitfall: Missing SIGPIPE/BrokenPipe Handling Causes Noisy Errors or Hangs
-- **Date**: 2025-08-31
-- **Discovered in**: CLI output layer
-- **What we tried**: Unhandled writes to closed pipes
-- **Why it seemed good**: Naively printing is fine in terminals
-- **Why it failed**: In pipelines, downstream consumers may exit early; writing to a closed pipe raises `BrokenPipeError` or EPIPE. Without handling, processes spew tracebacks or hang waiting.
+## Pitfall: SIGPIPE Handler Choice Affects Both CLI Output AND Subprocess Operations
+- **Date**: 2025-08-31 (updated 2025-12-30)
+- **Discovered in**: CLI output layer, then subprocess stdin handling
+- **What we tried**: Using `SIG_DFL` to handle SIGPIPE for CLI output pipes
+- **Why it seemed good**: `SIG_DFL` makes the process exit cleanly when stdout is closed
+- **Why it failed**: `SIG_DFL` also affects `subprocess.run()` stdin writes. When a subprocess doesn't consume all its stdin (e.g., `echo 'ignored'` with 20KB+ piped in), SIGPIPE kills the **parent** Python process with exit 141 - silently, no error, no cleanup.
 - **Symptoms**:
-  - Tracebacks on EPIPE
-  - Stalled processes
-- **Better approach**: Set `SIGPIPE` to `SIG_DFL` and centralize printing through a `safe_output()` that catches `BrokenPipeError`/EPIPE and exits cleanly.
-- **Key Lesson**: Pipe-robust CLIs must be explicit about SIGPIPE and write failures.
+  - Exit code 141 with no output whatsoever
+  - No trace file, no error message, complete silence
+  - Only occurs with large stdin data (>16KB on macOS, >64KB on Linux)
+  - Works fine when subprocess consumes all stdin
+- **Root cause**: Pipe buffer overflow. Small data fits in buffer and is discarded on pipe close. Large data requires continued writes, which trigger SIGPIPE when the subprocess exits early.
+- **Better approach**: Use `SIG_IGN` (ignore SIGPIPE). This allows:
+  - `subprocess.run()` to handle broken pipes gracefully internally
+  - Python to raise `BrokenPipeError` on direct writes, which you can catch
+  - Wrap CLI output in `safe_output()` that catches `BrokenPipeError`
+- **Example of failure**:
+  ```python
+  # DON'T DO THIS
+  signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
+  # Later, in a shell node:
+  subprocess.run("echo 'ignored'", input=large_data, ...)  # 20KB+ data
+  # Subprocess runs 'echo', which doesn't read stdin
+  # Python tries to write to closed pipe → SIGPIPE → Process killed (exit 141)
+
+  # DO THIS
+  signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+  # Now subprocess.run() handles the broken pipe internally
+  # Process completes normally
+  ```
+- **Key Lesson**: SIGPIPE affects ALL pipe operations in the process, not just stdout. Always use `SIG_IGN` when your application spawns subprocesses. The only exception is if you're certain no subprocess will ever ignore its stdin.
 
 ---
 
