@@ -417,8 +417,8 @@ class TestUnionTypeValidation:
                 },
                 {
                     "id": "node2",
-                    "type": "shell",
-                    "params": {"command": "echo ${node1.data}"},  # No nested access
+                    "type": "string-consumer",
+                    "params": {"text": "${node1.data}"},  # No nested access
                 },
             ],
             "enable_namespacing": True,
@@ -432,14 +432,19 @@ class TestUnionTypeValidation:
                     "params": [],
                 },
             },
-            "shell": {
-                "interface": {"inputs": [], "outputs": [], "params": []},
+            "string-consumer": {
+                "interface": {
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [{"key": "text", "type": "str"}],
+                },
             },
         })
 
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # No nested access, so no warnings even for union types
+        # dict|str is compatible with str (auto-serialization)
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "No warnings without nested access"
 
@@ -494,8 +499,8 @@ class TestUnionTypeEdgeCases:
                 },
                 {
                     "id": "node2",
-                    "type": "shell",
-                    "params": {"command": "echo ${node1.response}"},  # No nesting
+                    "type": "string-consumer",
+                    "params": {"text": "${node1.response}"},  # No nesting
                 },
             ],
             "enable_namespacing": True,
@@ -509,12 +514,17 @@ class TestUnionTypeEdgeCases:
                     "params": [],
                 },
             },
-            "shell": {
-                "interface": {"inputs": [], "outputs": [], "params": []},
+            "string-consumer": {
+                "interface": {
+                    "inputs": [],
+                    "outputs": [],
+                    "params": [{"key": "text", "type": "str"}],
+                },
             },
         })
 
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
+        # dict|str is compatible with str (auto-serialization)
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "Base access should work without warnings"

@@ -78,6 +78,31 @@ def test_registry(tmp_path):
                 ],
             },
         },
+        "shell": {
+            "class_name": "ShellNode",
+            "module": "pflow.nodes.shell.shell",
+            "interface": {
+                "outputs": [
+                    {"key": "stdout", "type": "str", "description": "Standard output"},
+                    {"key": "stderr", "type": "str", "description": "Standard error"},
+                    {"key": "exit_code", "type": "int", "description": "Exit code"},
+                ],
+                "params": [
+                    {"key": "command", "type": "str", "description": "Shell command to execute"},
+                    {"key": "stdin", "type": "str", "description": "Standard input (optional)"},
+                ],
+            },
+        },
+        "list-producer": {
+            "class_name": "ListProducer",
+            "module": "test",
+            "interface": {
+                "outputs": [
+                    {"key": "items", "type": "list", "description": "List of items"},
+                ],
+                "params": [],
+            },
+        },
     }
     registry.save(test_data)
 
@@ -347,3 +372,252 @@ class TestTypeValidationIntegration:
         assert "producer.response" in error  # template
         assert "dict" in error  # inferred type
         assert "int" in error  # expected type
+
+    def test_shell_command_blocks_dict_type(self, test_registry):
+        """Shell command parameter should not accept dict types."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${producer.response}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should have error about dict in shell command
+        shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
+        assert len(shell_errors) == 1
+        assert "producer.response" in shell_errors[0]
+        assert "dict" in shell_errors[0]
+        assert "stdin" in shell_errors[0].lower()  # Should suggest stdin
+
+    def test_shell_command_blocks_list_type(self, test_registry):
+        """Shell command parameter should not accept list types."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${producer.items}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should have error about list in shell command
+        shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
+        assert len(shell_errors) == 1
+        assert "producer.items" in shell_errors[0]
+        assert "list" in shell_errors[0]
+
+    def test_shell_stdin_allows_dict_type(self, test_registry):
+        """Shell stdin parameter should accept dict types (safe path)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${producer.response}",  # dict in stdin is OK
+                        "command": "jq '.message'",
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # No shell-specific errors for stdin
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_shell_command_allows_string_type(self, test_registry):
+        """Shell command parameter should accept string types normally."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "string-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${producer.result}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # No errors for string in command
+        assert len(errors) == 0
+
+    def test_shell_command_blocks_workflow_input_dict(self, test_registry):
+        """Workflow input with dict type should be blocked in shell command.
+
+        This is a common user path: declaring an input and using it directly.
+        """
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {
+                "data": {"type": "object", "required": True},  # User declares dict input
+            },
+            "nodes": [
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${data}'"},  # Uses input in command
+                },
+            ],
+            "edges": [],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should block dict workflow input in shell command
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+        assert "data" in shell_errors[0]
+        assert "stdin" in shell_errors[0].lower()
+
+    def test_shell_command_allows_nested_string_field_from_dict(self, test_registry):
+        """Accessing a string field from a dict should be allowed in shell command.
+
+        ${producer.response} is dict (blocked), but ${producer.response.message} is string (allowed).
+        """
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${producer.response.message}'"},  # Access string field
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # No errors - accessing string field from dict is safe
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_shell_command_blocks_union_with_dict(self, test_registry):
+        """Union type containing dict should be blocked in shell command.
+
+        dict|str could be a dict at runtime, so we block it to be safe.
+        Uses the LLM node from test_registry which has output type dict|str.
+        """
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                # LLM node has output type "dict|str" - could be dict at runtime
+                {"id": "llm-node", "type": "llm", "params": {"prompt": "test", "max_tokens": 100}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${llm-node.response}'"},
+                },
+            ],
+            "edges": [{"from": "llm-node", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should block - dict|str might be dict at runtime
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+        assert "dict" in shell_errors[0]
+
+
+class TestShellCommandValidationTiming:
+    """Integration tests verifying validation happens at compile time, not runtime.
+
+    This is critical - if validation runs after template resolution, we'd get
+    the same bug where dict/list slips through and causes runtime shell failures.
+    """
+
+    def test_dict_in_shell_command_fails_at_compile_time(self):
+        """Dict in shell command should fail during compilation, not runtime.
+
+        This tests the full compilation path to ensure the error is caught early.
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime.compiler import compile_ir_to_flow
+
+        workflow_ir = {
+            "inputs": {"data": {"type": "object", "required": True}},
+            "nodes": [
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${data}'"},
+                }
+            ],
+            "edges": [],
+            "outputs": {},
+        }
+
+        registry = Registry()
+
+        # Should fail during compile_ir_to_flow, not later during flow.run()
+        with pytest.raises(ValueError) as exc_info:
+            compile_ir_to_flow(
+                workflow_ir,
+                registry=registry,
+                initial_params={"data": {"key": "value"}},
+                validate=True,  # Validation enabled
+            )
+
+        # Error should mention stdin as the solution
+        assert "stdin" in str(exc_info.value).lower()
+
+    def test_list_in_shell_command_fails_at_compile_time(self):
+        """List in shell command should fail during compilation, not runtime."""
+        from pflow.registry.registry import Registry
+        from pflow.runtime.compiler import compile_ir_to_flow
+
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${items}'"},
+                }
+            ],
+            "edges": [],
+            "outputs": {},
+        }
+
+        registry = Registry()
+
+        with pytest.raises(ValueError) as exc_info:
+            compile_ir_to_flow(
+                workflow_ir,
+                registry=registry,
+                initial_params={"items": [1, 2, 3]},
+                validate=True,
+            )
+
+        assert "stdin" in str(exc_info.value).lower()
