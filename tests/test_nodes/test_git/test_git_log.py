@@ -188,7 +188,7 @@ class TestGitLogNode:
 
     @patch("subprocess.run")
     def test_exec_with_filters(self, mock_run):
-        """Test git log execution with all filters."""
+        """Test git log execution with all filters including git ref range."""
         node = GitLogNode()
         prep_res = {
             "since": "v1.0.0",
@@ -200,24 +200,54 @@ class TestGitLogNode:
             "working_directory": "/test/repo",
         }
 
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_result.stdout = ""
-        mock_run.return_value = mock_result
+        # Mock responses: 3 _is_git_ref checks + 1 git log command
+        # _is_git_ref is called: once for since, twice for until (in condition and assignment)
+        mock_ref_check = MagicMock(returncode=0)  # Valid git ref
+        mock_log_result = MagicMock(returncode=0, stdout="")
+        mock_run.side_effect = [mock_ref_check, mock_ref_check, mock_ref_check, mock_log_result]
 
         node.exec(prep_res)
 
         # Check command includes all filters
-        call_args = mock_run.call_args[0][0]
+        # The git log command should be the last call
+        call_args = mock_run.call_args_list[-1][0][0]
         assert "-n100" in call_args
-        assert "--since=v1.0.0" in call_args
-        assert "--until=v2.0.0" in call_args
+        # Since both since and until are git refs, should use commit range syntax
+        assert "v1.0.0..v2.0.0" in call_args
         assert "--author" in call_args
         assert "john@example.com" in call_args
         assert "--grep" in call_args
         assert "feat:" in call_args
         assert "--" in call_args
         assert "src/" in call_args
+
+    @patch("subprocess.run")
+    def test_exec_with_date_filters(self, mock_run):
+        """Test git log execution with date-based since/until (not git refs)."""
+        node = GitLogNode()
+        prep_res = {
+            "since": "2024-01-01",
+            "until": "2024-06-01",
+            "limit": 50,
+            "author": None,
+            "grep": None,
+            "path": None,
+            "working_directory": "/test/repo",
+        }
+
+        # Mock responses: _is_git_ref called once for since (returns False, so we use --since)
+        # Then once for until (returns False, so we use --until)
+        mock_ref_check = MagicMock(returncode=1)  # Not a valid git ref (it's a date)
+        mock_log_result = MagicMock(returncode=0, stdout="")
+        mock_run.side_effect = [mock_ref_check, mock_ref_check, mock_log_result]
+
+        node.exec(prep_res)
+
+        # Check command uses --since and --until for dates
+        call_args = mock_run.call_args_list[-1][0][0]
+        assert "-n50" in call_args
+        assert "--since=2024-01-01" in call_args
+        assert "--until=2024-06-01" in call_args
 
     @patch("subprocess.run")
     def test_exec_not_git_repository(self, mock_run):

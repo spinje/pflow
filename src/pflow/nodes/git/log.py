@@ -20,13 +20,13 @@ class GitLogNode(Node):
     Retrieve git commit history with filtering options.
 
     Interface:
-    - Params: since: str  # Start date/tag/SHA (optional, e.g., "2024-01-01", "v1.0.0", "abc1234")
-    - Params: until: str  # End date/tag/SHA (optional, default: HEAD)
-    - Params: limit: int  # Maximum number of commits (optional, default: 20)
-    - Params: author: str  # Filter by author email/name (optional)
-    - Params: grep: str  # Filter commits by message content (optional)
-    - Params: path: str  # Filter by file path (optional)
-    - Params: working_directory: str  # Directory to run git commands (optional, default: current directory)
+    - Params: since: str  # (optional) Start point: tag or date e.g. "v1.0.0" or "2024-01-01"
+    - Params: until: str  # (optional) End point: tag or date. Default: HEAD
+    - Params: limit: int  # (optional) Maximum commits to return. Default: 20
+    - Params: author: str  # (optional) Filter by author email/name
+    - Params: grep: str  # (optional) Filter commits by message content
+    - Params: path: str  # (optional) Filter by file path
+    - Params: working_directory: str  # (optional) Directory for git commands. Default: current directory
     - Writes: shared["commits"]: list[dict]  # List of commit objects
         - sha: str  # Full commit SHA
         - short_sha: str  # Short SHA (7 chars)
@@ -40,9 +40,14 @@ class GitLogNode(Node):
     - Actions: default (always)
 
     Note:
-        This node operates on the current working directory only.
-        Use ISO dates for 'since' and 'until' parameters (e.g., "2024-01-01").
-        Tags and branch names are also valid for since/until.
+        Auto-detects whether since/until are git refs or dates:
+        - Git refs (tags, branches, SHAs): Uses commit range syntax (e.g., "v1.0.0..HEAD")
+        - Dates: Uses --since/--until flags (e.g., "--since=2024-01-01")
+
+        Examples:
+        - since="v1.0.0" → commits after tag v1.0.0 up to HEAD
+        - since="v1.0.0", until="v2.0.0" → commits between the two tags
+        - since="2024-01-01" → commits since that date
     """
 
     def __init__(self) -> None:
@@ -136,7 +141,29 @@ class GitLogNode(Node):
 
         return commits
 
-    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+    def _is_git_ref(self, ref: str, cwd: str) -> bool:
+        """Check if a string is a valid git ref (tag, branch, SHA).
+
+        Args:
+            ref: The reference to check
+            cwd: Working directory for git command
+
+        Returns:
+            True if ref is a valid git reference, False if it's likely a date
+        """
+        # Try to resolve the ref using git rev-parse
+        result = subprocess.run(  # noqa: S603
+            ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            shell=False,
+            timeout=10,
+            check=False,
+        )
+        return result.returncode == 0
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
         """
         Execute git log command and parse the output.
 
@@ -156,11 +183,28 @@ class GitLogNode(Node):
         # Format: SHA|short_sha|author_name|author_email|ISO_date|timestamp|subject|body|ENDCOMMIT
         cmd = ["git", "log", "--format=%H|%h|%an|%ae|%aI|%at|%s|%b|ENDCOMMIT", f"-n{prep_res['limit']}"]
 
-        # Add optional filters
-        if prep_res["since"]:
-            cmd.append(f"--since={prep_res['since']}")
-        if prep_res["until"]:
-            cmd.append(f"--until={prep_res['until']}")
+        # Handle since/until - detect if they're git refs or dates
+        since = prep_res["since"]
+        until = prep_res["until"]
+
+        # Check if since is a git ref (tag, branch, SHA) or a date
+        if since:
+            if self._is_git_ref(since, cwd):
+                # Use commit range syntax for refs
+                end_ref = until if until and self._is_git_ref(until, cwd) else "HEAD"
+                cmd.append(f"{since}..{end_ref}")
+                # Clear until since we've handled it in the range
+                until = None if (until and self._is_git_ref(until, cwd)) else until
+            else:
+                # Treat as date
+                cmd.append(f"--since={since}")
+
+        if until:
+            if self._is_git_ref(until, cwd):
+                # If we get here, since wasn't a ref but until is
+                cmd.append(until)
+            else:
+                cmd.append(f"--until={until}")
         if prep_res["author"]:
             cmd.extend(["--author", prep_res["author"]])
         if prep_res["grep"]:
