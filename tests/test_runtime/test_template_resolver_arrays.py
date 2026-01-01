@@ -49,11 +49,11 @@ class TestArrayIndexSupport:
         context = {"qa_pairs": [{"question": "What?", "answer": "That."}, {"question": "Why?", "answer": "Because."}]}
 
         template = "Q: ${qa_pairs[0].question} A: ${qa_pairs[0].answer}"
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
         assert result == "Q: What? A: That."
 
         template = "Second: ${qa_pairs[1].question} - ${qa_pairs[1].answer}"
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
         assert result == "Second: Why? - Because."
 
     def test_real_world_slack_qa_workflow(self):
@@ -72,14 +72,14 @@ class TestArrayIndexSupport:
             }
         }
 
-        # Test exact templates that were failing
-        q1 = TemplateResolver.resolve_string("${analyze_questions.response.qa_pairs[0].question}", context)
+        # Test exact templates that were failing (simple templates - type preserved, but strings stay strings)
+        q1 = TemplateResolver.resolve_template("${analyze_questions.response.qa_pairs[0].question}", context)
         assert q1 == "How many letters in 'cat'?"
 
-        a1 = TemplateResolver.resolve_string("${analyze_questions.response.qa_pairs[0].answer}", context)
+        a1 = TemplateResolver.resolve_template("${analyze_questions.response.qa_pairs[0].answer}", context)
         assert a1 == "There are 3 letters in the word 'cat'."
 
-        q2 = TemplateResolver.resolve_string("${analyze_questions.response.qa_pairs[1].question}", context)
+        q2 = TemplateResolver.resolve_template("${analyze_questions.response.qa_pairs[1].question}", context)
         assert q2 == "What is the meaning of 'chairs'?"
 
     def test_variable_exists_with_arrays(self):
@@ -113,6 +113,6 @@ class TestArrayIndexSupport:
         result = TemplateResolver.resolve_value("api.responses[0].data.items[1].values[2]", context)
         assert result == 60
 
-        # Template string with complex path
+        # Template string with complex path (complex template - returns string)
         template = "Value: ${api.responses[0].data.items[0].values[0]}"
-        assert TemplateResolver.resolve_string(template, context) == "Value: 10"
+        assert TemplateResolver.resolve_template(template, context) == "Value: 10"

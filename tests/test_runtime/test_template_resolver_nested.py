@@ -281,7 +281,7 @@ class TestTemplateResolverBackwardCompatibility:
         template = "Hello ${name}, welcome to ${place}!"
         context = {"name": "Alice", "place": "Wonderland"}
 
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
         assert result == "Hello Alice, welcome to Wonderland!"
 
     def test_path_resolution_unchanged(self):
@@ -289,7 +289,7 @@ class TestTemplateResolverBackwardCompatibility:
         template = "User: ${user.name}, Age: ${user.age}"
         context = {"user": {"name": "Bob", "age": 30}}
 
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
         assert result == "User: Bob, Age: 30"
 
     def test_resolve_value_unchanged(self):

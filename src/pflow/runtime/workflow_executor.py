@@ -271,7 +271,7 @@ class WorkflowExecutor(BaseNode):
             if isinstance(parent_value, str) and TemplateResolver.has_templates(parent_value):
                 # Resolve template
                 try:
-                    resolved[child_param] = TemplateResolver.resolve_string(parent_value, context)
+                    resolved[child_param] = TemplateResolver.resolve_template(parent_value, context)
                 except Exception as e:
                     raise ValueError(f"Failed to resolve parameter '{child_param}': {e}") from e
             else:
