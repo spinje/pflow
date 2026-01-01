@@ -137,43 +137,45 @@ class TestTypeConversion:
         assert TemplateResolver._convert_to_string({"a": 1}) == '{"a": 1}'
 
 
-class TestStringResolution:
-    """Test complete string resolution with templates."""
+class TestTemplateResolution:
+    """Test complete template resolution."""
 
     def test_resolves_single_template(self):
         """Test resolution of single template in string."""
         context = {"url": "https://example.com"}
-        assert TemplateResolver.resolve_string("Visit ${url}", context) == "Visit https://example.com"
-        assert TemplateResolver.resolve_string("${url}", context) == "https://example.com"
+        # Complex template (text around variable) - returns string
+        assert TemplateResolver.resolve_template("Visit ${url}", context) == "Visit https://example.com"
+        # Simple template - preserves type (string in this case)
+        assert TemplateResolver.resolve_template("${url}", context) == "https://example.com"
 
     def test_resolves_multiple_templates(self):
         """Test resolution of multiple templates."""
         context = {"name": "Alice", "age": 30}
         template = "${name} is ${age} years old"
-        assert TemplateResolver.resolve_string(template, context) == "Alice is 30 years old"
+        assert TemplateResolver.resolve_template(template, context) == "Alice is 30 years old"
 
     def test_resolves_path_templates(self):
         """Test resolution of templates with paths."""
         context = {"user": {"name": "Bob", "email": "bob@example.com"}, "status": "active"}
         template = "User ${user.name} (${user.email}) - Status: ${status}"
         expected = "User Bob (bob@example.com) - Status: active"
-        assert TemplateResolver.resolve_string(template, context) == expected
+        assert TemplateResolver.resolve_template(template, context) == expected
 
     def test_preserves_unresolved_templates(self):
         """Test that unresolved templates remain unchanged."""
         context = {"found": "yes"}
         template = "Found: ${found}, Missing: ${missing}"
-        assert TemplateResolver.resolve_string(template, context) == "Found: yes, Missing: ${missing}"
+        assert TemplateResolver.resolve_template(template, context) == "Found: yes, Missing: ${missing}"
 
-    def test_handles_type_conversions(self):
-        """Test type conversions in resolution."""
+    def test_handles_type_conversions_in_complex_templates(self):
+        """Test type conversions when values are embedded in strings (complex templates)."""
         context = {"none_val": None, "zero": 0, "false": False, "empty_list": [], "data": {"count": 42}}
-        # None converts to empty string
-        assert TemplateResolver.resolve_string("[${none_val}]", context) == "[]"
-        assert TemplateResolver.resolve_string("Count: ${zero}", context) == "Count: 0"
-        assert TemplateResolver.resolve_string("Flag: ${false}", context) == "Flag: False"
-        assert TemplateResolver.resolve_string("Items: ${empty_list}", context) == "Items: []"
-        assert TemplateResolver.resolve_string("Total: ${data.count}", context) == "Total: 42"
+        # Complex templates always return strings - values get converted
+        assert TemplateResolver.resolve_template("[${none_val}]", context) == "[]"
+        assert TemplateResolver.resolve_template("Count: ${zero}", context) == "Count: 0"
+        assert TemplateResolver.resolve_template("Flag: ${false}", context) == "Flag: False"
+        assert TemplateResolver.resolve_template("Items: ${empty_list}", context) == "Items: []"
+        assert TemplateResolver.resolve_template("Total: ${data.count}", context) == "Total: 42"
 
 
 class TestEdgeCases:
@@ -184,28 +186,29 @@ class TestEdgeCases:
         context = {"var": "value", "data": {"field": "test"}}
 
         # Valid template should work
-        assert TemplateResolver.resolve_string("${var}", context) == "value"  # Valid new syntax
+        assert TemplateResolver.resolve_template("${var}", context) == "value"  # Valid new syntax
 
         # These malformed templates should remain as-is
-        assert TemplateResolver.resolve_string("${var", context) == "${var"  # Unclosed
-        assert TemplateResolver.resolve_string("$${var}", context) == "$${var}"  # Escaped
-        assert TemplateResolver.resolve_string("${}", context) == "${}"  # Empty
+        assert TemplateResolver.resolve_template("${var", context) == "${var"  # Unclosed
+        assert TemplateResolver.resolve_template("$${var}", context) == "$${var}"  # Escaped
+        assert TemplateResolver.resolve_template("${}", context) == "${}"  # Empty
 
         # Variables with hyphens now work
         context["user-id"] = "123"
-        assert TemplateResolver.resolve_string("${user-id}", context) == "123"
+        assert TemplateResolver.resolve_template("${user-id}", context) == "123"
 
     def test_path_traversal_with_null(self):
         """Test path traversal when encountering null/None."""
         context = {"parent": {"child": None}}
         # Should not be able to traverse through None
-        assert TemplateResolver.resolve_string("${parent.child.field}", context) == "${parent.child.field}"
+        assert TemplateResolver.resolve_template("${parent.child.field}", context) == "${parent.child.field}"
 
     def test_adjacent_templates(self):
-        """Test templates with no spacing between them."""
+        """Test templates with no spacing between them (complex template - returns string)."""
         context = {"a": "A", "b": "B", "c": "C"}
-        assert TemplateResolver.resolve_string("${a}${b}${c}", context) == "ABC"
-        assert TemplateResolver.resolve_string("${a}-${b}-${c}", context) == "A-B-C"
+        # Multiple templates = complex template = string result
+        assert TemplateResolver.resolve_template("${a}${b}${c}", context) == "ABC"
+        assert TemplateResolver.resolve_template("${a}-${b}-${c}", context) == "A-B-C"
 
     def test_template_in_larger_text(self):
         """Test templates embedded in larger text blocks."""
@@ -222,7 +225,7 @@ class TestEdgeCases:
         Assigned to: Alice
         Missing: ${undefined.field}
         """
-        assert TemplateResolver.resolve_string(template, context) == expected
+        assert TemplateResolver.resolve_template(template, context) == expected
 
 
 class TestRealWorldScenarios:
@@ -234,7 +237,7 @@ class TestRealWorldScenarios:
         planner_params = {"issue_number": "1234", "repo": "pflow"}
 
         template = "Working on issue ${issue_number} in ${repo}"
-        result = TemplateResolver.resolve_string(template, planner_params)
+        result = TemplateResolver.resolve_template(template, planner_params)
         assert result == "Working on issue 1234 in pflow"
 
     def test_shared_store_path_access(self):
@@ -250,7 +253,7 @@ class TestRealWorldScenarios:
         }
 
         template = "Video: ${transcript_data.title} by ${transcript_data.metadata.author}"
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
         assert result == "Video: Learning Python by CodeTeacher"
 
     def test_youtube_workflow_example(self):
@@ -268,5 +271,5 @@ class TestRealWorldScenarios:
 
         # Template from example workflow
         template = "Summary of '${transcript_data.title}' by ${transcript_data.metadata.author}"
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
         assert result == "Summary of 'How to Learn Programming' by TechChannel"

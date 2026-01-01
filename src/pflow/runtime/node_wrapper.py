@@ -525,6 +525,8 @@ class TemplateAwareNodeWrapper:
     def _resolve_simple_template(self, template: str, context: dict[str, Any]) -> tuple[Any, bool]:
         """Resolve a simple template variable like '${var}'.
 
+        Uses shared helper from TemplateResolver for consistent simple template detection.
+
         Args:
             template: Template string to resolve
             context: Resolution context
@@ -532,13 +534,10 @@ class TemplateAwareNodeWrapper:
         Returns:
             Tuple of (resolved_value, was_simple_template)
         """
-        import re
-
-        simple_var_match = re.match(r"^\$\{([^}]+)\}$", template)
-        if not simple_var_match:
+        # Use shared helper for simple template detection
+        var_name = TemplateResolver.extract_simple_template_var(template)
+        if var_name is None:
             return None, False
-
-        var_name = simple_var_match.group(1)
 
         # Check if variable exists (even if its value is None)
         if TemplateResolver.variable_exists(var_name, context):
@@ -586,7 +585,7 @@ class TemplateAwareNodeWrapper:
                 return resolved_value, True
 
             # Complex template with text around it, must be string
-            resolved_value = TemplateResolver.resolve_string(template, context)
+            resolved_value = TemplateResolver.resolve_template(template, context)
             return resolved_value, False
 
         # No template variables present, preserve original type

@@ -158,7 +158,7 @@ Located: `src/pflow/runtime/template_resolver.py`
 ```python
 class TemplateResolver:
     @staticmethod
-    def resolve_string(template: str, context: dict[str, Any]) -> str:
+    def resolve_template(template: str, context: dict[str, Any]) -> str:
         """Resolve all template variables in a string.
 
         Variables that cannot be resolved are left unchanged.
@@ -171,10 +171,10 @@ class TemplateResolver:
             String with all resolvable templates replaced
 
         Example:
-            >>> resolve_string("Hello ${name}", {"name": "Alice"})
+            >>> resolve_template("Hello ${name}", {"name": "Alice"})
             "Hello Alice"
 
-            >>> resolve_string("${missing}", {})
+            >>> resolve_template("${missing}", {})
             "${missing}"  # Left as-is if not found
         """
 ```
@@ -257,9 +257,9 @@ resolve_value("nothing", context)  # → None
 
 ```python
 # Template is part of larger string
-resolve_string("Count: ${count}", context)       # → "Count: 42" (str)
-resolve_string("Status: ${enabled}", context)    # → "Status: True" (str)
-resolve_string("Data: ${data}", context)         # → "Data: {\"key\": \"value\"}" (str)
+resolve_template("Count: ${count}", context)       # → "Count: 42" (str)
+resolve_template("Status: ${enabled}", context)    # → "Status: True" (str)
+resolve_template("Data: ${data}", context)         # → "Data: {\"key\": \"value\"}" (str)
 ```
 
 #### Conversion Rules for String Context
@@ -294,6 +294,37 @@ When a template is embedded in a string:
 If `token_limit=100` (int) and `enable_streaming=False` (bool), the LLM node receives:
 - `max_tokens=100` (int, not "100")
 - `stream=False` (bool, not "False")
+
+### Inline Object Type Preservation (Task 103)
+
+Prior to v0.6.0, simple templates inside nested structures were incorrectly stringified:
+
+**Before (v0.5.x - Bug):**
+```python
+context = {"config": {"key": "value"}}
+resolve_nested({"setting": "${config}"}, context)
+# → {"setting": "{\"key\": \"value\"}"}  ❌ Double-serialized!
+```
+
+**After (v0.6.0+ - Fixed):**
+```python
+context = {"config": {"key": "value"}}
+resolve_nested({"setting": "${config}"}, context)
+# → {"setting": {"key": "value"}}  ✅ Type preserved!
+```
+
+This enables powerful patterns like combining multiple data sources:
+
+```json
+{
+  "stdin": {"a": "${data-a}", "b": "${data-b}"},
+  "command": "jq '.a + .b'"
+}
+```
+
+**Rules:**
+- Simple template (`${var}`) → Type preserved (dict, list, int, bool, None)
+- Complex template (`"text ${var}"`) → String (unchanged behavior)
 
 ---
 
@@ -898,14 +929,14 @@ From `tests/test_runtime/test_template_resolver.py`:
 
 ```python
 context = {"url": "https://example.com"}
-assert resolve_string("Visit ${url}", context) == "Visit https://example.com"
+assert resolve_template("Visit ${url}", context) == "Visit https://example.com"
 ```
 
 #### Nested Paths
 
 ```python
 context = {"data": {"title": "Test", "count": 42}}
-assert resolve_string("Title: ${data.title}", context) == "Title: Test"
+assert resolve_template("Title: ${data.title}", context) == "Title: Test"
 assert resolve_value("data.count", context) == 42  # Type preserved!
 ```
 
@@ -913,7 +944,7 @@ assert resolve_value("data.count", context) == 42  # Type preserved!
 
 ```python
 context = {}
-assert resolve_string("Missing: ${undefined}", context) == "Missing: ${undefined}"
+assert resolve_template("Missing: ${undefined}", context) == "Missing: ${undefined}"
 # Left as-is for debugging
 ```
 
@@ -947,8 +978,8 @@ assert resolve_value("data", context) == {"key": "value"}  # dict
 assert resolve_value("empty", context) is None      # None, not ""
 
 # Complex template becomes string
-assert resolve_string("Count: ${count}", context) == "Count: 42"
-assert resolve_string("Status: ${enabled}", context) == "Status: True"
+assert resolve_template("Count: ${count}", context) == "Count: 42"
+assert resolve_template("Status: ${enabled}", context) == "Status: True"
 ```
 
 ### Real Workflow Examples
@@ -1759,6 +1790,7 @@ uv run pflow --param test_value=123 workflow.json
 | 2.0 | Task 35 | Migration to `${variable}` syntax for clear boundaries |
 | 3.0 | Task 84 | Schema-aware type checking and validation |
 | 4.0 | Task 85 | Runtime hardening, auto-parsing, partial resolution detection |
+| 5.0 | Task 103 | Inline object type preservation - fixes double-serialization in nested structures |
 
 ---
 

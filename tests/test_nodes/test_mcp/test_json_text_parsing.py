@@ -1,6 +1,5 @@
 """Test JSON parsing in MCP text content blocks."""
 
-import json
 from unittest.mock import MagicMock
 
 from pflow.nodes.mcp.node import MCPNode
@@ -79,9 +78,9 @@ class TestJSONTextContentParsing:
             }
         }
 
-        # Test nested template access
+        # Test nested template access (simple template - type preserved)
         template = "${mcp-node.result.data.channels[0].id}"
-        resolved = TemplateResolver.resolve_string(template, shared)
+        resolved = TemplateResolver.resolve_template(template, shared)
 
         assert resolved == "C123"
 
@@ -106,34 +105,58 @@ class TestJSONTextContentParsing:
 
 
 class TestTemplateSerialization:
-    """Test that dict/list values serialize to valid JSON."""
+    """Test that dict/list values serialize to valid JSON in complex templates."""
 
-    def test_dict_serializes_to_valid_json(self):
-        """Test that dicts in templates produce valid JSON (not Python repr)."""
+    def test_simple_template_preserves_dict_type(self):
+        """Test that simple templates preserve dict type (new behavior)."""
         context = {"config": {"channels": ["C123", "C456"], "enabled": True}}
 
+        # Simple template - type preserved
         template = "${config}"
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
 
-        # Should be valid JSON (double quotes), not Python repr (single quotes)
-        assert '"channels"' in result
-        assert "'channels'" not in result
+        # Should return the actual dict, not a JSON string
+        assert isinstance(result, dict)
+        assert result["channels"] == ["C123", "C456"]
+        assert result["enabled"] is True
 
-        # Should be parseable by jq/JSON parsers
-        parsed = json.loads(result)
-        assert parsed["channels"] == ["C123", "C456"]
+    def test_complex_template_serializes_dict_to_json(self):
+        """Test that dicts in complex templates produce valid JSON (not Python repr)."""
+        context = {"config": {"channels": ["C123", "C456"], "enabled": True}}
 
-    def test_list_serializes_to_valid_json(self):
-        """Test that lists in templates produce valid JSON."""
+        # Complex template - dict is serialized to JSON string
+        template = "Config: ${config}"
+        result = TemplateResolver.resolve_template(template, context)
+
+        # Should be a string with valid JSON embedded
+        assert isinstance(result, str)
+        assert '"channels"' in result  # JSON uses double quotes
+        assert "'channels'" not in result  # Not Python repr
+
+    def test_simple_template_preserves_list_type(self):
+        """Test that simple templates preserve list type (new behavior)."""
         context = {"items": [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]}
 
+        # Simple template - type preserved
         template = "${items}"
-        result = TemplateResolver.resolve_string(template, context)
+        result = TemplateResolver.resolve_template(template, context)
 
-        # Should be valid JSON
-        parsed = json.loads(result)
-        assert len(parsed) == 2
-        assert parsed[0]["name"] == "first"
+        # Should return the actual list, not a JSON string
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["name"] == "first"
+
+    def test_complex_template_serializes_list_to_json(self):
+        """Test that lists in complex templates produce valid JSON."""
+        context = {"items": [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]}
+
+        # Complex template - list is serialized to JSON string
+        template = "Items: ${items}"
+        result = TemplateResolver.resolve_template(template, context)
+
+        # Should be a string with valid JSON embedded
+        assert isinstance(result, str)
+        assert "Items: [" in result
 
 
 class TestComposioScenario:
@@ -175,21 +198,21 @@ class TestComposioScenario:
         }
 
         # Test accessing nested data with single array index
-        # (Multi-dimensional array access [0][0] requires extracting to intermediate variable)
+        # Simple templates now preserve type (list in this case)
         template1 = "${get-sheet-data.result.data.valueRanges[0].values}"
-        resolved1 = TemplateResolver.resolve_string(template1, shared)
+        resolved1 = TemplateResolver.resolve_template(template1, shared)
 
-        # Template resolver will convert the list to JSON string
-        import json
-
-        parsed = json.loads(resolved1)
-        assert parsed == [["A1", "B1"], ["A2", "B2"]]
+        # With type preservation, we get the actual list, not a JSON string
+        assert isinstance(resolved1, list)
+        assert resolved1 == [["A1", "B1"], ["A2", "B2"]]
 
         # Test direct access to first range object
         template2 = "${get-sheet-data.result.data.valueRanges[0]}"
-        resolved2 = TemplateResolver.resolve_string(template2, shared)
-        parsed2 = json.loads(resolved2)
-        assert "values" in parsed2
+        resolved2 = TemplateResolver.resolve_template(template2, shared)
+
+        # With type preservation, we get the actual dict, not a JSON string
+        assert isinstance(resolved2, dict)
+        assert "values" in resolved2
 
 
 class TestEdgeCases:

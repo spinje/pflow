@@ -16,16 +16,22 @@ logger = logging.getLogger(__name__)
 class TemplateResolver:
     """Handles template variable detection and resolution with path support."""
 
-    # Pattern supports ${var} format with paths
-    # Matches: ${identifier} or ${identifier.field.subfield}
-    # Groups: (identifier.field.subfield)
+    # Shared pattern for valid variable names with optional path and array indices
+    # Matches: identifier, identifier.field, identifier[0].field, etc.
+    # - Must start with letter or underscore
+    # - Can contain word characters and hyphens
+    # - Supports dot notation for nested access
+    # - Supports bracket notation for array indices
+    _VAR_NAME_PATTERN = r"[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?"
+
+    # Pattern for finding templates in strings (can match multiple)
     # Must not be preceded by $ (to avoid $${var} escapes)
-    # Identifiers must start with letter or underscore
-    # Supports hyphens in variable names
-    # Pattern supports array notation: ${node[0].field}, ${node.field[0].subfield}
-    TEMPLATE_PATTERN = re.compile(
-        r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"
-    )
+    TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_VAR_NAME_PATTERN})\}}")
+
+    # Pattern for detecting simple templates (entire string is exactly one ${var})
+    # Used to determine when to preserve type vs stringify
+    # Uses same strict variable name pattern as TEMPLATE_PATTERN
+    SIMPLE_TEMPLATE_PATTERN = re.compile(rf"^\$\{{({_VAR_NAME_PATTERN})\}}$")
 
     @staticmethod
     def has_templates(value: Any) -> bool:
@@ -59,6 +65,52 @@ class TemplateResolver:
             Set of variable names found (e.g., {'url', 'data.field'})
         """
         return set(TemplateResolver.TEMPLATE_PATTERN.findall(value))
+
+    @staticmethod
+    def is_simple_template(value: str) -> bool:
+        """Check if string is exactly one template variable reference.
+
+        Simple templates like "${var}" preserve the original type when resolved.
+        Complex templates like "Hello ${name}" always return strings.
+
+        Args:
+            value: String to check
+
+        Returns:
+            True if the entire string is a single template reference
+
+        Examples:
+            >>> TemplateResolver.is_simple_template("${var}")
+            True
+            >>> TemplateResolver.is_simple_template("${data.field}")
+            True
+            >>> TemplateResolver.is_simple_template("Hello ${name}")
+            False
+            >>> TemplateResolver.is_simple_template("${a}${b}")
+            False
+        """
+        return bool(TemplateResolver.SIMPLE_TEMPLATE_PATTERN.match(value))
+
+    @staticmethod
+    def extract_simple_template_var(value: str) -> Optional[str]:
+        """Extract variable name from a simple template.
+
+        Args:
+            value: String that may be a simple template
+
+        Returns:
+            Variable name (with path if present), or None if not a simple template
+
+        Examples:
+            >>> TemplateResolver.extract_simple_template_var("${data}")
+            'data'
+            >>> TemplateResolver.extract_simple_template_var("${user.name}")
+            'user.name'
+            >>> TemplateResolver.extract_simple_template_var("Hello ${name}")
+            None
+        """
+        match = TemplateResolver.SIMPLE_TEMPLATE_PATTERN.match(value)
+        return match.group(1) if match else None
 
     @staticmethod
     def _check_array_indices(
@@ -284,28 +336,52 @@ class TemplateResolver:
             return str(value)
 
     @staticmethod
-    def resolve_string(template: str, context: dict[str, Any]) -> str:
-        """Resolve all template variables in a string.
+    def resolve_template(template: str, context: dict[str, Any]) -> Any:
+        """Resolve a template string to its value.
 
-        Template variables that cannot be resolved are left unchanged
-        for debugging visibility.
+        For simple templates (entire string is "${var}"), preserves the original type.
+        For complex templates (text around variables), returns a string.
+        Template variables that cannot be resolved are left unchanged for debugging.
 
         Args:
             template: String containing template variables
             context: Dictionary containing values to resolve from
 
         Returns:
-            String with resolved template variables
+            - For simple templates: The resolved value with original type preserved
+            - For complex templates: String with variables interpolated
+            - For unresolved templates: The template string unchanged
 
         Examples:
-            >>> context = {"url": "https://example.com", "data": {"title": "Test"}}
-            >>> TemplateResolver.resolve_string("Visit ${url}", context)
-            'Visit https://example.com'
-            >>> TemplateResolver.resolve_string("Title: ${data.title}", context)
-            'Title: Test'
-            >>> TemplateResolver.resolve_string("Missing: ${undefined}", context)
+            >>> context = {"data": {"name": "Alice"}, "count": 42, "url": "https://example.com"}
+            >>> TemplateResolver.resolve_template("${data}", context)
+            {'name': 'Alice'}  # Dict preserved
+            >>> TemplateResolver.resolve_template("${count}", context)
+            42  # Int preserved
+            >>> TemplateResolver.resolve_template("Visit ${url}", context)
+            'Visit https://example.com'  # String (complex template)
+            >>> TemplateResolver.resolve_template("Missing: ${undefined}", context)
             'Missing: ${undefined}'
         """
+        # Check for simple template first - preserve type
+        var_name = TemplateResolver.extract_simple_template_var(template)
+        if var_name is not None:
+            if TemplateResolver.variable_exists(var_name, context):
+                resolved = TemplateResolver.resolve_value(var_name, context)
+                logger.debug(
+                    f"Resolved simple template '${{{var_name}}}' -> {resolved!r} (type: {type(resolved).__name__})",
+                    extra={"var_name": var_name, "value_type": type(resolved).__name__},
+                )
+                return resolved
+            else:
+                # Variable doesn't exist - return template unchanged for debugging
+                logger.debug(
+                    f"Simple template variable '${{{var_name}}}' could not be resolved",
+                    extra={"var_name": var_name},
+                )
+                return template
+
+        # Complex template - do string interpolation
         result = template
 
         # Find all template variables in the string
@@ -363,7 +439,8 @@ class TemplateResolver:
         """Recursively resolve template variables in nested structures.
 
         Handles dictionaries, lists, and nested combinations while preserving
-        the original structure and types of non-template values.
+        the original structure and types. Simple templates (${var}) preserve
+        their original type, while complex templates return strings.
 
         Args:
             value: The value to resolve (can be string, dict, list, or any type)
@@ -373,15 +450,17 @@ class TemplateResolver:
             The value with all template variables resolved, maintaining structure
 
         Examples:
-            >>> context = {"token": "abc123", "channel": "C123"}
+            >>> context = {"token": "abc123", "data": {"name": "Alice"}}
             >>> params = {"headers": {"Authorization": "Bearer ${token}"}}
             >>> TemplateResolver.resolve_nested(params, context)
             {'headers': {'Authorization': 'Bearer abc123'}}
+            >>> TemplateResolver.resolve_nested({"user": "${data}"}, context)
+            {'user': {'name': 'Alice'}}  # Type preserved
         """
         if isinstance(value, str):
-            # Resolve string templates
+            # Resolve string templates (preserves type for simple templates)
             if "${" in value:
-                return TemplateResolver.resolve_string(value, context)
+                return TemplateResolver.resolve_template(value, context)
             return value
         elif isinstance(value, dict):
             # Recursively resolve dictionary values

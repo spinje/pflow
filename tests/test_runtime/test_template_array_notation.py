@@ -118,7 +118,7 @@ class TestTemplateArrayNotation:
 
         # Note: Current TemplateResolver doesn't handle array indexing in resolve_value
         # It would need enhancement to parse [0] notation. For now, test pattern matching
-        TemplateResolver.resolve_string(template, context)  # Just verify no exception
+        TemplateResolver.resolve_template(template, context)  # Just verify no exception
         # The template would remain unresolved with current implementation
         # This test verifies the pattern matches array notation correctly
         matches = TemplateResolver.TEMPLATE_PATTERN.findall(template)

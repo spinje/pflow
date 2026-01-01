@@ -223,8 +223,8 @@ class TestNodeWrapperNestedResolution:
         assert node.exec_params["url"] == "https://slack.com/api/conversations.history"
         assert node.exec_params["method"] == "GET"
         assert node.exec_params["params"]["channel"] == "C09C16NAU5B"
-        # Template resolution converts numbers to strings when in nested structures
-        assert node.exec_params["params"]["limit"] == "10"
+        # Simple templates now preserve original type (int stays int)
+        assert node.exec_params["params"]["limit"] == 10
         assert node.exec_params["headers"]["Authorization"] == "Bearer xoxb-123456789"
         assert node.exec_params["headers"]["Content-Type"] == "application/json"
 
@@ -269,9 +269,9 @@ class TestNodeWrapperNestedResolution:
         # Verify all resolutions
         assert node.exec_params["url"] == "https://api.example.com/users"
         assert node.exec_params["auth"]["token"] == "secret123"  # noqa: S105 - Test data, not real credentials
-        # Template resolution converts to strings
-        assert node.exec_params["query"]["page"] == "1"
-        assert node.exec_params["query"]["active"] == "True"  # Boolean becomes string
+        # Simple templates now preserve original types (int stays int, bool stays bool)
+        assert node.exec_params["query"]["page"] == 1
+        assert node.exec_params["query"]["active"] is True  # Boolean preserved
         assert node.exec_params["query"]["filters"] == ["users", "published"]
-        assert node.exec_params["body"]["data"]["items"][0] == {"type": "users", "page": "1"}
+        assert node.exec_params["body"]["data"]["items"][0] == {"type": "users", "page": 1}
         assert node.exec_params["body"]["data"]["items"][1] == {"type": "static", "page": 0}
