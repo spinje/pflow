@@ -206,6 +206,24 @@ class TestSimpleTemplateDetection:
         assert TemplateResolver.is_simple_template("${var} text") is False  # Suffix
         assert TemplateResolver.is_simple_template("Hello ${name}!") is False  # Embedded
 
+    def test_invalid_variable_names_not_simple(self):
+        """Invalid variable names should NOT be detected as simple templates.
+
+        The SIMPLE_TEMPLATE_PATTERN uses the same strict pattern as TEMPLATE_PATTERN,
+        so it rejects invalid variable names like numbers, special chars, etc.
+        """
+        # Starting with number
+        assert TemplateResolver.is_simple_template("${123}") is False
+        # Starting with hyphen
+        assert TemplateResolver.is_simple_template("${-invalid}") is False
+        # Whitespace inside
+        assert TemplateResolver.is_simple_template("${ var }") is False
+        assert TemplateResolver.is_simple_template("${ var}") is False
+        assert TemplateResolver.is_simple_template("${var }") is False
+        # Special characters
+        assert TemplateResolver.is_simple_template("${@invalid}") is False
+        assert TemplateResolver.is_simple_template("${var!}") is False
+
     def test_extract_simple_template_var(self):
         """Test variable extraction from simple templates."""
         assert TemplateResolver.extract_simple_template_var("${var}") == "var"

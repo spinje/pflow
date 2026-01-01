@@ -490,3 +490,151 @@ Extracting `is_simple_template()` and `extract_simple_template_var()` to `Templa
 **Documentation:**
 - `implementation-plan.md` - Created
 - `progress-log.md` - This file
+
+---
+
+## [Code Review] - PR #32 Review Feedback
+
+### Review Summary
+
+Received comprehensive code review via GitHub comment. Overall assessment: **8.5-10/10** across categories.
+
+### Warnings Identified
+
+| Finding | Priority | Action |
+|---------|----------|--------|
+| ⚠️ SIMPLE_TEMPLATE_PATTERN too permissive | Medium | **FIXED** |
+| ⚠️ Missing whitespace edge case test | Low | **FIXED** |
+
+### Suggestions Identified
+
+| Finding | Priority | Action |
+|---------|----------|--------|
+| 💡 Extract shared `_VAR_NAME_PATTERN` | Code organization | **FIXED** |
+| 💡 Escaped template test | Test quality | Skipped (behavior verified correct) |
+| 💡 Logging enhancement | Observability | Skipped (too minor) |
+
+---
+
+## [Review Fix 1] - Stricter SIMPLE_TEMPLATE_PATTERN
+
+### Problem
+
+The original pattern `r"^\$\{([^}]+)\}$"` was too permissive:
+- Matched invalid variable names: `${123}`, `${-invalid}`
+- Matched whitespace: `${ var }`
+- Inconsistent with `TEMPLATE_PATTERN` which is strict
+
+### Solution
+
+Extracted shared pattern and use in both constants:
+
+```python
+# Before:
+TEMPLATE_PATTERN = re.compile(
+    r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?)\}"
+)
+SIMPLE_TEMPLATE_PATTERN = re.compile(r"^\$\{([^}]+)\}$")  # TOO PERMISSIVE
+
+# After:
+_VAR_NAME_PATTERN = r"[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?"
+TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_VAR_NAME_PATTERN})\}}")
+SIMPLE_TEMPLATE_PATTERN = re.compile(rf"^\$\{{({_VAR_NAME_PATTERN})\}}$")  # STRICT
+```
+
+### Verification
+
+```
+Testing patterns...
+  is_simple_template('${var}'): True PASS
+  is_simple_template('${data.field}'): True PASS
+  is_simple_template('${items[0]}'): True PASS
+
+  is_simple_template('${123}'): False PASS      # Now correctly rejected
+  is_simple_template('${ var }'): False PASS    # Now correctly rejected
+  is_simple_template('${-invalid}'): False PASS # Now correctly rejected
+```
+
+---
+
+## [Review Fix 2] - Invalid Variable Name Tests
+
+### Added Test
+
+```python
+def test_invalid_variable_names_not_simple(self):
+    """Invalid variable names should NOT be detected as simple templates."""
+    # Starting with number
+    assert TemplateResolver.is_simple_template("${123}") is False
+    # Starting with hyphen
+    assert TemplateResolver.is_simple_template("${-invalid}") is False
+    # Whitespace inside
+    assert TemplateResolver.is_simple_template("${ var }") is False
+    assert TemplateResolver.is_simple_template("${ var}") is False
+    assert TemplateResolver.is_simple_template("${var }") is False
+    # Special characters
+    assert TemplateResolver.is_simple_template("${@invalid}") is False
+    assert TemplateResolver.is_simple_template("${var!}") is False
+```
+
+### Rationale
+
+Documents the exact boundary between valid and invalid templates. Protects against pattern regression.
+
+---
+
+## [Review Fix 3] - Verified Escaped Templates
+
+### Verified Current Behavior
+
+```python
+# Escaped template test:
+is_simple_template('$${var}'): False  # Correct - not a simple template
+resolve_template('$${var}'): '$${var}'  # Correct - stays literal
+```
+
+The negative lookbehind in `TEMPLATE_PATTERN` (`(?<!\$)`) correctly prevents matching templates preceded by `$`. No code change needed.
+
+---
+
+## Final Test Results After Review Fixes
+
+```
+3237 passed, 9 skipped in 16.02s
+```
+
+One additional test added (total now 3237).
+
+---
+
+## Summary of All Changes
+
+### Source Files (3 files)
+
+| File | Change |
+|------|--------|
+| `template_resolver.py` | Added `_VAR_NAME_PATTERN`, renamed `resolve_string`→`resolve_template`, added helper methods |
+| `node_wrapper.py` | Use shared helper, call `resolve_template` |
+| `workflow_executor.py` | Call `resolve_template` |
+
+### Test Files (8 files)
+
+| File | Change |
+|------|--------|
+| `test_template_resolver.py` | Updated 22 calls |
+| `test_template_resolver_arrays.py` | Updated 6 calls |
+| `test_template_resolver_nested.py` | Updated 2 calls |
+| `test_template_array_notation.py` | Updated 1 call |
+| `test_json_text_parsing.py` | Updated 5 calls, rewrote for new behavior |
+| `test_node_wrapper_nested_resolution.py` | Fixed 2 assertions |
+| `test_template_type_preservation.py` | **NEW** - 13 tests for type preservation |
+| `test_shell_stdin_type_preservation.py` | **NEW** - 4 integration tests |
+
+### Documentation
+
+| File | Change |
+|------|--------|
+| `implementation-plan.md` | Created |
+| `progress-log.md` | This file |
+
+---

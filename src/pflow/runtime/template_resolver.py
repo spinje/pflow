@@ -16,20 +16,22 @@ logger = logging.getLogger(__name__)
 class TemplateResolver:
     """Handles template variable detection and resolution with path support."""
 
-    # Pattern supports ${var} format with paths
-    # Matches: ${identifier} or ${identifier.field.subfield}
-    # Groups: (identifier.field.subfield)
-    # Must not be preceded by $ (to avoid $${var} escapes)
-    # Identifiers must start with letter or underscore
-    # Supports hyphens in variable names
-    # Pattern supports array notation: ${node[0].field}, ${node.field[0].subfield}
-    TEMPLATE_PATTERN = re.compile(
-        r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"
-    )
+    # Shared pattern for valid variable names with optional path and array indices
+    # Matches: identifier, identifier.field, identifier[0].field, etc.
+    # - Must start with letter or underscore
+    # - Can contain word characters and hyphens
+    # - Supports dot notation for nested access
+    # - Supports bracket notation for array indices
+    _VAR_NAME_PATTERN = r"[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?"
 
-    # Pattern for detecting simple templates (entire string is one ${var} reference)
+    # Pattern for finding templates in strings (can match multiple)
+    # Must not be preceded by $ (to avoid $${var} escapes)
+    TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_VAR_NAME_PATTERN})\}}")
+
+    # Pattern for detecting simple templates (entire string is exactly one ${var})
     # Used to determine when to preserve type vs stringify
-    SIMPLE_TEMPLATE_PATTERN = re.compile(r"^\$\{([^}]+)\}$")
+    # Uses same strict variable name pattern as TEMPLATE_PATTERN
+    SIMPLE_TEMPLATE_PATTERN = re.compile(rf"^\$\{{({_VAR_NAME_PATTERN})\}}$")
 
     @staticmethod
     def has_templates(value: Any) -> bool:

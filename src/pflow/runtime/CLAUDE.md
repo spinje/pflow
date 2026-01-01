@@ -161,9 +161,10 @@ shared["__cache_hits__"] = []  # Nodes that hit cache (for JSON output)
 
 **Key Features**:
 - **Path Support**: `${data.user.name}`, `${items[0].title}`
-- **Type Preservation**: `${var}` preserves original type
-- **Nested Resolution**: Handles templates in dicts/lists
+- **Type Preservation**: `${var}` preserves original type (including in nested structures)
+- **Nested Resolution**: Handles templates in dicts/lists with proper type preservation
 - **Fallback**: Unresolved templates remain for debugging
+- **Key Methods**: `resolve_template()`, `resolve_nested()`, `is_simple_template()`
 
 **Resolution Priority**:
 1. `initial_params` (from planner)
@@ -444,6 +445,8 @@ shared["__template_errors__"] = {}        # Template/type errors in permissive m
 - **Array Support**: `${items[0].name}`, `${data[5].users[2]}`
 - **Simple templates** (`${var}`): Preserve original type (int, bool, None, dict, list)
 - **Complex templates** (`"Hello ${name}"`): Always return strings
+- **Inline objects**: `{"key": "${dict_var}"}` preserves inner types (no double-serialization)
+- **Helper methods**: `is_simple_template()`, `extract_simple_template_var()` for pattern detection
 - **Type Conversion**: None→"", False→"False", True→"True", 0→"0", []→"[]", {}→"{}", dicts/lists→JSON serialized (double quotes, valid JSON)
 - **Unresolved templates**: Remain for debugging visibility
 - **Template errors**: Fatal ValueError triggers repair
