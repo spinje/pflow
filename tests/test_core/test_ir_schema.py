@@ -639,6 +639,46 @@ class TestBatchConfig:
             }
             validate_ir(ir)  # Should not raise
 
+    def test_batch_config_inline_array_with_templates(self):
+        """Test inline array with templates inside elements."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "shell",
+                    "purpose": "Run multiple commands with same data",
+                    "batch": {
+                        "items": [
+                            {"cmd": "echo", "input": "${data}"},
+                            {"cmd": "wc -l", "input": "${data}"},
+                        ],
+                        "as": "task",
+                    },
+                    "params": {"command": "${task.cmd}", "stdin": "${task.input}"},
+                }
+            ],
+        }
+        validate_ir(ir)  # Should not raise
+
+    def test_batch_config_inline_array_empty_rejected(self):
+        """Test that empty inline array is rejected (minItems: 1)."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch_node",
+                    "type": "llm",
+                    "purpose": "Empty array should fail",
+                    "batch": {
+                        "items": [],  # Empty array not allowed
+                    },
+                }
+            ],
+        }
+        with pytest.raises(ValidationError):
+            validate_ir(ir)
+
 
 class TestBatchConfigPhase2:
     """Test validation of Phase 2 batch configuration fields (parallel execution)."""

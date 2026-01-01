@@ -240,40 +240,44 @@ class PflowBatchNode(Node):
         if "__llm_calls__" not in shared:
             shared["__llm_calls__"] = []
 
-        # Extract variable path from template: "${x.y}" -> "x.y"
-        var_path = self.items_template.strip()[2:-1]
+        # Handle inline array vs template reference
+        if isinstance(self.items_template, list):
+            # Inline array - resolve templates inside each element
+            # Task 103's resolve_nested() preserves types in nested structures
+            items = TemplateResolver.resolve_nested(self.items_template, shared)
+        else:
+            # Template reference - extract variable path: "${x.y}" -> "x.y"
+            var_path = self.items_template.strip()[2:-1]
+            items = TemplateResolver.resolve_value(var_path, shared)
 
-        # Resolve items from shared store
-        items = TemplateResolver.resolve_value(var_path, shared)
+            # Auto-parse JSON strings (enables shell → batch patterns)
+            # Shell nodes output text; if that text is valid JSON array, parse it
+            if isinstance(items, str):
+                trimmed = items.strip()  # Handle shell output newlines
 
-        # Auto-parse JSON strings (enables shell → batch patterns)
-        # Shell nodes output text; if that text is valid JSON array, parse it
-        if isinstance(items, str):
-            trimmed = items.strip()  # Handle shell output newlines
-
-            # Security: Prevent memory exhaustion from large JSON
-            MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
-            if len(trimmed) > MAX_JSON_SIZE:
-                logger.warning(
-                    f"Batch items string is {len(trimmed)} bytes, "
-                    f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
-                    extra={"node_id": self.node_id, "size": len(trimmed)},
-                )
-            elif trimmed.startswith("["):  # Quick check: looks like JSON array?
-                try:
-                    parsed = json.loads(trimmed)
-                    if isinstance(parsed, list):
-                        items = parsed
-                        logger.debug(
-                            "Auto-parsed JSON string to list for batch.items",
-                            extra={"node_id": self.node_id, "item_count": len(items)},
-                        )
-                except (json.JSONDecodeError, ValueError):
-                    # Not valid JSON - will fail at type check with clear error
-                    logger.debug(
-                        "Failed to parse batch.items as JSON, keeping as string",
-                        extra={"node_id": self.node_id},
+                # Security: Prevent memory exhaustion from large JSON
+                MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
+                if len(trimmed) > MAX_JSON_SIZE:
+                    logger.warning(
+                        f"Batch items string is {len(trimmed)} bytes, "
+                        f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
+                        extra={"node_id": self.node_id, "size": len(trimmed)},
                     )
+                elif trimmed.startswith("["):  # Quick check: looks like JSON array?
+                    try:
+                        parsed = json.loads(trimmed)
+                        if isinstance(parsed, list):
+                            items = parsed
+                            logger.debug(
+                                "Auto-parsed JSON string to list for batch.items",
+                                extra={"node_id": self.node_id, "item_count": len(items)},
+                            )
+                    except (json.JSONDecodeError, ValueError):
+                        # Not valid JSON - will fail at type check with clear error
+                        logger.debug(
+                            "Failed to parse batch.items as JSON, keeping as string",
+                            extra={"node_id": self.node_id},
+                        )
 
         if items is None:
             raise ValueError(

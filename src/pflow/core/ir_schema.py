@@ -121,9 +121,19 @@ BATCH_CONFIG_SCHEMA: dict[str, Any] = {
     "description": "Configuration for batch processing of multiple items",
     "properties": {
         "items": {
-            "type": "string",
-            "pattern": r"^\$\{.+\}$",
-            "description": "Template reference to array of items to process (e.g., '${node.files}')",
+            "oneOf": [
+                {
+                    "type": "string",
+                    "pattern": r"^\$\{.+\}$",
+                    "description": "Template reference to array (e.g., '${node.files}')",
+                },
+                {
+                    "type": "array",
+                    "minItems": 1,
+                    "description": "Inline array of items (can contain templates)",
+                },
+            ],
+            "description": "Items to process: template reference OR inline array",
         },
         "as": {
             "type": "string",
