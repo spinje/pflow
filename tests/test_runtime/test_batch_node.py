@@ -115,6 +115,55 @@ class TestPflowBatchNodeBasic:
         assert shared["test_node"]["results"][2] == {"response": "c"}
 
 
+class TestInlineArrayItems:
+    """Tests for inline array items support (batch.items as literal array)."""
+
+    def test_inline_array_with_templates(self):
+        """Inline array with templates inside elements resolves correctly."""
+        inner = MockInnerNode("test_node")
+        # items is a literal array with templates inside
+        batch = PflowBatchNode(
+            inner,
+            "test_node",
+            {
+                "items": [
+                    {"style": "summary", "data": "${source}"},
+                    {"style": "detailed", "data": "${source}"},
+                ]
+            },
+        )
+
+        shared = {"source": {"content": "hello world"}}
+        items = batch.prep(shared)
+
+        # Templates inside array elements should be resolved
+        assert items == [
+            {"style": "summary", "data": {"content": "hello world"}},
+            {"style": "detailed", "data": {"content": "hello world"}},
+        ]
+
+    def test_inline_array_preserves_types(self):
+        """Inline array preserves types of resolved templates (Task 103)."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(
+            inner,
+            "test_node",
+            {
+                "items": [
+                    {"count": "${num}", "flag": "${bool_val}", "items": "${list_val}"},
+                ]
+            },
+        )
+
+        shared = {"num": 42, "bool_val": True, "list_val": [1, 2, 3]}
+        items = batch.prep(shared)
+
+        # Types should be preserved, not stringified
+        assert items[0]["count"] == 42
+        assert items[0]["flag"] is True
+        assert items[0]["items"] == [1, 2, 3]
+
+
 class TestItemAliasInjection:
     """Tests for item alias injection into isolated context."""
 

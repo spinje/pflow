@@ -887,23 +887,14 @@ def _collect_json_outputs(
     Returns:
         Dictionary of outputs to serialize as JSON
     """
-    import json
-
-    def _parse_if_json(value: Any) -> Any:
-        """Parse value if it's a JSON string, otherwise return as-is."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except (json.JSONDecodeError, ValueError):
-                return value
-        return value
+    from pflow.core.json_utils import parse_json_or_original
 
     result = {}
 
     if output_key:
         # Specific key requested
         if output_key in shared_storage:
-            result[output_key] = _parse_if_json(shared_storage[output_key])
+            result[output_key] = parse_json_or_original(shared_storage[output_key])
         # In JSON mode, don't output warnings to stderr
 
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
@@ -913,14 +904,14 @@ def _collect_json_outputs(
 
         for output_name in declared:
             if output_name in shared_storage:
-                result[output_name] = _parse_if_json(shared_storage[output_name])
+                result[output_name] = parse_json_or_original(shared_storage[output_name])
         # In JSON mode, don't output warnings to stderr
 
     else:
         # Fallback: Use auto-detection (using unified function)
         key_found, value = _find_auto_output(shared_storage)
         if key_found:
-            result[key_found] = _parse_if_json(value)
+            result[key_found] = parse_json_or_original(value)
 
     return result
 

@@ -4,7 +4,6 @@ This module provides a shared formatter for successful workflow execution result
 ensuring CLI and MCP return identical output structures.
 """
 
-import json
 from typing import Any, Optional
 
 from pflow.core.workflow_status import WorkflowStatus
@@ -118,21 +117,14 @@ def _collect_outputs(
         Dictionary of outputs to include in result
     """
 
-    def _parse_if_json(value: Any) -> Any:
-        """Parse value if it's a JSON string, otherwise return as-is."""
-        if isinstance(value, str):
-            try:
-                return json.loads(value)
-            except (json.JSONDecodeError, ValueError):
-                return value
-        return value
+    from pflow.core.json_utils import parse_json_or_original
 
     result = {}
 
     if output_key:
         # Specific key requested
         if output_key in shared_storage:
-            result[output_key] = _parse_if_json(shared_storage[output_key])
+            result[output_key] = parse_json_or_original(shared_storage[output_key])
 
     elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
         # Collect ALL declared outputs
@@ -140,13 +132,13 @@ def _collect_outputs(
 
         for output_name in declared:
             if output_name in shared_storage:
-                result[output_name] = _parse_if_json(shared_storage[output_name])
+                result[output_name] = parse_json_or_original(shared_storage[output_name])
 
     else:
         # Fallback: Use auto-detection
         key_found, value = _find_auto_output(shared_storage)
         if key_found:
-            result[key_found] = _parse_if_json(value)
+            result[key_found] = parse_json_or_original(value)
 
     return result
 

@@ -18,6 +18,24 @@ from pflow.runtime.type_checker import (
     is_type_compatible,
 )
 
+# Pattern to match array indices at the end of a key (e.g., "stdout[0]" -> "stdout")
+_ARRAY_INDEX_PATTERN = re.compile(r"^([^\[]+)(\[\d+\])+$")
+
+
+def _strip_array_indices(key: str) -> tuple[str, bool]:
+    """Strip array indices from a key, returning base key and whether indices were present.
+
+    Args:
+        key: Key that may contain array indices (e.g., "stdout[0]", "items[0][1]")
+
+    Returns:
+        Tuple of (base_key, had_indices) - e.g., ("stdout", True) or ("stdout", False)
+    """
+    match = _ARRAY_INDEX_PATTERN.match(key)
+    if match:
+        return match.group(1), True
+    return key, False
+
 
 @dataclass
 class ValidationWarning:
@@ -845,17 +863,26 @@ class TemplateValidator:
                     # Just the node ID without output key - invalid
                     return (False, None)
 
+                # Strip array indices from output key (e.g., "stdout[0]" -> "stdout")
+                # This handles templates like ${node.stdout[0].field}
+                raw_output_key = parts[1]
+                base_output_key, has_array_index = _strip_array_indices(raw_output_key)
+
                 # Check if the namespaced path exists in node_outputs
-                node_output_key = f"{base_var}.{parts[1]}"
+                node_output_key = f"{base_var}.{base_output_key}"
                 if node_output_key in node_outputs:
-                    if len(parts) == 2:
+                    if len(parts) == 2 and not has_array_index:
                         # Just node_id.output_key - valid, no nesting
                         return (True, None)
 
                     # Validate deeper nested path
-                    output_key = parts[1]  # Extract output key
+                    # Include array index as part of the path to validate
+                    remaining_parts = [raw_output_key, *parts[2:]] if has_array_index else list(parts[2:])
                     return TemplateValidator._validate_nested_path(
-                        parts[2:], node_outputs[node_output_key], full_template=template, output_key=output_key
+                        remaining_parts,
+                        node_outputs[node_output_key],
+                        full_template=template,
+                        output_key=base_output_key,
                     )
                 return (False, None)
 
@@ -881,6 +908,63 @@ class TemplateValidator:
         return (False, None)
 
     @staticmethod
+    def _check_type_allows_traversal(
+        output_type: str, path_parts: list[str], output_info: dict[str, Any], full_template: str, output_key: str
+    ) -> tuple[bool, Optional[ValidationWarning]]:
+        """Check if output type allows traversal and generate warning if needed.
+
+        Args:
+            output_type: The output type string (may be union like "dict|str")
+            path_parts: List of path components for warning context
+            output_info: Output info dict for warning context
+            full_template: Full template string for warning context
+            output_key: The output key being accessed
+
+        Returns:
+            Tuple of (is_valid, optional_warning)
+        """
+        # Parse union types (e.g., "dict|str" → ["dict", "str"])
+        types_in_union = [t.strip().lower() for t in output_type.split("|")]
+
+        # Check if ANY type in the union allows traversal
+        # - dict/object: structured data, traversable (trusted, no warning)
+        # - any: explicit "could be anything" declaration (trusted, no warning)
+        # - str/string: might contain JSON, defer to runtime via JSON auto-parsing (WARNING)
+        traversable_types = [t for t in types_in_union if t in ["dict", "object", "any", "str", "string"]]
+
+        if not traversable_types:
+            return (False, None)
+
+        # dict/object and any types are trusted - no warning needed
+        # - dict/object: structured data
+        # - any: node author explicitly declared "this could be anything"
+        trusted_types = [t for t in traversable_types if t in ["dict", "object", "any"]]
+        if trusted_types:
+            # At least one trusted type - allow without warning
+            return (True, None)
+
+        # Only str/string types remain - warn about JSON auto-parsing
+        # This is the "surprising" case where nested access works via implicit parsing
+        string_types = [t for t in traversable_types if t in ["str", "string"]]
+        warning = None
+
+        if string_types and len(path_parts) > 0:
+            warning = ValidationWarning(
+                template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
+                node_id=output_info.get("node_id", "unknown"),
+                node_type=output_info.get("node_type", "unknown"),
+                output_key=output_key,
+                output_type=output_type,
+                reason=(
+                    f"Nested access on '{output_type}' requires valid JSON at runtime. "
+                    f"Non-JSON strings cause 'Unresolved variables' error."
+                ),
+                nested_path=".".join(path_parts),
+            )
+
+        return (True, warning)
+
+    @staticmethod
     def _validate_nested_path(
         path_parts: list[str], output_info: dict[str, Any], full_template: str = "", output_key: str = ""
     ) -> tuple[bool, Optional[ValidationWarning]]:
@@ -900,34 +984,9 @@ class TemplateValidator:
         # If no structure info, check if type allows traversal
         if not current_structure:
             output_type = output_info.get("type", "any")
-
-            # Parse union types (e.g., "dict|str" → ["dict", "str"])
-            # Strip whitespace and convert to lowercase for comparison
-            types_in_union = [t.strip().lower() for t in output_type.split("|")]
-
-            # Check if ANY type in the union allows traversal
-            traversable_types = [t for t in types_in_union if t in ["dict", "object", "any"]]
-
-            if not traversable_types:
-                # None of the types allow nested access
-                return (False, None)
-
-            # At least one type allows traversal - check if we should warn
-            # Only warn for pure "any" or if "any" is in a union
-            warning = None
-            if "any" in traversable_types and len(path_parts) > 0:
-                # Generate warning for runtime validation
-                warning = ValidationWarning(
-                    template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
-                    node_id=output_info.get("node_id", "unknown"),
-                    node_type=output_info.get("node_type", "unknown"),
-                    output_key=output_key,
-                    output_type=output_type,
-                    reason=f"Output type '{output_type}' - structure cannot be verified statically",
-                    nested_path=".".join(path_parts),
-                )
-
-            return (True, warning)
+            return TemplateValidator._check_type_allows_traversal(
+                output_type, path_parts, output_info, full_template, output_key
+            )
 
         # Traverse the structure
         for i, part in enumerate(path_parts):
@@ -943,8 +1002,10 @@ class TemplateValidator:
                         # More parts to traverse
                         current_structure = next_item.get("structure", {})
                         if not current_structure:
-                            # Can't traverse further into a non-dict type
-                            return (next_item.get("type", "any") in ["dict", "object", "any"], None)
+                            # Can't traverse further unless type allows it
+                            # str/string allowed for JSON auto-parsing at runtime
+                            field_type = next_item.get("type", "any").lower()
+                            return (field_type in ["dict", "object", "any", "str", "string"], None)
                     else:
                         # This is the final part - valid
                         return (True, None)

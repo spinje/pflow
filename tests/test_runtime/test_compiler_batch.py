@@ -502,3 +502,46 @@ class TestBatchEdgeCases:
 
         assert shared["batch1"]["count"] == 2
         assert shared["batch2"]["count"] == 3
+
+    def test_batch_inline_array_with_templates_compiles_and_executes(self, test_registry):
+        """Full pipeline: IR with inline batch array → compile → execute.
+
+        This is the primary use case: different operations on same data.
+        Verifies templates inside inline array elements resolve correctly.
+        """
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "source",
+                    "type": "value-node",
+                    "params": {"value": {"content": "hello world"}},
+                },
+                {
+                    "id": "multi-op",
+                    "type": "value-node",
+                    "batch": {
+                        "items": [
+                            {"op": "upper", "data": "${source.result}"},
+                            {"op": "lower", "data": "${source.result}"},
+                        ]
+                    },
+                    "params": {"value": "${item}"},  # Just echo the resolved item
+                },
+            ],
+            "edges": [{"from": "source", "to": "multi-op"}],
+        }
+
+        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        shared: dict[str, Any] = {}
+        flow.run(shared)
+
+        # Verify inline array resolved templates and executed both items
+        assert shared["multi-op"]["count"] == 2
+        results = shared["multi-op"]["results"]
+
+        # Templates inside inline array should be resolved (type preserved)
+        assert results[0]["result"]["op"] == "upper"
+        assert results[0]["result"]["data"] == {"content": "hello world"}
+        assert results[1]["result"]["op"] == "lower"
+        assert results[1]["result"]["data"] == {"content": "hello world"}

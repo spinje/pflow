@@ -884,10 +884,12 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 
 **Parsing Rules**:
 - ✅ **Auto-parsed**: Simple templates like `${node.output}` when target expects dict/list
+- ✅ **Path traversal**: `${node.stdout.field}` auto-parses JSON strings to access nested properties
 - ❌ **NOT parsed**: Complex templates like `"text ${var}"` always stay as strings (escape hatch)
 - ✅ **Handles newlines**: Shell output with trailing `\n` is automatically stripped
 - ✅ **Type-safe**: Only uses parsed result if type matches (array→list, object→dict)
 - ✅ **Graceful fallback**: Invalid JSON stays as string (Pydantic validation catches it)
+- ✅ **Type preserved in structures**: Both `{"key": "${dict}"}` and `[{"data": "${val}"}]` preserve types—build complex inputs from multiple sources
 
 **What happens when you use simple templates:**
 
@@ -1021,7 +1023,7 @@ Common mistake: Using jq for extraction creates unnecessary nodes. Templates han
     // Complex path
     "deep": "${fetch.result.data.users[0].profile.settings.email}",
 
-    // In JSON structures
+    // In JSON structures (types preserved - dicts stay dicts, not stringified)
     "body": {
       "user": "${username}",
       "data": "${process.output}",
@@ -1030,6 +1032,18 @@ Common mistake: Using jq for extraction creates unnecessary nodes. Templates han
         "source": "${api_url}"
       }
     },
+
+    // Multi-source object - combine data from different nodes
+    "stdin": {
+      "config": "${fetch-config.response}",
+      "items": "${fetch-items.result}"
+    },
+
+    // Inline array - each element's templates resolved independently
+    "operations": [
+      {"task": "summarize", "input": "${source.result}"},
+      {"task": "translate", "input": "${source.result}", "lang": "es"}
+    ],
 
     // In shell commands - use pflow variables directly (they resolve before shell runs)
     "command": "mkdir -p ${output_dir}/images && echo '${data}' | jq '.items[0:${limit}]'",
@@ -1397,13 +1411,30 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 **Options**:
 | Field | Default | Notes |
 |-------|---------|-------|
-| `items` | required | Template to source array |
+| `items` | required | Template reference OR inline array |
 | `as` | `"item"` | Custom name: `"file"` → `${file}` |
 | `parallel` | `false` | Concurrent execution |
 | `max_concurrent` | `10` | 1-100; use 5-10 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
+
+**Inline array pattern** (different operations × same data):
+```json
+{
+  "id": "multi-format",
+  "type": "llm",
+  "batch": {
+    "items": [
+      {"style": "executive-summary", "content": "${report.result}"},
+      {"style": "technical-details", "content": "${report.result}"},
+      {"style": "action-items", "content": "${report.result}"}
+    ],
+    "parallel": true
+  },
+  "params": {"prompt": "Reformat as ${item.style}:\n${item.content}"}
+}
+```
 
 **Using results**:
 ```json
