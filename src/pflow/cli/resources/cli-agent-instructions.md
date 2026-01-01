@@ -884,6 +884,7 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 
 **Parsing Rules**:
 - ✅ **Auto-parsed**: Simple templates like `${node.output}` when target expects dict/list
+- ✅ **Path traversal**: `${node.stdout.field}` auto-parses JSON strings to access nested properties
 - ❌ **NOT parsed**: Complex templates like `"text ${var}"` always stay as strings (escape hatch)
 - ✅ **Handles newlines**: Shell output with trailing `\n` is automatically stripped
 - ✅ **Type-safe**: Only uses parsed result if type matches (array→list, object→dict)
