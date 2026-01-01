@@ -43,7 +43,19 @@ def create_mock_registry():
         "llm": {
             "interface": {
                 "inputs": [{"key": "prompt", "type": "str", "description": "LLM prompt"}],
-                "outputs": [{"key": "summary", "type": "str", "description": "Generated summary"}],
+                "outputs": [
+                    {"key": "response", "type": "any", "description": "Model's response"},
+                    {
+                        "key": "llm_usage",
+                        "type": "dict",
+                        "description": "Token usage metrics",
+                        "structure": {
+                            "model": {"type": "str", "description": "Model identifier"},
+                            "input_tokens": {"type": "int", "description": "Input tokens"},
+                            "output_tokens": {"type": "int", "description": "Output tokens"},
+                        },
+                    },
+                ],
                 "params": [],
                 "actions": ["default", "error"],
             }
@@ -224,7 +236,7 @@ class TestWorkflowValidation:
                     "type": "write-file",
                     "params": {
                         "file_path": "summary.txt",
-                        "content": "${summary}",  # From llm node
+                        "content": "${response}",  # From llm node
                     },
                 },
             ],
@@ -369,7 +381,7 @@ class TestRealWorldScenarios:
                 {
                     "id": "save",
                     "type": "write-file",
-                    "params": {"file_path": "summary.md", "content": "# ${transcript_data.title}\n\n${summary}"},
+                    "params": {"file_path": "summary.md", "content": "# ${transcript_data.title}\n\n${response}"},
                 },
             ],
             "edges": [{"from": "fetch", "to": "summarize"}, {"from": "summarize", "to": "save"}],
@@ -642,3 +654,88 @@ class TestBatchTemplateValidation:
             workflow_ir, {"url": "https://youtube.com", "items": ["a", "b"]}, registry
         )
         assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_batch_results_nested_access_validated(self):
+        """Nested access to batch results like ${node.results[0].response} should validate."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-batch",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "use-first-result",
+                    "type": "llm",
+                    "params": {
+                        # Access nested field in batch results - THIS is the key test
+                        "prompt": "First response was: ${process-batch.results[0].response}"
+                    },
+                },
+            ],
+            "edges": [{"from": "process-batch", "to": "use-first-result"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        # Should NOT produce an error - results[0].response is valid
+        assert len(errors) == 0, f"Unexpected errors for nested batch access: {errors}"
+
+    def test_batch_results_nested_llm_usage_validated(self):
+        """Deeply nested access like ${node.results[0].llm_usage.input_tokens} should validate."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-batch",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "report-usage",
+                    "type": "llm",
+                    "params": {
+                        # Access deeply nested field - results[0].llm_usage.input_tokens
+                        "prompt": "Tokens used: ${process-batch.results[0].llm_usage.input_tokens}"
+                    },
+                },
+            ],
+            "edges": [{"from": "process-batch", "to": "report-usage"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        # Should NOT produce an error - deeply nested path is valid
+        assert len(errors) == 0, f"Unexpected errors for deeply nested batch access: {errors}"
+
+    def test_batch_results_invalid_nested_path_rejected(self):
+        """Invalid nested path like ${node.results[0].nonexistent} should fail validation."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-batch",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "use-result",
+                    "type": "llm",
+                    "params": {
+                        # 'typo_field' does not exist in llm outputs (response, llm_usage)
+                        "prompt": "Result: ${process-batch.results[0].typo_field}"
+                    },
+                },
+            ],
+            "edges": [{"from": "process-batch", "to": "use-result"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        # Should produce an error - typo_field is not a valid output
+        assert len(errors) == 1, f"Expected 1 error for invalid path, got: {errors}"
+        assert "typo_field" in errors[0] or "results[0]" in errors[0]

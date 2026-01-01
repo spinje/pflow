@@ -724,7 +724,9 @@ class TemplateValidator:
 
             if batch_config:
                 # Batch node: register batch outputs instead of normal outputs
-                TemplateValidator._register_batch_outputs(node_outputs, node_id, node_type, enable_namespacing)
+                TemplateValidator._register_batch_outputs(
+                    node_outputs, node_id, node_type, enable_namespacing, registry
+                )
 
                 # Register the item alias as an available variable
                 item_alias = batch_config.get("as", "item")
@@ -749,25 +751,55 @@ class TemplateValidator:
         node_id: str,
         node_type: str,
         enable_namespacing: bool,
+        registry: Registry,
     ) -> None:
         """Register batch-specific outputs for a node with batch configuration.
 
         Batch nodes wrap their inner node's outputs in a structured result with:
-        - results: Array of per-item results
+        - results: Array of per-item results (with inner node's output structure)
         - count: Total items processed
         - success_count/error_count: Success/failure counts
         - errors: Error details if any
         - batch_metadata: Execution statistics
         """
+        # Try to get inner node's output structure for results array
+        inner_outputs_structure: dict[str, Any] = {}
+        try:
+            nodes_metadata = registry.get_nodes_metadata([node_type])
+            if node_type in nodes_metadata:
+                interface = nodes_metadata[node_type]["interface"]
+                # Build structure from inner node's outputs
+                for output in interface.get("outputs", []):
+                    if isinstance(output, str):
+                        inner_outputs_structure[output] = {"type": "any"}
+                    else:
+                        key = output.get("key", "")
+                        if key:
+                            inner_outputs_structure[key] = {
+                                "type": output.get("type", "any"),
+                                "description": output.get("description", ""),
+                                "structure": output.get("structure", {}),
+                            }
+        except (ValueError, KeyError):
+            # Graceful fallback if node type not found (e.g., during testing)
+            pass
+
         for output in TemplateValidator._BATCH_OUTPUTS:
             key = output["key"]
-            output_info = {
+            output_info: dict[str, Any] = {
                 "type": output["type"],
                 "description": output["description"],
                 "node_id": node_id,
                 "node_type": node_type,
                 "is_batch_output": True,
             }
+
+            # For 'results' array, add inner node's output structure
+            if key == "results" and inner_outputs_structure:
+                output_info["items"] = {
+                    "type": "dict",
+                    "structure": inner_outputs_structure,
+                }
 
             # Register under original key for backward compatibility
             node_outputs[key] = output_info
@@ -825,6 +857,63 @@ class TemplateValidator:
                     node_outputs[namespaced_key] = output_info
 
     @staticmethod
+    def _validate_namespaced_output(
+        parts: list[str],
+        base_var: str,
+        node_outputs: dict[str, Any],
+        template: str,
+    ) -> tuple[bool, Optional[ValidationWarning]]:
+        """Validate a namespaced node output reference with array index support.
+
+        Handles patterns like:
+        - node_id.output_key
+        - node_id.results[0]
+        - node_id.results[0].field
+        """
+        if len(parts) == 1:
+            # Just the node ID without output key - invalid
+            return (False, None)
+
+        # Handle array indexing: parts[1] might be "results[0]" → base="results", index=0
+        output_part = parts[1]
+        array_index = None
+        if "[" in output_part and output_part.endswith("]"):
+            bracket_pos = output_part.index("[")
+            base_output = output_part[:bracket_pos]
+            array_index = output_part[bracket_pos + 1 : -1]
+        else:
+            base_output = output_part
+
+        node_output_key = f"{base_var}.{base_output}"
+        if node_output_key not in node_outputs:
+            return (False, None)
+
+        output_info = node_outputs[node_output_key]
+
+        # If array access, check if output has items structure
+        if array_index is not None:
+            items_info = output_info.get("items", {})
+            if items_info:
+                # Use items structure for nested validation
+                if len(parts) == 2:
+                    return (True, None)
+                return TemplateValidator._validate_nested_path(
+                    parts[2:], items_info, full_template=template, output_key=base_output
+                )
+            # No items info but array access requested - allow if type is array
+            if output_info.get("type") == "array":
+                return (True, None)
+            return (False, None)
+
+        if len(parts) == 2:
+            return (True, None)
+
+        # Validate deeper nested path
+        return TemplateValidator._validate_nested_path(
+            parts[2:], output_info, full_template=template, output_key=base_output
+        )
+
+    @staticmethod
     def _validate_template_path(
         template: str,
         initial_params: dict[str, Any],
@@ -858,33 +947,7 @@ class TemplateValidator:
 
             if base_var in node_ids:
                 # This is a namespaced node output reference
-                # The full path should be in node_outputs as "node_id.output_key"
-                if len(parts) == 1:
-                    # Just the node ID without output key - invalid
-                    return (False, None)
-
-                # Strip array indices from output key (e.g., "stdout[0]" -> "stdout")
-                # This handles templates like ${node.stdout[0].field}
-                raw_output_key = parts[1]
-                base_output_key, has_array_index = _strip_array_indices(raw_output_key)
-
-                # Check if the namespaced path exists in node_outputs
-                node_output_key = f"{base_var}.{base_output_key}"
-                if node_output_key in node_outputs:
-                    if len(parts) == 2 and not has_array_index:
-                        # Just node_id.output_key - valid, no nesting
-                        return (True, None)
-
-                    # Validate deeper nested path
-                    # Include array index as part of the path to validate
-                    remaining_parts = [raw_output_key, *parts[2:]] if has_array_index else list(parts[2:])
-                    return TemplateValidator._validate_nested_path(
-                        remaining_parts,
-                        node_outputs[node_output_key],
-                        full_template=template,
-                        output_key=base_output_key,
-                    )
-                return (False, None)
+                return TemplateValidator._validate_namespaced_output(parts, base_var, node_outputs, template)
 
         # Not a node ID reference (or namespacing disabled), check as root-level reference
 
