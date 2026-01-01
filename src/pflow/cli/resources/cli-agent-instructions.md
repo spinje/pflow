@@ -195,6 +195,9 @@ Result: Formatted output includes both extracted data and original context
 **Why impossible**: Workflow structure is fixed at creation time
 **Alternative**: "I'll process all items in a single node using batch operations"
 
+#### ❌ No Parallel Paths
+Each node has ONE successor (linear chain). Batch processing handles parallel operations.
+
 ### One Workflow or Multiple? (Critical Decision)
 
 **This decision shapes the entire implementation:**
