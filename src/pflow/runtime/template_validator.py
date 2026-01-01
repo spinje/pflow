@@ -955,7 +955,10 @@ class TemplateValidator:
                 node_type=output_info.get("node_type", "unknown"),
                 output_key=output_key,
                 output_type=output_type,
-                reason=f"Output type '{output_type}' - nested access will use JSON auto-parsing at runtime",
+                reason=(
+                    f"Nested access on '{output_type}' requires valid JSON at runtime. "
+                    f"Non-JSON strings cause 'Unresolved variables' error."
+                ),
                 nested_path=".".join(path_parts),
             )
 

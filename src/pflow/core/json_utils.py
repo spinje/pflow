@@ -15,6 +15,9 @@ logger = logging.getLogger(__name__)
 # Security: Prevent memory exhaustion from maliciously large JSON
 DEFAULT_MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB
 
+# Max chars to show in debug log previews
+_LOG_PREVIEW_LENGTH = 100
+
 
 def try_parse_json(
     value: str,
@@ -74,10 +77,14 @@ def try_parse_json(
         parsed = json.loads(text)
         logger.debug(
             f"Parsed JSON string to {type(parsed).__name__}",
-            extra={"preview": text[:100] if len(text) > 100 else text},
+            extra={"preview": text[:_LOG_PREVIEW_LENGTH] if len(text) > _LOG_PREVIEW_LENGTH else text},
         )
         return (True, parsed)
-    except (json.JSONDecodeError, ValueError):
+    except (json.JSONDecodeError, ValueError) as e:
+        logger.debug(
+            f"String is not valid JSON: {type(e).__name__}",
+            extra={"preview": text[:_LOG_PREVIEW_LENGTH] if len(text) > _LOG_PREVIEW_LENGTH else text},
+        )
         return (False, value)
 
 

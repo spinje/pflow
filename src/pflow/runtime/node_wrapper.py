@@ -654,21 +654,82 @@ class TemplateAwareNodeWrapper:
         """
         suggestions = []
         for var in variables:
-            var_lower = var.lower()
-            # Simple fuzzy matching
+            # For nested paths like "mynode.stdout", check if the first part
+            # (node ID) is similar to any available key
+            parts = var.split(".")
+            node_id = parts[0]
+            rest_of_path = ".".join(parts[1:]) if len(parts) > 1 else ""
+
+            node_id_lower = node_id.lower()
+            node_id_normalized = node_id.replace("_", "-").replace("-", "")
+
             for key in available_keys[:20]:
-                if isinstance(key, str):
-                    key_lower = key.lower()
-                    # Check for substring matches or similar names
-                    if (
-                        var_lower in key_lower
-                        or key_lower in var_lower
-                        or var.replace("_", "-") == key.replace("_", "-")
-                    ):
-                        suggestions.append(f"Did you mean '${{{key}}}'? (instead of '${{{var}}}')")
-                        break
+                if not isinstance(key, str):
+                    continue
+
+                key_lower = key.lower()
+                key_normalized = key.replace("_", "-").replace("-", "")
+
+                # Check for similar node IDs (handles typos like mynode vs my-node)
+                is_similar = (
+                    node_id_lower == key_lower
+                    or node_id_normalized == key_normalized
+                    or node_id_lower in key_lower
+                    or key_lower in node_id_lower
+                )
+
+                if is_similar and node_id != key:
+                    # Build the corrected variable path
+                    corrected = f"{key}.{rest_of_path}" if rest_of_path else key
+                    suggestions.append(f"Did you mean '${{{corrected}}}'? (instead of '${{{var}}}')")
+                    break
 
         return suggestions[:3]  # Limit to 3 suggestions
+
+    def _detect_json_parse_hints(self, variables: set[str], context: dict[str, Any]) -> list[str]:
+        """Detect if unresolved variables failed due to JSON parsing issues.
+
+        When a variable like ${node.stdout.field} fails to resolve, check if
+        node.stdout exists and is a string (not valid JSON). This helps users
+        understand why nested access failed.
+
+        Args:
+            variables: Set of unresolved variable names
+            context: Resolution context
+
+        Returns:
+            List of hint strings explaining JSON parse failures
+        """
+        hints = []
+
+        for var in variables:
+            parts = var.split(".")
+            if len(parts) < 3:
+                # Not a nested path like node.output.field
+                continue
+
+            # Check if parent path exists and is a string
+            # e.g., for "node.stdout.field", check if "node.stdout" is a string
+            node_id = parts[0]
+            output_key = parts[1]
+
+            if node_id in context and isinstance(context[node_id], dict):
+                node_data = context[node_id]
+                if output_key in node_data:
+                    value = node_data[output_key]
+                    if isinstance(value, str):
+                        # Found it - the parent is a string, not parsed JSON
+                        preview = value[:60] + "..." if len(value) > 60 else value
+                        # Clean up preview for display (escape newlines)
+                        preview = preview.replace("\n", "\\n")
+                        hints.append(
+                            f"${{{node_id}.{output_key}}} is a string, not JSON. "
+                            f"Nested access (.{'.'.join(parts[2:])}) requires valid JSON."
+                        )
+                        hints.append(f'  Actual value: "{preview}"')
+                        break  # One hint is enough
+
+        return hints
 
     def _build_enhanced_template_error(self, param_key: str, template: str, context: dict[str, Any]) -> str:
         """Build detailed error message for unresolved template.
@@ -703,13 +764,23 @@ class TemplateAwareNodeWrapper:
             error_parts.append("")
             error_parts.extend(self._format_available_keys(available_display, context))
 
-        # Add suggestions for close matches
-        suggestions = self._generate_suggestions(variables, available_keys)
-        if suggestions:
+        # Check for JSON parsing failures (most actionable hint for this feature)
+        json_hints = self._detect_json_parse_hints(variables, context)
+        if json_hints:
             error_parts.append("")
-            error_parts.append("💡 Suggestions:")
-            for s in suggestions:
-                error_parts.append(f"  {s}")
+            error_parts.append("⚠️ JSON parsing issue:")
+            for hint in json_hints:
+                error_parts.append(f"  {hint}")
+            error_parts.append("  Fix: Ensure upstream node outputs valid JSON.")
+
+        # Add suggestions for close matches (only if no JSON hints - avoid confusion)
+        if not json_hints:
+            suggestions = self._generate_suggestions(variables, available_keys)
+            if suggestions:
+                error_parts.append("")
+                error_parts.append("💡 Suggestions:")
+                for s in suggestions:
+                    error_parts.append(f"  {s}")
 
         return "\n".join(error_parts)
 

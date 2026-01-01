@@ -126,7 +126,7 @@ class TestValidationWarnings:
         assert "shell" in warning.node_id
         assert warning.output_type == "str"
         assert "field" in warning.nested_path
-        assert "JSON auto-parsing" in warning.reason
+        assert "requires valid JSON" in warning.reason
 
     def test_any_nested_template_no_warning(self):
         """any output with nested template should NOT warn (explicit declaration)."""
@@ -293,4 +293,4 @@ class TestWarningEdgeCases:
 
         # Should still have warning for str nested access
         assert len(warnings) == 1
-        assert "JSON auto-parsing" in warnings[0].reason
+        assert "requires valid JSON" in warnings[0].reason

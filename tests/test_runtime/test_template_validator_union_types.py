@@ -119,7 +119,7 @@ class TestUnionTypeValidation:
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         # Warning about runtime validation
         assert len(warnings) == 1, "Expected warning for str|int nested access"
-        assert "JSON auto-parsing" in warnings[0].reason
+        assert "requires valid JSON" in warnings[0].reason
 
     def test_dict_object_union_allows_nested_access(self):
         """Test that dict|object union allows nested access (both types traversable)."""
