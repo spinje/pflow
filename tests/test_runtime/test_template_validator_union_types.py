@@ -78,8 +78,12 @@ class TestUnionTypeValidation:
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "dict|str union should not generate warnings"
 
-    def test_str_int_union_rejects_nested_access(self):
-        """Test that str|int union type rejects nested template access."""
+    def test_str_int_union_allows_nested_access_with_warning(self):
+        """Test that str|int union allows nested access (str supports JSON auto-parsing).
+
+        Since str types support JSON auto-parsing at runtime, nested access is allowed
+        but generates a warning to inform the user it can't be verified statically.
+        """
         workflow_ir = {
             "nodes": [
                 {
@@ -111,8 +115,11 @@ class TestUnionTypeValidation:
 
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
-        assert len(errors) == 1, "Expected 1 error for str|int union with nested access"
-        assert "does not output 'output'" in errors[0] or "field" in errors[0]
+        # No errors - str allows nested access via JSON auto-parsing
+        assert len(errors) == 0, f"Expected no errors but got: {errors}"
+        # Warning about runtime validation
+        assert len(warnings) == 1, "Expected warning for str|int nested access"
+        assert "JSON auto-parsing" in warnings[0].reason
 
     def test_dict_object_union_allows_nested_access(self):
         """Test that dict|object union allows nested access (both types traversable)."""
@@ -186,8 +193,8 @@ class TestUnionTypeValidation:
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "dict|str|int union should not generate warnings"
 
-    def test_any_str_union_generates_warning(self):
-        """Test that unions containing 'any' generate warnings for nested access."""
+    def test_any_str_union_no_warning(self):
+        """Test that any|str union does NOT generate warning (any is trusted)."""
         workflow_ir = {
             "nodes": [
                 {
@@ -220,12 +227,11 @@ class TestUnionTypeValidation:
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
-        assert len(warnings) == 1, "any|str union should generate warning"
-        assert warnings[0].output_type == "any|str"
-        assert warnings[0].nested_path == "field"
+        # any is trusted (explicit declaration) - no warning even with str in union
+        assert len(warnings) == 0, "any|str union should NOT generate warning (any is trusted)"
 
-    def test_dict_any_union_generates_warning(self):
-        """Test that dict|any union generates warning (any part triggers it)."""
+    def test_dict_any_union_no_warning(self):
+        """Test that dict|any union does NOT generate warning (both are trusted)."""
         workflow_ir = {
             "nodes": [
                 {
@@ -258,7 +264,8 @@ class TestUnionTypeValidation:
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
-        assert len(warnings) == 1, "dict|any union should generate warning"
+        # dict and any are both trusted - no warning
+        assert len(warnings) == 0, "dict|any union should NOT generate warning"
 
     def test_case_insensitive_union_types(self):
         """Test that Dict|Str works (case-insensitive matching)."""
@@ -369,8 +376,8 @@ class TestUnionTypeValidation:
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "Single dict type should not generate warnings"
 
-    def test_pure_any_type_still_generates_warning(self):
-        """Test that pure 'any' type (not in union) still generates warnings."""
+    def test_pure_any_type_no_warning(self):
+        """Test that pure 'any' type does NOT generate warning (trusted, explicit declaration)."""
         workflow_ir = {
             "nodes": [
                 {
@@ -403,8 +410,8 @@ class TestUnionTypeValidation:
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
-        assert len(warnings) == 1, "Pure 'any' type should still generate warning"
-        assert warnings[0].output_type == "any"
+        # any is an explicit declaration - node author knows what they're doing
+        assert len(warnings) == 0, "Pure 'any' type should NOT generate warning (trusted)"
 
     def test_union_without_nested_access_no_warning(self):
         """Test that union types without nested access don't generate warnings."""

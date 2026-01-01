@@ -499,15 +499,13 @@ def _try_parse_json_string(prefix: str, value: str, depth: int, max_depth: int) 
     Returns:
         Flattened paths if JSON parse succeeds, None otherwise
     """
-    if not (isinstance(value, str) and value.strip().startswith(("{", "["))):
-        return None
+    from pflow.core.json_utils import try_parse_json
 
-    try:
-        parsed_value = json.loads(value)
+    success, parsed_value = try_parse_json(value)
+    if success:
         # Recursively flatten the parsed JSON
         return flatten_runtime_value(prefix, parsed_value, depth, max_depth)
-    except (json.JSONDecodeError, ValueError):
-        return None
+    return None
 
 
 def _flatten_dict(prefix: str, value: dict[str, Any], depth: int, max_depth: int) -> list[tuple[str, str]]:

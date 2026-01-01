@@ -62,12 +62,12 @@ Thread Safety:
 
 import contextlib
 import copy
-import json
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
+from pflow.core.json_utils import try_parse_json
 from pflow.runtime.template_resolver import TemplateResolver
 from pocketflow import Node
 
@@ -253,31 +253,13 @@ class PflowBatchNode(Node):
             # Auto-parse JSON strings (enables shell → batch patterns)
             # Shell nodes output text; if that text is valid JSON array, parse it
             if isinstance(items, str):
-                trimmed = items.strip()  # Handle shell output newlines
-
-                # Security: Prevent memory exhaustion from large JSON
-                MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
-                if len(trimmed) > MAX_JSON_SIZE:
-                    logger.warning(
-                        f"Batch items string is {len(trimmed)} bytes, "
-                        f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
-                        extra={"node_id": self.node_id, "size": len(trimmed)},
+                success, parsed = try_parse_json(items)
+                if success and isinstance(parsed, list):
+                    items = parsed
+                    logger.debug(
+                        "Auto-parsed JSON string to list for batch.items",
+                        extra={"node_id": self.node_id, "item_count": len(items)},
                     )
-                elif trimmed.startswith("["):  # Quick check: looks like JSON array?
-                    try:
-                        parsed = json.loads(trimmed)
-                        if isinstance(parsed, list):
-                            items = parsed
-                            logger.debug(
-                                "Auto-parsed JSON string to list for batch.items",
-                                extra={"node_id": self.node_id, "item_count": len(items)},
-                            )
-                    except (json.JSONDecodeError, ValueError):
-                        # Not valid JSON - will fail at type check with clear error
-                        logger.debug(
-                            "Failed to parse batch.items as JSON, keeping as string",
-                            extra={"node_id": self.node_id},
-                        )
 
         if items is None:
             raise ValueError(

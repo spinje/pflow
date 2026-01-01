@@ -5,9 +5,10 @@ template variables in parameters. It's the runtime proxy that enables
 pflow's "Plan Once, Run Forever" philosophy.
 """
 
-import json
 import logging
 from typing import Any, Optional
+
+from pflow.core.json_utils import try_parse_json
 
 from .template_resolver import TemplateResolver
 
@@ -747,37 +748,17 @@ class TemplateAwareNodeWrapper:
             if is_simple_template and isinstance(resolved_value, str):
                 expected_type = self._expected_types.get(key)
                 if expected_type in ("dict", "list", "object", "array"):
-                    trimmed = resolved_value.strip()  # Handle shell output newlines
-
-                    # Security: Prevent memory exhaustion from maliciously large JSON
-                    MAX_JSON_SIZE = 10 * 1024 * 1024  # 10MB limit
-                    if len(trimmed) > MAX_JSON_SIZE:
-                        logger.warning(
-                            f"JSON string for param '{key}' is {len(trimmed)} bytes, "
-                            f"exceeding {MAX_JSON_SIZE} byte limit. Keeping as string.",
-                            extra={"node_id": self.node_id, "param": key, "size": len(trimmed)},
+                    success, parsed = try_parse_json(resolved_value)
+                    # Type-safe: only use if parsed type matches expected
+                    type_matches = (expected_type in ("dict", "object") and isinstance(parsed, dict)) or (
+                        expected_type in ("list", "array") and isinstance(parsed, list)
+                    )
+                    if success and type_matches:
+                        resolved_value = parsed
+                        logger.debug(
+                            f"Auto-parsed JSON string to {type(parsed).__name__} for param '{key}'",
+                            extra={"node_id": self.node_id, "param": key},
                         )
-                    # Quick check: does it look like JSON?
-                    elif (expected_type in ("dict", "object") and trimmed.startswith("{")) or (
-                        expected_type in ("list", "array") and trimmed.startswith("[")
-                    ):
-                        try:
-                            parsed = json.loads(trimmed)
-                            # Type-safe: only use if parsed type matches expected
-                            if (expected_type in ("dict", "object") and isinstance(parsed, dict)) or (
-                                expected_type in ("list", "array") and isinstance(parsed, list)
-                            ):
-                                resolved_value = parsed
-                                logger.debug(
-                                    f"Auto-parsed JSON string to {type(parsed).__name__} for param '{key}'",
-                                    extra={"node_id": self.node_id, "param": key},
-                                )
-                        except (json.JSONDecodeError, ValueError):
-                            # Keep as string, Pydantic/validation will catch invalid type
-                            logger.debug(
-                                f"Failed to parse JSON string for param '{key}', keeping as string",
-                                extra={"node_id": self.node_id, "param": key},
-                            )
 
             # NEW: Validate type for simple templates (before storing in resolved_params)
             # Complex templates are already stringified, so no type mismatch possible

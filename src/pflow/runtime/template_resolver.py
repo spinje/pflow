@@ -10,6 +10,8 @@ import logging
 import re
 from typing import Any, Optional
 
+from pflow.core.json_utils import try_parse_json
+
 logger = logging.getLogger(__name__)
 
 
@@ -113,6 +115,60 @@ class TemplateResolver:
         return match.group(1) if match else None
 
     @staticmethod
+    def _try_parse_json_for_traversal(value: Any) -> Any:
+        """Attempt to parse a string value as JSON for path traversal.
+
+        Called when we need to access a property on a value that is a string.
+        If the string is valid JSON object/array, returns the parsed value.
+        Otherwise returns the original value unchanged.
+
+        This enables patterns like ${node.stdout.field} when stdout
+        contains a JSON string like '{"field": "value"}'.
+
+        Args:
+            value: Current value in path traversal (may be string or other type)
+
+        Returns:
+            Parsed JSON if value was a JSON string, otherwise original value
+        """
+        if not isinstance(value, str):
+            return value
+
+        success, parsed = try_parse_json(value)
+        if success and isinstance(parsed, (dict, list)):
+            # Only use parsed result if it's a container we can traverse
+            logger.debug(
+                f"Auto-parsed JSON string for path traversal: {type(parsed).__name__}",
+            )
+            return parsed
+        return value
+
+    @staticmethod
+    def _get_dict_value(value: Any, key: str) -> tuple[bool, Any]:
+        """Get a key from a dict, with JSON string auto-parsing.
+
+        Tries to access value[key], auto-parsing JSON strings if needed.
+
+        Args:
+            value: Dict, JSON string, or other value
+            key: Key to access
+
+        Returns:
+            Tuple of (success, result) where success indicates if key was found
+        """
+        # Direct dict access
+        if isinstance(value, dict) and key in value:
+            return True, value[key]
+
+        # JSON string auto-parsing
+        if isinstance(value, str):
+            parsed = TemplateResolver._try_parse_json_for_traversal(value)
+            if isinstance(parsed, dict) and key in parsed:
+                return True, parsed[key]
+
+        return False, None
+
+    @staticmethod
     def _check_array_indices(
         current: Any, indices_str: str, is_last_element: bool, part_index: int, total_parts: int
     ) -> tuple[bool, Any]:
@@ -163,34 +219,30 @@ class TemplateResolver:
             base_name = array_match.group(1)
             indices_str = array_match.group(2)
 
-            # Check if base exists
-            if not isinstance(current, dict) or base_name not in current:
+            # Get base value (with JSON auto-parsing)
+            found, current = TemplateResolver._get_dict_value(current, base_name)
+            if not found:
                 return False, current
 
-            current = current[base_name]
+            # Parse JSON string if needed before array access
+            current = TemplateResolver._try_parse_json_for_traversal(current)
 
             # Check array indices
             is_last = part_index == total_parts - 1
-            valid, new_current = TemplateResolver._check_array_indices(
-                current, indices_str, is_last, part_index, total_parts
-            )
-            return valid, new_current
-        else:
-            # Regular property access
-            if not isinstance(current, dict):
-                return False, current
+            return TemplateResolver._check_array_indices(current, indices_str, is_last, part_index, total_parts)
 
-            if part not in current:
-                return False, current
+        # Regular property access (with JSON auto-parsing)
+        found, value = TemplateResolver._get_dict_value(current, part)
+        if not found:
+            return False, current
 
-            if part_index < total_parts - 1:
-                # Not the last part - need to continue traversing
-                current = current[part]
-                if current is None:
-                    return False, current  # Can't traverse through None
-            # For the last part, we just check existence, not value
+        if part_index < total_parts - 1:
+            # Not the last part - check for None
+            if value is None:
+                return False, value
+            return True, value
 
-            return True, current
+        return True, current
 
     @staticmethod
     def variable_exists(var_name: str, context: dict[str, Any]) -> bool:
@@ -254,15 +306,17 @@ class TemplateResolver:
                     base_name = array_match.group(1)
                     indices_str = array_match.group(2)  # e.g., "[0][1]"
 
-                    # Get the base value (should lead to a list)
-                    if isinstance(value, dict) and base_name in value:
-                        value = value[base_name]
-                    else:
+                    # Get the base value (with JSON auto-parsing)
+                    found, value = TemplateResolver._get_dict_value(value, base_name)
+                    if not found:
                         logger.debug(
                             f"Cannot resolve path '{var_name}': '{base_name}' not found",
                             extra={"var_name": var_name, "failed_at": base_name},
                         )
                         return None
+
+                    # Parse JSON string if needed before array access
+                    value = TemplateResolver._try_parse_json_for_traversal(value)
 
                     # Extract and apply all indices
                     indices = re.findall(r"\[(\d+)\]", indices_str)
@@ -277,12 +331,11 @@ class TemplateResolver:
                             )
                             return None
                 else:
-                    # Regular property access
-                    if isinstance(value, dict) and part in value:
-                        value = value[part]
-                    else:
+                    # Regular property access (with JSON auto-parsing)
+                    found, value = TemplateResolver._get_dict_value(value, part)
+                    if not found:
                         logger.debug(
-                            f"Cannot resolve path '{var_name}': '{part}' not found or parent not a dict",
+                            f"Cannot resolve path '{var_name}': '{part}' not found",
                             extra={"var_name": var_name, "failed_at": part},
                         )
                         return None
