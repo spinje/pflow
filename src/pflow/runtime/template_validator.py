@@ -18,24 +18,6 @@ from pflow.runtime.type_checker import (
     is_type_compatible,
 )
 
-# Pattern to match array indices at the end of a key (e.g., "stdout[0]" -> "stdout")
-_ARRAY_INDEX_PATTERN = re.compile(r"^([^\[]+)(\[\d+\])+$")
-
-
-def _strip_array_indices(key: str) -> tuple[str, bool]:
-    """Strip array indices from a key, returning base key and whether indices were present.
-
-    Args:
-        key: Key that may contain array indices (e.g., "stdout[0]", "items[0][1]")
-
-    Returns:
-        Tuple of (base_key, had_indices) - e.g., ("stdout", True) or ("stdout", False)
-    """
-    match = _ARRAY_INDEX_PATTERN.match(key)
-    if match:
-        return match.group(1), True
-    return key, False
-
 
 @dataclass
 class ValidationWarning:
@@ -900,9 +882,29 @@ class TemplateValidator:
                 return TemplateValidator._validate_nested_path(
                     parts[2:], items_info, full_template=template, output_key=base_output
                 )
-            # No items info but array access requested - allow if type is array
-            if output_info.get("type") == "array":
+            # No items info but array access requested
+            output_type = output_info.get("type", "any")
+            # Allow if type is array (native array access)
+            if output_type == "array":
                 return (True, None)
+            # Also allow str types - they may contain JSON that gets auto-parsed at runtime
+            # This matches the behavior of _check_type_allows_traversal for field access
+            if output_type in ["str", "string"]:
+                # Generate warning about JSON auto-parsing requirement
+                nested_path = f"[{array_index}]" + (".".join(parts[2:]) if len(parts) > 2 else "")
+                warning = ValidationWarning(
+                    template=template if template.startswith("${") else f"${{{template}}}",
+                    node_id=output_info.get("node_id", "unknown"),
+                    node_type=output_info.get("node_type", "unknown"),
+                    output_key=base_output,
+                    output_type=output_type,
+                    reason=(
+                        f"Array access on '{output_type}' requires valid JSON array at runtime. "
+                        f"Non-JSON strings cause 'Unresolved variables' error."
+                    ),
+                    nested_path=nested_path,
+                )
+                return (True, warning)
             return (False, None)
 
         if len(parts) == 2:

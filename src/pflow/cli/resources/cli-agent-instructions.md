@@ -1418,6 +1418,7 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
+*(Each result contains the inner node's outputs, e.g., `${node.results[0].response}`)*
 
 **Inline array pattern** (different operations × same data):
 ```json
