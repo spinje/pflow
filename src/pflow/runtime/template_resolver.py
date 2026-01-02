@@ -495,6 +495,11 @@ class TemplateResolver:
         the original structure and types. Simple templates (${var}) preserve
         their original type, while complex templates return strings.
 
+        For simple templates that resolve to JSON strings, the JSON is automatically
+        parsed. This enables patterns like {"data": "${shell.stdout}"} where stdout
+        contains JSON. Complex templates (e.g., "prefix ${var}") are the escape hatch
+        for keeping raw JSON strings.
+
         Args:
             value: The value to resolve (can be string, dict, list, or any type)
             context: Dictionary containing values to resolve from
@@ -509,11 +514,27 @@ class TemplateResolver:
             {'headers': {'Authorization': 'Bearer abc123'}}
             >>> TemplateResolver.resolve_nested({"user": "${data}"}, context)
             {'user': {'name': 'Alice'}}  # Type preserved
+            >>> context = {"shell": {"stdout": '{"items": [1, 2, 3]}'}}
+            >>> TemplateResolver.resolve_nested({"data": "${shell.stdout}"}, context)
+            {'data': {'items': [1, 2, 3]}}  # JSON auto-parsed
         """
         if isinstance(value, str):
             # Resolve string templates (preserves type for simple templates)
             if "${" in value:
-                return TemplateResolver.resolve_template(value, context)
+                resolved = TemplateResolver.resolve_template(value, context)
+
+                # Auto-parse JSON strings from simple templates
+                # This enables: {"data": "${shell.stdout}"} where stdout is JSON
+                # Escape hatch: complex templates like "prefix ${var}" stay as strings
+                if isinstance(resolved, str) and TemplateResolver.is_simple_template(value):
+                    success, parsed = try_parse_json(resolved)
+                    if success:
+                        logger.debug(
+                            f"Auto-parsed JSON string in nested resolution: {type(parsed).__name__}",
+                        )
+                        return parsed
+
+                return resolved
             return value
         elif isinstance(value, dict):
             # Recursively resolve dictionary values

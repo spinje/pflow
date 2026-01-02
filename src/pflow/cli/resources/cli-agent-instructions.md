@@ -22,7 +22,7 @@ Structured data (JSON/CSV/XML) → `shell` node · Unstructured → `llm` node
 - **Workflow exists?** → Use it (5 sec vs 60 min to build)
 - **Passing `${node.result}` wholesale?** → Skip testing
 - **Async API?** → Try `Prefer: wait=60` header first
-- **JSON from shell?** → Auto-parses to objects
+- **JSON string in simple template?** → Auto-parses (any node type)
 - **Same operation per item?** → `batch` config (Batch Processing pattern)
 
 ### Core Philosophy - Understanding the WHY
@@ -880,64 +880,73 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 
 #### Critical: Automatic JSON Parsing for Simple Templates
 
-**Simple templates (`${var}`) containing JSON strings are automatically parsed when the target parameter expects structured data (dict/list).** This enables shell+jq workflows without requiring LLM intermediate steps.
+**Simple templates (`${var}`) automatically parse JSON strings.** This enables shell+jq workflows without intermediate extraction steps.
 
-**Parsing Rules**:
-- ✅ **Auto-parsed**: Simple templates like `${node.output}` when target expects dict/list
-- ✅ **Path traversal**: `${node.stdout.field}` auto-parses JSON strings to access nested properties
-- ❌ **NOT parsed**: Complex templates like `"text ${var}"` always stay as strings (escape hatch)
-- ✅ **Handles newlines**: Shell output with trailing `\n` is automatically stripped
-- ✅ **Type-safe**: Only uses parsed result if type matches (array→list, object→dict)
-- ✅ **Graceful fallback**: Invalid JSON stays as string (Pydantic validation catches it)
-- ✅ **Type preserved in structures**: Both `{"key": "${dict}"}` and `[{"data": "${val}"}]` preserve types—build complex inputs from multiple sources
+**Two contexts where auto-parsing occurs:**
 
-**What happens when you use simple templates:**
+1. **Path traversal**: `${node.stdout.field}` parses JSON to access nested properties
+2. **Inline objects**: `{"data": "${node.stdout}"}` parses JSON for structured data composition
 
-| Source Output | Target Parameter Type | What Actually Happens | Need Transformation? |
-|--------------|----------------------|----------------------|---------------------|
-| JSON string from shell | `body` (object) in HTTP | Auto-parsed to object | ❌ No |
-| JSON string from shell | `values` (array) in MCP | Auto-parsed to array | ❌ No |
-| JSON string from LLM | `data` (object) in any node | Auto-parsed to object | ❌ No |
-| Plain text | `prompt` (string) in LLM | Stays as string | ❌ No |
-| Malformed/broken JSON | Any structured type | Keeps as string, validation fails | ✅ Yes - fix format |
+**What gets parsed:**
+- All JSON types: objects `{}`, arrays `[]`, numbers, booleans, strings, null
+- Shell output with trailing `\n` is automatically stripped
+- Plain text and invalid JSON gracefully stay as strings
 
-**Escape Hatch** (Force String):
-If you need a JSON string to remain unparsed, use a complex template:
+**Concrete examples** (inline object context):
+| Template | Source value | After resolution |
+|----------|--------------|------------------|
+| `{"data": "${shell.stdout}"}` | `'{"items": [1,2,3]}\n'` | `{"data": {"items": [1,2,3]}}` |
+| `{"resp": "${http.response}"}` | `'{"status": "ok"}'` | `{"resp": {"status": "ok"}}` |
+| `{"items": "${mcp-node.result}"}` | `'[{"id": 1}, {"id": 2}]'` | `{"items": [{"id": 1}, {"id": 2}]}` |
+| `{"config": "${read-file.content}"}` | `'{"debug": true}'` | `{"config": {"debug": true}}` |
+| `{"count": "${jq-node.stdout}"}` | `'42\n'` | `{"count": 42}` |
+| `{"valid": "${check.stdout}"}` | `'true'` | `{"valid": true}` |
+| `{"text": "${any.output}"}` | `'plain text'` | `{"text": "plain text"}` |
+
+**Escape Hatch** (force raw string):
+Complex templates bypass parsing:
 ```json
-// This WILL be auto-parsed:
-{"params": {"data": "${json_var}"}}
+// Auto-parsed (simple template):
+{"data": "${json_var}"}
 
-// This will NOT be parsed (stays as string):
-{"params": {"data": " ${json_var}"}}  // Leading space makes it complex
-{"params": {"data": "${json_var} "}}  // Trailing space
-{"params": {"data": "'${json_var}'"}}  // Wrapped in quotes
-```
-
-**Shell Output Handling**: Trailing newlines from shell commands are automatically stripped before parsing:
-```json
-// Shell outputs: '[["data"]]\\n'
-// Auto-strips to: '[["data"]]' before parsing
-{"params": {"values": "${shell.stdout}"}}  // Works perfectly!
+// NOT parsed (complex templates):
+{"data": "${json_var} "}   // Trailing space
+{"data": "'${json_var}'"}  // Wrapped in quotes
+{"data": "raw: ${json_var}"}  // Has prefix
 ```
 
 **The Anti-Pattern to Avoid:**
 ```json
-// ❌ WRONG - Unnecessary "defensive" extraction
+// ❌ WRONG - Unnecessary extraction before LLM
 {
-  "id": "extract-json",
+  "id": "extract-first",
   "type": "shell",
-  "params": {
-    "stdin": "${llm.response}",
-    "command": "jq '.'"  // Extracting valid JSON for "safety"
-  }
+  "params": {"stdin": "${http-fetch.response}", "command": "jq '.'"}
+},
+{
+  "id": "analyze",
+  "type": "llm",
+  "params": {"prompt": "Analyze: ${extract-first.stdout}"}  // Extra step for nothing
 }
 
-// ✅ RIGHT - Direct pass (nodes handle parsing)
+// ✅ RIGHT - Pass directly to LLM
 {
-  "id": "use-data",
-  "type": "http",
+  "id": "analyze",
+  "type": "llm",
+  "params": {"prompt": "Analyze: ${http-fetch.response}"}  // Works directly
+}
+
+// ✅ RIGHT - Combine multiple sources in inline object (any node types work)
+{
+  "id": "process",
+  "type": "shell",
   "params": {
-    "body": "${llm.response}"  // JSON string → auto-parsed
+    "stdin": {
+      "api_data": "${http-fetch.response}",       // HTTP node
+      "db_records": "${mcp-postgres.result}",     // MCP node
+      "local_config": "${read-config.content}"    // File node
+    },
+    "command": "jq '.api_data.items + .db_records'"
   }
 }
 ```
@@ -947,7 +956,7 @@ If you need a JSON string to remain unparsed, use a complex template:
 - Specific field extraction (getting `.items[0]` from larger response)
 - Format conversion (JSON to CSV, etc.)
 
-**How to verify:** Test with your EXACT source output format—including newlines, whitespace, and any formatting quirks. If it works in `registry run`, it will work in the workflow. Don't add transformations "just in case."
+**How to verify:** Test with your EXACT source output format. If it works in `registry run`, it will work in the workflow.
 
 #### Transformation Complexity Checklist
 
