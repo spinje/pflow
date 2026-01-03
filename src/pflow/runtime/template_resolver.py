@@ -496,9 +496,13 @@ class TemplateResolver:
         their original type, while complex templates return strings.
 
         For simple templates that resolve to JSON strings, the JSON is automatically
-        parsed. This enables patterns like {"data": "${shell.stdout}"} where stdout
-        contains JSON. Complex templates (e.g., "prefix ${var}") are the escape hatch
-        for keeping raw JSON strings.
+        parsed in two contexts:
+        1. Path traversal (Task 105): ${node.stdout.field} - parses to access nested paths
+        2. Inline objects (this feature): {"data": "${node.stdout}"} - parses for structured data
+
+        This enables patterns like {"data": "${shell.stdout}"} where stdout contains JSON.
+        Complex templates (e.g., "prefix ${var}") are the escape hatch for keeping raw
+        JSON strings.
 
         Args:
             value: The value to resolve (can be string, dict, list, or any type)
@@ -526,11 +530,16 @@ class TemplateResolver:
                 # Auto-parse JSON strings from simple templates
                 # This enables: {"data": "${shell.stdout}"} where stdout is JSON
                 # Escape hatch: complex templates like "prefix ${var}" stay as strings
+                #
+                # Tech debt note (see Task 105): Same JSON string may be parsed multiple
+                # times if used in multiple templates. Acceptable for MVP since parsing
+                # is <1ms vs node execution 100-1000ms. Consider caching if profiling
+                # shows this as a bottleneck.
                 if isinstance(resolved, str) and TemplateResolver.is_simple_template(value):
                     success, parsed = try_parse_json(resolved)
                     if success:
                         logger.debug(
-                            f"Auto-parsed JSON string in nested resolution: {type(parsed).__name__}",
+                            f"Auto-parsed JSON from template '{value}': {type(parsed).__name__}",
                         )
                         return parsed
 

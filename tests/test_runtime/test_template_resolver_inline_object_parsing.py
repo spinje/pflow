@@ -220,3 +220,97 @@ class TestNestedAndRootAccessComposition:
 
         assert result["count"] == 3
         assert result["status_obj"] == {"status": "ok"}
+
+
+class TestEmptyJsonStructures:
+    """Tests for empty JSON objects and arrays (edge cases)."""
+
+    def test_empty_json_object(self):
+        """Empty JSON object '{}' is parsed to empty dict."""
+        context = {"source": {"stdout": "{}"}}
+        result = TemplateResolver.resolve_nested({"data": "${source.stdout}"}, context)
+        assert result["data"] == {}
+        assert isinstance(result["data"], dict)
+
+    def test_empty_json_array(self):
+        """Empty JSON array '[]' is parsed to empty list."""
+        context = {"source": {"stdout": "[]"}}
+        result = TemplateResolver.resolve_nested({"items": "${source.stdout}"}, context)
+        assert result["items"] == []
+        assert isinstance(result["items"], list)
+
+    def test_empty_json_with_whitespace(self):
+        """Empty JSON with trailing newline (shell behavior)."""
+        context = {"source": {"stdout": "{}\n"}}
+        result = TemplateResolver.resolve_nested({"data": "${source.stdout}"}, context)
+        assert result["data"] == {}
+
+
+class TestValidationRuntimeConsistency:
+    """Validator and resolver must agree on what's valid.
+
+    Critical: Task 105 established that compile-time validation and runtime
+    resolution must agree. These tests verify inline object patterns pass
+    both validation and runtime execution.
+    """
+
+    def test_inline_object_pattern_compiles_and_runs(self):
+        """Inline object with JSON template compiles and executes correctly.
+
+        This is an end-to-end check that:
+        1. The pattern is accepted by validation (implicit - compilation succeeds)
+        2. Runtime resolves and parses the JSON correctly
+        """
+        from pflow.runtime.compiler import compile_ir_to_flow
+        from tests.shared.registry_utils import ensure_test_registry
+
+        registry = ensure_test_registry()
+
+        # Workflow with inline object pattern - the exact pattern we're enabling
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "get-json",
+                    "type": "shell",
+                    "params": {"command": "echo '{\"items\": [1, 2, 3]}'"},
+                },
+                {
+                    "id": "use-json",
+                    "type": "shell",
+                    "params": {
+                        # This is the inline object pattern we're testing
+                        "stdin": {"data": "${get-json.stdout}"},
+                        "command": "jq '.data.items | length'",
+                    },
+                },
+            ],
+            "edges": [{"from": "get-json", "to": "use-json"}],
+        }
+
+        # Should compile without errors (validation passes)
+        flow = compile_ir_to_flow(workflow_ir, registry=registry)
+
+        # Should execute correctly (runtime works)
+        shared: dict = {}
+        flow.run(shared)
+
+        # jq could access .data.items, proving JSON was parsed
+        assert "3" in shared["use-json"]["stdout"]
+
+    def test_resolver_and_variable_exists_agree(self):
+        """resolve_nested and variable_exists should agree for inline patterns.
+
+        Both should accept ${source.stdout} whether it's JSON or not.
+        """
+        context = {"source": {"stdout": '{"key": "value"}'}}
+
+        # variable_exists checks if the path is valid
+        exists = TemplateResolver.variable_exists("source.stdout", context)
+
+        # resolve_nested resolves and parses
+        result = TemplateResolver.resolve_nested({"data": "${source.stdout}"}, context)
+
+        # Both should succeed
+        assert exists is True
+        assert result["data"] == {"key": "value"}
