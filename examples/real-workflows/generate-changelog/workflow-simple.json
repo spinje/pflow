@@ -1,0 +1,137 @@
+{
+  "inputs": {
+    "since_tag": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Tag to start from (default: latest tag)"
+    },
+    "changelog_file": {
+      "type": "string",
+      "required": false,
+      "default": "CHANGELOG.md",
+      "description": "Path to changelog file (default: CHANGELOG.md)"
+    }
+  },
+  "nodes": [
+    {
+      "id": "get-latest-tag",
+      "type": "git-get-latest-tag",
+      "purpose": "Get the latest git tag from repository"
+    },
+    {
+      "id": "resolve-tag",
+      "type": "shell",
+      "purpose": "Use provided tag or fall back to latest",
+      "params": {
+        "command": "provided='${since_tag}'\nlatest='${get-latest-tag.latest_tag.name}'\nif [ -n \"$provided\" ]; then echo \"$provided\"; else echo \"$latest\"; fi | tr -d '\\n'"
+      }
+    },
+    {
+      "id": "get-commits-enriched",
+      "type": "shell",
+      "purpose": "Get first-parent commits (no duplicates) enriched with PR details",
+      "params": {
+        "command": "tag='${resolve-tag.stdout}'\nrepo=$(gh repo view --json nameWithOwner -q '.nameWithOwner')\ncommits=$(git log --first-parent \"$tag\"..HEAD --format='{\"hash\":\"%H\",\"subject\":\"%s\"}' | jq -s '.')\nprs=$(gh pr list --state merged --limit 200 --json number,title,body 2>/dev/null || echo '[]')\necho \"$commits\" | jq --argjson prs \"$prs\" --arg repo \"$repo\" 'map(. + {pr_number: null, pr_title: \"\", pr_body: \"\", pr_link: \"\", is_merge: false} | if .subject | test(\"^Merge pull request #[0-9]+\") then (.subject | capture(\"#(?<num>[0-9]+)\").num | tonumber) as $prnum | ($prs | map(select(.number == $prnum)) | first // {}) as $pr | . + {pr_number: $prnum, pr_title: ($pr.title // \"\"), pr_body: ($pr.body // \"\"), pr_link: \"https://github.com/\\($repo)/pull/\\($prnum)\", is_merge: true} elif .subject | test(\"\\\\(#[0-9]+\\\\)\") then (.subject | capture(\"\\\\(#(?<num>[0-9]+)\\\\)\").num | tonumber) as $prnum | . + {pr_number: $prnum, pr_link: \"https://github.com/\\($repo)/pull/\\($prnum)\"} else . end)'"
+      }
+    },
+    {
+      "id": "analyze",
+      "type": "llm",
+      "purpose": "Analyze each commit for user-facing changelog entry",
+      "batch": {
+        "items": "${get-commits-enriched.stdout}",
+        "parallel": true,
+        "max_concurrent": 10,
+        "error_handling": "continue"
+      },
+      "params": {
+        "prompt": "Analyze this change for a user-facing changelog entry.\n\n## Context\nIs PR merge: ${item.is_merge}\nCommit subject: ${item.subject}\nPR Number: ${item.pr_number}\nPR Title: ${item.pr_title}\nPR Body: ${item.pr_body}\nPR Link: ${item.pr_link}\n\n## Instructions\nIf this is a PR merge (is_merge=true), use the PR Title and PR Body to understand what changed.\nIf this is a direct commit, use the commit subject.\n\n## CRITICAL: No guessing or inferring\n- ONLY use information explicitly provided in the commit/PR\n- If the commit message is minimal (e.g., \"fix bug\"), keep the changelog entry minimal\n- Do NOT invent details, add context, or guess what the change might do\n- Do NOT embellish with phrases like \"for better performance\" unless explicitly stated\n- If unclear whether user-facing, default to SKIP\n\nSTRICT RULES - Output \"SKIP: <original subject>\" unless this DIRECTLY affects end users:\n\n\u2705 INCLUDE (user-facing):\n- New CLI commands or features users can use\n- New workflow capabilities\n- Bug fixes that users would have encountered\n- Breaking changes users need to know about\n- Performance improvements users would notice\n\n\u274c SKIP (not user-facing):\n- Internal refactoring or code cleanup\n- Developer tooling improvements\n- Documentation updates\n- Test improvements\n- CI/CD changes\n- Internal implementation details\n- Dependency updates\n\n## Output Format\nIf INCLUDE and has PR link: Write entry ending with [#N](link)\n  Example: \"Added batch processing with parallel execution [#17](https://github.com/owner/repo/pull/17)\"\n\nIf INCLUDE but no PR: Write entry without link\n  Example: \"Fixed crash when running with empty input\"\n\nIf SKIP: Output \"SKIP: \" followed by the ORIGINAL commit subject (not a summary)\n  Example: \"SKIP: docs: update README\" (keep the exact commit message)\n  Example: \"SKIP: chore: update dependencies\"\n  Example: \"SKIP: test: add unit tests for parser\"\n\nOutput ONLY the changelog line or SKIP line. Nothing else."
+      }
+    },
+    {
+      "id": "filter-and-format",
+      "type": "shell",
+      "purpose": "Filter SKIPs, compute version, track skipped items",
+      "params": {
+        "stdin": "${analyze.results}",
+        "command": "jq -r '\n  # Filter out null responses first, then separate included and skipped\n  [.[] | select(.response != null)] as $valid |\n  [$valid[] | select(.response | type == \"string\") | select(.response | startswith(\"SKIP\") | not) | select(.response != \"\") | .response] as $entries |\n  [$valid[] | select(.response | type == \"string\") | select(.response | startswith(\"SKIP\")) | .response | sub(\"^SKIP: \"; \"\")] as $skipped |\n  \n  # Count by type\n  ($entries | map(select(startswith(\"Added\"))) | length) as $features |\n  ($entries | map(select(startswith(\"Fixed\"))) | length) as $fixes |\n  ($entries | map(select(startswith(\"Improved\"))) | length) as $improvements |\n  ($entries | map(select(startswith(\"Removed\") or startswith(\"Changed\"))) | length) as $breaking |\n  \n  # Determine bump type\n  (if $breaking > 0 then \"major\"\n   elif $features > 0 then \"minor\"\n   else \"patch\" end) as $bump |\n  \n  # Format output\n  {\n    entries: $entries,\n    skipped: $skipped,\n    summary: \"\\($entries | length) changes: \\($features) features, \\($fixes) fixes, \\($improvements) improvements, \\($breaking) breaking\",\n    bump_type: $bump\n  }'"
+      }
+    },
+    {
+      "id": "compute-next-version",
+      "type": "shell",
+      "purpose": "Compute next semantic version",
+      "params": {
+        "stdin": "${filter-and-format.stdout}",
+        "command": "current=$(echo '${resolve-tag.stdout}' | sed 's/^v//')\nbump=$(jq -r '.bump_type')\nmajor=$(echo $current | cut -d. -f1)\nminor=$(echo $current | cut -d. -f2)\npatch=$(echo $current | cut -d. -f3)\ncase $bump in\n  major) printf 'v%d.0.0' $((major + 1)) ;;\n  minor) printf 'v%d.%d.0' $major $((minor + 1)) ;;\n  patch) printf 'v%d.%d.%d' $major $minor $((patch + 1)) ;;\nesac"
+      }
+    },
+    {
+      "id": "format-changelog",
+      "type": "shell",
+      "purpose": "Format new changelog section with skipped items",
+      "params": {
+        "stdin": "${filter-and-format.stdout}",
+        "command": "version='${compute-next-version.stdout}'\ndate=$(date +%Y-%m-%d)\n\n# Use jq to format everything safely\njq -r --arg version \"$version\" --arg date \"$date\" '\n  \"## \\($version) (\\($date))\\n\" +\n  \"\\n\" +\n  (.entries | sort | map(\"- \" + .) | join(\"\\n\")) +\n  \"\\n\" +\n  (if (.skipped | length) > 0 then\n    \"\\n<details>\\n<summary>\" + (.skipped | length | tostring) + \" internal changes not included</summary>\\n\\n\" +\n    (.skipped | map(\"- \" + .) | join(\"\\n\")) +\n    \"\\n\\n</details>\\n\"\n  else \"\" end)\n'"
+      }
+    },
+    {
+      "id": "update-changelog-file",
+      "type": "shell",
+      "purpose": "Prepend new section to CHANGELOG.md (create if needed)",
+      "params": {
+        "stdin": "${format-changelog.stdout}",
+        "command": "changelog_file='${changelog_file}'\nnew_section=$(cat)\n\nif [ -f \"$changelog_file\" ]; then\n  if head -1 \"$changelog_file\" | grep -q '^# '; then\n    { head -1 \"$changelog_file\"; echo \"\"; printf '%s\\n' \"$new_section\"; tail -n +2 \"$changelog_file\"; } > /tmp/changelog_new\n  else\n    { printf '%s\\n' \"$new_section\"; cat \"$changelog_file\"; } > /tmp/changelog_new\n  fi\n  mv /tmp/changelog_new \"$changelog_file\"\nelse\n  { echo \"# Changelog\"; echo \"\"; printf '%s\\n' \"$new_section\"; } > \"$changelog_file\"\nfi\n\necho \"Updated $changelog_file\""
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "get-latest-tag",
+      "to": "resolve-tag"
+    },
+    {
+      "from": "resolve-tag",
+      "to": "get-commits-enriched"
+    },
+    {
+      "from": "get-commits-enriched",
+      "to": "analyze"
+    },
+    {
+      "from": "analyze",
+      "to": "filter-and-format"
+    },
+    {
+      "from": "filter-and-format",
+      "to": "compute-next-version"
+    },
+    {
+      "from": "compute-next-version",
+      "to": "format-changelog"
+    },
+    {
+      "from": "format-changelog",
+      "to": "update-changelog-file"
+    }
+  ],
+  "outputs": {
+    "suggested_version": {
+      "source": "${compute-next-version.stdout}",
+      "description": "Suggested next version based on changes"
+    },
+    "changelog_section": {
+      "source": "${format-changelog.stdout}",
+      "description": "New changelog section that was added"
+    },
+    "summary": {
+      "source": "${filter-and-format.stdout}",
+      "description": "Change summary with counts"
+    },
+    "result": {
+      "source": "${update-changelog-file.stdout}",
+      "description": "Confirmation of file update"
+    }
+  }
+}
