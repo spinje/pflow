@@ -493,6 +493,7 @@ Version (v0.8.0):
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
 
 Version (v0.9.0):
+- ⏳ Task 106: Automatic Workflow Iteration Cache (supersedes Task 73)
 - ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
 - ⏳ Task 78: Save User Request History in Workflow Metadata
 
@@ -520,9 +521,8 @@ Later:
 - ⏳ Task 100: Implement Reduce/Fold Mode for Batch Processing
 - ⏳ Task 101: Shell Node File Input Parameter for Safe Data Passing
 
-Deprecated Tasks?:
-- ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair and workflow iteratio
-- ❌ Task 44: Build caching system
+Deprecated Tasks:
+- ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair (superseded by Task 106)
 - ❌ Task 61: Implement Fast Mode for Planner
 - ❌ Task 60: Support Gemini models for planner
 - ❌ Task 69: Refactor Internal Repair system to use Pocketflow
