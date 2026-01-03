@@ -472,27 +472,29 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 96: Support Batch Processing in Workflows
 - ✅ Task 102: Remove Parameter Fallback Pattern
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
+- ✅ Task 103: Preserve Inline Object Type in Template Resolution
 
 Next up:
-
 
 First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
-Version (v0.7.0):
-- ⏳ Task 103: Preserve Inline Object Type in Template Resolution
+Version (v0.7.0 - LLM Authoring Experience):
 - ⏳ Task 104: Implement Python Script Node for Data Transformation
+- ⏳ Task 107: Implement Markdown Workflow Format
+
+Version (v0.8.0 - Workflow Expressiveness):
 - ⏳ Task 59: Add support for nested workflows
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
-- ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 
-Version (v0.8.0):
+Version (v0.9.0):
 - ⏳ Task 99: Expose pflow Nodes as MCP Tools to Claude Code Node
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 75: Execution Preview in Validation
 - ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
 
-Version (v0.9.0):
+Version (v0.10.0):
+- ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
 - ⏳ Task 106: Automatic Workflow Iteration Cache (supersedes Task 73)
 - ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
 - ⏳ Task 78: Save User Request History in Workflow Metadata
