@@ -1,0 +1,325 @@
+{
+  "inputs": {
+    "repo": {
+      "type": "string",
+      "required": false,
+      "default": "",
+      "description": "Repository in owner/repo format (e.g., 'owner/repo'). Defaults to current git remote."
+    },
+    "changelog_path": {
+      "type": "string",
+      "required": false,
+      "default": "CHANGELOG.md",
+      "description": "Path to the changelog file"
+    },
+    "github_token": {
+      "type": "string",
+      "required": true,
+      "description": "GitHub personal access token for API access"
+    }
+  },
+  "nodes": [
+    {
+      "id": "resolve-repo",
+      "type": "shell",
+      "purpose": "Get repo from input or detect from git remote",
+      "params": {
+        "command": "if [ -n '${repo}' ]; then printf '%s' '${repo}'; else git remote get-url origin 2>/dev/null | sed -E 's|.*github.com[:/]||' | sed 's/.git$//' | tr -d '\\n'; fi"
+      }
+    },
+    {
+      "id": "get-latest-tag",
+      "type": "git-get-latest-tag",
+      "purpose": "Get the most recent git tag to determine changelog range",
+      "params": {}
+    },
+    {
+      "id": "get-commits",
+      "type": "shell",
+      "purpose": "Get commits since last tag using --first-parent to avoid PR merge duplicates",
+      "params": {
+        "command": "git log ${get-latest-tag.latest_tag.name}..HEAD --first-parent --format='{\"sha\": \"%H\", \"short_sha\": \"%h\", \"subject\": \"%s\", \"author\": \"%an\", \"date\": \"%aI\"}' | jq -s '.' 2>/dev/null || echo '[]'"
+      }
+    },
+    {
+      "id": "get-today",
+      "type": "shell",
+      "purpose": "Get today's date for changelog header",
+      "params": {
+        "command": "date +%Y-%m-%d"
+      }
+    },
+    {
+      "id": "get-docs-diff",
+      "type": "shell",
+      "purpose": "Get documentation changes since last tag for accuracy context",
+      "params": {
+        "command": "git diff ${get-latest-tag.latest_tag.name}..HEAD -- docs/ 2>/dev/null | head -200 || echo 'No docs changes'"
+      }
+    },
+    {
+      "id": "extract-pr-info",
+      "type": "shell",
+      "purpose": "Extract PR numbers from commit messages and prepare API requests",
+      "params": {
+        "stdin": "${get-commits.stdout}",
+        "command": "jq '[.[] | {sha: .sha, short_sha: .short_sha, subject: .subject, author: .author, date: .date, pr_number: ((.subject | capture(\"#(?<num>[0-9]+)\") // {num: null}).num | tonumber? // null)}]'"
+      }
+    },
+    {
+      "id": "filter-commits-with-prs",
+      "type": "shell",
+      "purpose": "Filter to only commits that have PR numbers",
+      "params": {
+        "stdin": "${extract-pr-info.stdout}",
+        "command": "jq '[.[] | select(.pr_number)]'"
+      }
+    },
+    {
+      "id": "fetch-pr-data",
+      "type": "http",
+      "purpose": "Fetch PR details from GitHub API for commits with PR references",
+      "batch": {
+        "items": "${filter-commits-with-prs.stdout}",
+        "as": "commit",
+        "parallel": true,
+        "max_concurrent": 20,
+        "error_handling": "continue"
+      },
+      "params": {
+        "url": "https://api.github.com/repos/${resolve-repo.stdout}/pulls/${commit.pr_number}",
+        "method": "GET",
+        "headers": {
+          "Accept": "application/vnd.github.v3+json",
+          "Authorization": "token ${github_token}",
+          "User-Agent": "pflow-changelog"
+        }
+      }
+    },
+    {
+      "id": "get-file-changes",
+      "type": "shell",
+      "purpose": "Get list of changed files for each commit to help classify user-facing vs internal",
+      "batch": {
+        "items": "${extract-pr-info.stdout}",
+        "as": "commit",
+        "parallel": true,
+        "max_concurrent": 40
+      },
+      "params": {
+        "command": "git diff-tree --no-commit-id --name-only -r ${commit.sha} 2>/dev/null | jq -R -s 'split(\"\\n\") | map(select(length > 0))'"
+      }
+    },
+    {
+      "id": "combine-commit-data",
+      "type": "shell",
+      "purpose": "Merge commit info, PR data, and file changes - extract PR summary for classification",
+      "params": {
+        "stdin": {
+          "commits": "${extract-pr-info.stdout}",
+          "pr_commits": "${filter-commits-with-prs.stdout}",
+          "pr_results": "${fetch-pr-data.results}",
+          "file_results": "${get-file-changes.results}"
+        },
+        "command": "jq '([.pr_commits, .pr_results] | transpose | map({key: (.[0].pr_number | tostring), value: .[1].response}) | from_entries) as $pr_map | [range(0; .commits | length) as $i | .commits[$i] as $c | ($pr_map[$c.pr_number | tostring] // null) as $pr | { commit: $c, pr_full: $pr, pr_title: ($pr.title // null), pr_summary: (($pr.body // \"\") | split(\"## \")[0:2] | join(\" \") | gsub(\"[\\n\\r]+\"; \" \") | .[0:500]), pr_url: ($pr.html_url // null), files: (.file_results[$i].stdout // []) }]'"
+      }
+    },
+    {
+      "id": "classify-commits",
+      "type": "llm",
+      "purpose": "Classify each commit as user-facing or internal based on content and file paths",
+      "batch": {
+        "items": "${combine-commit-data.stdout}",
+        "as": "entry",
+        "parallel": true,
+        "max_concurrent": 50
+      },
+      "params": {
+        "prompt": "Classify this commit as user-facing or internal.\n\nCommit: ${entry.commit.subject}\nPR Title: ${entry.pr_title}\nPR Summary: ${entry.pr_summary}\nFiles Changed: ${entry.files}\n\nClassification rules:\n- Internal: changes only in tests/, docs/, .taskmaster/, internal tooling, CI/CD, refactoring with no behavior change\n- User-facing: new features, bug fixes, API changes, CLI changes, anything users would notice\n\nRespond with ONLY a JSON object:\n{\"classification\": \"user-facing\" or \"internal\", \"category\": \"Added\" or \"Changed\" or \"Fixed\" or \"Removed\" or \"Improved\", \"summary\": \"one-line description for changelog\"}"
+      }
+    },
+    {
+      "id": "split-by-classification",
+      "type": "shell",
+      "purpose": "Split into user-facing and internal, join with full PR data",
+      "params": {
+        "stdin": {
+          "classifications": "${classify-commits.results}",
+          "original_data": "${combine-commit-data.stdout}"
+        },
+        "command": "jq '{ user_facing: [range(0; .original_data | length) as $i | select(.classifications[$i].response.classification == \"user-facing\") | { classification: .classifications[$i].response, commit: .original_data[$i].commit, pr_title: .original_data[$i].pr_title, pr_body: .original_data[$i].pr_full.body, pr_url: .original_data[$i].pr_url, files: .original_data[$i].files }], internal: [range(0; .original_data | length) as $i | select(.classifications[$i].response.classification == \"internal\") | { classification: .classifications[$i].response, commit: .original_data[$i].commit }] }'"
+      }
+    },
+    {
+      "id": "compute-version-bump",
+      "type": "shell",
+      "purpose": "Determine version bump from categories: Removed/Changed=major, Added=minor, else patch",
+      "params": {
+        "stdin": "${split-by-classification.stdout.user_facing}",
+        "command": "jq -r 'map(.classification.category) | if any(. == \"Removed\" or . == \"Changed\") then \"major\" elif any(. == \"Added\") then \"minor\" else \"patch\" end'"
+      }
+    },
+    {
+      "id": "compute-new-version",
+      "type": "shell",
+      "purpose": "Apply version bump to previous tag to get new version",
+      "params": {
+        "stdin": {
+          "prev_tag": "${get-latest-tag.latest_tag.name}",
+          "bump": "${compute-version-bump.stdout}"
+        },
+        "command": "jq -r '(.prev_tag | ltrimstr(\"v\") | split(\".\") | map(tonumber)) as [$major, $minor, $patch] | (.bump | gsub(\"[\\n\\r]\"; \"\")) as $b | if $b == \"major\" then \"v\\($major + 1).0.0\" elif $b == \"minor\" then \"v\\($major).\\($minor + 1).0\" else \"v\\($major).\\($minor).\\($patch + 1)\" end'"
+      }
+    },
+    {
+      "id": "refine-and-format",
+      "type": "llm",
+      "purpose": "Refine user-facing entries and generate changelog markdown",
+      "params": {
+        "prompt": "Create a professional changelog from these user-facing commits.\n\nUser-facing entries (each has: classification, commit, pr_title, pr_body, pr_url, files):\n${split-by-classification.stdout.user_facing}\n\nDocumentation changes (use for accuracy on feature names):\n${get-docs-diff.stdout}\n\nVersion: ${compute-new-version.stdout}\nDate: ${get-today.stdout}\nRepository: ${resolve-repo.stdout}\n\nInstructions:\n1. Use the classification.summary as base, verify against pr_body for accuracy\n2. Merge duplicate/related entries\n3. Sort categories: Removed > Changed > Added > Fixed > Improved\n4. Use the provided version and date exactly as given\n5. Include PR links using pr_url\n\nRespond with ONLY a JSON object:\n{\n  \"changelog_md\": \"## [VERSION] - DATE\\n\\n### Added\\n- Entry ([#123](url))\\n...\",\n  \"user_facing_count\": number\n}"
+      }
+    },
+    {
+      "id": "generate-context",
+      "type": "shell",
+      "purpose": "Assemble context file for verification",
+      "params": {
+        "stdin": {
+          "changelog": "${refine-and-format.response}",
+          "user_facing": "${split-by-classification.stdout.user_facing}",
+          "internal": "${split-by-classification.stdout.internal}",
+          "docs_diff": "${get-docs-diff.stdout}"
+        },
+        "command": "jq -r '(.user_facing | if type == \"string\" then fromjson else . end) as $uf | (.internal | if type == \"string\" then fromjson else . end) as $int | \"# Release Context\\n\\n## Generated Changelog\\n\\n\" + .changelog.changelog_md + \"\\n\\n## User-Facing Entries (Full Context)\\n\\n\" + ($uf | map(\"### \" + .commit.subject + \"\\n\\n**Category:** \" + .classification.category + \"\\n**Summary:** \" + .classification.summary + \"\\n**PR:** \" + (.pr_url // \"N/A\") + \"\\n**Files:** \" + (.files | tostring) + \"\\n\\n\" + if .pr_body then \"<details>\\n<summary>PR Body</summary>\\n\\n\" + .pr_body + \"\\n</details>\" else \"\" end) | join(\"\\n\\n---\\n\\n\")) + \"\\n\\n## Skipped Changes (Internal)\\n\\n\" + ($int | map(\"- \" + .commit.subject) | join(\"\\n\")) + \"\\n\\n## Documentation Changes\\n\\n```diff\\n\" + .docs_diff + \"\\n```\\n\\n## Verification Checklist\\n\\n- [ ] Version number is correct\\n- [ ] No user-facing changes missed\\n- [ ] PR links are correct\\n- [ ] Category assignments are accurate\"'"
+      }
+    },
+    {
+      "id": "save-context",
+      "type": "write-file",
+      "purpose": "Save context file for verification before committing",
+      "params": {
+        "file_path": "releases/${compute-new-version.stdout}-context.md",
+        "content": "${generate-context.stdout}"
+      }
+    },
+    {
+      "id": "save-changelog",
+      "type": "shell",
+      "purpose": "Prepend new changelog entry to existing changelog file",
+      "params": {
+        "stdin": "${refine-and-format.response}",
+        "command": "changelog=$(jq -r '.changelog_md'); if [ -f '${changelog_path}' ]; then echo \"$changelog\" | cat - '${changelog_path}' > /tmp/changelog.tmp && mv /tmp/changelog.tmp '${changelog_path}'; else echo \"$changelog\" > '${changelog_path}'; fi && echo 'Updated: ${changelog_path}'"
+      }
+    },
+    {
+      "id": "output-summary",
+      "type": "shell",
+      "purpose": "Output summary of what was generated",
+      "params": {
+        "stdin": {
+          "changelog": "${refine-and-format.response}",
+          "internal": "${split-by-classification.stdout.internal}",
+          "version": "${compute-new-version.stdout}",
+          "bump": "${compute-version-bump.stdout}"
+        },
+        "command": "jq -r '(.version | gsub(\"[\\n\\r]\"; \"\")) as $v | (.bump | gsub(\"[\\n\\r]\"; \"\")) as $b | (.internal | if type == \"string\" then fromjson else . end) as $int | \"\\n=== Changelog Generated ===\\nVersion: \" + $v + \"\\nVersion bump: \" + $b + \"\\nUser-facing entries: \" + (.changelog.user_facing_count | tostring) + \"\\nSkipped (internal): \" + ($int | length | tostring) + \"\\n\\nFiles updated:\\n- ${changelog_path}\\n- releases/\" + $v + \"-context.md\\n\\nReview the context file before committing.\"'"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "resolve-repo",
+      "to": "get-latest-tag"
+    },
+    {
+      "from": "get-latest-tag",
+      "to": "get-commits"
+    },
+    {
+      "from": "get-commits",
+      "to": "get-today"
+    },
+    {
+      "from": "get-today",
+      "to": "get-docs-diff"
+    },
+    {
+      "from": "get-docs-diff",
+      "to": "extract-pr-info"
+    },
+    {
+      "from": "extract-pr-info",
+      "to": "filter-commits-with-prs"
+    },
+    {
+      "from": "filter-commits-with-prs",
+      "to": "fetch-pr-data"
+    },
+    {
+      "from": "fetch-pr-data",
+      "to": "get-file-changes"
+    },
+    {
+      "from": "get-file-changes",
+      "to": "combine-commit-data"
+    },
+    {
+      "from": "combine-commit-data",
+      "to": "classify-commits"
+    },
+    {
+      "from": "classify-commits",
+      "to": "split-by-classification"
+    },
+    {
+      "from": "split-by-classification",
+      "to": "compute-version-bump"
+    },
+    {
+      "from": "compute-version-bump",
+      "to": "compute-new-version"
+    },
+    {
+      "from": "compute-new-version",
+      "to": "refine-and-format"
+    },
+    {
+      "from": "refine-and-format",
+      "to": "generate-context"
+    },
+    {
+      "from": "generate-context",
+      "to": "save-context"
+    },
+    {
+      "from": "save-context",
+      "to": "save-changelog"
+    },
+    {
+      "from": "save-changelog",
+      "to": "output-summary"
+    }
+  ],
+  "outputs": {
+    "summary": {
+      "source": "${output-summary.stdout}",
+      "description": "Summary of changelog generation"
+    },
+    "changelog": {
+      "source": "${refine-and-format.response.changelog_md}",
+      "description": "Generated changelog markdown"
+    },
+    "version": {
+      "source": "${compute-new-version.stdout}",
+      "description": "Computed new version number"
+    },
+    "version_bump": {
+      "source": "${compute-version-bump.stdout}",
+      "description": "Computed version bump type (major/minor/patch)"
+    },
+    "internal_entries": {
+      "source": "${split-by-classification.stdout.internal}",
+      "description": "Internal/skipped entries for reference"
+    }
+  }
+}

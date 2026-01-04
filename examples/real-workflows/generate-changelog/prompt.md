@@ -6,9 +6,9 @@ Generate a changelog from git history since a tag. Outputs CHANGELOG.md, Mintlif
 
 ## Core Logic
 
-**Two-pass LLM approach:**
-1. First pass: Classify each commit in parallel (user-facing or internal?)
-2. Second pass: See all entries together, dedupe, sort, polish
+**Streamlined LLM approach:**
+1. Classification pass: Classify each commit in parallel (user-facing or internal?)
+2. Formatting pass: Mintlify formatter sees all entries, dedupes, groups themes, polishes (markdown is shell-only, no LLM)
 
 **Classification signals:**
 - File paths matter: `.taskmaster/`, `tests/`, `docs/`, `.github/` = probably internal
@@ -23,9 +23,9 @@ Generate a changelog from git history since a tag. Outputs CHANGELOG.md, Mintlif
 4. Load task-review.md files for referenced tasks (full file, not summary)
 5. Get docs diff since tag (for accurate parameter descriptions)
 6. **Parallel:** Classify each commit - user-facing or internal?
-7. Refine user-facing entries with full context
-8. Compute semantic version (breaking=major, features=minor, fixes=patch)
-9. **Parallel:** Format CHANGELOG.md and changelog.mdx (same entries, different styles)
+7. Compute semantic version (breaking=major, features=minor, fixes=patch)
+8. Format CHANGELOG.md (shell - simple bullets, no LLM)
+9. Format changelog.mdx (LLM - dedupe, group themes, polish, uses docs diff)
 10. Save context file with: skipped changes, task reviews, docs diff, draft entries + PR context
 11. Output summary with counts
 

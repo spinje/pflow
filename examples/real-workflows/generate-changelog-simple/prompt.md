@@ -4,27 +4,29 @@ The problem: writing changelogs manually is tedious and things get missed. Inter
 
 Workflow:
 
-1. Get commits since the last git tag using `--first-parent` (avoids duplicates from PR merges)
+1. Resolve repo from git remote (auto-detect owner/repo from origin, or use input if provided)
 
-2. Enrich each commit with PR data from GitHub - title, body, link
+2. Get commits since the last git tag using `--first-parent` (avoids duplicates from PR merges)
 
-3. Extract file paths changed per commit (helps classify internal vs user-facing)
+3. Fetch PR data from GitHub (title, body, link) for commits that have PR references in their message
 
-4. Get documentation changes since the tag (helps catch parameter renames, new features)
+4. Extract file paths changed per commit (helps classify internal vs user-facing)
 
-5. Analyze each commit in parallel - is it user-facing or internal? Use file paths as a signal (tests/, docs/, .taskmaster/ = internal)
+5. Get documentation changes since the tag (helps catch parameter renames, new features)
 
-6. Refine the user-facing entries using docs diff for accuracy. Merge duplicates, standardize format, sort by importance (Removed > Changed > Added > Fixed > Improved)
+6. Batch-classify each commit in PARALLEL - is it user-facing or internal? Each call receives: commit subject, PR title, PR summary (extract ## Summary section from body), file paths. Use file paths as signal (tests/, docs/, .taskmaster/ = internal)
 
-7. Compute version bump: any Removed/Changed = major, any Added = minor, else patch
+7. Split results: user-facing entries go to refinement, internal entries go to a separate output
 
-8. Generate the changelog markdown with PR links
+8. Refine ONLY the user-facing entries. Input: classified entries + full PR data (title, body, link) + docs diff. Merge duplicates, standardize format, sort by importance (Removed > Changed > Added > Fixed > Improved). Output the changelog markdown directly.
 
-9. Save a context file with the changelog, skipped changes, docs diff, and draft entries with full PR context - for verification before committing
+9. Compute version bump (simple rule): any Removed/Changed = major, any Added = minor, else patch
 
-10. Update the changelog file
+10. Assemble context file from the structured outputs - changelog, skipped changes, docs diff - for verification before committing
 
-11. Output a summary showing what was generated
+11. Update the changelog file
+
+12. Output a summary showing what was generated
 
 End result:
 A professional changelog plus a context file where you can verify nothing was misclassified. Run it before each release.

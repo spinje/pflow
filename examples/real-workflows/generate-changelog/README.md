@@ -25,14 +25,11 @@ Given a git tag as a starting point, the workflow:
 3. **Extracts file paths** to help classify internal vs user-facing changes
 4. **Finds task references** from commits and PR bodies, loads full task review files
 5. **Gathers docs context** by extracting documentation changes since the tag
-6. **Analyzes each change** in parallel to determine if it's user-facing
+6. **Analyzes each change** in parallel using truncated PR summaries (not full bodies) for efficient classification
 7. **Filters internal changes** (docs, tests, `.claude/`, `.taskmaster/`) for verification
-8. **Refines entries** with docs + task review context for accurate descriptions
-9. **Computes semantic version** based on change types
-10. **Generates triple output**:
-    - Markdown (technical, with PR links)
-    - Mintlify (user-facing, grouped themes, no links)
-    - Release context (AI-readable + verification)
+8. **Computes semantic version** based on change types
+9. **Formats both outputs in parallel** - markdown and Mintlify run as 2 parallel LLM calls
+10. **Refines entries** - both formatters dedupe, sort by verb, and standardize terminology
 11. **Adds breaking changes** accordion with migration guidance (for major versions)
 12. **Saves context file** with full task reviews, docs diff, and skipped changes for review
 13. **Outputs summary** showing version, file paths, and counts for verification
@@ -43,15 +40,15 @@ This workflow showcases several key pflow capabilities:
 
 | Feature | Usage |
 |---------|-------|
-| **Batch processing** | Parallel LLM analysis of 40+ commits |
-| **Inline array batch** | Two different prompts run in parallel |
+| **Batch processing** | Parallel LLM analysis of 50+ commits |
+| **Inline array batch** | Two different format prompts run in parallel |
 | **Object stdin** | Combining multiple data sources |
 | **Nested template access** | `${get-dates.stdout.iso}` accesses JSON fields |
+| **Batch result indexing** | `${format-both.results[0].response}` accesses specific batch results |
 | **Git integration** | `git-get-latest-tag` node |
 | **GitHub integration** | PR enrichment via `gh` CLI |
 | **Docs diff context** | Uses documentation changes to improve accuracy |
 | **Task review context** | Reads task-review.md files for implementation details |
-| **Style reference** | Reads existing changelog for consistent formatting |
 | **File path classification** | Uses changed file paths to identify internal changes |
 
 ## Workflow Architecture
@@ -62,7 +59,7 @@ This workflow showcases several key pflow capabilities:
 └─────────────────┘     └──────────────┘     └──────────────┘     └─────────┬─────────┘
                                                                             ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ get-commits-enriched (with file paths + task numbers)                                 │
+│ get-commits-enriched (with file paths, task numbers, pr_summary)                      │
 └───────────────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
@@ -72,26 +69,19 @@ This workflow showcases several key pflow capabilities:
                                               │
                                               ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ analyze (BATCH LLM, 10 concurrent) → filter-and-format                                │
+│ analyze-commits (BATCH LLM, 10 concurrent) → filter-and-format                        │
 └───────────────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
-┌───────────────────┐     ┌─────────────────────────────────────────────────────────────┐
-│ prepare-context   │ ──▶ │ refine-entries (uses docs diff + task reviews)              │
-└───────────────────┘     └─────────────────────────────────────────────────────────────┘
-                                              │
-                                              ▼
-┌───────────────────┐     ┌────────────────────┐     ┌───────────┐
-│ compute-bump-type │ ──▶ │ compute-next-ver   │ ──▶ │ get-dates │
-└───────────────────┘     └────────────────────┘     └─────┬─────┘
-                                                           ▼
-┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ format-both (BATCH LLM - parallel, 2 items)                                           │
-│ - Markdown: technical, with PR links                                                  │
-│ - Mintlify: user-facing, grouped themes, no PR links                                  │
-└───────────────────────────────────────────────────────────────────────────────────────┘
-                                              │
-                                              ▼
+┌───────────────────┐     ┌────────────────────┐     ┌────────────────────┐     ┌───────────┐
+│ prepare-context   │ ──▶ │ compute-bump-type  │ ──▶ │ compute-next-ver   │ ──▶ │ get-dates │
+└───────────────────┘     └────────────────────┘     └────────────────────┘     └─────┬─────┘
+                                                                                      ▼
+                                                                        ┌────────────────────┐
+                                                                        │ format-both (BATCH LLM, 2 items parallel)                             │
+                                                                        │ [0] markdown, [1] mintlify - both refine + format                    │
+                                                                        └─────────┬──────────┘
+                                                                                  ▼
                                 ┌─────────────────────────┐
                                 │ save-release-context    │
                                 │ (releases/<ver>.md)     │
@@ -116,7 +106,7 @@ This workflow showcases several key pflow capabilities:
                                 └────────────────────┘
 ```
 
-**18 nodes total** - includes file path extraction, task review loading, docs diff, style reference, release context generation, and summary output.
+**17 nodes total** - includes file path extraction, task review loading, docs diff, release context generation, and summary output.
 
 ## Usage
 
@@ -306,11 +296,11 @@ This makes it clear where each type of content goes - user-facing entries in the
 
 When a PR is merged, git history contains both the merge commit AND all individual commits. Using `--first-parent` shows only the main line, eliminating duplicates automatically.
 
-### 2. Two-Pass LLM Approach
+### 2. Streamlined LLM Approach
 
-**First Pass (Parallel)**: Analyzes each commit in isolation. Fast but no cross-entry awareness.
+**Classification Pass (Parallel)**: Analyzes each commit using truncated PR summaries (not full bodies) to determine if it's user-facing. Fast parallel execution with 10 concurrent calls.
 
-**Second Pass (Aggregator)**: Sees ALL entries with context. Enables merging duplicates, consistent formatting, and proper sorting.
+**Formatting Pass (Parallel)**: Both markdown and Mintlify formatters run in parallel as a batch node with 2 items. Each formatter receives full context (task reviews, docs diff, PR bodies) and performs its own refinement (deduping, sorting, verb standardization) before formatting.
 
 ### 3. File Paths for Classification
 
@@ -348,9 +338,13 @@ Changes:
 
 This enables entries like "renamed `task` to `prompt`" instead of vague "updated parameters".
 
-### 6. Style Reference for Consistency
+### 6. Entry Refinement
 
-The workflow reads the last 2 `<Update>` blocks from the existing changelog and provides them as a style reference. This ensures new entries match the established format.
+Both formatters perform the same refinement steps:
+- Merge duplicate entries (combining PR links)
+- Standardize verbs (Allow→Added, Enable→Added, Update→Changed)
+- Sort by: Removed > Changed > Added > Fixed > Improved
+- Use task reviews and docs diff for accurate descriptions
 
 ### 7. Breaking Changes Accordion
 
@@ -367,17 +361,22 @@ The same workflow generates both - demonstrating pflow's ability to run multiple
 
 ### 9. Inline Array Batch for Parallel Formats
 
-The `format-both` node uses an inline array to run two different prompts in parallel:
+The `format-both` node uses an inline array to run two different prompts in parallel. Each item contains its own prompt, and results are accessed by index:
 
 ```json
 "batch": {
   "items": [
-    {"format": "markdown", "prompt": "Format as markdown..."},
-    {"format": "mintlify", "prompt": "Format as Mintlify..."}
+    {"format": "markdown", "prompt": "Refine and format as markdown..."},
+    {"format": "mintlify", "prompt": "Refine and format as Mintlify..."}
   ],
   "parallel": true
+},
+"params": {
+  "prompt": "${item.prompt}"
 }
 ```
+
+Results are accessed via `${format-both.results[0].response}` (markdown) and `${format-both.results[1].response}` (mintlify).
 
 ### 10. Object Stdin for Combining Data
 
@@ -403,16 +402,18 @@ ${get-dates.stdout.month_year} → "January 2026"
 
 ## Performance
 
-Typical run on a repository with ~48 commits:
+Typical run on a repository with ~50 commits:
 
 | Metric | Value |
 |--------|-------|
-| Commits analyzed | 48 |
+| Commits analyzed | 51 |
 | Task reviews loaded | 4 |
 | Entries included | 17 |
-| Entries skipped | 32 |
-| Total time | ~65 seconds |
-| LLM cost | ~$0.12 |
+| Entries skipped | 34 |
+| Total time | ~45 seconds |
+| LLM cost | ~$0.13 |
+
+**Architecture**: Classification uses truncated PR summaries for efficiency. Both format outputs run in parallel as a batch node, with each receiving full context for refinement.
 
 ## Semantic Versioning
 
