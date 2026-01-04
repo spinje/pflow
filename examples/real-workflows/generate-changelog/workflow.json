@@ -17,6 +17,12 @@
       "required": false,
       "default": "docs/changelog.mdx",
       "description": "Path to Mintlify changelog (pass empty string to skip)"
+    },
+    "releases_dir": {
+      "type": "string",
+      "required": false,
+      "default": "releases",
+      "description": "Directory for release context files"
     }
   },
   "nodes": [
@@ -34,11 +40,36 @@
       }
     },
     {
+      "id": "get-docs-diff",
+      "type": "shell",
+      "purpose": "Get documentation changes since tag, grouped by file with commit refs",
+      "params": {
+        "command": "tag='${resolve-tag.stdout}'\nfor file in $(git diff \"$tag\"..HEAD --name-only -- docs/ 2>/dev/null | command grep -v changelog.mdx); do\n  echo \"## $file\"\n  echo \"Commits: $(git log \"$tag\"..HEAD --oneline -- \"$file\" | paste -sd ', ' -)\"\n  echo \"Changes:\"\n  git diff \"$tag\"..HEAD -- \"$file\" | command grep '^[+-]' | command grep -v -E '^\\+\\+\\+|^---' | head -50\n  echo \"\"\ndone"
+      }
+    },
+    {
+      "id": "get-recent-updates",
+      "type": "shell",
+      "purpose": "Get last 2 Update blocks from changelog as style reference",
+      "params": {
+        "command": "awk '/<Update/,/<\\/Update>/{print; if(/<\\/Update>/){count++; if(count==2) exit}}' docs/changelog.mdx 2>/dev/null || echo ''"
+      }
+    },
+    {
       "id": "get-commits-enriched",
       "type": "shell",
-      "purpose": "Fetch commits since tag with PR metadata",
+      "purpose": "Fetch commits since tag with PR metadata, file paths, and task numbers",
       "params": {
-        "command": "tag='${resolve-tag.stdout}'\nrepo=$(gh repo view --json nameWithOwner -q '.nameWithOwner')\ncommits=$(git log --first-parent \"$tag\"..HEAD --format='{\"hash\":\"%H\",\"subject\":\"%s\"}' | jq -s '.')\nprs=$(gh pr list --state merged --limit 200 --json number,title,body 2>/dev/null || echo '[]')\necho \"$commits\" | jq --argjson prs \"$prs\" --arg repo \"$repo\" 'map(. + {pr_number: null, pr_title: \"\", pr_body: \"\", pr_link: \"\", is_merge: false} | if .subject | test(\"^Merge pull request #[0-9]+\") then (.subject | capture(\"#(?<num>[0-9]+)\").num | tonumber) as $prnum | ($prs | map(select(.number == $prnum)) | first // {}) as $pr | . + {pr_number: $prnum, pr_title: ($pr.title // \"\"), pr_body: ($pr.body // \"\"), pr_link: \"https://github.com/\\($repo)/pull/\\($prnum)\", is_merge: true} elif .subject | test(\"\\\\(#[0-9]+\\\\)\") then (.subject | capture(\"\\\\(#(?<num>[0-9]+)\\\\)\").num | tonumber) as $prnum | . + {pr_number: $prnum, pr_link: \"https://github.com/\\($repo)/pull/\\($prnum)\"} else . end)'"
+        "command": "tag='${resolve-tag.stdout}'\nrepo=$(gh repo view --json nameWithOwner -q '.nameWithOwner')\n\n# Get commits with file stats\ncommits=$(git log --first-parent \"$tag\"..HEAD --format='COMMIT_START%n{\"hash\":\"%H\",\"commit_message\":\"%s\"}%nCOMMIT_END' | \\\n  awk '/COMMIT_START/{getline json; getline; print json}' | jq -s '.')\n\n# Get file changes per commit\nfile_changes=$(git log --first-parent \"$tag\"..HEAD --format='HASH:%H' --name-only | \\\n  awk '/^HASH:/{hash=substr($0,6); next} NF{files[hash]=files[hash] $0 \",\"} END{for(h in files) print h \"|\" files[h]}' | \\\n  jq -Rs 'split(\"\\n\") | map(select(length>0) | split(\"|\") | {key: .[0], value: (.[1] // \"\" | split(\",\") | map(select(length>0)) | join(\", \"))}) | from_entries')\n\n# Get PRs\nprs=$(gh pr list --state merged --limit 200 --json number,title,body 2>/dev/null || echo '[]')\n\n# Combine all data\necho \"$commits\" | jq --argjson prs \"$prs\" --argjson files \"$file_changes\" --arg repo \"$repo\" '\n  map(. + {\n    pr_number: null, pr_title: \"\", pr_body: \"\", pr_link: \"\", is_merge: false,\n    files_changed: ($files[.hash] // \"\"),\n    task_number: null\n  } |\n  # Extract task number from commit message or PR body\n  (if .commit_message | test(\"[Tt]ask[- ]?[0-9]+\") then\n    (.commit_message | capture(\"[Tt]ask[- ]?(?<num>[0-9]+)\").num | tonumber)\n  else null end) as $task_from_commit |\n  . + {task_number: $task_from_commit} |\n  # Enrich with PR data\n  if .commit_message | test(\"^Merge pull request #[0-9]+\") then\n    (.commit_message | capture(\"#(?<num>[0-9]+)\").num | tonumber) as $prnum |\n    ($prs | map(select(.number == $prnum)) | first // {}) as $pr |\n    (if ($pr.body // \"\") | test(\"[Tt]ask[- _]?[0-9]+\") then\n      (($pr.body // \"\") | capture(\"[Tt]ask[- _]?(?<num>[0-9]+)\").num | tonumber)\n    else .task_number end) as $task_from_pr |\n    . + {\n      pr_number: $prnum,\n      pr_title: ($pr.title // \"\"),\n      pr_body: ($pr.body // \"\"),\n      pr_link: \"https://github.com/\\($repo)/pull/\\($prnum)\",\n      is_merge: true,\n      task_number: ($task_from_pr // .task_number)\n    }\n  elif .commit_message | test(\"\\\\(#[0-9]+\\\\)\") then\n    (.commit_message | capture(\"\\\\(#(?<num>[0-9]+)\\\\)\").num | tonumber) as $prnum |\n    . + {pr_number: $prnum, pr_link: \"https://github.com/\\($repo)/pull/\\($prnum)\"}\n  else . end\n  )'"
+      }
+    },
+    {
+      "id": "get-task-reviews",
+      "type": "shell",
+      "purpose": "Read task-review.md files for referenced tasks",
+      "params": {
+        "stdin": "${get-commits-enriched.stdout}",
+        "command": "# Extract unique task numbers\ntask_nums=$(jq -r '[.[].task_number | select(. != null)] | unique | .[]')\n\necho '{'\nfirst=true\nfor num in $task_nums; do\n  review_file=\".taskmaster/tasks/task_$num/task-review.md\"\n  if [ -f \"$review_file\" ]; then\n    content=$(cat \"$review_file\")\n    if [ -n \"$content\" ]; then\n      if [ \"$first\" = true ]; then first=false; else echo ','; fi\n      printf '\"%s\": %s' \"$num\" \"$(printf '%s' \"$content\" | jq -Rs .)\"\n    fi\n  fi\ndone\necho '}'"
       }
     },
     {
@@ -52,7 +83,7 @@
         "error_handling": "continue"
       },
       "params": {
-        "prompt": "Analyze this change for a user-facing changelog entry.\n\n## Context\nIs PR merge: ${item.is_merge}\nCommit subject: ${item.subject}\nPR Number: ${item.pr_number}\nPR Title: ${item.pr_title}\nPR Body: ${item.pr_body}\nPR Link: ${item.pr_link}\n\n## Instructions\nIf this is a PR merge (is_merge=true), use the PR Title and PR Body to understand what changed.\nIf this is a direct commit, use the commit subject.\n\n## CRITICAL: No guessing or inferring\n- ONLY use information explicitly provided in the commit/PR\n- If the commit message is minimal (e.g., \"fix bug\"), keep the changelog entry minimal\n- Do NOT invent details, add context, or guess what the change might do\n- Do NOT embellish with phrases like \"for better performance\" unless explicitly stated\n- If unclear whether user-facing, default to SKIP\n- ALWAYS specify WHAT component/node/feature changed (e.g., \"Added timeout parameter to shell node\" not just \"Added timeout parameter\")\n\nSTRICT RULES - Output \"SKIP: <original subject>\" unless this DIRECTLY affects end users:\n\n\u2705 INCLUDE (user-facing):\n- New CLI commands or features users can use\n- New workflow capabilities\n- Bug fixes that users would have encountered\n- Breaking changes users need to know about\n- Performance improvements users would notice\n\n\u274c SKIP (not user-facing):\n- Internal refactoring or code cleanup\n- Developer tooling improvements\n- Documentation updates\n- Test improvements\n- CI/CD changes\n- Internal implementation details\n- Dependency updates\n\n## Output Format\nIf INCLUDE and has PR link: Write entry ending with [#N](link)\n  Example: \"Added batch processing with parallel execution [#17](https://github.com/owner/repo/pull/17)\"\n\nIf INCLUDE but no PR: Write entry without link\n  Example: \"Fixed crash when running with empty input\"\n\nIf SKIP: Output \"SKIP: \" followed by the ORIGINAL commit subject (not a summary)\n  Example: \"SKIP: docs: update README\" (keep the exact commit message)\n  Example: \"SKIP: chore: update dependencies\"\n  Example: \"SKIP: test: add unit tests for parser\"\n\nOutput ONLY the changelog line or SKIP line. Nothing else."
+        "prompt": "Analyze this change for a user-facing changelog entry.\n\n## Context\nIs PR merge: ${item.is_merge}\nCommit message: ${item.commit_message}\nFiles changed: ${item.files_changed}\nPR Number: ${item.pr_number}\nPR Title: ${item.pr_title}\nPR Body: ${item.pr_body}\nPR Link: ${item.pr_link}\n\n## Instructions\nIf this is a PR merge (is_merge=true), use the PR Title and PR Body to understand what changed.\nIf this is a direct commit, use the commit message.\n\n## CRITICAL: No guessing or inferring\n- ONLY use information explicitly provided in the commit/PR\n- If the commit message is minimal (e.g., \"fix bug\"), keep the changelog entry minimal\n- Do NOT invent details, add context, or guess what the change might do\n- Do NOT embellish with phrases like \"for better performance\" unless explicitly stated\n- If unclear whether user-facing, default to SKIP\n- ALWAYS specify WHAT component/node/feature changed (e.g., \"Added timeout parameter to shell node\" not just \"Added timeout parameter\")\n\nSTRICT RULES - Output \"SKIP: <original commit message>\" unless this DIRECTLY affects end users:\n\n\u2705 INCLUDE (user-facing):\n- New CLI commands or features users can use\n- New workflow capabilities\n- Bug fixes that users would have encountered\n- Breaking changes users need to know about\n- Performance improvements users would notice\n\n\u274c SKIP (not user-facing):\n- Internal refactoring or code cleanup\n- Developer tooling improvements\n- Documentation updates\n- Test improvements\n- CI/CD changes\n- Internal implementation details\n- Dependency updates\n- Task/planning files (e.g., \"add task for X\")\n- Files in internal paths: .claude/, .taskmaster/, .github/, tests/\n\n## Output Format\nIf INCLUDE and has PR link: Write entry ending with [#N](link)\n  Example: \"Added batch processing with parallel execution [#17](https://github.com/owner/repo/pull/17)\"\n\nIf INCLUDE but no PR: Write entry without link\n  Example: \"Fixed crash when running with empty input\"\n\nIf SKIP: Output \"SKIP: \" followed by the ORIGINAL commit message (not a summary)\n  Example: \"SKIP: docs: update README\" (keep the exact commit message)\n  Example: \"SKIP: chore: update dependencies\"\n  Example: \"SKIP: test: add unit tests for parser\"\n  Example: \"SKIP: add task for feature X\" (planning, not implementation)\n\nOutput ONLY the changelog line or SKIP line. Nothing else."
       }
     },
     {
@@ -73,7 +104,7 @@
           "filter": "${filter-and-format.stdout}",
           "commits": "${get-commits-enriched.stdout}"
         },
-        "command": "jq '. as $root | .filter.included | map({draft: .response, index: .index, context: ($root.commits[.index] | {subject, pr_title, pr_body, pr_link, pr_number})})'"
+        "command": "jq '. as $root | .filter.included | map({draft: .response, index: .index, context: ($root.commits[.index] | {commit_message, task_number, files_changed: ((.files_changed // \"\") | split(\", \") | if length > 5 then (.[0:5] | join(\", \")) + \" ... and \\(length - 5) more files\" else . | join(\", \") end), pr_title, pr_body, pr_link, pr_number})})'"
       }
     },
     {
@@ -81,7 +112,7 @@
       "type": "llm",
       "purpose": "Polish entries: merge duplicates, standardize format, sort by priority",
       "params": {
-        "prompt": "You are refining changelog entries for end users.\n\n## Draft Entries\n${prepare-context.stdout}\n\n## Format Rules\nEvery entry: `<Verb> <what> [in <component>] [#N](url)`\n\nVerb priority (this IS the sort order):\n1. Removed - features/APIs removed (breaking)\n2. Changed - behavior changes (breaking if incompatible)\n3. Added - new capabilities\n4. Fixed - bug fixes\n5. Improved - enhancements\n\n## Examples\n\u2705 \"Added batch processing to workflow execution [#17](url)\"\n\u2705 \"Fixed shell node crash on empty stdin [#26](url)\"\n\u274c \"Updated the thing\" (too vague)\n\u274c \"Bug fix\" (what bug? where?)\n\n## Tasks\n1. Merge duplicates \u2192 combine PR links: [#10](url), [#12](url)\n2. Standardize verbs (Allow X \u2192 Added X)\n3. Add component specificity from context\n4. Keep each entry to ONE line\n5. Use user-facing language, not internal jargon\n6. Sort by verb priority, then alphabetically\n\n## Constraints\n- NEVER invent details not in context\n- NEVER add entries, only refine\n- Minimal context \u2192 minimal entry\n\n## Output\nJSON array only:\n[\"Removed X [#10](url)\", \"Added Y [#11](url)\", ...]"
+        "prompt": "You are refining changelog entries for end users.\n\n## Draft Entries\n${prepare-context.stdout}\n\n## Task Implementation Reviews\nThese are executive summaries from completed tasks. Use them to understand what was actually built and write more accurate entries:\n\n${get-task-reviews.stdout}\n\n## Documentation Changes (use for accuracy)\nThe following documentation was updated since the last release. Use this to:\n- Get accurate parameter names (e.g., if docs show `task` \u2192 `prompt` rename, mention it)\n- Understand what features actually do\n- Identify breaking changes (parameter renames, removed features)\n\n${get-docs-diff.stdout}\n\n## Format Rules\nEvery entry: `<Verb> <what> [in <component>] [#N](url)`\n\nVerb priority (this IS the sort order):\n1. Removed - features/APIs removed (breaking)\n2. Changed - behavior changes (breaking if incompatible)\n3. Added - new capabilities\n4. Fixed - bug fixes\n5. Improved - enhancements\n\n## Examples\n\u2705 \"Added batch processing to workflow execution [#17](url)\"\n\u2705 \"Changed claude-code node: renamed `task` to `prompt`, `working_directory` to `cwd` [#10](url)\"\n\u2705 \"Fixed shell node crash on empty stdin [#26](url)\"\n\u274c \"Updated the thing\" (too vague)\n\u274c \"Bug fix\" (what bug? where?)\n\n## Tasks\n1. Merge duplicates \u2192 combine PR links: [#10](url), [#12](url)\n2. Use docs diff to improve accuracy (parameter renames, new options)\n3. Standardize verbs (Allow X \u2192 Added X)\n4. Add component specificity from context\n5. Keep each entry to ONE line\n6. Use user-facing language, not internal jargon\n7. Sort by verb priority, then alphabetically\n\n## Constraints\n- Use docs context to improve accuracy, but don't invent entries\n- If docs show parameter renames, include them in Changed entries\n- NEVER add entries, only refine existing ones\n- Minimal context \u2192 minimal entry\n\n## Output\nJSON array only:\n[\"Removed X [#10](url)\", \"Changed Y: detail [#11](url)\", \"Added Z [#12](url)\", ...]"
       }
     },
     {
@@ -117,17 +148,32 @@
         "items": [
           {
             "format": "markdown",
-            "prompt": "Format these changelog entries as a markdown section.\n\n## Input\nVersion: ${compute-next-version.stdout}\nDate: ${get-dates.stdout.iso}\nEntries: ${refine-entries.response}\nSkipped: ${filter-and-format.stdout.skipped}\n\n## Output Format\n## v1.0.0 (2026-01-01)\n\n- Entry one [#N](url)\n- Entry two\n\n<details>\n<summary>N internal changes not included</summary>\n\n- skipped item\n</details>\n\n## Rules\n- Use version and date exactly as provided\n- Each entry as bullet point with `- ` prefix\n- Preserve PR links exactly\n- Add <details> section only if skipped array is non-empty\n- Start with ## - no code fences\n- Output ONLY the markdown"
+            "prompt": "Format these changelog entries as a markdown section.\n\n## Input\nVersion: ${compute-next-version.stdout}\nDate: ${get-dates.stdout.iso}\nEntries: ${refine-entries.response}\n\n## Output Format\n## v1.0.0 (2026-01-01)\n\n- Entry one [#N](url)\n- Entry two\n\n## Rules\n- Use version and date exactly as provided\n- Each entry as bullet point with `- ` prefix\n- Preserve PR links exactly\n- Start with ## - no code fences\n- Output ONLY the markdown"
           },
           {
             "format": "mintlify",
-            "prompt": "Format these changelog entries as a Mintlify <Update> component.\n\n## Input\nVersion: ${compute-next-version.stdout}\nMonth/Year: ${get-dates.stdout.month_year}\nEntries: ${refine-entries.response}\n\n## Output Format\n<Update label=\"January 2026\" description=\"v1.0.0\" tags={[\"New releases\"]}>\n  ## Feature Group Title\n\n  Brief 1-2 sentence description.\n\n  **Highlights**\n  - Key point one\n  - Key point two\n</Update>\n\n## Rules\n- Use version and month/year exactly as provided\n- Group related entries by theme (2-4 groups)\n- Write 1-2 sentence summary per group\n- Use **Bold headers** for sub-sections\n- Tags: combine from \"New releases\", \"Improvements\", \"Bug fixes\"\n- Start with <Update> - no code fences\n- End with </Update>"
+            "prompt": "Format these changelog entries as a Mintlify <Update> component.\n\n## Style Reference (match this format)\n${get-recent-updates.stdout}\n\n## Input\nVersion: ${compute-next-version.stdout}\nMonth/Year: ${get-dates.stdout.month_year}\nEntries: ${refine-entries.response}\nBump Type: ${compute-bump-type.stdout}\n\n## Structure Rules\n\n### Thematic Groups (2-4 max)\n- Group related features AND their related fixes together\n- If more than 4 distinct themes, combine related ones (e.g., \"Shell improvements\" + \"Git improvements\" \u2192 \"Node reliability\")\n- Each group: ## header, 1-2 sentence intro, **Highlights** bullets\n- Include related bug fixes within their theme (not separate)\n\n### Bug Fixes Section (only if needed)\n- Add a separate \"## Bug fixes\" section ONLY for orphan fixes that don't belong to any theme\n- Keep visible (not in accordion) - users want to scan these\n- If all fixes relate to themes, skip this section entirely\n\n### Accordion Usage\nUse accordions ONLY for:\n- Breaking changes (REQUIRED if bump type is major)\n- Code examples that take up space\n- Supplementary info: \"Quick start\", \"Limitations\", \"What's next\"\n\nNEVER put main features or highlights in accordions.\n\n## Output Format\n<Update label=\"January 2026\" description=\"v1.0.0\" tags={[\"New releases\", \"Bug fixes\"]}>\n  ## Theme Title\n\n  Brief 1-2 sentence description.\n\n  **Highlights**\n  - Key feature\n  - Related improvement\n  - Related fix (if applicable)\n\n  ## Another Theme\n\n  Description.\n\n  **Highlights**\n  - Feature\n  - Fix related to this theme\n\n  ## Bug fixes\n\n  - Orphan fix with no clear theme\n  - Another standalone fix\n\n  <Accordion title=\"Breaking changes\">\n    - **Feature X**: Migration guidance here\n    - **Parameter Y**: Renamed from `old` to `new`\n  </Accordion>\n</Update>\n\n## Rules\n- Match the style of the reference exactly\n- Use version and month/year exactly as provided\n- Tags: combine from \"New releases\", \"Improvements\", \"Bug fixes\"\n- If bump type is \"major\": add \"Breaking changes\" to tags array\n- Main features and highlights must be visible (not in accordions)\n- Related fixes go in their theme, orphan fixes get separate section\n- Breaking changes accordion is MANDATORY if bump type is major\n- Do NOT include PR links (e.g., [#N]) - this is a user-facing changelog\n- Start with <Update> - no code fences\n- End with </Update>\n- Output EXACTLY ONE <Update> block - nothing else before or after"
           }
         ],
         "parallel": true
       },
       "params": {
         "prompt": "${item.prompt}"
+      }
+    },
+    {
+      "id": "save-release-context",
+      "type": "shell",
+      "purpose": "Save full context to version-named file for AI agents and verification",
+      "params": {
+        "stdin": {
+          "changelog": "${format-both.results[0].response}",
+          "skipped": "${filter-and-format.stdout.skipped}",
+          "task_reviews": "${get-task-reviews.stdout}",
+          "docs_diff": "${get-docs-diff.stdout}",
+          "draft_entries": "${prepare-context.stdout}"
+        },
+        "command": "version='${compute-next-version.stdout}'\ndate='${get-dates.stdout.iso}'\nreleases_dir='${releases_dir}'\n\nmkdir -p \"$releases_dir\"\noutfile=\"$releases_dir/$version-context.md\"\n\n# Capture stdin to temp file (handles large data)\ntmpfile=$(mktemp)\ncat > \"$tmpfile\"\n\n# Build file section by section\nprintf '%s\\n' \"# $version Release Context\" > \"$outfile\"\nprintf '\\n%s\\n' \"Generated: $date\" >> \"$outfile\"\nprintf '%s\\n' \"This file contains implementation context for AI agents and release verification.\" >> \"$outfile\"\nprintf '\\n%s\\n\\n' \"---\" >> \"$outfile\"\n\n# Changelog section\nprintf '%s\\n\\n' \"## Changelog\" >> \"$outfile\"\njq -r '.changelog' \"$tmpfile\" >> \"$outfile\"\nprintf '\\n%s\\n\\n' \"---\" >> \"$outfile\"\n\n# Skipped changes section\nprintf '%s\\n\\n' \"## Skipped Changes (Verification)\" >> \"$outfile\"\nprintf '%s\\n\\n' \"Review these to ensure nothing was incorrectly classified as internal:\" >> \"$outfile\"\njq -r '.skipped[]? // empty | \"- \" + .' \"$tmpfile\" >> \"$outfile\"\nprintf '\\n%s\\n\\n' \"---\" >> \"$outfile\"\n\n# Task reviews section\nprintf '%s\\n\\n' \"## Task Implementation Reviews\" >> \"$outfile\"\njq -r '.task_reviews | to_entries[]? // empty | \"### Task \" + .key + \"\\n\\n\" + .value + \"\\n\"' \"$tmpfile\" >> \"$outfile\"\nprintf '%s\\n\\n' \"---\" >> \"$outfile\"\n\n# Documentation changes section\nprintf '%s\\n\\n' \"## Documentation Changes\" >> \"$outfile\"\njq -r '.docs_diff // \"\"' \"$tmpfile\" >> \"$outfile\"\nprintf '\\n%s\\n\\n' \"---\" >> \"$outfile\"\n\n# Draft entries section\nprintf '%s\\n\\n' \"## Draft Entries with Context\" >> \"$outfile\"\nprintf '%s\\n' '```json' >> \"$outfile\"\njq '.draft_entries' \"$tmpfile\" >> \"$outfile\"\nprintf '%s\\n' '```' >> \"$outfile\"\n\nrm -f \"$tmpfile\"\necho \"Saved context to $outfile\""
       }
     },
     {
@@ -147,6 +193,19 @@
         "stdin": "${format-both.results[1].response}",
         "command": "mintlify_file='${mintlify_file}'\nnew_section=$(cat)\n\n# Skip if no mintlify file specified\nif [ -z \"$mintlify_file\" ]; then\n  echo \"Skipped mintlify (no file specified)\"\n  exit 0\nfi\n\nif [ -f \"$mintlify_file\" ]; then\n  # Find the line after the frontmatter (after second ---)\n  frontmatter_end=$(awk '/^---$/{c++; if(c==2){print NR; exit}}' \"$mintlify_file\")\n  if [ -n \"$frontmatter_end\" ]; then\n    { head -n \"$frontmatter_end\" \"$mintlify_file\"; echo \"\"; printf '%s\\n' \"$new_section\"; tail -n +$((frontmatter_end + 1)) \"$mintlify_file\"; } > /tmp/mintlify_new\n  else\n    { printf '%s\\n' \"$new_section\"; echo \"\"; cat \"$mintlify_file\"; } > /tmp/mintlify_new\n  fi\n  mv /tmp/mintlify_new \"$mintlify_file\"\nelse\n  # Create new file with frontmatter\n  { echo '---'; echo 'title: \"Changelog\"'; echo 'description: \"Product updates and announcements\"'; echo 'icon: \"clock\"'; echo 'rss: true'; echo '---'; echo \"\"; printf '%s\\n' \"$new_section\"; } > \"$mintlify_file\"\nfi\n\necho \"Updated $mintlify_file\""
       }
+    },
+    {
+      "id": "create-summary",
+      "type": "shell",
+      "purpose": "Create release summary for CLI output",
+      "params": {
+        "stdin": {
+          "entries": "${refine-entries.response}",
+          "skipped": "${filter-and-format.stdout.skipped}",
+          "task_reviews": "${get-task-reviews.stdout}"
+        },
+        "command": "version=$(printf '%s' '${compute-next-version.stdout}' | tr -d '\\n')\nbump=$(printf '%s' '${compute-bump-type.stdout}' | tr -d '\\n')\ndate=$(printf '%s' '${get-dates.stdout.iso}' | tr -d '\\n')\nchangelog='${changelog_file}'\nmintlify='${mintlify_file}'\nreleases_dir='${releases_dir}'\n\n# Capture stdin to temp file\ntmpfile=$(mktemp)\ncat > \"$tmpfile\"\n\n# Count items\nuser_facing=$(jq '.entries | length' \"$tmpfile\")\nskipped=$(jq '.skipped | length' \"$tmpfile\")\ntask_count=$(jq '.task_reviews | keys | length' \"$tmpfile\")\nrm -f \"$tmpfile\"\n\nprintf '## Release Summary\\n\\n'\nprintf 'Version: %s (%s)\\n' \"$version\" \"$bump\"\nprintf 'Date: %s\\n\\n' \"$date\"\nprintf '%s\\n' \"$changelog\"\nprintf '  %d user-facing entries\\n\\n' \"$user_facing\"\nif [ -n \"$mintlify\" ]; then\n  printf '%s\\n' \"$mintlify\"\n  printf '  Mintlify format (same entries)\\n\\n'\nfi\nprintf '%s/%s-context.md\\n' \"$releases_dir\" \"$version\"\nprintf '  %d skipped changes (for verification)\\n' \"$skipped\"\nprintf '  %d task reviews\\n' \"$task_count\""
+      }
     }
   ],
   "edges": [
@@ -156,10 +215,22 @@
     },
     {
       "from": "resolve-tag",
+      "to": "get-docs-diff"
+    },
+    {
+      "from": "get-docs-diff",
+      "to": "get-recent-updates"
+    },
+    {
+      "from": "get-recent-updates",
       "to": "get-commits-enriched"
     },
     {
       "from": "get-commits-enriched",
+      "to": "get-task-reviews"
+    },
+    {
+      "from": "get-task-reviews",
       "to": "analyze"
     },
     {
@@ -192,33 +263,33 @@
     },
     {
       "from": "format-both",
+      "to": "save-release-context"
+    },
+    {
+      "from": "save-release-context",
       "to": "update-changelog-file"
     },
     {
       "from": "update-changelog-file",
       "to": "update-mintlify-file"
+    },
+    {
+      "from": "update-mintlify-file",
+      "to": "create-summary"
     }
   ],
   "outputs": {
+    "summary": {
+      "source": "${create-summary.stdout}",
+      "description": "Release summary"
+    },
     "suggested_version": {
       "source": "${compute-next-version.stdout}",
       "description": "Suggested next version based on changes"
     },
-    "markdown_section": {
-      "source": "${format-both.results[0].response}",
-      "description": "Markdown changelog section"
-    },
-    "mintlify_section": {
-      "source": "${format-both.results[1].response}",
-      "description": "Mintlify Update component"
-    },
     "refined_entries": {
       "source": "${refine-entries.response}",
       "description": "Refined and sorted changelog entries"
-    },
-    "result": {
-      "source": "${update-mintlify-file.stdout}",
-      "description": "Confirmation of file updates"
     }
   }
 }
