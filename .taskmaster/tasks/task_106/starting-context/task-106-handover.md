@@ -205,6 +205,26 @@ for node in workflow.nodes:
 - `examples/real-workflows/generate-changelog/workflow.json` - 15 nodes, good test case
 - `examples/real-workflows/generate-changelog/README.md` - Documents the iteration pain
 
+## Alternative Considered: `--run-node` Flag
+
+During development of the generate-changelog workflow, an alternative approach was discussed: explicit node isolation via `--run-node=node_id`. This would let you run a specific node in isolation, either with cached predecessor outputs or mocked inputs.
+
+**Why Task 106's automatic caching was preferred:**
+
+| Aspect | `--run-node` flag | Task 106 automatic cache |
+|--------|-------------------|-------------------------|
+| AI agent friction | Requires flag awareness | Zero - invisible |
+| Configuration | Needs `--input` for mocks | None needed |
+| Coverage | Single node | Full workflow iteration |
+| Use case | Debugging specific node | General iteration |
+
+**When `--run-node` might still be valuable:**
+1. Testing a node with different mock data (cache only stores real outputs)
+2. Avoiding cache lookup overhead during rapid single-node iteration
+3. Debugging a node's behavior in complete isolation
+
+This is documented in Future Enhancements. If Task 106's caching proves insufficient for certain debugging workflows, consider adding `--run-node` as a complementary feature. But start with automatic caching - it solves 90% of iteration pain with zero friction.
+
 ## Final Reminder
 
 The user's core philosophy: **pflow exposes primitives, AI agents orchestrate**. Task 106 is not about building a complex caching system - it's about making iteration **invisible and automatic**.

@@ -409,5 +409,6 @@ pflow settings cache show
 - **Concurrent execution support** - File locking for parallel runs
 - **Cache sharing** - Share caches across similar workflows
 - **Selective re-run** - `pflow workflow.json --rerun=node_3`
+- **Run single node in isolation** - `pflow workflow.json --run-node=node_3` with optional mocked inputs (`--input upstream.stdout="mock data"`). This would enable testing a specific node with custom data without running the full workflow. Task 106's automatic caching covers 90% of iteration use cases, but explicit node isolation would help when: (1) testing with different mock data, (2) avoiding cache lookup overhead during rapid iteration, (3) debugging a specific node's behavior in isolation. Consider this as a complementary feature if Task 106's caching proves insufficient for certain debugging workflows.
 - **Cache export** - Package cache for reproducibility
 - **Remote cache** - Cloud-based cache for team workflows
