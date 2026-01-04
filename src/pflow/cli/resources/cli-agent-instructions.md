@@ -97,39 +97,39 @@ fetch-data → process-data → save-results
       "params": {"command": "date +%Y-%m-%d"}
     },
     {
-      "id": "step3-extract",
+      "id": "step3-transform",
       "type": "shell",
       "params": {
-        "stdin": "${step1-fetch.response}",  // Pipes data into command (like: echo $data | jq)
-        "command": "jq '.items'"
+        "stdin": "${step1-fetch.response.items}",  // Template extracts .items, jq transforms
+        "command": "jq 'map({id, name: .title}) | sort_by(.name)'"
       }
     },
     {
       "id": "step4-analyze",
       "type": "llm",
       "params": {
-        "prompt": "Analyze this data from ${step3-extract.stdout} fetched at ${step2-timestamp.stdout}"
+        "prompt": "Analyze this data from ${step3-transform.stdout} fetched at ${step2-timestamp.stdout}"
       }
     },
     {
       "id": "step5-report",
       "type": "llm",
       "params": {
-        "prompt": "Create report:\nRaw: ${step1-fetch.response}\nItems: ${step3-extract.stdout}\nAnalysis: ${step4-analyze.response}\nTime: ${step2-timestamp.stdout}"
+        "prompt": "Create report:\nRaw: ${step1-fetch.response}\nItems: ${step3-transform.stdout}\nAnalysis: ${step4-analyze.response}\nTime: ${step2-timestamp.stdout}"
       }
     }
   ],
   "edges": [
     {"from": "step1-fetch", "to": "step2-timestamp"},
-    {"from": "step2-timestamp", "to": "step3-extract"},
-    {"from": "step3-extract", "to": "step4-analyze"},
+    {"from": "step2-timestamp", "to": "step3-transform"},
+    {"from": "step3-transform", "to": "step4-analyze"},
     {"from": "step4-analyze", "to": "step5-report"}
   ]
 }
 ```
 
 **Key insights from this example:**
-- `step3-extract` accesses `step1-fetch.response` directly (skipping step2)
+- `step3-transform` accesses `step1-fetch.response.items` directly (skipping step2)
 - `step5-report` accesses ALL previous outputs (step1, step2, step3, step4)
 - Edges only control execution order, NOT data availability
 - Think of it as: edges create a timeline, templates access history
@@ -139,8 +139,8 @@ fetch-data → process-data → save-results
 |-----------------|------------------------------|
 | step1-fetch | (none) |
 | step2-timestamp | step1-fetch |
-| step3-extract | step1-fetch, step2-timestamp |
-| step4-analyze | step1-fetch, step2-timestamp, step3-extract |
+| step3-transform | step1-fetch, step2-timestamp |
+| step4-analyze | step1-fetch, step2-timestamp, step3-transform |
 | step5-report | ALL previous nodes |
 
 This accumulation pattern is fundamental - each node adds to the available data pool.
@@ -346,7 +346,7 @@ Is it an MCP node?
          │        ├─ YES → Test with real endpoint
          │        └─ NO → Skip testing
          └─ NO → Is it complex shell+jq?
-                  ├─ YES → Test extraction logic
+                  ├─ YES → Test transformation logic
                   └─ NO → Skip testing
 ```
 
@@ -508,25 +508,16 @@ Save this as `my-workflow.json` anywhere you like. The save command will add all
       "params": {"url": "${source_url}"}
     },
     {
-      "id": "extract",
-      "type": "shell",
-      "params": {
-        "stdin": "${fetch.response}",
-        "command": "jq '.data'"
-      }
-    },
-    {
       "id": "test-output",
       "type": "write-file",
       "params": {
         "file_path": "/tmp/test.json",
-        "content": "${extract.stdout}"
+        "content": "${fetch.response.data}"
       }
     }
   ],
   "edges": [
-    {"from": "fetch", "to": "extract"},
-    {"from": "extract", "to": "test-output"}
+    {"from": "fetch", "to": "test-output"}
   ]
 }
 ```
@@ -534,7 +525,7 @@ Save this as `my-workflow.json` anywhere you like. The save command will add all
 **Test before continuing:**
 ```bash
 uv run pflow phase1.json source_url="https://api.example.com/data"
-# Verify: Did extraction work? Is data structure correct?
+# Verify: Is ${fetch.response.data} the structure you expected?
 ```
 
 **Phase 2: Add Processing (One Service at a Time)**
@@ -544,7 +535,7 @@ uv run pflow phase1.json source_url="https://api.example.com/data"
   "id": "process",
   "type": "llm",
   "params": {
-    "prompt": "Analyze this data and extract key insights:\n${extract.stdout}"
+    "prompt": "Analyze this data and extract key insights:\n${fetch.response.data}"
   }
 }
 ```
@@ -592,7 +583,7 @@ Is this value in the user's request?
                            └─ NO → Hardcode it
 ```
 
-**Key insight**: LLM prompts, jq extraction commands, and shell scripts are HOW the workflow works, not WHAT it processes. These stay hardcoded unless the user specifically asks to customize them.
+**Key insight**: LLM prompts, jq transformation commands, and shell scripts are HOW the workflow works, not WHAT it processes. These stay hardcoded unless the user specifically asks to customize them.
 
 **Input examples with rationale:**
 ```json
@@ -667,12 +658,12 @@ Is this value in the user's request?
 
     // Shell node with complex jq
     {
-      "id": "complex-extraction",
+      "id": "filter-and-reshape",
       "type": "shell",
-      "purpose": "Extract and transform nested data",
+      "purpose": "Filter active items and reshape",
       "params": {
-        "stdin": "${fetch-with-auth.response}",
-        "command": "jq '[.data.items[] | select(.status == \"active\") | {id: .id, name: .name, value: .metrics.value}]'"
+        "stdin": "${fetch-with-auth.response.data.items}",
+        "command": "jq '[.[] | select(.status == \"active\") | {id, name, value: .metrics.value}]'"
       }
     },
 
@@ -682,7 +673,7 @@ Is this value in the user's request?
       "type": "llm",
       "purpose": "Analyze data with specific criteria",
       "params": {
-        "prompt": "Analyze this data according to these criteria:\n\nData:\n${complex-extraction.stdout}\n\nCriteria:\n1. Identify patterns\n2. Find anomalies\n3. Suggest improvements\n\nFormat your response as:\n- Patterns: ...\n- Anomalies: ...\n- Improvements: ...",
+        "prompt": "Analyze this data according to these criteria:\n\nData:\n${filter-and-reshape.stdout}\n\nCriteria:\n1. Identify patterns\n2. Find anomalies\n3. Suggest improvements\n\nFormat your response as:\n- Patterns: ...\n- Anomalies: ...\n- Improvements: ...",
         "temperature": 0.7,
         "model": "gpt-4"
       }
@@ -951,10 +942,11 @@ Complex templates bypass parsing:
 }
 ```
 
-**When you DO need transformation:**
-- Malformed JSON (extra text, broken structure)
-- Specific field extraction (getting `.items[0]` from larger response)
-- Format conversion (JSON to CSV, etc.)
+**When you DO need jq:**
+- Filtering: `jq 'map(select(.active))'`
+- Computation: `jq '[.[].amount] | add'`
+- Reshaping: `jq 'map({id, name: .title})'`
+- Validation: `jq 'if has("items") then . else error("missing") end'`
 
 **How to verify:** Test with your EXACT source output format. If it works in `registry run`, it will work in the workflow.
 
@@ -1141,7 +1133,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
 |-----------|-------|-----|---------------|
 | MCP nodes | **DEPENDS** | See decision tree above | Actual paths if needed |
 | New HTTP API | **DEPENDS** | Only if extracting fields | Response structure |
-| Complex jq | **ALWAYS** | Verify extraction logic | Does filter work? Correct output? |
+| Complex jq | **ALWAYS** | Verify transformation logic | Does filter work? Correct output? |
 | Shell with pipes | **YES** | Chain might fail | Each pipe stage output |
 | Simple shell | **NO** | Predictable output | - |
 | File read/write | **NO** | Known interface | - |
@@ -1324,16 +1316,17 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
       "type": "shell",
       "purpose": "Reshape to our format",
       "params": {
-        "stdin": "${validate-structure.stdout}",
-        "command": "jq '[.items[] | {id: .id, name: .title, value: .metrics.current}]'"
+        "stdin": "${validate-structure.stdout.items}",
+        "command": "jq '[.[] | {id, name: .title, value: .metrics.current}]'"
       }
     },
     {
       "id": "enrich-with-analysis",
       "type": "llm",
-      "purpose": "Add insights to data",
+      "batch": {"items": "${transform-data.stdout}", "parallel": true},
+      "purpose": "Add insights to each item",
       "params": {
-        "prompt": "Analyze these metrics and add insights:\n${transform-data.stdout}\n\nFor each item add: trend, risk_level, recommendation"
+        "prompt": "Analyze this metric and add insights:\n${item}\n\nProvide: trend, risk_level, recommendation"
       }
     },
     {
@@ -1341,7 +1334,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
       "type": "llm",
       "purpose": "Format for final output",
       "params": {
-        "prompt": "Format this data as a markdown report:\n${enrich-with-analysis.response}\n\nInclude: summary, table, recommendations"
+        "prompt": "Format this data as a markdown report:\n${enrich-with-analysis.results}\n\nInclude: summary, table, recommendations"
       }
     },
     {
@@ -1404,7 +1397,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
 
 ### Pattern: Batch Processing
 
-Same operation × N items. Add `batch` to any node:
+Same operation × N items ("each", "for each", "in parallel" → batch, not single LLM). Add `batch` to any node:
 
 ```json
 {
@@ -1412,6 +1405,14 @@ Same operation × N items. Add `batch` to any node:
   "type": "llm",
   "batch": {"items": "${source.files}"},
   "params": {"prompt": "Analyze: ${item}"}
+}
+
+// Works with any node - shell example:
+{
+  "id": "fetch-each",
+  "type": "shell",
+  "batch": {"items": "${urls}", "parallel": true, "max_concurrent": 5},
+  "params": {"command": "curl -s '${item}'"}
 }
 ```
 
@@ -1429,7 +1430,8 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
 *(Each result contains the inner node's outputs, e.g., `${node.results[0].response}`)*
 
-**Inline array pattern** (different operations × same data):
+**Inline array pattern** (parallel independent operations):
+Workflows are linear—this is the only way to run operations concurrently.
 ```json
 {
   "id": "multi-format",
@@ -1445,6 +1447,23 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
   "params": {"prompt": "Reformat as ${item.style}:\n${item.content}"}
 }
 ```
+**Completely different operations** (each item defines its own prompt and data):
+```json
+{
+  "id": "parallel-tasks",
+  "type": "llm",
+  "batch": {
+    "items": [
+      {"prompt": "Summarize in 2 sentences: ${data}"},
+      {"prompt": "Extract action items from: ${data}"},
+      {"prompt": "Translate to Spanish: ${other-data}"}
+    ],
+    "parallel": true
+  },
+  "params": {"prompt": "${item.prompt}"}
+}
+```
+Each runs independently: `${parallel-tasks.results[0].response}`, `[1]`, `[2]`
 
 **Using results**:
 ```json
@@ -1495,8 +1514,8 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 
 #### 6. Wrong tool for task
 **Impact**: Expensive, slow, unreliable
-**Fix**: shell+jq for structure, LLM for meaning
-**Example**: Extract field with jq, interpret with LLM
+**Fix**: Templates for extraction, shell+jq for transformation, LLM for meaning
+**Example**: `${node.data.field}` to extract, jq to filter/reshape, LLM to interpret
 
 #### 7. Missing format step
 **Impact**: Raw JSON in user-facing outputs
@@ -1565,7 +1584,7 @@ I need to clarify a few details:
 | No inputs | Not reusable | Extract all values as inputs |
 | 30+ nodes | Too complex | Break into multiple workflows |
 | Repetitive nodes | Inefficient | Consolidate operations |
-| LLM for extraction | Expensive & unreliable | Use shell+jq |
+| LLM for extraction | Expensive & unreliable | Templates for paths, jq for transformation |
 | Hardcoded credentials | Security risk | Use inputs + settings |
 | No output formatting | Poor UX | Add format step |
 | Generic names | Hard to discover | Use descriptive names |
@@ -1639,7 +1658,7 @@ Otherwise → Hardcode
 ```
 Need specific nested fields? → Test with show_structure
 Passing whole result? → Skip testing
-Complex extraction? → Test
+Complex transformation? → Test
 Simple operations? → Skip
 ```
 
@@ -1647,7 +1666,8 @@ Simple operations? → Skip
 ```
 Extract nested field? → Template variable ${node.path.to.field}
 Transform/compute? → shell+jq
-Need meaning? → LLM
+Parse text → structured? → shell+jq (NEVER LLM)
+Need meaning/reasoning? → LLM
 File download? → shell+curl
 JSON API? → http node
 Service-specific? → MCP node
@@ -1665,7 +1685,7 @@ Format: `verb-noun-qualifier`
 | Mistake | Why It Happens | Prevention |
 |---------|----------------|------------|
 | **Using Slack as default example** | Document bias from old examples | Rotate between service categories |
-| **Using LLM for JSON extraction** | Seems "safer" or more flexible | Trust jq for ALL structured data |
+| **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract paths, jq transforms |
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
 | **Creating defensive extraction steps** | Fear of malformed data | Nodes handle parsing automatically |
 | **Ignoring workflow discovery** | Eager to build something new | ALWAYS check existing workflows first |
