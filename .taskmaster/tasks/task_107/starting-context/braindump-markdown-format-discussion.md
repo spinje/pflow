@@ -43,6 +43,32 @@ This isn't just about markdown vs JSON — it's about the whole authoring experi
 **Documentation inline is bigger than I realized:**
 The generate-changelog workflow has a separate README.md explaining design decisions. In markdown format, that explanation lives WITH the nodes. Single source of truth.
 
+**The `purpose` field is a crippled version of what markdown enables:**
+In JSON, each node has a `purpose` field — one line, terse, no formatting. Markdown replaces this with free-form prose that can:
+- Explain WHY this approach was chosen (not just what it does)
+- Include links to external docs
+- Show example input/output
+- Document edge cases and tradeoffs
+- Use formatting (bold, lists, blockquotes)
+
+The user noted this could go **inline with each node** OR **at the end of the file** OR both. Flexibility matters — some workflows need heavy documentation, others need minimal. The format should accommodate both.
+
+Example of what becomes possible:
+```markdown
+## fetch
+type: http
+url: https://r.jina.ai/${target_url}
+
+Uses [Jina Reader](https://r.jina.ai) for conversion.
+
+> **Why Jina?** We tested Trafilatura, Readability, and direct fetching.
+> Jina had the best quality for SPAs and paywalled content.
+
+**Expected output:** Clean markdown with images as `![alt](url)` references.
+```
+
+This replaces: `"purpose": "Fetch markdown via Jina Reader"` — a massive expressiveness upgrade.
+
 **"Novel = scary" doesn't apply:**
 The user pointed out: if humans rarely touch the format, and when they do it's just markdown (which they know), there's no novelty cost. The format is familiar syntax with new semantics.
 
@@ -62,17 +88,33 @@ The user pointed out: if humans rarely touch the format, and when they do it's j
 
 **NEEDS VERIFICATION:** That shellcheck/ruff actually work on extracted code blocks seamlessly in practice.
 
+## How We Got Here
+
+The conversation didn't start with "let's rethink the format." It started with improving the generate-changelog workflow (adding docs diff context, style reference). While implementing those improvements, the pain of editing prompts in JSON became apparent. The docs diff discussion surfaced a deeper question: why are we escaping everything?
+
+This organic path matters — the markdown format isn't theoretical. It emerged from real friction while doing real work.
+
+**The TypeScript → JavaScript analogy:**
+I used this framing and it resonated. Markdown is the authoring format (source). IR is the execution format (compiled). You don't "maintain two formats" — you have one source of truth that compiles down.
+
+**My initial resistance:**
+I listed "users learn new format" and "novel = scary" as costs. The user correctly challenged this: LLMs are the users, and they already know markdown. My mental model was wrong. I was optimizing for hypothetical human editors instead of actual LLM authors. This reframe changed everything.
+
 ## Unexplored Territory
 
-**UNEXPLORED:** How does this affect the MCP server (Task 72)? If agents are creating workflows via MCP tools, do they output markdown or IR?
+**UNEXPLORED:** When agents write workflows (via MCP tools or CLI), should they write markdown files directly? The current flow is agents using primitives (`registry discover`, `registry run`, `workflow save`) to iterate with users in chat. Markdown would be the format they write to disk.
 
 **UNEXPLORED:** Migration path for existing JSON workflows. We said "no backwards compatibility needed" (MVP with zero users), but existing examples need conversion.
 
 **UNEXPLORED:** VS Code extension. The user mentioned linting, but a proper `.pflow.md` extension with syntax highlighting, validation, and linting integration would be valuable.
 
-**CONSIDER:** What if a node needs multiple code blocks of the same type? Two `shell` blocks? The task doc notes this as an open question.
+**UNEXPLORED:** How does `pflow workflow save` change? Currently takes JSON file path. Would it accept markdown? Auto-detect by extension?
 
-**CONSIDER:** The edges format in frontmatter. I proposed `edges: [a, b, c]` for linear chains and mentioned `[update-changelog, update-mintlify]` for fan-out, but the exact syntax for complex graphs wasn't fully specified.
+**UNEXPLORED:** The agent instructions (`pflow instructions create --part 1/2/3`) reference JSON format throughout. These would need updating to teach agents to write markdown.
+
+**NOTE:** pflow is currently linear only - no parallel paths in the graph (Task 39 is future). So edges are always `[a, b, c, d]`. The "parallel" in batch nodes is data parallelism, not graph parallelism. This simplifies the edge syntax question for now.
+
+**CONSIDER:** What if a node needs multiple code blocks of the same type? Two `shell` blocks?
 
 **MIGHT MATTER:** Error recovery. If the markdown parser encounters malformed content, can it give useful errors? We said "markdown always parses" but semantic errors still need good messages.
 

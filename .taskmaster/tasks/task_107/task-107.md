@@ -105,6 +105,17 @@ Trafilatura because it handles SPAs and paywalled content better.
 - Renders beautifully on GitHub
 - Self-documenting by default
 
+**Documentation flexibility (replaces `purpose` field):**
+- JSON's `purpose` field: one line, no formatting, terse
+- Markdown: free-form prose anywhere in the file
+- Can explain WHY, not just WHAT
+- Can include links, examples, blockquotes, lists
+- Documentation can be:
+  - Inline with each node (right after the heading)
+  - At the end of the file (like a README appendix)
+  - Mixed (brief inline, detailed at end)
+- The format accommodates minimal or extensive documentation
+
 **Labeled blocks for complex params:**
 - Simple params inline: `type: llm`, `model: gpt-4`
 - Complex configs in blocks: ` ```batch `, ` ```stdin `

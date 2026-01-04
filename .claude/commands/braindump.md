@@ -149,7 +149,7 @@ Ask yourself:
 
 Write a markdown file with your braindump.
 
-**If task ID provided**: `.taskmaster/tasks/task_<id>/braindump-<timestamp-or-short-description>.md`
+**If task ID provided**: `.taskmaster/tasks/task_<id>/starting-context/braindump-<timestamp-or-short-description>.md`
 
 **If no task ID**: `scratchpads/handoffs/<descriptive-name>.md`
 
