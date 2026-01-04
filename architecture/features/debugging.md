@@ -248,9 +248,8 @@ Debugging features have minimal performance impact:
 
 ## Future Enhancements
 
-Planned improvements for v2.0:
-- Interactive debugging mode
-- Trace file viewer CLI command
-- Automatic trace analysis
-- Performance profiling
-- Cost tracking for LLM calls
+Planned improvements:
+- **Task 108**: Smart Trace Debug Output - Intelligent markdown output for agent iteration (v0.7.0)
+- Interactive debugging mode (v2.0)
+- Performance profiling (v2.0)
+- Cost tracking for LLM calls (v2.0)
