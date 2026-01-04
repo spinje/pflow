@@ -78,6 +78,11 @@ Create a pull request based on the current branch and recent commits:
      ```markdown
      ## Summary
      Brief description of changes
+
+     ## Task
+     <task-id>
+
+     <!-- If this PR is related to a task, include the task id here otherwise dont include the task section at all -->
      
      ## Changes
      - Key change 1
