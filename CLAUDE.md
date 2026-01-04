@@ -450,6 +450,7 @@ The codebase is currently feature complete for MVP with these tasks completed:
 - ✅ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
 - ✅ Task 54: Implement HTTP
 - ✅ Task 57: Update planner integration-tests to use better test cases with real world north star examples
+- ✅ Task 42: Implement Claude Code Agentic Node - Claude Code SDK integration for AI-assisted development tasks
 - ✅ Task 58: Update workflow generator prompt-tests to use better real world test cases
 - ✅ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
 - ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
