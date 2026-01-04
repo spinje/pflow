@@ -66,7 +66,7 @@ Data saved successfully # Only first workflow output is presented to the user (t
 ### Instructions for building workflows
 
 ```bash
-# Read all 3 parts sequentially before building workflows:
+# Read all 3 parts IN FULL before building workflows (do not truncate or skip any part):
 pflow instructions create --part 1
 pflow instructions create --part 2
 pflow instructions create --part 3
