@@ -225,6 +225,41 @@ During development of the generate-changelog workflow, an alternative approach w
 
 This is documented in Future Enhancements. If Task 106's caching proves insufficient for certain debugging workflows, consider adding `--run-node` as a complementary feature. But start with automatic caching - it solves 90% of iteration pain with zero friction.
 
+## Concrete Example: Shell Command Development
+
+During generate-changelog development, adding a new shell command required this workflow:
+
+**Without Task 106 (current friction):**
+```
+1. Write shell command in bash terminal to test it
+2. Verify it works
+3. Copy to workflow.json (escape \n, quotes, etc.)
+4. Run full workflow to verify it works in context
+5. If escaping broke it → back to step 1
+```
+
+The agent tests externally because running the full workflow is expensive (time + cost).
+
+**With Task 106 (automatic cache):**
+```
+1. Write shell command directly in workflow.json
+2. Run workflow → predecessors cached (instant), only new node runs
+3. Fails? Fix command, run again → still cached
+4. Iterate until correct
+```
+
+**With `--run-node` (explicit isolation):**
+```
+1. Write shell command in workflow.json
+2. pflow workflow.json --run-node=get-docs-diff --input resolve-tag.stdout="v0.5.0"
+3. Fails? Fix command, run again
+4. Iterate until correct
+```
+
+Both approaches eliminate the "test in bash first" step. Task 106 is automatic and covers full workflow iteration. `--run-node` is explicit and useful when you want to test with specific mock data.
+
+**Key insight:** The cache removes the penalty for "getting it wrong the first time" - so agents can write directly in the workflow and iterate there.
+
 ## Final Reminder
 
 The user's core philosophy: **pflow exposes primitives, AI agents orchestrate**. Task 106 is not about building a complex caching system - it's about making iteration **invisible and automatic**.
