@@ -546,55 +546,25 @@ Cloud Platform:
 
 ## User Decisions and Recommendations
 
-Every time you need the user to make a decision, you should:
-1. Create a new markdown file in the folder `scratchpads/<conversation-subject>/critical-user-decisions/` and write down the details about the decision and the reasoning why it is needed.
-2. Give at least 2 options with clear recommendations.
-3. Add a markdown checkbox for each option so the user can select the option they prefer easily.
+You are only able to provide information and recommendations—you cannot make decisions for the user.
 
-> Important: Do not proceed to implementation until the user has made a decision and you have a clear understanding of the decision and its implications.
+**When you encounter a decision point:**
 
-**Remember** You are an AI agent and you *are not able to make decisions for the user*. You are only able to provide information and recommendations. The user is the one who makes the final decision if anything is unclear or ambigous in the documentation.
+1. **Explain why a decision is needed.** What's the context? What's at stake? Frame it so it can be understood in isolation.
 
-### Example formatting for presenting the user with a decision
+2. **Present at least 2 options with tradeoffs.** For each option: what's good about it, what's bad about it, and how reversible is it?
 
-```markdown
-## 1. Decision Title - Decision importance (1-5)
+3. **Make a clear recommendation.** State which option you'd suggest and why.
 
-Describe the decision and the reasoning why it is needed.
+4. **Gauge importance (1-5).** For low-stakes decisions (1-2) where you're confident, you may proceed. For anything higher, STOP—do not proceed to implementation until the user has decided and you clearly understand the decision and its implications.
 
-### Context:
+If anything is unclear or ambiguous in the documentation, the user makes the call.
 
-Describe the context around the problem so it can be understood clearly in isolation.
-
-### Options:
-
-- [x] **Option A: ...
-  - Reasoning for why this is a good and bad option
-  - ...
-  - ...
-
-- [ ] **Option B: ...
-  - ...
-  - ...
-
-**Recommendation**: Option A - Reasoning for why this might be the best option.
-```
-
-> If the decision importance is 1-2 and you are confident in the decision, you can make the decision for the user and does not need to ask the user for confirmation or document the decision in the scratchpad.
-
-### Decision Escalation Framework
-
-Escalate to user when:
+**Escalate when:**
 - Architectural decisions affect multiple components
 - Trade-offs have no clear winner after analysis
 - Current approach contradicts established patterns
 - Integration would break existing functionality
-
-Document for user decision:
-1. Context and constraints
-2. Options with pros/cons
-3. Your recommendation and why
-4. Reversibility of each option
 
 ### Implementation Guidelines and
 
