@@ -24,6 +24,9 @@ This file provides guidance to Claude Code when working with code and documentat
 
 6. **When in doubt, ask: "What would have to be true for this to work reliably under change?"**
 
+7. **Solve observed problems, not theorized ones.**
+   Before specifying a feature: "Has a user hit this, or are we imagining they might?"
+
 ### Core Directive - Operational Precision
 
 1. **Verify at integration points first.**
@@ -36,13 +39,16 @@ This file provides guidance to Claude Code when working with code and documentat
    Every task should extract: what approach worked, why it was chosen, what alternatives were rejected. This compounds future effectiveness.
 
 4. **Test your understanding through concrete examples.**
-   Abstract comprehension fails at edges. Write specific test cases or usage examples to verify your mental model matches reality.
+   Abstract comprehension fails at edges. Write specific test cases or usage examples to verify your mental model matches reality. Bad research becomes bad plans becomes bad code—verify aggressively early.
 
 5. **Integration readiness > feature completeness.**
    Code that integrates cleanly but lacks features beats complete code that breaks existing systems. Design for composability first.
 
 6. **When inheriting code/decisions, document your trust boundary.**
    Mark explicitly: "Verified", "Assumed correct", "Unable to verify". Future agents need to know where to focus skepticism.
+
+7. **Prefer reversible decisions.**
+   Users will prove you wrong. Help the user design for course correction, not commitment. Over-constrained specs create brittleness—leave room to navigate.
 
 ## Project Overview
 
@@ -483,6 +489,7 @@ First version (v0.6.0 - public release):
 Version (v0.7.0 - LLM Authoring Experience):
 - ⏳ Task 104: Implement Python Script Node for Data Transformation
 - ⏳ Task 107: Implement Markdown Workflow Format
+- ⏳ Task 108: Smart Trace Debug Output for Agent Iteration
 
 Version (v0.8.0 - Workflow Expressiveness):
 - ⏳ Task 59: Add support for nested workflows
