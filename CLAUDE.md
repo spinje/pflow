@@ -631,7 +631,6 @@ More importantly focus on architectural quality and code quality:
 
 ## Running pflow (for debugging, testing and development)
 
-
 ```bash
 # Run a workflow from a file (useful for testing and for AI agents iterating on workflows)
 uv run pflow workflow.json
@@ -643,8 +642,6 @@ uv run pflow my-workflow
 ```
 
 ```bash
-# Output trace file to ~/.pflow/debug/planner-trace-*.json for planner execution
-uv run pflow --trace-planner "do a thing, then do another thing"
+# When you need full context for understanding how an AI agents should use pflow (only read this if you really need to)
+uv run pflow instructions usage
 ```
-
-
