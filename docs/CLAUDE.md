@@ -75,7 +75,7 @@ See `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` for compl
 | Configuration and env vars | Template resolution algorithm |
 | Debugging and troubleshooting | Contributor guides |
 
-**For implementation details**: Link to `architecture/` docs if not present in `how-it-works/`, don't duplicate.
+**For implementation details**: Link to `architecture/` docs in pflow repo if not present in `how-it-works/`, don't duplicate.
 
 **For technical deep-dives**: Use the "How it works" tab. Keep Reference and Guides focused on practical usage - save detailed explanations of internals, design decisions, and "why it works this way" for the "How it works" section. Use accordions in Reference/Guides only for truly helpful context, not to dump technical details.
 
