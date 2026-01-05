@@ -31,7 +31,7 @@ pflow examples/real-workflows/webpage-to-markdown/workflow.json \
 └─────────────────────────────────────────────────────────┘
 ```
 
-6 nodes. No inline Python. Simple enough for an AI agent to create.
+7 nodes. No inline Python. Simple enough for an AI agent to create.
 
 ### Example Output
 
@@ -71,7 +71,7 @@ Context Usage Comparison:
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
 | `target_url` | string | yes | - | Webpage URL to convert |
-| `output_file` | string | no | `/tmp/pflow-article.md` | Output file path |
+| `output_file` | string | no | `auto` | Output file path, or `auto` to generate from URL with date prefix |
 | `describe_images` | boolean | no | `true` | Use vision AI to extract content from images |
 
 **Skip image analysis** (faster, free):
@@ -89,7 +89,7 @@ pflow examples/real-workflows/webpage-to-markdown/workflow.json \
 - Diagrams become mermaid code, charts become data values
 
 **vs. the complex 13-node version:**
-- Same result, 6 nodes instead of 13
+- Same result, 7 nodes instead of 13
 - $0.006 instead of $0.11
 - Leverages Jina instead of reinventing scraping
 
@@ -97,7 +97,7 @@ pflow examples/real-workflows/webpage-to-markdown/workflow.json \
 
 ```
 webpage-to-markdown/
-├── workflow.json    # The 6-node workflow
+├── workflow.json    # The 7-node workflow
 └── prompt.md        # Prompt to reproduce this workflow
 ```
 
