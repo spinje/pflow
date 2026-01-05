@@ -1,0 +1,360 @@
+---
+title: "Batch processing"
+description: "Process arrays of items through workflows"
+icon: "list"
+---
+
+<Info>
+  **For the curious.** Your AI agent configures batch processing when needed. This explains what happens when you ask to process many items (files, API results, etc.) and what to expect during execution.
+</Info>
+
+Batch processing is how pflow runs a single node multiple times - once for each item in an array - with isolated contexts and automatic error handling. Think of it like a for-loop in your workflow.
+
+## When batch processing happens
+
+Your agent uses batch processing when tasks involve:
+- Processing each file in a directory listing
+- Analyzing each item from an API response
+- Running the same LLM prompt on multiple inputs
+- Transforming each element in an array
+
+**Example scenario:** When you ask to classify 100 GitHub issues, your agent configures a batch node to process each issue.
+
+## How it works
+
+A `batch` configuration is added to a node:
+
+```json
+{
+  "nodes": [
+    {
+      "id": "list_issues",
+      "type": "http",
+      "params": {
+        "url": "https://api.github.com/repos/owner/repo/issues"
+      }
+    },
+    {
+      "id": "classify",
+      "type": "llm",
+      "batch": {
+        "items": "${list_issues.response}",
+        "as": "issue"
+      },
+      "params": {
+        "prompt": "Classify this issue: ${issue.title}"
+      }
+    }
+  ]
+}
+```
+
+This runs the `classify` node once for each issue. The `as: "issue"` creates a template variable `${issue}` that changes with each iteration.
+
+## Configuration options
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `items` | template | Yes | - | Array to iterate over (usually `${previous_node.key}`) |
+| `as` | string | Yes | - | Name for the item variable (e.g., `"item"`, `"file"`, `"issue"`) |
+| `parallel` | bool | No | `false` | Run items concurrently instead of sequentially |
+| `max_concurrent` | int | No | `10` | Maximum parallel items (1-100) |
+| `error_handling` | string | No | `"fail_fast"` | `"fail_fast"` or `"continue"` |
+| `max_retries` | int | No | `0` | Retry failed items this many times |
+| `retry_wait` | int | No | `1` | Seconds to wait between retries |
+
+## Sequential vs parallel
+
+### Sequential (default)
+
+Items are processed one at a time, in order:
+
+```json
+{
+  "batch": {
+    "items": "${files}",
+    "as": "file"
+  }
+}
+```
+
+This mode is chosen when:
+- Order matters
+- Rate limits are strict
+- Resources are limited
+
+### Parallel
+
+Multiple items are processed concurrently:
+
+```json
+{
+  "batch": {
+    "items": "${files}",
+    "as": "file",
+    "parallel": true,
+    "max_concurrent": 5
+  }
+}
+```
+
+This mode is chosen when:
+- Items are independent
+- Speed is important
+- API/LLM can handle concurrent requests
+
+<Tip>
+  Your agent typically starts with `max_concurrent: 5` for LLM calls to avoid rate limits, increasing gradually based on API tier.
+</Tip>
+
+## Error handling
+
+### Fail fast (default)
+
+Execution stops immediately on first error:
+
+```json
+{
+  "batch": {
+    "items": "${files}",
+    "as": "file",
+    "error_handling": "fail_fast"
+  }
+}
+```
+
+This mode is chosen when:
+- Any failure means the whole task is invalid
+- Errors should be fixed and re-run from scratch
+
+### Continue on errors
+
+All items are processed, with errors collected:
+
+```json
+{
+  "batch": {
+    "items": "${files}",
+    "as": "file",
+    "error_handling": "continue"
+  }
+}
+```
+
+This mode is chosen when:
+- Partial results are useful
+- Some failures are expected
+- All errors should be seen before fixing
+
+The node output includes error details in this mode:
+
+```json
+{
+  "results": [...],
+  "errors": [
+    {
+      "index": 3,
+      "item": "file3.txt",
+      "error": "File not found"
+    }
+  ]
+}
+```
+
+## Retries
+
+Failed items can be automatically retried:
+
+```json
+{
+  "batch": {
+    "items": "${api_calls}",
+    "as": "call",
+    "parallel": true,
+    "max_retries": 3,
+    "retry_wait": 2,
+    "error_handling": "continue"
+  }
+}
+```
+
+This configuration retries each failed item up to 3 times, waiting 2 seconds between attempts. Common in scenarios involving:
+- Transient API errors
+- Rate limit recovery
+- Network timeouts
+
+## What you'll see
+
+During batch execution, pflow shows real-time progress:
+
+```
+  fetch-issues... ✓ 2.1s
+  classify... 1/8 ✓
+  classify... 2/8 ✓
+  classify... 3/8 ✗
+  ...
+  classify... 8/8 ✓ 24.9s
+```
+
+Failed items are marked with `✗` and summarized at the end.
+
+## Output structure
+
+Batch nodes write a special output structure to the shared store:
+
+```json
+{
+  "node_id": {
+    "results": [
+      {},
+      {},
+      ...
+    ],
+    "batch_metadata": {
+      "parallel": true,
+      "total_items": 8,
+      "successful_items": 7,
+      "failed_items": 1,
+      "timing": {
+        "total_duration_ms": 24900,
+        "avg_item_duration_ms": 3112
+      }
+    },
+    "errors": [
+      {"index": 2, "item": {}, "error": "..."}
+    ]
+  }
+}
+```
+
+Subsequent nodes can access results:
+
+```json
+{
+  "prompt": "Summarize these classifications: ${classify.results}"
+}
+```
+
+## Examples
+
+### Process files from directory listing
+
+```json
+{
+  "nodes": [
+    {
+      "id": "list",
+      "type": "shell",
+      "params": {
+        "command": "ls -1 *.md"
+      }
+    },
+    {
+      "id": "split",
+      "type": "shell",
+      "params": {
+        "stdin": "${list.stdout}",
+        "command": "tr '\\n' ',' | jq -Rc 'split(\",\") | map(select(length > 0))'"
+      }
+    },
+    {
+      "id": "read_all",
+      "type": "read-file",
+      "batch": {
+        "items": "${split.stdout}",
+        "as": "filename",
+        "parallel": true,
+        "max_concurrent": 10
+      },
+      "params": {
+        "file_path": "${filename}"
+      }
+    }
+  ]
+}
+```
+
+### API pagination pattern
+
+```json
+{
+  "nodes": [
+    {
+      "id": "get_pages",
+      "type": "shell",
+      "params": {
+        "command": "echo '[1,2,3,4,5]'"
+      }
+    },
+    {
+      "id": "fetch_all",
+      "type": "http",
+      "batch": {
+        "items": "${get_pages.stdout}",
+        "as": "page",
+        "parallel": true,
+        "max_concurrent": 3
+      },
+      "params": {
+        "url": "https://api.example.com/items?page=${page}"
+      }
+    }
+  ]
+}
+```
+
+### Fault-tolerant LLM processing
+
+```json
+{
+  "nodes": [
+    {
+      "id": "process",
+      "type": "llm",
+      "batch": {
+        "items": "${documents}",
+        "as": "doc",
+        "parallel": true,
+        "max_concurrent": 5,
+        "max_retries": 3,
+        "retry_wait": 2,
+        "error_handling": "continue"
+      },
+      "params": {
+        "prompt": "Summarize: ${doc.content}",
+        "model": "gpt-4"
+      }
+    }
+  ]
+}
+```
+
+## How your agent chooses settings
+
+**For LLM calls**, your agent typically:
+- Starts with `max_concurrent: 5`
+- Monitors rate limits and costs
+- Uses `retry_wait` for rate limit recovery
+
+**For HTTP requests**, your agent typically:
+- Checks API rate limits in documentation
+- Uses `max_concurrent` to respect limits
+- Adds retries for transient errors
+
+**For file operations**, your agent typically:
+- Uses parallel processing for reads (safe)
+- Uses sequential mode for writes (avoids race conditions)
+- Uses sequential mode when files depend on each other
+
+## Limitations
+
+- **No nested batch** - You can't batch a node that's already in a batch
+- **No branching within batch** - Each item follows the same code path
+- **Memory usage** - All results are held in memory until batch completes
+
+## Related
+
+- [Template variables](/how-it-works/template-variables) - Understanding `${item}` variables
+- [Shell node](/reference/nodes/shell) - Often used to prepare arrays
+- [HTTP node](/reference/nodes/http) - API pagination patterns
+- [LLM node](/reference/nodes/llm) - Batch prompt processing

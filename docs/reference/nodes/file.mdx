@@ -149,7 +149,7 @@ Deletes a file with required confirmation.
 | `confirm_delete` | bool | Yes | - | Must be `true` to confirm deletion |
 
 <Warning>
-  The `confirm_delete` parameter must come from the shared store, not node parameters. This safety mechanism prevents accidental deletions from workflow configuration.
+  **Security exception**: The `confirm_delete` parameter must be set in the shared store (via a previous node or template variable). It cannot be provided directly in node parameters. This prevents accidental deletions from workflow configuration files.
 </Warning>
 
 ### Output

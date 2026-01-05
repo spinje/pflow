@@ -71,6 +71,39 @@ The shell node executes commands with full Unix power - pipes, redirects, and al
 | bool | Lowercase string (`true`/`false`) |
 | bytes | Decoded UTF-8 (fallback: latin-1) |
 
+## Validation and error handling
+
+<Info>
+  **Your agent handles this.** pflow validates shell commands at workflow creation time. If you see errors about structured data in commands, the error message will explain how to fix it - typically by moving data to the `stdin` parameter.
+</Info>
+
+The shell node validates that dicts and lists aren't embedded directly in command strings (which would break shell parsing). Data should go through `stdin` instead:
+
+```json
+{
+  "stdin": "${api.response}",
+  "command": "jq -r '.data.name'"
+}
+```
+
+<Accordion title="Technical details">
+  When a workflow is created, pflow checks if command templates contain dict or list variables. If found, you'll see an error like:
+
+  ```
+  Shell node 'process': cannot use ${api.response} (type: object) in command parameter.
+
+  PROBLEM: Object data embedded in shell commands breaks shell parsing. Dict/list
+  data contains special characters (quotes, braces, spaces) that break command syntax.
+
+  FIX: Move data to stdin, keep command simple:
+    {"stdin": "${api.response}", "command": "jq '.field'"}
+  ```
+
+  This validation happens at workflow creation time (compile-time), not during execution, so you get immediate feedback.
+
+  **Why this matters:** Shell parsers expect text, and JSON data contains special characters (`{`, `}`, `"`, spaces) that have meaning to the shell. Even with careful quoting, it's fragile. The `stdin` approach is safer and more reliable.
+</Accordion>
+
 ## Security
 
 <Warning>

@@ -6,10 +6,10 @@ This file provides guidance to AI agents when working on user-facing documentati
 
 **NEVER write documentation based on assumptions.** Before documenting any CLI command, flag, or behavior:
 
-1. **Verify the command exists** - Run `pflow --help` or check `src/pflow/cli/`
+1. **Verify the command exists** - Run `pflow --help` or check `src/pflow/cli/` or `src/pflow/mcp_server/tools/`
 2. **Verify flags exist** - Check the actual Click decorators in the code
 3. **Test examples** - Every command you document must be runnable
-4. **Check current usage patterns** - Run `pflow instructions usage` to see what we tell agents
+4. **Check current usage patterns** - Run `pflow instructions usage` to see what we tell agents.
 
 If you cannot verify something, ask the user or mark it as "needs verification" - do not guess.
 
@@ -38,14 +38,16 @@ docs/
 ├── roadmap.mdx                  # Direction and priorities
 ├── guides/                      # How-to guides
 ├── integrations/                # AI tool setup
+├── how-it-works/                # Technical deep-dives for curious users
 └── reference/                   # CLI, nodes, config
 ```
 
 ### Navigation tabs
 
-The docs have three main tabs:
+The docs have four main tabs:
 - **Documentation** - Getting started, guides, integrations
 - **Reference** - CLI commands, nodes, configuration
+- **How it works** - Technical deep-dives for curious users who want to understand internals
 - **Changelog & Roadmap** - Product updates and future plans
 
 ### External links
@@ -64,6 +66,8 @@ See `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` for compl
 
 **Document what users need to USE pflow effectively.**
 
+> **Critical perspective**: Just because you have implementation details in your context doesn't mean they're relevant to pflow users. Put yourself in their shoes before writing - most users just want their AI agent to accomplish tasks, not understand how pflow works internally.
+
 | Include | Exclude |
 |---------|---------|
 | CLI commands and options | Planner internals |
@@ -71,7 +75,9 @@ See `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` for compl
 | Configuration and env vars | Template resolution algorithm |
 | Debugging and troubleshooting | Contributor guides |
 
-**For implementation details**: Link to `architecture/` docs, don't duplicate.
+**For implementation details**: Link to `architecture/` docs if not present in `how-it-works/`, don't duplicate.
+
+**For technical deep-dives**: Use the "How it works" tab. Keep Reference and Guides focused on practical usage - save detailed explanations of internals, design decisions, and "why it works this way" for the "How it works" section. Use accordions in Reference/Guides only for truly helpful context, not to dump technical details.
 
 ---
 
@@ -190,6 +196,18 @@ Test all commands before publishing.
   You need to set up an API key before using this feature.
 </Note>
 ```
+
+### Setting expectations
+
+Use Info or Note callouts to clarify who does what (pattern from CLI reference):
+
+```mdx
+<Info>
+  **Your agent handles this.** [Brief explanation of what users see/experience]
+</Info>
+```
+
+This helps users understand they don't need to memorize technical details - their agent does the work.
 
 ### Structure
 

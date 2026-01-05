@@ -1,0 +1,212 @@
+---
+title: "Template variables"
+description: "Dynamic data flow in workflows"
+icon: "braces"
+---
+
+<Info>
+  **For the curious.** Your AI agent handles template variables automatically. This explains how data flows between nodes and what's happening when you see `${variable}` syntax in workflows or traces.
+</Info>
+
+Template variables are how pflow connects data between nodes in workflows. When you see `${variable}` syntax, it's pulling data from previous nodes, workflow inputs, or nested structures.
+
+## Basic syntax
+
+The `${variable}` syntax accesses values from the shared store:
+
+```json
+{
+  "id": "summarize",
+  "type": "llm",
+  "params": {
+    "prompt": "${read.content}"
+  }
+}
+```
+
+Here, `${read.content}` pulls the `content` output from the `read` node.
+
+## Nested access
+
+Template variables can traverse deeply nested structures:
+
+```json
+{
+  "prompt": "${api.response.items[0].name}"
+}
+```
+
+This traverses:
+1. `api` node's output
+2. `response` key
+3. `items` array
+4. First element (`[0]`)
+5. `name` field
+
+## Type preservation
+
+<Note>
+  Template variables preserve the original data type when used alone. When combined with text, they become strings.
+</Note>
+
+| Template | Original value | Result | Type |
+|----------|---------------|--------|------|
+| `"${count}"` | `42` (int) | `42` | int |
+| `"Count: ${count}"` | `42` (int) | `"Count: 42"` | string |
+| `"${config}"` | `{"key": "val"}` | `{"key": "val"}` | dict |
+| `"Prefix ${config}"` | `{"key": "val"}` | `"Prefix {\"key\": \"val\"}"` | string |
+
+**Simple templates** (just `${var}`) preserve type. **Complex templates** (any surrounding text) become strings.
+
+### Inline objects
+
+This type preservation makes inline object construction intuitive:
+
+```json
+{
+  "stdin": {
+    "config": "${settings}",
+    "data": "${results}"
+  }
+}
+```
+
+If `settings` is `{"timeout": 30}` and `results` is `{"status": "ok"}`, the resolved `stdin` is:
+
+```json
+{
+  "config": {"timeout": 30},
+  "data": {"status": "ok"}
+}
+```
+
+Without type preservation, both would be stringified JSON requiring manual parsing.
+
+## JSON auto-parsing
+
+When a template accesses nested fields on a JSON string, pflow automatically parses it:
+
+```json
+{
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "shell",
+      "params": {
+        "command": "curl https://api.example.com/data"
+      }
+    },
+    {
+      "id": "extract",
+      "type": "llm",
+      "params": {
+        "prompt": "Analyze: ${fetch.stdout.results[0].name}"
+      }
+    }
+  ]
+}
+```
+
+Even though `fetch.stdout` is a string containing JSON, the nested access `${fetch.stdout.results[0].name}` works because pflow:
+1. Sees you're trying to access `.results`
+2. Attempts to parse `stdout` as JSON
+3. Traverses the parsed structure
+4. Returns the value at `results[0].name`
+
+<Tip>
+  This means shell commands that output JSON work seamlessly with template variables - no manual `json.loads()` needed.
+</Tip>
+
+## Workflow inputs
+
+Template variables also reference workflow inputs declared in the workflow definition:
+
+```json
+{
+  "inputs": {
+    "api_key": {"type": "string"},
+    "endpoint": {"type": "string"}
+  },
+  "nodes": [
+    {
+      "type": "http",
+      "params": {
+        "url": "${endpoint}",
+        "headers": {"Authorization": "Bearer ${api_key}"}
+      }
+    }
+  ]
+}
+```
+
+When running this workflow, inputs are provided via CLI arguments:
+
+```bash
+pflow my-workflow api_key="sk-..." endpoint="https://api.example.com"
+```
+
+## Array notation
+
+Array elements are accessed using bracket notation:
+
+```json
+{
+  "first_item": "${results[0]}",
+  "nested_array": "${data.items[2].tags[1]}"
+}
+```
+
+## Batch processing
+
+In batch nodes, a special template variable (`${item}` by default) represents the current item:
+
+```json
+{
+  "id": "process",
+  "type": "llm",
+  "batch": {
+    "items": "${files}",
+    "as": "file"
+  },
+  "params": {
+    "prompt": "Summarize: ${file}"
+  }
+}
+```
+
+The `as: "file"` creates `${file}` as the item variable. See [Batch processing](/how-it-works/batch-processing) for details.
+
+## Escaping
+
+Literal `${...}` text (not a template variable) uses double dollar signs to escape:
+
+```json
+{
+  "command": "echo 'Price: $${PRICE}'"
+}
+```
+
+This produces the literal string `Price: ${PRICE}` instead of trying to resolve a variable.
+
+## Validation
+
+pflow validates template variables at workflow creation time:
+
+- **Unknown variables** → Error: "Unresolved variable: `${typo}`"
+- **Type mismatches** → Warning: "Expected string, got dict"
+- **Invalid syntax** → Error: "Invalid template: `${foo.}`"
+
+<Accordion title="Compile-time vs runtime validation">
+  Most validation happens when the workflow is created (compile-time). Some validations happen during execution (runtime):
+
+  - **Compile-time**: Variable existence, type compatibility, syntax
+  - **Runtime**: JSON parsing success, nested access on dynamic values
+
+  If JSON auto-parsing fails at runtime, you'll see an "Unresolved variable" error.
+</Accordion>
+
+## Related
+
+- [Nodes overview](/reference/nodes/index) - How nodes use template variables
+- [Batch processing](/how-it-works/batch-processing) - Item variables in batch nodes
+- [Debugging](/guides/debugging) - Troubleshooting template issues

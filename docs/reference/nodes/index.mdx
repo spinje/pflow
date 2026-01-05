@@ -39,21 +39,23 @@ pflow includes these built-in nodes:
 
 Every node follows the same pattern:
 
-1. **Read inputs** from the shared store or node parameters
+1. **Read inputs** from node parameters
 2. **Execute** its operation
 3. **Write outputs** to the shared store
 4. **Return an action** that determines the next node
 
 ### Parameters vs shared store
 
-Nodes receive data in two ways:
+Nodes receive data through parameters. Parameters can be static values or template variables that pull from the shared store:
 
-| Source | When to use | Example |
-|--------|-------------|---------|
-| **Parameters** | Fixed values set when building the workflow | `"model": "gpt-5.2"` |
-| **Shared store** | Dynamic values from previous nodes | `"prompt": "${summarize.response}"` |
+| Type | When to use | Example |
+|------|-------------|---------|
+| **Static parameters** | Fixed values set when building the workflow | `"model": "gpt-4"` |
+| **Template variables** | Dynamic values from previous nodes or workflow inputs | `"prompt": "${summarize.response}"` |
 
-Template variables like `${node_id.key}` pull data from the shared store at runtime. You can access nested fields and array elements directly: `${api.response.items[0].name}`.
+Template variables like `${node_id.key}` are resolved at runtime from the shared store and injected into node parameters. You can access nested fields and array elements directly: `${api.response.items[0].name}`.
+
+Nodes write their outputs to the shared store, making them available for template variables in subsequent nodes. See [Template variables](/reference/template-variables) for complete syntax and examples.
 
 ### Automatic JSON parsing
 

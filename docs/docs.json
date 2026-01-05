@@ -90,6 +90,14 @@
         ]
       },
       {
+        "tab": "How it works",
+        "icon": "lightbulb",
+        "pages": [
+          "how-it-works/template-variables",
+          "how-it-works/batch-processing"
+        ]
+      },
+      {
         "tab": "Changelog & Roadmap",
         "icon": "history",
         "pages": [
