@@ -549,3 +549,31 @@ class TestReverseCoercionDictToString:
         # Check the structure - channel_id may be int or str depending on resolver
         assert "channel_id" in parsed_path
         assert parsed_body == {"content": "Hello from pflow!"}
+
+    def test_deeply_nested_inline_object_with_templates(self, simple_node):
+        """Deeply nested inline objects with templates should serialize correctly."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "data", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Deeply nested structure with template at the deepest level
+        wrapper.set_params({"data": {"outer": {"middle": {"inner": "${value}"}}}})
+
+        shared = {"value": "deep"}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["data"], str)
+
+        parsed = json_module.loads(result["data"])
+        assert parsed["outer"]["middle"]["inner"] == "deep"

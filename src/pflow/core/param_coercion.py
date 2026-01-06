@@ -48,11 +48,20 @@ def coerce_to_declared_type(
 
     # dict/list -> str: Serialize to JSON
     if normalized_type in ("str", "string") and isinstance(value, (dict, list)):
-        serialized = json.dumps(value)
-        logger.debug(
-            f"Coerced {type(value).__name__} to JSON string for str-typed parameter",
-            extra={"original_type": type(value).__name__},
-        )
-        return serialized
+        try:
+            serialized = json.dumps(value)
+            logger.debug(
+                f"Coerced {type(value).__name__} to JSON string for str-typed parameter",
+                extra={"original_type": type(value).__name__},
+            )
+            return serialized
+        except (TypeError, ValueError) as e:
+            # Non-serializable objects (custom classes, file handles, etc.)
+            # Fall back to original value - let downstream handle the type mismatch
+            logger.warning(
+                f"Cannot serialize {type(value).__name__} to JSON: {e}. Passing original value.",
+                extra={"original_type": type(value).__name__, "error": str(e)},
+            )
+            return value
 
     return value

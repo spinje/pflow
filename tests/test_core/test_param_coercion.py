@@ -117,3 +117,51 @@ class TestPassthroughBehavior:
         original = {"key": "value"}
         result = coerce_to_declared_type(original, None)
         assert result is original
+
+
+class TestUnicodeHandling:
+    """Test Unicode and special characters."""
+
+    def test_unicode_in_dict_serializes_correctly(self):
+        """Unicode characters should serialize and parse correctly."""
+        result = coerce_to_declared_type({"emoji": "🚀", "chinese": "你好"}, "str")
+
+        assert isinstance(result, str)
+        parsed = json.loads(result)
+        assert parsed["emoji"] == "🚀"
+        assert parsed["chinese"] == "你好"
+
+    def test_special_characters_in_values(self):
+        """Special characters (newlines, quotes) should be escaped."""
+        result = coerce_to_declared_type({"text": 'line1\nline2\twith "quotes"'}, "str")
+
+        assert isinstance(result, str)
+        parsed = json.loads(result)
+        assert parsed["text"] == 'line1\nline2\twith "quotes"'
+
+
+class TestNonSerializableHandling:
+    """Test graceful handling of non-JSON-serializable objects."""
+
+    def test_non_serializable_object_falls_back(self):
+        """Non-serializable objects should fall back to original value."""
+
+        class CustomClass:
+            pass
+
+        original = {"obj": CustomClass()}
+        result = coerce_to_declared_type(original, "str")
+
+        # Should return original dict (not crash)
+        assert result is original
+        assert isinstance(result, dict)
+
+    def test_partially_serializable_dict_falls_back(self):
+        """Dict with non-serializable values should fall back."""
+        import io
+
+        # File handles are not JSON serializable
+        original = {"file": io.StringIO("test")}
+        result = coerce_to_declared_type(original, "str")
+
+        assert result is original
