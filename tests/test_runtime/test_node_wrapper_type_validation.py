@@ -51,8 +51,10 @@ class TestBasicTypeValidation:
         assert result == "default"
         assert node.params_at_execution["prompt"] == "Hello, World!"
 
-    def test_string_param_receives_dict_raises_error(self):
-        """String parameter receiving dict should raise ValueError in strict mode."""
+    def test_string_param_receives_dict_gets_coerced(self):
+        """String parameter receiving dict should be coerced to JSON string."""
+        import json
+
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(
@@ -69,19 +71,19 @@ class TestBasicTypeValidation:
         # Execute with dict in shared store
         shared = {"data": {"status": "ok", "result": "test"}}
 
-        # Should raise ValueError with enhanced message
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+        # Should NOT raise - dict gets coerced to JSON string
+        result = wrapper._run(shared)
+        assert result == "default"
 
-        error_msg = str(exc_info.value)
-        # Verify error message has all components
-        assert "prompt" in error_msg
-        assert "expects str but received dict" in error_msg
-        assert "💡 Common fixes:" in error_msg
-        assert '"${data}"' in error_msg  # Quoted fix shown
+        # Verify the dict was serialized to JSON string
+        prompt_value = node.params_at_execution["prompt"]
+        assert isinstance(prompt_value, str)
+        assert json.loads(prompt_value) == {"status": "ok", "result": "test"}
 
-    def test_string_param_receives_list_raises_error(self):
-        """String parameter receiving list should raise ValueError in strict mode."""
+    def test_string_param_receives_list_gets_coerced(self):
+        """String parameter receiving list should be coerced to JSON string."""
+        import json
+
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(
@@ -98,13 +100,14 @@ class TestBasicTypeValidation:
         # Execute with list in shared store
         shared = {"items": ["item1", "item2", "item3"]}
 
-        # Should raise ValueError
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+        # Should NOT raise - list gets coerced to JSON string
+        result = wrapper._run(shared)
+        assert result == "default"
 
-        error_msg = str(exc_info.value)
-        assert "expects str but received list" in error_msg
-        assert "contains 3 items" in error_msg
+        # Verify the list was serialized to JSON string
+        prompt_value = node.params_at_execution["prompt"]
+        assert isinstance(prompt_value, str)
+        assert json.loads(prompt_value) == ["item1", "item2", "item3"]
 
     def test_any_param_receives_dict_no_error(self):
         """'any' type parameter should accept dict without error."""
@@ -207,8 +210,10 @@ class TestComplexTemplates:
 class TestPermissiveMode:
     """Test permissive mode behavior."""
 
-    def test_permissive_mode_stores_warning_not_error(self):
-        """Permissive mode should store warning in __template_errors__ instead of raising."""
+    def test_permissive_mode_coerces_dict_to_str(self):
+        """Permissive mode should coerce dict to str without storing warning."""
+        import json
+
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(
@@ -225,17 +230,21 @@ class TestPermissiveMode:
         # Execute with dict in shared store
         shared = {"data": {"status": "ok"}}
 
-        # Should not raise error - permissive mode continues
+        # Should not raise error - dict gets coerced to JSON string
         result = wrapper._run(shared)
         assert result == "default"
 
-        # Should store error in shared["__template_errors__"]
-        assert "__template_errors__" in shared
-        assert "test-node" in shared["__template_errors__"]
-        assert "type_validation" in shared["__template_errors__"]["test-node"]["type"]
+        # No template errors stored (coercion is silent)
+        assert "__template_errors__" not in shared or "test-node" not in shared.get("__template_errors__", {})
 
-    def test_permissive_mode_continues_execution(self):
-        """Permissive mode should continue execution after type error."""
+        # Verify coercion happened
+        assert isinstance(node.params_at_execution["prompt"], str)
+        assert json.loads(node.params_at_execution["prompt"]) == {"status": "ok"}
+
+    def test_permissive_mode_coerces_list_to_str(self):
+        """Permissive mode should coerce list to str without storing warning."""
+        import json
+
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "text", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(
@@ -246,24 +255,65 @@ class TestPermissiveMode:
             interface_metadata=interface_metadata,
         )
 
-        # Set template that resolves to dict
+        # Set template that resolves to list
         wrapper.set_params({"text": "${response}"})
 
         # Execute
-        shared = {"response": {"data": "test"}}
+        shared = {"response": ["a", "b", "c"]}
         result = wrapper._run(shared)
 
-        # Should execute successfully despite type mismatch
+        # Should execute successfully with coerced value
         assert result == "default"
-        # Node should receive the dict (permissive allows it)
-        assert node.params_at_execution["text"] == {"data": "test"}
+        # Node should receive JSON string, not list
+        assert isinstance(node.params_at_execution["text"], str)
+        assert json.loads(node.params_at_execution["text"]) == ["a", "b", "c"]
 
 
 class TestErrorMessages:
-    """Test error message formatting."""
+    """Test error message formatting for type mismatches that still raise errors.
 
-    def test_error_shows_parameter_name(self):
-        """Error message should include parameter name."""
+    Note: dict/list → str is now auto-coerced (not an error).
+    These tests verify error messages for other type mismatches.
+    """
+
+    def test_error_for_malformed_json_when_dict_expected(self):
+        """Malformed JSON → dict should raise clear error."""
+        node = DummyNode()
+        interface_metadata = {"inputs": [{"key": "config", "type": "dict"}], "params": []}
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
+
+        wrapper.set_params({"config": "${data}"})
+        # String that looks like JSON but is malformed
+        shared = {"data": "{invalid json}"}
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared)
+
+        error_msg = str(exc_info.value)
+        assert "Parameter 'config'" in error_msg
+        assert "malformed JSON" in error_msg
+
+    def test_error_for_malformed_json_when_list_expected(self):
+        """Malformed JSON → list should raise clear error."""
+        node = DummyNode()
+        interface_metadata = {"inputs": [{"key": "items", "type": "list"}], "params": []}
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
+
+        wrapper.set_params({"items": "${data}"})
+        # String that looks like JSON array but is malformed
+        shared = {"data": "[invalid json]"}
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared)
+
+        error_msg = str(exc_info.value)
+        assert "Parameter 'items'" in error_msg
+        assert "malformed JSON" in error_msg
+
+    def test_dict_to_str_no_longer_errors(self):
+        """Verify that dict → str is now coerced, not an error."""
+        import json
+
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
@@ -271,76 +321,28 @@ class TestErrorMessages:
         wrapper.set_params({"prompt": "${data}"})
         shared = {"data": {"key": "value"}}
 
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+        # Should NOT raise - gets coerced to JSON string
+        result = wrapper._run(shared)
+        assert result == "default"
+        assert isinstance(node.params_at_execution["prompt"], str)
+        assert json.loads(node.params_at_execution["prompt"]) == {"key": "value"}
 
-        assert "Parameter 'prompt'" in str(exc_info.value)
+    def test_list_to_str_no_longer_errors(self):
+        """Verify that list → str is now coerced, not an error."""
+        import json
 
-    def test_error_shows_template_used(self):
-        """Error message should show the template that resolved."""
-        node = DummyNode()
-        interface_metadata = {"inputs": [{"key": "message", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
-
-        wrapper.set_params({"message": "${response}"})
-        shared = {"response": {"status": "ok"}}
-
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
-
-        assert "Template used: ${response}" in str(exc_info.value)
-
-    def test_error_shows_fix_suggestions(self):
-        """Error message should provide 3 fix suggestions."""
-        node = DummyNode()
-        interface_metadata = {"inputs": [{"key": "text", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
-
-        wrapper.set_params({"text": "${data}"})
-        shared = {"data": {"field": "value"}}
-
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
-
-        error_msg = str(exc_info.value)
-        assert "💡 Common fixes:" in error_msg
-        assert "1. Serialize to JSON" in error_msg
-        assert "2. Access a specific field" in error_msg
-        assert "3. Combine with text" in error_msg
-
-    def test_error_shows_available_fields_for_dict(self):
-        """For dict values, error should list available fields."""
-        node = DummyNode()
-        interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
-
-        wrapper.set_params({"prompt": "${response}"})
-        shared = {"response": {"status": "ok", "data": "test", "code": 200}}
-
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
-
-        error_msg = str(exc_info.value)
-        assert "Available fields in response:" in error_msg
-        assert "- status" in error_msg
-        assert "- data" in error_msg
-        assert "- code" in error_msg
-
-    def test_error_shows_item_count_for_list(self):
-        """For list values, error should show item count."""
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "summary", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
 
         wrapper.set_params({"summary": "${items}"})
-        shared = {"items": ["a", "b", "c", "d", "e"]}
+        shared = {"items": ["a", "b", "c"]}
 
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
-
-        error_msg = str(exc_info.value)
-        assert "contains 5 items" in error_msg
-        assert "${items[0]}" in error_msg
+        # Should NOT raise - gets coerced to JSON string
+        result = wrapper._run(shared)
+        assert result == "default"
+        assert isinstance(node.params_at_execution["summary"], str)
+        assert json.loads(node.params_at_execution["summary"]) == ["a", "b", "c"]
 
 
 class TestEdgeCases:
@@ -386,8 +388,8 @@ class TestEdgeCases:
         result = wrapper._run(shared)
         assert result == "default"
 
-    def test_empty_dict_value(self):
-        """Empty dict should still trigger validation."""
+    def test_empty_dict_coerced_to_empty_json_object(self):
+        """Empty dict should be coerced to '{}'."""
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "text", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
@@ -395,14 +397,13 @@ class TestEdgeCases:
         wrapper.set_params({"text": "${data}"})
         shared = {"data": {}}  # Empty dict
 
-        # Should raise ValueError even for empty dict
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+        # Should NOT raise - empty dict coerced to "{}"
+        result = wrapper._run(shared)
+        assert result == "default"
+        assert node.params_at_execution["text"] == "{}"
 
-        assert "expects str but received dict" in str(exc_info.value)
-
-    def test_empty_list_value(self):
-        """Empty list should still trigger validation."""
+    def test_empty_list_coerced_to_empty_json_array(self):
+        """Empty list should be coerced to '[]'."""
         node = DummyNode()
         interface_metadata = {"inputs": [{"key": "message", "type": "str"}], "params": []}
         wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
@@ -410,11 +411,10 @@ class TestEdgeCases:
         wrapper.set_params({"message": "${items}"})
         shared = {"items": []}  # Empty list
 
-        # Should raise ValueError even for empty list
-        with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
-
-        assert "expects str but received list" in str(exc_info.value)
+        # Should NOT raise - empty list coerced to "[]"
+        result = wrapper._run(shared)
+        assert result == "default"
+        assert node.params_at_execution["message"] == "[]"
 
 
 class TestPerformance:

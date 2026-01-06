@@ -429,3 +429,123 @@ class TestSecurityLimits:
         # Should be parsed successfully
         assert isinstance(result["list_param"], list)
         assert len(result["list_param"]) == 100_000
+
+
+class TestReverseCoercionDictToString:
+    """Test dict/list → JSON string coercion when expected type is str.
+
+    This is the fix for MCP tools that declare `param: str` but expect JSON content.
+    """
+
+    def test_dict_becomes_json_string_for_str_param(self, simple_node):
+        """Dict value becomes JSON string when param type is str."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "path_params", "type": "str", "description": "JSON string"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Template resolves to dict, but param expects str
+        wrapper.set_params({"path_params": "${data}"})
+        shared = {"data": {"channel_id": "123"}}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["path_params"], str)
+        # Should be valid JSON
+        assert json_module.loads(result["path_params"]) == {"channel_id": "123"}
+
+    def test_list_becomes_json_string_for_str_param(self, simple_node):
+        """List value becomes JSON string when param type is str."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "items", "type": "str", "description": "JSON array string"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        wrapper.set_params({"items": "${data}"})
+        shared = {"data": [1, 2, 3]}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["items"], str)
+        assert json_module.loads(result["items"]) == [1, 2, 3]
+
+    def test_dict_preserved_when_type_is_dict(self, simple_node, interface_metadata):
+        """Dict stays dict when param type is dict (no coercion)."""
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,  # Has dict_param: dict
+        )
+
+        wrapper.set_params({"dict_param": "${data}"})
+        shared = {"data": {"key": "value"}}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["dict_param"], dict)
+        assert result["dict_param"] == {"key": "value"}
+
+    def test_mcp_workflow_pattern(self, simple_node):
+        """End-to-end test: workflow JSON object → MCP str param → JSON string.
+
+        This is the exact bug scenario: workflow has JSON object for param,
+        but MCP tool expects JSON string.
+        """
+        import json as json_module
+
+        # MCP tool interface - declares str params for JSON content
+        interface_metadata = {
+            "params": [
+                {"key": "path_params", "type": "str"},
+                {"key": "body_schema", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="mcp-discord-execute_action",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Workflow defines inline objects with templates (the bug case)
+        wrapper.set_params({
+            "path_params": {"channel_id": "${channel_id}"},
+            "body_schema": {"content": "${message}"},
+        })
+
+        # Runtime values
+        shared = {"channel_id": "123456789", "message": "Hello from pflow!"}
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # Both should be JSON strings, not dicts
+        assert isinstance(result["path_params"], str)
+        assert isinstance(result["body_schema"], str)
+
+        # Should be valid, parseable JSON
+        parsed_path = json_module.loads(result["path_params"])
+        parsed_body = json_module.loads(result["body_schema"])
+
+        # Check the structure - channel_id may be int or str depending on resolver
+        assert "channel_id" in parsed_path
+        assert parsed_body == {"content": "Hello from pflow!"}
