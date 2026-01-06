@@ -1,0 +1,227 @@
+{
+  "inputs": {
+    "version": {
+      "type": "string",
+      "required": true,
+      "description": "Version being released (e.g., 0.6.0)"
+    },
+    "changelog_section": {
+      "type": "string",
+      "required": true,
+      "description": "Changelog markdown for this version"
+    },
+    "project_name": {
+      "type": "string",
+      "required": false,
+      "default": "pflow",
+      "description": "Name of the project"
+    },
+    "project_url": {
+      "type": "string",
+      "required": false,
+      "default": "https://github.com/spinje/pflow",
+      "description": "Project URL for links"
+    },
+    "slack_channel": {
+      "type": "string",
+      "required": true,
+      "description": "Slack channel to post announcement (e.g., releases)"
+    },
+    "discord_channel_id": {
+      "type": "string",
+      "required": true,
+      "description": "Discord channel ID (numeric, e.g., 1458059302022549698)"
+    },
+    "x_output_file": {
+      "type": "string",
+      "required": false,
+      "default": "./x-announcement.txt",
+      "description": "File path to save X/Twitter post for review"
+    }
+  },
+  "nodes": [
+    {
+      "id": "generate-drafts",
+      "type": "llm",
+      "purpose": "Generate platform-specific announcement drafts",
+      "batch": {
+        "items": [
+          {
+            "platform": "slack",
+            "instructions": "Write a Slack announcement for a software release. Use Slack markdown (*bold*, `code`). Include version number and key changes. Link to the GitHub release: github.com/spinje/pflow/releases/tag/v[VERSION]. No filler commentary or forced jokes - just the facts."
+          },
+          {
+            "platform": "x",
+            "instructions": "Write a tweet announcing a software release. Max 280 characters. MUST use line breaks (\\n) between ideas. Format:\n\n[version headline]\n\n[one sentence about key feature]\n\nAsk @grok to read github.com/spinje/pflow/blob/main/releases/v[VERSION]-context.md and explain [feature]\n\nUse actual version number. Pick one compelling feature from changelog for the Grok prompt. No separate GitHub link needed."
+          },
+          {
+            "platform": "discord",
+            "instructions": "Write a Discord announcement for a community server. Use Discord markdown (**bold**, `code`). Include version number and key changes. Link to the GitHub release: github.com/spinje/pflow/releases/tag/v[VERSION]. No filler commentary or forced quirky jokes - just the facts, stated plainly."
+          }
+        ],
+        "parallel": true
+      },
+      "params": {
+        "model": "gemini-3-flash-preview",
+        "prompt": "You are writing a ${item.platform} announcement for ${project_name} version ${version}.\n\n${item.instructions}\n\nChangelog:\n${changelog_section}\n\nProject URL: ${project_url}\n\nVOICE: Write like a tired-but-competent engineer sharing notes. Low-ego, high-signal, no hype. Better rough and real than polished and generic. Avoid: hustle-bro energy, VC-speak, 'game changer' language, inspirational poster vibes, 'building the future' startup tone.\n\nRespond with ONLY the announcement text, no explanations or metadata."
+      }
+    },
+    {
+      "id": "critique-drafts",
+      "type": "llm",
+      "purpose": "Review and critique each draft for platform fit",
+      "batch": {
+        "items": [
+          {
+            "platform": "slack",
+            "draft": "${generate-drafts.results[0].response}",
+            "criteria": "Check: links to GitHub release (github.com/spinje/pflow/releases/tag/v[VERSION]), not just the repo. Version displayed, correct Slack markdown (*bold*), no forced jokes or filler commentary"
+          },
+          {
+            "platform": "x",
+            "draft": "${generate-drafts.results[1].response}",
+            "criteria": "Check: under 280 characters, has line breaks between sections (not one long line), includes version, Grok call-to-action starts with 'Ask @grok to read' and has correct URL format, feature is specific, no separate GitHub link"
+          },
+          {
+            "platform": "discord",
+            "draft": "${generate-drafts.results[2].response}",
+            "criteria": "Check: links to GitHub release (github.com/spinje/pflow/releases/tag/v[VERSION]), not just the repo. Version displayed, correct Discord markdown (**bold**), no forced jokes or quirky filler"
+          }
+        ],
+        "parallel": true
+      },
+      "params": {
+        "model": "gpt-5.2",
+        "prompt": "Review this ${item.platform} announcement draft for ${project_name} version ${version}.\n\nDRAFT:\n---\n${item.draft}\n---\n\nSOURCE CHANGELOG:\n${changelog_section}\n\nProject URL: ${project_url}\n\nCriteria:\n${item.criteria}\n\nVOICE CHECK: Should sound like a tired-but-competent engineer sharing notes. Low-ego, high-signal, no hype. Flag if it sounds like: hustle-bro energy, VC-speak, 'game changer' language, inspirational poster vibes, or 'building the future' startup tone.\n\nThink hard about how this could be improved further. Don't just check boxes - really consider what would make someone stop scrolling and read this. Check if the draft accurately represents the changelog.\n\nFormat:\n\nSTRENGTHS:\n- point\n\nISSUES:\n- issue: specific fix\n\nDEEPER IMPROVEMENTS:\n- what would make this genuinely better, not just correct"
+      }
+    },
+    {
+      "id": "improve-drafts",
+      "type": "llm",
+      "purpose": "Create final polished versions based on critique",
+      "batch": {
+        "items": [
+          {
+            "platform": "slack",
+            "draft": "${generate-drafts.results[0].response}",
+            "critique": "${critique-drafts.results[0].response}"
+          },
+          {
+            "platform": "x",
+            "draft": "${generate-drafts.results[1].response}",
+            "critique": "${critique-drafts.results[1].response}"
+          },
+          {
+            "platform": "discord",
+            "draft": "${generate-drafts.results[2].response}",
+            "critique": "${critique-drafts.results[2].response}"
+          }
+        ],
+        "parallel": true
+      },
+      "params": {
+        "model": "claude-opus-4.5",
+        "prompt": "Improve this ${item.platform} announcement for ${project_name} version ${version}.\n\nORIGINAL DRAFT:\n${item.draft}\n\nCRITIQUE:\n${item.critique}\n\nSOURCE CHANGELOG:\n${changelog_section}\n\nProject URL: ${project_url}\n\nVOICE: Write like a tired-but-competent engineer sharing notes. Low-ego, high-signal, no hype. Better rough and real than polished and generic. Avoid: hustle-bro energy, VC-speak, 'game changer' language, inspirational poster vibes, 'building the future' startup tone.\n\nCreate the final version. Apply valid suggestions from the critique. Ensure accuracy against the source changelog. Output ONLY the announcement text, nothing else."
+      }
+    },
+    {
+      "id": "post-slack",
+      "type": "mcp-composio-slack-SLACK_SEND_MESSAGE",
+      "purpose": "Post announcement to Slack",
+      "params": {
+        "channel": "${slack_channel}",
+        "markdown_text": "${improve-drafts.results[0].response}"
+      }
+    },
+    {
+      "id": "prepare-discord-body",
+      "type": "shell",
+      "purpose": "Prepare Discord message body as escaped JSON",
+      "params": {
+        "stdin": "${improve-drafts.results[2].response}",
+        "command": "jq -Rs '{content: .}'"
+      }
+    },
+    {
+      "id": "post-discord",
+      "type": "mcp-discord-execute_action",
+      "purpose": "Post announcement to Discord",
+      "params": {
+        "server_name": "discord",
+        "category_name": "DISCORD_CHANNELS_MESSAGES",
+        "action_name": "create_message",
+        "path_params": "{\"channel_id\":\"${discord_channel_id}\"}",
+        "body_schema": "${prepare-discord-body.stdout}"
+      }
+    },
+    {
+      "id": "save-x-post",
+      "type": "write-file",
+      "purpose": "Save X/Twitter post to file for review",
+      "params": {
+        "file_path": "${x_output_file}",
+        "content": "${improve-drafts.results[1].response}"
+      }
+    },
+    {
+      "id": "create-summary",
+      "type": "shell",
+      "purpose": "Create execution summary with X post command",
+      "params": {
+        "command": "printf '## Release Announcements for ${project_name} v${version}\\n\\n\u2713 Posted to Slack: #${slack_channel}\\n\u2713 Posted to Discord: channel ${discord_channel_id}\\n\u2713 X post saved to: ${x_output_file}\\n\\nTo post to X, run:\\npflow registry run mcp-twitter-x-TWITTER_CREATION_OF_A_POST text=\"$(cat ${x_output_file})\"\\n'"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-drafts",
+      "to": "critique-drafts"
+    },
+    {
+      "from": "critique-drafts",
+      "to": "improve-drafts"
+    },
+    {
+      "from": "improve-drafts",
+      "to": "post-slack"
+    },
+    {
+      "from": "post-slack",
+      "to": "prepare-discord-body"
+    },
+    {
+      "from": "prepare-discord-body",
+      "to": "post-discord"
+    },
+    {
+      "from": "post-discord",
+      "to": "save-x-post"
+    },
+    {
+      "from": "save-x-post",
+      "to": "create-summary"
+    }
+  ],
+  "outputs": {
+    "summary": {
+      "source": "${create-summary.stdout}",
+      "description": "Summary of announcements posted and X post command"
+    },
+    "slack_post": {
+      "source": "${improve-drafts.results[0].response}",
+      "description": "Final Slack announcement"
+    },
+    "discord_post": {
+      "source": "${improve-drafts.results[2].response}",
+      "description": "Final Discord announcement"
+    },
+    "x_post": {
+      "source": "${improve-drafts.results[1].response}",
+      "description": "Final X/Twitter announcement (saved to file)"
+    },
+    "x_post_file": {
+      "source": "${x_output_file}",
+      "description": "Path to saved X post file"
+    }
+  }
+}
