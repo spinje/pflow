@@ -707,6 +707,30 @@ def format_output_value(value: Any, max_length: int = 200) -> str:
         return value_str
 
 
+def _is_summary_format(formatted_value: str) -> bool:
+    """Check if a formatted value is a collection summary like {...N keys} or [...N items].
+
+    These summaries may not need a read-fields hint if children are visible in the output.
+    """
+    return formatted_value.startswith("{...") or formatted_value.startswith("[...")
+
+
+def _has_visible_children(parent_path: str, all_paths: set[str]) -> bool:
+    """Check if a parent path has any visible child paths in the output.
+
+    Args:
+        parent_path: The parent path (e.g., "llm_usage")
+        all_paths: Set of all paths displayed in output
+
+    Returns:
+        True if any child path like "parent.x" or "parent[0]" exists
+    """
+    for path in all_paths:
+        if path != parent_path and (path.startswith(f"{parent_path}.") or path.startswith(f"{parent_path}[")):
+            return True
+    return False
+
+
 def _format_collection_smart(value: dict | list) -> tuple[str, bool]:
     """Format dict or list for smart display.
 
@@ -778,6 +802,13 @@ def format_smart_paths_with_values(
 
     Resolves each path to its value and formats with truncation rules.
 
+    The hint for read-fields is only shown when there's genuinely hidden data:
+    - Actual value truncation (string too long, showing "(truncated)")
+    - Collection summary ({...N keys}) where children are NOT visible
+
+    If a collection is summarized but all its children are visible in the output,
+    the hint is suppressed since the user can already see all the data.
+
     Args:
         paths: List of (path, type) tuples
         outputs: Node output dictionary
@@ -786,11 +817,12 @@ def format_smart_paths_with_values(
         execution_id: Execution ID for read-fields hint
 
     Returns:
-        Tuple of (formatted_lines, any_value_truncated)
+        Tuple of (formatted_lines, any_value_hidden)
     """
     lines: list[str] = []
-    any_truncated = False
-    first_truncated_path: str | None = None
+    all_paths_set: set[str] = set()
+    truncated_paths: list[str] = []  # Actual data truncation (string cut off)
+    summarized_paths: list[str] = []  # Collection summaries ({...N keys})
 
     # Header
     if source_description:
@@ -800,6 +832,8 @@ def format_smart_paths_with_values(
 
     # Format each path with its value
     for path, type_str in paths[:MAX_DISPLAYED_FIELDS]:
+        all_paths_set.add(path)
+
         # Resolve the actual value using helper that handles None vs not-found
         value = _resolve_template_value(path, outputs, shared_store)
 
@@ -811,9 +845,11 @@ def format_smart_paths_with_values(
             formatted_value, truncated = format_value_for_smart_display(value)
 
         if truncated:
-            any_truncated = True
-            if first_truncated_path is None:
-                first_truncated_path = path
+            # Distinguish between collection summaries and actual truncation
+            if _is_summary_format(formatted_value):
+                summarized_paths.append(path)
+            else:
+                truncated_paths.append(path)
 
         lines.append(f"  ✓ ${{{path}}} ({type_str}) = {formatted_value}")
 
@@ -822,12 +858,25 @@ def format_smart_paths_with_values(
         remaining = len(paths) - MAX_DISPLAYED_FIELDS
         lines.append(f"  ... and {remaining} more paths")
 
-    # Add read-fields hint if any value was truncated and we have an execution_id
-    if any_truncated and execution_id:
-        example_path = first_truncated_path or (paths[0][0] if paths else "path")
+    # Filter summarized paths: only count those without visible children
+    # If children are visible, the user can already see the data
+    hidden_summarized = [p for p in summarized_paths if not _has_visible_children(p, all_paths_set)]
+
+    # Determine if there's genuinely hidden data
+    any_hidden = bool(truncated_paths or hidden_summarized)
+
+    # Add read-fields hint only if there's hidden data
+    if any_hidden and execution_id:
+        # Prefer showing a truly truncated path as example
+        if truncated_paths:
+            example_path = truncated_paths[0]
+        elif hidden_summarized:
+            example_path = hidden_summarized[0]
+        else:
+            example_path = paths[0][0] if paths else "path"
         lines.append(f"\nUse `pflow read-fields {execution_id} {example_path}` for full values.")
 
-    return lines, any_truncated
+    return lines, any_hidden
 
 
 def _format_value_full(value: Any) -> str:
