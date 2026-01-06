@@ -904,6 +904,104 @@ class TestSmartOutputMode:
         assert "result.data" in hint_lines[0]
         assert "<path>" not in hint_lines[0]
 
+    def test_smart_mode_no_hint_when_summarized_parent_has_visible_children(self):
+        """SMART MODE: No hint when summarized parent's children are all visible.
+
+        If a dict/list is summarized ({...N keys}) but all its children are
+        displayed in the output, the hint is useless because the user can
+        already see all the data through the child paths.
+        """
+        from pflow.execution.formatters.node_output_formatter import (
+            format_smart_paths_with_values,
+        )
+
+        # Simulate llm_usage scenario: parent dict with 6 keys (> 5 threshold)
+        # but all 6 children are displayed with full values
+        paths = [
+            ("llm_usage", "dict"),
+            ("llm_usage.input_tokens", "int"),
+            ("llm_usage.output_tokens", "int"),
+            ("llm_usage.total_tokens", "int"),
+            ("llm_usage.model", "str"),
+            ("llm_usage.cache_read_tokens", "int"),
+            ("llm_usage.cache_write_tokens", "int"),
+            ("response", "str"),
+        ]
+        outputs = {
+            "llm_usage": {
+                "input_tokens": 100,
+                "output_tokens": 50,
+                "total_tokens": 150,
+                "model": "test-model",
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            },
+            "response": "Hello!",
+        }
+        shared_store = {}
+
+        lines, any_hidden = format_smart_paths_with_values(
+            paths=paths,
+            outputs=outputs,
+            shared_store=shared_store,
+            source_description=None,
+            execution_id="exec-123",
+        )
+
+        # llm_usage shows {...6 keys} but all children are visible
+        # So no hint should appear - user can see all data through child paths
+        assert any_hidden is False
+        hint_lines = [line for line in lines if "read-fields" in line]
+        assert len(hint_lines) == 0
+
+    def test_smart_mode_hint_shown_when_summarized_parent_has_no_visible_children(self):
+        """SMART MODE: Hint shown when summarized parent has no visible children.
+
+        If a dict/list is summarized ({...N keys}) and its children are NOT
+        displayed (e.g., filtered out), the hint IS useful because the user
+        cannot see the data.
+        """
+        from pflow.execution.formatters.node_output_formatter import (
+            format_smart_paths_with_values,
+        )
+
+        # Simulate scenario: parent dict shown but children filtered out
+        paths = [
+            ("response.organization", "dict"),  # Summarized, no children visible
+            ("response.name", "str"),
+            ("response.stars", "int"),
+        ]
+        outputs = {
+            "response": {
+                "organization": {
+                    "login": "anthropic",
+                    "id": 12345,
+                    "url": "https://github.com/anthropics",
+                    "description": "AI safety company",
+                    "repos_url": "https://api.github.com/orgs/anthropics/repos",
+                    "members_count": 100,  # 6 keys, triggers summary
+                },
+                "name": "test-repo",
+                "stars": 1000,
+            }
+        }
+        shared_store = {}
+
+        lines, any_hidden = format_smart_paths_with_values(
+            paths=paths,
+            outputs=outputs,
+            shared_store=shared_store,
+            source_description=None,
+            execution_id="exec-123",
+        )
+
+        # response.organization shows {...6 keys} and NO children are visible
+        # So hint SHOULD appear - user cannot see the organization data
+        assert any_hidden is True
+        hint_lines = [line for line in lines if "read-fields" in line]
+        assert len(hint_lines) == 1
+        assert "response.organization" in hint_lines[0]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

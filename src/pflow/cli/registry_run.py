@@ -9,6 +9,7 @@ import click
 
 from pflow.cli.main import parse_workflow_params
 from pflow.core.execution_cache import ExecutionCache
+from pflow.core.param_coercion import coerce_to_declared_type
 from pflow.core.user_errors import MCPError
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.registry import Registry
@@ -78,6 +79,49 @@ def _validate_parameters(params: tuple[str, ...]) -> dict[str, Any]:
         sys.exit(1)
 
     return execution_params
+
+
+def _coerce_params_for_node(
+    params: dict[str, Any],
+    node_id: str,
+    registry: Registry,
+) -> dict[str, Any]:
+    """Coerce parameter types based on node interface declaration.
+
+    When a parameter is declared as 'str' but the value is dict/list,
+    serialize it to a JSON string. This enables MCP tools that expect
+    JSON-formatted string parameters.
+
+    Args:
+        params: Parameters to coerce
+        node_id: Node ID for registry lookup
+        registry: Registry instance
+
+    Returns:
+        Parameters with coerced types
+    """
+    # Get node interface metadata
+    nodes = registry.load()
+    node_info = nodes.get(node_id, {})
+    interface = node_info.get("interface", {})
+    param_schemas = interface.get("params", [])
+
+    # Build type lookup
+    param_types: dict[str, str] = {}
+    for param in param_schemas:
+        if isinstance(param, dict):
+            key = param.get("key")
+            param_type = param.get("type")
+            if key and param_type:
+                param_types[key] = param_type
+
+    # Coerce each parameter
+    coerced = {}
+    for key, value in params.items():
+        expected_type = param_types.get(key)
+        coerced[key] = coerce_to_declared_type(value, expected_type)
+
+    return coerced
 
 
 def _resolve_node_type(node_type: str, registry: Registry, verbose: bool) -> str:
@@ -157,6 +201,10 @@ def _prepare_node_execution(
         execution_params,
         registry,  # node_id same as node_type
     )
+
+    # Coerce parameters to declared types (dict/list → str for str-typed params)
+    if enhanced_params:
+        enhanced_params = _coerce_params_for_node(enhanced_params, resolved_node, registry)
 
     # Set parameters on node
     if enhanced_params:

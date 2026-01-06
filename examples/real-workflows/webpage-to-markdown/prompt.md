@@ -18,7 +18,7 @@ This step is about extracting information from this image in a condensed but com
 
 4. Append an "Image Details" section to the markdown with all the extracted content
 
-5. Save to file
+5. Save to file - auto-generate filename from URL with today's date prefix (e.g., `2026-01-05-article-name-from-url.md`), or use custom path if provided
 
 End result:
 A markdown file where nothing is lost - diagrams become mermaid code you can render, charts become data you can use, screenshots become text you can search.

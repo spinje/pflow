@@ -9,6 +9,7 @@ import logging
 from typing import Any, Optional
 
 from pflow.core.json_utils import try_parse_json
+from pflow.core.param_coercion import coerce_to_declared_type
 
 from .template_resolver import TemplateResolver
 
@@ -830,6 +831,13 @@ class TemplateAwareNodeWrapper:
                             f"Auto-parsed JSON string to {type(parsed).__name__} for param '{key}'",
                             extra={"node_id": self.node_id, "param": key},
                         )
+
+            # REVERSE: Serialize dict/list → str when expected type is str
+            # This enables MCP tools that declare `param: str` but expect JSON content
+            # Applies to both simple templates (${var} → dict) and inline objects ({"key": "${var}"})
+            if isinstance(resolved_value, (dict, list)):
+                expected_type = self._expected_types.get(key)
+                resolved_value = coerce_to_declared_type(resolved_value, expected_type)
 
             # NEW: Validate type for simple templates (before storing in resolved_params)
             # Complex templates are already stringified, so no type mismatch possible

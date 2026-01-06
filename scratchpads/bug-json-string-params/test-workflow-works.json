@@ -1,0 +1,35 @@
+{
+  "inputs": {
+    "channel_id": {
+      "type": "string",
+      "required": true,
+      "description": "Discord channel ID to post to"
+    },
+    "message": {
+      "type": "string",
+      "required": true,
+      "description": "Message to send"
+    }
+  },
+  "nodes": [
+    {
+      "id": "post-discord",
+      "type": "mcp-discord-execute_action",
+      "purpose": "Post message to Discord - WORKS with escaped JSON strings",
+      "params": {
+        "server_name": "discord",
+        "category_name": "DISCORD_CHANNELS_MESSAGES",
+        "action_name": "create_message",
+        "path_params": "{\"channel_id\": \"${channel_id}\"}",
+        "body_schema": "{\"content\": \"${message}\"}"
+      }
+    }
+  ],
+  "edges": [],
+  "outputs": {
+    "result": {
+      "source": "${post-discord.result}",
+      "description": "Discord API response"
+    }
+  }
+}
