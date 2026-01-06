@@ -307,8 +307,7 @@ def format_structure_output(
         path_lines, _ = format_smart_paths_with_values(
             paths_to_display, outputs, shared_store, source_desc, execution_id or ""
         )
-    else:  # structure mode
-        paths_to_display, source_desc = _apply_smart_filtering(paths_to_display, source_desc, original_count)
+    else:  # structure mode - skip LLM filtering entirely, show all paths without values
         path_lines = format_template_paths(paths_to_display, source_desc)
 
     lines.extend(path_lines)

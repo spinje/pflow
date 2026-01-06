@@ -16,6 +16,7 @@ Caching:
 import hashlib
 import logging
 from functools import lru_cache
+from typing import Any
 
 import llm
 from pydantic import BaseModel
@@ -166,10 +167,22 @@ Return ONLY the field paths (without type annotations) that the agent needs to s
 
         filtering_model = get_model_for_feature("filtering")
         model = llm.get_model(filtering_model)
+
+        # Reduce thinking for Gemini models - filtering is a simple task
+        # Note: Uses heuristic based on Google's current naming (gemini-3, gemini-2.5)
+        # If naming changes, optimization may not apply but filtering still works correctly
+        model_options: dict[str, Any] = {"temperature": 0.0}
+        if "gemini-3" in filtering_model:
+            model_options["thinking_level"] = "minimal"
+            logger.debug(f"Applied thinking_level=minimal for {filtering_model}")
+        elif "gemini-2.5" in filtering_model and "lite" not in filtering_model:
+            model_options["thinking_budget"] = 0
+            logger.debug(f"Applied thinking_budget=0 for {filtering_model}")
+
         response = model.prompt(
             prompt=prompt,
             schema=FilteredFields,
-            temperature=0.0,  # Deterministic filtering
+            **model_options,
         )
 
         # Parse structured response

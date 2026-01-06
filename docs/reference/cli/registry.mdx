@@ -270,9 +270,9 @@ The output display is controlled by the `registry.output_mode` setting. There ar
 
 | Mode | Description | When to use |
 |------|-------------|-------------|
-| `smart` (default) | Shows template paths with values, truncates large data | General debugging and testing |
-| `structure` | Shows template paths only, no values | When output contains sensitive data |
-| `full` | Shows all fields with full values, no truncation | Manual inspection only (not recommended for agents) |
+| `smart` (default) | Shows template paths with values. Filters large outputs (>30 fields) using LLM. | General debugging and AI agent workflows |
+| `structure` | Shows template paths only, no values. No filtering - fast, no LLM overhead. | Sensitive data, quick exploration |
+| `full` | Shows all fields with full values, no truncation or filtering | Manual inspection only (not recommended for agents) |
 
 Change the mode with:
 
@@ -284,7 +284,7 @@ pflow settings registry output-mode full      # Everything
 
 **Smart mode (default):**
 
-Shows template paths with actual values. Large values are truncated to keep output readable:
+Shows template paths with actual values. Large values are truncated to keep output readable. For outputs with more than 30 fields, uses an LLM to intelligently filter to the most relevant fields:
 
 ```
 ✓ Node executed successfully
@@ -308,7 +308,7 @@ When values are truncated, use `pflow read-fields <execution-id> <path>` to retr
 
 **Structure mode:**
 
-Shows only template paths without values - useful when outputs contain sensitive data:
+Shows only template paths without values - useful when outputs contain sensitive data or when you want fast output without LLM overhead. Unlike smart mode, structure mode shows all fields without filtering:
 
 ```
 ✓ Node executed successfully
