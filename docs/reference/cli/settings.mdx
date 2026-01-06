@@ -396,7 +396,7 @@ pflow settings llm set-discovery gemini-3-flash-preview
 
 ### pflow settings llm set-filtering
 
-Set the model for smart field filtering (structure-only mode with large responses).
+Set the model for smart field filtering (used when `smart` output mode filters large API responses).
 
 ```bash
 pflow settings llm set-filtering <MODEL>
@@ -408,9 +408,31 @@ pflow settings llm set-filtering <MODEL>
 **Example:**
 
 ```bash
-# Use a fast model for filtering
-pflow settings llm set-filtering gemini-3-flash-preview
+# Use a fast, cheap model for filtering
+pflow settings llm set-filtering gemini-2.5-flash-lite
 ```
+
+<Tip>
+  Smart filtering is a simple task - use a fast, cheap model.
+
+  **Recommended (fast + cheap):**
+
+  | Provider | Model | Overhead | Notes |
+  |----------|-------|----------|-------|
+  | Google | `gemini-2.5-flash-lite` | ~2-3s | Best budget option |
+  | OpenAI | `gpt-5-mini` | ~1-2s | Runner-up budget |
+  | Anthropic | `claude-haiku-4-5` | ~1-2s | Third place budget |
+
+  **Alternative (higher cost):**
+
+  | Provider | Model | Overhead | Notes |
+  |----------|-------|----------|-------|
+  | Anthropic | `claude-sonnet-4-5` | ~1-2s | Best premium option |
+  | Google | `gemini-3-flash-preview` | ~2-3s | Runner-up premium |
+  | OpenAI | `gpt-5.2` | ~5-6s | Slower, not recommended |
+
+  All models produce equivalent quality for this task.
+</Tip>
 
 ### pflow settings llm unset
 
@@ -477,9 +499,9 @@ pflow settings registry output-mode [MODE]
 
 | Mode | Description |
 |------|-------------|
-| `smart` (default) | Shows template paths with values, truncates large data |
-| `structure` | Shows template paths only, no values |
-| `full` | Shows all fields with full values, no truncation |
+| `smart` (default) | Shows template paths with values. Uses LLM to filter large outputs (>30 fields) to relevant fields. |
+| `structure` | Shows template paths only (no values). No filtering - shows all fields. Fast, no LLM overhead. |
+| `full` | Shows all fields with full values, no truncation or filtering. |
 
 **Examples:**
 
@@ -498,7 +520,7 @@ pflow settings registry output-mode full
 ```
 
 <Warning>
-  Use `structure` mode when working with sensitive data. Avoid `full` mode with AI agents - it bypasses all truncation and can consume excessive tokens.
+  Use `structure` mode when working with sensitive data or when you want fast output without LLM overhead. Avoid `full` mode with AI agents - it shows all values without truncation and can consume excessive tokens.
 </Warning>
 
 See [registry run output modes](/reference/cli/registry#output-modes) for detailed examples of each mode.

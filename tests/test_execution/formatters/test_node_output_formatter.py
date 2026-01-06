@@ -704,6 +704,54 @@ class TestSmartFilteringIntegration:
         # All fields should be shown
         assert "field0" in result or "result.field0" in result
 
+    def test_structure_mode_skips_smart_filtering(self):
+        """Structure output_mode should skip LLM filtering entirely, showing all paths."""
+        from pflow.execution.formatters.node_output_formatter import format_node_output
+
+        # Create mock registry with node that has 100 output fields
+        # This would trigger filtering in smart mode, but structure mode should skip it
+        registry = Mock(spec=Registry)
+        node_metadata = {
+            "test-large-node": {
+                "interface": {
+                    "outputs": [
+                        {
+                            "name": "result",
+                            "type": "dict",
+                            "structure": {f"field{i}": {"type": "string"} for i in range(100)},
+                        }
+                    ]
+                }
+            }
+        }
+        registry.get_nodes_metadata.return_value = node_metadata
+
+        # Create outputs matching the structure
+        outputs = {"result": {f"field{i}": f"value{i}" for i in range(100)}}
+
+        # Note: NO mock_llm_calls setup - if filtering were triggered, this would fail
+        result = format_node_output(
+            node_type="test-large-node",
+            action="success",
+            outputs=outputs,
+            shared_store={},
+            execution_time_ms=100,
+            registry=registry,
+            format_type="structure",
+            output_mode="structure",  # Explicitly use structure mode to skip filtering
+            execution_id="exec-no-filter",
+        )
+
+        # Should show all 100+ paths without filtering
+        # Check for multiple fields to verify no filtering occurred
+        assert "result.field0" in result
+        assert "result.field50" in result
+        assert "result.field99" in result
+
+        # Should NOT show filtering message since no filtering occurred
+        assert "of 100 shown" not in result
+        assert "of 101 shown" not in result
+
 
 class TestSmartOutputMode:
     """Tests for smart output mode (showing values with truncation)."""
