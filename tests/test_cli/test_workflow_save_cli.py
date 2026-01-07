@@ -61,7 +61,8 @@ class TestWorkflowSaveCLI:
         assert saved_file.exists(), "Workflow file should be created"
 
         saved_data = json.loads(saved_file.read_text())
-        assert saved_data["name"] == "my-workflow"
+        # Note: name is NOT stored in file - it's derived from filename at load time
+        assert "name" not in saved_data  # Name derived from filename, not stored
         assert saved_data["description"] == "Test workflow"
         assert saved_data["ir"]["nodes"][0]["id"] == "test"
 

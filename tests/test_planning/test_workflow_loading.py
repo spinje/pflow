@@ -191,7 +191,8 @@ class TestWorkflowLoading:
 
         # Should only load the valid one
         assert len(workflows) == 1
-        assert workflows[0]["name"] == "valid-workflow"
+        # Name is derived from filename, not from internal field
+        assert workflows[0]["name"] == "valid"
 
         # Should log warning about invalid JSON
         assert "Failed to parse JSON from invalid.json" in caplog.text
@@ -206,16 +207,16 @@ class TestWorkflowLoading:
         workflow_dir = fake_home / ".pflow" / "workflows"
         workflow_dir.mkdir(parents=True)
 
-        # Create workflow missing 'name' field
-        missing_name = {"description": "Missing name", "ir": {}}
-        (workflow_dir / "missing-name.json").write_text(json.dumps(missing_name))
+        # Create workflow missing 'description' field (name is derived from filename, so not required)
+        missing_description = {"ir": {}}
+        (workflow_dir / "missing-description.json").write_text(json.dumps(missing_description))
 
         # Create workflow missing 'ir' field
-        missing_ir = {"name": "missing-ir", "description": "Missing IR"}
+        missing_ir = {"description": "Missing IR"}
         (workflow_dir / "missing-ir.json").write_text(json.dumps(missing_ir))
 
-        # Create valid workflow
-        valid = {"name": "valid", "description": "Valid", "ir": {}}
+        # Create valid workflow (name is optional in file, derived from filename)
+        valid = {"description": "Valid", "ir": {}}
         (workflow_dir / "valid.json").write_text(json.dumps(valid))
 
         # Ensure caplog captures WARNING level logs from the context_builder module
@@ -226,10 +227,10 @@ class TestWorkflowLoading:
 
         # Should only load the valid one
         assert len(workflows) == 1
-        assert workflows[0]["name"] == "valid"
+        assert workflows[0]["name"] == "valid"  # Derived from filename
 
-        # Should log warnings
-        assert "missing required fields: ['name']" in caplog.text
+        # Should log warnings for missing required fields (description and ir, NOT name)
+        assert "missing required fields: ['description']" in caplog.text
         assert "missing required fields: ['ir']" in caplog.text
 
     def test_skips_wrong_field_types(self, tmp_path, monkeypatch, caplog):
@@ -498,8 +499,8 @@ class TestWorkflowLoadingIntegration:
         # Create invalid JSON file
         (workflow_dir / "invalid.json").write_text("{invalid json}")
 
-        # Create workflow missing required fields
-        (workflow_dir / "incomplete.json").write_text(json.dumps({"name": "incomplete"}))
+        # Create workflow missing required fields (description and ir required, name derived from filename)
+        (workflow_dir / "incomplete.json").write_text(json.dumps({"description": "incomplete"}))
 
         # Create non-JSON file
         (workflow_dir / "readme.txt").write_text("This is not a workflow")
@@ -512,7 +513,8 @@ class TestWorkflowLoadingIntegration:
 
         # Should only load the valid workflow
         assert len(workflows) == 1
-        assert workflows[0]["name"] == "valid-workflow"
+        # Name is derived from filename, not from internal field
+        assert workflows[0]["name"] == "valid"
 
         # Should log appropriate warnings for invalid files
         assert "Failed to parse JSON from invalid.json" in caplog.text

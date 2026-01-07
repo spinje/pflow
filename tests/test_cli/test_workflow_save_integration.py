@@ -81,7 +81,8 @@ class TestWorkflowSaveIntegration:
             with open(workflow_file) as f:
                 saved_data = json.load(f)
 
-            assert saved_data["name"] == "test-workflow"
+            # Note: name is NOT stored in file - it's derived from filename at load time
+            assert "name" not in saved_data  # Name derived from filename, not stored
             # Description should be empty when no metadata is provided
             assert saved_data["description"] == ""
             assert saved_data["ir"] == sample_workflow

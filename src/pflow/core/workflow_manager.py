@@ -86,8 +86,9 @@ class WorkflowManager:
         """
         now = datetime.now(timezone.utc).isoformat()
 
+        # Note: name is NOT stored in the file - it's derived from filename at load time
+        # This ensures filename is the single source of truth (prevents name/filename mismatches)
         wrapper = {
-            "name": name,
             "description": description,
             "ir": workflow_ir,
             "created_at": now,
@@ -203,6 +204,9 @@ class WorkflowManager:
             with open(file_path, encoding="utf-8") as f:
                 metadata = json.load(f)
 
+            # Derive name from filename (single source of truth)
+            metadata["name"] = name
+
             logger.debug(f"Loaded workflow '{name}' from {file_path}")
             return metadata  # type: ignore[no-any-return]
 
@@ -249,6 +253,8 @@ class WorkflowManager:
             try:
                 with open(file_path, encoding="utf-8") as f:
                     metadata = json.load(f)
+                # Derive name from filename (single source of truth)
+                metadata["name"] = file_path.stem
                 workflows.append(metadata)
             except Exception as e:
                 logger.warning(f"Failed to load workflow from {file_path}: {e}")
