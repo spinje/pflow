@@ -695,16 +695,16 @@ def discover_nodes(query: str) -> None:
 @click.argument("params", nargs=-1)
 @click.option(
     "--output-format",
-    type=click.Choice(["text", "json"]),
-    default="text",
-    help="Output format (text or json)",
+    type=click.Choice(["json"]),
+    default=None,
+    help="Output format: json bypasses structure mode for raw output",
 )
 @click.option("--timeout", type=int, default=60, help="Execution timeout in seconds")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution information")
 def run_node(
     node_type: str,
     params: tuple[str, ...],
-    output_format: str,
+    output_format: str | None,
     timeout: int,
     verbose: bool,
 ) -> None:
@@ -714,9 +714,11 @@ def run_node(
 
         pflow registry run read-file file_path=/tmp/test.txt
 
-        pflow registry run llm prompt="Hello world" --output-format json
+        pflow registry run llm prompt="Hello world"
 
         pflow registry run mcp-slack-fetch channel=C123
+
+        pflow registry run shell command="ls -la" --output-format json
 
     This command is useful for:
 
@@ -741,8 +743,8 @@ def run_node(
     execute_single_node(
         node_type=node_type,
         params=params,
-        output_format=output_format,
-        show_structure=True,  # Task 89: Structure-only mode is now the default
+        output_format=output_format or "text",  # Default to text for formatter
+        show_structure=(output_format != "json"),  # Structure mode unless --output-format json
         timeout=timeout,
         verbose=verbose,
     )

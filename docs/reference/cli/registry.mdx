@@ -230,7 +230,7 @@ pflow registry run <NODE> [PARAMS...] [OPTIONS]
 - `PARAMS` - Parameter key=value pairs
 
 **Options:**
-- `--output-format text|json` - Output format (default: text)
+- `--output-format json` - Raw JSON output, bypasses structure mode
 - `--timeout INT` - Execution timeout in seconds (default: 60)
 - `-v, --verbose` - Show detailed execution information
 
@@ -325,28 +325,18 @@ Use these paths in workflow templates.
 Execution time: 45ms
 ```
 
-**Text mode (`--output-format text`):**
+### Raw JSON output
 
-Shows full output values in human-readable format:
+Use `--output-format json` to bypass structure mode and get raw, machine-parseable output:
 
+```bash
+pflow registry run read-file file_path=/tmp/test.txt --output-format json
 ```
-✓ Node executed successfully
-
-content: "Hello world..."
-metadata:
-  size: 123
-  created: "2024-01-15"
-
-Execution time: 45ms
-```
-
-**JSON mode (`--output-format json`):**
-
-Returns structured JSON for programmatic use:
 
 ```json
 {
   "success": true,
+  "node_type": "read-file",
   "outputs": {
     "content": "Hello world...",
     "metadata": {"size": 123}
@@ -358,6 +348,10 @@ Returns structured JSON for programmatic use:
 <Tip>
   Agents use `registry run` to test node parameters before building workflows. The execution ID lets you retrieve full values later with `pflow read-fields`.
 </Tip>
+
+<Note>
+  Agents always use structure mode for template path discovery. The `--output-format json` flag is for debugging and scripting when you need raw output values.
+</Note>
 
 ### Retrieving full values
 

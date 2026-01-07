@@ -194,8 +194,8 @@ def test_node_execution_returns_exit_code_one_on_failure(runner):
 # ==============================================================================
 
 
-def test_json_output_format_is_valid(runner, tmp_path):
-    """Test that structure-only mode overrides JSON output format (Task 89)."""
+def test_json_output_format_produces_valid_json(runner, tmp_path):
+    """Test that --output-format json produces raw JSON output bypassing structure mode."""
     test_file = tmp_path / "test.txt"
     test_file.write_text("test content")
 
@@ -214,13 +214,56 @@ def test_json_output_format_is_valid(runner, tmp_path):
 
         assert result.exit_code == 0
 
-        # Task 89: Structure-only mode overrides --output-format
-        # Should get structure output (text), not JSON with data
-        assert "Execution ID:" in result.output
-        assert "test content" not in result.output  # No actual data
-        # Output should be text (structure), not JSON
-        with pytest.raises(json.JSONDecodeError):
-            json.loads(result.output)
+        # --output-format json should produce valid JSON with actual data
+        output = json.loads(result.output)
+        assert output["success"] is True
+        assert output["node_type"] == "read-file"
+        assert "outputs" in output
+        assert "execution_time_ms" in output
+        # Should contain actual data, not just structure paths
+        # ReadFileNode includes line numbers in output
+        assert "test content" in output["outputs"]["content"]
+
+
+def test_output_format_text_is_rejected(runner):
+    """Test that --output-format text is no longer a valid option."""
+    result = runner.invoke(registry, ["run", "read-file", "file_path=/tmp/test.txt", "--output-format", "text"])
+
+    # Click should reject invalid choice
+    assert result.exit_code != 0
+    assert "Invalid value" in result.output or "invalid choice" in result.output.lower()
+
+
+def test_json_output_bypasses_structure_formatting(runner, tmp_path):
+    """Test that --output-format json returns raw data without template path formatting."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test content")
+
+    from pflow.nodes.file.read_file import ReadFileNode
+
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
+
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}", "--output-format", "json"])
+
+        assert result.exit_code == 0
+        output = json.loads(result.output)
+
+        # JSON output should NOT contain structure mode formatting
+        output_str = json.dumps(output)
+        assert "${" not in output_str  # No template variable syntax
+        assert "Execution ID:" not in output_str  # No structure mode header
+        assert "Available template paths" not in output_str  # No structure mode text
+
+        # Should have raw dict structure, not formatted strings
+        assert isinstance(output["outputs"], dict)
+        assert isinstance(output["outputs"]["content"], str)
 
 
 def test_structure_mode_shows_flattened_paths(runner, mock_registry):
