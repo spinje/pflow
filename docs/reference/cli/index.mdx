@@ -76,9 +76,7 @@ pflow ~/workflows/analysis.json param=value
 | `--output-format text\|json` | Output format (default: text) |
 | `-p, --print` | Force non-interactive output |
 | `--no-trace` | Disable workflow trace saving |
-| `--trace-planner` | Save planner execution trace |
 | `--validate-only` | Validate workflow without executing |
-| `--auto-repair` | Enable automatic workflow repair on failure |
 | `--help` | Show help message |
 
 <Accordion title="Planner options (experimental)">
@@ -86,11 +84,17 @@ pflow ~/workflows/analysis.json param=value
 
   | Option | Description |
   |--------|-------------|
+  | `--trace-planner` | Save planner execution trace |
+  | `--auto-repair` | Enable automatic workflow repair on failure |
   | `--planner-timeout INT` | Timeout for planner in seconds (default: 60) |
   | `--save / --no-save` | Save generated workflow (default: save) |
   | `--cache-planner` | Enable cross-session LLM caching to reduce costs |
   | `--planner-model TEXT` | LLM model for planning (default: auto-detect) |
   | `--no-update` | Save repairs to separate file instead of updating original |
+
+  <Note>
+    This is not the recommended way to use pflow. It may be deprecated in favor of using pflow through AI agents via the CLI or MCP server.
+  </Note>
 </Accordion>
 
 ## Parameter syntax
@@ -241,7 +245,6 @@ Agents use this to check workflows before running them. Exit code 0 means valid.
 By default, pflow saves execution traces to `~/.pflow/debug/`:
 
 - **Workflow traces**: `workflow-trace-{name}-{timestamp}.json`
-- **Planner traces**: `planner-trace-{timestamp}.json` (with `--trace-planner`)
 
 Disable traces with `--no-trace` for faster execution.
 

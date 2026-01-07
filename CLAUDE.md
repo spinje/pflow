@@ -210,7 +210,7 @@ pflow/
 │   │   ├── executor_service.py  # Reusable workflow execution service (IR -> run)
 │   │   ├── null_output.py       # No-op OutputInterface implementation
 │   │   ├── output_interface.py  # Output interface/protocol for display backends
-│   │   ├── repair_service.py    # Validation-driven auto-repair flow
+│   │   ├── repair_service.py    # Validation-driven auto-repair flow (may be deprecated soon)
 │   │   ├── workflow_diff.py     # Compute diffs between original and repaired IR
 │   │   ├── workflow_execution.py # Orchestrates validate/repair/execute cycle
 │   │   └── formatters/      # Shared formatters for CLI/MCP parity (return, never print)
@@ -241,23 +241,7 @@ pflow/
 │   │   ├── mcp/             # MCP tool bridge node
 │   │   ├── shell/           # Shell command execution node
 │   │   └── test/            # Internal test/demo nodes
-│   ├── planning/            # Natural language planner system
-│   │   ├── context_blocks.py    # Reusable blocks for planner context strings
-│   │   ├── context_builder.py   # Builds planning context, two-phase discovery
-│   │   ├── flow.py              # Planner meta-workflow orchestration
-│   │   ├── nodes.py             # Planner node orchestration and selection logic
-│   │   ├── ir_models.py         # Pydantic models for planner IR/intermediate outputs
-│   │   ├── debug.py             # Planner debugging helpers and pretty output
-│   │   ├── error_handler.py     # Structured error handling for planner failures
-│   │   ├── utils/               # Helper modules for planner
-│   │   │   ├── anthropic_llm_model.py   # Install/patch Anthropic model for planner/tests
-│   │   │   ├── anthropic_structured_client.py # Client helpers for Anthropic
-│   │   │   ├── llm_helpers.py           # Common LLM call wrappers and schema helpers
-│   │   │   ├── prompt_cache_helper.py   # Prompt caching utilities
-│   │   │   ├── registry_helper.py       # Registry querying and normalization
-│   │   │   └── workflow_loader.py       # Load workflows for planner context
-│   │   └── prompts/         # Prompt definitions (markdown + loaders)
-│   │       └── archive/     # Archived/legacy prompt variants
+│   ├── planning/            # Natural language planner system (may be deprecated soon)
 │   ├── registry/            # Node registry and scanning
 │   │   ├── metadata_extractor.py # Docstring/interface metadata extraction
 │   │   ├── registry.py      # Central registry load/save/filter/search

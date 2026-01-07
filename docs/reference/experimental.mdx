@@ -4,7 +4,7 @@ description: "Features that are available but not yet stable"
 icon: "flask-conical"
 ---
 
-These features are available in pflow but considered experimental. They may change, have rough edges, or be replaced in future versions. Use them if they solve a problem for you, but be aware of the caveats.
+These features are available in pflow but considered experimental and/or may be deprecated in the future. They may change, have rough edges, or be replaced in future versions. Use them if they solve a problem for you, but be aware of the caveats.
 
 ## Built-in Git and GitHub nodes
 
@@ -64,8 +64,9 @@ pflow has a built-in natural language planner that lets you run commands like:
 ```bash
 pflow "fetch the latest issues from my repo and summarize them"
 ```
-
-This is **experimental**. Using an external agent (Claude Code, Cursor, etc.) is the recommended approach - it's more capable and provides a better experience.
+<Note>
+  This is **experimental**. Using an external agent (Claude Code, Cursor, etc.) is the recommended approach - it's more capable and provides a better experience. Using your own agents also has the benefit of using a payed subscription instead of paying for every LLM call using API pricing.
+</Note>
 
 ### When to use it
 
