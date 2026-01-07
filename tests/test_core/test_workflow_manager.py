@@ -82,7 +82,8 @@ class TestWorkflowManager:
             saved_data = json.load(f)
 
         # Test required metadata fields exist and have correct values
-        assert saved_data["name"] == name
+        # Note: name is NOT stored in file - it's derived from filename at load time
+        assert "name" not in saved_data  # Name derived from filename, not stored
         assert saved_data["description"] == description
         assert saved_data["ir"] == sample_ir
         assert saved_data["version"] == "1.0.0"
@@ -508,3 +509,42 @@ class TestWorkflowManager:
         # Verify that a valid workflow can still be saved successfully
         workflow_manager.save(name, ir)
         assert workflow_manager.exists(name)
+
+    def test_filename_is_source_of_truth_for_name(self, workflow_manager, sample_ir):
+        """Test that filename determines workflow name, not internal field.
+
+        This is a regression test for a bug where:
+        - File 'api-analysis.json' contained {"name": "slack-qa-analyzer", ...}
+        - list_all() returned "slack-qa-analyzer" (from internal field)
+        - exists("slack-qa-analyzer") returned False (file doesn't exist)
+        - Result: "Did you mean: slack-qa-analyzer" for a name that "doesn't exist"
+
+        The fix: derive name from filename, ignore any internal name field.
+        """
+        # Create a workflow file with a MISMATCHED internal name
+        # (simulates legacy file or manual edit)
+        file_path = workflow_manager.workflows_dir / "actual-filename.json"
+        legacy_data = {
+            "name": "wrong-internal-name",  # This should be IGNORED
+            "description": "Test workflow",
+            "ir": sample_ir,
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "updated_at": "2025-01-01T00:00:00+00:00",
+            "version": "1.0.0",
+        }
+        with open(file_path, "w") as f:
+            json.dump(legacy_data, f)
+
+        # list_all() should return filename-derived name, not internal name
+        workflows = workflow_manager.list_all()
+        names = [w["name"] for w in workflows]
+        assert "actual-filename" in names
+        assert "wrong-internal-name" not in names
+
+        # load() should return filename-derived name
+        loaded = workflow_manager.load("actual-filename")
+        assert loaded["name"] == "actual-filename"  # Derived from filename
+
+        # exists() should work with filename
+        assert workflow_manager.exists("actual-filename")
+        assert not workflow_manager.exists("wrong-internal-name")

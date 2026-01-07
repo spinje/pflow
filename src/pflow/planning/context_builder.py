@@ -212,16 +212,16 @@ def _validate_workflow_fields(workflow_data: dict[str, Any], filename: str) -> b
         True if all validations pass, False otherwise
     """
     # Validate required fields presence
-    required_fields = ["name", "description", "ir"]
+    # Note: name is NOT required in file - it's derived from filename at load time
+    required_fields = ["description", "ir"]
     missing_fields = [field for field in required_fields if field not in workflow_data]
 
     if missing_fields:
         logger.warning(f"Workflow file {filename} missing required fields: {missing_fields}")
         return False
 
-    # Validate field types
+    # Validate field types (name is not validated - it's derived from filename)
     validations = [
-        ("name", str, "string"),
         ("description", str, "string"),
         ("ir", dict, "dict"),
     ]
@@ -257,6 +257,9 @@ def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
         # Validate the workflow
         if not _validate_workflow_fields(workflow_data, json_file.name):
             return None
+
+        # Derive name from filename (single source of truth)
+        workflow_data["name"] = json_file.stem
 
         logger.debug(f"Loaded workflow '{workflow_data['name']}' from {json_file.name}")
         return workflow_data  # type: ignore[no-any-return]

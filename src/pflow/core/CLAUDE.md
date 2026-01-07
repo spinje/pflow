@@ -171,7 +171,6 @@ Centralizes all workflow operations and bridges the format gap between component
 **Storage Format**:
 ```json
 {
-  "name": "fix-issue",
   "description": "Fixes GitHub issues",
   "ir": { /* actual workflow IR */ },
   "created_at": "2025-01-29T10:00:00+00:00",
@@ -185,6 +184,9 @@ Centralizes all workflow operations and bridges the format gap between component
   }
 }
 ```
+
+**Note**: The workflow `name` is NOT stored in the file - it is derived from the filename at load time.
+This ensures the filename is the single source of truth and prevents name/filename mismatches.
 
 ### 5. workflow_validator.py - Unified Validation System (NEW)
 
