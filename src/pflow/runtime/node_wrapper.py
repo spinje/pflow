@@ -858,7 +858,12 @@ class TemplateAwareNodeWrapper:
                         }
                         # Continue execution in permissive mode
                     else:
-                        # Strict mode or unexpected error - re-raise
+                        # Strict mode - enrich with upstream stderr context before re-raising
+                        from pflow.runtime.error_context import get_upstream_shell_stderr
+
+                        upstream_context = get_upstream_shell_stderr(str(template), context)
+                        if upstream_context:
+                            raise ValueError(str(e) + upstream_context) from None
                         raise
 
             resolved_params[key] = resolved_value
@@ -889,6 +894,12 @@ class TemplateAwareNodeWrapper:
                         error_msg,
                         extra={"node_id": self.node_id, "param": key, "mode": "strict"},
                     )
+                    # Add upstream stderr context if available
+                    from pflow.runtime.error_context import get_upstream_shell_stderr
+
+                    upstream_context = get_upstream_shell_stderr(str(template), context)
+                    if upstream_context:
+                        error_msg += upstream_context
                     # Make template errors fatal to trigger repair
                     raise ValueError(error_msg)
                 else:
