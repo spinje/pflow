@@ -108,6 +108,7 @@ class ShellNode(Node):
     - Params: env: dict  # Additional environment variables (optional)
     - Params: timeout: int  # Max execution time in seconds (optional, default 30)
     - Params: ignore_errors: bool  # Continue on non-zero exit (optional, default false)
+    - Params: strip_newline: bool  # Strip trailing newlines from stdout (optional, default true)
     - Actions: default (exit code 0 or ignore_errors=true or auto-handled), error (non-zero exit or timeout)
 
     IMPORTANT: The shell node returns "error" action on command failure. If your workflow
@@ -347,6 +348,26 @@ class ShellNode(Node):
             error_msg += f": {stderr_preview}"
         return error_msg
 
+    def _store_output(self, shared: dict, key: str, value: Any, is_binary: bool, strip_newline: bool = False) -> None:
+        """Store stdout/stderr in shared store with appropriate encoding.
+
+        Args:
+            shared: The shared store to write to
+            key: Key name ("stdout" or "stderr")
+            value: The output value (str or bytes)
+            is_binary: Whether the output is binary
+            strip_newline: Whether to strip trailing newlines (text only)
+        """
+        if is_binary:
+            encoded = base64.b64encode(value).decode("ascii")
+            shared[key] = encoded
+            shared[f"{key}_is_binary"] = True
+        else:
+            if strip_newline:
+                value = value.rstrip("\n")
+            shared[key] = value
+            shared[f"{key}_is_binary"] = False
+
     def __init__(self) -> None:
         """Initialize the shell node with retry support."""
         # Shell commands can be flaky, so allow retries
@@ -399,6 +420,7 @@ class ShellNode(Node):
         env = self.params.get("env", {})
         timeout = self.params.get("timeout", self.DEFAULT_TIMEOUT)
         ignore_errors = self.params.get("ignore_errors", False)
+        strip_newline = self.params.get("strip_newline", True)
 
         # Validate and normalize working directory if provided
         if cwd:
@@ -432,6 +454,7 @@ class ShellNode(Node):
             "env": env,
             "timeout": timeout,
             "ignore_errors": ignore_errors,
+            "strip_newline": strip_newline,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -538,25 +561,22 @@ class ShellNode(Node):
         Returns:
             Action string for flow control
         """
-        # Handle stdout encoding
-        if exec_res.get("stdout_is_binary", False):
-            # Encode binary stdout as base64
-            encoded = base64.b64encode(exec_res["stdout"]).decode("ascii")
-            shared["stdout"] = encoded
-            shared["stdout_is_binary"] = True
-        else:
-            shared["stdout"] = exec_res["stdout"]
-            shared["stdout_is_binary"] = False
+        # Handle stdout encoding (strip trailing newlines for text output)
+        self._store_output(
+            shared,
+            "stdout",
+            exec_res["stdout"],
+            exec_res.get("stdout_is_binary", False),
+            strip_newline=prep_res.get("strip_newline", True),
+        )
 
-        # Handle stderr encoding
-        if exec_res.get("stderr_is_binary", False):
-            # Encode binary stderr as base64
-            encoded = base64.b64encode(exec_res["stderr"]).decode("ascii")
-            shared["stderr"] = encoded
-            shared["stderr_is_binary"] = True
-        else:
-            shared["stderr"] = exec_res["stderr"]
-            shared["stderr_is_binary"] = False
+        # Handle stderr encoding (never strip newlines)
+        self._store_output(
+            shared,
+            "stderr",
+            exec_res["stderr"],
+            exec_res.get("stderr_is_binary", False),
+        )
 
         # Store exit code
         shared["exit_code"] = exec_res["exit_code"]

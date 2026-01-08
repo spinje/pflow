@@ -61,7 +61,7 @@ class TestBinaryStdoutDetection:
             # Text decoded correctly
             assert action == "default"
             assert shared["stdout_is_binary"] is False
-            assert shared["stdout"] == "hello world\n", "Text stdout corrupted"
+            assert shared["stdout"] == "hello world", "Text stdout corrupted"
 
     def test_empty_binary_handled(self):
         """
@@ -170,7 +170,7 @@ class TestMixedBinaryTextOutput:
             # Independent handling
             assert shared["stdout_is_binary"] is False
             assert shared["stderr_is_binary"] is True
-            assert shared["stdout"] == "Success\n"
+            assert shared["stdout"] == "Success"
 
 
 class TestSafePatternsWithBinary:
@@ -336,7 +336,7 @@ class TestBackwardCompatibility:
 
             # JSON decoded as text
             assert shared["stdout_is_binary"] is False
-            assert shared["stdout"] == '{"result": "success"}\n'
+            assert shared["stdout"] == '{"result": "success"}'
 
     def test_multiline_text_unchanged(self):
         """
