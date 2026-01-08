@@ -472,6 +472,11 @@ Shared Store → Auto-detection → Format (text/json) → Display
 - `CompilationError`: Workflow compilation issues
 - Generic exceptions: Fallback handling
 
+**Shell Error Details** (verbose mode):
+- `_display_shell_error_details()` - Shows command, stdout, and stderr
+- Displayed when `--verbose` flag is used and error has `shell_command`
+- Truncates long output (command: 200 chars, stdout/stderr: 300 chars)
+
 **Output Streams**:
 - Progress/warnings → stderr (`err=True`)
 - Results → stdout (for piping)

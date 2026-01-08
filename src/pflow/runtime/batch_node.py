@@ -262,16 +262,18 @@ class PflowBatchNode(Node):
                     )
 
         if items is None:
-            raise ValueError(
+            base_error = (
                 f"Batch items template '{self.items_template}' resolved to None. "
                 f"Ensure the referenced node output exists."
             )
+            raise ValueError(self._enrich_with_upstream_stderr(base_error, shared))
 
         if not isinstance(items, list):
-            raise TypeError(
+            base_error = (
                 f"Batch items must be an array, got {type(items).__name__}. "
                 f"Template '{self.items_template}' resolved to: {items!r}"
             )
+            raise TypeError(self._enrich_with_upstream_stderr(base_error, shared))
 
         logger.debug(
             f"Batch node '{self.node_id}' processing {len(items)} items",
@@ -299,6 +301,25 @@ class PflowBatchNode(Node):
         if error:
             return str(error)
         return None
+
+    def _enrich_with_upstream_stderr(self, base_error: str, shared: dict[str, Any]) -> str:
+        """Add upstream shell stderr context to error message if available.
+
+        Args:
+            base_error: The base error message
+            shared: The shared store containing node outputs
+
+        Returns:
+            Error message enriched with upstream stderr context, or original if none found
+        """
+        if isinstance(self.items_template, str):
+            # Lazy import to keep error path lightweight - only loaded when errors occur
+            from pflow.runtime.error_context import get_upstream_stderr
+
+            upstream_context = get_upstream_stderr(self.items_template, shared)
+            if upstream_context:
+                return base_error + upstream_context
+        return base_error
 
     def _capture_item_llm_usage(self, item_shared: dict[str, Any], idx: int) -> None:
         """Capture llm_usage from item context and append to shared __llm_calls__.

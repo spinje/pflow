@@ -1531,14 +1531,26 @@ def _display_single_error(
 
     # Show shell command details in verbose mode
     if verbose and "shell_command" in error:
-        click.echo("\n  Shell details:", err=True)
-        cmd = error.get("shell_command", "")
-        # Truncate very long commands
-        cmd_display = cmd[:200] + "..." if len(cmd) > 200 else cmd
-        click.echo(f"    Command: {cmd_display}", err=True)
-        if stdout := error.get("shell_stdout"):
-            stdout_preview = stdout[:300] + "..." if len(stdout) > 300 else stdout
-            click.echo(f"    Stdout: {stdout_preview}", err=True)
+        _display_shell_error_details(error)
+
+
+def _display_shell_error_details(error: dict[str, Any]) -> None:
+    """Display shell command details for a failed shell node.
+
+    Args:
+        error: Error dict containing shell_command, shell_stdout, shell_stderr
+    """
+    click.echo("\n  Shell details:", err=True)
+    cmd = error.get("shell_command", "")
+    # Truncate very long commands
+    cmd_display = cmd[:200] + "..." if len(cmd) > 200 else cmd
+    click.echo(f"    Command: {cmd_display}", err=True)
+    if stdout := error.get("shell_stdout"):
+        stdout_preview = stdout[:300] + "..." if len(stdout) > 300 else stdout
+        click.echo(f"    Stdout: {stdout_preview}", err=True)
+    if stderr := error.get("shell_stderr"):
+        stderr_preview = stderr[:300] + "..." if len(stderr) > 300 else stderr
+        click.echo(f"    Stderr: {stderr_preview}", err=True)
 
 
 def _display_text_error_details(

@@ -38,6 +38,7 @@ src/pflow/runtime/
 ├── __init__.py                  # Module exports (3 public functions)
 ├── batch_node.py               # Batch processing wrapper (sequential/parallel)
 ├── compiler.py                  # Main IR→Flow compiler (1042 lines)
+├── error_context.py            # Upstream error context extraction utilities
 ├── instrumented_wrapper.py      # Metrics, tracing, caching (1168 lines)
 ├── node_wrapper.py             # Template resolution wrapper (680 lines)
 ├── namespaced_wrapper.py       # Collision prevention wrapper (95 lines)
@@ -244,6 +245,41 @@ Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
 
 **Key Function**:
 - `populate_declared_outputs()` - Map namespaced outputs to root level
+
+### 8. Error Context (`error_context.py`)
+
+**Purpose**: Extract diagnostic context from upstream nodes when errors occur.
+
+When a downstream node fails due to unexpected upstream output, this module helps surface the root cause by extracting stderr from shell nodes referenced in template variables.
+
+**Key Functions**:
+- `extract_node_ids_from_template(template)` - Parse `${node.field}` to get node IDs
+- `get_upstream_stderr(template, shared)` - Get formatted stderr from referenced nodes (works for any node type with stderr)
+
+**Usage Pattern**:
+```python
+from pflow.runtime.error_context import get_upstream_stderr
+
+# In error handling code
+base_error = "Template resolved to empty string"
+upstream_context = get_upstream_stderr("${shell-node.stdout}", shared)
+if upstream_context:
+    base_error += upstream_context
+raise ValueError(base_error)
+```
+
+**Output Example**:
+```
+Batch items must be an array, got str. Template '${extract.stdout}' resolved to: ''
+
+  ⚠️  Upstream node 'extract' stderr:
+     grep: invalid option -- P
+     usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] ...
+```
+
+**Integration Points**:
+- `batch_node.py` - Enriches batch item resolution errors
+- `node_wrapper.py` - Enriches unresolved template errors
 
 ## Critical Integration Points
 
