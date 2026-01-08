@@ -3,6 +3,9 @@
 This module provides utilities for extracting diagnostic context from upstream
 nodes when a downstream node fails. The primary use case is showing stderr
 from shell nodes when a batch or template resolution error occurs.
+
+Note: While primarily designed for shell nodes, these utilities work for any
+node type that writes stderr to the shared store.
 """
 
 import re
@@ -39,16 +42,17 @@ def extract_node_ids_from_template(template: str) -> set[str]:
     return node_ids
 
 
-def get_upstream_shell_stderr(
+def get_upstream_stderr(
     template: str,
     shared: dict[str, Any],
     max_stderr_len: int = 500,
 ) -> str | None:
-    """Get stderr context from shell nodes referenced in a template.
+    """Get stderr context from upstream nodes referenced in a template.
 
     When a downstream node fails because of unexpected upstream output,
-    this function extracts stderr from the referenced shell nodes to help
-    diagnose the root cause.
+    this function extracts stderr from referenced nodes to help diagnose
+    the root cause. Works for any node type that writes stderr to shared store
+    (primarily shell nodes, but also any future node types with stderr output).
 
     Args:
         template: Template string with ${node.field} references

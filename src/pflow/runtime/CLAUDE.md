@@ -254,15 +254,15 @@ When a downstream node fails due to unexpected upstream output, this module help
 
 **Key Functions**:
 - `extract_node_ids_from_template(template)` - Parse `${node.field}` to get node IDs
-- `get_upstream_shell_stderr(template, shared)` - Get formatted stderr from referenced shell nodes
+- `get_upstream_stderr(template, shared)` - Get formatted stderr from referenced nodes (works for any node type with stderr)
 
 **Usage Pattern**:
 ```python
-from pflow.runtime.error_context import get_upstream_shell_stderr
+from pflow.runtime.error_context import get_upstream_stderr
 
 # In error handling code
 base_error = "Template resolved to empty string"
-upstream_context = get_upstream_shell_stderr("${shell-node.stdout}", shared)
+upstream_context = get_upstream_stderr("${shell-node.stdout}", shared)
 if upstream_context:
     base_error += upstream_context
 raise ValueError(base_error)

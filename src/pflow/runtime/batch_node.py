@@ -313,9 +313,10 @@ class PflowBatchNode(Node):
             Error message enriched with upstream stderr context, or original if none found
         """
         if isinstance(self.items_template, str):
-            from pflow.runtime.error_context import get_upstream_shell_stderr
+            # Lazy import to keep error path lightweight - only loaded when errors occur
+            from pflow.runtime.error_context import get_upstream_stderr
 
-            upstream_context = get_upstream_shell_stderr(self.items_template, shared)
+            upstream_context = get_upstream_stderr(self.items_template, shared)
             if upstream_context:
                 return base_error + upstream_context
         return base_error

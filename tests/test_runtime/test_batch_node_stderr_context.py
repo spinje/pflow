@@ -12,7 +12,7 @@ import pytest
 from pflow.runtime.batch_node import PflowBatchNode
 from pflow.runtime.error_context import (
     extract_node_ids_from_template,
-    get_upstream_shell_stderr,
+    get_upstream_stderr,
 )
 
 
@@ -45,8 +45,8 @@ class TestExtractNodeIds:
         assert result == set()
 
 
-class TestGetUpstreamShellStderr:
-    """Test get_upstream_shell_stderr utility."""
+class TestGetUpstreamStderr:
+    """Test get_upstream_stderr utility."""
 
     def test_returns_stderr_from_referenced_node(self):
         """Returns stderr when referenced shell node has non-empty stderr."""
@@ -59,7 +59,7 @@ class TestGetUpstreamShellStderr:
         }
         template = "${shell-node.stdout}"
 
-        result = get_upstream_shell_stderr(template, shared)
+        result = get_upstream_stderr(template, shared)
 
         assert result is not None
         assert "shell-node" in result
@@ -76,7 +76,7 @@ class TestGetUpstreamShellStderr:
         }
         template = "${shell-node.stdout}"
 
-        result = get_upstream_shell_stderr(template, shared)
+        result = get_upstream_stderr(template, shared)
 
         assert result is None
 
@@ -85,7 +85,7 @@ class TestGetUpstreamShellStderr:
         shared = {}
         template = "${missing-node.stdout}"
 
-        result = get_upstream_shell_stderr(template, shared)
+        result = get_upstream_stderr(template, shared)
 
         assert result is None
 
@@ -104,7 +104,7 @@ class TestGetUpstreamShellStderr:
         # Template only references node-b
         template = "${node-b.stdout}"
 
-        result = get_upstream_shell_stderr(template, shared)
+        result = get_upstream_stderr(template, shared)
 
         assert result is not None
         assert "node-b" in result
@@ -123,7 +123,7 @@ class TestGetUpstreamShellStderr:
         }
         template = "${shell-node.stdout}"
 
-        result = get_upstream_shell_stderr(template, shared, max_stderr_len=500)
+        result = get_upstream_stderr(template, shared, max_stderr_len=500)
 
         assert result is not None
         assert "..." in result
