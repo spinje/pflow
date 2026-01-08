@@ -1179,7 +1179,7 @@ llm keys set anthropic --key "sk-ant-..."
 **Parsing Rules**:
 - ✅ **Auto-parsed**: Simple templates like `${node.output}` when target expects dict/list
 - ❌ **NOT parsed**: Complex templates like `"text ${var}"` always stay as strings (escape hatch)
-- ✅ **Handles newlines**: Shell output with trailing `\n` is automatically stripped (disable with `strip_newline: false`)
+- ✅ **Handles newlines**: Shell **stdout** with trailing `\n` is automatically stripped (disable with `strip_newline: false`). stderr is never modified.
 - ✅ **Type-safe**: Only uses parsed result if type matches (array→list, object→dict)
 - ✅ **Graceful fallback**: Invalid JSON stays as string (Pydantic validation catches it)
 

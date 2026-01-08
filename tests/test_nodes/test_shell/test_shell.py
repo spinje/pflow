@@ -733,3 +733,14 @@ class TestStripNewline:
 
         # All trailing newlines stripped
         assert shared["stdout"] == "data"
+
+    def test_empty_stdout_unchanged(self):
+        """Empty stdout remains empty after stripping.
+
+        Common scenario: commands with conditional output or no matches.
+        """
+        shared = {}
+        run_shell_node(shared, command="printf ''")  # Empty output
+
+        assert shared["stdout"] == ""
+        assert shared["stdout_is_binary"] is False

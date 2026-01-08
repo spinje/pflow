@@ -108,7 +108,7 @@ class ShellNode(Node):
     - Params: env: dict  # Additional environment variables (optional)
     - Params: timeout: int  # Max execution time in seconds (optional, default 30)
     - Params: ignore_errors: bool  # Continue on non-zero exit (optional, default false)
-    - Params: strip_newline: bool  # Strip trailing newlines from stdout (optional, default true)
+    - Params: strip_newline: bool  # Strip trailing newlines from stdout only (optional, default true). stderr is never stripped.
     - Actions: default (exit code 0 or ignore_errors=true or auto-handled), error (non-zero exit or timeout)
 
     IMPORTANT: The shell node returns "error" action on command failure. If your workflow
@@ -348,24 +348,28 @@ class ShellNode(Node):
             error_msg += f": {stderr_preview}"
         return error_msg
 
-    def _store_output(self, shared: dict, key: str, value: Any, is_binary: bool, strip_newline: bool = False) -> None:
+    def _store_output(self, shared: dict, key: str, value: str | bytes, is_binary: bool, strip_newline: bool) -> None:
         """Store stdout/stderr in shared store with appropriate encoding.
 
         Args:
             shared: The shared store to write to
             key: Key name ("stdout" or "stderr")
-            value: The output value (str or bytes)
+            value: The output value (str for text, bytes for binary)
             is_binary: Whether the output is binary
-            strip_newline: Whether to strip trailing newlines (text only)
+            strip_newline: Whether to strip trailing newlines (stdout text only, ignored for binary)
         """
         if is_binary:
-            encoded = base64.b64encode(value).decode("ascii")
+            # Binary data: encode as base64 (value is bytes when is_binary=True)
+            binary_value = value if isinstance(value, bytes) else value.encode("utf-8")
+            encoded = base64.b64encode(binary_value).decode("ascii")
             shared[key] = encoded
             shared[f"{key}_is_binary"] = True
         else:
+            # Text data: optionally strip trailing newlines (value is str when is_binary=False)
+            text_value = value if isinstance(value, str) else value.decode("utf-8")
             if strip_newline:
-                value = value.rstrip("\n")
-            shared[key] = value
+                text_value = text_value.rstrip("\n")
+            shared[key] = text_value
             shared[f"{key}_is_binary"] = False
 
     def __init__(self) -> None:
@@ -576,6 +580,7 @@ class ShellNode(Node):
             "stderr",
             exec_res["stderr"],
             exec_res.get("stderr_is_binary", False),
+            strip_newline=False,
         )
 
         # Store exit code
