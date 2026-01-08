@@ -173,11 +173,17 @@ def prepare_inputs(
                     )
                     defaults[input_name] = default_value
                 else:
-                    # Optional with no default key means it can be omitted entirely
+                    # Optional inputs without explicit default resolve to None.
+                    # Rationale: "required: false" means "can be omitted", and omitted
+                    # values should still be available in context (as None) so templates
+                    # like ${optional_param} can resolve rather than fail validation.
+                    # Note: Nested access like ${optional_param.field} will still fail
+                    # at runtime since you can't traverse into None - this is intentional.
                     logger.debug(
-                        f"Optional input '{input_name}' not provided and has no default",
+                        f"Optional input '{input_name}' not provided, using None as default",
                         extra={"phase": "input_validation", "input": input_name},
                     )
+                    defaults[input_name] = None
         else:
             # Input is provided
             logger.debug(f"Input '{input_name}' provided", extra={"phase": "input_validation", "input": input_name})

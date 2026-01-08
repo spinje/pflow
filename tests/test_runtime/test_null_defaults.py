@@ -279,18 +279,172 @@ class TestNullDefaults:
             "inputs": {
                 "input1": {"required": False, "default": None},
                 "input2": {"required": False, "default": ""},
-                "input3": {"required": False},  # No default at all
+                "input3": {"required": False},  # No default at all - should resolve to None
             },
         }
 
         registry = Registry()
 
-        # Note: input3 without default and not provided will fail validation
-        # So we need to provide it
-        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={"input3": "value3"})
+        # Optional inputs without explicit defaults should resolve to None
+        # This allows templates like ${input3} to work without requiring a value
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={})
 
         node = flow.start_node
         assert hasattr(node, "initial_params")
-        assert node.initial_params["input1"] is None  # null default
+        assert node.initial_params["input1"] is None  # explicit null default
         assert node.initial_params["input2"] == ""  # empty string default
-        assert node.initial_params["input3"] == "value3"  # provided value
+        assert node.initial_params["input3"] is None  # implicit None (no default specified)
+
+    def test_optional_input_without_default_resolves_to_none(self):
+        """Test that optional inputs without defaults resolve to None in templates.
+
+        This is a regression test for the bug where optional inputs without defaults
+        failed template resolution with "Unresolved variables" error.
+
+        Bug report: Optional inputs declared with required=false but no default value
+        should resolve to None when not provided, not fail validation.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_param}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_param": {
+                    "type": "string",
+                    "required": False,
+                    # No default specified - should resolve to None
+                    "description": "Optional parameter with no default",
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Should compile successfully - optional input without default resolves to None
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={})
+
+        node = flow.start_node
+        assert hasattr(node, "initial_params")
+        assert node.initial_params["optional_param"] is None
+
+    def test_optional_input_without_default_can_be_overridden(self):
+        """Test that optional inputs without defaults can still be provided."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_param}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_param": {
+                    "type": "string",
+                    "required": False,
+                    # No default specified
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Provide a value for the optional input
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={"optional_param": "user_provided"})
+
+        node = flow.start_node
+        assert hasattr(node, "initial_params")
+        assert node.initial_params["optional_param"] == "user_provided"
+
+    def test_nested_path_on_none_optional_input_fails_gracefully(self):
+        """Test that nested path access on None-valued optional input fails with clear error.
+
+        When an optional input without default resolves to None, attempting to access
+        nested paths like ${optional_param.field} should fail with an informative error,
+        not silently pass or crash.
+
+        This is the expected behavior: you can't access .field on None.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_config.api_key}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_config": {
+                    "type": "object",
+                    "required": False,
+                    # No default - will resolve to None
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Compilation should succeed - the input is optional
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={})
+
+        # But execution should fail because we can't access .api_key on None
+        # This is correct behavior - nested path on None is an error
+        with pytest.raises(ValueError, match="optional_config"):
+            flow.run({})
+
+    def test_nested_path_on_provided_optional_input_succeeds(self):
+        """Test that nested path access works when optional input is provided."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_config.api_key}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_config": {
+                    "type": "object",
+                    "required": False,
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Provide the optional input with nested structure
+        flow = compile_ir_to_flow(
+            workflow_ir,
+            registry,
+            initial_params={"optional_config": {"api_key": "secret123"}},
+        )
+
+        # Execution should succeed
+        shared = {}
+        flow.run(shared)
+
+        # Verify the nested value was resolved
+        assert shared.get("test", {}).get("stdout", "").strip() == "secret123"

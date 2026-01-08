@@ -1,0 +1,24 @@
+{
+  "_test": "Optional input with default - currently WORKS (baseline)",
+  "_run": "pflow 02-optional-with-default.json",
+  "_expected": "Should succeed with 'World' output",
+  "inputs": {
+    "optional_name": {
+      "type": "string",
+      "required": false,
+      "default": "World",
+      "description": "Optional name with default"
+    }
+  },
+  "nodes": [
+    {
+      "id": "greet",
+      "type": "shell",
+      "params": {
+        "stdin": "${optional_name}",
+        "command": "echo \"Got: $(cat)\""
+      }
+    }
+  ],
+  "edges": []
+}

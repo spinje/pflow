@@ -1,0 +1,29 @@
+{
+  "_test": "Mixed resolvable and unresolvable templates - shows misleading error",
+  "_run": "pflow 03-mixed-templates.json provided=hello",
+  "_expected": "Should succeed OR error should only mention ${missing}, not ${provided}",
+  "inputs": {
+    "provided": {
+      "type": "string",
+      "required": true
+    },
+    "missing": {
+      "type": "string",
+      "required": false
+    }
+  },
+  "nodes": [
+    {
+      "id": "test",
+      "type": "shell",
+      "params": {
+        "stdin": {
+          "has_value": "${provided}",
+          "no_value": "${missing}"
+        },
+        "command": "jq ."
+      }
+    }
+  ],
+  "edges": []
+}

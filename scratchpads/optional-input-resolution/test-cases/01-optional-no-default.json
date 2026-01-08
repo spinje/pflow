@@ -1,0 +1,23 @@
+{
+  "_test": "Optional input without default - currently FAILS, should PASS",
+  "_run": "pflow 01-optional-no-default.json",
+  "_expected": "Should succeed with empty/null output",
+  "inputs": {
+    "optional_name": {
+      "type": "string",
+      "required": false,
+      "description": "Optional name with no default"
+    }
+  },
+  "nodes": [
+    {
+      "id": "greet",
+      "type": "shell",
+      "params": {
+        "stdin": "${optional_name}",
+        "command": "echo \"Got: $(cat)\""
+      }
+    }
+  ],
+  "edges": []
+}
