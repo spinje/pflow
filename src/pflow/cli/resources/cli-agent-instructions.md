@@ -880,7 +880,7 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 
 **What gets parsed:**
 - All JSON types: objects `{}`, arrays `[]`, numbers, booleans, strings, null
-- Shell output with trailing `\n` is automatically stripped
+- Shell **stdout** with trailing `\n` is automatically stripped (disable with `strip_newline: false`). stderr is never modified.
 - Plain text and invalid JSON gracefully stay as strings
 
 **Concrete examples** (inline object context):

@@ -1,0 +1,28 @@
+{
+  "inputs": {},
+  "nodes": [
+    {
+      "id": "generate-json",
+      "type": "shell",
+      "purpose": "Output JSON (will have trailing newline after the closing brace)",
+      "params": {
+        "command": "echo '{\"name\": \"testfile\"}'"
+      }
+    },
+    {
+      "id": "save-file",
+      "type": "write-file",
+      "purpose": "Use JSON path traversal - this WORKS correctly",
+      "params": {
+        "file_path": "./${generate-json.stdout.name}.txt",
+        "content": "This file was created correctly because we used .stdout.name"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-json",
+      "to": "save-file"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "inputs": {},
+  "nodes": [
+    {
+      "id": "generate-name",
+      "type": "shell",
+      "purpose": "Output simple string with trailing newline",
+      "params": {
+        "command": "echo 'myfile'"
+      }
+    },
+    {
+      "id": "show-escaped",
+      "type": "shell",
+      "purpose": "Show that inline object escapes newline to literal backslash-n",
+      "params": {
+        "stdin": {
+          "name": "${generate-name.stdout}"
+        },
+        "command": "cat | xxd | head -2"
+      }
+    },
+    {
+      "id": "extract-and-show",
+      "type": "shell",
+      "purpose": "Show that jq converts escaped \\n back to real newline",
+      "params": {
+        "stdin": {
+          "name": "${generate-name.stdout}"
+        },
+        "command": "jq -r '.name' | xxd"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-name",
+      "to": "show-escaped"
+    },
+    {
+      "from": "show-escaped",
+      "to": "extract-and-show"
+    }
+  ]
+}

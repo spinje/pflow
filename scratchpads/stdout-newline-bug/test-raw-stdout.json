@@ -1,0 +1,27 @@
+{
+  "inputs": {},
+  "nodes": [
+    {
+      "id": "generate-name",
+      "type": "shell",
+      "purpose": "Output a simple string (will have trailing newline)",
+      "params": {
+        "command": "echo 'myfile'"
+      }
+    },
+    {
+      "id": "show-hex",
+      "type": "shell",
+      "purpose": "Display hex dump of stdout to reveal newline",
+      "params": {
+        "command": "printf '%s' '${generate-name.stdout}' | xxd"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-name",
+      "to": "show-hex"
+    }
+  ]
+}

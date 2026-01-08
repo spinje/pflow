@@ -1,0 +1,28 @@
+{
+  "inputs": {},
+  "nodes": [
+    {
+      "id": "generate-filename",
+      "type": "shell",
+      "purpose": "Simple echo - outputs 'bugdemo\\n'",
+      "params": {
+        "command": "echo 'bugdemo'"
+      }
+    },
+    {
+      "id": "save-file",
+      "type": "write-file",
+      "purpose": "Creates file with corrupted name 'bugdemo\\n.txt'",
+      "params": {
+        "file_path": "./${generate-filename.stdout}.txt",
+        "content": "This file exists but you cannot access it normally!\n\nTry: cat bugdemo.txt\nResult: No such file or directory\n\nThe actual filename has a newline character embedded in it."
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-filename",
+      "to": "save-file"
+    }
+  ]
+}

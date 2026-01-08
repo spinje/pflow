@@ -677,3 +677,70 @@ class TestShellNodeRetryBehavior:
         # Check that max_retries is set to 1 (as per __init__)
         assert node.max_retries == 1
         assert node.wait == 0
+
+
+class TestStripNewline:
+    """Test strip_newline parameter behavior.
+
+    Shell commands typically add trailing newlines (echo, date, hostname).
+    By default, these are stripped to match bash $() convention.
+    Users can opt-out with strip_newline=false.
+    """
+
+    def test_default_strips_trailing_newline(self):
+        """Default behavior: echo output has no trailing newline.
+
+        This is the core fix - using ${shell.stdout} in file paths
+        should not create filenames with embedded newlines.
+        """
+        shared = {}
+        run_shell_node(shared, command="echo hello")
+
+        # No trailing newline - can safely use in file paths
+        assert shared["stdout"] == "hello"
+        assert not shared["stdout"].endswith("\n")
+
+    def test_opt_out_preserves_trailing_newline(self):
+        """With strip_newline=false, trailing newline is preserved.
+
+        Edge case for users who need exact raw output.
+        """
+        shared = {}
+        run_shell_node(shared, command="echo hello", strip_newline=False)
+
+        # Trailing newline preserved
+        assert shared["stdout"] == "hello\n"
+
+    def test_multiline_preserves_internal_newlines(self):
+        """Internal newlines are preserved, only trailing stripped.
+
+        Critical: multi-line output must not lose internal structure.
+        """
+        shared = {}
+        run_shell_node(shared, command="printf 'line1\\nline2\\n'")
+
+        # Internal newline preserved, trailing stripped
+        assert shared["stdout"] == "line1\nline2"
+        assert shared["stdout"].count("\n") == 1
+
+    def test_multiple_trailing_newlines_all_stripped(self):
+        """Multiple trailing newlines are all stripped (matches bash).
+
+        bash: x=$(printf 'data\\n\\n\\n') results in x='data'
+        """
+        shared = {}
+        run_shell_node(shared, command="printf 'data\\n\\n\\n'")
+
+        # All trailing newlines stripped
+        assert shared["stdout"] == "data"
+
+    def test_empty_stdout_unchanged(self):
+        """Empty stdout remains empty after stripping.
+
+        Common scenario: commands with conditional output or no matches.
+        """
+        shared = {}
+        run_shell_node(shared, command="printf ''")  # Empty output
+
+        assert shared["stdout"] == ""
+        assert shared["stdout_is_binary"] is False

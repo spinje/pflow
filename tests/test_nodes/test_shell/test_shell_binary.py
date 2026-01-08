@@ -61,7 +61,7 @@ class TestBinaryStdoutDetection:
             # Text decoded correctly
             assert action == "default"
             assert shared["stdout_is_binary"] is False
-            assert shared["stdout"] == "hello world\n", "Text stdout corrupted"
+            assert shared["stdout"] == "hello world", "Text stdout corrupted"
 
     def test_empty_binary_handled(self):
         """
@@ -170,7 +170,7 @@ class TestMixedBinaryTextOutput:
             # Independent handling
             assert shared["stdout_is_binary"] is False
             assert shared["stderr_is_binary"] is True
-            assert shared["stdout"] == "Success\n"
+            assert shared["stdout"] == "Success"
 
 
 class TestSafePatternsWithBinary:
@@ -336,7 +336,7 @@ class TestBackwardCompatibility:
 
             # JSON decoded as text
             assert shared["stdout_is_binary"] is False
-            assert shared["stdout"] == '{"result": "success"}\n'
+            assert shared["stdout"] == '{"result": "success"}'
 
     def test_multiline_text_unchanged(self):
         """
@@ -391,3 +391,35 @@ class TestPartialUTF8Sequences:
             assert shared["stdout_is_binary"] is True
             expected_b64 = base64.b64encode(b"\xc3\x28").decode("ascii")
             assert shared["stdout"] == expected_b64
+
+
+class TestStripNewlineWithBinary:
+    """Test that strip_newline has no effect on binary data."""
+
+    def test_strip_newline_ignored_for_binary_stdout(self):
+        """Binary data is never modified by strip_newline parameter.
+
+        This guards against future refactoring accidentally applying
+        string operations to binary data.
+        """
+        node = ShellNode()
+        # Explicit strip_newline=True, should have no effect on binary
+        node.set_params({"command": "cat binary.bin", "strip_newline": True})
+
+        with patch("subprocess.run") as mock_run:
+            # Binary data ending with 0x0a (newline byte)
+            binary_with_newline = b"\x89PNG\r\n\x1a\n"  # PNG-like header ending with newline
+            mock_result = Mock()
+            mock_result.stdout = binary_with_newline
+            mock_result.stderr = b""
+            mock_result.returncode = 0
+            mock_run.return_value = mock_result
+
+            shared = {}
+            node.run(shared)
+
+            # Binary data unchanged - newline byte preserved
+            assert shared["stdout_is_binary"] is True
+            decoded = base64.b64decode(shared["stdout"])
+            assert decoded == binary_with_newline, "Binary data was modified by strip_newline"
+            assert decoded.endswith(b"\n"), "Binary newline byte was stripped"
