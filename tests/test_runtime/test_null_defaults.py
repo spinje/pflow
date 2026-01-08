@@ -368,3 +368,83 @@ class TestNullDefaults:
         node = flow.start_node
         assert hasattr(node, "initial_params")
         assert node.initial_params["optional_param"] == "user_provided"
+
+    def test_nested_path_on_none_optional_input_fails_gracefully(self):
+        """Test that nested path access on None-valued optional input fails with clear error.
+
+        When an optional input without default resolves to None, attempting to access
+        nested paths like ${optional_param.field} should fail with an informative error,
+        not silently pass or crash.
+
+        This is the expected behavior: you can't access .field on None.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_config.api_key}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_config": {
+                    "type": "object",
+                    "required": False,
+                    # No default - will resolve to None
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Compilation should succeed - the input is optional
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={})
+
+        # But execution should fail because we can't access .api_key on None
+        # This is correct behavior - nested path on None is an error
+        with pytest.raises(ValueError, match="optional_config"):
+            flow.run({})
+
+    def test_nested_path_on_provided_optional_input_succeeds(self):
+        """Test that nested path access works when optional input is provided."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_config.api_key}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_config": {
+                    "type": "object",
+                    "required": False,
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Provide the optional input with nested structure
+        flow = compile_ir_to_flow(
+            workflow_ir,
+            registry,
+            initial_params={"optional_config": {"api_key": "secret123"}},
+        )
+
+        # Execution should succeed
+        shared = {}
+        flow.run(shared)
+
+        # Verify the nested value was resolved
+        assert shared.get("test", {}).get("stdout", "").strip() == "secret123"

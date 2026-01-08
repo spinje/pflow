@@ -1,0 +1,56 @@
+{
+  "_test": "Real-world example: optional output path",
+  "_run": "pflow 04-real-world-example.json url=https://example.com",
+  "_expected": "Should work - use auto-generated filename when output_path not provided",
+  "_notes": "This pattern is common: allow user to override output location, but have sensible default",
+  "inputs": {
+    "url": {
+      "type": "string",
+      "required": true,
+      "description": "URL to fetch"
+    },
+    "output_path": {
+      "type": "string",
+      "required": false,
+      "description": "Optional custom output path"
+    }
+  },
+  "nodes": [
+    {
+      "id": "generate-default-path",
+      "type": "shell",
+      "params": {
+        "command": "echo './output.txt'"
+      }
+    },
+    {
+      "id": "determine-path",
+      "type": "shell",
+      "purpose": "Use custom path if provided, otherwise use default",
+      "params": {
+        "stdin": {
+          "custom": "${output_path}",
+          "default": "${generate-default-path.stdout}"
+        },
+        "command": "jq -r 'if .custom != \"\" and .custom != null then .custom else .default end'"
+      }
+    },
+    {
+      "id": "save-result",
+      "type": "shell",
+      "params": {
+        "command": "echo 'Would save to: ${determine-path.stdout}'"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-default-path",
+      "to": "determine-path"
+    },
+    {
+      "from": "determine-path",
+      "to": "save-result"
+    }
+  ]
+}
