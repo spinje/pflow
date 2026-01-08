@@ -1411,7 +1411,7 @@ Same operation × N items ("each", "for each", "in parallel" → batch, not sing
 {
   "id": "fetch-each",
   "type": "shell",
-  "batch": {"items": "${urls}", "parallel": true, "max_concurrent": 5},
+  "batch": {"items": "${urls}", "parallel": true, "max_concurrent": 40},
   "params": {"command": "curl -s '${item}'"}
 }
 ```
@@ -1424,7 +1424,7 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 | `items` | required | Template reference OR inline array |
 | `as` | `"item"` | Custom name: `"file"` → `${file}` |
 | `parallel` | `false` | Concurrent execution |
-| `max_concurrent` | `10` | 1-100; use 5-10 for LLM APIs (rate limits) |
+| `max_concurrent` | `10` | 1-100; use 20-40 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
