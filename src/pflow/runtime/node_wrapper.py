@@ -744,7 +744,11 @@ class TemplateAwareNodeWrapper:
             Formatted error message with context and suggestions
         """
         # Extract variable names from template
-        variables = TemplateResolver.extract_variables(str(template))
+        all_variables = TemplateResolver.extract_variables(str(template))
+
+        # Filter to only actually unresolved variables (not in context)
+        # This prevents misleading errors like "${provided}, ${missing}" when only ${missing} failed
+        variables = {v for v in all_variables if not TemplateResolver.variable_exists(v, context)}
 
         # Build available keys section
         available_keys = [k for k in context if not k.startswith("__")]
@@ -758,6 +762,7 @@ class TemplateAwareNodeWrapper:
             available_display = available_keys
 
         # Simplified single-line error message (removes redundancy)
+        # Only report actually unresolved variables
         error_parts = [f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"]
 
         # Add available keys section (only if there are keys to show)

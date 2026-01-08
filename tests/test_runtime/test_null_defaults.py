@@ -279,18 +279,92 @@ class TestNullDefaults:
             "inputs": {
                 "input1": {"required": False, "default": None},
                 "input2": {"required": False, "default": ""},
-                "input3": {"required": False},  # No default at all
+                "input3": {"required": False},  # No default at all - should resolve to None
             },
         }
 
         registry = Registry()
 
-        # Note: input3 without default and not provided will fail validation
-        # So we need to provide it
-        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={"input3": "value3"})
+        # Optional inputs without explicit defaults should resolve to None
+        # This allows templates like ${input3} to work without requiring a value
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={})
 
         node = flow.start_node
         assert hasattr(node, "initial_params")
-        assert node.initial_params["input1"] is None  # null default
+        assert node.initial_params["input1"] is None  # explicit null default
         assert node.initial_params["input2"] == ""  # empty string default
-        assert node.initial_params["input3"] == "value3"  # provided value
+        assert node.initial_params["input3"] is None  # implicit None (no default specified)
+
+    def test_optional_input_without_default_resolves_to_none(self):
+        """Test that optional inputs without defaults resolve to None in templates.
+
+        This is a regression test for the bug where optional inputs without defaults
+        failed template resolution with "Unresolved variables" error.
+
+        Bug report: Optional inputs declared with required=false but no default value
+        should resolve to None when not provided, not fail validation.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_param}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_param": {
+                    "type": "string",
+                    "required": False,
+                    # No default specified - should resolve to None
+                    "description": "Optional parameter with no default",
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Should compile successfully - optional input without default resolves to None
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={})
+
+        node = flow.start_node
+        assert hasattr(node, "initial_params")
+        assert node.initial_params["optional_param"] is None
+
+    def test_optional_input_without_default_can_be_overridden(self):
+        """Test that optional inputs without defaults can still be provided."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${optional_param}",
+                        "command": "cat",
+                    },
+                }
+            ],
+            "edges": [],
+            "inputs": {
+                "optional_param": {
+                    "type": "string",
+                    "required": False,
+                    # No default specified
+                },
+            },
+        }
+
+        registry = Registry()
+
+        # Provide a value for the optional input
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params={"optional_param": "user_provided"})
+
+        node = flow.start_node
+        assert hasattr(node, "initial_params")
+        assert node.initial_params["optional_param"] == "user_provided"

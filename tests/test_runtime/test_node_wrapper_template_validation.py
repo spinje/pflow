@@ -517,3 +517,77 @@ class TestEdgeCases:
 
         assert result == "default"
         assert node.params_at_execution == {"message": "static text", "count": 42}
+
+
+class TestErrorMessageAccuracy:
+    """Test that error messages only report actually unresolved variables.
+
+    Bug fix: Previously, when a parameter had multiple template variables
+    and some resolved but others didn't, the error message would list ALL
+    variables as unresolved - even ones that successfully resolved.
+    """
+
+    def test_error_only_shows_actually_unresolved_variables(self):
+        """Error message should only list variables that are actually missing.
+
+        Regression test for misleading error messages:
+        - Parameter: {"a": "${provided}", "b": "${missing}"}
+        - Old error: "Unresolved variables: ${provided}, ${missing}"  (wrong!)
+        - Fixed error: "Unresolved variables: ${missing}"  (correct)
+        """
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+
+        # Parameter with two variables - one exists, one doesn't
+        wrapper.set_params({
+            "data": {
+                "has_value": "${provided}",
+                "no_value": "${missing}",
+            }
+        })
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared={"provided": "hello"})
+
+        error_msg = str(exc_info.value)
+
+        # Error should mention the missing variable
+        assert "${missing}" in error_msg
+
+        # Error should NOT mention the resolved variable
+        assert "${provided}" not in error_msg
+
+    def test_error_shows_all_missing_when_multiple_missing(self):
+        """When multiple variables are missing, error should list all of them."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+
+        wrapper.set_params({"message": "Hello ${name}, you have ${count} items with status ${status}"})
+
+        with pytest.raises(ValueError) as exc_info:
+            # Only provide name, missing count and status
+            wrapper._run(shared={"name": "Alice"})
+
+        error_msg = str(exc_info.value)
+
+        # Should list both missing variables
+        assert "${count}" in error_msg
+        assert "${status}" in error_msg
+
+        # Should NOT list the resolved variable
+        assert "${name}" not in error_msg
+
+    def test_error_available_keys_shows_provided_context(self):
+        """Error message should show what keys ARE available for debugging."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+
+        wrapper.set_params({"field": "${missing}"})
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared={"available_key": "value", "another_key": 42})
+
+        error_msg = str(exc_info.value)
+
+        # Should show available keys to help user debug
+        assert "available_key" in error_msg or "Available context keys" in error_msg

@@ -173,11 +173,13 @@ def prepare_inputs(
                     )
                     defaults[input_name] = default_value
                 else:
-                    # Optional with no default key means it can be omitted entirely
+                    # Optional with no default key - use None so templates can resolve
+                    # This allows ${optional_param} to resolve to None instead of failing
                     logger.debug(
-                        f"Optional input '{input_name}' not provided and has no default",
+                        f"Optional input '{input_name}' not provided, using None as default",
                         extra={"phase": "input_validation", "input": input_name},
                     )
+                    defaults[input_name] = None
         else:
             # Input is provided
             logger.debug(f"Input '{input_name}' provided", extra={"phase": "input_validation", "input": input_name})
