@@ -690,8 +690,8 @@ def _format_node_status_line(step: dict[str, Any]) -> str:
             return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
 
     # Regular node
-    # Use warning indicator if node succeeded but produced stderr (hidden errors)
-    if step.get("has_stderr") and status == "completed":
+    # Use warning indicator if node produced stderr (has_stderr already implies completed)
+    if step.get("has_stderr"):
         return f"  ⚠ {node_id} {timing}{tag_str}"
 
     indicator = _get_status_indicator(status)

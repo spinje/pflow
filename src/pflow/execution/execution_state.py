@@ -131,7 +131,8 @@ def build_execution_steps(
             step["batch_errors_truncated"] = max(0, len(errors) - 5)
 
         # Detect shell nodes with stderr output but exit_code=0
-        # This helps surface hidden errors from shell pipeline failures
+        # This surfaces hidden errors from shell pipeline failures in CLI display
+        # and adds has_stderr flag to JSON output for programmatic detection
         if isinstance(node_output, dict):
             exit_code = node_output.get("exit_code")
             stderr = node_output.get("stderr", "")

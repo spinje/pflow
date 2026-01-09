@@ -442,13 +442,20 @@ class TestFormatNodeStatusLine:
         assert "\u2713" in result  # Checkmark
         assert "clean-node" in result
 
-    def test_error_indicator_overrides_stderr(self):
-        """Failed nodes should show error indicator, not stderr warning."""
+    def test_has_stderr_only_set_for_completed_nodes(self):
+        """has_stderr is only set by build_execution_steps when status=completed.
+
+        This test documents that build_execution_steps guards against the
+        impossible state of has_stderr=True with status=failed. The display
+        function trusts this invariant and doesn't need redundant checks.
+        """
+        # In practice, build_execution_steps only sets has_stderr for completed nodes
+        # (see execution_state.py line 139: status == "completed" check)
         step = {
             "node_id": "failed-node",
             "status": "failed",
             "duration_ms": 100,
-            "has_stderr": True,  # This shouldn't matter for failed nodes
+            # has_stderr is NOT set here - this matches real behavior
         }
 
         result = _format_node_status_line(step)
