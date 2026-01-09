@@ -18,3 +18,4 @@ Would be nice to have template functions like ${date:YYYY-MM-DD} or ${slugify:ta
 sed 's|https\\?://||' | sed 's|[^a-zA-Z0-9]|-|g' | sed 's|--*|-|g' | sed 's|^-||' | sed 's|-$||' | cut -c1-100
 3. This is a common pattern - turning URLs/strings into safe filenames. Could be a built-in.
 4. Batch results structure wasn't immediately obvious - Had to figure out that ${process-images.results} contains objects with .item and .response fields. A quick example in the docs would help. ✅ (fixed)
+5. No stdin/stdout visibility on success - Workflow shows `✓ convert-to-array (11ms)` but not what went in/out. Had shell bug where URLs went in but `/bin/sh` came out - would be obvious with `--verbose` showing truncated stdin→stdout per node.
