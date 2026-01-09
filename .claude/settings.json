@@ -15,17 +15,5 @@
       "Bash(touch:*)"
     ],
     "deny": []
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run .claude/hooks/pre_tool_use.py"
-          }
-        ]
-      }
-    ]
   }
 }

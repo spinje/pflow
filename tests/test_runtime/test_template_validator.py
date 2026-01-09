@@ -683,6 +683,34 @@ class TestBatchTemplateValidation:
         # Should NOT produce an error - results[0].response is valid
         assert len(errors) == 0, f"Unexpected errors for nested batch access: {errors}"
 
+    def test_batch_results_item_field_validated(self):
+        """Access to ${node.results[0].item} should validate (original batch input)."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-batch",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "Process: ${item}"},
+                },
+                {
+                    "id": "correlate-results",
+                    "type": "llm",
+                    "params": {
+                        # Access item field in batch results - correlate input with output
+                        "prompt": "Input was: ${process-batch.results[0].item}, Output was: ${process-batch.results[0].response}"
+                    },
+                },
+            ],
+            "edges": [{"from": "process-batch", "to": "correlate-results"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        # Should NOT produce an error - results[0].item is valid (original batch input)
+        assert len(errors) == 0, f"Unexpected errors for batch item field access: {errors}"
+
     def test_batch_results_nested_llm_usage_validated(self):
         """Deeply nested access like ${node.results[0].llm_usage.input_tokens} should validate."""
         workflow_ir = {

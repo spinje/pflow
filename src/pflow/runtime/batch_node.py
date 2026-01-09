@@ -31,7 +31,13 @@ IR Syntax:
 Output Structure:
     ```python
     shared["summarize"] = {
-        "results": [...],      # Array of results in input order
+        "results": [           # Array of results in input order
+            {
+                "item": "file1.txt",  # Original batch input (always present)
+                "response": "...",    # Inner node outputs
+            },
+            ...
+        ],
         "count": 3,            # Total items processed
         "success_count": 2,    # Items without errors
         "error_count": 1,      # Items with errors
@@ -390,6 +396,14 @@ class PflowBatchNode(Node):
                 elif not isinstance(result, dict):
                     result = {"value": result}
 
+                # Include original item in result for easy correlation
+                if "item" in result:
+                    logger.warning(
+                        "Batch result already has 'item' key, overwriting with original batch item",
+                        extra={"node_id": self.node_id, "existing_item": result.get("item")},
+                    )
+                result["item"] = item
+
                 # Check for error in result dict
                 error_msg = self._extract_error(result)
                 duration_ms = (time.perf_counter() - start_time) * 1000
@@ -463,6 +477,14 @@ class PflowBatchNode(Node):
                     result = {}
                 elif not isinstance(result, dict):
                     result = {"value": result}
+
+                # Include original item in result for easy correlation
+                if "item" in result:
+                    logger.warning(
+                        "Batch result already has 'item' key, overwriting with original batch item",
+                        extra={"node_id": self.node_id, "existing_item": result.get("item")},
+                    )
+                result["item"] = item
 
                 # Check for error in result dict
                 error_msg = self._extract_error(result)
