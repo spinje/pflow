@@ -657,7 +657,9 @@ Is this value in the user's request?
       }
     },
 
-    // Shell node with complex jq
+    // Shell node with stdin
+    // The "stdin" param is PIPED to the command (not a shell variable).
+    // Use commands that read stdin: jq, cat, grep, etc.
     {
       "id": "filter-and-reshape",
       "type": "shell",
