@@ -165,7 +165,7 @@ def format_no_matches_with_suggestions(
     workflows: list[dict[str, Any]],
     query: str,
     reasoning: str | None = None,
-    max_suggestions: int = 5,
+    max_suggestions: int = 10,
 ) -> str:
     """Format no matches message with workflow suggestions and LLM reasoning.
 
@@ -212,11 +212,7 @@ def format_no_matches_with_suggestions(
         # Limit to max_suggestions
         for workflow in workflows[:max_suggestions]:
             name = workflow.get("name", "unknown")
-            desc = workflow.get("description") or "No description"  # Handle None and empty string
-            # Truncate long descriptions
-            if len(desc) > 80:
-                desc = desc[:77] + "..."
-            lines.append(f"  • {name} - {desc}")
+            lines.append(f"  • {name}")
 
         # Show count if more workflows exist
         if len(workflows) > max_suggestions:
@@ -225,7 +221,6 @@ def format_no_matches_with_suggestions(
 
     lines.append("\nTry:")
     lines.append('  • More specific query: "workflow for [specific task]"')
-    lines.append("  • Browse all: pflow workflow list")
 
     if not workflows:
         lines.append("  • Recommendation: Create your first workflow")

@@ -54,37 +54,31 @@ class TestFormatDiscoveryResult:
 class TestFormatNoMatchesWithSuggestions:
     """Test no matches message formatting with workflow suggestions."""
 
-    def test_formats_with_multiple_workflows(self):
-        """NO MATCHES: Shows top 5 workflows with descriptions."""
-        workflows = [
-            {"name": "test-workflow-1", "description": "First test workflow"},
-            {"name": "test-workflow-2", "description": "Second test workflow"},
-            {"name": "test-workflow-3", "description": "Third test workflow"},
-            {"name": "test-workflow-4", "description": "Fourth test workflow"},
-            {"name": "test-workflow-5", "description": "Fifth test workflow"},
-            {"name": "test-workflow-6", "description": "Sixth test workflow"},
-        ]
-        query = "test something"
+    def test_limits_workflows_and_shows_remaining_count(self):
+        """NO MATCHES: Limits displayed workflows and shows count of remaining."""
+        workflows = [{"name": f"workflow-{i}"} for i in range(15)]
+        query = "test"
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
+        # Use explicit limit to test the behavior
+        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
 
         # Verify header
-        assert 'No workflows found matching "test something" (minimum 70% confidence).' in formatted
+        assert 'No workflows found matching "test" (minimum 70% confidence).' in formatted
 
-        # Verify suggestions section
-        assert "Available workflows:" in formatted
-        assert "• test-workflow-1 - First test workflow" in formatted
-        assert "• test-workflow-2 - Second test workflow" in formatted
-        assert "• test-workflow-5 - Fifth test workflow" in formatted
+        # First 3 shown
+        assert "• workflow-0" in formatted
+        assert "• workflow-1" in formatted
+        assert "• workflow-2" in formatted
 
-        # Verify only first 5 shown with count of remaining
-        assert "test-workflow-6" not in formatted
-        assert "... and 1 more workflow" in formatted
+        # 4th not shown
+        assert "workflow-3" not in formatted
+
+        # Remaining count displayed
+        assert "... and 12 more" in formatted
 
         # Verify guidance section
         assert "Try:" in formatted
         assert '• More specific query: "workflow for [specific task]"' in formatted
-        assert "• Browse all: pflow workflow list" in formatted
         assert "• Recommendation: Try building a new workflow" in formatted
 
     def test_formats_with_few_workflows(self):
@@ -99,9 +93,9 @@ class TestFormatNoMatchesWithSuggestions:
         formatted = format_no_matches_with_suggestions(workflows, query)
 
         # All 3 workflows should be shown
-        assert "• workflow-a - First workflow" in formatted
-        assert "• workflow-b - Second workflow" in formatted
-        assert "• workflow-c - Third workflow" in formatted
+        assert "• workflow-a" in formatted
+        assert "• workflow-b" in formatted
+        assert "• workflow-c" in formatted
 
         # No "... and X more" message
         assert "... and" not in formatted
@@ -122,37 +116,33 @@ class TestFormatNoMatchesWithSuggestions:
         # Different guidance for empty library
         assert "• Recommendation: Create your first workflow" in formatted
 
-    def test_truncates_long_descriptions(self):
-        """NO MATCHES: Long descriptions truncated to 80 chars."""
+    def test_shows_names_only(self):
+        """NO MATCHES: Shows only workflow names without descriptions."""
         workflows = [
             {
-                "name": "long-desc-workflow",
-                "description": "This is a very long description that definitely exceeds the eighty character limit and should be truncated with ellipsis at the end",
+                "name": "my-workflow",
+                "description": "This description should not appear in output",
             }
         ]
         query = "test"
 
         formatted = format_no_matches_with_suggestions(workflows, query)
 
-        # Description should be truncated with "..."
-        assert "..." in formatted
-        # Full description should not appear
-        assert "should be truncated with ellipsis at the end" not in formatted
-        # Should be roughly 80 chars (77 + "...")
-        assert "This is a very long description that definitely exceeds the eighty" in formatted
+        # Name should appear
+        assert "• my-workflow" in formatted
+        # Description should not appear
+        assert "This description should not appear" not in formatted
 
-    def test_handles_missing_descriptions(self):
-        """NO MATCHES: Missing descriptions show default text."""
+    def test_handles_missing_names(self):
+        """NO MATCHES: Missing names show default text."""
         workflows = [
-            {"name": "no-desc-workflow"},  # Missing description
-            {"name": "empty-desc-workflow", "description": ""},  # Empty description
+            {"description": "Has description but no name"},  # Missing name
         ]
         query = "test"
 
         formatted = format_no_matches_with_suggestions(workflows, query)
 
-        assert "• no-desc-workflow - No description" in formatted
-        assert "• empty-desc-workflow - No description" in formatted  # Empty treated same as missing
+        assert "• unknown" in formatted
 
     def test_respects_max_suggestions_parameter(self):
         """NO MATCHES: Respects custom max_suggestions limit."""
@@ -163,9 +153,9 @@ class TestFormatNoMatchesWithSuggestions:
         formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
 
         # First 3 workflows shown
-        assert "• workflow-0 - Workflow 0" in formatted
-        assert "• workflow-1 - Workflow 1" in formatted
-        assert "• workflow-2 - Workflow 2" in formatted
+        assert "• workflow-0" in formatted
+        assert "• workflow-1" in formatted
+        assert "• workflow-2" in formatted
 
         # 4th workflow not shown
         assert "workflow-3" not in formatted
@@ -175,30 +165,23 @@ class TestFormatNoMatchesWithSuggestions:
 
     def test_formats_singular_remaining_count(self):
         """NO MATCHES: Uses singular 'workflow' when 1 remaining."""
-        workflows = [
-            {"name": "workflow-1", "description": "First"},
-            {"name": "workflow-2", "description": "Second"},
-            {"name": "workflow-3", "description": "Third"},
-            {"name": "workflow-4", "description": "Fourth"},
-            {"name": "workflow-5", "description": "Fifth"},
-            {"name": "workflow-6", "description": "Sixth"},
-        ]
+        workflows = [{"name": f"workflow-{i}"} for i in range(4)]
         query = "test"
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
+        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
 
-        # 6 workflows, showing 5, 1 remaining
+        # 4 workflows, showing 3, 1 remaining
         assert "... and 1 more workflow" in formatted  # Singular
-        assert "workflows" not in "... and 1 more workflow"  # Not plural
+        assert "... and 1 more workflows" not in formatted  # Not plural
 
     def test_formats_plural_remaining_count(self):
         """NO MATCHES: Uses plural 'workflows' when multiple remaining."""
-        workflows = [{"name": f"w-{i}", "description": f"Workflow {i}"} for i in range(8)]
+        workflows = [{"name": f"w-{i}"} for i in range(6)]
         query = "test"
 
-        formatted = format_no_matches_with_suggestions(workflows, query)
+        formatted = format_no_matches_with_suggestions(workflows, query, max_suggestions=3)
 
-        # 8 workflows, showing 5, 3 remaining
+        # 6 workflows, showing 3, 3 remaining
         assert "... and 3 more workflows" in formatted  # Plural
 
     def test_handles_special_characters_in_query(self):
@@ -211,20 +194,20 @@ class TestFormatNoMatchesWithSuggestions:
         # Query should be preserved exactly in header
         assert 'No workflows found matching "test with "quotes" and $special chars"' in formatted
 
-    def test_handles_special_characters_in_descriptions(self):
-        """NO MATCHES: Descriptions with special chars displayed correctly."""
+    def test_handles_special_characters_in_names(self):
+        """NO MATCHES: Names with special chars displayed correctly."""
         workflows = [
             {
-                "name": "special-workflow",
-                "description": 'Workflow with "quotes" and ${template} syntax',
+                "name": "special-workflow-${var}",
+                "description": "Some description",
             }
         ]
         query = "test"
 
         formatted = format_no_matches_with_suggestions(workflows, query)
 
-        # Special characters preserved
-        assert 'Workflow with "quotes" and ${template} syntax' in formatted
+        # Special characters in name preserved
+        assert "• special-workflow-${var}" in formatted
 
     def test_includes_reasoning_when_provided(self):
         """NO MATCHES: Shows LLM reasoning when available."""
@@ -333,7 +316,7 @@ class TestEdgeCases:
 
         formatted = format_no_matches_with_suggestions(workflows, query)
 
-        assert "• unknown - No name provided" in formatted
+        assert "• unknown" in formatted
 
     def test_workflows_with_none_values(self):
         """EDGE: None values handled as missing."""
@@ -342,8 +325,8 @@ class TestEdgeCases:
 
         formatted = format_no_matches_with_suggestions(workflows, query)
 
-        # None description treated as missing
-        assert "• test - No description" in formatted
+        # Name should appear without description
+        assert "• test" in formatted
 
 
 class TestCLIParity:
@@ -357,7 +340,7 @@ class TestCLIParity:
         formatted = format_no_matches_with_suggestions(workflows, query)
 
         # Verify bullet character
-        assert "  • test - Test" in formatted
+        assert "  • test" in formatted
 
     def test_guidance_format_matches_cli(self):
         """PARITY: Guidance section format matches CLI."""
@@ -369,7 +352,6 @@ class TestCLIParity:
         # Verify guidance format with bullets
         assert "\nTry:\n" in formatted
         assert "  • More specific query:" in formatted
-        assert "  • Browse all:" in formatted
         assert "  • Recommendation:" in formatted
 
     def test_section_spacing_matches_cli(self):

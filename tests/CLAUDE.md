@@ -599,6 +599,20 @@ with patch("pflow.planning.context_builder._workflow_manager", None):
     context = build_discovery_context(registry_metadata=metadata)
 ```
 
+### 12. Testing Implementation Details Instead of Behavior
+**Problem**: Tests break when changing defaults or internal values that don't affect behavior
+**Solution**: Use explicit parameters to test behavior, not implicit defaults
+```python
+# ❌ WRONG: Relies on default max_suggestions=5
+formatted = format_suggestions(workflows)  # Breaks if default changes
+assert "workflow-6" not in formatted
+
+# ✅ RIGHT: Test the limiting behavior explicitly
+formatted = format_suggestions(workflows, max_suggestions=3)
+assert "workflow-3" not in formatted
+assert "... and 2 more" in formatted
+```
+
 ## Test Maintenance
 
 ### When to Update Tests
