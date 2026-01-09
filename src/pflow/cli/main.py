@@ -690,6 +690,10 @@ def _format_node_status_line(step: dict[str, Any]) -> str:
             return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
 
     # Regular node
+    # Use warning indicator if node succeeded but produced stderr (hidden errors)
+    if step.get("has_stderr") and status == "completed":
+        return f"  ⚠ {node_id} {timing}{tag_str}"
+
     indicator = _get_status_indicator(status)
     return f"  {indicator} {node_id} {timing}{tag_str}"
 
@@ -723,6 +727,35 @@ def _display_batch_errors(steps: list[dict[str, Any]]) -> None:
 
         if truncated > 0:
             click.echo(f"  ...and {truncated} more errors", err=True)
+
+
+def _display_stderr_warnings(steps: list[dict[str, Any]]) -> None:
+    """Display stderr warnings for shell nodes that succeeded but produced stderr.
+
+    This helps surface hidden errors from shell pipeline failures where
+    intermediate commands fail but the overall exit code is 0.
+
+    Args:
+        steps: List of execution step dicts (may contain has_stderr and stderr fields)
+    """
+    stderr_warnings = [
+        (step.get("node_id", "unknown"), step.get("stderr", ""))
+        for step in steps
+        if step.get("has_stderr") and step.get("stderr")
+    ]
+
+    if not stderr_warnings:
+        return
+
+    click.echo("\n⚠️  Shell stderr (exit code 0):", err=True)
+    for node_id, stderr in stderr_warnings:
+        # Truncate long stderr to 300 chars
+        stderr_preview = stderr[:300]
+        if len(stderr) > 300:
+            stderr_preview += "..."
+        # Indent multiline stderr for readability
+        indented = stderr_preview.replace("\n", "\n     ")
+        click.echo(f"  • {node_id}: {indented}", err=True)
 
 
 def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
@@ -761,6 +794,24 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
         click.echo(f"💰 Cost: ${total_cost:.4f}", err=True)
 
 
+def _display_workflow_completion_status(duration_s: float, status: str, has_stderr_warnings: bool) -> None:
+    """Display workflow completion status with appropriate indicator.
+
+    Args:
+        duration_s: Execution duration in seconds
+        status: Workflow status ("success", "degraded", "failed")
+        has_stderr_warnings: Whether any shell node produced stderr with exit_code=0
+    """
+    if status == "degraded":
+        click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s", err=True)
+    elif status == "failed":
+        click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
+    elif has_stderr_warnings:
+        click.echo(f"⚠️ Workflow completed in {duration_s:.3f}s", err=True)
+    else:
+        click.echo(f"✓ Workflow completed in {duration_s:.3f}s", err=True)
+
+
 def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) -> None:
     """Display execution summary with metrics in text mode.
 
@@ -796,13 +847,8 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
     if duration_ms is not None:
         duration_s = duration_ms / 1000.0
         status = formatted_result.get("status", "success")
-
-        if status == "degraded":
-            click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s", err=True)
-        elif status == "failed":
-            click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
-        else:
-            click.echo(f"✓ Workflow completed in {duration_s:.3f}s", err=True)
+        has_stderr_warnings = any(step.get("has_stderr") for step in steps)
+        _display_workflow_completion_status(duration_s, status, has_stderr_warnings)
 
     # Show per-node execution details
     if steps:
@@ -813,6 +859,9 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
 
         # Show batch errors section if any batch nodes had failures
         _display_batch_errors(steps)
+
+        # Show stderr warnings for shell nodes that succeeded but produced stderr
+        _display_stderr_warnings(steps)
 
     # Show cost if > 0
     _display_cost_summary(total_cost, formatted_result)
