@@ -291,16 +291,16 @@ class TestStderrInJsonOutput:
 class TestPipelineFailureScenario:
     """Test the exact bug scenario: pipeline where intermediate command fails."""
 
-    def test_pipeline_intermediate_failure_shows_stderr(self, tmp_path):
-        """Pipeline with intermediate failure should surface stderr.
+    def test_pipeline_intermediate_stderr_shows_warning(self, tmp_path):
+        """Pipeline with intermediate stderr should surface the warning.
 
-        This is the exact bug scenario from the bug report:
+        This tests the bug scenario from the bug report:
         - Pipeline: cmd1 | cmd2 | cmd3
-        - cmd2 fails and writes to stderr
+        - cmd2 writes to stderr (warning/error)
         - cmd3 succeeds, so pipeline exit code is 0
         - stderr was hidden before the fix
 
-        Uses a sed regex that fails on macOS (non-greedy .*? not supported).
+        Uses a portable subshell that writes to stderr while passing data through.
         """
         workflow = {
             "ir_version": "0.1.0",
@@ -309,9 +309,9 @@ class TestPipelineFailureScenario:
                     "id": "pipeline-node",
                     "type": "shell",
                     "params": {
-                        # Pipeline where sed fails but cat succeeds
-                        # sed's .*? (non-greedy) is not supported in BSD sed (macOS)
-                        "command": "echo 'test' | sed -E 's/.*?/bad/' | cat"
+                        # Pipeline where middle command writes stderr but passes data through
+                        # Subshell writes warning to stderr AND cats stdin to stdout
+                        "command": "echo 'test' | (echo 'pipeline warning' >&2; cat) | cat"
                     },
                 }
             ],
@@ -324,13 +324,13 @@ class TestPipelineFailureScenario:
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
 
-        # Workflow succeeds because cat succeeded (exit code 0)
+        # Workflow succeeds (exit code 0)
         assert result.exit_code == 0
 
         combined_output = result.output + (result.stderr or "")
 
-        # The key assertion: stderr from sed should be visible
-        assert "RE error" in combined_output or "repetition-operator" in combined_output
+        # The key assertion: stderr from pipeline should be visible
+        assert "pipeline warning" in combined_output
 
         # Warning indicators should be present
         assert "Shell stderr (exit code 0):" in combined_output
