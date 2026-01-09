@@ -234,6 +234,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 
 **Which pflow node to use:**
 - **Structured data** (JSON/CSV/XML) → `shell` node with jq/awk/grep commands
+  - Use macOS-compatible (BSD) commands, not GNU-specific extensions
 - **Unstructured data** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
 - **Binary/streaming data** → `shell` node with curl
@@ -722,16 +723,20 @@ uv run pflow --validate-only workflow.json
 
 ### Step 10: TEST - Systematic Testing
 
+**Development loop: edit file → run from path → debug → repeat until working**
+
 ```bash
-# Always test with minimal parameters first
+# Run directly from file path during development (no saving needed)
 uv run pflow workflow.json param1=value1 param2=value2 limit=2
 ```
 
+Keep iterating on the JSON file until the workflow executes successfully. Do NOT save until it works.
+
 **Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` contains events, nodes, outputs, errors and more
 
-### Step 11: SAVE - Make It Executable by Name
+### Step 11: SAVE - Make It Executable by Name (Final Step)
 
-## 🚨 CRITICAL: Without This Step, Workflows Cannot Be Run by Name! 🚨
+⚠️ **Only do this AFTER your workflow runs successfully from the file path in Step 10.**
 
 **Your workflow currently works with:**
 ```bash
@@ -993,12 +998,30 @@ Complex templates bypass parsing:
 
 **Extraction (getting data) → Templates**
 **Transformation (changing data) → jq**
+**Combining/concatenating → Templates or shell**
+**Interpretation (creative decisions) → LLM**
 
 ```
 Need data at specific path? → ${node.result.data.items[0].name}
 Need to compute/transform?  → jq 'map(...)', jq 'length', jq 'select(...)'
+Need to combine/append?     → Templates: "${a}\n${b}" or shell: printf/echo
 Need to interpret meaning?  → LLM
 ```
+
+**⚠️ The LLM test**: Can you write a deterministic algorithm for it?
+- **YES** (fixed structure, no creative decisions) → shell/templates, NOT LLM
+- **NO** (requires judgment: what to emphasize, summarize, what matters) → LLM
+
+| Task | Deterministic? | Use |
+|------|----------------|-----|
+| "Append section X to document" | YES - fixed structure | shell |
+| "Combine A and B into report" | YES - concatenation | shell |
+| "Create summary of this data" | NO - deciding importance | LLM |
+| "Format for human readability" | DEPENDS - see below | ? |
+
+**"Format" is ambiguous** - ask: is the output structure fixed?
+- "Add markdown headers and bullet points" → YES, deterministic → shell/jq
+- "Format as professional report" → NO, requires judgment → LLM
 
 Common mistake: Using jq for extraction creates unnecessary nodes. Templates handle all path traversal automatically.
 
@@ -1367,11 +1390,11 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
       "params": {"filter": "${filter_criteria}"}
     },
     {
-      "id": "combine-data",
+      "id": "correlate-data",
       "type": "llm",
-      "purpose": "Merge data from multiple sources",
+      "purpose": "Find relationships between datasets (requires understanding)",
       "params": {
-        "prompt": "Combine this data:\n\nService1: ${fetch-service1.result}\n\nService2: ${fetch-service2.result}\n\nCreate unified dataset with cross-references"
+        "prompt": "Analyze these two datasets and identify cross-references:\n\nService1: ${fetch-service1.result}\n\nService2: ${fetch-service2.result}\n\nFind relationships, correlations, and connections between them."
       }
     },
     {
@@ -1379,7 +1402,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
       "type": "llm",
       "purpose": "Create human-readable output",
       "params": {
-        "prompt": "Format this data as a professional report:\n${combine-data.response}\n\nUse markdown headers, bullet points, and clear sections"
+        "prompt": "Format this data as a professional report:\n${correlate-data.response}\n\nUse markdown headers, bullet points, and clear sections"
       }
     },
     {
@@ -1394,6 +1417,8 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
   ]
 }
 ```
+
+**Note**: `correlate-data` uses LLM because finding relationships requires understanding. If you just need to concatenate or append data with a fixed structure (e.g., "put A and B together"), use shell/templates instead.
 
 ### Pattern: Batch Processing
 
@@ -1666,8 +1691,9 @@ Simple operations? → Skip
 ```
 Extract nested field? → Template variable ${node.path.to.field}
 Transform/compute? → shell+jq
+Combine/concatenate? → Templates "${a}\n${b}" or shell (NOT LLM)
 Parse text → structured? → shell+jq (NEVER LLM)
-Need meaning/reasoning? → LLM
+Need meaning/reasoning? → LLM (only if creative decisions needed)
 File download? → shell+curl
 JSON API? → http node
 Service-specific? → MCP node
