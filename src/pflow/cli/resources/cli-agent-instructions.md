@@ -42,11 +42,11 @@ Structured data (JSON/CSV/XML) → `shell` node · Unstructured → `llm` node
 
 **This is non-negotiable. Before any other action:**
 ```bash
-uv run pflow workflow discover "user's exact request here"
+pflow workflow discover "user's exact request here"
 ```
 
 **Decision tree based on match score:**
-- **≥95% match** → Execute immediately with `uv run pflow workflow-name`, you're done
+- **≥95% match** → Execute immediately with `pflow workflow-name`, you're done
 - **80-94% match** → Show user: "Found [name] that does this. Should I use it, modify it, or build new?"
 - **70-79% match** → Load workflow, show differences, suggest: "I can modify [name] to do what you need"
 - **<70% match** → Continue to build new workflow
@@ -235,7 +235,8 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 
 **Which pflow node to use:**
 - **Structured data** (JSON/CSV/XML) → `shell` node with jq/awk/grep commands
-  - Use macOS-compatible (BSD) commands, not GNU-specific extensions
+  - Use macOS-compatible (BSD) commands, not GNU-specific extensions (e.g., sed: use `-E` not `-r`, `[^X]*` not `.*?`)
+  - Test shell commands independently before integrating into workflow
 - **Unstructured data** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
 - **Binary/streaming data** → `shell` node with curl
@@ -264,7 +265,7 @@ Try `Prefer: wait=60` header in `http` node first (eliminates polling nodes)
 ### Step 2: DISCOVER WORKFLOWS - Detailed Matching
 
 ```bash
-uv run pflow workflow discover "exact user request, including all details"
+pflow workflow discover "exact user request, including all details"
 ```
 
 **Match score actions:**
@@ -278,16 +279,16 @@ uv run pflow workflow discover "exact user request, including all details"
 ### Step 3: DISCOVER NODES - Finding Building Blocks
 
 ```bash
-uv run pflow registry discover "[complete description of ALL operations needed]"
+pflow registry discover "[complete description of ALL operations needed]"
 ```
 
 **Effective task descriptions:**
 ```bash
 # ❌ Too vague
-uv run pflow registry discover "process data"
+pflow registry discover "process data"
 
 # ✅ Complete and specific
-uv run pflow registry discover "fetch JSON from REST API, extract specific fields, validate data completeness, transform to CSV format, upload to S3 bucket"
+pflow registry discover "fetch JSON from REST API, extract specific fields, validate data completeness, transform to CSV format, upload to S3 bucket"
 ```
 
 **Interpreting discovered nodes:**
@@ -311,7 +312,7 @@ uv run pflow registry discover "fetch JSON from REST API, extract specific field
 #### Phase 3: Test Authentication
 ```bash
 # Test with minimal call
-uv run pflow registry run http \
+pflow registry run http \
   url="https://api.service.com/health" \
   headers='{"Authorization": "Bearer TOKEN"}'
 ```
@@ -398,7 +399,7 @@ echo "I need to test access to [service]. This will [describe effect]."
 # If has_side_effects: "⚠️ This test will [visible effect]. Should I proceed?"
 
 # 3. Test with structure discovery AND format compatibility
-uv run pflow registry run mcp-{mcp-service-name}-{mcp-tool-name} \
+pflow registry run mcp-{mcp-service-name}-{mcp-tool-name} \
   param1="your_actual_format_here"
 
 # 4. Document results
@@ -423,7 +424,7 @@ Server C:  result.Items[]                   # DynamoDB style
 ```
 
 **There are NO patterns. Test every MCP tool:**
-`uv run pflow registry run mcp-service-TOOL param=value`
+`pflow registry run mcp-service-TOOL param=value`
 
 ### Step 6: DESIGN - Data Flow Mapping
 
@@ -526,7 +527,7 @@ Save this as `my-workflow.json` anywhere you like. The save command will add all
 
 **Test before continuing:**
 ```bash
-uv run pflow phase1.json source_url="https://api.example.com/data"
+pflow phase1.json source_url="https://api.example.com/data"
 # Verify: Is ${fetch.response.data} the structure you expected?
 ```
 
@@ -708,14 +709,14 @@ Is this value in the user's request?
 ### Step 9: VALIDATE - Understanding Validation Errors
 
 ```bash
-uv run pflow --validate-only workflow.json
+pflow --validate-only workflow.json
 ```
 
 **Common validation errors with precise fixes:**
 
 | Error Message | Exact Cause | Precise Fix |
 |---------------|-------------|-------------|
-| `"Unknown node type 'mcp-slack-fetch'"` | Node type doesn't exist | Run `uv run pflow registry discover "fetch Slack messages"` to find correct type |
+| `"Unknown node type 'mcp-slack-fetch'"` | Node type doesn't exist | Run `pflow registry discover "fetch Slack messages"` to find correct type |
 | `"Template variable '${channel_id}' not found in inputs or node outputs"` | Missing input declaration | Add to inputs: `"channel_id": {"type": "string", "required": true, "description": "..."}` |
 | `"Node 'process' references '${analyze.result}' but 'analyze' hasn't executed yet"` | Wrong edge order | Fix edges so 'analyze' runs before 'process' |
 | `"Circular dependency detected: A -> B -> C -> A"` | Edge loop | Remove the edge that creates the cycle |
@@ -730,7 +731,7 @@ uv run pflow --validate-only workflow.json
 
 ```bash
 # Run directly from file path during development (no saving needed)
-uv run pflow workflow.json param1=value1 param2=value2 limit=2
+pflow workflow.json param1=value1 param2=value2 limit=2
 ```
 
 Keep iterating on the JSON file until the workflow executes successfully. Do NOT save until it works.
@@ -743,18 +744,18 @@ Keep iterating on the JSON file until the workflow executes successfully. Do NOT
 
 **Your workflow currently works with:**
 ```bash
-uv run pflow /path/to/workflow.json param=value  # ✅ Works but requires full path
+pflow/path/to/workflow.json param=value  # ✅ Works but requires full path
 ```
 
 **To make it work with just a name (REQUIRED for reusability):**
 ```bash
-uv run pflow workflow-name param=value  # ❌ Won't work until you save it!
+pflow workflow-name param=value  # ❌ Won't work until you save it!
 ```
 
 **⚡ You MUST use the save command - this is NOT optional:**
 
 ```bash
-uv run pflow workflow save /path/to/your-workflow.json \
+pflow workflow save /path/to/your-workflow.json \
   --name workflow-name \
   --description "Brief description of what it does"
 ```
@@ -767,12 +768,12 @@ uv run pflow workflow save /path/to/your-workflow.json \
 **Example:**
 ```bash
 # Save your tested workflow
-uv run pflow workflow save /tmp/api-processor.json \
+pflow workflow save /tmp/api-processor.json \
   --name api-data-processor \
   --description "Fetches data from API, processes with custom logic, delivers results"
 
 # Now you can execute by name from anywhere
-uv run pflow api-data-processor \
+pflow api-data-processor \
   api_url="https://api.example.com/data" \
   limit=100
 ```
@@ -780,13 +781,13 @@ uv run pflow api-data-processor \
 **After saving, always show usage examples:**
 ```bash
 # Original use case
-uv run pflow api-data-processor \
+pflow api-data-processor \
   api_url="https://api.example.com/data" \
   limit=100 \
   output_format="json"
 
 # Different use case showing reusability
-uv run pflow api-data-processor \
+pflow api-data-processor \
   api_url="https://different-api.com/records" \
   limit=50 \
   output_format="csv"
@@ -805,11 +806,11 @@ uv run pflow api-data-processor \
 **For API tokens:**
 ```bash
 # User stores in settings
-uv run pflow settings set-env SERVICE_API_TOKEN "sk-abc123..."
-uv run pflow settings set-env GITHUB_TOKEN "ghp_xyz789..."
+pflow settings set-env SERVICE_API_TOKEN "sk-abc123..."
+pflow settings set-env GITHUB_TOKEN "ghp_xyz789..."
 
 # Verify storage
-uv run pflow settings show
+pflow settings show
 ```
 
 **For LLM providers (using Simon Willison's llm tool):**
@@ -981,10 +982,10 @@ Complex templates bypass parsing:
    - Not with "cleaned" test data
    ```bash
    # Step 1: Get actual upstream output
-   uv run pflow registry run llm prompt="..." # See what LLM produces
+   pflow registry run llm prompt="..." # See what LLM produces
 
    # Step 2: Test your extraction with that EXACT output
-   uv run pflow registry run shell \
+   pflow registry run shell \
      stdin="[actual LLM output here]" \
      command="your grep/sed/jq command"
    # See what extraction produces - often broken!
@@ -1167,13 +1168,22 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
 | LLM | **NO** | Flexible output | - |
 | Known HTTP | **NO** | Structure documented | - |
 
+**Testing shell pipelines independently:**
+When building complex shell commands (especially with grep/sed/jq), test the complete pipeline outside pflow first:
+```bash
+# Test with actual data source before integrating:
+curl -s "https://example.com/data" | grep 'pattern' | sed 's/old/new/' | jq '.'
+
+# Once verified, integrate into workflow
+```
+
 ### MCP Meta-Discovery Process
 
 **Before testing individual MCP tools, always check for helpers:**
 
 ```bash
 # 1. Find all tools from a service
-uv run pflow registry list "slack"
+pflow registry list "slack"
 
 # Returns something like:
 # mcp-slack-SEND_MESSAGE
@@ -1182,7 +1192,7 @@ uv run pflow registry list "slack"
 # mcp-slack-GET_CHANNEL_INFO  ← Meta tool!
 
 # 2. Use meta tools to understand
-uv run pflow registry run mcp-slack-GET_CHANNEL_INFO \
+pflow registry run mcp-slack-GET_CHANNEL_INFO \
   channel="general"
 
 # 3. Now you know the actual structure for that service
@@ -1195,7 +1205,7 @@ uv run pflow registry run mcp-slack-GET_CHANNEL_INFO \
 ```bash
 # Step 1: Test with minimal real data
 # Example for a service called "example-service" and a tool called "get-data"
-uv run pflow registry run mcp-example-service-get-data query="test_value"
+pflow registry run mcp-example-service-get-data query="test_value"
 
 # Step 2: The output shows the actual structure (pre-filtered for agents, you will only see the output structure, not the data)
 # Example output:
@@ -1221,7 +1231,7 @@ Available template paths (from actual output (4 of 31 shown)): # Smart filtering
 #### Phase 1: Identify Error Type
 
 ```bash
-uv run pflow workflow.json param=value
+pflow workflow.json param=value
 # Read the error carefully
 ```
 
@@ -1241,7 +1251,7 @@ uv run pflow workflow.json param=value
 
 ```bash
 # Test the specific failing node
-uv run pflow registry run failing-node-type \
+pflow registry run failing-node-type \
   param="test_value"
 
 # Check its output structure
@@ -1259,8 +1269,10 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | {node: .node_id, dura
 # See what data was available at failure point
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "failing-node") | .available_inputs'
 
-# Check actual output of previous node
+# Check actual output of previous node (two ways):
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previous-node") | .outputs'
+# Or access via shared_after (especially useful for indexed access):
+cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
 ```
 
 ## Part 6: Workflow Patterns
@@ -1442,7 +1454,7 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 **Options**:
 | Field | Default | Notes |
 |-------|---------|-------|
-| `items` | required | Template reference OR inline array |
+| `items` | required | Template reference OR inline array (must resolve to JSON array, not newline-separated string) |
 | `as` | `"item"` | Custom name: `"file"` → `${file}` |
 | `parallel` | `false` | Concurrent execution |
 | `max_concurrent` | `10` | 1-100; use 20-40 for LLM APIs (rate limits) |
@@ -1498,7 +1510,7 @@ Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-ta
 #### 1. Skipping workflow discovery
 **Impact**: Rebuild existing workflow (30-60 min wasted)
 **Fix**: ALWAYS run first, even if user says "create new"
-**Check**: First action should be `uv run pflow workflow discover`
+**Check**: First action should be `pflow workflow discover`
 
 #### 2. Not testing MCP outputs
 **Impact**: Wrong template paths, failed execution
@@ -1625,24 +1637,24 @@ I need to clarify a few details:
 
 ```bash
 # Discovery & Research
-uv run pflow workflow discover "complete user request"     # Find existing workflows
-uv run pflow registry discover "all operations needed"      # Find nodes for building
-uv run pflow registry describe node1 node2                  # Get node specifications
-uv run pflow registry list "keyword1 keyword2"              # List all available nodes
+pflow workflow discover "complete user request"     # Find existing workflows
+pflow registry discover "all operations needed"      # Find nodes for building
+pflow registry describe node1 node2                  # Get node specifications
+pflow registry list "keyword1 keyword2"              # List all available nodes
 
 # Testing & Debugging
-uv run pflow registry run node-type param=value             # Test node (output pre-filtered for agents)
-uv run pflow read-fields exec-id field.path                 # Get actual field values if needed
+pflow registry run node-type param=value             # Test node (output pre-filtered for agents)
+pflow read-fields exec-id field.path                 # Get actual field values if needed
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'          # Inspect trace (for debugging)
 
 # Workflow Operations
-uv run pflow --validate-only workflow.json                  # Check if workflow is valid
-uv run pflow workflow.json param1=value1                    # Run workflow from file (while developing)
-uv run pflow workflow save workflow-file.json --name workflow-name --description "description"  # Save workflow (when finished developing)
+pflow --validate-only workflow.json                  # Check if workflow is valid
+pflow workflow.json param1=value1                    # Run workflow from file (while developing)
+pflow workflow save workflow-file.json --name workflow-name --description "description"  # Save workflow (when finished developing)
 
 # Settings & Auth
-uv run pflow settings set-env KEY_NAME "value"             # Store credential
-uv run pflow settings show                                 # View settings
+pflow settings set-env KEY_NAME "value"             # Store credential
+pflow settings show                                 # View settings
 llm keys set provider                                      # Set LLM keys
 ```
 
