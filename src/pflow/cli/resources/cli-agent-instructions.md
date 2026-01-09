@@ -24,6 +24,7 @@ Structured data (JSON/CSV/XML) → `shell` node · Unstructured → `llm` node
 - **Async API?** → Try `Prefer: wait=60` header first
 - **JSON string in simple template?** → Auto-parses (any node type)
 - **Same operation per item?** → `batch` config (Batch Processing pattern)
+- **Keep it simple** →  Don't invent requirements or add unnecessary nodes.
 
 ### Core Philosophy - Understanding the WHY
 
