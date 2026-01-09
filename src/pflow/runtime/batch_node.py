@@ -58,6 +58,9 @@ Output Structure:
     }
     ```
 
+    Note: 'item' is a reserved field in batch results. If your inner node outputs an
+    'item' key, it will be overwritten with the original batch input (a warning is logged).
+
 Thread Safety:
     - Sequential mode: Single-threaded, no concerns
     - Parallel mode:
@@ -396,11 +399,11 @@ class PflowBatchNode(Node):
                 elif not isinstance(result, dict):
                     result = {"value": result}
 
-                # Include original item in result for easy correlation
+                # Include original item in result for self-contained downstream processing
                 if "item" in result:
                     logger.warning(
                         "Batch result already has 'item' key, overwriting with original batch item",
-                        extra={"node_id": self.node_id, "existing_item": result.get("item")},
+                        extra={"node_id": self.node_id, "existing_item": result["item"]},
                     )
                 result["item"] = item
 
@@ -478,11 +481,11 @@ class PflowBatchNode(Node):
                 elif not isinstance(result, dict):
                     result = {"value": result}
 
-                # Include original item in result for easy correlation
+                # Include original item in result for self-contained downstream processing
                 if "item" in result:
                     logger.warning(
                         "Batch result already has 'item' key, overwriting with original batch item",
-                        extra={"node_id": self.node_id, "existing_item": result.get("item")},
+                        extra={"node_id": self.node_id, "existing_item": result["item"]},
                     )
                 result["item"] = item
 

@@ -226,7 +226,7 @@ Batch nodes write a special output structure to the shared store:
 }
 ```
 
-Each result contains `item` (the original input) plus the inner node's outputs. This makes it easy to correlate results with their inputs: `${node.results[0].item}`.
+Each result contains `item` (the original input) plus the inner node's outputs, making results self-contained for downstream processing. When passing `${node.results}` to an LLM, it sees both inputs and outputs together.
 
 Subsequent nodes can access results:
 
