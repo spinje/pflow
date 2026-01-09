@@ -46,6 +46,10 @@ def build_execution_steps(
         - batch_error_details: First 5 error dicts (index, item, error, exception)
         - batch_errors_truncated: Count of additional errors beyond the 5 shown
 
+        For shell nodes with stderr but exit_code=0:
+        - has_stderr: True (only when stderr present and exit_code=0)
+        - stderr: The stderr content (stripped of leading/trailing whitespace)
+
     Example:
         >>> steps = build_execution_steps(workflow_ir, shared_storage, metrics)
         >>> steps[0]
@@ -125,6 +129,17 @@ def build_execution_steps(
             errors = node_output.get("errors") or []
             step["batch_error_details"] = errors[:5]
             step["batch_errors_truncated"] = max(0, len(errors) - 5)
+
+        # Detect shell nodes with stderr output but exit_code=0
+        # This surfaces hidden errors from shell pipeline failures in CLI display
+        # and adds has_stderr flag to JSON output for programmatic detection
+        if isinstance(node_output, dict):
+            exit_code = node_output.get("exit_code")
+            stderr = node_output.get("stderr", "")
+            # Only flag completed nodes with exit_code=0 and non-empty stderr
+            if status == "completed" and exit_code == 0 and stderr and isinstance(stderr, str) and stderr.strip():
+                step["has_stderr"] = True
+                step["stderr"] = stderr.strip()
 
         steps.append(step)
 
