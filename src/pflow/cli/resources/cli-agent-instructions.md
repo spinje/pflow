@@ -1453,7 +1453,7 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
-*(Each result contains the inner node's outputs, e.g., `${node.results[0].response}`)*
+Results are always in input order. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs).
 
 **Inline array pattern** (parallel independent operations):
 Workflows are linear—this is the only way to run operations concurrently.
@@ -1488,7 +1488,7 @@ Workflows are linear—this is the only way to run operations concurrently.
   "params": {"prompt": "${item.prompt}"}
 }
 ```
-Each runs independently: `${parallel-tasks.results[0].response}`, `[1]`, `[2]`
+Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
 
 **Using results**:
 ```json

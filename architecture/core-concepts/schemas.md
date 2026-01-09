@@ -454,13 +454,20 @@ Batch nodes write aggregated results to the shared store:
 
 ```json
 {
-  "results": [...],
+  "results": [
+    {"item": "input1", "response": "..."},
+    {"item": "input2", "response": "..."}
+  ],
   "count": 10,
   "success_count": 9,
   "error_count": 1,
   "errors": [{"index": 3, "item": {...}, "error": "..."}]
 }
 ```
+
+Each result in the `results` array contains:
+- `item`: The original batch input (always present)
+- Inner node outputs (e.g., `response`, `stdout`, etc.)
 
 **Execution Semantics:**
 

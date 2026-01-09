@@ -93,7 +93,8 @@ class TestPflowBatchNodeBasic:
         batch.post(shared, items, results)
 
         assert len(shared["test_node"]["results"]) == 1
-        assert shared["test_node"]["results"][0] == {"response": "hello"}
+        assert shared["test_node"]["results"][0]["response"] == "hello"
+        assert shared["test_node"]["results"][0]["item"] == "hello"
         assert shared["test_node"]["count"] == 1
         assert shared["test_node"]["success_count"] == 1
         assert shared["test_node"]["error_count"] == 0
@@ -110,9 +111,70 @@ class TestPflowBatchNodeBasic:
 
         assert shared["test_node"]["count"] == 3
         assert shared["test_node"]["success_count"] == 3
-        assert shared["test_node"]["results"][0] == {"response": "a"}
-        assert shared["test_node"]["results"][1] == {"response": "b"}
-        assert shared["test_node"]["results"][2] == {"response": "c"}
+        assert shared["test_node"]["results"][0]["response"] == "a"
+        assert shared["test_node"]["results"][0]["item"] == "a"
+        assert shared["test_node"]["results"][1]["response"] == "b"
+        assert shared["test_node"]["results"][1]["item"] == "b"
+        assert shared["test_node"]["results"][2]["response"] == "c"
+        assert shared["test_node"]["results"][2]["item"] == "c"
+
+
+class TestItemInResult:
+    """Tests for the `item` field being included in each batch result."""
+
+    def test_item_included_when_result_has_error_key(self):
+        """Original item is included even when result contains error key."""
+        inner = MockInnerNode("test_node", behavior="error_in_result")
+        inner.error_index = 1  # Second item will have error in result
+
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {"data": ["success", "will_fail", "success"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+
+        # All results should have item field, including the one with error
+        assert results[0]["response"] == "success"
+        assert results[0]["item"] == "success"
+
+        # Error result still has item field for debugging
+        assert "error" in results[1]
+        assert results[1]["item"] == "will_fail"
+
+        assert results[2]["response"] == "success"
+        assert results[2]["item"] == "success"
+
+    def test_item_overwrite_warning_logged(self, caplog):
+        """Warning is logged when node output already has 'item' key."""
+        import logging
+
+        class ItemOutputNode:
+            """Node that outputs its own 'item' field."""
+
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                # Node outputs its own 'item' key which will be overwritten
+                shared[self.node_id] = {"response": item, "item": "node_provided"}
+                return "default"
+
+        inner = ItemOutputNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": ["test_value"]}
+        items = batch.prep(shared)
+
+        with caplog.at_level(logging.WARNING):
+            results = batch._exec(items)
+
+        # The original item should overwrite the node-provided value
+        assert results[0]["item"] == "test_value"
+        assert results[0]["response"] == "test_value"
+
+        # Warning should have been logged
+        assert "already has 'item' key" in caplog.text
 
 
 class TestInlineArrayItems:
@@ -177,7 +239,8 @@ class TestItemAliasInjection:
         results = batch._exec(items)
 
         # Inner node received item via "item" alias
-        assert results[0] == {"response": "value1"}
+        assert results[0]["response"] == "value1"
+        assert results[0]["item"] == "value1"
 
     def test_custom_item_alias(self):
         """Custom alias is used when 'as' is specified."""
@@ -201,8 +264,12 @@ class TestItemAliasInjection:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"response": "doc1.txt", "alias_used": "file"}
-        assert results[1] == {"response": "doc2.txt", "alias_used": "file"}
+        assert results[0]["response"] == "doc1.txt"
+        assert results[0]["alias_used"] == "file"
+        assert results[0]["item"] == "doc1.txt"
+        assert results[1]["response"] == "doc2.txt"
+        assert results[1]["alias_used"] == "file"
+        assert results[1]["item"] == "doc2.txt"
 
 
 class TestIsolatedContext:
@@ -318,9 +385,11 @@ class TestErrorHandling:
         assert shared["test_node"]["error_count"] == 1
 
         # Failed item has None result
-        assert results[0] == {"response": "a"}
+        assert results[0]["response"] == "a"
+        assert results[0]["item"] == "a"
         assert results[1] is None
-        assert results[2] == {"response": "c"}
+        assert results[2]["response"] == "c"
+        assert results[2]["item"] == "c"
 
         # Error recorded
         assert len(shared["test_node"]["errors"]) == 1
@@ -354,7 +423,8 @@ class TestErrorHandling:
         batch.post(shared, items, results)
 
         # Error-containing result is still in results (not None)
-        assert results[1] == {"error": "Error: Processing failed for item b"}
+        assert results[1]["error"] == "Error: Processing failed for item b"
+        assert results[1]["item"] == "b"
 
         # But it's counted as error and recorded
         assert shared["test_node"]["success_count"] == 2
@@ -405,8 +475,10 @@ class TestResultStructure:
         batch.post(shared, items, results)
 
         # None in response is valid (node returned None as legitimate value)
-        assert results[0] == {"response": None}
-        assert results[1] == {"response": None}
+        assert results[0]["response"] is None
+        assert results[0]["item"] == "a"
+        assert results[1]["response"] is None
+        assert results[1]["item"] == "b"
         assert shared["test_node"]["success_count"] == 2
         assert shared["test_node"]["error_count"] == 0
 
@@ -611,8 +683,10 @@ class TestComplexItems:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"response": "Alice"}
-        assert results[1] == {"response": "Bob"}
+        assert results[0]["response"] == "Alice"
+        assert results[0]["item"] == {"name": "Alice", "age": 30}
+        assert results[1]["response"] == "Bob"
+        assert results[1]["item"] == {"name": "Bob", "age": 25}
 
     def test_items_with_none_values(self):
         """Array containing None values is processed."""
@@ -625,9 +699,12 @@ class TestComplexItems:
         batch.post(shared, items, results)
 
         assert shared["test_node"]["count"] == 3
-        assert results[0] == {"response": None}
-        assert results[1] == {"response": "value"}
-        assert results[2] == {"response": None}
+        assert results[0]["response"] is None
+        assert results[0]["item"] is None
+        assert results[1]["response"] == "value"
+        assert results[1]["item"] == "value"
+        assert results[2]["response"] is None
+        assert results[2]["item"] is None
 
 
 class TestInputOutputFormats:
@@ -642,9 +719,12 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"response": 2}  # 1 * 2
-        assert results[1] == {"response": 4}  # 2 * 2
-        assert results[2] == {"response": 6}  # 3 * 2
+        assert results[0]["response"] == 2  # 1 * 2
+        assert results[0]["item"] == 1
+        assert results[1]["response"] == 4  # 2 * 2
+        assert results[1]["item"] == 2
+        assert results[2]["response"] == 6  # 3 * 2
+        assert results[2]["item"] == 3
 
     def test_float_items(self):
         """Float items are processed correctly."""
@@ -655,9 +735,12 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"response": 3.0}
-        assert results[1] == {"response": 5.0}
-        assert results[2] == {"response": 7.0}
+        assert results[0]["response"] == 3.0
+        assert results[0]["item"] == 1.5
+        assert results[1]["response"] == 5.0
+        assert results[1]["item"] == 2.5
+        assert results[2]["response"] == 7.0
+        assert results[2]["item"] == 3.5
 
     def test_mixed_type_items(self):
         """Mixed type items (strings, numbers, dicts, None) are processed."""
@@ -669,11 +752,16 @@ class TestInputOutputFormats:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        assert results[0] == {"response": 1}
-        assert results[1] == {"response": "two"}
-        assert results[2] == {"response": {"three": 3}}
-        assert results[3] == {"response": None}
-        assert results[4] == {"response": True}
+        assert results[0]["response"] == 1
+        assert results[0]["item"] == 1
+        assert results[1]["response"] == "two"
+        assert results[1]["item"] == "two"
+        assert results[2]["response"] == {"three": 3}
+        assert results[2]["item"] == {"three": 3}
+        assert results[3]["response"] is None
+        assert results[3]["item"] is None
+        assert results[4]["response"] is True
+        assert results[4]["item"] is True
         assert shared["test_node"]["count"] == 5
         assert shared["test_node"]["success_count"] == 5
 
@@ -686,9 +774,12 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"response": [1, 2]}
-        assert results[1] == {"response": [3, 4]}
-        assert results[2] == {"response": [5, 6]}
+        assert results[0]["response"] == [1, 2]
+        assert results[0]["item"] == [1, 2]
+        assert results[1]["response"] == [3, 4]
+        assert results[1]["item"] == [3, 4]
+        assert results[2]["response"] == [5, 6]
+        assert results[2]["item"] == [5, 6]
 
     def test_boolean_items(self):
         """Boolean items are processed correctly."""
@@ -712,9 +803,12 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"response": True}
-        assert results[1] == {"response": False}
-        assert results[2] == {"response": True}
+        assert results[0]["response"] is True
+        assert results[0]["item"] is True
+        assert results[1]["response"] is False
+        assert results[1]["item"] is False
+        assert results[2]["response"] is True
+        assert results[2]["item"] is True
 
     def test_string_output_wrapped_in_dict(self):
         """When node writes string directly to namespace, it's wrapped in {'value': ...}."""
@@ -737,9 +831,11 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        # String output should be wrapped in {"value": ...}
-        assert results[0] == {"value": "processed_a"}
-        assert results[1] == {"value": "processed_b"}
+        # String output should be wrapped in {"value": ...}, plus item
+        assert results[0]["value"] == "processed_a"
+        assert results[0]["item"] == "a"
+        assert results[1]["value"] == "processed_b"
+        assert results[1]["item"] == "b"
 
     def test_number_output_wrapped_in_dict(self):
         """When node writes number directly to namespace, it's wrapped in {'value': ...}."""
@@ -762,9 +858,12 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"value": 10}
-        assert results[1] == {"value": 20}
-        assert results[2] == {"value": 30}
+        assert results[0]["value"] == 10
+        assert results[0]["item"] == 1
+        assert results[1]["value"] == 20
+        assert results[1]["item"] == 2
+        assert results[2]["value"] == 30
+        assert results[2]["item"] == 3
 
     def test_list_output_wrapped_in_dict(self):
         """When node writes list directly to namespace, it's wrapped in {'value': ...}."""
@@ -787,8 +886,10 @@ class TestInputOutputFormats:
         items = batch.prep(shared)
         results = batch._exec(items)
 
-        assert results[0] == {"value": ["x", "x"]}
-        assert results[1] == {"value": ["y", "y"]}
+        assert results[0]["value"] == ["x", "x"]
+        assert results[0]["item"] == "x"
+        assert results[1]["value"] == ["y", "y"]
+        assert results[1]["item"] == "y"
 
     def test_empty_dict_output(self):
         """When node writes empty dict to namespace, it's returned as-is."""
@@ -811,8 +912,9 @@ class TestInputOutputFormats:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        assert results[0] == {}
-        assert results[1] == {}
+        # Empty dict output only contains the item key
+        assert results[0] == {"item": "a"}
+        assert results[1] == {"item": "b"}
         # Empty dict is not an error, just no output
         assert shared["test_node"]["success_count"] == 2
 
@@ -837,9 +939,9 @@ class TestInputOutputFormats:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Result is None from namespace, converted to {}
-        assert results[0] == {}
-        assert results[1] == {}
+        # Result is None from namespace, converted to {} with item added
+        assert results[0] == {"item": "a"}
+        assert results[1] == {"item": "b"}
         assert shared["test_node"]["success_count"] == 2
 
 
@@ -1443,9 +1545,11 @@ class TestParallelErrorHandling:
         batch.post(shared, items, results)
 
         # First and third items succeeded
-        assert results[0] == {"response": "a"}
+        assert results[0]["response"] == "a"
+        assert results[0]["item"] == "a"
         assert results[1] is None  # Failed
-        assert results[2] == {"response": "c"}
+        assert results[2]["response"] == "c"
+        assert results[2]["item"] == "c"
 
 
 class TestParallelRetry:
@@ -1504,6 +1608,7 @@ class TestParallelRetry:
         # Should succeed on 3rd attempt
         assert results[0]["response"] == "x"
         assert results[0]["attempts"] == 3
+        assert results[0]["item"] == "x"  # item preserved through retries
         assert shared["test_node"]["success_count"] == 1
 
     def test_parallel_retry_exhausted(self):
@@ -2018,7 +2123,8 @@ class TestParallelEdgeCases:
         batch.post(shared, items, results)
 
         assert len(results) == 1
-        assert results[0] == {"response": "only_one"}
+        assert results[0]["response"] == "only_one"
+        assert results[0]["item"] == "only_one"
         assert shared["test_node"]["success_count"] == 1
 
     def test_parallel_vs_sequential_same_results(self):

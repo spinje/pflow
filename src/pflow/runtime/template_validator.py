@@ -776,11 +776,15 @@ class TemplateValidator:
                 "is_batch_output": True,
             }
 
-            # For 'results' array, add inner node's output structure
-            if key == "results" and inner_outputs_structure:
+            # For 'results' array, add inner node's output structure plus 'item'
+            if key == "results":
+                # Each result always contains 'item' (original batch input)
+                result_structure = {"item": {"type": "any", "description": "Original batch input"}}
+                if inner_outputs_structure:
+                    result_structure.update(inner_outputs_structure)
                 output_info["items"] = {
                     "type": "dict",
-                    "structure": inner_outputs_structure,
+                    "structure": result_structure,
                 }
 
             # Register under original key for backward compatibility
