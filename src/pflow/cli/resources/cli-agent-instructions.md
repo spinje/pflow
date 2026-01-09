@@ -963,9 +963,10 @@ Complex templates bypass parsing:
 
 1. **Can the source produce cleaner output?**
    - LLM: Add "Return ONLY valid JSON, no other text" to prompt
+   - LLM: Need title + content? Ask for both in one call, not separate LLM nodes
    - Shell: Use `-r` flag in jq to remove quotes
    - HTTP: Check if API has a `format=json` parameter
-   - **If yes → Fix at source instead of extracting**
+   - **If yes → Fix at source instead of adding nodes**
 
 2. **Is each transformation adding risk?**
    - Valid JSON → grep → sed → BROKEN JSON (common!)
@@ -1392,19 +1393,11 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
       "params": {"filter": "${filter_criteria}"}
     },
     {
-      "id": "correlate-data",
+      "id": "analyze-and-format",
       "type": "llm",
-      "purpose": "Find relationships between datasets (requires understanding)",
+      "purpose": "Find relationships and format as report (one LLM call for both)",
       "params": {
-        "prompt": "Analyze these two datasets and identify cross-references:\n\nService1: ${fetch-service1.result}\n\nService2: ${fetch-service2.result}\n\nFind relationships, correlations, and connections between them."
-      }
-    },
-    {
-      "id": "format-for-display",
-      "type": "llm",
-      "purpose": "Create human-readable output",
-      "params": {
-        "prompt": "Format this data as a professional report:\n${correlate-data.response}\n\nUse markdown headers, bullet points, and clear sections"
+        "prompt": "Analyze these two datasets and identify cross-references:\n\nService1: ${fetch-service1.result}\n\nService2: ${fetch-service2.result}\n\nFind relationships, correlations, and connections. Format as a professional report with markdown headers and sections."
       }
     },
     {
@@ -1413,14 +1406,14 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previou
       "params": {
         "to": "${recipient_email}",
         "subject": "Data Analysis Report",
-        "body": "${format-for-display.response}"
+        "body": "${analyze-and-format.response}"
       }
     }
   ]
 }
 ```
 
-**Note**: `correlate-data` uses LLM because finding relationships requires understanding. If you just need to concatenate or append data with a fixed structure (e.g., "put A and B together"), use shell/templates instead.
+**Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use shell/templates instead.
 
 ### Pattern: Batch Processing
 
@@ -1546,16 +1539,9 @@ Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-ta
 
 #### 7. Missing format step
 **Impact**: Raw JSON in user-facing outputs
-**Fix**: Add formatting node before delivery
-```json
-{
-  "id": "format-output",
-  "type": "llm",
-  "params": {
-    "prompt": "Format this data for Slack with markdown:\n${data}"
-  }
-}
-```
+**Fix**: Add formatting node before delivery - but choose the right tool:
+- **Fixed structure** (headers, bullets, tables with known columns) → shell/jq
+- **Requires judgment** (what to emphasize, summarize, professional tone) → LLM
 
 ### Real Request Parsing - Handling Ambiguity
 
