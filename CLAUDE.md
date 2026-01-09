@@ -495,6 +495,7 @@ Version (v1.0.0):
 - ⏳ Task 97: OAuth Authentication for Remote MCP Servers
 - ⏳ Task 66: Support structured output for LLM node
 - ⏳ Task 87: Implement sandbox runtime for Shell Node
+- ⏳ Task 109: Sandbox Bypass Security Controls
 - ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
 
 Version (v1.1.0):
