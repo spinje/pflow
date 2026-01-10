@@ -194,6 +194,11 @@ class ShellNode(Node):
             Tuple of (is_safe, reason) where:
             - is_safe: True if this is a safe non-error (e.g., grep no match)
             - reason: Human-readable explanation of why it's safe (for logging)
+
+        IMPORTANT: When adding new patterns here, the reason string MUST contain
+        either "no matches" or "not found" for proper tag display in CLI output.
+        See src/pflow/cli/main.py _format_node_status_line() for the tag mapping.
+        If neither phrase fits your pattern, update the tag mapping in main.py.
         """
         # Check if stderr has content - this usually indicates a real error
         # from a command in the pipeline, not a "no results" case
@@ -243,8 +248,11 @@ class ShellNode(Node):
             return True, "command -v exit 1 with empty stderr - command not found"
 
         # type returns 1 when command not found
-        # This one checks for "not found" in output, which is a more specific check
-        if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr or "not found" in stdout):
+        # "not found" appears in stdout on some systems (bash), stderr on others
+        # If stderr has content beyond "not found", it's likely a downstream error
+        type_not_found = "not found" in stderr or "not found" in stdout
+        stderr_has_other_errors = has_stderr_content and "not found" not in stderr
+        if exit_code != 0 and command.strip().startswith("type ") and type_not_found and not stderr_has_other_errors:
             return True, "type exit 1 - command not found"
 
         # find with no results (returns 0 but empty output)
@@ -265,6 +273,10 @@ class ShellNode(Node):
         so the stderr checks are already done there. We keep the same logic here for
         consistency and safety.
         """
+        # Handle bytes (binary output) - can't do pattern matching on bytes
+        if isinstance(stderr, bytes) or isinstance(stdout, bytes):
+            return exit_code
+
         has_stderr_content = stderr and stderr.strip()
 
         # Normalize ls glob no-match to 1
@@ -281,8 +293,10 @@ class ShellNode(Node):
         # Normalize command -v not-found to 1 (only if no stderr content)
         if exit_code != 0 and not has_stderr_content and "command -v" in command:
             return 1
-        # Normalize type not-found to 1
-        if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr or "not found" in stdout):
+        # Normalize type not-found to 1 (only if no other stderr errors)
+        type_not_found = "not found" in stderr or "not found" in stdout
+        stderr_has_other_errors = has_stderr_content and "not found" not in stderr
+        if exit_code != 0 and command.strip().startswith("type ") and type_not_found and not stderr_has_other_errors:
             return 1
         return exit_code
 

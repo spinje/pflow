@@ -324,7 +324,8 @@ RepairService uses as cache_blocks for LLM
 - Cache performance
 
 **Progress Display** (OutputController):
-- ✓ success, ❌ error, ⚠️ warning, ↻ cached, [repaired] modified
+- ✓ success, ❌ error, ⚠️ warning (stderr on exit 0), ↻ cached, [repaired] modified
+- Shell smart handling tags: [no matches] (grep/rg), [not found] (which/type)
 
 ## Key Data Structures
 
@@ -620,5 +621,6 @@ shared["__cache_hits__"].append(self.node_id)
 - `format_execution_errors()` - Error formatting with sanitization (used by CLI JSON, MCP)
 - `format_execution_success()` - Success results with metrics
 - `build_execution_steps()` - Per-node execution state (in `execution_state.py`)
+  - Includes shell metadata: `has_stderr`, `stderr`, `smart_handled`, `smart_handled_reason`
 
 **MCP Usage**: Returns text/structured data matching CLI output modes for parity

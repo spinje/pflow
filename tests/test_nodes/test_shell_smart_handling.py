@@ -1,11 +1,17 @@
 """Tests for shell node smart error handling with stderr check.
 
+Related: Task 110 - Fix Shell Node Smart Error Handling
+
 These tests verify that the shell node correctly distinguishes between:
 1. Legitimate "no results" cases (grep no match, which not found) - should succeed
 2. Real errors from downstream commands in pipelines - should fail
 
 The key insight: legitimate "no results" cases have empty stderr,
 while real errors write to stderr.
+
+Known limitation (Task 110 future work): Commands that fail silently
+(exit 1, no stderr) like `grep foo | false` will incorrectly succeed.
+This requires PIPESTATUS capture to fix properly.
 """
 
 import json
@@ -85,7 +91,7 @@ class TestSmartHandlingStderrCheck:
                 {
                     "id": "rg-nomatch",
                     "type": "shell",
-                    "params": {"stdin": "${data}", "command": "rg notfound || true && rg notfound"},
+                    "params": {"stdin": "${data}", "command": "rg notfound"},
                 }
             ],
             "edges": [],
@@ -208,6 +214,83 @@ class TestSmartHandlingStderrCheck:
         assert result.exit_code != 0
         combined = result.output + (result.stderr or "")
         assert "execution failed" in combined
+
+    def test_type_downstream_error_fails(self, tmp_path):
+        """type + downstream error should fail (not be masked by 'not found' check)."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "type-sed-fail",
+                    "type": "shell",
+                    "params": {
+                        # type succeeds (ls exists), sed fails with bad regex
+                        "command": "type ls | sed -E 's/.*?/bad/'",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        workflow_path = tmp_path / "test.json"
+        workflow_path.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(workflow_path)])
+
+        assert result.exit_code != 0
+        combined = result.output + (result.stderr or "")
+        assert "execution failed" in combined
+
+
+class TestSmartHandlingKnownLimitations:
+    """Document known limitations of smart handling.
+
+    These tests document current behavior for edge cases that will be
+    addressed in future work (Task 110 - PIPESTATUS capture).
+    """
+
+    def test_silent_downstream_failure_known_limitation(self, tmp_path):
+        """Known limitation: grep | false succeeds (no stderr, exit 1).
+
+        This is a documented limitation. Commands that fail silently
+        (exit 1 but no stderr) cannot be distinguished from legitimate
+        "no results" cases without PIPESTATUS capture.
+
+        Future fix: Task 110 will implement PIPESTATUS to detect which
+        command in a pipeline actually failed.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": False, "default": "test"}},
+            "nodes": [
+                {
+                    "id": "grep-false",
+                    "type": "shell",
+                    "params": {
+                        "stdin": "${data}",
+                        # grep matches, false fails silently (no stderr)
+                        "command": "grep test | false",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        workflow_path = tmp_path / "test.json"
+        workflow_path.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(workflow_path)])
+
+        # KNOWN LIMITATION: This incorrectly succeeds because:
+        # - exit code is 1 (from false)
+        # - stderr is empty (false doesn't write to stderr)
+        # - grep is in the command
+        # So it's treated as "grep no match" when it's actually "false failed"
+        assert result.exit_code == 0  # Should ideally be != 0
+        combined = result.output + (result.stderr or "")
+        assert "[no matches]" in combined  # Incorrectly tagged as no matches
 
 
 class TestSmartHandlingJsonOutput:
