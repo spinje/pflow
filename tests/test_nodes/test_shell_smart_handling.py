@@ -55,8 +55,9 @@ class TestSmartHandlingStderrCheck:
                     "type": "shell",
                     "params": {
                         "stdin": "${data}",
-                        # grep matches, sed fails with invalid regex
-                        "command": "grep test | sed -E 's/.*?/bad/'",
+                        # grep matches, then cat fails reading nonexistent file
+                        # This works on both BSD (macOS) and GNU (Linux) systems
+                        "command": "grep test | cat /nonexistent_file_xyz",
                     },
                 }
             ],
@@ -72,8 +73,8 @@ class TestSmartHandlingStderrCheck:
         assert result.exit_code != 0
         combined = result.output + (result.stderr or "")
         assert "execution failed" in combined
-        # Error message should show the sed error
-        assert "RE error" in combined or "repetition-operator" in combined
+        # Error message should mention the missing file
+        assert "No such file" in combined or "nonexistent" in combined.lower()
 
     def test_rg_no_match_succeeds(self, tmp_path):
         """ripgrep with no matches should succeed (exit 1, stderr empty)."""
@@ -136,11 +137,11 @@ class TestSmartHandlingStderrCheck:
             "ir_version": "0.1.0",
             "nodes": [
                 {
-                    "id": "which-sed-fail",
+                    "id": "which-cat-fail",
                     "type": "shell",
                     "params": {
-                        # which succeeds, sed fails
-                        "command": "which ls | sed -E 's/.*?/bad/'",
+                        # which succeeds, cat fails reading nonexistent file
+                        "command": "which ls | cat /nonexistent_file_xyz",
                     },
                 }
             ],
@@ -187,10 +188,11 @@ class TestSmartHandlingStderrCheck:
             "ir_version": "0.1.0",
             "nodes": [
                 {
-                    "id": "cmdv-sed-fail",
+                    "id": "cmdv-cat-fail",
                     "type": "shell",
                     "params": {
-                        "command": "command -v ls | sed -E 's/.*?/bad/'",
+                        # command -v succeeds, cat fails reading nonexistent file
+                        "command": "command -v ls | cat /nonexistent_file_xyz",
                     },
                 }
             ],
