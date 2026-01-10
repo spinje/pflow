@@ -674,6 +674,19 @@ def _format_node_status_line(step: dict[str, Any]) -> str:
         tags.append("cached")
     if repaired:
         tags.append("repaired")
+    # Add smart handling tag for visibility (grep no-match, which not-found, etc.)
+    # Tag mapping for smart handling patterns defined in shell.py _is_safe_non_error().
+    # When adding new patterns there, ensure reason contains "no matches" or "not found",
+    # OR add a new elif branch here. Fallback shows raw reason to avoid silent mystery.
+    if step.get("smart_handled"):
+        reason = step.get("smart_handled_reason", "")
+        if "no matches" in reason:
+            tags.append("no matches")
+        elif "not found" in reason:
+            tags.append("not found")
+        elif reason:
+            # Unknown pattern - show actual reason so agent knows what happened
+            tags.append(reason)
     tag_str = f" [{', '.join(tags)}]" if tags else ""
 
     # Check if this is a batch node

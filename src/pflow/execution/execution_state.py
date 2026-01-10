@@ -11,6 +11,32 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def _add_shell_node_metadata(step: dict[str, Any], node_output: dict[str, Any], status: str) -> None:
+    """Add shell-specific metadata to step dict.
+
+    Detects stderr warnings and smart handling (grep no-match, etc.) for shell nodes.
+
+    Args:
+        step: The step dictionary to modify in place
+        node_output: The node's output from shared storage
+        status: The node's execution status
+    """
+    if not isinstance(node_output, dict):
+        return
+
+    # Detect shell nodes with stderr output but exit_code=0
+    exit_code = node_output.get("exit_code")
+    stderr = node_output.get("stderr", "")
+    if status == "completed" and exit_code == 0 and stderr and isinstance(stderr, str) and stderr.strip():
+        step["has_stderr"] = True
+        step["stderr"] = stderr.strip()
+
+    # Detect shell nodes where smart handling was applied (exit 1 treated as success)
+    if node_output.get("smart_handled"):
+        step["smart_handled"] = True
+        step["smart_handled_reason"] = node_output.get("smart_handled_reason", "")
+
+
 def build_execution_steps(
     workflow_ir: dict[str, Any],
     shared_storage: dict[str, Any],
@@ -49,6 +75,10 @@ def build_execution_steps(
         For shell nodes with stderr but exit_code=0:
         - has_stderr: True (only when stderr present and exit_code=0)
         - stderr: The stderr content (stripped of leading/trailing whitespace)
+
+        For shell nodes where smart handling was applied (exit 1 treated as success):
+        - smart_handled: True (grep/rg no-match, which/command-v not-found, etc.)
+        - smart_handled_reason: Human-readable explanation of why exit 1 was OK
 
     Example:
         >>> steps = build_execution_steps(workflow_ir, shared_storage, metrics)
@@ -130,16 +160,8 @@ def build_execution_steps(
             step["batch_error_details"] = errors[:5]
             step["batch_errors_truncated"] = max(0, len(errors) - 5)
 
-        # Detect shell nodes with stderr output but exit_code=0
-        # This surfaces hidden errors from shell pipeline failures in CLI display
-        # and adds has_stderr flag to JSON output for programmatic detection
-        if isinstance(node_output, dict):
-            exit_code = node_output.get("exit_code")
-            stderr = node_output.get("stderr", "")
-            # Only flag completed nodes with exit_code=0 and non-empty stderr
-            if status == "completed" and exit_code == 0 and stderr and isinstance(stderr, str) and stderr.strip():
-                step["has_stderr"] = True
-                step["stderr"] = stderr.strip()
+        # Add shell-specific metadata (stderr warnings, smart handling)
+        _add_shell_node_metadata(step, node_output, status)
 
         steps.append(step)
 

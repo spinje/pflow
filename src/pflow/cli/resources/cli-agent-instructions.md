@@ -1177,6 +1177,8 @@ curl -s "https://example.com/data" | grep 'pattern' | sed 's/old/new/' | jq '.'
 # Once verified, integrate into workflow
 ```
 
+**Pipeline exit codes**: Only the last command's exit code is captured. In `grep | sed`, if sed fails you see sed's stderr, but can't tell if grep found matches or not.
+
 ### MCP Meta-Discovery Process
 
 **Before testing individual MCP tools, always check for helpers:**
