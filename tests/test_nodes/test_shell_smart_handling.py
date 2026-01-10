@@ -224,8 +224,10 @@ class TestSmartHandlingStderrCheck:
                     "id": "type-sed-fail",
                     "type": "shell",
                     "params": {
-                        # type succeeds (ls exists), sed fails with bad regex
-                        "command": "type ls | sed -E 's/.*?/bad/'",
+                        # type succeeds (ls exists), sed fails with unbalanced bracket
+                        # Note: Using unbalanced bracket instead of .*? for cross-platform compatibility
+                        # (GNU sed on Linux handles .*? differently than BSD sed on macOS)
+                        "command": "type ls | sed -E 's/[/bad/'",
                     },
                 }
             ],
