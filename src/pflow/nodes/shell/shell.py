@@ -168,6 +168,12 @@ class ShellNode(Node):
         Determines if commands like grep, find, or diff returned non-zero because
         they legitimately found no results, rather than due to an actual error.
 
+        IMPORTANT: For most patterns (grep, rg, which, command -v), we only treat
+        exit code as "safe" if stderr is EMPTY. If stderr has content, it likely
+        indicates a real error from a downstream command in a pipeline, not a
+        legitimate "no results" case. This prevents silent failures in pipelines
+        like `grep pattern | sed 's/bad_regex/'` where sed fails but grep is blamed.
+
         IMPORTANT: Only call this for TEXT output. Binary output should skip this
         check entirely since safe patterns ("No such file", "not found", "no matches")
         don't apply to binary data. Calling this on binary output could cause:
@@ -189,38 +195,57 @@ class ShellNode(Node):
             - is_safe: True if this is a safe non-error (e.g., grep no match)
             - reason: Human-readable explanation of why it's safe (for logging)
         """
+        # Check if stderr has content - this usually indicates a real error
+        # from a command in the pipeline, not a "no results" case
+        has_stderr_content = stderr and stderr.strip()
+
         # ls with glob patterns that match no files
+        # Note: ls explicitly checks for specific stderr messages, so it's different
         if (
             exit_code != 0
             and command.strip().startswith("ls ")
             and any(char in command for char in ["*", "?", "[", "]"])
             and ("No such file or directory" in stderr or "cannot access" in stderr)
         ):
-            return True, "ls with glob pattern - empty matches are valid"
+            return True, "ls with glob pattern - no matches"
 
         # grep returns 1 when pattern not found (this is normal behavior)
-        if exit_code == 1 and (
-            command.strip().startswith("grep ") or " grep " in command or "|grep " in command or "| grep " in command
+        # BUT only if stderr is empty - otherwise a downstream command likely failed
+        if (
+            exit_code == 1
+            and not has_stderr_content
+            and (
+                command.strip().startswith("grep ")
+                or " grep " in command
+                or "|grep " in command
+                or "| grep " in command
+            )
         ):
-            return True, "grep returns 1 when pattern not found - valid result"
+            return True, "grep exit 1 with empty stderr - no matches"
 
         # ripgrep (rg) returns 1 when pattern not found
-        if exit_code == 1 and (
-            command.strip().startswith("rg ") or " rg " in command or "|rg " in command or "| rg " in command
+        # BUT only if stderr is empty - otherwise a downstream command likely failed
+        if (
+            exit_code == 1
+            and not has_stderr_content
+            and (command.strip().startswith("rg ") or " rg " in command or "|rg " in command or "| rg " in command)
         ):
-            return True, "ripgrep returns 1 when pattern not found - valid result"
+            return True, "ripgrep exit 1 with empty stderr - no matches"
 
         # which returns 1 when command doesn't exist (that's its purpose)
-        if exit_code != 0 and command.strip().startswith("which "):
-            return True, "which returns 1 when command doesn't exist - existence check"
+        # BUT only if stderr is empty - otherwise a downstream command likely failed
+        if exit_code != 0 and not has_stderr_content and command.strip().startswith("which "):
+            return True, "which exit 1 with empty stderr - command not found"
 
         # command -v returns 1 when command doesn't exist
-        if exit_code != 0 and "command -v" in command:
-            return True, "command -v returns 1 when command doesn't exist - existence check"
+        # BUT only if stderr is empty - otherwise a downstream command likely failed
+        if exit_code != 0 and not has_stderr_content and "command -v" in command:
+            return True, "command -v exit 1 with empty stderr - command not found"
 
         # type returns 1 when command not found
+        # This one checks for "not found" in output, which is a more specific check
         if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr or "not found" in stdout):
-            return True, "type returns 1 when command not found - existence check"
+            return True, "type exit 1 - command not found"
 
         # find with no results (returns 0 but empty output)
         if exit_code == 0 and command.strip().startswith("find ") and not stdout.strip():
@@ -235,7 +260,13 @@ class ShellNode(Node):
         Some environments (e.g., macOS vs GNU coreutils) return different non-zero codes
         for the same "no results" scenarios. We standardize these to 1 for predictability
         in tests and downstream logic.
+
+        Note: This function should only be called when _is_safe_non_error returns True,
+        so the stderr checks are already done there. We keep the same logic here for
+        consistency and safety.
         """
+        has_stderr_content = stderr and stderr.strip()
+
         # Normalize ls glob no-match to 1
         if (
             exit_code != 0
@@ -244,11 +275,11 @@ class ShellNode(Node):
             and ("No such file or directory" in stderr or "cannot access" in stderr)
         ):
             return 1
-        # Normalize which not-found to 1
-        if exit_code != 0 and command.strip().startswith("which "):
+        # Normalize which not-found to 1 (only if no stderr content)
+        if exit_code != 0 and not has_stderr_content and command.strip().startswith("which "):
             return 1
-        # Normalize command -v not-found to 1
-        if exit_code != 0 and "command -v" in command:
+        # Normalize command -v not-found to 1 (only if no stderr content)
+        if exit_code != 0 and not has_stderr_content and "command -v" in command:
             return 1
         # Normalize type not-found to 1
         if exit_code != 0 and command.strip().startswith("type ") and ("not found" in stderr or "not found" in stdout):
@@ -639,6 +670,9 @@ class ShellNode(Node):
             shared_exit = normalized_exit if isinstance(normalized_exit, int) else exit_code
             # Reflect normalized code back into shared for test expectations
             shared["exit_code"] = shared_exit
+            # Store smart handling info for visibility in execution summary
+            shared["smart_handled"] = True
+            shared["smart_handled_reason"] = reason
             # Ensure stderr contains a helpful message for type-not-found across platforms
             if (
                 command.strip().startswith("type ")

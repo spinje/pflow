@@ -515,6 +515,7 @@ Later:
 - ⏳ Task 98: Architectural Refactor - First-Class IR Execution
 - ⏳ Task 100: Implement Reduce/Fold Mode for Batch Processing
 - ⏳ Task 101: Shell Node File Input Parameter for Safe Data Passing
+- ⏳ Task 110: PIPESTATUS-Based Pipeline Failure Detection
 
 Deprecated Tasks:
 - ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair (superseded by Task 106)

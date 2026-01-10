@@ -674,6 +674,15 @@ def _format_node_status_line(step: dict[str, Any]) -> str:
         tags.append("cached")
     if repaired:
         tags.append("repaired")
+    # Add smart handling tag for visibility (grep no-match, which not-found, etc.)
+    if step.get("smart_handled"):
+        reason = step.get("smart_handled_reason", "")
+        if "no matches" in reason:
+            tags.append("no matches")
+        elif "not found" in reason or "command not found" in reason:
+            tags.append("not found")
+        else:
+            tags.append("exit 1 ok")
     tag_str = f" [{', '.join(tags)}]" if tags else ""
 
     # Check if this is a batch node
