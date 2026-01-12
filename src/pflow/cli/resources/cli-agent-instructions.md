@@ -673,6 +673,18 @@ Is this value in the user's request?
       }
     },
 
+    // Shell with pipes: when Unix tools (sort, uniq, grep, head) beat pure jq
+    {
+      "id": "extract-and-dedupe",
+      "type": "shell",
+      "purpose": "Extract unique names as JSON array",
+      "params": {
+        "stdin": "${fetch-with-auth.response.data.items}",
+        "command": "jq -r '.[].name' | sort -u | jq -R -s 'split(\"\\n\") | map(select(. != \"\"))'"
+      }
+    },
+    // $var = shell variable, ${var} = pflow template (don't mix up)
+
     // LLM with structured prompt
     {
       "id": "structured-analysis",
@@ -1462,6 +1474,11 @@ Current item: `${item}`. Results: `${node.results}` (array in input order).
 | `parallel` | `false` | Concurrent execution |
 | `max_concurrent` | `10` | 1-100; use 20-40 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
+
+**Text lines → JSON array:**
+```shell
+your-command | jq -R -s 'split("\n") | map(select(. != ""))'
+```
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
 Results are always in input order. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs).
