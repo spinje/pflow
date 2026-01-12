@@ -19,3 +19,57 @@ sed 's|https\\?://||' | sed 's|[^a-zA-Z0-9]|-|g' | sed 's|--*|-|g' | sed 's|^-||
 3. This is a common pattern - turning URLs/strings into safe filenames. Could be a built-in.
 4. Batch results structure wasn't immediately obvious - Had to figure out that ${process-images.results} contains objects with .item and .response fields. A quick example in the docs would help. ✅ (fixed)
 5. No stdin/stdout visibility on success - Workflow shows `✓ convert-to-array (11ms)` but not what went in/out. Had shell bug where URLs went in but `/bin/sh` came out - would be obvious with `--verbose` showing truncated stdin→stdout per node.
+
+---
+
+3. Batch errors could show which items failed
+
+  Current (if some fail):
+  ⚠️ process-images (29732ms) - 6/8 items succeeded
+
+  Suggestion: Show failed items
+  ⚠️ process-images (29.7s) - 6/8 items succeeded, 2 failed
+    Failed items:
+      • Item 3: Connection timeout
+      • Item 7: Invalid image format
+
+  Or at least:
+  ⚠️ process-images (29.7s) - 6/8 items succeeded (view errors: pflow trace show --node process-images)
+
+  4. "Workflow output" could be clearer
+
+  Current:
+  Workflow output:
+
+  ./2026-01-09-anthropic-com-engineering-building-effective-agent.md
+
+  Suggestion: Make it more obvious this is the result
+  📄 Result:
+  ./2026-01-09-anthropic-com-engineering-building-effective-agent.md
+
+  Or if multiple outputs:
+  📄 Results:
+    • file_path: ./2026-01-09-anthropic-com-engineering-building-effective-agent.md
+    • images_processed: 8
+
+
+    6. Workflow file not found error could be better
+
+  Current:
+  ❌ Workflow '/tmp/test-grep-bug.json' not found.
+
+  Use 'pflow workflow list' to see available workflows.
+  Or use quotes for natural language: pflow "your request"
+
+  Issue: This appears even when the file path is correct but pflow is running from wrong directory
+
+  Suggestion:
+  ❌ Workflow '/tmp/test-grep-bug.json' not found.
+
+  Checked:
+    • Absolute path: /tmp/test-grep-bug.json (not found)
+    • Relative to cwd: /current/dir/tmp/test-grep-bug.json (not found)
+
+  Did you mean:
+    • pflow workflow list - see saved workflows
+    • pflow "describe what you want" - natural language
