@@ -103,6 +103,57 @@ def test_registry(tmp_path):
                 "params": [],
             },
         },
+        # Additional nodes for shell type validation tests
+        "list-dict-producer": {
+            "class_name": "ListDictProducer",
+            "module": "test",
+            "interface": {
+                "outputs": [
+                    {"key": "data", "type": "list[dict]", "description": "List of dicts (generic type)"},
+                ],
+                "params": [],
+            },
+        },
+        "dict-list-union-producer": {
+            "class_name": "DictListUnionProducer",
+            "module": "test",
+            "interface": {
+                "outputs": [
+                    {"key": "data", "type": "dict|list", "description": "Dict or list (no safe type)"},
+                ],
+                "params": [],
+            },
+        },
+        "dict-any-union-producer": {
+            "class_name": "DictAnyUnionProducer",
+            "module": "test",
+            "interface": {
+                "outputs": [
+                    {"key": "data", "type": "dict|any", "description": "Dict or any (has safe type)"},
+                ],
+                "params": [],
+            },
+        },
+        "list-str-union-producer": {
+            "class_name": "ListStrUnionProducer",
+            "module": "test",
+            "interface": {
+                "outputs": [
+                    {"key": "data", "type": "list|str", "description": "List or str (has safe type)"},
+                ],
+                "params": [],
+            },
+        },
+        "any-producer": {
+            "class_name": "AnyProducer",
+            "module": "test",
+            "interface": {
+                "outputs": [
+                    {"key": "data", "type": "any", "description": "Any type"},
+                ],
+                "params": [],
+            },
+        },
     }
     registry.save(test_data)
 
@@ -383,7 +434,8 @@ class TestTypeValidationIntegration:
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    "params": {"command": "echo '${producer.response}'"},
+                    # Note: unquoted template - quoted would trigger escape hatch
+                    "params": {"command": "echo ${producer.response}"},
                 },
             ],
             "edges": [{"from": "producer", "to": "shell-node"}],
@@ -408,7 +460,8 @@ class TestTypeValidationIntegration:
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    "params": {"command": "echo '${producer.items}'"},
+                    # Note: unquoted template - quoted would trigger escape hatch
+                    "params": {"command": "echo ${producer.items}"},
                 },
             ],
             "edges": [{"from": "producer", "to": "shell-node"}],
@@ -482,7 +535,8 @@ class TestTypeValidationIntegration:
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    "params": {"command": "echo '${data}'"},  # Uses input in command
+                    # Note: unquoted template - quoted would trigger escape hatch
+                    "params": {"command": "echo ${data}"},  # Uses input in command
                 },
             ],
             "edges": [],
@@ -521,22 +575,24 @@ class TestTypeValidationIntegration:
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
 
-    def test_shell_command_blocks_union_with_dict(self, test_registry):
-        """Union type containing dict should be blocked in shell command.
+    def test_shell_command_allows_union_with_str(self, test_registry):
+        """Union type containing str should be ALLOWED in shell command (Tier 1).
 
-        dict|str could be a dict at runtime, so we block it to be safe.
+        dict|str contains a safe type (str), so it's auto-allowed.
+        Runtime coercion will handle dict → JSON string if needed.
         Uses the LLM node from test_registry which has output type dict|str.
         """
         workflow_ir = {
             "enable_namespacing": True,
             "inputs": {},
             "nodes": [
-                # LLM node has output type "dict|str" - could be dict at runtime
+                # LLM node has output type "dict|str" - contains str, so allowed
                 {"id": "llm-node", "type": "llm", "params": {"prompt": "test", "max_tokens": 100}},
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    "params": {"command": "echo '${llm-node.response}'"},
+                    # Note: even without quotes, dict|str is allowed due to Tier 1
+                    "params": {"command": "echo ${llm-node.response}"},
                 },
             ],
             "edges": [{"from": "llm-node", "to": "shell-node"}],
@@ -544,10 +600,433 @@ class TestTypeValidationIntegration:
 
         errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
-        # Should block - dict|str might be dict at runtime
+        # Should pass - dict|str contains str, which is a safe type
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+
+class TestShellCommandUnionTypes:
+    """Tests for Tier 1: auto-allow unions with safe types (str, string, any)."""
+
+    def test_shell_allows_list_str_union(self, test_registry):
+        """list|str union is allowed (contains str)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "list-str-union-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.data}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_shell_allows_dict_any_union(self, test_registry):
+        """dict|any union is allowed (contains any)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-any-union-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.data}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_shell_blocks_dict_list_union(self, test_registry):
+        """dict|list union is blocked (no safe type in union)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-list-union-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.data}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+        assert "dict" in shell_errors[0] or "list" in shell_errors[0]
+
+    def test_shell_allows_any_type(self, test_registry):
+        """Pure 'any' type is allowed (safe type)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "any-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.data}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+
+class TestShellCommandGenericTypes:
+    """Tests for Fix 0: generic type base extraction (bug fix).
+
+    Generic types like list[dict] should have their base type extracted
+    before checking against blocked types.
+    """
+
+    def test_shell_blocks_list_dict_generic(self, test_registry):
+        """list[dict] is blocked (base type is list)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "list-dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.data}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should block - base type "list" is blocked
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+        assert "list" in shell_errors[0]
+
+    def test_shell_allows_quoted_generic_type(self, test_registry):
+        """'${data}' with list[dict] type is allowed (quote escape)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "list-dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # Quoted template triggers escape hatch
+                    "params": {"command": "echo '${producer.data}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should pass - quoted template bypasses type check
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+
+class TestShellCommandQuoteEscape:
+    """Tests for Tier 2: quote escape for structured types.
+
+    Templates wrapped in single quotes '${var}' bypass type validation,
+    signaling the user accepts runtime coercion.
+    """
+
+    def test_quoted_dict_template_allowed(self, test_registry):
+        """'${data}' with dict type is allowed."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${producer.response}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_unquoted_dict_template_blocked(self, test_registry):
+        """${data} with dict type is blocked."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.response}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
         assert "dict" in shell_errors[0]
+
+    def test_quoted_dict_list_union_allowed(self, test_registry):
+        """'${data}' with dict|list type is allowed (escape hatch)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-list-union-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo '${producer.data}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_double_quoted_template_not_escaped(self, test_registry):
+        """ "${data}" does NOT trigger escape (only single quotes)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # Double quotes don't trigger escape
+                    "params": {"command": 'echo "${producer.response}"'},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1  # Still blocked
+
+    def test_quoted_with_prefix_not_escaped(self, test_registry):
+        """'prefix ${data}' does NOT trigger escape (not exact match)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # Has prefix inside quotes - not exact '${var}' pattern
+                    "params": {"command": "echo 'Data: ${producer.response}'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1  # Still blocked
+
+    def test_multiple_quoted_templates(self, test_registry):
+        """Multiple '${a}' '${b}' patterns each get escape."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer1", "type": "dict-producer", "params": {}},
+                {"id": "producer2", "type": "list-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # Both templates are individually quoted
+                    "params": {"command": "echo '${producer1.response}' '${producer2.items}'"},
+                },
+            ],
+            "edges": [
+                {"from": "producer1", "to": "shell-node"},
+                {"from": "producer2", "to": "shell-node"},
+            ],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0  # Both escaped
+
+    def test_mixed_quoted_and_unquoted(self, test_registry):
+        """Mix of quoted and unquoted - only unquoted blocked."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer1", "type": "dict-producer", "params": {}},
+                {"id": "producer2", "type": "list-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # First quoted (escaped), second unquoted (blocked)
+                    "params": {"command": "echo '${producer1.response}' ${producer2.items}"},
+                },
+            ],
+            "edges": [
+                {"from": "producer1", "to": "shell-node"},
+                {"from": "producer2", "to": "shell-node"},
+            ],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1  # Only unquoted one blocked
+        assert "producer2" in shell_errors[0]
+
+    def test_error_message_suggests_quote_escape(self, test_registry):
+        """Error message should suggest the quote escape option."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.response}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+        # Check that error message suggests quote escape
+        assert "Quote the template" in shell_errors[0] or "single quotes" in shell_errors[0]
+
+
+class TestShellCommandRegressions:
+    """Regression tests - ensure existing behavior is preserved."""
+
+    def test_pure_dict_still_blocked_unquoted(self, test_registry):
+        """Pure dict type without quotes is still blocked."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.response}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+
+    def test_pure_list_still_blocked_unquoted(self, test_registry):
+        """Pure list type without quotes is still blocked."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "list-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.items}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 1
+
+    def test_str_type_still_allowed(self, test_registry):
+        """Pure str type is still allowed."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "string-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    "params": {"command": "echo ${producer.result}"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
+    def test_stdin_still_allows_dict(self, test_registry):
+        """stdin parameter still accepts dict (not command)."""
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # stdin allows dict - only command param is checked
+                    "params": {"stdin": "${producer.response}", "command": "jq '.message'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
 
 
 class TestShellCommandValidationTiming:
@@ -571,7 +1050,8 @@ class TestShellCommandValidationTiming:
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    "params": {"command": "echo '${data}'"},
+                    # Note: unquoted template - quoted would trigger escape hatch
+                    "params": {"command": "echo ${data}"},
                 }
             ],
             "edges": [],
@@ -603,7 +1083,8 @@ class TestShellCommandValidationTiming:
                 {
                     "id": "shell-node",
                     "type": "shell",
-                    "params": {"command": "echo '${items}'"},
+                    # Note: unquoted template - quoted would trigger escape hatch
+                    "params": {"command": "echo ${items}"},
                 }
             ],
             "edges": [],
