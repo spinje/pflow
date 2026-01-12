@@ -236,6 +236,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 **Which pflow node to use:**
 - **Structured data** (JSON/CSV/XML) → `shell` node with jq/awk/grep commands
   - Use macOS-compatible (BSD) commands, not GNU-specific extensions (e.g., sed: use `-E` not `-r`, `[^X]*` not `.*?`)
+  - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
   - Test shell commands independently before integrating into workflow
 - **Unstructured data** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
