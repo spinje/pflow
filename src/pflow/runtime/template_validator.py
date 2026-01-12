@@ -46,7 +46,12 @@ MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
 
 # Pattern to detect templates exactly wrapped in single quotes: '${var}'
 # This is an escape hatch for structured types in shell commands.
+#
+# Matches:   '${var}', '${node.field}', '${data.items[0].name}'
 # Does NOT match: '${a} ${b}', 'prefix ${var}', '$${var}' (escaped)
+#
+# Note: Array indices use [] not {}, so [^}]+ correctly captures paths
+# like 'data.items[0].value' without stopping at brackets.
 _QUOTED_TEMPLATE_PATTERN = re.compile(r"'\$\{([^}]+)\}'")
 
 # Types that are safe in shell commands (string-like or unknown type)

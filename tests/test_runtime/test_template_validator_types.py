@@ -819,6 +819,34 @@ class TestShellCommandQuoteEscape:
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
 
+    def test_quoted_nested_field_access_with_array_indices(self, test_registry):
+        """'${node.field[0].subfield}' works correctly with nested paths and array indices.
+
+        This tests that the quote escape pattern correctly captures complex paths
+        including array indices (which use [] not {}), nested field access,
+        and combinations thereof.
+        """
+        workflow_ir = {
+            "enable_namespacing": True,
+            "inputs": {},
+            "nodes": [
+                {"id": "producer", "type": "list-dict-producer", "params": {}},
+                {
+                    "id": "shell-node",
+                    "type": "shell",
+                    # Complex nested path with array index
+                    "params": {"command": "echo '${producer.data}' | jq '.[0].field'"},
+                },
+            ],
+            "edges": [{"from": "producer", "to": "shell-node"}],
+        }
+
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+
+        # Should pass - quoted template with nested path is escaped
+        shell_errors = [e for e in errors if "Shell node" in e]
+        assert len(shell_errors) == 0
+
     def test_double_quoted_template_not_escaped(self, test_registry):
         """ "${data}" does NOT trigger escape (only single quotes)."""
         workflow_ir = {
