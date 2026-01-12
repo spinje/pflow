@@ -284,7 +284,7 @@ class TestFlowIR:
                 "data": {"type": "dict", "schema": {"type": "object"}},
                 "options": {"type": "list", "items": {"type": "str"}},
             },
-            outputs={"result": {"type": "Any", "optional": True}},
+            outputs={"result": {"type": "any", "optional": True}},
         )
 
         # Verify structure is preserved

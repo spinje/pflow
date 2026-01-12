@@ -59,7 +59,7 @@ class TestGetNodeInterface:
                     {"key": "config", "type": "str", "optional": True},
                 ],
                 "outputs": [
-                    {"key": "result", "type": "Any"},
+                    {"key": "result", "type": "any"},
                     {"key": "metadata", "type": "dict"},
                 ],
                 "params": [

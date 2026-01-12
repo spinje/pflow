@@ -54,8 +54,8 @@ def test_registry():
                 "file_path": str(Path(__file__)),
                 "type": "core",
                 "interface": {
-                    "params": [{"name": "value", "type": "Any"}],
-                    "outputs": [{"name": "result", "type": "Any"}],
+                    "params": [{"name": "value", "type": "any"}],
+                    "outputs": [{"name": "result", "type": "any"}],
                 },
             }
         }

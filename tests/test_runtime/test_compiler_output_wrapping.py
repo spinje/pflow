@@ -33,11 +33,11 @@ def registry_with_echo():
                 "inputs": [
                     {"name": "message", "type": "str", "description": "Message to echo", "required": False},
                     {"name": "count", "type": "int", "description": "Number of times to repeat", "required": False},
-                    {"name": "data", "type": "Any", "description": "Any data to pass through", "required": False},
+                    {"name": "data", "type": "any", "description": "Any data to pass through", "required": False},
                 ],
                 "outputs": [
                     {"key": "echo", "type": "str", "description": "The echoed message"},
-                    {"key": "data", "type": "Any", "description": "The passed-through data"},
+                    {"key": "data", "type": "any", "description": "The passed-through data"},
                     {
                         "key": "metadata",
                         "type": "dict",

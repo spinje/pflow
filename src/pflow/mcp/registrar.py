@@ -230,7 +230,7 @@ class MCPRegistrar:
             outputs = [
                 {
                     "key": "result",  # Changed from "name" to "key" to match pflow convention
-                    "type": "Any",
+                    "type": "any",
                     "description": "Tool execution result",
                 }
             ]

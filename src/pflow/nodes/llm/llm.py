@@ -1,27 +1,4 @@
-"""General-purpose LLM node for text processing.
-
-Interface:
-- Params: prompt: str  # Text prompt to send to model
-- Params: system: str  # System prompt (optional)
-- Params: images: list[str]  # Image URLs or file paths (optional)
-- Writes: shared["response"]: Any  # Model's response (auto-parsed JSON or string)
-- Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
-- Params: model: str  # Model to use (optional - use default unless user requests specific model)
-- Params: temperature: float  # Sampling temperature (default: 1.0)
-- Params: max_tokens: int  # Max response tokens (optional)
-- Actions: default (always)
-
-Note on model parameter:
-    Always use the default model unless the user explicitly requests a specific model.
-
-    In pflow context, the compiler auto-detects the model from:
-    1. settings.llm.default_model (if configured)
-    2. llm CLI default (llm models default)
-    3. Auto-detect from API keys (Anthropic → Gemini → OpenAI)
-    If nothing is configured, compilation fails with setup instructions.
-
-    When using this node standalone (outside pflow), falls back to gemini-3-flash-preview.
-"""
+"""General-purpose LLM node for text processing."""
 
 import json
 import sys

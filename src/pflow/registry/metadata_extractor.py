@@ -384,7 +384,7 @@ class PflowMetadataExtractor:
 
             if match:
                 key = match.group(1)
-                type_str = match.group(2).strip()
+                type_str = match.group(2).strip().lower()  # Normalize to lowercase
                 # Individual comment if present, otherwise use shared comment
                 individual_comment = match.group(3).strip() if match.group(3) else ""
                 description = individual_comment if individual_comment else shared_comment
@@ -452,7 +452,7 @@ class PflowMetadataExtractor:
 
             if match:
                 key = match.group(1)
-                type_str = match.group(2).strip()
+                type_str = match.group(2).strip().lower()  # Normalize to lowercase
                 description = match.group(3).strip() if match.group(3) else ""
 
                 results.append({"key": key, "type": type_str, "description": description})
@@ -579,7 +579,7 @@ class PflowMetadataExtractor:
                 field_match = re.match(r"\s*-\s*(\w+)\s*:\s*([^#\n]+)(?:\s*#\s*(.*))?", line)
                 if field_match:
                     field_name = field_match.group(1)
-                    field_type = field_match.group(2).strip()
+                    field_type = field_match.group(2).strip().lower()  # Normalize to lowercase
                     field_desc = field_match.group(3).strip() if field_match.group(3) else ""
 
                     field_info = {"type": field_type, "description": field_desc}
