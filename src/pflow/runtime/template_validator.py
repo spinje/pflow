@@ -44,6 +44,69 @@ MAX_DISPLAYED_FIELDS = 20  # Fits in ~25 terminal lines with formatting
 MAX_DISPLAYED_SUGGESTIONS = 3  # Cognitive limit for processing alternatives
 MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
 
+# Pattern to detect templates exactly wrapped in single quotes: '${var}'
+# This is an escape hatch for structured types in shell commands.
+#
+# Matches:   '${var}', '${node.field}', '${data.items[0].name}'
+# Does NOT match: '${a} ${b}', 'prefix ${var}', '$${var}' (escaped)
+#
+# Note: Array indices use [] not {}, so [^}]+ correctly captures paths
+# like 'data.items[0].value' without stopping at brackets.
+_QUOTED_TEMPLATE_PATTERN = re.compile(r"'\$\{([^}]+)\}'")
+
+# Types that are safe in shell commands (string-like or unknown type)
+# When a union contains one of these, runtime coercion to string is acceptable.
+_SHELL_SAFE_TYPES = {"str", "string", "any"}
+
+
+def _extract_base_type(type_str: str) -> str:
+    """Extract base type from generic type string.
+
+    Generic types like list[dict] or dict[str, any] have a base type
+    (list, dict) that determines their shell command compatibility.
+
+    Examples:
+        list[dict] -> list
+        dict[str, any] -> dict
+        str -> str
+        list -> list
+
+    Args:
+        type_str: Type string, possibly with generic parameters
+
+    Returns:
+        Base type without generic parameters
+    """
+    return type_str.split("[")[0]
+
+
+def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bool, str | None]:
+    """Check if a type is safe for shell command embedding.
+
+    Args:
+        inferred_type: The inferred type string (may be union like "dict|str")
+        blocked_types: Set of blocked type names
+
+    Returns:
+        Tuple of (is_safe, blocked_type_if_not_safe)
+        - (True, None) if type is safe
+        - (False, "dict") if blocked, with the first blocked type
+    """
+    # Split union and get base type for each component
+    type_parts = [t.strip() for t in inferred_type.split("|")]
+    base_types = [_extract_base_type(t) for t in type_parts]
+
+    # Tier 1: If union contains a safe base type (str, string, any), allow it
+    if any(t in _SHELL_SAFE_TYPES for t in base_types):
+        return (True, None)
+
+    # Check if any base type is blocked
+    blocked_parts = [t for t in base_types if t in blocked_types]
+    if blocked_parts:
+        return (False, blocked_parts[0])
+
+    return (True, None)
+
 
 class TemplateValidator:
     """Validates template variables before workflow execution."""
@@ -1303,6 +1366,11 @@ class TemplateValidator:
         The general type checker allows dict/list → str (for LLM prompts, HTTP bodies),
         but shell commands are special - embedded JSON breaks shell parsing.
 
+        Validation has three tiers:
+        1. Fix 0: Extract base types from generics (list[dict] → list) before checking
+        2. Tier 1: Auto-allow unions containing safe types (str, string, any)
+        3. Tier 2: Allow templates wrapped in single quotes '${var}' as an escape hatch
+
         Args:
             workflow_ir: Workflow IR
             node_outputs: Node output metadata from registry
@@ -1331,26 +1399,29 @@ class TemplateValidator:
             if not isinstance(command, str) or not TemplateResolver.has_templates(command):
                 continue
 
+            # Tier 2: Find templates exactly wrapped in single quotes (escape hatch)
+            # Pattern '${var}' signals user accepts runtime coercion to string
+            quoted_templates = {match.group(1) for match in _QUOTED_TEMPLATE_PATTERN.finditer(command)}
+
             # Check each template in the command and collect blocked ones
             templates = TemplateResolver.extract_variables(command)
             blocked_templates: list[tuple[str, str]] = []  # (template, type)
 
             for template in templates:
+                # Tier 2: Skip if template is quoted (user accepts coercion)
+                if template in quoted_templates:
+                    continue
+
                 inferred_type = infer_template_type(template, workflow_ir, node_outputs)
 
                 # Skip if cannot infer type (will be caught by path validation)
                 if not inferred_type:
                     continue
 
-                # Conservative approach for union types: block if ANY component is blocked.
-                # E.g., "dict|str" could be a dict at runtime, so we block it for safety.
-                # This prevents silent failures where the value happens to be a dict
-                # and breaks shell parsing with cryptic errors.
-                type_parts = inferred_type.split("|")
-                blocked_parts = [t.strip() for t in type_parts if t.strip() in SHELL_BLOCKED_TYPES]
-
-                if blocked_parts:
-                    blocked_templates.append((template, blocked_parts[0]))
+                # Check if type is safe (handles Fix 0 and Tier 1)
+                is_safe, blocked_type = _is_shell_safe_type(inferred_type, SHELL_BLOCKED_TYPES)
+                if not is_safe and blocked_type:
+                    blocked_templates.append((template, blocked_type))
 
             # Generate a single consolidated error if any templates are blocked
             if blocked_templates:
@@ -1370,7 +1441,9 @@ class TemplateValidator:
                         f"1. Access specific fields (if they're strings/numbers):\n"
                         f"   ${{{template}.fieldname}}, ${{{template}.count}}, etc.\n\n"
                         f"2. Use stdin for the whole object:\n"
-                        f'   {{"stdin": "${{{template}}}", "command": "jq \'.field\'"}}'
+                        f'   {{"stdin": "${{{template}}}", "command": "jq \'.field\'"}}\n\n'
+                        f"3. Quote the template to accept JSON coercion (if you've verified it's safe):\n"
+                        f"   '${{{template}}}' - wrapping in single quotes signals you accept runtime coercion"
                     )
                 else:
                     # Multiple templates - need different approach
@@ -1387,7 +1460,9 @@ class TemplateValidator:
                         f'   {{"id": "save-b", "type": "write-file", "params": {{"path": "/tmp/b.json", "content": "${{data-b}}"}}}}\n'
                         f'   {{"id": "process", "type": "shell", "params": {{"command": "jq -s \'.[0] * .[1]\' /tmp/a.json /tmp/b.json"}}}}\n\n'
                         f"2. Process each data source in separate shell nodes, combine results after\n\n"
-                        f"3. Pass one via stdin, reference another via file"
+                        f"3. Pass one via stdin, reference another via file\n\n"
+                        f"4. Quote templates to accept JSON coercion (if you've verified they're safe):\n"
+                        f"   '${{template}}' - wrapping in single quotes signals you accept runtime coercion"
                     )
 
         return errors
