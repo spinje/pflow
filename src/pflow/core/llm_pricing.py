@@ -21,6 +21,7 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "anthropic/claude-sonnet-4-0": {"input": 3.00, "output": 15.00},
     "anthropic/claude-sonnet-4-5": {"input": 3.00, "output": 15.00},  # Same pricing as 4.0
     "anthropic/claude-opus-4-1-20250805": {"input": 15, "output": 75},
+    "anthropic/claude-opus-4-5-20251101": {"input": 5, "output": 25},
     "anthropic/claude-haiku-4-5-20251001": {"input": 1, "output": 5},
     "anthropic/claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
     # OpenAI models
@@ -53,6 +54,8 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
     "gemini/gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},
     "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
     "gemini/gemini-3-flash-preview": {"input": 0.50, "output": 3.00},
+    "gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
+    "gemini/gemini-3-pro-preview": {"input": 2.00, "output": 12.00},
 }
 
 # Model aliases mapping - maps common aliases to their canonical names
@@ -68,6 +71,7 @@ MODEL_ALIASES = {
     "claude-4-sonnet": "anthropic/claude-sonnet-4-0",
     "claude-sonnet-4.5": "anthropic/claude-sonnet-4-5",
     "claude-opus-4.1": "anthropic/claude-opus-4-1-20250805",
+    "claude-opus-4.5": "anthropic/claude-opus-4-5-20251101",
     # OpenAI aliases
     "4o": "gpt-4o",
     "4o-mini": "gpt-4o-mini",
@@ -96,6 +100,8 @@ MODEL_ALIASES = {
     "gemini-2.5-flash-lite": "gemini/gemini-2.5-flash-lite",
     "gemini-3-flash": "gemini/gemini-3-flash-preview",
     "gemini-3-flash-preview": "gemini/gemini-3-flash-preview",
+    "gemini-3-pro": "gemini/gemini-3-pro-preview",
+    "gemini-3-pro-preview": "gemini/gemini-3-pro-preview",
 }
 
 
