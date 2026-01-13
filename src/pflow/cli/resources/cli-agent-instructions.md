@@ -972,7 +972,20 @@ Complex templates bypass parsing:
 
 **How to verify:** Test with your EXACT source output format. If it works in `registry run`, it will work in the workflow.
 
-**Reverse also works**: Objects in `str`-typed params auto-serialize to JSON strings with proper escaping. Use `{"key": "${val}"}` not `"{\"key\": \"${val}\"}"` - the latter breaks when content has quotes or newlines.
+#### Automatic JSON Serialization for String-Typed Parameters
+
+Objects in `str`-typed params auto-serialize to JSON strings with proper escaping. Always use object syntax—never manually construct JSON strings.
+
+```json
+// ✅ Object syntax - auto-serializes with proper escaping
+"request_body": {"query": "${user_input}", "limit": 10}
+// Result: '{"query": "Hello \"world\"\\nLine 2", "limit": 10}'
+
+// ❌ String syntax - breaks on quotes/newlines
+"request_body": "{\"query\": \"${user_input}\"}"
+```
+
+Works with or without template variables. Handles nested objects and arrays.
 
 #### Transformation Complexity Checklist
 
@@ -1577,6 +1590,14 @@ Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-ta
 **Fix**: Add formatting node before delivery - but choose the right tool:
 - **Fixed structure** (headers, bullets, tables with known columns) → shell/jq
 - **Requires judgment** (what to emphasize, summarize, professional tone) → LLM
+
+#### 8. Manual JSON string construction for string-typed params
+**Impact**: JSON parsing errors when content contains quotes, newlines, or backslashes
+**Fix**: Use object syntax—pflow auto-serializes with proper escaping
+```json
+// ❌ "{\"data\": \"${input}\"}"   → breaks on special chars
+// ✅ {"data": "${input}"}         → auto-escapes correctly
+```
 
 ### Real Request Parsing - Handling Ambiguity
 
