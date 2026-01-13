@@ -73,3 +73,40 @@ sed 's|https\\?://||' | sed 's|[^a-zA-Z0-9]|-|g' | sed 's|--*|-|g' | sed 's|^-||
   Did you mean:
     • pflow workflow list - see saved workflows
     • pflow "describe what you want" - natural language
+
+---
+
+7. Shell → JSON construction breaks on special characters
+
+  Problem: When shell commands try to construct JSON from arbitrary text (like git commit messages), special characters break parsing.
+
+  Common broken pattern:
+  ```bash
+  git log --format='{"hash":"%H","message":"%s"}' | jq -s '.'
+  ```
+
+  Fails when commit message contains curly quotes, regular quotes, backslashes, etc:
+  ```
+  {"hash":"abc","message":"docs: add "How it works" tab"}  # broken JSON
+  ```
+
+  Correct pattern (verbose):
+  ```bash
+  git log --format='%H|%s' | while IFS='|' read -r hash msg; do
+    jq -n --arg hash "$hash" --arg msg "$msg" '{hash: $hash, message: $msg}'
+  done | jq -s '.'
+  ```
+
+  Issues:
+  - The broken pattern is everywhere in tutorials, so LLMs naturally produce it
+  - It works 95% of the time (most text doesn't have special chars)
+  - Failure is silent when combined with `|| echo '[]'` fallbacks
+  - The fix is verbose and non-obvious
+
+  Possible pflow solutions:
+  1. Add structured output mode for shell nodes that handles text→JSON conversion:
+     ```json
+     "output_format": {"type": "delimited", "delimiter": "|", "fields": ["hash", "message"]}
+     ```
+  2. Add documentation warning about this pattern
+  3. Lint rule to detect inline JSON format strings in shell commands
