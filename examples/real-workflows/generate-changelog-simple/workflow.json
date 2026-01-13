@@ -11,11 +11,6 @@
       "required": false,
       "default": "CHANGELOG.md",
       "description": "Path to the changelog file"
-    },
-    "github_token": {
-      "type": "string",
-      "required": true,
-      "description": "GitHub personal access token for API access"
     }
   },
   "nodes": [
@@ -29,16 +24,18 @@
     },
     {
       "id": "get-latest-tag",
-      "type": "git-get-latest-tag",
+      "type": "shell",
       "purpose": "Get the most recent git tag to determine changelog range",
-      "params": {}
+      "params": {
+        "command": "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'); printf '{\"latest_tag\": {\"name\": \"%s\"}}' \"$tag\""
+      }
     },
     {
       "id": "get-commits",
       "type": "shell",
       "purpose": "Get commits since last tag using --first-parent to avoid PR merge duplicates",
       "params": {
-        "command": "git log ${get-latest-tag.latest_tag.name}..HEAD --first-parent --format='{\"sha\": \"%H\", \"short_sha\": \"%h\", \"subject\": \"%s\", \"author\": \"%an\", \"date\": \"%aI\"}' | jq -s '.' 2>/dev/null || echo '[]'"
+        "command": "git log ${get-latest-tag.stdout.latest_tag.name}..HEAD --first-parent --format='%H|%h|%s|%an|%aI' | while IFS='|' read -r sha short subj author date; do jq -n --arg sha \"$sha\" --arg short \"$short\" --arg subj \"$subj\" --arg author \"$author\" --arg date \"$date\" '{sha: $sha, short_sha: $short, subject: $subj, author: $author, date: $date}'; done | jq -s '.'"
       }
     },
     {
@@ -54,7 +51,7 @@
       "type": "shell",
       "purpose": "Get documentation changes since last tag for accuracy context",
       "params": {
-        "command": "git diff ${get-latest-tag.latest_tag.name}..HEAD -- docs/ 2>/dev/null | head -200 || echo 'No docs changes'"
+        "command": "git diff ${get-latest-tag.stdout.latest_tag.name}..HEAD -- docs/ 2>/dev/null | head -200 || echo 'No docs changes'"
       }
     },
     {
@@ -77,8 +74,8 @@
     },
     {
       "id": "fetch-pr-data",
-      "type": "http",
-      "purpose": "Fetch PR details from GitHub API for commits with PR references",
+      "type": "shell",
+      "purpose": "Fetch PR details from GitHub using gh CLI for commits with PR references",
       "batch": {
         "items": "${filter-commits-with-prs.stdout}",
         "as": "commit",
@@ -87,13 +84,7 @@
         "error_handling": "continue"
       },
       "params": {
-        "url": "https://api.github.com/repos/${resolve-repo.stdout}/pulls/${commit.pr_number}",
-        "method": "GET",
-        "headers": {
-          "Accept": "application/vnd.github.v3+json",
-          "Authorization": "token ${github_token}",
-          "User-Agent": "pflow-changelog"
-        }
+        "command": "gh pr view ${commit.pr_number} --repo '${resolve-repo.stdout}' --json title,body,url 2>/dev/null || echo '{\"title\": null, \"body\": null, \"url\": null}'"
       }
     },
     {
@@ -121,7 +112,7 @@
           "pr_results": "${fetch-pr-data.results}",
           "file_results": "${get-file-changes.results}"
         },
-        "command": "jq '([.pr_commits, .pr_results] | transpose | map({key: (.[0].pr_number | tostring), value: .[1].response}) | from_entries) as $pr_map | [range(0; .commits | length) as $i | .commits[$i] as $c | ($pr_map[$c.pr_number | tostring] // null) as $pr | { commit: $c, pr_full: $pr, pr_title: ($pr.title // null), pr_summary: (($pr.body // \"\") | split(\"## \")[0:2] | join(\" \") | gsub(\"[\\n\\r]+\"; \" \") | .[0:500]), pr_url: ($pr.html_url // null), files: (.file_results[$i].stdout // []) }]'"
+        "command": "jq '([.pr_commits, .pr_results] | transpose | map({key: (.[0].pr_number | tostring), value: (.[1].stdout | if type == \"string\" then fromjson else . end)}) | from_entries) as $pr_map | [range(0; .commits | length) as $i | .commits[$i] as $c | ($pr_map[$c.pr_number | tostring] // null) as $pr | { commit: $c, pr_full: $pr, pr_title: ($pr.title // null), pr_summary: (($pr.body // \"\") | split(\"## \")[0:2] | join(\" \") | gsub(\"[\\n\\r]+\"; \" \") | .[0:500]), pr_url: ($pr.url // null), files: (.file_results[$i].stdout // []) }]'"
       }
     },
     {
@@ -165,18 +156,23 @@
       "purpose": "Apply version bump to previous tag to get new version",
       "params": {
         "stdin": {
-          "prev_tag": "${get-latest-tag.latest_tag.name}",
+          "prev_tag": "${get-latest-tag.stdout.latest_tag.name}",
           "bump": "${compute-version-bump.stdout}"
         },
         "command": "jq -r '(.prev_tag | ltrimstr(\"v\") | split(\".\") | map(tonumber)) as [$major, $minor, $patch] | (.bump | gsub(\"[\\n\\r]\"; \"\")) as $b | if $b == \"major\" then \"v\\($major + 1).0.0\" elif $b == \"minor\" then \"v\\($major).\\($minor + 1).0\" else \"v\\($major).\\($minor).\\($patch + 1)\" end'"
       }
     },
     {
-      "id": "refine-and-format",
-      "type": "llm",
-      "purpose": "Refine user-facing entries and generate changelog markdown",
+      "id": "format-changelog",
+      "type": "shell",
+      "purpose": "Format classified entries into changelog markdown",
       "params": {
-        "prompt": "Create a professional changelog from these user-facing commits.\n\nUser-facing entries (each has: classification, commit, pr_title, pr_body, pr_url, files):\n${split-by-classification.stdout.user_facing}\n\nDocumentation changes (use for accuracy on feature names):\n${get-docs-diff.stdout}\n\nVersion: ${compute-new-version.stdout}\nDate: ${get-today.stdout}\nRepository: ${resolve-repo.stdout}\n\nInstructions:\n1. Use the classification.summary as base, verify against pr_body for accuracy\n2. Merge duplicate/related entries\n3. Sort categories: Removed > Changed > Added > Fixed > Improved\n4. Use the provided version and date exactly as given\n5. Include PR links using pr_url\n\nRespond with ONLY a JSON object:\n{\n  \"changelog_md\": \"## [VERSION] - DATE\\n\\n### Added\\n- Entry ([#123](url))\\n...\",\n  \"user_facing_count\": number\n}"
+        "stdin": {
+          "entries": "${split-by-classification.stdout.user_facing}",
+          "version": "${compute-new-version.stdout}",
+          "date": "${get-today.stdout}"
+        },
+        "command": "jq -r '[\"Removed\", \"Changed\", \"Added\", \"Fixed\", \"Improved\"] as $order | .entries as $entries | .version as $version | .date as $date | ($entries | group_by(.classification.category) | map({key: .[0].classification.category, value: .}) | from_entries) as $by_cat | \"## [\" + $version + \"] - \" + $date + \"\\n\\n\" + ($order | map($by_cat[.] as $items | if $items then \"### \" + . + \"\\n\" + ($items | map(\"- \" + .classification.summary + (if .pr_url then \" ([#\" + (.pr_url | split(\"/\") | last) + \"](\" + .pr_url + \"))\" else \"\" end)) | join(\"\\n\")) else empty end) | join(\"\\n\\n\"))'"
       }
     },
     {
@@ -185,12 +181,12 @@
       "purpose": "Assemble context file for verification",
       "params": {
         "stdin": {
-          "changelog": "${refine-and-format.response}",
+          "changelog": "${format-changelog.stdout}",
           "user_facing": "${split-by-classification.stdout.user_facing}",
           "internal": "${split-by-classification.stdout.internal}",
           "docs_diff": "${get-docs-diff.stdout}"
         },
-        "command": "jq -r '(.user_facing | if type == \"string\" then fromjson else . end) as $uf | (.internal | if type == \"string\" then fromjson else . end) as $int | \"# Release Context\\n\\n## Generated Changelog\\n\\n\" + .changelog.changelog_md + \"\\n\\n## User-Facing Entries (Full Context)\\n\\n\" + ($uf | map(\"### \" + .commit.subject + \"\\n\\n**Category:** \" + .classification.category + \"\\n**Summary:** \" + .classification.summary + \"\\n**PR:** \" + (.pr_url // \"N/A\") + \"\\n**Files:** \" + (.files | tostring) + \"\\n\\n\" + if .pr_body then \"<details>\\n<summary>PR Body</summary>\\n\\n\" + .pr_body + \"\\n</details>\" else \"\" end) | join(\"\\n\\n---\\n\\n\")) + \"\\n\\n## Skipped Changes (Internal)\\n\\n\" + ($int | map(\"- \" + .commit.subject) | join(\"\\n\")) + \"\\n\\n## Documentation Changes\\n\\n```diff\\n\" + .docs_diff + \"\\n```\\n\\n## Verification Checklist\\n\\n- [ ] Version number is correct\\n- [ ] No user-facing changes missed\\n- [ ] PR links are correct\\n- [ ] Category assignments are accurate\"'"
+        "command": "jq -r '(.user_facing | if type == \"string\" then fromjson else . end) as $uf | (.internal | if type == \"string\" then fromjson else . end) as $int | \"# Release Context\\n\\n## Generated Changelog\\n\\n\" + .changelog + \"\\n\\n## User-Facing Entries (Full Context)\\n\\n\" + ($uf | map(\"### \" + .commit.subject + \"\\n\\n**Category:** \" + .classification.category + \"\\n**Summary:** \" + .classification.summary + \"\\n**PR:** \" + (.pr_url // \"N/A\") + \"\\n**Files:** \" + (.files | tostring) + \"\\n\\n\" + if .pr_body then \"<details>\\n<summary>PR Body</summary>\\n\\n\" + .pr_body + \"\\n</details>\" else \"\" end) | join(\"\\n\\n---\\n\\n\")) + \"\\n\\n## Skipped Changes (Internal)\\n\\n\" + ($int | map(\"- \" + .commit.subject) | join(\"\\n\")) + \"\\n\\n## Documentation Changes\\n\\n```diff\\n\" + .docs_diff + \"\\n```\\n\\n## Verification Checklist\\n\\n- [ ] Version number is correct\\n- [ ] No user-facing changes missed\\n- [ ] PR links are correct\\n- [ ] Category assignments are accurate\"'"
       }
     },
     {
@@ -207,8 +203,8 @@
       "type": "shell",
       "purpose": "Prepend new changelog entry to existing changelog file",
       "params": {
-        "stdin": "${refine-and-format.response}",
-        "command": "changelog=$(jq -r '.changelog_md'); if [ -f '${changelog_path}' ]; then echo \"$changelog\" | cat - '${changelog_path}' > /tmp/changelog.tmp && mv /tmp/changelog.tmp '${changelog_path}'; else echo \"$changelog\" > '${changelog_path}'; fi && echo 'Updated: ${changelog_path}'"
+        "stdin": "${format-changelog.stdout}",
+        "command": "changelog=$(cat); if [ -f '${changelog_path}' ]; then { echo \"$changelog\"; echo ''; cat '${changelog_path}'; } > /tmp/changelog.tmp && mv /tmp/changelog.tmp '${changelog_path}'; else echo \"$changelog\" > '${changelog_path}'; fi && echo 'Updated: ${changelog_path}'"
       }
     },
     {
@@ -217,12 +213,12 @@
       "purpose": "Output summary of what was generated",
       "params": {
         "stdin": {
-          "changelog": "${refine-and-format.response}",
+          "user_facing": "${split-by-classification.stdout.user_facing}",
           "internal": "${split-by-classification.stdout.internal}",
           "version": "${compute-new-version.stdout}",
           "bump": "${compute-version-bump.stdout}"
         },
-        "command": "jq -r '(.version | gsub(\"[\\n\\r]\"; \"\")) as $v | (.bump | gsub(\"[\\n\\r]\"; \"\")) as $b | (.internal | if type == \"string\" then fromjson else . end) as $int | \"\\n=== Changelog Generated ===\\nVersion: \" + $v + \"\\nVersion bump: \" + $b + \"\\nUser-facing entries: \" + (.changelog.user_facing_count | tostring) + \"\\nSkipped (internal): \" + ($int | length | tostring) + \"\\n\\nFiles updated:\\n- ${changelog_path}\\n- releases/\" + $v + \"-context.md\\n\\nReview the context file before committing.\"'"
+        "command": "jq -r '(.version | gsub(\"[\\n\\r]\"; \"\")) as $v | (.bump | gsub(\"[\\n\\r]\"; \"\")) as $b | (.internal | if type == \"string\" then fromjson else . end) as $int | (.user_facing | if type == \"string\" then fromjson else . end) as $uf | \"\\n=== Changelog Generated ===\\nVersion: \" + $v + \"\\nVersion bump: \" + $b + \"\\nUser-facing entries: \" + ($uf | length | tostring) + \"\\nSkipped (internal): \" + ($int | length | tostring) + \"\\n\\nFiles updated:\\n- ${changelog_path}\\n- releases/\" + $v + \"-context.md\\n\\nReview the context file before committing.\"'"
       }
     }
   ],
@@ -281,10 +277,10 @@
     },
     {
       "from": "compute-new-version",
-      "to": "refine-and-format"
+      "to": "format-changelog"
     },
     {
-      "from": "refine-and-format",
+      "from": "format-changelog",
       "to": "generate-context"
     },
     {
@@ -306,7 +302,7 @@
       "description": "Summary of changelog generation"
     },
     "changelog": {
-      "source": "${refine-and-format.response.changelog_md}",
+      "source": "${format-changelog.stdout}",
       "description": "Generated changelog markdown"
     },
     "version": {
