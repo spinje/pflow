@@ -4,6 +4,8 @@ Tests the feature that automatically parses JSON strings when passed to
 dict/list parameters, enabling shell+jq → MCP workflows without LLM steps.
 """
 
+import json
+
 import pytest
 
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
@@ -27,10 +29,46 @@ class SimpleNode(Node):
         return "default"
 
 
+class JsonConsumingNode(Node):
+    """Test node that calls json.loads() on a str-typed parameter.
+
+    This simulates MCP nodes that expect JSON string parameters and parse them.
+    If a dict is passed instead of a string, json.loads() will fail with:
+    TypeError: the JSON object must be str, bytes or bytearray, not dict
+
+    This is the EXACT error from the bug report in SUPPLEMENTARY-FINDINGS.md.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def prep(self, shared):
+        return {}
+
+    def exec(self, prep_res):
+        # Simulate what MCP nodes do: parse JSON string parameters
+        json_param = self.params.get("json_data")
+        if json_param is not None:
+            # This will FAIL if json_param is a dict instead of a string
+            parsed = json.loads(json_param)
+            return {"parsed": parsed, "original_type": type(json_param).__name__}
+        return {"parsed": None, "original_type": None}
+
+    def post(self, shared, prep_res, exec_res):
+        shared["result"] = exec_res
+        return "default"
+
+
 @pytest.fixture
 def simple_node():
     """Create a simple test node."""
     return SimpleNode()
+
+
+@pytest.fixture
+def json_consuming_node():
+    """Create a node that calls json.loads() on its parameter."""
+    return JsonConsumingNode()
 
 
 @pytest.fixture
@@ -577,3 +615,308 @@ class TestReverseCoercionDictToString:
 
         parsed = json_module.loads(result["data"])
         assert parsed["outer"]["middle"]["inner"] == "deep"
+
+
+class TestStaticParamCoercion:
+    """Test dict/list → JSON string coercion for STATIC params (no templates).
+
+    This is the bug fix for SUPPLEMENTARY-FINDINGS.md: objects without templates
+    were not being coerced because they bypassed the template resolution path.
+    """
+
+    def test_static_dict_coerced_to_json_string(self, simple_node):
+        """Static dict (no template) becomes JSON string when param type is str."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "path_params", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Static dict - NO template variables
+        wrapper.set_params({"path_params": {"channel_id": "123"}})
+
+        shared = {}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["path_params"], str)
+        assert json_module.loads(result["path_params"]) == {"channel_id": "123"}
+
+    def test_static_list_coerced_to_json_string(self, simple_node):
+        """Static list (no template) becomes JSON string when param type is str."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "items", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Static list - NO template variables
+        wrapper.set_params({"items": [1, 2, 3]})
+
+        shared = {}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["items"], str)
+        assert json_module.loads(result["items"]) == [1, 2, 3]
+
+    def test_static_dict_preserved_when_type_is_dict(self, simple_node, interface_metadata):
+        """Static dict stays dict when param type is dict (no coercion)."""
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,  # Has dict_param: dict
+        )
+
+        # Static dict for dict-typed param
+        wrapper.set_params({"dict_param": {"key": "value"}})
+
+        shared = {}
+        wrapper._run(shared)
+
+        result = shared["result"]
+        assert isinstance(result["dict_param"], dict)
+        assert result["dict_param"] == {"key": "value"}
+
+    def test_mixed_static_and_template_params(self, simple_node):
+        """Mixed static + template params both coerced correctly."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "path_params", "type": "str"},
+                {"key": "body_schema", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Mixed: one static, one with template
+        wrapper.set_params({
+            "path_params": {"channel_id": "123"},  # Static - no template
+            "body_schema": {"content": "${message}"},  # Has template
+        })
+
+        shared = {"message": "Hello!"}
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # Both should be JSON strings
+        assert isinstance(result["path_params"], str)
+        assert isinstance(result["body_schema"], str)
+
+        # Both should parse to correct values
+        assert json_module.loads(result["path_params"]) == {"channel_id": "123"}
+        assert json_module.loads(result["body_schema"]) == {"content": "Hello!"}
+
+    def test_mcp_workflow_pattern_with_hardcoded_channel(self, simple_node):
+        """Real bug case: hardcoded channel_id with template message.
+
+        This is the exact scenario from SUPPLEMENTARY-FINDINGS.md that was broken.
+        """
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "path_params", "type": "str"},
+                {"key": "body_schema", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="mcp-discord-execute_action",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # The bug case: hardcoded path_params, template in body_schema
+        wrapper.set_params({
+            "path_params": {"channel_id": "1458059302022549698"},  # Hardcoded!
+            "body_schema": {"content": "${message}"},
+        })
+
+        shared = {"message": "Test message"}
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # BOTH must be JSON strings for MCP to work
+        assert isinstance(result["path_params"], str), "path_params should be JSON string"
+        assert isinstance(result["body_schema"], str), "body_schema should be JSON string"
+
+        # Verify valid JSON
+        path_params = json_module.loads(result["path_params"])
+        body_schema = json_module.loads(result["body_schema"])
+
+        assert path_params == {"channel_id": "1458059302022549698"}
+        assert body_schema == {"content": "Test message"}
+
+    def test_fully_static_workflow_both_params(self, simple_node):
+        """All static params (no templates at all) should still coerce."""
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "path_params", "type": "str"},
+                {"key": "body_schema", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Fully static - no templates anywhere
+        wrapper.set_params({
+            "path_params": {"channel_id": "123"},
+            "body_schema": {"content": "hardcoded message"},
+        })
+
+        shared = {}
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # Both should be JSON strings
+        assert isinstance(result["path_params"], str)
+        assert isinstance(result["body_schema"], str)
+
+        # Verify values
+        assert json_module.loads(result["path_params"]) == {"channel_id": "123"}
+        assert json_module.loads(result["body_schema"]) == {"content": "hardcoded message"}
+
+    def test_json_loads_succeeds_with_coerced_static_dict(self, json_consuming_node):
+        """CANARY TEST: Node calling json.loads() works with coerced static dict.
+
+        This is the highest-value test because it would have FAILED before the fix.
+        Before: dict passed to json.loads() → TypeError
+        After:  dict coerced to JSON string → json.loads() succeeds
+
+        This simulates exactly what MCP nodes do and catches the bug from
+        SUPPLEMENTARY-FINDINGS.md: "the JSON object must be str, bytes or bytearray, not dict"
+        """
+        interface_metadata = {
+            "params": [
+                {"key": "json_data", "type": "str"},  # Typed as str, expects JSON string
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=json_consuming_node,
+            node_id="mcp-like-node",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Pass a dict WITHOUT templates - the exact bug case
+        wrapper.set_params({"json_data": {"channel_id": "123", "content": "hello"}})
+
+        shared = {}
+        # Before fix: This would raise TypeError in json.loads()
+        # After fix: Dict is coerced to JSON string, json.loads() succeeds
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # Verify the node received a STRING (not dict)
+        assert result["original_type"] == "str", "Node should receive string, not dict"
+
+        # Verify json.loads() successfully parsed it back
+        assert result["parsed"] == {"channel_id": "123", "content": "hello"}
+
+    def test_static_dict_not_coerced_without_type_metadata(self, simple_node):
+        """Static dict stays dict when no type metadata available.
+
+        Without type information, we cannot know if the param should be
+        coerced to a string. Safe default is to pass through unchanged.
+        """
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=None,  # No type metadata!
+        )
+
+        # Static dict without type info
+        wrapper.set_params({"unknown_param": {"key": "value"}})
+
+        shared = {}
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # Without type metadata, dict should NOT be coerced
+        assert isinstance(result["unknown_param"], dict)
+        assert result["unknown_param"] == {"key": "value"}
+
+    def test_deeply_nested_static_object_serializes_correctly(self, simple_node):
+        """Deeply nested static objects serialize correctly to JSON string.
+
+        This verifies that json.dumps() handles arbitrary nesting depth,
+        including nested dicts, arrays, and mixed structures.
+        """
+        import json as json_module
+
+        interface_metadata = {
+            "params": [
+                {"key": "complex_param", "type": "str"},
+            ]
+        }
+        wrapper = TemplateAwareNodeWrapper(
+            inner_node=simple_node,
+            node_id="test",
+            initial_params={},
+            interface_metadata=interface_metadata,
+        )
+
+        # Deeply nested static structure - NO templates
+        nested_value = {
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "data": "value",
+                        "numbers": [1, 2, 3],
+                        "nested_array": [{"a": 1}, {"b": 2}],
+                    }
+                },
+                "sibling": "value",
+            },
+            "top_array": [{"x": 1}, {"y": 2}],
+        }
+
+        wrapper.set_params({"complex_param": nested_value})
+
+        shared = {}
+        wrapper._run(shared)
+
+        result = shared["result"]
+
+        # Should be serialized to JSON string
+        assert isinstance(result["complex_param"], str)
+
+        # Should parse back to identical structure
+        parsed = json_module.loads(result["complex_param"])
+        assert parsed == nested_value

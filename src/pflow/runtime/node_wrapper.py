@@ -85,7 +85,11 @@ class TemplateAwareNodeWrapper:
                     extra={"node_id": self.node_id, "param": key},
                 )
             else:
-                self.static_params[key] = value
+                # Apply type coercion for static params (dict/list → str when expected)
+                # This mirrors the coercion applied to template params at runtime
+                expected_type = self._expected_types.get(key)
+                coerced_value = coerce_to_declared_type(value, expected_type)
+                self.static_params[key] = coerced_value
 
         # Set only static params on inner node for now
         self.inner_node.set_params(self.static_params)
