@@ -5,6 +5,55 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="JANUARY 2026" description="v0.5.0" tags={["New releases", "Bug fixes"]}>
+  ## Batch Processing
+
+  Workflows now support processing arrays of data through a single node using isolated execution contexts. This enables powerful fan-out patterns for mass data transformation and analysis.
+
+  **Highlights**
+  - Added sequential and parallel batch execution modes with configurable concurrency limits.
+  - Added real-time progress indicators in the CLI showing item completion status.
+  - Added automatic LLM usage and cost tracking for all sub-executions within a batch.
+  - Added self-contained batch results by including the original input item in the output schema.
+  - Improved batch validation to support dotted references and nested structures.
+
+  ## Intelligent Data Flow
+
+  Significant improvements to the template engine make it easier to pipe data between different tools without manual parsing or string manipulation.
+
+  **Highlights**
+  - Added automatic JSON parsing during nested template access, allowing variables like `${node.stdout.field}` to work even when the source is a JSON string.
+  - Added type preservation for simple templates in inline objects to prevent double-serialization bugs.
+  - Added automatic coercion of complex types (dicts/lists) to JSON strings when mapped to string-only parameters.
+  - Added normalized type string validation across the registry and workflow nodes to prevent matching failures.
+  - Improved workflow input resolution to handle optional variables without default values.
+
+  ## Shell & Node Reliability
+
+  Enhancements to the shell execution environment and core node integrations provide better visibility into failures and more predictable behavior.
+
+  **Highlights**
+  - Migrated the Claude Code node to the Claude Agent SDK with new sandbox configuration support.
+  - Added visibility for shell `stderr` output when exit codes are successful to help debug silent pipeline failures.
+  - Added automatic stripping of trailing newlines from shell `stdout` by default.
+  - Added a "smart handling" check for shell pipelines to correctly catch errors in commands like `grep` or `sed`.
+  - Added support for branch and tag references in the Git Log node.
+  - Fixed a critical bug where `SIGPIPE` signals could prematurely terminate workflows when subprocesses ignored input.
+
+  <Accordion title="Breaking changes">
+    ### Parameter-Only Pattern
+    The "shared store fallback" pattern has been removed from all nodes. Nodes now read exclusively from `self.params`. All data wiring must be done explicitly using `${variable}` templates in the workflow configuration. This prevents naming collisions between node IDs and parameter names.
+
+    ### Claude Code Node
+    - Parameter `task` renamed to `prompt`
+    - Parameter `working_directory` renamed to `cwd`
+    - Parameter `context` removed (include context directly in the prompt)
+
+    ### Workflow Metadata
+    - The `name` field is no longer stored inside workflow JSON files. Names are now derived directly from the filename to ensure the filesystem remains the single source of truth.
+  </Accordion>
+</Update>
+
 <Update label="December 2024" description="v0.7.0" tags={["New releases", "Improvements"]}>
   ## Batch processing
 
