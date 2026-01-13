@@ -972,6 +972,8 @@ Complex templates bypass parsing:
 
 **How to verify:** Test with your EXACT source output format. If it works in `registry run`, it will work in the workflow.
 
+**Reverse also works**: Objects in `str`-typed params auto-serialize to JSON strings with proper escaping. Use `{"key": "${val}"}` not `"{\"key\": \"${val}\"}"` - the latter breaks when content has quotes or newlines.
+
 #### Transformation Complexity Checklist
 
 **Before adding any extraction/processing steps (grep, sed, jq, etc.):**
@@ -1731,6 +1733,7 @@ Format: `verb-noun-qualifier`
 
 | Mistake | Why It Happens | Prevention |
 |---------|----------------|------------|
+| **Manual JSON string construction** | Trying to build `"{\"key\": \"${val}\"}"` | Use object syntax: `{"key": "${val}"}` - auto-serializes with proper escaping |
 | **Using Slack as default example** | Document bias from old examples | Rotate between service categories |
 | **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract paths, jq transforms |
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
