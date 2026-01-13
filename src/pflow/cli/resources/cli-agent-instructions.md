@@ -78,7 +78,7 @@ fetch-data → process-data → save-results
 - `save-results` starts ONLY after `process-data` completely finishes
 - No node can start until its predecessor completes
 - Each node has exactly ONE successor (except the last node which has none)
-- No parallel execution ever
+- No parallel edges (use `batch` with `parallel: true` for concurrent operations)
 
 #### Concept 2: Data Access (Templates)
 **Templates define WHAT DATA nodes can see** - any node can access any PREVIOUS node's output.
@@ -1533,6 +1533,8 @@ Workflows are linear—this is the only way to run operations concurrently.
 ```
 Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
 
+**⚠️ No dynamic indexing**: `${results[${item.index}]}` won't work. Put static indices in each item instead.
+
 **Using results**:
 ```json
 {"id": "report", "type": "llm", "params": {"prompt": "Summary of ${process-each.count} items:\n${process-each.results}"}}
@@ -1652,7 +1654,7 @@ I need to clarify a few details:
 |-------|---------|-----|
 | No inputs | Not reusable | Extract all values as inputs |
 | 30+ nodes | Too complex | Break into multiple workflows |
-| Repetitive nodes | Inefficient | Consolidate operations |
+| Repetitive nodes | Inefficient | Use batch with inline array |
 | LLM for extraction | Expensive & unreliable | Templates for paths, jq for transformation |
 | Hardcoded credentials | Security risk | Use inputs + settings |
 | No output formatting | Poor UX | Add format step |
