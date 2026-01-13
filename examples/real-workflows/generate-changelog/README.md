@@ -45,7 +45,7 @@ This workflow showcases several key pflow capabilities:
 | **Object stdin** | Combining multiple data sources |
 | **Nested template access** | `${get-dates.stdout.iso}` accesses JSON fields |
 | **Batch result indexing** | `${format-both.results[0].response}` accesses specific batch results |
-| **Git integration** | `git-get-latest-tag` node |
+| **Git integration** | Shell commands for tag/commit extraction |
 | **GitHub integration** | PR enrichment via `gh` CLI |
 | **Docs diff context** | Uses documentation changes to improve accuracy |
 | **Task review context** | Reads task-review.md files for implementation details |
@@ -69,7 +69,7 @@ This workflow showcases several key pflow capabilities:
                                               │
                                               ▼
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
-│ analyze-commits (BATCH LLM, 10 concurrent) → filter-and-format                        │
+│ analyze-commits (BATCH LLM, 90 concurrent) → filter-and-format                        │
 └───────────────────────────────────────────────────────────────────────────────────────┘
                                               │
                                               ▼
@@ -298,7 +298,7 @@ When a PR is merged, git history contains both the merge commit AND all individu
 
 ### 2. Streamlined LLM Approach
 
-**Classification Pass (Parallel)**: Analyzes each commit using truncated PR summaries (not full bodies) to determine if it's user-facing. Fast parallel execution with 10 concurrent calls.
+**Classification Pass (Parallel)**: Analyzes each commit using truncated PR summaries (not full bodies) to determine if it's user-facing. Fast parallel execution with 90 concurrent calls.
 
 **Formatting Pass (Parallel)**: Both markdown and Mintlify formatters run in parallel as a batch node with 2 items. Each formatter receives full context (task reviews, docs diff, PR bodies) and performs its own refinement (deduping, sorting, verb standardization) before formatting.
 

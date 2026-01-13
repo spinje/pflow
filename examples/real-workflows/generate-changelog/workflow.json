@@ -28,15 +28,18 @@
   "nodes": [
     {
       "id": "get-latest-tag",
-      "type": "git-get-latest-tag",
-      "purpose": "Get latest git tag as baseline"
+      "type": "shell",
+      "purpose": "Get latest git tag as baseline",
+      "params": {
+        "command": "tag=$(git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'); printf '{\"latest_tag\": {\"name\": \"%s\"}}' \"$tag\""
+      }
     },
     {
       "id": "resolve-tag",
       "type": "shell",
       "purpose": "Use provided tag or default to latest",
       "params": {
-        "command": "provided='${since_tag}'\nlatest='${get-latest-tag.latest_tag.name}'\nif [ -n \"$provided\" ]; then echo \"$provided\"; else echo \"$latest\"; fi | tr -d '\\n'"
+        "command": "provided='${since_tag}'\nlatest='${get-latest-tag.stdout.latest_tag.name}'\nif [ -n \"$provided\" ]; then echo \"$provided\"; else echo \"$latest\"; fi | tr -d '\\n'"
       }
     },
     {
@@ -79,7 +82,7 @@
       "batch": {
         "items": "${get-commits-enriched.stdout}",
         "parallel": true,
-        "max_concurrent": 50,
+        "max_concurrent": 90,
         "error_handling": "continue"
       },
       "params": {
