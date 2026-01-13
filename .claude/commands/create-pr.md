@@ -88,6 +88,10 @@ Create a pull request based on the current branch and recent commits:
      - Key change 1
      - Key change 2
 
+     ## Explanation
+     <!-- why did you make these changes and what was the reasoning behind it -->
+     <!-- if the changes are not obvious, explain them so that its easy to understand what was done -->
+
      ## Created Docs
      If you created any new docs, list them here.
      If the PR is related to a task, include references to these files (make sure they exist first)
@@ -95,6 +99,7 @@ Create a pull request based on the current branch and recent commits:
      - .taskmaster/tasks/<task-id>/task-review.md
      - .taskmaster/tasks/<task-id>/implementation/progress-log.md
      
+     <!-- brief description of any updates to user facing documentation if changes made to docs/ folder -->
      <!-- Include file stats from diff output if available -->
      
      ## Testing
