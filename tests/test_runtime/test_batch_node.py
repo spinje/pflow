@@ -2524,3 +2524,62 @@ class TestBatchProgressCallbacks:
         # All events should have depth=2
         assert len(events) == 2
         assert all(e["depth"] == 2 for e in events)
+
+
+class IndexCapturingMockNode:
+    """Mock node that captures __index__ from shared store."""
+
+    def __init__(self, node_id: str):
+        self.node_id = node_id
+        self.captured_indices: list[int | None] = []
+
+    def _run(self, shared: dict) -> str:
+        """Capture __index__ and item from shared."""
+        index = shared.get("__index__")
+        item = shared.get("item")
+        self.captured_indices.append(index)
+        shared[self.node_id] = {"response": item, "captured_index": index}
+        return "default"
+
+
+class TestBatchIndexInjection:
+    """High-value tests for __index__ system variable injection."""
+
+    def test_index_injected_sequential(self):
+        """__index__ is injected in sequential batch execution."""
+        inner = IndexCapturingMockNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        batch._exec(items)
+
+        assert inner.captured_indices == [0, 1, 2]
+
+    def test_index_injected_parallel(self):
+        """__index__ is injected in parallel batch execution."""
+        inner = IndexCapturingMockNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
+
+        shared = {"data": ["x", "y", "z"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # In parallel mode, inner node is deep-copied per thread.
+        # Results are stored at their original index position, so
+        # results[i] should have captured_index == i
+        for i, result in enumerate(shared["test_node"]["results"]):
+            assert result["captured_index"] == i, f"Result at position {i} has wrong index"
+
+    def test_index_zero_not_falsy(self):
+        """Index 0 is injected correctly (critical edge case)."""
+        inner = IndexCapturingMockNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared = {"data": ["only_item"]}
+        items = batch.prep(shared)
+        batch._exec(items)
+
+        # Index 0 should be captured, not None
+        assert inner.captured_indices == [0]

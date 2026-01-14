@@ -767,3 +767,36 @@ class TestBatchTemplateValidation:
         # Should produce an error - typo_field is not a valid output
         assert len(errors) == 1, f"Expected 1 error for invalid path, got: {errors}"
         assert "typo_field" in errors[0] or "results[0]" in errors[0]
+
+    def test_nested_index_template_not_flagged_as_malformed(self):
+        """${results[${__index__}]} should not be flagged as malformed syntax."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "first-batch",
+                    "type": "shell",
+                    "batch": {"items": "${items}"},
+                    "params": {"command": "echo ${item}"},
+                },
+                {
+                    "id": "second-batch",
+                    "type": "shell",
+                    "batch": {"items": "${items}"},
+                    "params": {
+                        # Nested index template - should not be flagged as malformed
+                        "command": "echo ${first-batch.results[${__index__}].stdout}"
+                    },
+                },
+            ],
+            "edges": [{"from": "first-batch", "to": "second-batch"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"items": ["a", "b", "c"]}, registry
+        )
+        # Should NOT produce any "malformed template" errors
+        malformed_errors = [e for e in errors if "Malformed template" in e]
+        assert len(malformed_errors) == 0, f"Unexpected malformed template errors: {malformed_errors}"

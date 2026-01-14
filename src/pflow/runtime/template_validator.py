@@ -727,8 +727,11 @@ class TemplateValidator:
         return TemplateValidator._create_simple_template_error(template, workflow_ir)
 
     # More permissive pattern to catch malformed templates for validation
-    # Now supports array notation: ${node[0].field}, ${node.field[0].subfield}
-    _PERMISSIVE_PATTERN = re.compile(r"\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[\w-]*(?:\[[\d]+\])?)*)?)\}")
+    # Supports array notation: ${node[0].field}, ${node.field[0].subfield}
+    # Also supports nested index templates: ${node[${__index__}].field}
+    _PERMISSIVE_PATTERN = re.compile(
+        r"\$\{([a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?)\}"
+    )
 
     # Batch output definitions matching PflowBatchNode.post() structure
     _BATCH_OUTPUTS: ClassVar[list[dict[str, str]]] = [
@@ -778,6 +781,15 @@ class TemplateValidator:
                 node_outputs[item_alias] = {
                     "type": "any",
                     "description": f"Current batch item during iteration (from node '{node_id}')",
+                    "node_id": node_id,
+                    "node_type": node_type,
+                    "is_batch_item": True,
+                }
+
+                # Register __index__ as an available variable (0-based batch item index)
+                node_outputs["__index__"] = {
+                    "type": "int",
+                    "description": f"Current batch item index (0-based) during iteration (from node '{node_id}')",
                     "node_id": node_id,
                     "node_type": node_type,
                     "is_batch_item": True,
@@ -1178,8 +1190,13 @@ class TemplateValidator:
                     # Count how many valid templates we matched
                     valid_matches = TemplateValidator._PERMISSIVE_PATTERN.findall(value)
 
-                    # If mismatch, we have malformed syntax
-                    if len(valid_matches) < dollar_brace_count:
+                    # Account for nested templates inside brackets - they're part of
+                    # outer templates and shouldn't be counted separately
+                    # e.g., ${results[${__index__}]} has 2 '${' but is 1 logical template
+                    nested_count = sum(1 for m in valid_matches if "[${" in f"${{{m}}}")
+
+                    # If mismatch (accounting for nested), we have malformed syntax
+                    if len(valid_matches) + nested_count < dollar_brace_count:
                         location = f"node '{node_id}' parameter '{param_path}'" if param_path else f"node '{node_id}'"
                         errors.append(
                             f"Malformed template syntax in {location}: "
