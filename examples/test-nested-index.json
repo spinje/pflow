@@ -1,0 +1,56 @@
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "generate-data",
+      "type": "shell",
+      "params": {
+        "command": "echo '[{\"name\": \"alice\", \"score\": 85}, {\"name\": \"bob\", \"score\": 92}, {\"name\": \"charlie\", \"score\": 78}]'"
+      }
+    },
+    {
+      "id": "process-batch",
+      "type": "shell",
+      "batch": {
+        "items": "${generate-data.stdout}",
+        "as": "user"
+      },
+      "params": {
+        "command": "echo \"Processing user ${user.name} (index ${__index__}) with score ${user.score}\""
+      }
+    },
+    {
+      "id": "correlate-batch",
+      "type": "shell",
+      "batch": {
+        "items": [
+          {
+            "label": "First user",
+            "extra": "VIP"
+          },
+          {
+            "label": "Second user",
+            "extra": "Regular"
+          },
+          {
+            "label": "Third user",
+            "extra": "New"
+          }
+        ]
+      },
+      "params": {
+        "command": "echo \"${item.label}: ${process-batch.results[${__index__}].stdout} (${item.extra})\""
+      }
+    }
+  ],
+  "edges": [
+    {
+      "from": "generate-data",
+      "to": "process-batch"
+    },
+    {
+      "from": "process-batch",
+      "to": "correlate-batch"
+    }
+  ]
+}

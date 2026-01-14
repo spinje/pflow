@@ -35,6 +35,16 @@ class TemplateResolver:
     # Uses same strict variable name pattern as TEMPLATE_PATTERN
     SIMPLE_TEMPLATE_PATTERN = re.compile(rf"^\$\{{({_VAR_NAME_PATTERN})\}}$")
 
+    # Pattern for nested index templates: ${outer[${inner}]} or ${outer.path[${inner}].rest}
+    # Captures: (1) outer_var with optional dot path, (2) inner_template, (3) rest_of_path
+    # Examples: ${results[${item.index}]}, ${node.data[${__index__}].field}
+    # Inner template uses same strict variable naming as _VAR_NAME_PATTERN for defense-in-depth
+    NESTED_INDEX_PATTERN = re.compile(
+        r"\$\{([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\[(\$\{"
+        + _VAR_NAME_PATTERN
+        + r"\})\]((?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)\}"
+    )
+
     @staticmethod
     def has_templates(value: Any) -> bool:
         """Check if value contains template variables.
@@ -55,6 +65,80 @@ class TemplateResolver:
             return any(TemplateResolver.has_templates(item) for item in value)
         else:
             return False
+
+    @staticmethod
+    def resolve_nested_index_templates(template: str, context: dict[str, Any]) -> str:
+        """Pre-process nested index templates by resolving inner ${...} first.
+
+        Transforms templates like ${results[${item.index}].response} into
+        ${results[0].response} (if item.index resolves to 0).
+
+        This enables dynamic array indexing in batch processing where the index
+        comes from a variable like ${__index__} or ${item.index}.
+
+        Note: This is called automatically at the start of resolve_template()
+        for all templates. Only ONE level of nesting is supported:
+        - ${outer[${inner}]} works
+        - ${outer[${inner[${deep}]}]} is NOT supported (inner nesting ignored)
+
+        Handles array index patterns [${...}] only. Non-integer inner values
+        or missing variables leave the template unchanged for debugging.
+
+        Performance: Iterates up to 10 times per template (for multiple nested
+        patterns). Early exits when no nested pattern found or can't resolve.
+
+        Args:
+            template: String that may contain nested index templates
+            context: Dictionary containing values to resolve inner templates from
+
+        Returns:
+            Template string with inner index templates resolved to static values
+        """
+        if "${" not in template or "[${" not in template:
+            return template
+
+        # Limit iterations to prevent infinite loops with malformed templates
+        max_iterations = 10
+        for _ in range(max_iterations):
+            match = TemplateResolver.NESTED_INDEX_PATTERN.search(template)
+            if not match:
+                break
+
+            outer_var = match.group(1)  # e.g., "results" or "node.results"
+            inner_template = match.group(2)  # e.g., "${item.index}"
+            rest_path = match.group(3)  # e.g., ".response"
+
+            # Extract variable name from inner template
+            inner_var = TemplateResolver.extract_simple_template_var(inner_template)
+            if inner_var is None:
+                logger.debug(
+                    "Nested template resolution skipped: inner template not simple",
+                    extra={"template": template, "inner": inner_template},
+                )
+                break
+
+            # Resolve inner variable
+            resolved_inner = TemplateResolver.resolve_value(inner_var, context)
+            if resolved_inner is None:
+                logger.debug(
+                    "Nested template resolution skipped: inner variable not found",
+                    extra={"template": template, "inner_var": inner_var},
+                )
+                break
+
+            # Must resolve to integer for array indexing
+            if not isinstance(resolved_inner, int):
+                logger.warning(
+                    f"Nested index must be integer, got {type(resolved_inner).__name__}",
+                    extra={"template": template, "inner_value": resolved_inner},
+                )
+                break
+
+            # Build the resolved template with static index
+            resolved = f"${{{outer_var}[{resolved_inner}]{rest_path}}}"
+            template = template[: match.start()] + resolved + template[match.end() :]
+
+        return template
 
     @staticmethod
     def extract_variables(value: str) -> set[str]:
@@ -416,6 +500,9 @@ class TemplateResolver:
             >>> TemplateResolver.resolve_template("Missing: ${undefined}", context)
             'Missing: ${undefined}'
         """
+        # Pre-process nested index templates: ${outer[${inner}]} -> ${outer[0]}
+        template = TemplateResolver.resolve_nested_index_templates(template, context)
+
         # Check for simple template first - preserve type
         var_name = TemplateResolver.extract_simple_template_var(template)
         if var_name is not None:

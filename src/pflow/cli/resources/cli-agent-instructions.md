@@ -1072,7 +1072,9 @@ Common mistake: Using jq for extraction creates unnecessary nodes. Templates han
     // Array access
     "first_item": "${fetch.items[0]}",
     "specific_field": "${fetch.items[0].name}",
-    "last_item": "${fetch.items[-1]}",
+
+    // Nested template: inner resolves first
+    "by_input": "${fetch.items[${choice}]}",  // choice=0,1,2 selects item
 
     // Multiple templates in one string
     "combined": "User ${username} data: ${fetch.response}",
@@ -1479,7 +1481,7 @@ Same operation × N items ("each", "for each", "in parallel" → batch, not sing
 }
 ```
 
-Current item: `${item}`. Results: `${node.results}` (array in input order).
+Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Results: `${node.results}` (array in input order).
 
 **Options**:
 | Field | Default | Notes |
@@ -1533,7 +1535,11 @@ Workflows are linear—this is the only way to run operations concurrently.
 ```
 Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
 
-**⚠️ No dynamic indexing**: `${results[${item.index}]}` won't work. Put static indices in each item instead.
+**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate:
+```
+${previous.results[${__index__}]}     // Access by position
+${previous.results[${item.idx}]}      // Access by item field
+```
 
 **Using results**:
 ```json

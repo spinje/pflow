@@ -185,14 +185,20 @@ def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
     # Note: This is a permissive check - we allow batch aliases globally rather than
     # tracking which node each template belongs to. Runtime will catch invalid usage.
     batch_item_aliases: set[str] = set()
+    has_batch_nodes = False
     for node in workflow_ir.get("nodes", []):
         batch_config = node.get("batch")
         if batch_config:
+            has_batch_nodes = True
             item_alias = batch_config.get("as", "item")
             batch_item_aliases.add(item_alias)
 
     # Combine declared inputs with batch item aliases for validation
     valid_simple_refs = declared_inputs | batch_item_aliases
+
+    # __index__ is auto-injected in batch contexts (0-based batch item index)
+    if has_batch_nodes:
+        valid_simple_refs.add("__index__")
 
     # Build execution order
     try:

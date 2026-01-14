@@ -385,6 +385,7 @@ class PflowBatchNode(Node):
                 item_shared = dict(self._shared)
                 item_shared[self.node_id] = {}
                 item_shared[self.item_alias] = item
+                item_shared["__index__"] = idx  # 0-based batch item index
 
                 # Execute inner node
                 self.inner_node._run(item_shared)
@@ -740,6 +741,7 @@ class PflowBatchNode(Node):
             item_shared = dict(self._shared)
             item_shared[self.node_id] = {}
             item_shared[self.item_alias] = item
+            item_shared["__index__"] = idx  # 0-based batch item index
 
             # CRITICAL: Deep copy node chain to avoid TemplateAwareNodeWrapper race condition
             # Each thread gets its own copy of the wrapper chain
