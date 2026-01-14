@@ -38,8 +38,11 @@ class TemplateResolver:
     # Pattern for nested index templates: ${outer[${inner}]} or ${outer.path[${inner}].rest}
     # Captures: (1) outer_var with optional dot path, (2) inner_template, (3) rest_of_path
     # Examples: ${results[${item.index}]}, ${node.data[${__index__}].field}
+    # Inner template uses same strict variable naming as _VAR_NAME_PATTERN for defense-in-depth
     NESTED_INDEX_PATTERN = re.compile(
-        r"\$\{([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\[(\$\{[^}]+\})\]((?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)\}"
+        r"\$\{([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\[(\$\{"
+        + _VAR_NAME_PATTERN
+        + r"\})\]((?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)\}"
     )
 
     @staticmethod
@@ -108,13 +111,19 @@ class TemplateResolver:
             # Extract variable name from inner template
             inner_var = TemplateResolver.extract_simple_template_var(inner_template)
             if inner_var is None:
-                # Not a simple template, can't resolve
+                logger.debug(
+                    "Nested template resolution skipped: inner template not simple",
+                    extra={"template": template, "inner": inner_template},
+                )
                 break
 
             # Resolve inner variable
             resolved_inner = TemplateResolver.resolve_value(inner_var, context)
             if resolved_inner is None:
-                # Inner variable not found in context
+                logger.debug(
+                    "Nested template resolution skipped: inner variable not found",
+                    extra={"template": template, "inner_var": inner_var},
+                )
                 break
 
             # Must resolve to integer for array indexing

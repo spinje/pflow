@@ -1191,8 +1191,12 @@ class TemplateValidator:
                     valid_matches = TemplateValidator._PERMISSIVE_PATTERN.findall(value)
 
                     # Account for nested templates inside brackets - they're part of
-                    # outer templates and shouldn't be counted separately
-                    # e.g., ${results[${__index__}]} has 2 '${' but is 1 logical template
+                    # outer templates and shouldn't be counted separately.
+                    # Example: ${results[${__index__}]} has 2 '${' but is 1 logical template
+                    # - valid_matches = ['results[${__index__}]', '__index__'] (2 matches)
+                    # - nested_count = 1 (one match contains '[${')
+                    # - dollar_brace_count = 2
+                    # - len(valid_matches) + nested_count = 3 >= 2 ✓ (no error)
                     nested_count = sum(1 for m in valid_matches if "[${" in f"${{{m}}}")
 
                     # If mismatch (accounting for nested), we have malformed syntax
