@@ -480,6 +480,7 @@ Version (v0.8.0 - Workflow Expressiveness):
 - ⏳ Task 38: Support conditional Branching in Generated Workflows
 
 Version (v0.9.0):
+- ⏳ Task 111: Batch Limit for Workflow Iteration
 - ⏳ Task 99: Expose pflow Nodes as MCP Tools to Claude Code Node
 - ⏳ Task 46: Workflow Export to Zero-Dependency Code
 - ⏳ Task 75: Execution Preview in Validation
