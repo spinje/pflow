@@ -511,3 +511,58 @@ class TestBatchDataFlowValidation:
         }
         errors = validate_data_flow(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
+
+    def test_batch_dunder_index_valid(self):
+        """${__index__} should be valid in batch contexts."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "batch": {"items": ["a", "b", "c"]},
+                    "params": {"command": "echo 'Item ${__index__}: ${item}'"},
+                },
+            ],
+            "edges": [],
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"__index__ should be valid in batch context: {errors}"
+
+    def test_batch_dunder_index_with_nested_template(self):
+        """${results[${__index__}]} nested template should be valid."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "first",
+                    "type": "shell",
+                    "batch": {"items": ["a", "b", "c"]},
+                    "params": {"command": "echo ${item}"},
+                },
+                {
+                    "id": "second",
+                    "type": "shell",
+                    "batch": {"items": ["x", "y", "z"]},
+                    "params": {"command": "echo ${first.results[${__index__}].stdout}"},
+                },
+            ],
+            "edges": [{"from": "first", "to": "second"}],
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == [], f"Nested __index__ template should be valid: {errors}"
+
+    def test_dunder_index_invalid_without_batch(self):
+        """${__index__} should be invalid outside batch contexts."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "shell",
+                    # No batch config - __index__ is invalid here
+                    "params": {"command": "echo ${__index__}"},
+                },
+            ],
+            "edges": [],
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1, f"Expected error for __index__ without batch: {errors}"
+        assert "__index__" in errors[0]
