@@ -2070,7 +2070,6 @@ def _validate_before_execution(
     execution_params: dict[str, Any],
     output_format: str,
     verbose: bool,
-    metrics_collector: Any | None,
 ) -> None:
     """Validate workflow before execution using full WorkflowValidator.
 
@@ -2083,7 +2082,6 @@ def _validate_before_execution(
         execution_params: Real execution parameters for template validation
         output_format: Output format (text or json)
         verbose: Verbose flag
-        metrics_collector: Optional metrics collector for JSON output
     """
     from pflow.core.workflow_validator import WorkflowValidator
     from pflow.execution.formatters.validation_formatter import format_validation_failure
@@ -2091,20 +2089,12 @@ def _validate_before_execution(
 
     registry = Registry()
 
-    try:
-        errors, warnings = WorkflowValidator.validate(
-            workflow_ir=ir_data,
-            extracted_params=execution_params,  # Real params for full validation
-            registry=registry,
-            skip_node_types=False,
-        )
-    except Exception as e:
-        # Handle unexpected validation errors
-        if output_format == "json":
-            click.echo(json.dumps({"success": False, "error": f"Validation error: {e}"}))
-        else:
-            click.echo(f"✗ Validation error: {e}", err=True)
-        ctx.exit(1)
+    errors, warnings = WorkflowValidator.validate(
+        workflow_ir=ir_data,
+        extracted_params=execution_params,  # Real params for full validation
+        registry=registry,
+        skip_node_types=False,
+    )
 
     if errors:
         if output_format == "json":
@@ -2171,7 +2161,7 @@ def execute_json_workflow(
     # Validate before execution (if not using auto-repair)
     # Auto-repair mode handles validation inside execute_workflow() with repair capability
     if not auto_repair:
-        _validate_before_execution(ctx, ir_data, enhanced_params, output_format, verbose, metrics_collector)
+        _validate_before_execution(ctx, ir_data, enhanced_params, output_format, verbose)
 
     # Show execution starting
     node_count = len(ir_data.get("nodes", []))
