@@ -113,14 +113,9 @@ def mock_compile():
 @pytest.fixture
 def mock_validate_ir():
     """Mock IR validation to always pass."""
-    with patch("pflow.cli.main.validate_ir") as mock:
-        # Mock to add edges if missing and pass validation
-        def validate_with_edges(ir_data):
-            if isinstance(ir_data, dict) and "edges" not in ir_data:
-                ir_data["edges"] = []
-            return None
-
-        mock.side_effect = validate_with_edges
+    with patch("pflow.core.workflow_validator.WorkflowValidator.validate") as mock:
+        # Return (errors=[], warnings=[]) to indicate validation passed
+        mock.return_value = ([], [])
         yield mock
 
 

@@ -15,7 +15,7 @@ from typing import Any, cast
 
 import click
 
-from pflow.core import StdinData, ValidationError, validate_ir
+from pflow.core import StdinData
 from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
@@ -1301,70 +1301,6 @@ def _prompt_workflow_save(
             return (False, None)  # Other error, don't retry
 
 
-def _validate_workflow_structure(ir_data: dict[str, Any], ctx: click.Context) -> bool:
-    """Validate the workflow structure.
-
-    Returns:
-        True if valid workflow, False if not a workflow.
-    """
-    # Return the condition directly (fixes SIM103)
-    return isinstance(ir_data, dict) and "nodes" in ir_data and "ir_version" in ir_data
-
-
-def _validate_and_handle_workflow_errors(
-    ir_data: dict[str, Any],
-    ctx: click.Context,
-    output_format: str,
-    verbose: bool,
-    metrics_collector: Any | None = None,
-) -> None:
-    """Validate workflow structure and IR schema, handling errors appropriately.
-
-    Raises SystemExit on validation failure after outputting appropriate error messages.
-
-    Args:
-        ir_data: Workflow IR data to validate
-        ctx: Click context
-        output_format: Output format (json or text)
-        verbose: Verbose flag
-        metrics_collector: Optional metrics collector for JSON output
-    """
-    # Validate workflow structure first
-    if not _validate_workflow_structure(ir_data, ctx):
-        error_msg = "Invalid workflow - missing required fields (ir_version, nodes)"
-        if output_format == "json":
-            # Create a simple exception for the error
-            error = ValueError(error_msg)
-            workflow_metadata = ctx.obj.get("workflow_metadata")
-            error_output = _create_json_error_output(
-                error,
-                None,  # No metrics collector
-                None,  # No shared storage
-                workflow_metadata,
-            )
-            _serialize_json_result(error_output, verbose)
-        else:
-            click.echo(f"cli: {error_msg}", err=True)
-        ctx.exit(1)
-
-    # Validate IR schema
-    try:
-        validate_ir(ir_data)
-    except ValidationError as e:
-        if output_format == "json":
-            workflow_metadata = ctx.obj.get("workflow_metadata")
-            error_output = _create_json_error_output(
-                e,
-                None,  # No metrics collector
-                None,  # No shared storage
-                workflow_metadata,
-            )
-            _serialize_json_result(error_output, verbose)
-        else:
-            click.echo(f"cli: Invalid workflow - {e}", err=True)
-        ctx.exit(1)
-
-
 def _prepare_execution_environment(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -2000,9 +1936,8 @@ def _setup_execution_context(
 
         metrics_collector = MetricsCollector()
 
-    # Only validate if repair is disabled (execute_workflow will handle validation when repair is enabled)
-    if not auto_repair:
-        _validate_and_handle_workflow_errors(ir_data, ctx, output_format, verbose, metrics_collector)
+    # Note: Validation now happens after _prepare_execution_environment()
+    # with real enhanced_params, in execute_json_workflow()
 
     return verbose, auto_repair, metrics_collector
 
@@ -2129,6 +2064,70 @@ def _handle_validate_only_mode(
     _display_validation_results(errors, warnings, output_format)
 
 
+def _validate_before_execution(
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    execution_params: dict[str, Any],
+    output_format: str,
+    verbose: bool,
+    metrics_collector: Any | None,
+) -> None:
+    """Validate workflow before execution using full WorkflowValidator.
+
+    This uses real execution params (not dummy) for complete template validation.
+    Exits on validation failure.
+
+    Args:
+        ctx: Click context
+        ir_data: Workflow IR data
+        execution_params: Real execution parameters for template validation
+        output_format: Output format (text or json)
+        verbose: Verbose flag
+        metrics_collector: Optional metrics collector for JSON output
+    """
+    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.execution.formatters.validation_formatter import format_validation_failure
+    from pflow.registry.registry import Registry
+
+    registry = Registry()
+
+    try:
+        errors, warnings = WorkflowValidator.validate(
+            workflow_ir=ir_data,
+            extracted_params=execution_params,  # Real params for full validation
+            registry=registry,
+            skip_node_types=False,
+        )
+    except Exception as e:
+        # Handle unexpected validation errors
+        if output_format == "json":
+            click.echo(json.dumps({"success": False, "error": f"Validation error: {e}"}))
+        else:
+            click.echo(f"✗ Validation error: {e}", err=True)
+        ctx.exit(1)
+
+    if errors:
+        if output_format == "json":
+            workflow_metadata = ctx.obj.get("workflow_metadata")
+            error_output: dict[str, Any] = {
+                "success": False,
+                "error": "Workflow validation failed",
+                "validation_errors": errors,
+            }
+            if workflow_metadata:
+                error_output["metadata"] = workflow_metadata
+            # Note: Not including metrics since validation fails before execution starts
+            click.echo(json.dumps(error_output, indent=2 if verbose else None))
+        else:
+            click.echo(format_validation_failure(errors, warnings), err=True)
+        ctx.exit(1)
+
+    # Warnings are non-blocking, just display them in verbose mode
+    if warnings and output_format != "json" and verbose:
+        for warning in warnings:
+            click.echo(f"⚠️  {warning}", err=True)
+
+
 def execute_json_workflow(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -2168,6 +2167,11 @@ def execute_json_workflow(
     cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
         ctx, ir_data, output_format, verbose, execution_params, planner_llm_calls, planner_cache_chunks
     )
+
+    # Validate before execution (if not using auto-repair)
+    # Auto-repair mode handles validation inside execute_workflow() with repair capability
+    if not auto_repair:
+        _validate_before_execution(ctx, ir_data, enhanced_params, output_format, verbose, metrics_collector)
 
     # Show execution starting
     node_count = len(ir_data.get("nodes", []))
