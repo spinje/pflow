@@ -5,6 +5,7 @@ ensuring consistency between production, tests, and any other consumers.
 """
 
 import logging
+import re
 from typing import Any, Optional
 
 from pflow.registry import Registry
@@ -35,6 +36,7 @@ class WorkflowValidator:
         3. Template validation - Variable resolution
         4. Node type validation - Registry verification
         5. Output source validation - Output node references
+        6. JSON string template validation - Anti-pattern detection
 
         Args:
             workflow_ir: Workflow to validate
@@ -79,6 +81,12 @@ class WorkflowValidator:
         output_errors, output_warnings = WorkflowValidator._validate_output_sources(workflow_ir, registry)
         errors.extend(output_errors)
         warnings.extend(output_warnings)
+
+        # 6. JSON string template anti-pattern detection
+        # Only run if registry available (need interface metadata for param types)
+        if registry is not None:
+            json_string_errors = WorkflowValidator._validate_json_string_templates(workflow_ir, registry)
+            errors.extend(json_string_errors)
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
@@ -389,3 +397,166 @@ class WorkflowValidator:
             lines.append(f'  To:     "{corrected}"')
 
         return "\n".join(lines)
+
+    # =========================================================================
+    # JSON String Template Validation (Step 6)
+    # =========================================================================
+
+    @staticmethod
+    def _check_json_string_with_template(
+        param_key: str,
+        param_value: Any,
+        expected_type: Optional[str],
+        node_id: str,
+    ) -> Optional[str]:
+        """Check if a parameter is a JSON string with templates (anti-pattern).
+
+        Detects the pattern of manually constructed JSON strings with template variables:
+            "body_schema": "{\"content\": \"${var}\"}"
+
+        This pattern fails at runtime when template values contain special characters
+        (newlines, quotes, backslashes) because template substitution is context-unaware
+        and doesn't escape for JSON.
+
+        The correct pattern is object syntax:
+            "body_schema": {"content": "${var}"}
+
+        Args:
+            param_key: The parameter name
+            param_value: The parameter value from workflow IR
+            expected_type: The declared type from node interface (e.g., "str")
+            node_id: The node ID (for error messages)
+
+        Returns:
+            Error message string if anti-pattern detected, None otherwise
+        """
+        # Only check str-typed parameters
+        if expected_type != "str":
+            return None
+
+        # Only check string values (objects are fine - they get serialized properly)
+        if not isinstance(param_value, str):
+            return None
+
+        # Must contain templates to be problematic
+        if "${" not in param_value:
+            return None
+
+        stripped = param_value.strip()
+
+        # Check for JSON object with templates: starts with {"
+        # The {" sequence is unambiguous - it's the only valid start for a non-empty JSON object
+        is_json_object = stripped.startswith('{"')
+
+        # Check for JSON array with templates: starts with [" or [{
+        is_json_array = stripped.startswith('["') or stripped.startswith("[{")
+
+        if not (is_json_object or is_json_array):
+            return None
+
+        # This is the anti-pattern - build helpful error message
+        kind = "object" if is_json_object else "array"
+
+        # Extract template variables for the error message
+        templates = re.findall(r"\$\{([^}]+)\}", param_value)
+        template_mention = f"${{{templates[0]}}}" if templates else "the template"
+
+        # Escape the value for display in error message
+        escaped_value = param_value.replace("\\", "\\\\").replace('"', '\\"')
+
+        return (
+            f"Node '{node_id}' parameter '{param_key}' will fail if {template_mention} contains newlines or quotes.\n"
+            f"\n"
+            f"Replace JSON string with {kind} syntax:\n"
+            f'  \u2717  "{param_key}": "{escaped_value}"\n'
+            f'  \u2713  "{param_key}": {param_value}\n'
+            f"\n"
+            f"Objects are auto-serialized with proper JSON escaping."
+        )
+
+    @staticmethod
+    def _build_param_type_map(interface: dict[str, Any]) -> dict[str, str]:
+        """Build a mapping of param_key -> expected_type from interface metadata.
+
+        Args:
+            interface: Node interface metadata containing params and inputs arrays
+
+        Returns:
+            Dictionary mapping parameter keys to their expected types
+        """
+        type_map: dict[str, str] = {}
+
+        # Extract from 'params' array
+        for param in interface.get("params", []):
+            if isinstance(param, dict):
+                key = param.get("key")
+                param_type = param.get("type")
+                if key and param_type:
+                    type_map[key] = param_type
+
+        # Extract from 'inputs' array (some nodes use this)
+        for inp in interface.get("inputs", []):
+            if isinstance(inp, dict):
+                key = inp.get("key")
+                inp_type = inp.get("type")
+                if key and inp_type:
+                    type_map[key] = inp_type
+
+        return type_map
+
+    @staticmethod
+    def _validate_json_string_templates(
+        workflow_ir: dict[str, Any],
+        registry: Registry,
+    ) -> list[str]:
+        """Validate that JSON strings don't contain template variables.
+
+        Detects the anti-pattern of manually constructed JSON strings with templates:
+            "body_schema": "{\"content\": \"${var}\"}"
+
+        This pattern fails at runtime when template values contain special characters
+        (newlines, quotes, backslashes) because template substitution is context-unaware
+        and doesn't escape for JSON.
+
+        The correct pattern is object syntax:
+            "body_schema": {"content": "${var}"}
+
+        Args:
+            workflow_ir: Workflow to validate
+            registry: Node registry for interface metadata
+
+        Returns:
+            List of validation errors
+        """
+        errors: list[str] = []
+
+        try:
+            # Get all node metadata at once for efficiency
+            node_types = {node.get("type") for node in workflow_ir.get("nodes", []) if node.get("type")}
+            nodes_metadata = registry.get_nodes_metadata(node_types) if node_types else {}
+        except Exception as e:
+            logger.debug(f"Could not load registry metadata for JSON string validation: {e}")
+            return errors  # Skip this validation if registry unavailable
+
+        for node in workflow_ir.get("nodes", []):
+            node_id = node.get("id", "unknown")
+            node_type = node.get("type", "")
+            params = node.get("params", {})
+
+            # Get interface metadata for this node type
+            node_meta = nodes_metadata.get(node_type, {})
+            interface = node_meta.get("interface", {})
+
+            # Build param_key -> expected_type map
+            type_map = WorkflowValidator._build_param_type_map(interface)
+
+            # Check each parameter
+            for param_key, param_value in params.items():
+                expected_type = type_map.get(param_key)
+                error = WorkflowValidator._check_json_string_with_template(
+                    param_key, param_value, expected_type, node_id
+                )
+                if error:
+                    errors.append(error)
+
+        return errors
