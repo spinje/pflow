@@ -108,6 +108,53 @@ def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bo
     return (True, None)
 
 
+def _split_template_path(template: str) -> list[str]:
+    """Split template path on dots, preserving dots inside ${...}.
+
+    Standard str.split(".") breaks nested templates like ${item.field}
+    inside array brackets. This function correctly handles:
+
+    - drafts.results[${item.draft_index}].response
+      -> ['drafts', 'results[${item.draft_index}]', 'response']
+
+    - node.data[${__index__}].field
+      -> ['node', 'data[${__index__}]', 'field']
+
+    Args:
+        template: Template path string (without ${} wrapper)
+
+    Returns:
+        List of path components with nested templates preserved
+    """
+    parts: list[str] = []
+    current = ""
+    depth = 0  # Track nesting level of ${...}
+
+    i = 0
+    while i < len(template):
+        if template[i : i + 2] == "${":
+            depth += 1
+            current += template[i : i + 2]
+            i += 2
+        elif template[i] == "}" and depth > 0:
+            depth -= 1
+            current += template[i]
+            i += 1
+        elif template[i] == "." and depth == 0:
+            if current:
+                parts.append(current)
+            current = ""
+            i += 1
+        else:
+            current += template[i]
+            i += 1
+
+    if current:
+        parts.append(current)
+
+    return parts
+
+
 class TemplateValidator:
     """Validates template variables before workflow execution."""
 
@@ -709,7 +756,8 @@ class TemplateValidator:
         Returns:
             Error message string
         """
-        parts = template.split(".")
+        # Use smart split to preserve dots inside nested templates like ${item.field}
+        parts = _split_template_path(template)
         base_var = parts[0]
         enable_namespacing = workflow_ir.get("enable_namespacing", True)
 
@@ -1018,7 +1066,8 @@ class TemplateValidator:
         Returns:
             Tuple of (is_valid, optional_warning)
         """
-        parts = template.split(".")
+        # Use smart split to preserve dots inside nested templates like ${item.field}
+        parts = _split_template_path(template)
         base_var = parts[0]
         enable_namespacing = workflow_ir.get("enable_namespacing", True)
 

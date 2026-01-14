@@ -57,3 +57,74 @@ class TestNestedIndexTemplates:
         result = TemplateResolver.resolve_template("${results[${item.index}]}", context)
         # Inner template resolves, outer can't - produces malformed but debuggable output
         assert result == "${results[str]}"
+
+    def test_nested_with_item_field(self):
+        """${results[${item.draft_index}]} - custom field index (bug fix verification)."""
+        context = {
+            "item": {"platform": "slack", "draft_index": 2},
+            "results": [{"r": "a"}, {"r": "b"}, {"r": "c"}],
+        }
+        result = TemplateResolver.resolve_template("${results[${item.draft_index}].r}", context)
+        assert result == "c"
+
+
+class TestSplitTemplatePath:
+    """Tests for _split_template_path() helper function.
+
+    This function splits template paths on dots while preserving
+    dots inside nested ${...} templates.
+    """
+
+    def test_simple_path(self):
+        """Simple paths split normally."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        assert _split_template_path("node.field") == ["node", "field"]
+        assert _split_template_path("a.b.c") == ["a", "b", "c"]
+
+    def test_single_component(self):
+        """Single component returns list with one element."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        assert _split_template_path("node") == ["node"]
+
+    def test_nested_template_preserved(self):
+        """Dots inside ${...} are not split points."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        result = _split_template_path("drafts.results[${item.draft_index}].response")
+        assert result == ["drafts", "results[${item.draft_index}]", "response"]
+
+    def test_dunder_index_preserved(self):
+        """${__index__} is preserved correctly."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        result = _split_template_path("node.data[${__index__}].field")
+        assert result == ["node", "data[${__index__}]", "field"]
+
+    def test_multiple_nested_templates(self):
+        """Multiple nested templates in one path."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        result = _split_template_path("a[${x.y}].b[${z.w}].c")
+        assert result == ["a[${x.y}]", "b[${z.w}]", "c"]
+
+    def test_complex_nested_path(self):
+        """Complex nested path with multiple dots inside template."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        result = _split_template_path("node.results[${item.data.index}].value")
+        assert result == ["node", "results[${item.data.index}]", "value"]
+
+    def test_empty_string(self):
+        """Empty string returns empty list."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        assert _split_template_path("") == []
+
+    def test_trailing_nested_template(self):
+        """Nested template at end of path."""
+        from pflow.runtime.template_validator import _split_template_path
+
+        result = _split_template_path("node.data[${idx}]")
+        assert result == ["node", "data[${idx}]"]

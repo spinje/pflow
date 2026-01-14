@@ -800,3 +800,55 @@ class TestBatchTemplateValidation:
         # Should NOT produce any "malformed template" errors
         malformed_errors = [e for e in errors if "Malformed template" in e]
         assert len(malformed_errors) == 0, f"Unexpected malformed template errors: {malformed_errors}"
+
+    def test_nested_item_field_in_array_index_validated(self):
+        """REGRESSION: ${results[${item.draft_index}]} should validate correctly.
+
+        Bug: Validator used template.split(".") which broke ${item.draft_index}
+        into ['item', 'draft_index}]', causing validation error:
+        "Node 'drafts' does not output 'results[${item'"
+
+        Fix: Use _split_template_path() which preserves dots inside ${...}.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "drafts",
+                    "type": "llm",
+                    "batch": {
+                        "items": [
+                            {"platform": "slack"},
+                            {"platform": "discord"},
+                            {"platform": "x"},
+                        ],
+                        "parallel": True,
+                    },
+                    "params": {"prompt": "Write draft for ${item.platform}"},
+                },
+                {
+                    "id": "critiques",
+                    "type": "llm",
+                    "batch": {
+                        "items": [
+                            {"platform": "slack", "draft_index": 0},
+                            {"platform": "discord", "draft_index": 1},
+                            {"platform": "x", "draft_index": 2},
+                        ],
+                        "parallel": True,
+                    },
+                    "params": {
+                        # THE BUG: This template failed validation because the dot in
+                        # ${item.draft_index} was treated as a path separator
+                        "prompt": "Critique ${item.platform}: ${drafts.results[${item.draft_index}].response}"
+                    },
+                },
+            ],
+            "edges": [{"from": "drafts", "to": "critiques"}],
+        }
+
+        registry = create_mock_registry()
+        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+
+        # CRITICAL: Should NOT fail with "does not output 'results[${item'"
+        bad_errors = [e for e in errors if "results[${item" in e]
+        assert len(bad_errors) == 0, f"Regression: nested item.field incorrectly parsed: {bad_errors}"
