@@ -80,7 +80,7 @@
         "items": "${filter-commits-with-prs.stdout}",
         "as": "commit",
         "parallel": true,
-        "max_concurrent": 20,
+        "max_concurrent": 30,
         "error_handling": "continue"
       },
       "params": {
@@ -123,7 +123,7 @@
         "items": "${combine-commit-data.stdout}",
         "as": "entry",
         "parallel": true,
-        "max_concurrent": 50
+        "max_concurrent": 100
       },
       "params": {
         "prompt": "Classify this commit as user-facing or internal.\n\nCommit: ${entry.commit.subject}\nPR Title: ${entry.pr_title}\nPR Summary: ${entry.pr_summary}\nFiles Changed: ${entry.files}\n\nClassification rules:\n- Internal: changes only in tests/, docs/, .taskmaster/, internal tooling, CI/CD, refactoring with no behavior change\n- User-facing: new features, bug fixes, API changes, CLI changes, anything users would notice\n\nRespond with ONLY a JSON object:\n{\"classification\": \"user-facing\" or \"internal\", \"category\": \"Added\" or \"Changed\" or \"Fixed\" or \"Removed\" or \"Improved\", \"summary\": \"one-line description for changelog\"}"
