@@ -506,6 +506,8 @@ Version (v1.1.0):
 - ⏳ Task 65: MCP Gateway Integration Support
 
 Later:
+- ⏳ Task 110: PIPESTATUS-Based Pipeline Failure Detection
+- ⏳ Task 112: Pre-execution Type Validation for Literal Parameters
 - ⏳ Task 74: Create knowledge base system
 - ⏳ Task 51: Refactor CLI main.py
 - ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
@@ -516,7 +518,6 @@ Later:
 - ⏳ Task 98: Architectural Refactor - First-Class IR Execution
 - ⏳ Task 100: Implement Reduce/Fold Mode for Batch Processing
 - ⏳ Task 101: Shell Node File Input Parameter for Safe Data Passing
-- ⏳ Task 110: PIPESTATUS-Based Pipeline Failure Detection
 
 Deprecated Tasks:
 - ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair (superseded by Task 106)
