@@ -55,6 +55,7 @@ Things that exist only in your head right now:
 - **Connections you made** — links between concepts that aren't obvious
 - **Things that felt wrong** — instincts you can't fully justify yet
 - **Context that took time to build** — understanding that wasn't instant
+- **Things the user said** - it's your job to document their exact words and phrasing for key concepts
 
 ### Ambiguity and Assumptions
 
@@ -139,11 +140,12 @@ Ask yourself:
 1. What do I understand now that I didn't at the start?
 2. What would I do differently if starting over?
 3. What's the user's real priority beneath their stated request?
-4. What almost broke and why?
-5. What am I 70% sure about but haven't verified?
-6. What pattern did I notice that might apply elsewhere?
-7. What feels intuitive to me but might not be obvious to the next agent?
-8. What would break if my understanding were wrong?
+4. What might the user not understand fully and need more guidance or explanation on?
+5. What almost broke and why?
+6. What am I 70% sure about but haven't verified?
+7. What pattern did I notice that might apply elsewhere?
+8. What feels intuitive to me but might not be obvious to the next agent?
+9. What would break if my understanding were wrong?
 
 ## Output
 
@@ -166,7 +168,7 @@ No rigid structure required. Write naturally. But consider:
 
 ## User's Mental Model
 
-<How they think about this, in their words>
+<How they think about this, in their words. Explain what you think they meant and document everything important the user said.>
 
 ## Key Insights
 
