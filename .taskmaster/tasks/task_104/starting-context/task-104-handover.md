@@ -1,8 +1,8 @@
-# Task 104 Handoff: Python Script Node
+# Task 104 Handoff: Python Code Node
 
 ## How We Got Here - The Journey Matters
 
-This task emerged organically from fixing a shell validation bug. Understanding this journey is crucial because it reveals the **real problem** the script node solves.
+This task emerged organically from fixing a shell validation bug. Understanding this journey is crucial because it reveals the **real problem** the code node solves.
 
 ### The Original Bug (Issue #29)
 We discovered that shell node's dict/list validation was broken:
@@ -38,15 +38,15 @@ Current workarounds are clunky:
 1. **Temp files** - Write each to file, shell reads files (verbose)
 2. **Shell + Python -c** - Still one stdin, code is escaped string nightmare
 
-**User asked**: "Is a native script node better than using Python in shell?"
+**User asked**: "Is a native code node better than using Python in shell?"
 
 Answer: **Significantly better.**
 
 ## The Core Insight
 
-A Python script node completely sidesteps shell complexity:
+A Python code node completely sidesteps shell complexity:
 
-| Aspect | Shell + Python | Script Node |
+| Aspect | Shell + Python | Code Node |
 |--------|---------------|-------------|
 | Multiple inputs | ❌ One stdin | ✅ Unlimited native objects |
 | Serialization | ❌ JSON roundtrip | ✅ None needed |
@@ -54,7 +54,7 @@ A Python script node completely sidesteps shell complexity:
 | Error messages | ❌ Cryptic shell errors | ✅ Python traceback with line numbers |
 | Debugging | ❌ Hard | ✅ Easy |
 
-The script node doesn't need escaping because **there's no shell layer parsing the data**.
+The code node doesn't need escaping because **there's no shell layer parsing the data**.
 
 ## Critical Technical Context
 
@@ -68,7 +68,7 @@ self.inner_node.params = merged_params
 
 Templates are resolved by the wrapper BEFORE `node.prep()` runs. The old shell check was dead code because by prep() time, `${data}` was already `"[1, 2, 3]"` (JSON string).
 
-For the script node, this means:
+For the code node, this means:
 - `inputs: {"data": "${data}"}` will be resolved BEFORE your node runs
 - You'll receive the actual Python dict, not a template string
 - The wrapper handles all template resolution for you
@@ -83,7 +83,7 @@ infer_template_type("user.name", workflow_ir, node_outputs) # → None
 
 Nested field access returns `None` because we can't always infer nested types. Our validation skips `None` types (permissive). This is why `${user.name}` passes through - we don't know it's a string, but we allow it.
 
-For the script node, you don't need to worry about this. You receive native Python objects - types are preserved automatically.
+For the code node, you don't need to worry about this. You receive native Python objects - types are preserved automatically.
 
 ### How Shell Node Handles stdin (Reference Pattern)
 
@@ -93,7 +93,7 @@ if isinstance(stdin, (dict, list)):
     return json.dumps(stdin, ensure_ascii=False)
 ```
 
-Shell node serializes dict/list to JSON for stdin. **Your script node shouldn't need this** - pass dicts as dicts.
+Shell node serializes dict/list to JSON for stdin. **Your code node shouldn't need this** - pass dicts as dicts.
 
 ## Design Decisions Already Made
 
@@ -113,7 +113,7 @@ Throughout this session, the user showed strong preferences:
 2. **Simplicity** - MVP mindset, no over-engineering
 3. **Real solutions** - Don't suggest things that don't work (we updated error messages to remove bad suggestions)
 
-The script node should have excellent error messages:
+The code node should have excellent error messages:
 - Missing `result` variable: "Script did not set 'result' variable. Add: result = <your value>"
 - Syntax error: Show the exact line in their code
 - Runtime error: Full traceback pointing to their code
@@ -127,9 +127,9 @@ Task 103 is about preserving types when resolving templates inside dict/list val
 
 Currently this double-serializes (inner dicts become JSON strings). Task 103 would fix this.
 
-**For your script node**: Task 103 is NOT a dependency. Your node receives inputs as native objects through the `inputs` parameter, not through stdin serialization. You're solving the problem differently.
+**For your code node**: Task 103 is NOT a dependency. Your node receives inputs as native objects through the `inputs` parameter, not through stdin serialization. You're solving the problem differently.
 
-However, if Task 103 is completed, shell node could also support multiple inputs via stdin. The script node remains superior for code readability and error handling.
+However, if Task 103 is completed, shell node could also support multiple inputs via stdin. The code node remains superior for code readability and error handling.
 
 ## Files You'll Need
 
@@ -189,7 +189,7 @@ These weren't definitively resolved:
 
 ## Final Advice
 
-The script node is conceptually simple but the devil is in the details:
+The code node is conceptually simple but the devil is in the details:
 1. Get basic exec() working first
 2. Add sandboxing carefully
 3. Focus on error messages - they're how agents learn to use the node

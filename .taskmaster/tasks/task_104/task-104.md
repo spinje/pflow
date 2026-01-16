@@ -1,19 +1,19 @@
-# Task 104: Implement Python Script Node for Data Transformation
+# Task 104: Implement Python Code Node for Data Transformation
 
 ## ID
 104
 
 ## Title
-Implement Python Script Node for Data Transformation
+Implement Python Code Node for Data Transformation
 
 ## Description
-Create a native Python script node that executes Python code with direct access to input data as native objects. This solves the shell node limitation of single stdin input and avoids JSON serialization/escaping issues by running Python code in-process.
+Create a native Python code node that executes Python code with direct access to input data as native objects. This solves the shell node limitation of single stdin input and avoids JSON serialization/escaping issues by running Python code in-process.
 
 ## Status
 not started
 
 ## Dependencies
-- Task 103: Preserve Inline Object Type in Template Resolution - While not strictly required, Task 103's inline object pattern (`{"a": "${a}", "b": "${b}"}`) could inform how script node handles multiple inputs. However, the script node can proceed independently since it receives inputs as native Python objects, not serialized strings.
+- Task 103: Preserve Inline Object Type in Template Resolution - While not strictly required, Task 103's inline object pattern (`{"a": "${a}", "b": "${b}"}`) could inform how code node handles multiple inputs. However, the code node can proceed independently since it receives inputs as native Python objects, not serialized strings.
 
 ## Priority
 medium
@@ -40,7 +40,7 @@ This is verbose and clunky.
 
 ### Proposed Solution
 
-A native Python script node that:
+A native Python code node that:
 - Receives multiple inputs as **native Python objects** (no serialization)
 - Executes Python code **in-process** (no subprocess overhead)
 - Returns results directly (no output parsing)
@@ -48,10 +48,24 @@ A native Python script node that:
 ```json
 {
   "id": "transform",
-  "type": "script",
+  "type": "code",
   "params": {
     "inputs": {"data": "${data}", "config": "${config}"},
-    "code": "result = f\"{data['name']} - {config['setting']}\""
+    "code": "result = f\"{data['name']} - {config['setting']}\"",
+    "requires": []
+  }
+}
+```
+
+Example with dependencies:
+```json
+{
+  "id": "analyze",
+  "type": "code",
+  "params": {
+    "inputs": {"records": "${fetch.result}"},
+    "code": "import pandas as pd\ndf = pd.DataFrame(records)\nresult = df.describe().to_dict()",
+    "requires": ["pandas"]
   }
 }
 ```
@@ -65,19 +79,20 @@ A native Python script node that:
 - Later could add jq, JavaScript, etc.
 
 **In-process execution**:
-- Use `exec()` with controlled globals
+- Use `exec()` with full Python access
 - Inputs injected as local variables
 - `result` variable captured as output
-- Sandbox with restricted `__builtins__` for safety
+- All imports allowed (no sandbox restrictions for MVP - see braindump for rationale)
 
 **Interface**:
 ```python
-class ScriptNode(Node):
+class CodeNode(Node):
     """Execute Python code with native object inputs."""
 
     # Params:
     # - inputs: dict mapping variable names to template values
     # - code: Python code string to execute
+    # - requires: optional list of package dependencies (documentation/validation)
     # - timeout: optional execution timeout (default: 30s)
 
     # Outputs:
@@ -85,13 +100,19 @@ class ScriptNode(Node):
     # - stdout: captured print() output (optional)
 ```
 
+**Dependency declaration**:
+- Optional `requires` field lists package dependencies: `["pandas", "numpy"]`
+- For documentation and future validation (not enforcement for MVP)
+- Could enable auto-install or containerization later
+
 ### Key Technical Considerations
 
-1. **Security/Sandboxing**:
-   - Restrict `__builtins__` (no `open`, `exec`, `eval`, `__import__`)
-   - Allow safe builtins (len, str, int, list, dict, range, etc.)
+1. **No Sandbox (MVP Decision)**:
+   - Python language-level sandboxing is fundamentally bypassable (object traversal escapes)
+   - Users need full Python access (pandas, youtube-transcript-api, etc.)
+   - Container-level sandboxing would require serialization, negating native objects value
+   - All imports allowed - user's responsibility
    - Consider timeout for runaway code
-   - No filesystem or network access from sandbox
 
 2. **Error Handling**:
    - Capture Python exceptions with full tracebacks
@@ -109,11 +130,11 @@ class ScriptNode(Node):
 
 ### Comparison with Alternatives
 
-| Approach | Multiple Inputs | Serialization | Code Readability | Safety |
-|----------|----------------|---------------|------------------|--------|
-| Shell + stdin | ❌ One | ❌ JSON roundtrip | ❌ Escaped strings | ⚠️ Shell injection |
-| Shell + Python -c | ❌ One | ❌ JSON roundtrip | ❌ String in string | ⚠️ Shell injection |
-| Script node | ✅ Unlimited | ✅ Native objects | ✅ Clean code | ✅ Sandboxed |
+| Approach | Multiple Inputs | Serialization | Code Readability | Error Messages |
+|----------|----------------|---------------|------------------|----------------|
+| Shell + stdin | ❌ One | ❌ JSON roundtrip | ❌ Escaped strings | ❌ Shell errors |
+| Shell + Python -c | ❌ One | ❌ JSON roundtrip | ❌ String in string | ❌ Shell errors |
+| Code node | ✅ Unlimited | ✅ Native objects | ✅ Clean code | ✅ Python traceback |
 
 ## Test Strategy
 
@@ -134,15 +155,15 @@ class ScriptNode(Node):
    - Runtime errors include traceback
    - Timeout triggers for infinite loops
 
-4. **Sandbox security**:
-   - Restricted builtins (no `open`, `__import__`, etc.)
-   - Allowed builtins work (len, str, dict, etc.)
-   - Cannot access filesystem or network
+4. **Import handling**:
+   - Standard library imports work (json, re, math, etc.)
+   - Third-party imports work if installed (pandas, etc.)
+   - Clear error message when import fails (module not found)
 
 ### Integration Tests
 
 1. **Workflow integration**:
-   - Script node receives template-resolved inputs
+   - Code node receives template-resolved inputs
    - Output flows to downstream nodes
    - Works with namespacing
 
@@ -150,3 +171,11 @@ class ScriptNode(Node):
    - Combine two dicts
    - Filter/map list items
    - String formatting with multiple data sources
+
+## Open Questions
+
+1. **`requires` field behavior**: Is it optional or required? What happens when deps aren't installed - error, warning, or just documentation?
+
+2. **Sandbox for MVP**: Dropped per braindump discussion. No restricted builtins, all imports allowed.
+
+3. **Task 107 integration**: How does `requires` appear in markdown frontmatter?

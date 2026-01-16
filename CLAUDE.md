@@ -471,7 +471,7 @@ First version (v0.6.0 - public release):
 - ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
 
 Version (v0.7.0 - LLM Authoring Experience):
-- ⏳ Task 104: Implement Python Script Node for Data Transformation
+- ⏳ Task 104: Implement Python Code Node for Data Transformation
 - ⏳ Task 107: Implement Markdown Workflow Format
 - ⏳ Task 108: Smart Trace Debug Output for Agent Iteration
 
@@ -506,6 +506,8 @@ Version (v1.1.0):
 - ⏳ Task 65: MCP Gateway Integration Support
 
 Later:
+- ⏳ Task 113: Add TypeScript Support to Code Node
+- ⏳ Task 114: Lightweight Custom Node Creation
 - ⏳ Task 110: PIPESTATUS-Based Pipeline Failure Detection
 - ⏳ Task 112: Pre-execution Type Validation for Literal Parameters
 - ⏳ Task 74: Create knowledge base system
