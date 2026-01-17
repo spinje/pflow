@@ -363,52 +363,53 @@ Is this what you're expecting?
 
 MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
-**Implemented Capabilities:**
+### Implemented Capabilities
 
 **CLI & Execution:**
-Run workflows by name or file, shell pipe integration, named workflow save/load, batch processing, registry CLI (list/search/describe), workflow input/output declarations
+✅ Run workflows by name or file, shell pipe integration, named workflow save/load, batch processing, registry CLI (list/search/describe), workflow input/output declarations
 → Tasks 8, 10, 21, 22, 24, 96
 
 **Nodes:**
-shell, http, llm (via llm library), file (read/write/copy/move/delete), git, github, mcp, claude-code
+✅ shell, http, llm (via llm library), file (read/write/copy/move/delete), git, github, mcp, claude-code
 → Tasks 11, 12, 26, 41, 42, 54, 95
 
 **Templates & Data Flow:**
-${var} syntax, schema-aware type checking, auto JSON parsing, shared store with namespacing
+✅ ${var} syntax, schema-aware type checking, auto JSON parsing, shared store with namespacing
 → Tasks 9, 18, 84, 85, 103, 105
 
 **Workflow Validation:**
-Unified validation pipeline, pre-execution risk assessment for shell commands
+✅ Unified validation pipeline, pre-execution risk assessment for shell commands
 → Tasks 40, 63
 
 **MCP Integration:**
-MCP server support, http transport, pflow-as-MCP-server for agents
+✅ MCP server support, http transport, pflow-as-MCP-server for agents
 → Tasks 43, 47, 67, 72
 
 **Planner (legacy):**
-Natural language → workflow, runtime validation feedback, debugging/tracing
+✅ Natural language → workflow, runtime validation feedback, debugging/tracing
 → Tasks 17, 27, 52, 56
 
 **Settings & Security:**
-Node filtering, API key management, binary data support, security audit complete
+✅ Node filtering, API key management, binary data support, security audit complete
 → Tasks 50, 63, 80, 82, 83
 
 **Observability:**
-Metrics/tracing system, rerun command display, interactive/non-interactive output, user-friendly error messages
+✅ Metrics/tracing system, rerun command display, interactive/non-interactive output, user-friendly error messages
 → Tasks 32, 37, 53, 55
 
 **Agent Support:**
-CLI commands for agents, registry execute for node testing, LLM-powered discovery
+✅ CLI commands for agents, registry execute for node testing, LLM-powered discovery
 → Tasks 71, 76, 89
 
 **Recently Completed:**
-- Task 105: Auto-Parse JSON Strings During Nested Template Access
-- Task 103: Preserve Inline Object Type in Template Resolution
-- Task 102: Remove Parameter Fallback Pattern
-- Task 96: Support Batch Processing in Workflows
-- Task 95: Unify LLM Usage via Simon Willison's llm Library
+- ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
+- ✅ Task 103: Preserve Inline Object Type in Template Resolution
+- ✅ Task 102: Remove Parameter Fallback Pattern
+- ✅ Task 96: Support Batch Processing in Workflows
+- ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
-**Planned:**
+
+### Planned Features (in order of priority)
 
 **v0.8.0 - PyPI & Authoring:**
 - Task 49: Publish to PyPI
@@ -463,6 +464,10 @@ CLI commands for agents, registry execute for node testing, LLM-powered discover
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
 
+> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
+
+### Project status tools
+
 > **Task commands:**
 > ```bash
 > ./scripts/tasks              # View summary
@@ -472,8 +477,6 @@ CLI commands for agents, registry execute for node testing, LLM-powered discover
 >
 > **Task files:** `.taskmaster/tasks/task_N/`
 > **Version history:** `.taskmaster/versions.md`
-
-> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 
 ## User Decisions and Recommendations
 
