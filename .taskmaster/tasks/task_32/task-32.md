@@ -1,16 +1,13 @@
 # Task 32: Unified Metrics and Tracing System for Workflow Execution
 
-## ID
-32
-
-## Title
-Unified Metrics and Tracing System for Workflow Execution
-
 ## Description
 Implement a comprehensive observability system that provides cost tracking, performance metrics, and debugging capabilities for both planner and workflow execution. The system collects lightweight metrics when using `--output-format json` and detailed traces with `--trace` flags, giving users complete visibility into LLM costs and execution performance.
 
 ## Status
-pending
+done
+
+## Completed
+2025-08-30
 
 ## Dependencies
 - Task 27: Planner Debugging Capabilities - Builds upon the DebugWrapper and tracing infrastructure, reuses patterns for LLM interception and trace collection

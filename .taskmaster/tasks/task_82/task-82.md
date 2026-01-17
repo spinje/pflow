@@ -1,16 +1,13 @@
 # Task 82: Implement System-Wide Binary Data Support
 
-## ID
-82
-
-## Title
-Implement System-Wide Binary Data Support
-
 ## Description
 Add comprehensive binary data support to pflow by implementing a base64 encoding contract across all file-handling nodes. This enables workflows to download, process, and save binary files (images, PDFs, etc.) which currently fail with encoding errors. The solution uses base64 encoding in the shared store with explicit binary flags for cross-node communication.
 
 ## Status
-not started
+done
+
+## Completed
+2025-10-10
 
 ## Dependencies
 None

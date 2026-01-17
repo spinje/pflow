@@ -1,11 +1,5 @@
 # Task 106: Automatic Workflow Iteration Cache
 
-## ID
-106
-
-## Title
-Automatic Workflow Iteration Cache for Frictionless AI Agent Development
-
 ## Description
 Implement automatic caching of node execution results during workflow.json iteration, enabling AI agents to rapidly test and fix workflows without re-executing completed nodes. Zero configuration required - caching is automatic for workflow files, invisible to the agent, and prevents both wasted computation and duplicate side effects.
 

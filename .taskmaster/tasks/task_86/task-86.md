@@ -1,6 +1,8 @@
 # Task 86: MCP Server Discovery and Installation Automation
 
-**Status**: Not Started
+## Status
+not started
+
 **Priority**: High
 **Estimated Effort**: 6-12 weeks (depending on scope chosen)
 **Dependencies**: None (builds on existing registry system)

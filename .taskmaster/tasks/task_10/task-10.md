@@ -1,16 +1,13 @@
 # Task 10: Create registry CLI commands
 
-## ID
-10
-
-## Title
-Create registry CLI commands
-
 ## Description
 Implement CLI commands for registry operations (`pflow registry list|describe|search|scan`) to replace the temporary `scripts/populate_registry.py` script. Core nodes will auto-discover on first use, while user nodes require explicit scanning with security warnings.
 
 ## Status
-not started
+done
+
+## Completed
+2025-08-30
 
 ## Dependencies
 - Task 2: Basic CLI run command with stdio/stdin support - Registry commands need the CLI infrastructure to be in place

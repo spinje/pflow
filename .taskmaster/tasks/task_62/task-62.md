@@ -1,11 +1,5 @@
 # Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
 
-## ID
-62
-
-## Title
-Enhance Parameter Discovery to Route stdin to Workflow Inputs
-
 ## Description
 Update the parameter discovery system in the planner to intelligently map stdin content to appropriate workflow input parameters when users pipe data but don't specify explicit file paths. This enables workflows to seamlessly work with both piped stdin data and file paths without requiring changes to individual nodes, maintaining their atomic nature.
 

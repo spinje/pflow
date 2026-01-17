@@ -5,7 +5,6 @@
 Add validation that checks literal parameter values against node interface metadata before execution. Currently pflow validates template references (`${node.output}`) but not literal values like `"model": 6` against the expected type (`str`).
 
 ## Status
-
 not started
 
 ## Priority

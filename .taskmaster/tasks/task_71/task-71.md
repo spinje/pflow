@@ -1,16 +1,13 @@
 # Task 71: Extend CLI Commands with tools for agentic workflow building
 
-## ID
-71
-
-## Title
-Extend CLI Commands with tools for agentic workflow building
-
 ## Description
 Add CLI commands that enable AI agents to discover pflow capabilities through intelligent, LLM-powered discovery. These commands mirror the planner's discovery approach - agents provide rich descriptions of what they want to build, and receive complete, detailed information about relevant components. Create comprehensive instructions showing agents how to use this discovery-first workflow.
 
 ## Status
-not started
+done
+
+## Completed
+2025-10-03
 
 ## Dependencies
 - LLM integration (same as used by planner)

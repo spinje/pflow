@@ -1,16 +1,13 @@
 # Task 35: Migrate Template Syntax from $variable to ${variable}
 
-## ID
-35
-
-## Title
-Migrate Template Syntax from $variable to ${variable}
-
 ## Description
 Change the template variable syntax from `$variable` to `${variable}` to provide explicit boundaries, eliminate parsing ambiguities, and align with industry standards. This will solve issues with variables adjacent to underscores, periods, and other characters that currently require awkward workarounds.
 
 ## Status
-in progress
+done
+
+## Completed
+2025-08-16
 
 ## Dependencies
 None

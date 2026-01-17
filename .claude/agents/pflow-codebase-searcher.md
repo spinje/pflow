@@ -114,6 +114,8 @@ Calibrate search depth based on the task complexity:
 
 2. **Use Smart Entry Points**
    ```
+   Task discovery → ./scripts/tasks (add -v for descriptions)
+   Task details → ./scripts/tasks 104 (or multiple: 56 55 65)
    CLI features → src/pflow/cli/main.py
    Node implementations → src/pflow/nodes/*/
    Planning logic → src/pflow/planning/flow.py
@@ -522,6 +524,8 @@ tests/
 
 **Purpose**: Task tracking, planning documentation, and consolidated learning repository.
 
+**Quick Access**: Run `./scripts/tasks` or `./scripts/tasks -v` to browse tasks, or `./scripts/tasks <N>` for specific task details with file pointers.
+
 **Structure**:
 ```
 .taskmaster/
@@ -530,7 +534,7 @@ tests/
 │   │   ├── task-review.md      # **IMPORTANT**: Summary of what was implemented
 │   │   ├── task-1.md # Task specification
 │   │   └── implementation/      # Implementation details
-│   │       └── progress-log.md         # **Progress tracking**
+│   │       └── progress-log.md         # **All implementation details captured during development**
 │   └── ...                     # 90+ task directories
 └── knowledge/                  # **CRITICAL**: Consolidated learning repository
     ├── CLAUDE.md              # Knowledge maintenance guide
@@ -584,7 +588,12 @@ CLI (cli/main.py)
 Only relevant when needing to answer questions about the codebase and how it works and why it was implemented a certain way.
 
 ### **Task History Awareness**
-- Know what has been implemented across completed tasks (check CLAUDE.md for current status)
+- Use `./scripts/tasks` or `./scripts/tasks -v` to see project status with descriptions
+- Use `./scripts/tasks --search X` to find tasks related to a topic
+- Use `./scripts/tasks <number>` or `./scripts/tasks <number> <number> <number>` to see task summaries with file pointers
+- **Proactively read** `task-review.md` files to understand what was implemented
+- **Read** `progress-log.md` for implementation details and decisions made during development
+- These files contain crucial context that may not exist elsewhere in the codebase
 - Can reference decisions and patterns from `.taskmaster/tasks/*/`
 
 ### **Documentation Navigation**

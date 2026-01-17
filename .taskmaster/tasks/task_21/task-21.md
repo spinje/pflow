@@ -1,11 +1,5 @@
 # Task 21: Implement Workflow Input/Output Declaration
 
-## ID
-21
-
-## Title
-Implement Workflow Input/Output Declaration
-
 ## Description
 Enable workflows to declare their expected input parameters and output data in the IR schema, providing discovery, validation, and documentation capabilities. This feature makes workflows self-documenting by declaring their complete interface (what they consume and produce), enabling compile-time validation, workflow composition, and better tooling integration.
 
@@ -155,6 +149,9 @@ Create a mechanism for workflows to declare their complete interface with:
 
 ## Status
 done
+
+## Completed
+2025-07-29
 
 ## Test Strategy
 

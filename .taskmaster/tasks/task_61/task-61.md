@@ -1,16 +1,10 @@
 # Task 61: Implement Fast Mode for Planner with Aggressive Parallelization
 
-## ID
-61
-
-## Title
-Implement Fast Mode for Planner with Aggressive Parallelization
-
 ## Description
 Add a `--fast` CLI flag to the planner that enables aggressive parallelization of nodes, trading some component selection quality for significant speed improvements (23% faster). This gives users control over the speed/quality trade-off, with the default remaining quality-first sequential execution.
 
 ## Status
-not started
+deprecated
 
 ## Dependencies
 - Task 52: Improve planner with "plan" and "requirements" steps - The parallelization builds on top of the new RequirementsAnalysisNode and PlanningNode architecture. These nodes must exist before we can parallelize them.

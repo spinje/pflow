@@ -5,7 +5,6 @@
 Define security controls for workflows that disable sandbox execution on shell and python nodes. Prevent AI-generated workflows from gaining unsandboxed access without explicit user approval.
 
 ## Status
-
 not started
 
 ## Priority

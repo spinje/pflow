@@ -1,16 +1,13 @@
 # Task 76: Implement Registry Execute Command for Independent Node Testing
 
-## ID
-76
-
-## Title
-Implement Registry Execute Command for Independent Node Testing
-
 ## Description
 Add a `pflow registry execute` command that allows agents (and users) to test individual nodes in isolation before integrating them into workflows. This enables parameter validation, output structure discovery, and credential testing without building complete workflows, significantly reducing the workflow development iteration cycle.
 
 ## Status
-not started
+done
+
+## Completed
+2025-10-06
 
 ## Dependencies
 - Task 71: Extend CLI Commands with tools for agentic workflow building - The execute command complements the discovery commands by enabling testing after discovery

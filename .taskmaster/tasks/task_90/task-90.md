@@ -1,11 +1,5 @@
 # Task 90: Expose Individual Workflows as Remote HTTP MCP Servers
 
-## ID
-90
-
-## Title
-Expose Individual Workflows as Remote HTTP MCP Servers
-
 ## Description
 Enable pflow cloud users to publish individual workflows as standalone remote HTTP MCP servers that can be installed into any MCP-compatible agent (Claude Desktop, ChatGPT, Cursor, etc.). This complements the existing full pflow MCP interface by providing a simpler, turnkey distribution mechanism for workflows.
 

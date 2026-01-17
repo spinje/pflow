@@ -1,16 +1,13 @@
 # Task 36: Update Context Builder for Namespacing Clarity
 
-## ID
-36
-
-## Title
-Update Context Builder for Namespacing Clarity
-
 ## Description
 Modify the context builder to present node information in a way that clearly reflects how nodes work with automatic namespacing enabled by default. Since nodes can no longer directly read from the shared store, the current "Inputs" terminology is misleading - all data must be passed via params using template variables.
 
 ## Status
-not started
+done
+
+## Completed
+2025-08-18
 
 ## Dependencies
 - Task 9: Automatic Namespacing - This task introduced namespacing which fundamentally changed how nodes access data, making direct shared store reads impossible

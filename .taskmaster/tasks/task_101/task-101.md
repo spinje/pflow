@@ -1,11 +1,5 @@
 # Task 101: Shell Node File Input Parameter for Safe Data Passing
 
-## ID
-101
-
-## Title
-Shell Node File Input Parameter for Safe Data Passing
-
 ## Description
 Add a `files` parameter to the shell node that allows passing template data as temporary files instead of embedding in command strings. This eliminates shell escaping issues when JSON or other structured data contains quotes, apostrophes, or special characters.
 

@@ -1,16 +1,13 @@
 # Task 57: Update planner tests to use better test cases with real world north star examples
 
-## ID
-57
-
-## Title
-Update planner tests to use better test cases with real world north star examples
-
 ## Description
 Update the planner test suite to use realistic north star examples from `architecture/vision/north-star-examples.md` instead of simplified prompts. This ensures tests validate actual user behavior patterns where verbose first-time specifications trigger workflow generation (Path B) and brief commands trigger workflow reuse (Path A). The tests should validate specific parameter extraction and use exact prompts that real users would type.
 
 ## Status
-in progress
+done
+
+## Completed
+2025-09-05
 
 ## Dependencies
 - Task 28: Improve performance of planner - Provides critical lessons about test quality, pipeline fidelity, and avoiding mock node pitfalls that created false confidence in workflow generator tests

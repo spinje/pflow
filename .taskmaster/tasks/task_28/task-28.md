@@ -1,16 +1,13 @@
 # Task 28: Improve Performance of Planner Prompts
 
-## ID
-28
-
-## Title
-Improve Performance of Planner Prompts
-
 ## Description
 Systematically improve all planner node prompts for accuracy, clarity, and cost-effectiveness. Refine corresponding test suites to focus on decision correctness with parallel execution support. Integrate with the prompt accuracy tracking system (`tools/test_prompt_accuracy.py`) to measure improvements quantitatively.
 
 ## Status
-completed (6/6 prompts improved to >80% accuracy)
+done
+
+## Completed
+2025-08-24
 
 ## Dependencies
 - Task 33: Extract Planner Prompts to Markdown Files - Prompts must be in markdown format for testing

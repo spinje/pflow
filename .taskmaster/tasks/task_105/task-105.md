@@ -1,6 +1,10 @@
 # Task 105: Auto-Parse JSON Strings During Nested Template Access
 
-## Status: ✅ Completed
+## Status
+done
+
+## Completed
+2026-01-02
 
 ## Problem Statement
 

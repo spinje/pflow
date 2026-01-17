@@ -1,16 +1,13 @@
 # Task 84: Implement Schema-Aware Type Checking for Template Variables
 
-## ID
-84
-
-## Title
-Implement Schema-Aware Type Checking for Template Variables
-
 ## Description
 Create compile-time type validation that catches type mismatches in template variables before workflow execution, preventing runtime errors from dict→str mismatches and other type incompatibilities. This addresses the bug where dict values passed to string parameters cause cryptic errors in MCP tools and external APIs.
 
 ## Status
-completed
+done
+
+## Completed
+2025-10-20
 
 ## Dependencies
 None

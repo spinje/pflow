@@ -1,18 +1,15 @@
 # Task 85: Runtime Template Resolution Hardening
 
-## ID
-85
-
-## Title
-Runtime Template Resolution Hardening
-
 ## Description
 Prevent literal template variables (like `${variable}`) from appearing in workflow output when nodes fail or produce empty results. Currently, when a node fails to produce output, downstream templates can't resolve but the workflow continues, sending literal `${variable}` text to external APIs like Slack. This task implements detection, proper error handling, and configurable fail-fast behavior to prevent silent data corruption in production workflows.
 
 **Related Issue**: https://github.com/spinje/pflow/issues/95 - Bug report from AI agent discovering this behavior in production workflow testing.
 
 ## Status
-not started
+done
+
+## Completed
+2025-10-20
 
 ## Dependencies
 - Task 56: Implement Runtime Validation and Error Feedback Loop - The runtime validation infrastructure provides the foundation for detecting template resolution failures during execution. We'll extend this to detect unresolved templates in final output.

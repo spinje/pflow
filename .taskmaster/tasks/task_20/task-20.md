@@ -1,11 +1,5 @@
 # Task 20: Implement Nested Workflow Execution
 
-## ID
-20
-
-## Title
-Implement Nested Workflow Execution
-
 ## Description
 Enable workflows to execute other workflows as sub-components through a runtime execution component. This will allow users to compose complex workflows from simpler, reusable workflow components while maintaining proper parameter isolation and error handling.
 
@@ -98,6 +92,9 @@ Create a runtime component that enables workflows to reference and execute other
 
 ## Status
 done
+
+## Completed
+2025-07-28
 
 ## Test Strategy
 

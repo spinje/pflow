@@ -5,7 +5,6 @@
 Enable users to create reusable custom nodes without the overhead of full MCP servers. Nodes should be discoverable via registry and usable in workflows like built-in nodes.
 
 ## Status
-
 not started
 
 ## Priority

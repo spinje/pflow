@@ -1,11 +1,5 @@
 # Task 39: Support Task Parallelism in Workflows
 
-## ID
-39
-
-## Title
-Support Task Parallelism in Workflows (Fan-Out/Fan-In Patterns)
-
 ## Description
 Enable pflow to represent and execute workflows where multiple DIFFERENT operations run concurrently on the same data. This is "task parallelism" - running analyze AND visualize AND summarize at the same time, then combining their results.
 

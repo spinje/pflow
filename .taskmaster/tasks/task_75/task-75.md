@@ -1,11 +1,5 @@
 # Task 75: Execution Preview in Validation
 
-## ID
-75
-
-## Title
-Execution Preview in Validation
-
 ## Description
 Enhance the `--validate-only` flag to show a comprehensive execution preview that displays what will execute, in what order, data flow between nodes, required credentials, and estimated execution time/cost. This transforms validation from a simple "valid ✓" into an informative preview that helps agents understand exactly what will happen before execution.
 

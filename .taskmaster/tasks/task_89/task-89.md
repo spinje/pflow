@@ -1,16 +1,13 @@
 # Task 89: Implement Structure-Only Mode and Selective Data Retrieval
 
-## ID
-89
-
-## Title
-Implement Structure-Only Mode and Selective Data Retrieval
-
 ## Description
 Transform pflow's registry run command to return only structure (no actual data) by default, dramatically reducing token consumption for AI agents. Add a new read-fields tool that enables selective retrieval of specific data fields from cached node execution results, providing 600x token efficiency improvement over traditional tool calling approaches.
 
 ## Status
-not started
+done
+
+## Completed
+2025-11-17
 
 ## Dependencies
 - Task 76: Implement Registry Execute Command for Independent Node Testing by agents - The registry run command infrastructure that we're modifying is already implemented here

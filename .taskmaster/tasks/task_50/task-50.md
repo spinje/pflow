@@ -1,16 +1,13 @@
 # Task 50: Implement Comprehensive Node Filtering System with Settings Management
 
-## ID
-50
-
-## Title
-Implement Comprehensive Node Filtering System with Settings Management
-
 ## Description
 Implement a flexible node filtering system that allows users to control which nodes are available through a settings.json configuration file with allow/deny patterns. The system hides test nodes from regular users by default while providing an environment variable override for testing. It supports filtering of all node types including MCP nodes, provides CLI commands for managing settings, and ensures denied nodes are completely hidden from the LLM/planner context. The filtering is applied at load-time to maintain reversibility while preserving all nodes in the registry.
 
 ## Status
-completed
+done
+
+## Completed
+2025-08-31
 
 ## Dependencies
 - Task 7: Extract node metadata from docstrings - The filtering system needs to identify nodes by their metadata
