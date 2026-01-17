@@ -256,11 +256,6 @@ This Claude Code super node provides comprehensive AI-assisted development capab
 
 ## See Also
 
-- **Design Philosophy**: [Simple Nodes Pattern](../features/simple-nodes.md) - Why this is an exception
-- **Interface Format**: [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - How node interfaces are defined
-- **Communication**: [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
-- **Planning System**: [Planner](../features/planner.md) - How template-driven prompts are generated
-- **Related Nodes**:
-  - [GitHub Nodes](./github-nodes.md) - Issue and PR management nodes
-  - [CI Nodes](./ci-nodes.md) - Testing and deployment nodes
-  - [LLM Node](./llm-nodes.md) - General text processing (simpler alternative)
+- [Simple Nodes](../features/simple-nodes.md) - Node design philosophy
+- [Shared Store](../core-concepts/shared-store.md) - Inter-node data flow
+- [Node Metadata](../reference/ir-schema.md#node-metadata-schema) - Interface format

@@ -74,7 +74,7 @@ The goal is to enable local execution of intelligent workflows with the **minima
 
 ### Core Architecture
 
-pflow is built on the **PocketFlow** framework (~150-line Python library in `pocketflow/__init__.py`).
+pflow is built on the **PocketFlow** framework (~200-line Python library in `pocketflow/__init__.py`).
 
 > If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 
@@ -411,25 +411,27 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
 ### Planned Features (in order of priority)
 
-**v0.8.0 - PyPI & Authoring:**
+**v0.8.0 - PyPI release:**
 - Task 49: Publish to PyPI
+
+**v0.9.0 - Agent Authoring Experience:**
 - Task 104: Python Code Node
 - Task 107: Markdown Workflow Format
 - Task 108: Smart Trace Debug Output
 
-**v0.9.0 - Workflow Expressiveness:**
-- Task 38: Conditional Branching
+**v0.10.0 - Workflow Expressiveness:**
+- Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
 
-**v0.10.0 - Extended Features:**
+**v0.11.0 - Extended Features:**
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
 - Task 99: Expose Nodes as MCP Tools
 - Task 111: Batch Limit for Iteration
 
-**v0.11.0 - Performance:**
-- Task 39: Parallel Execution
+**v0.12.0 - Performance:**
+- Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
 - Task 106: Workflow Iteration Cache
@@ -560,7 +562,7 @@ More importantly focus on architectural quality and code quality:
 
 ### Project-specific Memories
 
-- **CLI Development Principle**: never commit code unless explicitly instructed by the user
+- **CLI Development Principle**: NEVER either `git add`, `git commit` or `git push` code unless explicitly instructed by the user
 - **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
 
 ## Running pflow (for debugging, testing and development)

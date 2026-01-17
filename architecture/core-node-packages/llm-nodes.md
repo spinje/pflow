@@ -252,11 +252,6 @@ This approach delivers the benefits of simplicity (one interface to learn) with 
 
 ## See Also
 
-- **Design Philosophy**: [Simple Nodes Pattern](../features/simple-nodes.md) - Why this is a smart exception
-- **Interface Format**: [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - How node interfaces are defined
-- **Communication**: [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
-- **Node Registry**: [Registry System](../core-concepts/registry.md) - How nodes are discovered and managed
-- **Related Nodes**:
-  - [Claude Nodes](./claude-nodes.md) - Comprehensive development "super node" (more complex alternative)
-  - [GitHub Nodes](./github-nodes.md) - Platform integration nodes
-  - [CI Nodes](./ci-nodes.md) - Testing and deployment nodes
+- [Simple Nodes](../features/simple-nodes.md) - Node design philosophy
+- [Shared Store](../core-concepts/shared-store.md) - Inter-node data flow
+- [Node Metadata](../reference/ir-schema.md#node-metadata-schema) - Interface format

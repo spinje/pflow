@@ -155,7 +155,7 @@ Connect nodes using edges:
 
 ## Full Schema Reference
 
-For complete documentation of all available fields, see [IR Schema Documentation](core-concepts/schemas.md).
+For complete documentation of all available fields, see [IR Schema Documentation](../reference/ir-schema.md).
 
 ### Optional Fields
 

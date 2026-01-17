@@ -7,7 +7,7 @@ This document provides common patterns and best practices for implementing nodes
 Before implementing any node, you should understand:
 - [Simple Node Architecture](../features/simple-nodes.md) - Single-purpose node design philosophy
 - [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow and communication
-- [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format specification
+- [Node Metadata Schema](./ir-schema.md#node-metadata-schema) - Interface format specification
 
 ## Common Implementation Patterns
 
@@ -172,11 +172,6 @@ This section documents user-facing node types that can be used in workflows. For
 
 ## See Also
 
-- [Simple Nodes Pattern](../features/simple-nodes.md) - Understanding single-purpose node design
-- [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
-- [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format
-- **Node Package Specifications**:
-  - [GitHub Nodes](../core-node-packages/github-nodes.md)
-  - [Claude Nodes](../core-node-packages/claude-nodes.md)
-  - [CI Nodes](../core-node-packages/ci-nodes.md)
-  - [LLM Node](../core-node-packages/llm-nodes.md)
+- [Simple Nodes](../features/simple-nodes.md) - Node design philosophy
+- [Shared Store](../core-concepts/shared-store.md) - Inter-node data flow
+- [Node Metadata](./ir-schema.md#node-metadata-schema) - Interface format

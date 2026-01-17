@@ -2,6 +2,8 @@
 
 This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the PocketFlow retry pattern.
 
+> **Note:** Template resolution, namespacing, and instrumentation wrappers are applied automatically by the compiler at runtime. Node implementations should focus only on business logic - never implement these concerns yourself. See `src/pflow/runtime/CLAUDE.md` for details.
+
 ## 🚨 Critical Pattern: PocketFlow Node Error Handling
 
 **This is non-negotiable** - violating this pattern disables automatic retries, severely impacting reliability.

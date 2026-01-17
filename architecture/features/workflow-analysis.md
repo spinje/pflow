@@ -1,5 +1,8 @@
 # Rethinking AI-Assisted Development Workflows: A Technical Deep Dive
 
+> **Note on Syntax**: Examples in this document using `>>` and `=>` illustrate conceptual data flow.
+> These are not CLI commands. pflow uses JSON workflow files: `pflow workflow.json` or `pflow saved-name param=value`
+
 When Anthropic published their Claude Code best practices, they recommended using slash commands for repetitive workflows. It's a solid approach, but it got me thinking about the underlying inefficiencies in how we interact with AI coding assistants. Let me walk through a concrete example and explore an alternative approach.
 
 ## The Current State: Slash Commands
@@ -245,9 +248,6 @@ As AI tools become more integrated into our development workflows, understanding
 
 ## See Also
 
-- **Architecture**: [Product Requirements](../prd.md) - Core vision and philosophy behind pflow
-- **Architecture**: [Architecture Document](../architecture/architecture.md) - Complete system design
-- **Patterns**: [Simple Nodes](./simple-nodes.md) - How claude-code super node fits into simple node philosophy
-- **Components**: [Planner](./planner.md) - How natural language translates to deterministic workflows
-- **Implementation**: [MVP Implementation Guide](./mvp-implementation-guide.md) - What's included in the initial version
-- **Next Steps**: [Shell Pipes](./shell-pipes.md) - Unix philosophy integration with AI workflows
+- [Architecture](../architecture.md) - System design overview
+- [Planner](./planner.md) - Natural language to workflows
+- [Simple Nodes](./simple-nodes.md) - Node design philosophy

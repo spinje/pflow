@@ -657,7 +657,7 @@ pflow workflow --param api_key=sk-override-value
 ## References
 
 ### Related Documentation
-- `architecture/core-concepts/schemas.md` - Workflow IR schema
+- `architecture/reference/ir-schema.md` - Workflow IR schema
 - `src/pflow/core/CLAUDE.md` - Settings implementation details
 - `tests/test_core/test_settings.py` - Test examples
 

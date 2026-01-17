@@ -1,3 +1,12 @@
+---
+**Document Type**: Vision/Strategy (NOT current implementation)
+
+**For Current Architecture**: See `architecture/architecture.md`
+
+**Caveat**: Current pflow uses a hybrid approach with platform nodes (shell, file, git, etc.) AND MCP integration, not MCP-only as this vision proposes.
+
+---
+
 # MCP as pflow's Extension API: A Fundamental Simplification
 
 ## The Core Insight

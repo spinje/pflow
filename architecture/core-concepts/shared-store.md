@@ -1,10 +1,13 @@
 # Shared Store + Proxy Design Pattern in pflow
 
+> **Note on Syntax**: The `=>` examples below illustrate conceptual data flow between nodes.
+> pflow uses JSON workflow files for composition: `pflow workflow.json` or `pflow saved-name param=value`
+
 ## Navigation
 
 **Related Documents:**
-- **Architecture**: [PRD](../prd.md) | [Architecture](../architecture/architecture.md) | [MVP Implementation Guide](../features/mvp-implementation-guide.md)
-- **Components**: [Planner](../features/planner.md) | [Runtime](./runtime.md) | [CLI Runtime](../features/cli-runtime.md)
+- **Architecture**: [PRD](../historical/prd.md) | [Architecture](../architecture.md) | [MVP Implementation Guide](../historical/mvp-implementation-guide.md)
+- **Components**: [Planner](../features/planner.md) | [Execution Reference](../reference/execution-reference.md) | [CLI Runtime](../historical/cli-runtime-original.md)
 - **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/llm-nodes.md)
 - **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
 
@@ -12,7 +15,7 @@
 
 This document defines a core architectural principle in `pflow`: the coordination of logic and memory through a **shared store** with an optional **proxy layer** that enables standalone, reusable nodes without imposing binding complexity on node writers.
 
-This pattern is implemented using the lightweight **pocketflow framework** (100 lines of Python), leveraging its existing `params` system and flow orchestration capabilities.
+This pattern is implemented using the lightweight **pocketflow framework** (~200 lines of Python), leveraging its existing `params` system and flow orchestration capabilities.
 
 ## Shared Store vs Params Guidelines
 
@@ -59,7 +62,7 @@ claude-code --prompt="<instructions>
                       </instructions>
                       This is the issue: ${issue}"
 
-# Planner generates workflow where ${issue} will map to shared["issue"] (from github-get-issue node output)
+# Planner generates workflow where ${issue} will map to shared["issue"] (from shell node output)
 # The generated workflow will contain the actual prompt with template already planned
 claude-code --prompt="<instructions>...This is the issue: ${issue}"
 ```
@@ -67,10 +70,10 @@ claude-code --prompt="<instructions>...This is the issue: ${issue}"
 ### Template-Driven Workflow Examples
 ```bash
 # Template variables in workflow
-pflow github-get-issue --issue=1234 => \
+pflow shell --command="gh issue view 1234 --json title,body" => \
   claude-code --prompt="${comprehensive_fix_instructions}" => \
   llm --prompt="Write commit message for: ${code_report}" => \
-  git-commit --message="${commit_message}"
+  shell --command="git commit -m '${commit_message}'"
 
 # Template variables in the generated workflow will map to:
 # ${comprehensive_fix_instructions} → planner-generated instructions
@@ -97,11 +100,11 @@ The CLI intelligently routes different types of flags:
 Template variables create dependencies between nodes:
 
 ```bash
-# ${issue} depends on github-get-issue output
-github-get-issue --issue=1234 =>  # Outputs: shared["issue"], shared["issue_title"]
-claude-code --prompt="...This is the issue: ${issue}" =>  # Depends on: shared["issue"]
-llm --prompt="Write commit message for: ${code_report}" =>  # Depends on: shared["commit_message"]
-git-commit --message="${commit_message}"  # Depends on: shared["commit_message"]
+# ${issue} depends on shell node output (gh CLI)
+shell --command="gh issue view 1234 --json title,body" =>  # Outputs: shared["stdout"]
+claude-code --prompt="...This is the issue: ${stdout}" =>  # Depends on: shared["stdout"]
+llm --prompt="Write commit message for: ${code_report}" =>  # Depends on: shared["code_report"]
+shell --command="git commit -m '${commit_message}'"  # Depends on: shared["commit_message"]
 ```
 
 ### Missing Input Handling
@@ -110,9 +113,9 @@ When required inputs are missing (typically for first nodes expecting user input
 
 ```bash
 # User runs: pflow fix-issue
-# Planner detects missing --issue flag for github-get-issue node
-# Prompts user: "Please provide --issue=<issue_number> for github-get-issue"
-# User provides: pflow fix-issue --issue=1234
+# Planner detects missing --issue_number input
+# Prompts user: "Please provide issue_number=<value>"
+# User provides: pflow fix-issue issue_number=1234
 # Continues with: shared["issue_number"] = "1234"
 ```
 
@@ -566,16 +569,13 @@ This pattern enables **progressive user empowerment** by making flow orchestrati
 
 The shared store pattern is fundamental to pflow and is used by:
 
-- **CLI Runtime** ([cli-runtime.md](../features/cli-runtime.md)): Routes CLI flags to shared store
 - **Planner** ([planner.md](../features/planner.md)): Generates template strings with variables
 - **All Node Packages**: Every node reads/writes using shared store keys
-  - [GitHub Nodes](../core-node-packages/github-nodes.md)
   - [Claude Nodes](../core-node-packages/claude-nodes.md)
-  - [CI Nodes](../core-node-packages/ci-nodes.md)
   - [LLM Node](../core-node-packages/llm-nodes.md)
-- **Runtime Engine** ([runtime.md](./runtime.md)): Manages shared store during execution
-- **Registry System** ([registry.md](./registry.md)): Extracts shared store interfaces from metadata
+- **Execution Engine** ([execution-reference.md](../reference/execution-reference.md)): Manages shared store during execution
+- **Node Registry** ([architecture.md](../architecture.md#node-naming)): Node naming conventions and discovery
 
 ## See Also
 
-> **For complete CLI usage, validation rules, and runtime parameter details**, see [Shared-Store & Proxy Model — CLI Runtime Specification](../features/cli-runtime.md)
+> **For complete CLI usage, validation rules, and runtime parameter details**, see [CLI Reference](../reference/cli-reference.md)

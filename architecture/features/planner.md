@@ -1,16 +1,31 @@
 # Planner Responsibility & Functionality Spec
 
 > **Version**: MVP
-> **MVP Status**: ✅ Core Component
-> For complete MVP boundaries, see [MVP Implementation Guide](./mvp-implementation-guide.md)
+> **Status**: ⚠️ Legacy Feature - Being Phased Out
+>
+> **Note**: This planner is functional but considered legacy. AI agents should use CLI primitives (`workflow discover`, `registry discover`, `registry run`) for more reliable workflow creation. See `pflow instructions usage` for the current agent guide.
+>
+> **Note on Syntax**: The `=>` CLI pipe syntax shown in examples was never implemented. pflow uses JSON workflow files: `pflow workflow.json` or `pflow saved-name param=value`
+
+## Current Recommended Approach
+
+For AI agents building workflows, the recommended approach is:
+
+1. **Discovery**: `pflow workflow discover "description"` to find existing workflows
+2. **Node discovery**: `pflow registry discover "capability"` to find needed nodes
+3. **Manual JSON**: Write workflow JSON directly with iteration
+4. **Validation**: `pflow --validate-only workflow.json` before execution
+5. **Save**: `pflow workflow save` when working
+
+The planner remains available for human users who prefer natural language input, but agents achieve better results with direct JSON creation.
 
 ## Navigation
 
 **Related Documents:**
 - **Patterns**: [Shared Store](../core-concepts/shared-store.md) | [Template Variables](../core-concepts/shared-store.md#template-variable-resolution)
-- **Architecture**: [Architecture](../architecture/architecture.md) | [PRD](../prd.md)
-- **Components**: [Runtime](../core-concepts/runtime.md) | [Registry](../core-concepts/registry.md) | [Schemas](../core-concepts/schemas.md)
-- **Implementation**: [CLI Runtime](./cli-runtime.md) | [Components](../architecture/components.md)
+- **Architecture**: [Architecture](../architecture.md) | [PRD](../historical/prd.md)
+- **Components**: [Execution Reference](../reference/execution-reference.md) | [Architecture](../architecture.md#node-naming) | [IR Schema](../reference/ir-schema.md)
+- **Implementation**: [CLI Reference](../reference/cli-reference.md) | [Components](../historical/components-original.md)
 
 ---
 
@@ -152,14 +167,14 @@ pflow read-file --[TAB]   # → --path, --encoding
 # LLM still processes the complete command
 ```
 
-Read more about the [CLI Autocomplete](../features/autocomplete.md) feature.
+Read more about the [CLI Autocomplete](../historical/autocomplete-original.md) feature (v2.0 - not yet implemented).
 
 **The pattern**: Start simple (everything through LLM), optimize later (direct parsing in v2.0).
 
 ### 3.2.2 Future Enhancement: Type Shadow Store (v2.0)
 
 > **Version**: v2.0
-> **Status**: ❌ Deferred - See [MVP Implementation Guide](./mvp-implementation-guide.md)
+> **Status**: ❌ Deferred - See [MVP Implementation Guide](../historical/mvp-implementation-guide.md)
 
 A future enhancement will provide real-time type compatibility feedback during CLI composition. This feature is explicitly deferred to v2.0 to maintain MVP focus on core functionality.
 
@@ -271,7 +286,10 @@ class YTTranscriptNode(Node):
 }
 ```
 
-For complete metadata format and validation rules, see [Schemas](../core-concepts/schemas.md).
+> **Note**: The `purity` field shown above is a planned v2.0 addition.
+> Current node metadata does not include this field.
+
+For complete metadata format and validation rules, see [Schemas](../reference/ir-schema.md).
 
 ### 5.3 Flow Metadata Schema
 
@@ -287,7 +305,7 @@ For complete metadata format and validation rules, see [Schemas](../core-concept
 }
 ```
 
-For complete flow metadata schema definitions, see [Schemas](../core-concepts/schemas.md).
+For complete flow metadata schema definitions, see [Schemas](../reference/ir-schema.md).
 
 ### 5.4 Registry Management
 
@@ -650,7 +668,7 @@ elif user_intent == "technical_summary":
 
 ### 10.1 Template-Driven JSON IR Schema
 
-The planner generates JSON IR with template variable support. For complete IR schema definition and validation rules, see [Schemas](../core-concepts/schemas.md#document-envelope-flow-ir).
+The planner generates JSON IR with template variable support. For complete IR schema definition and validation rules, see [Schemas](../reference/ir-schema.md#document-envelope-flow-ir).
 
 **Template-Specific Features**:
 - `input_templates`: Node inputs with `${variable}` placeholders
@@ -924,7 +942,7 @@ expects 'text'.
 
 ---
 
-> **Caching Details**: See [Runtime](../core-concepts/runtime.md#caching-strategy) for node-level caching implementation and [Execution Reference](../reference/execution-reference.md#performance-considerations) for performance optimizations
+> **Caching Details**: See [Runtime](../reference/execution-reference.md#caching-strategy) for node-level caching implementation and [Execution Reference](../reference/execution-reference.md#performance-considerations) for performance optimizations
 
 ---
 
@@ -1119,11 +1137,6 @@ expects 'text'.
 
 ## See Also
 
-- **Patterns**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Core communication mechanism
-- **Schemas**: [JSON IR & Metadata Schemas](../core-concepts/schemas.md) - Schema definitions and validation
-- **Runtime**: [Runtime Behavior](../core-concepts/runtime.md) - Execution engine that consumes planner output
-- **Registry**: [Registry System](../core-concepts/registry.md) - Node discovery and metadata extraction
-
----
-
-### End of Spec
+- [Shared Store](../core-concepts/shared-store.md) - Core communication pattern
+- [Schemas](../reference/ir-schema.md) - IR and metadata definitions
+- [Runtime](../reference/execution-reference.md) - Execution engine

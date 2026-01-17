@@ -7,7 +7,7 @@ This document defines JSON schema governance for two key pflow artifacts:
 
 Both schemas work together to enable metadata-driven flow planning and validation.
 
-> **Architecture Context**: See [Node Metadata Strategy](../implementation-details/metadata-extraction.md) for extraction details and [Shared Store Pattern](./shared-store.md) for interface concepts.
+> **Architecture Context**: See [Node Metadata Strategy](../implementation-details/metadata-extraction.md) for extraction details and [Shared Store Pattern](../core-concepts/shared-store.md) for interface concepts.
 
 ---
 
@@ -36,7 +36,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 
 - `$schema` dereferences a JSON-Schema; hard error if not recognised
 - `ir_version` uses semantic versioning; unknown higher major → refuse to run
-- `metadata.locked_nodes` mirrors [version lockfile](./registry.md) for deterministic execution
+- `metadata.locked_nodes` mirrors version lockfile for deterministic execution (see [Registry Versioning](../future-version/registry-versioning.md))
 - `metadata.planner_version` tracks planner that generated IR for provenance
 
 > **Example**: See [examples/core/minimal.json](../../examples/core/minimal.json) for the simplest valid Flow IR - a single node with no edges or metadata.
@@ -400,9 +400,13 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 | `registry_id` | Namespace/name format | References node in registry for metadata resolution |
 | `version` | Semantic version string | Resolved during [planner validation](../features/planner.md) |
 | `params` | Arbitrary JSON for node behavior | **Never** contains shared store keys or execution directives |
-| `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See [Runtime Behavior](./runtime.md) |
+| `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See [Flow-Safe Caching](../future-version/flow-safe-caching.md) |
 | `execution.use_cache` | Boolean, only for `@flow_safe` nodes | Cache eligibility enforced at runtime |
 | `execution.wait` | Float ≥ 0, retry delay in seconds | Used by pocketflow framework (`pocketflow/__init__.py`) |
+
+> **Note (v2.0+)**: The `max_retries` and `use_cache` constraints reference the
+> planned `@flow_safe` purity model. For current versions, nodes should omit these
+> fields from IR. PocketFlow's built-in retry (`Node(max_retries=N)`) works independently.
 
 **Interface Resolution:**
 
@@ -411,7 +415,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 - Registry metadata validates params and execution config eligibility
 - Node interfaces declared through docstring metadata, not IR params
 
-> **Natural Interface Pattern**: See [shared store specification](./shared-store.md) for natural interface concepts
+> **Natural Interface Pattern**: See [shared store specification](../core-concepts/shared-store.md) for natural interface concepts
 
 ---
 
@@ -554,7 +558,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 - Completely optional - nodes use direct shared store access when no mappings defined
 - Transparent to node code via `NodeAwareSharedStore` proxy
 
-> **Architecture Integration**: See [shared store pattern](./shared-store.md) for proxy implementation details
+> **Architecture Integration**: See [shared store pattern](../core-concepts/shared-store.md) for proxy implementation details
 
 > **Example**: See [examples/core/proxy-mappings.json](../../examples/core/proxy-mappings.json) for a complete example of using mappings to adapt incompatible node interfaces.
 
@@ -562,7 +566,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 
 ## Side-Effect Model
 
-Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior Specification](./runtime.md)). IR validation enforces purity constraints:
+Node purity status determined by `@flow_safe` decorator (see [Flow-Safe Caching](../future-version/flow-safe-caching.md)). IR validation enforces purity constraints:
 
 - Only `@flow_safe` nodes may specify `max_retries > 0`
 - Only `@flow_safe` nodes may specify `use_cache: true`
@@ -640,7 +644,7 @@ Node purity status determined by `@flow_safe` decorator (see [Runtime Behavior S
 - Optional fields with sensible defaults
 - Clear validation rules for new features
 
-> **Implementation Details**: See [CLI Reference](../reference/cli-reference.md) for registry commands and [Registry](./registry.md) for implementation details
+> **Implementation Details**: See [CLI Reference](./cli-reference.md) for registry commands and [Architecture](../architecture.md#node-naming) for naming conventions
 
 ---
 
@@ -728,8 +732,7 @@ This document defines the JSON schemas for Flow IR and Node Metadata, providing 
 
 ## See Also
 
-- **Architecture**: [Shared Store + Proxy Pattern](./shared-store.md) - Natural interface patterns and proxy mapping design
-- **Components**: [Planner Specification](../features/planner.md) - How schemas integrate with dual-mode planning
-- **Components**: [Registry System](./registry.md) - Node discovery and metadata management
-- **Implementation**: [Metadata Extraction](../implementation-details/metadata-extraction.md) - How node metadata is extracted from docstrings
-- **Related Features**: [Runtime Behavior](./runtime.md) - How execution configuration in schemas affects runtime
+- [Shared Store](../core-concepts/shared-store.md) - Natural interface patterns
+- [Architecture](../architecture.md#node-naming) - Node naming conventions
+- [Execution Reference](./execution-reference.md) - Execution configuration
+- [Flow-Safe Caching](../future-version/flow-safe-caching.md) - Future caching and retry features

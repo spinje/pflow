@@ -46,7 +46,7 @@ The extraction process feeds the planner's metadata-driven selection:
 
 ### Registry Integration
 >
-> **See**: [Node Discovery & Versioning](../core-concepts/registry.md#registry-management)
+> **See**: [Node Naming](../architecture.md#node-naming) and [Registry Versioning](./registry-versioning.md)
 
 Metadata extraction occurs during node installation:
 
@@ -1137,9 +1137,6 @@ The infrastructure enables intelligent flow planning while preserving the simpli
 
 ## See Also
 
-- **Architecture**: [JSON Schemas](../core-concepts/schemas.md) - Node metadata schema definitions
-- **Architecture**: [Registry System](../core-concepts/registry.md) - How metadata integrates with node discovery
-- **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Node design patterns that guide metadata extraction
-- **Components**: [Planner](../features/planner.md) - How planner uses extracted metadata for node selection
-- **Related Features**: [Shared Store](../core-concepts/shared-store.md) - Natural interface patterns documented in metadata
-- **Future Features**: [LLM Node Generation](../future-version/llm-node-gen.md) - Future LLM-assisted development using metadata
+- [IR Schema](../reference/ir-schema.md) - Metadata schema definitions
+- [Architecture](../architecture.md#node-naming) - Node naming conventions
+- [Simple Nodes](../features/simple-nodes.md) - Design patterns

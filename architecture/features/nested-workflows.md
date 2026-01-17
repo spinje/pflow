@@ -466,5 +466,5 @@ Include version metadata for compatibility:
 
 - [Runtime Components](../architecture/runtime-components.md) - Understanding runtime infrastructure
 - [Shared Store Pattern](../core-concepts/shared-store.md) - Understanding data flow
-- [Workflow Schemas](../core-concepts/schemas.md) - JSON IR format
+- [IR Schema](../reference/ir-schema.md) - JSON IR format
 - [Simple Nodes](simple-nodes.md) - Building workflow components

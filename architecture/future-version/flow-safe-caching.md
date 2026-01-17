@@ -1,12 +1,8 @@
-# Runtime: Caching and Safety Mechanisms
+# Flow-Safe Decorator and Caching
 
-> **MVP Note**: The `@flow_safe` decorator and associated caching/retry mechanisms described in this document are **post-MVP features** (v2.0+). They are documented here for architectural completeness but will not be implemented in the initial release.
-
-This document defines pflow's caching strategy and node safety model (`@flow_safe` decorator).
-
-> **Navigation**: [Index](../index.md) → Runtime
-
-> **Note**: For complete execution behavior, see [Execution Reference](../reference/execution-reference.md). For architectural context, see [Shared Store Pattern](./shared-store.md).
+> **Status**: Post-MVP feature (v2.0+)
+>
+> This document describes the `@flow_safe` decorator and associated caching/retry mechanisms. These features are documented for architectural completeness but are not implemented in the current release.
 
 ## Side-Effect Declaration and Node Safety
 
@@ -14,12 +10,12 @@ pflow uses an **opt-in purity model** rather than comprehensive side-effect enum
 
 ### Core Principle
 
-> All nodes are treated as impure unless explicitly marked `@flow_safe`.\
+> All nodes are treated as impure unless explicitly marked `@flow_safe`.
 > There is no need to list or predict side effects. We only verify and certify purity.
 
 ### Node Classification
 
-- **Impure (default)**\
+- **Impure (default)**
    Nodes may write files, make network calls, mutate external state. These are permitted but untrusted, uncacheable, and un-retryable unless the user inspects and accepts them.
 
 - **Pure (`@flow_safe`) nodes**:
@@ -119,65 +115,8 @@ Until then: **`@flow_safe` is the contract. Everything else is opaque by design.
 
 > **Execution Details**: See [Execution Reference](../reference/execution-reference.md) for flow immutability, testing framework, and future resilience features
 
-## Execution Tracing
-
-### Comprehensive Trace Output
-
-When tracing is enabled (default; disable with `--no-trace`), pflow captures detailed execution information that provides visibility into workflow behavior:
-
-```
-[1] github-get-issue (0.3s)
-    Input: {"issue": 1234}
-    Output: {"title": "Bug: Login fails", "body": "..."}
-    Shared Store Δ: +issue, +issue_title
-
-[2] claude-code (45.2s, 1523 tokens, $0.0234)
-    Input: {"prompt": "Implement fix for: Bug: Login fails..."}
-    Output: {"code_report": "Modified auth.py, added tests..."}
-    Shared Store Δ: +code_report, +files_modified
-    Cache: MISS
-
-[3] git-commit (0.1s)
-    Input: {"message": "Fix login bug (#1234)"}
-    Output: {"commit_hash": "abc123"}
-    Shared Store Δ: +commit_hash
-```
-
-### LLM Usage and Cost Tracking
-
-> **Implementation Note**: Before building custom LLM usage tracking, leverage existing tools:
-> - **Simon Willison's `llm` CLI**: Already tracks token usage and costs when used as the LLM backend
-> - **Claude Code CLI output**: Provides detailed metrics in its execution reports
-> - These tools can be integrated via their CLI interfaces or Python APIs
-
-Token usage and cost information will be extracted from:
-- LLM node execution logs (when using `llm` CLI backend)
-- Claude Code node output parsing (comprehensive development reports include metrics)
-- Third-party API responses that include usage data
-
-### Trace vs Conversation Logs
-
-Unlike conversation logs (e.g., Claude's interactive dialogue history), execution traces provide:
-
-- **Deterministic step-by-step execution**: Shows exact order and timing of operations
-- **Resource usage tracking**: Tokens consumed, API costs, execution time per node
-- **Data flow visibility**: Captures how data moves through shared store (Δ shows changes)
-- **Performance optimization insights**: Identifies slow nodes and caching opportunities
-- **Debugging information**: Clear view of inputs, outputs, and state changes
-
-This enables developers to:
-- Understand exactly what happened during workflow execution
-- Identify performance bottlenecks and optimization opportunities
-- Track costs and resource usage for budgeting
-- Debug data flow issues between nodes
-
-### Trace Storage
-
-Traces are persisted in `~/.pflow/traces/<run-id>.json` for post-execution analysis and debugging.
-
 ## See Also
 
-- [Execution Reference](../reference/execution-reference.md) - Complete execution model and runtime behavior
-- [Node Reference](../reference/node-reference.md) - How to implement `@flow_safe` nodes
-- [Shared Store Pattern](./shared-store.md) - Core pattern for node communication
-- [JSON Schemas](./schemas.md) - Runtime configuration in Flow IR
+- [Execution Reference](../reference/execution-reference.md) - Complete execution model
+- [Shared Store](../core-concepts/shared-store.md) - Node communication pattern
+- [IR Schema](../reference/ir-schema.md) - Runtime configuration in Flow IR

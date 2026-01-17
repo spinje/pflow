@@ -1,20 +1,33 @@
 # pflow-pocketflow Integration Guide
 
-> **Version**: MVP
-> **MVP Status**: ✅ Critical Implementation Guide
-> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
+> **Version**: Current
+> **Status**: ✅ Critical Guide for pflow Internal Development
 
 ## Navigation
 
 **Related Documents:**
 - **Framework**: pocketflow Source (`pocketflow/__init__.py`) | pocketflow Docs (`pocketflow/CLAUDE.md`)
-- **Architecture**: [Architecture](./architecture.md) | [Shared Store](../core-concepts/shared-store.md)
-- **Components**: [CLI Runtime](../features/cli-runtime.md) | [Planner](../features/planner.md) | [Runtime](../core-concepts/runtime.md)
-- **Implementation**: [Component Inventory](./components.md)
+- **Architecture**: [Architecture](./architecture.md) | [Shared Store](./core-concepts/shared-store.md)
+- **Concepts**: [Planner](./features/planner.md) | [Execution Reference](./reference/execution-reference.md)
+- **Implementation**: [Runtime Components](./runtime-components.md) | [Runtime CLAUDE.md](../src/pflow/runtime/CLAUDE.md)
 
 ## Overview
 
 This document captures critical insights about how pflow and pocketflow integrate. These insights were discovered through deep analysis and are essential for correct implementation.
+
+## Scope & Audience
+
+> **This guide is for pflow internal developers**, not for users or AI agents building workflows.
+
+**Users and AI agents** should ALWAYS use JSON workflows via the CLI (`pflow workflow.json`). They never interact with PocketFlow directly.
+
+**This guide covers two internal development patterns:**
+
+1. **Writing platform nodes** - All nodes inherit from `pocketflow.Node`. This is the standard pattern for extending pflow's capabilities. Wrappers (template resolution, namespacing, instrumentation) are applied automatically by the compiler - node authors don't implement these.
+
+2. **Direct PocketFlow flows** - Used ONLY in exceptional cases where pflow itself needs an internal workflow (e.g., the planner). This is rare and should be avoided unless there's a compelling reason. Currently only the planner uses this pattern.
+
+**For the compilation/runtime layer** where JSON IR is transformed into executable PocketFlow objects, see `src/pflow/runtime/CLAUDE.md`.
 
 ## Critical Insight #1: PocketFlow IS the Execution Engine
 
@@ -236,20 +249,23 @@ def scan_for_nodes(directory):
 }
 ```
 
-## Critical Insight #10: What NOT to Build
+## Critical Insight #10: What NOT to Build (and What Was Built Later)
 
-**Avoid these common traps**:
+**Core principles that remain true:**
 
-1. **Execution orchestration** - pocketflow.Flow does this
-2. **Retry mechanisms** - pocketflow.Node has this built-in
-3. **Complex abstractions** - Use pocketflow directly
-4. **SharedStore class** - It's just a dict with validation functions
-5. **Template engine** - Simple string substitution is enough
-6. **Node wrapper classes** - Direct inheritance is clearer
-7. **Complex registry** - Filesystem scanning is sufficient
-8. **Compatibility system** (MVP) - MVP nodes are designed to be compatible
-9. **Metrics system** (MVP) - Focus on working code first
-10. **Performance optimization** (MVP) - Make it work, then make it fast
+1. **Execution orchestration** - pocketflow.Flow handles this; don't reimplement
+2. **Retry mechanisms** - pocketflow.Node has this built-in; use `max_retries` and `wait`
+3. **Complex abstractions in nodes** - Nodes should be simple; complexity lives in wrappers
+
+**What the MVP avoided but was added as the system matured:**
+
+4. **~~SharedStore class~~** → `NamespacedSharedStore` was added for collision prevention (applied by compiler)
+5. **~~Simple template engine~~** → Template resolution grew to 600+ lines with path traversal, type preservation, auto JSON parsing
+6. **~~No wrapper classes~~** → Wrapper chain was added: Template → Namespace → Batch → Instrumented (applied by compiler)
+7. **~~Simple registry~~** → Registry now includes metadata extraction, LLM-powered discovery
+8. **~~No metrics~~** → `MetricsCollector` tracks timing, tokens, costs
+
+**The lesson:** Start simple, but expect complexity to emerge. The key is that complexity was added in the **compiler/wrapper layer**, not in node implementations. Nodes remain simple.
 
 ## Implementation Principles
 

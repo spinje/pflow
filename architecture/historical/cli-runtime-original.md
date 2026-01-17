@@ -1,3 +1,12 @@
+---
+**⚠️ HISTORICAL DOCUMENT**
+
+**Reason**: Describes `=>` CLI composition syntax that was never implemented. pflow uses JSON workflow files for composition.
+
+**For Current CLI**: See `architecture/reference/cli-reference.md` or run `pflow --help`
+
+---
+
 ## Shared-Store & Proxy Model — CLI Runtime Specification
 
 ### 1 · Purpose

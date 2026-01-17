@@ -6,13 +6,16 @@ pflow implements a **simple, single-purpose node architecture** that dramaticall
 
 ## Architecture Comparison
 
+> **Note on Syntax**: The `>>` syntax below illustrates data flow between nodes conceptually.
+> This is PocketFlow's Python operator for node chaining (used internally by the compiler).
+> To run workflows, use JSON workflow files: `pflow workflow.json` or `pflow saved-name param=value`
+
 ### Before: Complex Action-Based Nodes
 ```bash
 # Complex nodes with internal action dispatch (NOT OUR PATTERN)
 github --action=get-issue --issue=1234 >>
 claude --action=analyze --prompt="understand this issue" >>
 claude --action=implement --prompt="create fix" >>
-ci --action=run-tests >>
 git --action=commit --message="Fix issue 1234"
 ```
 
@@ -25,11 +28,10 @@ git --action=commit --message="Fix issue 1234"
 ### After: Simple, Single-Purpose Nodes
 ```bash
 # Clear, focused nodes with single responsibilities
-github-get-issue --repo=owner/repo --issue=1234 >>
+shell --command="gh issue view 1234 --json title,body" >>
 llm --prompt="Analyze this issue and suggest a fix" >>
 write-file implementation.py >>
-run-tests --command="pytest tests/" >>
-git-commit --message="Fix issue 1234"
+shell --command="git commit -m 'Fix issue 1234'"
 ```
 
 **Benefits**:
@@ -45,14 +47,13 @@ git-commit --message="Fix issue 1234"
 
 | Node | Purpose | Interface |
 |------|---------|-----------|
-| **[`github-get-issue`](../core-node-packages/github-nodes.md#github-get-issue)** | Retrieve GitHub issue details | Reads: `issue_number`, `repo` → Writes: `issue` |
-| **[`github-create-issue`](../core-node-packages/github-nodes.md#github-create-issue)** | Create new GitHub issue | Reads: `title`, `body`, `repo` → Writes: `created_issue` |
-| **[`github-list-prs`](../core-node-packages/github-nodes.md#github-list-prs)** | List GitHub pull requests | Reads: `repo`, `state` → Writes: `prs` |
 | **[`llm`](../core-node-packages/llm-nodes.md)** | General-purpose LLM processing | Reads: `prompt` → Writes: `response` |
 | **`read-file`** | Read file contents | Reads: `file_path` → Writes: `content` |
 | **`write-file`** | Write file contents | Reads: `content`, `file_path` → Writes: `written` |
-| **[`run-tests`](../core-node-packages/ci-nodes.md#ci-run-tests)** | Execute test commands | Reads: `test_command` → Writes: `test_results` |
-| **`git-commit`** | Create git commit | Reads: `message`, `files` → Writes: `commit_hash` |
+| **`copy-file`** | Copy a file | Reads: `source`, `destination` → Writes: `copied` |
+| **`shell`** | Execute shell commands | Reads: `command` → Writes: `stdout`, `stderr` |
+| **`http`** | Make HTTP requests | Reads: `url`, `method` → Writes: `response` |
+| **[`claude-code`](../core-node-packages/claude-nodes.md)** | Claude Code CLI for complex tasks | Reads: `instructions` → Writes: `code_report` |
 
 ### The LLM Node: Smart Exception to Prevent Proliferation
 
@@ -65,54 +66,43 @@ The `llm` node is our general-purpose solution for all text processing tasks:
 
 ### Node Implementation Pattern
 
-Nodes follow the interface patterns defined in our [metadata schema](../core-concepts/schemas.md#node-metadata-schema). All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`) and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
+Nodes follow the interface patterns defined in our [metadata schema](../reference/ir-schema.md#node-metadata-schema). All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`) and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
 
 ```python
-class GitHubGetIssueNode(Node):  # Use Node for retry support
-    """Get GitHub issue details.
+class ReadFileNode(Node):  # Use Node for retry support
+    """Read file contents from disk.
 
-    Fetches issue information from a GitHub repository using the GitHub API.
-    Requires authentication token for private repositories.
+    Reads the contents of a file from the local filesystem.
 
     Interface:
-    - Reads: shared["issue_number"]: int  # GitHub issue number
-    - Reads: shared["repo"]: str  # Repository name (owner/repo format)
-    - Writes: shared["issue"]: dict  # Issue data from GitHub
+    - Reads: shared["file_path"]: str  # Path to file to read
+    - Writes: shared["content"]: str  # File contents
     - Writes: shared["error"]: str  # Error message if operation failed
-    - Params: token: str  # GitHub authentication token
-    - Actions: default (success), not_found (issue doesn't exist)
-
-    Security Note: The token parameter should be kept secure and not logged.
+    - Actions: default (success), not_found (file doesn't exist)
     """
 
     # Node name is determined by:
     # 1. class.name attribute if present
     # 2. Otherwise, kebab-case conversion of class name
-    name = "github-get-issue"  # Optional explicit name
+    name = "read-file"  # Optional explicit name
 
     def prep(self, shared):
         # Read from params (template resolution handles shared store wiring)
-        issue_number = self.params.get("issue_number")
-        if not issue_number:
-            raise ValueError("issue_number parameter is required")
-
-        # Repository from params
-        repo = self.params.get("repo")
-        if not repo:
-            raise ValueError("repo parameter is required")
-
-        return (issue_number, repo)
+        file_path = self.params.get("file_path")
+        if not file_path:
+            raise ValueError("file_path parameter is required")
+        return file_path
 
     def exec(self, prep_res):
-        issue_number, repo = prep_res
-        token = self.params.get("token")
-        return github_api.get_issue(repo, issue_number, token)
+        file_path = prep_res
+        with open(file_path, "r") as f:
+            return f.read()
 
     def post(self, shared, prep_res, exec_res):
         if exec_res is None:
-            shared["error"] = "Issue not found"
+            shared["error"] = "File not found"
             return "not_found"
-        shared["issue"] = exec_res
+        shared["content"] = exec_res
         return "default"
 ```
 
@@ -130,23 +120,22 @@ All simple nodes follow clear interface patterns based on our [shared store desi
 ```javascript
 // MCP server exposes multiple tools
 {
-  "name": "github-server",
-  "tools": ["get-issue", "create-issue", "list-prs", "create-pr"]
+  "name": "slack",
+  "tools": ["send_message", "list_channels", "get_thread"]
 }
 
-// Each MCP tool becomes a simple pflow node
-mcp-github-get-issue
-mcp-github-create-issue
-mcp-github-list-prs
-mcp-github-create-pr
+// Each MCP tool becomes a simple pflow node with naming: mcp-<server>-<tool>
+mcp-slack-send_message
+mcp-slack-list_channels
+mcp-slack-get_thread
 ```
 
-### Future MCP Integration
-When MCP servers are integrated in v2.0, simple nodes provide natural compatibility:
+### MCP Integration
+MCP servers are fully integrated - each MCP tool maps to a pflow node:
 - Each MCP tool maps to exactly one simple node
 - Clear, predictable interfaces without internal complexity
 - Consistent user experience between native and MCP nodes
-- Future CLI grouping syntax aligns naturally: `pflow mcp github get-issue`
+- Node naming: `mcp-<server>-<tool>` (e.g., `mcp-slack-send_message`)
 
 ## Natural Interface Pattern
 
@@ -192,8 +181,8 @@ This consistency provides significant advantages:
 
 ```bash
 # The key names make the data flow obvious
-github-get-issue --issue=123 >>         # Writes: shared["issue"]
-llm --prompt="Analyze ${issue}" >>        # Reads: shared["issue"], Writes: shared["response"]
+read-file --file_path=data.json >>      # Writes: shared["content"]
+llm --prompt="Analyze ${content}" >>    # Reads: shared["content"], Writes: shared["response"]
 write-file analysis.md                  # Reads: shared["response"] as content
 ```
 
@@ -204,18 +193,18 @@ No documentation needed - the natural interfaces guide composition.
 ### Discovery and Learning
 ```bash
 # See all available nodes by category
-$ pflow registry list --category=github
-📦 GitHub Nodes:
-- github-get-issue: Retrieve issue details by number
-- github-create-issue: Create new issue with title and body
-- github-list-prs: List pull requests with filtering
-- github-create-pr: Create pull request from branch
+$ pflow registry list file
+📦 File Nodes:
+- read-file: Read file contents from disk
+- write-file: Write content to a file
+- copy-file: Copy a file to a new location
+- delete-file: Delete a file from disk
 
 # Get detailed interface for specific node
-$ pflow describe github-get-issue
-Reads: shared["issue_number"], shared["repo"]
-Writes: shared["issue"]
-Params: --repo, --token, --issue (optional)
+$ pflow registry describe read-file
+Reads: shared["file_path"]
+Writes: shared["content"]
+Params: --file_path
 ```
 
 ### Reduced Cognitive Load
@@ -225,23 +214,24 @@ Params: --repo, --token, --issue (optional)
 ### Natural Workflow Patterns
 Simple nodes create clear, linear workflows:
 ```bash
-# Natural thought process: "Get issue, analyze, implement, test"
-github-get-issue --repo=owner/repo --issue=123 >>
-llm --prompt="Analyze this issue and suggest a fix" >>
-write-file fix.py >>
-run-tests --command="pytest tests/" >>
-git-commit --message="Fix issue 123"
+# Natural thought process: "Read file, analyze, write report"
+read-file --file_path=code.py >>
+llm --prompt="Review this code and suggest improvements" >>
+write-file review.md
 ```
 
-### Future CLI Grouping (v2.0)
-While nodes remain simple underneath, v2.0 will add convenient CLI grouping:
+### Using Shell for Git/GitHub Operations
+For Git and GitHub operations, use the `shell` node with CLI tools:
 ```bash
-# v2.0 CLI sugar - same simple nodes underneath
-pflow github get-issue --repo=owner/repo --issue=123
-pflow github create-pr --title="Fix" --branch=fix-branch
+# GitHub operations via gh CLI
+shell --command="gh issue view 123 --json title,body" >>
+llm --prompt="Analyze this issue" >>
+shell --command="gh issue comment 123 --body '${response}'"
 
-# This is purely CLI convenience, not node architecture!
-# Internally maps to: github-get-issue, github-create-pr
+# Git operations via git CLI
+shell --command="git status --porcelain" >>
+llm --prompt="Summarize these changes" >>
+shell --command="git commit -m '${response}'"
 ```
 
 ## Real-World Examples
@@ -249,12 +239,11 @@ pflow github create-pr --title="Fix" --branch=fix-branch
 ### Daily Standup Automation
 ```bash
 # Business scenario: Automate morning standup preparation
-$ pflow "check my team's open PRs, get failing CI builds, summarize weekend slack alerts, format for standup"
+$ pflow "check my team's open PRs, get failing CI builds, format for standup"
 
 # Generated simple node workflow:
-github-list-prs --team=backend >>
-ci-get-failures >>
-slack-get-messages --since=friday >>
+shell --command="gh pr list --state=open --json title,author,url" >>
+shell --command="gh run list --status=failure --json name,conclusion" >>
 llm --prompt="Format these updates as a standup report"
 
 # Subsequent executions:
@@ -264,12 +253,11 @@ $ pflow standup-prep
 ### Production Incident Investigation
 ```bash
 # Business scenario: Investigate production errors and correlate with recent changes
-$ pflow "get datadog errors last hour, find related deploys, check which PRs merged, identify likely cause"
+$ pflow "get recent errors, find related deploys, identify likely cause"
 
 # Generated simple node workflow:
-datadog-get-errors --window=1h >>
-github-get-deploys >>
-github-get-merged-prs >>
+http --url="https://api.datadog.com/errors?window=1h" >>
+shell --command="gh pr list --state=merged --json title,mergedAt" >>
 llm --prompt="Correlate these errors with recent changes and identify likely cause"
 ```
 
@@ -291,9 +279,9 @@ write-file churn-analysis.csv
 $ pflow "deploy to staging"
 
 # Generated simple node workflow:
-github-create-release --tag=v2.0 >>
-aws-deploy --env=staging >>
-slack-send-message --channel=deploys --message="Staging deployment complete"
+shell --command="gh release create v2.0 --generate-notes" >>
+shell --command="aws deploy create-deployment --application-name myapp --deployment-group staging" >>
+http --method=POST --url="https://slack.com/api/chat.postMessage" --body='{"channel":"deploys","text":"Staging deployment complete"}'
 ```
 
 ## Trade-offs and Considerations
@@ -301,8 +289,8 @@ slack-send-message --channel=deploys --message="Staging deployment complete"
 ### Acknowledged Downsides
 
 **1. More Node Names to Learn**
-- Simple nodes: `github-get-issue`, `github-create-issue`, `github-list-prs`
-- Action-based (NOT our pattern): `github --action=get-issue`
+- Simple nodes: `read-file`, `write-file`, `shell`, `llm`
+- Action-based (NOT our pattern): `file --action=read`
 - **Trade-off**: More distinct names but each with crystal-clear purpose
 
 **2. General LLM Node Complexity**
@@ -311,7 +299,7 @@ slack-send-message --channel=deploys --message="Staging deployment complete"
 - **Mitigation**: Clear examples and future template system
 
 **3. Node Name Length**
-- Names like `github-get-issue` are longer than `github`
+- Names like `read-file` are longer than `file`
 - **Trade-off**: Longer names for absolute clarity of purpose
 
 ### Why These Trade-offs Are Acceptable
@@ -326,19 +314,17 @@ slack-send-message --channel=deploys --message="Staging deployment complete"
 
 ### Metadata Schema Updates
 
-Simple nodes have straightforward metadata without action complexity, following our [node metadata schema](../core-concepts/schemas.md#node-metadata-schema):
+Simple nodes have straightforward metadata without action complexity, following our [node metadata schema](../reference/ir-schema.md#node-metadata-schema):
 ```json
 {
-  "id": "github-get-issue",
+  "id": "read-file",
   "type": "simple",
-  "description": "Retrieve GitHub issue details by number",
+  "description": "Read file contents from disk",
   "interface": {
-    "reads": ["issue_number", "repo"],
-    "writes": ["issue"],
+    "reads": ["file_path"],
+    "writes": ["content"],
     "params": {
-      "repo": {"type": "string", "description": "Repository name"},
-      "token": {"type": "string", "description": "GitHub API token"},
-      "issue_number": {"type": "integer", "description": "Issue number (optional if in shared store)"}
+      "file_path": {"type": "string", "description": "Path to file to read"}
     }
   }
 }
@@ -353,8 +339,8 @@ The LLM planner works with simple node selection:
 
 ### Registry System Updates
 Node discovery supports simple node organization:
-- `pflow registry list --category=github` shows related nodes
-- `pflow describe github-get-issue` shows specific node interface
+- `pflow registry list file` shows related file nodes
+- `pflow registry describe read-file` shows specific node interface
 - Clear categorization by platform or function
 - Simple interface documentation
 
@@ -363,7 +349,7 @@ Node discovery supports simple node organization:
 ### Documentation Updates
 - ✅ Update MVP scope examples to use simple node syntax
 - ✅ Revise implementation plans for individual simple nodes
-- ✅ Create simple node specifications (github-get-issue, etc.)
+- ✅ Create simple node specifications (read-file, write-file, etc.)
 - ✅ Update component inventory to reflect simple node architecture
 
 ### Implementation Updates
@@ -376,28 +362,28 @@ Node discovery supports simple node organization:
 
 ### Adding New Nodes
 ```python
-# Adding new GitHub functionality is simple
-class GitHubGetCommitsNode(Node):
-    """Get repository commit history.
+# Adding new functionality follows a simple pattern
+class ExtractJsonFieldNode(Node):
+    """Extract a field from JSON data.
 
     Interface:
-    - Reads: shared["repo"]: str  # Repository name (owner/repo format)
-    - Writes: shared["commits"]: list  # List of commit data
-    - Params: token: str  # GitHub authentication token
-    - Params: limit: int  # Maximum number of commits to retrieve (default: 30)
+    - Reads: shared["json_data"]: dict  # JSON data to extract from
+    - Writes: shared["extracted"]: any  # Extracted field value
+    - Params: field: str  # JSON path to extract (e.g., "data.items[0].name")
     """
 
     def exec(self, prep_res):
         # Simple, focused implementation
-        return github_api.get_commits(...)
+        return extract_json_path(prep_res, self.params.get("field"))
 ```
 
 ### Adding New Platforms
 New platforms follow the same simple pattern:
-- Create individual nodes for each operation (e.g., "slack-send-message", "aws-deploy")
+- Create individual nodes for each operation
 - Each node has clear, single purpose
 - Follow consistent interface patterns
 - Add to registry with simple metadata
+- For external APIs, prefer using `shell` with CLI tools or MCP servers
 
 ## Conclusion
 
@@ -412,13 +398,6 @@ This architecture enables pflow to deliver on its promise of transforming AI-ass
 
 ## See Also
 
-- **Core Patterns**: [Shared Store + Proxy Pattern](../core-concepts/shared-store.md) - Understanding data flow and node communication
-- **Node Specifications**:
-  - [GitHub Nodes](../core-node-packages/github-nodes.md) - Platform integration nodes
-  - [Claude Nodes](../core-node-packages/claude-nodes.md) - Development automation "super node"
-  - [CI Nodes](../core-node-packages/ci-nodes.md) - Testing and deployment nodes
-  - [LLM Node](../core-node-packages/llm-nodes.md) - General text processing
-- **Implementation Details**:
-  - [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format specification
-  - [Registry System](../core-concepts/registry.md) - Node discovery and management
-  - [CLI Runtime](./cli-runtime.md) - How nodes integrate with the CLI
+- [Shared Store](../core-concepts/shared-store.md) - Node communication pattern
+- [Node Metadata](../reference/ir-schema.md#node-metadata-schema) - Interface format
+- [Registry](../architecture.md#node-naming) - Node discovery
