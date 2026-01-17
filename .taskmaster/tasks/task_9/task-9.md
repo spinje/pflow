@@ -1,16 +1,13 @@
 # Task 9: Implement Shared Store Collision Detection and Proxy Mapping
 
-## ID
-9
-
-## Title
-Implement Shared Store Collision Detection and Proxy Mapping
-
 ## Description
 Implement automatic namespacing to prevent output collisions when multiple nodes of the same type write to the shared store. This feature isolates each node's outputs in its own namespace, enabling workflows to use multiple instances of the same node type without data being overwritten. Originally planned as manual proxy mappings, the implementation evolved to automatic namespacing after discovering it was simpler and more powerful.
 
 ## Status
 done
+
+## Completed
+2025-08-16
 
 ## Dependencies
 - Task 18: Template Variable System - Namespacing leverages the existing template path resolution (`$node.key`) for accessing namespaced outputs

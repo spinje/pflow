@@ -1,0 +1,347 @@
+#!/bin/bash
+# pflow task browser
+# Usage:
+#   ./scripts/tasks              Show summary and pending tasks
+#   ./scripts/tasks -v           Include descriptions
+#   ./scripts/tasks 56 55 65     Show details for specific tasks
+#   ./scripts/tasks --done       List completed tasks
+#   ./scripts/tasks --search X   Find tasks mentioning X
+
+set -e
+
+TASKS_DIR=".taskmaster/tasks"
+VERSIONS_FILE=".taskmaster/versions.md"
+
+# Colors (disabled if not terminal)
+if [ -t 1 ]; then
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    RED='\033[0;31m'
+    BLUE='\033[0;34m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    GREEN=''
+    YELLOW=''
+    RED=''
+    BLUE=''
+    BOLD=''
+    NC=''
+fi
+
+# Count tasks by status
+count_tasks() {
+    local status=$1
+    local count=0
+    for dir in "$TASKS_DIR"/task_*/; do
+        task_num=$(basename "$dir" | sed 's/task_//')
+        file="$dir/task-$task_num.md"
+        if [ -f "$file" ]; then
+            task_status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+            if [ "$task_status" = "$status" ]; then
+                ((count++))
+            fi
+        fi
+    done
+    echo "$count"
+}
+
+# Get task info
+get_task_info() {
+    local task_num=$1
+    local dir="$TASKS_DIR/task_$task_num"
+    local file="$dir/task-$task_num.md"
+
+    if [ ! -f "$file" ]; then
+        echo "Task $task_num not found"
+        return 1
+    fi
+
+    local raw_title=$(head -1 "$file" | sed 's/^# //')
+    # Ensure title has "Task N:" prefix
+    if [[ ! "$raw_title" =~ ^Task\ $task_num: ]]; then
+        local title="Task $task_num: $raw_title"
+    else
+        local title="$raw_title"
+    fi
+    local status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+    local completed=$(grep -A1 "^## Completed" "$file" 2>/dev/null | tail -1 | xargs)
+    local desc=$(awk '/^## Description/{found=1; next} found && /^##/{exit} found{print}' "$file" | head -5)
+
+    echo -e "${BOLD}## $title${NC}"
+    echo -e "${BOLD}Status:${NC} $status"
+    if [ -n "$completed" ] && [ "$completed" != "unknown" ]; then
+        echo -e "${BOLD}Completed:${NC} $completed"
+    fi
+    echo ""
+    echo "$desc"
+    echo ""
+
+    # Show available files with reading guidance
+    local progress="$dir/implementation/progress-log.md"
+    local review="$dir/task-review.md"
+
+    if [ -f "$review" ] || [ -f "$progress" ]; then
+        echo -e "${BLUE}📁 Read:${NC}"
+        if [ -f "$review" ]; then
+            echo "  1. $review (start here)"
+        fi
+        if [ -f "$progress" ]; then
+            echo "  2. $progress (implementation details)"
+        fi
+    fi
+}
+
+# List tasks by status
+list_by_status() {
+    local filter_status=$1
+    local verbose=$2
+
+    # Collect task info for sorting
+    local task_entries=()
+
+    for dir in "$TASKS_DIR"/task_*/; do
+        task_num=$(basename "$dir" | sed 's/task_//')
+        file="$dir/task-$task_num.md"
+
+        if [ -f "$file" ]; then
+            task_status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+            if [ "$task_status" = "$filter_status" ]; then
+                if [ "$filter_status" = "done" ]; then
+                    # For done tasks, collect with completion date for sorting
+                    completed=$(grep -A1 "^## Completed" "$file" 2>/dev/null | tail -1 | xargs)
+                    # Use date for sorting, default to 9999-99-99 if unknown
+                    sort_key="${completed:-9999-99-99}"
+                    task_entries+=("$sort_key|$task_num")
+                else
+                    # For other statuses, sort by task number
+                    task_entries+=("$(printf '%04d' "$task_num")|$task_num")
+                fi
+            fi
+        fi
+    done
+
+    # Sort entries (by date for done, by number for others)
+    IFS=$'\n' sorted=($(printf '%s\n' "${task_entries[@]}" | sort)); unset IFS
+
+    # Track current month for grouping (done tasks only)
+    local current_month=""
+
+    # Output each task
+    for entry in "${sorted[@]}"; do
+        task_num="${entry#*|}"
+        local dir="$TASKS_DIR/task_$task_num"
+        local file="$dir/task-$task_num.md"
+
+        raw_title=$(head -1 "$file" | sed 's/^# //')
+        if [[ ! "$raw_title" =~ ^Task\ $task_num: ]]; then
+            title="Task $task_num: $raw_title"
+        else
+            title="$raw_title"
+        fi
+        completed=$(grep -A1 "^## Completed" "$file" 2>/dev/null | tail -1 | xargs)
+
+        # Group by month for done tasks
+        if [ "$filter_status" = "done" ] && [ -n "$completed" ] && [ "$completed" != "unknown" ]; then
+            # Extract year-month (e.g., "2025-06" from "2025-06-27")
+            year_month="${completed:0:7}"
+            if [ "$year_month" != "$current_month" ]; then
+                current_month="$year_month"
+                # Convert to readable format (e.g., "June 2025")
+                year="${year_month:0:4}"
+                month_num="${year_month:5:2}"
+                case "$month_num" in
+                    01) month_name="January" ;;
+                    02) month_name="February" ;;
+                    03) month_name="March" ;;
+                    04) month_name="April" ;;
+                    05) month_name="May" ;;
+                    06) month_name="June" ;;
+                    07) month_name="July" ;;
+                    08) month_name="August" ;;
+                    09) month_name="September" ;;
+                    10) month_name="October" ;;
+                    11) month_name="November" ;;
+                    12) month_name="December" ;;
+                    *) month_name="Unknown" ;;
+                esac
+                echo ""
+                echo -e "${BOLD}### $month_name $year${NC}"
+            fi
+        fi
+
+        if [ "$verbose" = "true" ]; then
+            desc=$(awk '/^## Description/{found=1; next} found && /^##/{exit} found{print}' "$file" | head -5 | tr '\n' ' ' | cut -c1-500)
+            echo "- $title"
+            if [ -n "$desc" ]; then
+                echo "  $desc"
+            fi
+        else
+            echo "- $title"
+        fi
+    done
+}
+
+# Search tasks
+search_tasks() {
+    local term=$1
+    local found_done=""
+    local found_pending=""
+    local found_deprecated=""
+
+    for dir in "$TASKS_DIR"/task_*/; do
+        task_num=$(basename "$dir" | sed 's/task_//')
+        file="$dir/task-$task_num.md"
+
+        if [ -f "$file" ]; then
+            if grep -qi "$term" "$file" 2>/dev/null; then
+                task_status=$(grep -A1 "^## Status" "$file" 2>/dev/null | tail -1 | xargs)
+                raw_title=$(head -1 "$file" | sed 's/^# //')
+                # Ensure title has "Task N:" prefix
+                if [[ ! "$raw_title" =~ ^Task\ $task_num: ]]; then
+                    title="Task $task_num: $raw_title"
+                else
+                    title="$raw_title"
+                fi
+
+                case "$task_status" in
+                    done) found_done="$found_done$title\n" ;;
+                    deprecated) found_deprecated="$found_deprecated$title\n" ;;
+                    *) found_pending="$found_pending$title\n" ;;
+                esac
+            fi
+        fi
+    done
+
+    echo -e "${BOLD}# Tasks matching \"$term\"${NC}"
+    echo ""
+
+    if [ -n "$found_done" ]; then
+        echo -e "${GREEN}## Done${NC}"
+        echo -e "$found_done" | grep -v '^$' | while read -r line; do echo "- $line"; done
+        echo ""
+    fi
+
+    if [ -n "$found_pending" ]; then
+        echo -e "${YELLOW}## Pending${NC}"
+        echo -e "$found_pending" | grep -v '^$' | while read -r line; do echo "- $line"; done
+        echo ""
+    fi
+
+    if [ -n "$found_deprecated" ]; then
+        echo -e "${RED}## Deprecated${NC}"
+        echo -e "$found_deprecated" | grep -v '^$' | while read -r line; do echo "- $line"; done
+    fi
+}
+
+# Show all tasks
+show_summary() {
+    local verbose=$1
+
+    local done_count=$(count_tasks "done")
+    local pending_count=$(count_tasks "not started")
+    local deprecated_count=$(count_tasks "deprecated")
+
+    echo -e "${BOLD}# pflow Tasks${NC}"
+    echo ""
+    echo -e "${GREEN}✅ $done_count done${NC} | ${YELLOW}⏳ $pending_count pending${NC} | ${RED}❌ $deprecated_count deprecated${NC}"
+    echo ""
+
+    echo -e "${GREEN}## Done${NC}"
+    list_by_status "done" "$verbose"
+    echo ""
+
+    echo -e "${YELLOW}## Pending${NC}"
+    list_by_status "not started" "$verbose"
+    echo ""
+
+    echo -e "${RED}## Deprecated${NC}"
+    list_by_status "deprecated" "$verbose"
+    echo ""
+
+    echo "---"
+    echo -e "📁 Task files: ${BLUE}.taskmaster/tasks/task_N/task-N.md${NC}"
+    echo -e "📁 Version history: ${BLUE}.taskmaster/versions.md${NC}"
+    echo ""
+    echo "Commands:"
+    echo "  ./scripts/tasks 104         Show task details"
+    echo "  ./scripts/tasks --search X  Find tasks mentioning X"
+}
+
+# Main
+VERBOSE=false
+TASK_NUMS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --done)
+            echo -e "${BOLD}# Completed Tasks${NC}"
+            echo ""
+            list_by_status "done" "$VERBOSE"
+            exit 0
+            ;;
+        --pending)
+            echo -e "${BOLD}# Pending Tasks${NC}"
+            echo ""
+            list_by_status "not started" "$VERBOSE"
+            exit 0
+            ;;
+        --deprecated)
+            echo -e "${BOLD}# Deprecated Tasks${NC}"
+            echo ""
+            list_by_status "deprecated" "$VERBOSE"
+            exit 0
+            ;;
+        --search)
+            shift
+            if [ -z "$1" ]; then
+                echo "Error: --search requires a term"
+                exit 1
+            fi
+            search_tasks "$1"
+            exit 0
+            ;;
+        --help|-h)
+            echo "pflow task browser"
+            echo ""
+            echo "Usage:"
+            echo "  ./scripts/tasks              Show summary and roadmap"
+            echo "  ./scripts/tasks -v           Include descriptions"
+            echo "  ./scripts/tasks 56 55 65     Show details for specific tasks"
+            echo "  ./scripts/tasks --done       List completed tasks"
+            echo "  ./scripts/tasks --pending    List pending tasks"
+            echo "  ./scripts/tasks --search X   Find tasks mentioning X"
+            exit 0
+            ;;
+        *)
+            # Assume it's a task number
+            if [[ "$1" =~ ^[0-9]+$ ]]; then
+                TASK_NUMS+=("$1")
+            else
+                echo "Unknown option: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# If task numbers provided, show those tasks
+if [ ${#TASK_NUMS[@]} -gt 0 ]; then
+    for i in "${!TASK_NUMS[@]}"; do
+        if [ $i -gt 0 ]; then
+            echo ""
+            echo "---"
+            echo ""
+        fi
+        get_task_info "${TASK_NUMS[$i]}"
+    done
+    exit 0
+fi
+
+# Default: show summary
+show_summary "$VERBOSE"

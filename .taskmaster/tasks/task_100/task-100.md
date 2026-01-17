@@ -1,11 +1,5 @@
 # Task 100: Implement Reduce/Fold Mode for Batch Processing
 
-## ID
-100
-
-## Title
-Implement Reduce/Fold Mode for Batch Processing
-
 ## Description
 Add a `mode: "reduce"` option to batch processing that enables sequential chained operations where each iteration's output becomes the next iteration's input. This enables fold/accumulate patterns that are currently impossible in pflow without temp file workarounds.
 

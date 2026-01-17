@@ -1,11 +1,5 @@
 # Task 78: Save User Request History in Workflow Metadata
 
-## ID
-78
-
-## Title
-Save User Request History in Workflow Metadata
-
 ## Description
 Add functionality to save a list of unique user requests that triggered a workflow in the workflow JSON file's metadata. This will help the pflow agent better match ambiguous user requests by learning from actual usage patterns, significantly improving confidence when users use informal language like "do the thing" that previously triggered a specific workflow.
 

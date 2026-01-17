@@ -1,18 +1,15 @@
 # Task 96: Support Batch Processing in Workflows
 
-## ID
-96
-
-## Title
-Support Batch Processing in Workflows (Data Parallelism)
-
 ## Description
 Expose PocketFlow's existing `BatchNode` and `AsyncParallelBatchNode` capabilities in pflow's IR schema, enabling workflows to process multiple items with the same operation concurrently. This is "data parallelism" - applying the same transformation to many items in parallel.
 
 **Key Decision**: This task extends the **current DAG format** (nodes + edges). No new IR format or parser is required.
 
 ## Status
-not started
+done
+
+## Completed
+2025-12-27
 
 ## Dependencies
 - None (uses existing PocketFlow infrastructure)

@@ -1,16 +1,13 @@
 # Task 12: Implement General LLM Node
 
-## ID
-12
-
-## Title
-Implement General LLM Node
-
 ## Description
 Create a general-purpose LLM node that wraps Simon Willison's `llm` library for text processing in pflow workflows. This is the ONLY LLM node in pflow - a smart exception to the simple nodes philosophy that prevents proliferation of prompt-specific nodes like analyze-code, write-content, or explain-concept.
 
 ## Status
-not started
+done
+
+## Completed
+2025-08-03
 
 ## Dependencies
 None

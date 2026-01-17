@@ -181,6 +181,9 @@ Current test failures show the LLM creates branching in ~30% of complex workflow
 | Complex DAGs attempted | Medium | Validation to reject reconverging branches |
 | Action string typos | Low | Runtime warnings for unmatched actions |
 
+## Status
+not started
+
 ## Dependencies
 
 - No external dependencies

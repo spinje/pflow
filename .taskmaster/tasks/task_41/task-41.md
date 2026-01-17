@@ -1,16 +1,13 @@
 # Task 41: Implement Shell Node
 
-## ID
-41
-
-## Title
-Implement Shell Node
-
 ## Description
 Create a shell node that executes shell commands within pflow workflows. This provides the essential escape hatch for operations not covered by domain-specific nodes, enabling integration with any CLI tool, Unix pipelines, and existing scripts.
 
 ## Status
-not started
+done
+
+## Completed
+2025-08-25
 
 ## Dependencies
 - Task 6: Define JSON IR schema - The shell node must conform to the established IR schema

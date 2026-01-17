@@ -1,16 +1,13 @@
 # Task 53: Add Rerun Command Display
 
-## ID
-53
-
-## Title
-Add Rerun Command Display
-
 ## Description
 Display the exact `pflow run` command with parameters after creating or reusing a workflow, making it easy for users to run the same workflow again without needing the planner. This teaches users the system and enables quick re-execution.
 
 ## Status
-not started
+done
+
+## Completed
+2025-09-02
 
 ## Dependencies
 - Task 22: Named Workflow Execution - The rerun command requires named workflows to be implemented

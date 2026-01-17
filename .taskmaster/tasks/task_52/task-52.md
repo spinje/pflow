@@ -1,16 +1,13 @@
 # Task 52: Improve planner with "plan" and "requirements" steps
 
-## ID
-52
-
-## Title
-Improve planner with "plan" and "requirements" steps
-
 ## Description
 Add Requirements Analysis and Planning nodes to the planner pipeline to improve workflow generation success rates. Requirements will extract abstract operations from user input, and Planning will create an execution blueprint before generation. This two-step analysis significantly improves first-attempt success and provides better error messages for impossible requirements.
 
 ## Status
-in progress
+done
+
+## Completed
+2025-09-14
 
 ## Dependencies
 - Task 17: Implement Natural Language Planner System - The base planner system must exist before we can enhance it with additional planning steps

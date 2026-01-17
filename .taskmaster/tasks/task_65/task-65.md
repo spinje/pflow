@@ -1,11 +1,5 @@
 # Task 65: MCP Gateway Integration Support
 
-## ID
-65
-
-## Title
-MCP Gateway Integration Support
-
 ## Description
 Enhance pflow to provide first-class support for MCP gateways (Docker MCP Gateway, IBM Context Forge) that aggregate multiple MCP services behind a single endpoint. This enables OAuth authentication, service aggregation, and enterprise features without requiring direct OAuth implementation in pflow.
 

@@ -1,5 +1,8 @@
 # Task 74: Create knowledge base system
 
+## Status
+not started
+
 I want to create some kind of system where the user is asked at the end of a completed workflow (after it has been saved to the workflow library/registry) if they want to store any important insights, knowledge, or information that they gained when creating the workflow.
 
 This is especially important if there was a lot of trial and error, for example if the agent struggled to understand a certain api, command or parameter in a node (e.g. the agent failed multiple times to understand the how to use an mcp node).
@@ -20,5 +23,4 @@ And the related workflow name will be automatically included when the agent is u
 In the future these knowledge base files will be shared across a users team or organization when connected to pflow cloud.
 
 Read: https://www.anthropic.com/news/context-management for more information on how to manage context efficiently.
-
 

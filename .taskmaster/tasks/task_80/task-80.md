@@ -1,16 +1,13 @@
 # Task 80: Implement API Key Management via Settings
 
-## ID
-80
-
-## Title
-Implement API Key Management via Settings
-
 ## Description
 Enable users to store API keys in `~/.pflow/settings.json` that automatically populate workflow inputs, eliminating the need to manually provide keys for every workflow execution. This improves the local development experience by allowing users to set their API keys once and use them across all workflows.
 
 ## Status
-not started
+done
+
+## Completed
+2025-10-09
 
 ## Dependencies
 - Task 50: Node Filtering System with Settings Management - The settings.py infrastructure is already in place with an unused `env` field that this task will implement

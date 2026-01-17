@@ -1,11 +1,5 @@
 # Task 94: Display Available LLM Models Based on Configured API Keys
 
-## ID
-94
-
-## Title
-Display Available LLM Models Based on Configured API Keys
-
 ## Description
 Enhance the LLM node information displayed to agents (via `registry describe` and `registry discover`) to show which models are actually available based on configured API keys. If no keys are configured, show instructions for the agent to ask the user to set up keys using `pflow settings set-env`.
 

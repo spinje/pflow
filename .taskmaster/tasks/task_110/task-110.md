@@ -5,7 +5,6 @@
 Use bash's PIPESTATUS to accurately detect which command in a pipeline failed, enabling precise "no results" vs "real error" detection. This is the root-cause solution for silent pipeline failures in shell nodes.
 
 ## Status
-
 not started
 
 ## Priority

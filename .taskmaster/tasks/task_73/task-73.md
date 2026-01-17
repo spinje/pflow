@@ -1,16 +1,10 @@
 # Task 73: Implement Checkpoint Persistence for External Agent Repair
 
-## ID
-73
-
-## Title
-Implement Checkpoint Persistence for External Agent Repair
-
 ## Description
 Add checkpoint persistence mechanism to enable external agents using `--no-repair` to resume workflow execution from the last successful node, avoiding duplicate execution of nodes with side effects. This addresses a critical correctness issue where external agent repair loops cause duplicate side effects (API calls, notifications, database writes).
 
 ## Status
-not started
+deprecated
 
 ## Dependencies
 - Task 71: Extend CLI Commands with tools for agentic workflow building - Provides the foundation of agent-friendly CLI commands and the `--no-repair` flag that this feature extends

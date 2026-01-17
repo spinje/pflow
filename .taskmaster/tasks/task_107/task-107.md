@@ -5,7 +5,6 @@
 A new workflow authoring format using markdown that compiles to the existing IR. Optimizes for LLM authoring with literate programming, lintable code blocks, and significant token efficiency gains. The format treats LLMs as the primary authors while accidentally being highly readable by humans.
 
 ## Status
-
 not started
 
 ## Priority

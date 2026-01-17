@@ -1,11 +1,5 @@
 # Task 46: Workflow Export to Zero-Dependency Code
 
-## ID
-46
-
-## Title
-Workflow Export to Zero-Dependency Code
-
 ## Description
 Implement the ability to export pflow workflows to standalone, zero-dependency code in target languages (starting with Python). This feature transforms pflow from a runtime dependency into a pure development-time tool, allowing users to generate human-readable code that runs without pflow installed.
 

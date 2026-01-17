@@ -1,16 +1,13 @@
 # Task 58: Update workflow generator prompt-tests to use better real world test cases
 
-## ID
-58
-
-## Title
-Update workflow generator prompt-tests to use better real world test cases
-
 ## Description
 Replace the current workflow generator test cases with realistic, real-world examples that validate actual system capabilities. The current tests use many non-existent mock nodes, making them poor validators of real functionality. This task focuses on creating test cases that use actual available nodes, follow north star examples, and include MCP integration testing.
 
 ## Status
-in progress
+done
+
+## Completed
+2025-09-09
 
 ## Dependencies
 None

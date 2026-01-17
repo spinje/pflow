@@ -54,9 +54,19 @@ This file provides guidance to Claude Code when working with code and documentat
 
 We are building a modular, CLI-first system called `pflow`.
 
-pflow is a workflow compiler that transforms natural language and CLI pipe syntax into permanent, deterministic CLI commands. It follows a "Plan Once, Run Forever" philosophy - capturing user intent once and compiling it into reproducible workflows that run instantly without AI overhead.
+pflow is a CLI tool that runs workflows defined in JSON config files. AI agents (Claude Code, Cursor, etc.) can create these workflow files by calling pflow CLI commands, then run them later with `pflow my-workflow param1=value1 param2=value2`.
 
-**What pflow produces**: Executable PocketFlow workflows - users describe what they want, and pflow generates the corresponding PocketFlow Flow objects that can be saved and reused.
+**How it works mechanically (simplified):**
+1. AI agent (or legacy planner) generates a temporaryworkflow JSON file
+2. Can run it with `pflow ./my-workflow.json param1=value1` while iterating on the workflow
+3. When user is satisfied with the workflow, the Agent saves it with `pflow workflow save ./my-workflow.json --name my-workflow --description "Description of what it does"`
+4. `pflow my-workflow` runs the saved workflow
+5. Workflows are sequences of nodes: `shell`, `http`, `llm`, `file`, and dynamically loaded MCP tools
+
+**Interfaces:**
+- **Primary:** AI agents invoke pflow via CLI commands
+- **Experimental:** AI agents can also use pflow via MCP server (`src/pflow/mcp_server/`)
+- **Legacy:** Built-in planner for natural language → workflow (being phased out since most workflows needs to be iterated on rather than created in a one-shot prompt)
 
 The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a scalable cloud-native service.
 
@@ -64,13 +74,13 @@ The goal is to enable local execution of intelligent workflows with the **minima
 
 ### Core Architecture
 
-pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`).
+pflow is built on the **PocketFlow** framework (~150-line Python library in `pocketflow/__init__.py`).
 
 > If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 
 - **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
-- **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining
-- **CLI**: Primary interface for composing and executing flows with pipe syntax
+- **Flows**: Orchestrate nodes into workflows (PocketFlow uses `>>` operator internally)
+- **CLI**: Execute workflows, discover and test nodes, manage saved workflows and settings
 - **Registry**: Discovery system for available nodes and their capabilities
 - **Shared Store**: In-memory dictionary for inter-node communication, keeping data handling separate from computation logic
 
@@ -91,40 +101,28 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Design Constraints & MVP Scope
 
-**MVP Requirements** (0.1 - local-first CLI):
+**MVP Requirements** (0.6.0 - local-first CLI):
 - Compose and run flows using `pflow` CLI
-- Define simple nodes (`llm`, `read_file`, `write_file`)
+- Core nodes: `shell`, `http`, `llm`, `file` operations, MCP tools
 - Store intermediate data in shared store
 - Use shell pipe syntax for stdin/stdout integration
 - Pure Python, single-machine, stateless
 - Logging and tracing for debugging
-- LLM-based natural language planning
+- AI agents can create/run workflows via CLI
 
-**Excluded from MVP** (v2.0+):
-- Conditional transitions (`node - "fail" >> error_handler`)
-- Async nodes and flows
-- Advanced caching and error handling
-- CLI autocomplete and shadow-store suggestions
-
-**Future Cloud Platform** (v3.0+):
-- Authentication, multi-user access
-- Remote node discovery (MCP servers)
-- Namespaced/versioned node resolution
-- Cloud execution, job queues
-- Web UI, interactive prompting
 
 **Key Principles**:
 - **PocketFlow Foundation**: Always consider `pocketflow/__init__.py` first and evaluate examples in `pocketflow/cookbook` for implementation reference
 - **Shared Store Pattern**: All communication between nodes is done through the shared store
-- **Deterministic Execution**: Reproducible workflows
+- **Deterministic Structure**: Workflow execution order is fixed; individual node outputs (especially `llm`) may vary
 - **Atomic Nodes**: Nodes are isolated and focused on business logic only
-- **Natural Language WorkflowPlanning**: Natural language through the CLI is the primary interface for the MVP
+- **Agent-Friendly CLI**: CLI commands are the primary interface for AI agents to discover, create and run workflows
 - **Observability**: Clear logging and step-by-step traceability
 
 ### Technology Stack
 
 **Core Dependencies** (discuss before adding others):
-- `Python 3.9+` - Modern Python
+- `Python 3.10+` - Modern Python
 - `click` - CLI framework (more flexible than Typer)
 - `pydantic` - IR/metadata validation
 - `llm` - Simon Willison's LLM CLI integration and inspiration
@@ -140,19 +138,21 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Architecture Components
 
-**Foundation Layer**: PocketFlow integration (`prep/exec/post` lifecycle), shared store, proxy pattern for connecting uncompatible nodes.
+pflow is built on PocketFlow and extends it for CLI-based workflow execution.
 
-**CLI Interface**: Commands, pipe syntax parser (`>>` operator), shell integration with stdin/stdout
+**PocketFlow Foundation** (see `pocketflow/__init__.py`):
+- Node lifecycle: `prep()` → `exec()` → `post()`
+- Flow orchestration with action-based transitions
+- Shared store pattern for inter-node data
+- `>>` operator for node chaining (used internally by compiler)
 
-**Node System**: Registry, metadata extraction, two-tier AI approach with simple platform nodes
-
-**Execution Engine**: Synchronous runtime with basic caching, action-based transitions
-
-**Storage**: Lockfiles, local filesystem, JSON IR format for Flows and Nodes
-
-**Validation**: CLI and IR validation pipelines, comprehensive error checking
-
-> Note some of these components are not part of the MVP and will be added in future versions.
+**pflow Extensions:**
+- **CLI Layer**: Commands, stdin/stdout pipes, workflow save/load
+- **IR Compiler**: JSON workflow → PocketFlow Flow/Node objects
+- **Wrapper Chain**: Template resolution, namespacing, batch processing, instrumentation
+- **Platform Nodes**: shell, http, llm, file, git, github, mcp, claude-code
+- **Validation**: 6-layer pipeline (structure, data flow, templates, types, outputs)
+- **Observability**: Metrics, tracing, MD5-based caching
 
 ### Project Structure
 
@@ -324,7 +324,7 @@ Is this what you're expecting?
 - **Dependencies**: What dependencies does this task have?
 - **Why Now**: Why implement this step?
 - **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
-- **Is the task too big?**: If the task is too big, break it down into smaller sub tasks
+- **Is the task too big?**: If the task is too big, break it down into phases
 - **Test Strategy**: What tests will validate this functionality?
 
 **Development Standards and process**:
@@ -352,185 +352,126 @@ Is this what you're expecting?
 
 ### Documentation Resources
 
-**Extensive Markdown Documentation** should be leveraged by Claude:
+> Always read relevant docs before coding!
 
-> Always read relevant docs before coding or updating existing documentation!
+- **pflow docs**: `architecture/index.md` (inventory), `architecture/CLAUDE.md` (navigation)
+- **PocketFlow docs**: `pocketflow/CLAUDE.md` (framework docs and cookbook)
 
-#### Pflow Project Documentation
+> Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation, examples and searching for code. If you need specific information, ask a subagent or multiple subagents to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
 
-**Pflow Project Documentation**:
+### Project Status
 
-**`architecture/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
+MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
-Folders:
-- `architecture/features/`: Feature specifications and guides
-- `architecture/core-concepts/`: Core concepts and patterns (shared store, schemas, registry, runtime)
-- `architecture/reference/`: CLI syntax and execution reference
-- `architecture/core-node-packages/`: Platform node specifications
-- `architecture/implementation-details/`: Detailed implementation guides
-- `architecture/future-version/`: Post-MVP features
-- `architecture/architecture/`: System architecture and design
+**Implemented Capabilities:**
 
-#### PocketFlow Documentation
+**CLI & Execution:**
+Run workflows by name or file, shell pipe integration, named workflow save/load, batch processing, registry CLI (list/search/describe), workflow input/output declarations
+→ Tasks 8, 10, 21, 22, 24, 96
 
-**PocketFlow Documentation**:
-- `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
-- `pocketflow/docs/guide.md`: Guide to using PocketFlow (partial relevance for CLI tool)
-- `pocketflow/docs/core_abstraction/`: Documentation on Node, Flow, Shared Store
-- `pocketflow/docs/design_pattern/`: Workflow, Agent, RAG, Map Reduce patterns
-- `pocketflow/cookbook/`: Examples and tutorials for custom nodes and flows
+**Nodes:**
+shell, http, llm (via llm library), file (read/write/copy/move/delete), git, github, mcp, claude-code
+→ Tasks 11, 12, 26, 41, 42, 54, 95
 
-**PocketFlow Core Components**:
-- **Node**: Basic building block with `prep()`, `exec()`, `post()` lifecycle (see `pocketflow/docs/core_abstraction/node.md`)
-- **Flow**: Orchestrator connecting nodes using action strings for transitions (see `pocketflow/docs/core_abstraction/flow.md`)
-- **Shared Store**: In-memory dictionary for inter-node communication (see `pocketflow/docs/core_abstraction/communication.md`)
-- **Batch**: Components for data-intensive tasks (BatchNode, BatchFlow)
-- **Async & Parallel**: Advanced components (excluded from MVP)
+**Templates & Data Flow:**
+${var} syntax, schema-aware type checking, auto JSON parsing, shared store with namespacing
+→ Tasks 9, 18, 84, 85, 103, 105
 
-Always read the documentation in `pocketflow/docs` and relevant examples in `pocketflow/cookbook` when needed for any task that requires using the pocketflow framework.
+**Workflow Validation:**
+Unified validation pipeline, pre-execution risk assessment for shell commands
+→ Tasks 40, 63
 
-*All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
+**MCP Integration:**
+MCP server support, http transport, pflow-as-MCP-server for agents
+→ Tasks 43, 47, 67, 72
 
-> Remember: Proactively use subagents when reading documentation, examples and codeexcept for small lookups. If you need specific information, ask a subagent to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
+**Planner (legacy):**
+Natural language → workflow, runtime validation feedback, debugging/tracing
+→ Tasks 17, 27, 52, 56
 
-### Current State of the Project
+**Settings & Security:**
+Node filtering, API key management, binary data support, security audit complete
+→ Tasks 50, 63, 80, 82, 83
 
-The codebase is currently feature complete for MVP with these tasks completed:
-- ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
-- ✅ Comprehensive documentation infrastructure in `architecture/`
-- ✅ Development tooling and testing setup
-- ✅ Task 1: Package setup and CLI entry point with `pflow` command and version subcommand
-- ✅ Task 2: Basic CLI run command with stdio/stdin support
-- ✅ Task 3: Execute a Hardcoded 'Hello World' Workflow
-- ✅ Task 4: Implement IR-to-PocketFlow Object Converter
-- ✅ Task 5: Node discovery and registry implementation
-- ✅ Task 6: Define JSON IR schema
-- ✅ Task 7: Extract node metadata from docstrings
-- ✅ Task 8: Build comprehensive shell pipe integration with stdin/stdout
-- ✅ Task 11: Implement read-file and write-file nodes
-- ✅ Task 16: Create planning context builder
-- ✅ Task 14: Implement type, structure, description and semantic documentation for all Interface components
-- ✅ Task 15: Extend context builder for two-phase discovery and structure documentation support (modify and extend the context builder implemented in Task 16)
-- ✅ Task 18: Template Variable System
-- ✅ Task 19: Implement Node Interface Registry (Node IR) for Accurate Template Validation - moved interface parsing to scan-time, eliminating false validation failures
-- ✅ Task 20: Implement Nested Workflow Execution
-- ✅ Task 21: Implement Workflow Input Declaration - workflows to declare their expected input and output parameters in the IR schema
-- ✅ Task 24: Implement Workflow Manager (A centralized service that owns the workflow lifecycle - save/load/resolve)
-- ✅ Task 12: Implement LLM Node - Create a general-purpose LLM node - infinitely reusable building block by combining prompts with template variables
-- ✅ Task 26: Implement GitHub and Git Operation Nodes - 9 nodes for GitHub/Git automation
-- ✅ Task 17: Implement Natural Language Planner System (complete planner meta-workflow that transforms natural language into workflows)
-- ✅ Task 30: Refactor Validation Functions from compiler.py
-- ✅ Task 31: Refactor Test Infrastructure - Mock at LLM Level
-- ✅ Task 27: Implement intuitive debugging capabilities and tracing system for the planner
-- ✅ Task 9: Implement shared store collision detection using automatic namespacing
-- ✅ Task 33: Extract planner prompts to markdown files in `src/pflow/planning/prompts/` and improve/create test cases for each prompt in `tests/test_planning/llm/prompts/`
-- ✅ Task 34: Prompt Accuracy Tracking System for planner prompts
-- ✅ Task 35: Migrate Template Syntax from $variable to ${variable}
-- ✅ Task 36: Update Context Builder for Namespacing Clarity
-- ✅ Task 37: Implement API Error Handling with User-Friendly Messages
-- ✅ Task 40: Improve Workflow Validation and Consolidate into Unified System
-- ✅ Task 41: Implement Shell Node
-- ✅ Task 28: Improve performance of planner by modifying prompts (Discovery, Component Browsing, Metadata Generation, Parameter Prompts, Workflow Generator)
-- ✅ Task 43: MCP Server support
-- ✅ Task 32: Unified Metrics and Tracing System for User Workflow Execution
-- ✅ Task 10: Create registry CLI
-- ✅ Task 50: Node Filtering System with Settings Management json file
-- ✅ Task 22: Named workflow execution
-- ✅ Task 53: Add Rerun Command Display
-- ✅ Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
-- ✅ Task 54: Implement HTTP
-- ✅ Task 57: Update planner integration-tests to use better test cases with real world north star examples
-- ✅ Task 42: Implement Claude Code Agentic Node - Claude Code SDK integration for AI-assisted development tasks
-- ✅ Task 58: Update workflow generator prompt-tests to use better real world test cases
-- ✅ Task 63: Implement Pre-Execution Risk Assessment System for shell nodes
-- ✅ Task 52: Improve planner with "plan" and "requirements" steps + prompt caching + thinking
-- ✅ Task 47: Implement MCP http transport
-- ✅ Task 67: Use MCP Standard Format
-- ✅ Task 56: Implement Runtime Validation and Error Feedback Loop for planner
-- ✅ Task 68: Separate RuntimeValidation from planner and refactor Workflow Execution
-- ✅ Task 70: Design and Validate MCP-Based Agent Infrastructure Architecture
-- ✅ Task 71: Extend CLI Commands with tools for agentic workflow building
-- ✅ Task 76: Implement Registry Execute Command for Independent Node Testing by agents
-- ✅ Task 80: Implement API Key Management via Settings
-- ✅ Task 82: Implement System-Wide Binary Data Support
-- ✅ Task 72: Implement MCP Server for pflow (expose pflow commands as MCP tools to AI agents)
-- ✅ Task 84: Implement Schema-Aware Type Checking for Template Variables
-- ✅ Task 85: Runtime Template Resolution Hardening
-- ✅ Task 89: Implement Structure-Only Mode and Selective Data Retrieval
-- ✅ Task 83: Pre-Release Security and Code Quality Audit
-- ✅ Task 93: Set Up Mintlify Documentation
-- ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
-- ✅ Task 96: Support Batch Processing in Workflows
-- ✅ Task 102: Remove Parameter Fallback Pattern
-- ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
-- ✅ Task 103: Preserve Inline Object Type in Template Resolution
+**Observability:**
+Metrics/tracing system, rerun command display, interactive/non-interactive output, user-friendly error messages
+→ Tasks 32, 37, 53, 55
 
-Next up:
+**Agent Support:**
+CLI commands for agents, registry execute for node testing, LLM-powered discovery
+→ Tasks 71, 76, 89
 
-First version (v0.6.0 - public release):
-- ⏳ Task 49: Prepare and Publish `pflow-cli` to PyPI
+**Recently Completed:**
+- Task 105: Auto-Parse JSON Strings During Nested Template Access
+- Task 103: Preserve Inline Object Type in Template Resolution
+- Task 102: Remove Parameter Fallback Pattern
+- Task 96: Support Batch Processing in Workflows
+- Task 95: Unify LLM Usage via Simon Willison's llm Library
 
-Version (v0.7.0 - LLM Authoring Experience):
-- ⏳ Task 104: Implement Python Code Node for Data Transformation
-- ⏳ Task 107: Implement Markdown Workflow Format
-- ⏳ Task 108: Smart Trace Debug Output for Agent Iteration
+**Planned:**
 
-Version (v0.8.0 - Workflow Expressiveness):
-- ⏳ Task 59: Add support for nested workflows
-- ⏳ Task 38: Support conditional Branching in Generated Workflows
+**v0.8.0 - PyPI & Authoring:**
+- Task 49: Publish to PyPI
+- Task 104: Python Code Node
+- Task 107: Markdown Workflow Format
+- Task 108: Smart Trace Debug Output
 
-Version (v0.9.0):
-- ⏳ Task 111: Batch Limit for Workflow Iteration
-- ⏳ Task 99: Expose pflow Nodes as MCP Tools to Claude Code Node
-- ⏳ Task 46: Workflow Export to Zero-Dependency Code
-- ⏳ Task 75: Execution Preview in Validation
-- ⏳ Task 94: Display Available LLM Models Based on Configured API Keys
+**v0.9.0 - Workflow Expressiveness:**
+- Task 38: Conditional Branching
+- Task 59: Nested Workflows
 
-Version (v0.10.0):
-- ⏳ Task 88: Benchmarking pflow with MCPMark Evaluation
-- ⏳ Task 106: Automatic Workflow Iteration Cache (supersedes Task 73)
-- ⏳ Task 39: Support Parallel Execution in Workflows (task parallelism - fan-out/fan-in patterns)
-- ⏳ Task 78: Save User Request History in Workflow Metadata
+**v0.10.0 - Extended Features:**
+- Task 46: Workflow Export to Zero-Dependency Code
+- Task 75: Execution Preview in Validation
+- Task 94: Display Available LLM Models
+- Task 99: Expose Nodes as MCP Tools
+- Task 111: Batch Limit for Iteration
 
-Version (v1.0.0):
-- ⏳ Task 97: OAuth Authentication for Remote MCP Servers
-- ⏳ Task 66: Support structured output for LLM node
-- ⏳ Task 87: Implement sandbox runtime for Shell Node
-- ⏳ Task 109: Sandbox Bypass Security Controls
-- ⏳ Task 91: Export Workflows as Self-Hosted MCP Server Packages
+**v0.11.0 - Performance:**
+- Task 39: Parallel Execution
+- Task 78: Save User Request History
+- Task 88: MCPMark Benchmarking
+- Task 106: Workflow Iteration Cache
 
-Version (v1.1.0):
-- ⏳ Task 81: Expose tools that lets users/agents find and install existing remote mcp servers
-- ⏳ Task 86: MCP Server Discovery and Installation Automation
-- ⏳ Task 77: Improve Agent Instructions
-- ⏳ Task 65: MCP Gateway Integration Support
+**v1.0.0 - Security & Sandboxing:**
+- Task 66: Structured Output for LLM Node
+- Task 87: Sandboxed Execution Runtime
+- Task 91: Export as MCP Server Packages
+- Task 97: OAuth for Remote MCP Servers
+- Task 109: Sandbox Bypass Controls
 
-Later:
-- ⏳ Task 113: Add TypeScript Support to Code Node
-- ⏳ Task 114: Lightweight Custom Node Creation
-- ⏳ Task 110: PIPESTATUS-Based Pipeline Failure Detection
-- ⏳ Task 112: Pre-execution Type Validation for Literal Parameters
-- ⏳ Task 74: Create knowledge base system
-- ⏳ Task 51: Refactor CLI main.py
-- ⏳ Task 45: Evaluate if wrapping or integrating n8n is worth the effort
-- ⏳ Task 92: Replace Planner with Agent Node + Pflow MCP Tools
-- ⏳ Task 62: Enhance Parameter Discovery to Route stdin to Workflow Inputs
-- ⏳ Task 64: MCP Orchestration with long running servers
-- ⏳ Task 79: Show tool definitions as structured JSON
-- ⏳ Task 98: Architectural Refactor - First-Class IR Execution
-- ⏳ Task 100: Implement Reduce/Fold Mode for Batch Processing
-- ⏳ Task 101: Shell Node File Input Parameter for Safe Data Passing
+**v1.1.0 - MCP Ecosystem:**
+- Task 65: MCP Gateway Integration
+- Task 77: Improve Agent Instructions
+- Task 81: Find/Install Remote MCP Servers
+- Task 86: MCP Server Discovery Automation
 
-Deprecated Tasks:
-- ❌ Task 73: Implement Checkpoint Persistence for External Agent Repair (superseded by Task 106)
-- ❌ Task 61: Implement Fast Mode for Planner
-- ❌ Task 60: Support Gemini models for planner
-- ❌ Task 69: Refactor Internal Repair system to use Pocketflow
+**Later:**
+- Task 45: Evaluate n8n integration
+- Task 51: Refactor CLI main.py
+- Task 62: Route stdin to Workflow Inputs
+- Task 64: MCP Orchestration (long-running servers)
+- Task 74: Knowledge base system
+- Task 79: Tool definitions as JSON
+- Task 90: Workflows as Remote HTTP MCP Servers
+- Task 92: Replace Planner with Agent + MCP
+- Task 98: First-Class IR Execution
+- Task 100: Reduce/Fold for Batch
+- Task 101: Shell Node File Input
+- Task 110: PIPESTATUS Pipeline Detection
+- Task 112: Pre-execution Type Validation
+- Task 113: TypeScript Code Node
+- Task 114: Lightweight Custom Nodes
 
-Cloud Platform:
-- ⏳ Task 90: Expose Individual Workflows as Remote HTTP MCP Servers
-
-*Update this list as you complete tasks.*
+> **Task commands:**
+> ```bash
+> ./scripts/tasks              # View summary
+> ./scripts/tasks 104          # View specific task (or multiple: 104 103 110)
+> ./scripts/tasks --search X   # Find tasks
+> ```
+>
+> **Task files:** `.taskmaster/tasks/task_N/`
+> **Version history:** `.taskmaster/versions.md`
 
 > We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 
@@ -556,7 +497,7 @@ If anything is unclear or ambiguous in the documentation, the user makes the cal
 - Current approach contradicts established patterns
 - Integration would break existing functionality
 
-### Implementation Guidelines and
+### Implementation Guidelines
 
 Enforced by `mypy` and `ruff`:
 
@@ -627,7 +568,7 @@ uv run pflow workflow.json
 ```
 
 ```bash
-# Workflow traces are saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
+# Workflow traces are saved automatically to ~/.pflow/debug/workflow-trace-[name-]YYYYMMDD-HHMMSS.json
 uv run pflow my-workflow
 ```
 

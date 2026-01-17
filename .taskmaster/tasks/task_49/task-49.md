@@ -13,8 +13,7 @@ Package and Publish pflow to PyPI with Trusted Publishers (GitHub Actions OIDC)
 Package the existing pflow CLI for distribution on PyPI using modern Python packaging practices. This involves finalizing package metadata, setting up reproducible builds, configuring GitHub Actions for automated releases via OIDC Trusted Publishers, and establishing a clear release workflow. The codebase is mature and functional - this task focuses on packaging and distribution, not new development.
 
 ## Status
-
-pending
+not started
 
 ## Dependencies
 

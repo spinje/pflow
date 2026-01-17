@@ -1,10 +1,4 @@
-# Task 96: Implement OAuth Authentication for Remote MCP Servers
-
-## ID
-96
-
-## Title
-Implement OAuth Authentication for Remote MCP Servers
+# Task 97: Implement OAuth Authentication for Remote MCP Servers
 
 ## Description
 Enable pflow to authenticate with remote MCP servers using OAuth 2.1. This allows users to connect pflow to OAuth-protected MCP servers (like Heptabase, GitHub MCP, Sentry, etc.) by running a simple CLI command that triggers a browser-based OAuth flow, stores credentials locally, and uses them transparently for subsequent MCP calls.

@@ -1,11 +1,5 @@
 # Task 99: Expose pflow Nodes as MCP Tools to Claude Code Node
 
-## ID
-99
-
-## Title
-Expose pflow Nodes as MCP Tools to Claude Code Node
-
 ## Description
 Add a `pflow_tools` parameter to the Claude Code node that allows users to expose specific pflow registry nodes as MCP tools within a Claude Code session. This enables Claude Code to call pflow nodes directly (e.g., github-create-pr, http, llm) without pre-wiring them into the workflow, giving the agent dynamic access to pflow's capabilities.
 

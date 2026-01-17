@@ -1,16 +1,13 @@
 # Task 72: Implement MCP Server for pflow
 
-## ID
-72
-
-## Title
-Implement MCP Server for pflow
-
 ## Description
 Build an MCP (Model Context Protocol) server that exposes pflow's core workflow building and execution capabilities as programmatically accessible tools for AI agents. This enables agents to use pflow without shell access, with structured responses and better performance than CLI spawning.
 
 ## Status
-ready
+done
+
+## Completed
+2025-10-12
 
 ## Dependencies
 - Task 71: CLI extensions for agents (COMPLETED - provides the patterns we're exposing)

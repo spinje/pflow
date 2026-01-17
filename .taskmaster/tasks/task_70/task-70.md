@@ -1,16 +1,13 @@
 # Task 70: Design and Validate MCP-Based Agent Infrastructure Architecture
 
-## ID
-70
-
-## Title
-Design and Validate MCP-Based Agent Infrastructure Architecture
-
 ## Description
 Plan and validate the fundamental architectural pivot that transforms pflow from a standalone CLI tool with internal planner into MCP-based infrastructure that AI agents (Claude Code, Cursor, Copilot) use to build workflows. This planning phase will produce validated design decisions, proof-of-concept implementations, and detailed implementation tasks that can be executed with confidence.
 
 ## Status
-not started
+done
+
+## Completed
+2025-10-02
 
 ## Dependencies
 None - this is a foundational architectural decision that precedes implementation work. However, it builds upon existing completed tasks:

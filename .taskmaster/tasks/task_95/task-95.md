@@ -1,16 +1,13 @@
 # Task 95: Unify LLM Usage via Simon Willison's llm Library
 
-## ID
-95
-
-## Title
-Unify LLM Usage via Simon Willison's llm Library
-
 ## Description
 Replace hardcoded Anthropic SDK usage in discovery features, structure-only smart filtering, and **fix the global monkey-patch that causes inconsistent model handling** with Simon Willison's `llm` library. This allows users to choose their preferred LLM provider for all pflow features, simplifies API key configuration, and fixes critical bugs with model name validation.
 
 ## Status
-not started
+done
+
+## Completed
+2025-12-19
 
 ## Dependencies
 - Task 92: Replace Planner with Agent Node + Pflow MCP Tools - If the planner is replaced, the `anthropic` SDK dependency can be fully removed. However, Task 95 can be implemented independently; it just means the anthropic SDK would still be needed for the planner until Task 92 is complete.

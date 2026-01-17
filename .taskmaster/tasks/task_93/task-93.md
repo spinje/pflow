@@ -1,16 +1,13 @@
 # Task 93: Set Up Mintlify Documentation
 
-## ID
-93
-
-## Title
-Set Up Mintlify Documentation
-
 ## Description
 Configure Mintlify as the documentation platform for pflow's user-facing documentation. The docs will live in the `/docs` folder within the main repo (monorepo approach), enabling AI agents to update documentation atomically alongside code changes.
 
 ## Status
-in progress
+done
+
+## Completed
+2025-12-16
 
 ## Specification
 See `starting-context/mintlify-docs-spec.md` for complete specification including:

@@ -1,16 +1,13 @@
 # Task 103: Preserve Type for Simple Templates in Dict/List Values
 
-## ID
-103
-
-## Title
-Preserve Type for Simple Templates in Dict/List Values
-
 ## Description
 When resolving template variables inside dict/list values, preserve the original type if the value is exactly `"${template}"` (simple template) instead of serializing to JSON string. This enables constructing inline objects with multiple data sources, most useful for shell node stdin.
 
 ## Status
-completed
+done
+
+## Completed
+2026-01-01
 
 ## Dependencies
 None - this is a self-contained enhancement to the template resolver.

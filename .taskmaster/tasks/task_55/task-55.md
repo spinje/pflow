@@ -1,16 +1,13 @@
 # Task 55: Fix Output Control for Interactive vs Non-Interactive Execution
 
-## ID
-55
-
-## Title
-Fix Output Control for Interactive vs Non-Interactive Execution
-
 ## Description
 Fix output behavior to properly handle interactive (terminal) vs non-interactive (piped/automated) execution modes. In interactive mode, add progress indicators for both planning and node execution. In non-interactive mode, suppress ALL progress output and only return the workflow result, making pflow usable in shell scripts, pipes, and CI/CD automation.
 
 ## Status
-not started
+done
+
+## Completed
+2025-09-04
 
 ## Dependencies
 None

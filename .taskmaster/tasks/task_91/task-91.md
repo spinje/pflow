@@ -1,11 +1,5 @@
 # Task 91: Export Workflows as Self-Hosted MCP Server Packages
 
-## ID
-91
-
-## Title
-Export Workflows as Self-Hosted MCP Server Packages
-
 ## Description
 Enable users to export pflow workflows as standalone MCP server packages (Python/TypeScript) that can be deployed on their own infrastructure. This allows workflows to be distributed as installable MCP servers that any MCP-compatible agent can use, without requiring pflow runtime or cloud dependencies.
 

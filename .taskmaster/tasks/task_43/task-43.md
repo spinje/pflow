@@ -1,16 +1,13 @@
 # Task 43: MCP Server Support
 
-## ID
-43
-
-## Title
-MCP Server Support (Install MCPs and Use as Dynamic Nodes)
-
 ## Description
 Enable pflow to connect to MCP (Model Context Protocol) servers and expose their tools as workflow nodes. Users configure MCP servers once, then all tools from those servers become available as individual nodes in pflow's registry, allowing natural language workflows to leverage any MCP-compatible service without custom integration code.
 
 ## Status
-not started
+done
+
+## Completed
+2025-09-02
 
 ## Dependencies
 - Task 40: Improve Workflow Validation and Consolidate into Unified System - MCP tools have JSON schemas that must integrate with pflow's validation system

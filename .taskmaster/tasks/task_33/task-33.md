@@ -1,16 +1,13 @@
 # Task 33: Extract Planner Prompts to Markdown Files
 
-## ID
-33
-
-## Title
-Extract Planner Prompts to Markdown Files
-
 ## Description
 Extract all inline prompts from the planning nodes to standalone markdown files in `src/pflow/planning/prompts/`, making them reviewable, maintainable, and testable. Create a simple loader that reads prompts from markdown files and formats them with variables, establishing patterns for prompt externalization with automatic validation.
 
 ## Status
 done
+
+## Completed
+2025-08-15
 
 ## Dependencies
 - Task 17: Natural Language Planner System - The planner nodes contain the inline prompts that need extraction

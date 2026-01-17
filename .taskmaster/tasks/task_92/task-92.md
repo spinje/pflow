@@ -1,11 +1,5 @@
 # Task 92: Replace Planner with Agent + MCP Tools (Dogfooding)
 
-## ID
-92
-
-## Title
-Replace Planner with Agent + MCP Tools (Dogfooding)
-
 ## Description
 Replace the complex multi-phase natural language planner with a simple agent node that uses pflow's own MCP tools. This dramatically reduces complexity while improving reliability by leveraging Claude's native tool-use capabilities instead of custom prompt orchestration.
 

@@ -5,7 +5,6 @@
 Extend the code node (Task 104) to support TypeScript/JavaScript as an additional language option. TypeScript enables V8 isolate sandboxing - true isolation WITHOUT losing native objects, something Python fundamentally cannot do.
 
 ## Status
-
 not started
 
 ## Priority

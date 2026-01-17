@@ -1,11 +1,5 @@
 # Task 98: Architectural Refactor - First-Class IR Execution
 
-## ID
-98
-
-## Title
-Evaluate and Design First-Class IR Execution Architecture
-
 ## Status
 not started
 

@@ -1,11 +1,5 @@
 # Task 104: Implement Python Code Node for Data Transformation
 
-## ID
-104
-
-## Title
-Implement Python Code Node for Data Transformation
-
 ## Description
 Create a native Python code node that executes Python code with direct access to input data as native objects. This solves the shell node limitation of single stdin input and avoids JSON serialization/escaping issues by running Python code in-process.
 

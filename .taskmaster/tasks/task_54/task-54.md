@@ -1,16 +1,13 @@
 # Task 54: Implement HTTP Node
 
-## ID
-54
-
-## Title
-Implement HTTP Node
-
 ## Description
 Add a native HTTP node for making web requests with automatic JSON handling, authentication support, and proper error handling. This enables common API integrations without requiring shell commands or MCP servers, making pflow immediately useful for webhook, API health checks, and data fetching workflows.
 
 ## Status
-not started
+done
+
+## Completed
+2025-09-03
 
 ## Dependencies
 None

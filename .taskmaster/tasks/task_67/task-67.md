@@ -1,16 +1,13 @@
 # Task 67: Fix MCP Standard Format Compatibility
 
-## ID
-67
-
-## Title
-Fix MCP Standard Format Compatibility
-
 ## Description
 Ensure pflow uses the standard MCP configuration format (`mcpServers` key) for full compatibility with Claude Code, Claude Desktop, and other MCP clients. This eliminates format conversion bugs and allows users to share configuration files across different MCP-compatible tools.
 
 ## Status
-completed
+done
+
+## Completed
+2025-09-19
 
 ## Dependencies
 - Task 43: MCP Server support - Provides the base MCP functionality that needs format standardization

@@ -1,16 +1,13 @@
 # Task 42: Claude Code Agentic Node
 
-## ID
-42
-
-## Title
-Claude Code Agentic Node
-
 ## Description
 Create a Claude Code agentic super node that integrates with the Claude Code Python SDK to provide comprehensive AI-assisted development capabilities. This node will enable complex, multi-step development tasks with full project context, supporting the "Plan Once, Run Forever" philosophy by allowing workflows to leverage Claude's coding abilities.
 
 ## Status
-not started
+done
+
+## Completed
+2025-09-07
 
 ## Dependencies
 - Task 17: Implement Natural Language Planner System - The Claude Code node will receive planner-generated prompts with template variables

@@ -1,16 +1,13 @@
 # Task 26: GitHub and Git Operation Nodes
 
-## ID
-26
-
-## Title
-GitHub and Git Operation Nodes
-
 ## Description
 Create GitHub and Git operation nodes using GitHub CLI (gh) for GitHub operations and native git commands for version control automation. These nodes are critical for unblocking Task 17 (Natural Language Planner), enabling the canonical "fix github issue 1234" workflow example that demonstrates pflow's real-world value beyond simple file operations.
 
 ## Status
 done
+
+## Completed
+2025-08-03
 
 ## Dependencies
 - Task 5: Node Discovery and Registry - The registry scanner must be able to discover and register the new GitHub/Git nodes

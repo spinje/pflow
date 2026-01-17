@@ -1,5 +1,8 @@
 # Task 87: Implement Sandboxed Execution Runtime
 
+## Status
+not started
+
 ## Scope
 
 Implement container-level sandboxing for command/code execution nodes:

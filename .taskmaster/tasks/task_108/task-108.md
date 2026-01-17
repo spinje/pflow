@@ -1,11 +1,5 @@
 # Task 108: Smart Trace Debug Output for Agent Iteration
 
-## ID
-108
-
-## Title
-Smart Trace Debug Output for Agent Iteration
-
 ## Description
 Implement an intelligent trace debugging system that generates focused, token-efficient markdown output from workflow traces. The system analyzes trace data to extract only relevant debugging information based on what went wrong, enabling AI agents to quickly diagnose and fix failing workflows during iteration.
 

@@ -1,16 +1,13 @@
 # Task 22: Implement Named Workflow Execution
 
-## ID
-22
-
-## Title
-Implement Named Workflow Execution
-
 ## Description
 Enable execution of saved workflows by name with parameters, supporting natural workflow invocation patterns like `pflow my-workflow param=value` and `pflow workflow.json`. This delivers the core "Plan Once, Run Forever" value proposition by making saved workflows easily executable.
 
 ## Status
-in progress
+done
+
+## Completed
+2025-09-01
 
 ## Dependencies
 - Task 17: Natural Language Planner System - Provides workflow saving functionality that creates the workflows we'll execute by name
