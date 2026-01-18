@@ -7,7 +7,7 @@
 
 **Related Documents:**
 - **Architecture**: [PRD](../historical/prd.md) | [Architecture](../architecture.md) | [MVP Implementation Guide](../historical/mvp-implementation-guide.md)
-- **Components**: [Planner](../features/planner.md) | [Execution Reference](../reference/execution-reference.md) | [CLI Runtime](../historical/cli-runtime-original.md)
+- **Components**: [Planner](../historical/planner-specification.md) | [Execution Reference](../historical/execution-reference-original.md) | [CLI Runtime](../historical/cli-runtime-original.md)
 - **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/llm-nodes.md)
 - **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
 
@@ -33,7 +33,7 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ### Best Practice Pattern:
 
-> **Implementation**: See [Node Reference](../reference/node-reference.md#parameter-only-pattern) for the recommended pattern
+> **Implementation**: See [Enhanced Interface Format](../reference/enhanced-interface-format.md) for the recommended pattern
 
 **Parameters take precedence** - nodes read from `self.params` which contains template-resolved values. The template system (`${variable}`) handles wiring shared store data into params before node execution. This provides explicit, predictable data flow.
 
@@ -220,7 +220,7 @@ validator - "complete" >> finalizer
 - Node-local parameters that don't affect shared store
 - Simple access via `self.params.get("temperature", 0.7)`
 
-> **Framework Integration**: See [Node Reference](../reference/node-reference.md#node-lifecycle-implementation) for pocketflow integration details
+> **Framework Integration**: See [Enhanced Interface Format](../reference/enhanced-interface-format.md) for pocketflow integration details
 
 ## The Standalone Node Pattern
 
@@ -265,9 +265,9 @@ A crucial distinction in our implementation:
 - **Generated**: Flow orchestration code (from IR) with optional proxy setup
 - **Runtime**: CLI injection into shared store and params overrides
 
-> **Node Examples**: See [Node Reference](../reference/node-reference.md#common-implementation-patterns) for LLMNode and other implementation examples
+> **Node Examples**: See [Enhanced Interface Format](../reference/enhanced-interface-format.md) for LLMNode and other implementation examples
 
-> **Testing Examples**: See [Node Reference](../reference/node-reference.md#testing-pattern) for node testing patterns
+> **Testing Examples**: See [Enhanced Interface Format](../reference/enhanced-interface-format.md) for node testing patterns
 ```
 
 Compare this to complex binding setup requirements in other approaches.
@@ -531,6 +531,76 @@ The round-trip cognitive architecture enhances developer experience through desc
 - Maintains backward compatibility
 - Pattern works within existing APIs
 
+## Automatic Namespacing
+
+Automatic namespacing prevents output collisions between nodes by isolating each node's outputs in its own namespace.
+
+### The Problem
+
+Without namespacing, when multiple nodes of the same type write to the same key, data gets overwritten:
+
+```json
+{
+  "nodes": [
+    {"id": "fetch1", "type": "http", "params": {"url": "..."}},
+    {"id": "fetch2", "type": "http", "params": {"url": "..."}}
+  ]
+}
+```
+
+Both nodes write to `shared["response"]`, so `fetch2` overwrites `fetch1`'s data.
+
+### The Solution
+
+pflow automatically namespaces each node's outputs:
+- `fetch1` writes to `shared["fetch1"]["response"]`
+- `fetch2` writes to `shared["fetch2"]["response"]`
+
+No configuration needed - this is always enabled.
+
+### Template Variable Syntax
+
+Access namespaced outputs with dot notation:
+- `${fetch1.response}` - Output from node "fetch1"
+- `${fetch1.data.title}` - Nested field access
+
+### Example
+
+```json
+{
+  "nodes": [
+    {"id": "github", "type": "http", "params": {"url": "https://api.github.com/..."}},
+    {"id": "gitlab", "type": "http", "params": {"url": "https://gitlab.com/api/..."}},
+    {"id": "compare", "type": "llm", "params": {
+      "prompt": "Compare: ${github.response} vs ${gitlab.response}"
+    }}
+  ]
+}
+```
+
+### Shared Store Structure
+
+Without namespacing:
+```python
+shared = {"response": "..."}  # Last API call overwrites
+```
+
+With namespacing:
+```python
+shared = {
+  "github": {"response": "..."},
+  "gitlab": {"response": "..."},
+  "stdin": "..."  # CLI input remains at root
+}
+```
+
+### Technical Implementation
+
+- `NamespacedSharedStore`: Proxy that redirects writes to namespaced locations
+- `NamespacedNodeWrapper`: Wraps nodes to provide namespaced store access
+- Compiler integration: Automatically applies wrapping when enabled
+- Template resolver: Supports path-based access (`${node.key}`)
+
 ## Summary
 
 This design enables `pflow` to:
@@ -569,13 +639,15 @@ This pattern enables **progressive user empowerment** by making flow orchestrati
 
 The shared store pattern is fundamental to pflow and is used by:
 
-- **Planner** ([planner.md](../features/planner.md)): Generates template strings with variables
+- **Planner** ([planner-specification.md](../historical/planner-specification.md)): Generates template strings with variables
 - **All Node Packages**: Every node reads/writes using shared store keys
   - [Claude Nodes](../core-node-packages/claude-nodes.md)
   - [LLM Node](../core-node-packages/llm-nodes.md)
-- **Execution Engine** ([execution-reference.md](../reference/execution-reference.md)): Manages shared store during execution
+- **Execution Engine** ([execution-reference-original.md](../historical/execution-reference-original.md)): Manages shared store during execution
 - **Node Registry** ([architecture.md](../architecture.md#node-naming)): Node naming conventions and discovery
 
 ## See Also
 
-> **For complete CLI usage, validation rules, and runtime parameter details**, see [CLI Reference](../reference/cli-reference.md)
+- [Architecture](../architecture.md) - System overview and CLI commands
+- [Template Variables](../reference/template-variables.md) - Complete template syntax reference
+- [IR Schema](../reference/ir-schema.md) - Workflow JSON format specification

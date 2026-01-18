@@ -112,24 +112,7 @@ Output
 
 ### Shared Store Pattern
 
-The shared store is a simple dictionary that enables inter-node communication:
-
-```python
-# Two-level structure
-shared = {
-    "__execution__": {...},      # Reserved: execution metadata
-    "__llm_calls__": [...],      # Reserved: LLM call tracking
-    "node_id": {                 # Namespaced per node
-        "output_key": value
-    },
-    "global_key": value          # Root level for workflow inputs
-}
-```
-
-**Resolution Priority:**
-1. Initial parameters (CLI args, workflow inputs)
-2. Shared store (node outputs)
-3. Workflow defaults
+See [shared-store.md](./core-concepts/shared-store.md) for the shared store pattern.
 
 ### Wrapper Chain
 
@@ -137,6 +120,9 @@ Each node is wrapped for instrumentation and namespacing:
 
 ```
 InstrumentedWrapper (metrics, cache, trace)
+    │
+    ▼
+BatchWrapper (if configured - iteration)
     │
     ▼
 NamespacedWrapper (collision prevention)
@@ -172,15 +158,19 @@ Templates use `${variable}` syntax:
 
 ### Core Node Types
 
-| Type | Module | Description |
-|------|--------|-------------|
-| `shell` | `nodes/shell/` | Execute shell commands |
-| `http` | `nodes/http/` | HTTP requests |
-| `llm` | `nodes/llm/` | LLM API calls (via `llm` library) |
-| `read-file` | `nodes/file/` | Read file contents |
-| `write-file` | `nodes/file/` | Write file contents |
-| `claude-code` | `nodes/claude/` | Claude Code CLI integration |
-| `mcp` | `nodes/mcp/` | Execute MCP tools |
+| Type | Module | Description | Status |
+|------|--------|-------------|--------|
+| `shell` | `nodes/shell/` | Execute shell commands | Active |
+| `http` | `nodes/http/` | HTTP requests | Active |
+| `llm` | `nodes/llm/` | LLM API calls (via `llm` library) | Active |
+| `read-file` | `nodes/file/` | Read file contents | Active |
+| `write-file` | `nodes/file/` | Write file contents | Active |
+| `claude-code` | `nodes/claude/` | Claude Code CLI integration | Active |
+| `mcp` | `nodes/mcp/` | Execute MCP tools | Active |
+| `git/*` | `nodes/git/` | Git operations | ⚠️ Deprecated |
+| `github/*` | `nodes/github/` | GitHub API operations | ⚠️ Deprecated |
+
+> **Deprecation Notice**: The `git/*` and `github/*` nodes are deprecated. Use MCP GitHub server (`mcp-github-*`) instead for GitHub operations, and shell commands with `git` CLI for Git operations.
 
 > **Critical:** See `src/pflow/nodes/CLAUDE.md` for the mandatory retry pattern. Nodes that catch exceptions in exec() break automatic retries.
 
@@ -221,7 +211,7 @@ Run `pflow registry list` to see all available nodes.
 - **Discoverable**: `pflow registry search file` finds all file nodes
 - **Composable**: Clear single-purpose functions
 
-> **Future**: Namespace and version support (`core/llm@1.0.0`) planned for v2.0. See [Registry Versioning](./future-version/registry-versioning.md).
+> **Future**: Namespace and version support (`core/llm@1.0.0`) planned for v2.0. See `.taskmaster/feature-dump/registry-versioning.md` for design notes.
 
 ### Node Interface Format
 
@@ -415,9 +405,74 @@ pflow settings deny http
 - Debugging visibility
 - Supports complex workflows
 
+## Runtime vs User-Facing Components
+
+The pflow architecture separates concerns between user-facing nodes and internal runtime components.
+
+### User-Facing Nodes
+Building blocks users work with directly:
+- Defined in `src/pflow/nodes/`
+- Discoverable via `pflow registry list`
+- Have metadata describing their interface
+- Appear in workflow JSON with their `type` field
+- Examples: `read-file`, `write-file`, `llm`, `shell`, `http`
+
+### Runtime Components
+Internal infrastructure that executes workflows:
+- Defined in `src/pflow/runtime/` and `src/pflow/execution/`
+- Not exposed in the registry
+- Handle workflow execution infrastructure
+- Users don't interact with them directly
+- Examples: `WorkflowExecutor`, `Compiler`, wrappers
+
+### Example: WorkflowExecutor
+
+**What users see** (simple JSON):
+```json
+{
+  "id": "run_subflow",
+  "type": "workflow",
+  "params": {
+    "workflow_ref": "path/to/workflow.json",
+    "param_mapping": { "input": "${data}" }
+  }
+}
+```
+
+**What happens internally**:
+1. Runtime sees `type: "workflow"` in the IR
+2. Instantiates `WorkflowExecutor` (not a regular node)
+3. Executor handles: loading sub-workflow, storage isolation, parameter mapping, recursive execution, output mapping, error context
+
+Users simply specify `type: "workflow"` - they don't need to know about WorkflowExecutor.
+
+### Why This Separation?
+
+| Benefit | Explanation |
+|---------|-------------|
+| **Simplicity** | Users only need to know about node types, not implementation |
+| **Evolution** | Runtime can improve without changing user API |
+| **Safety** | Runtime components can have special privileges regular nodes shouldn't |
+| **Performance** | Runtime components can be optimized differently than user nodes |
+
+### Key Runtime Components
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| **Compiler** | `runtime/compiler.py` | Transforms JSON IR → executable PocketFlow objects |
+| **WorkflowExecutor** | `runtime/workflow_executor.py` | Handles nested workflow execution |
+| **Wrappers** | `runtime/*_wrapper.py` | Add instrumentation, namespacing, templates |
+| **TemplateResolver** | `runtime/template_resolver.py` | Resolves `${var}` syntax |
+
+### When to Create What?
+
+- **User-facing feature?** → Create a node in `nodes/`
+- **Execution infrastructure?** → Create a runtime component in `runtime/`
+- **Cross-cutting concern?** → Consider a wrapper
+
 ## Related Documents
 
 - **PocketFlow**: `pocketflow/CLAUDE.md` - Framework documentation
 - **Integration Guide**: `architecture/pflow-pocketflow-integration-guide.md`
-- **Runtime Components**: `architecture/runtime-components.md`
-- **Node Reference**: `architecture/reference/node-reference.md`
+- **Node Interface Format**: `architecture/reference/enhanced-interface-format.md`
+- **Shared Store**: `architecture/core-concepts/shared-store.md`

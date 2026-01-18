@@ -60,7 +60,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 - Accurately reflects current codebase
 - MCP integration is complete (stdio + http transports)
 - Shared store uses namespaced pattern
-- Wrapper chain: Instrumented → Namespaced → TemplateAware → Node
+- Wrapper chain: Instrumented → Batch → Namespaced → TemplateAware → Node
 
 **When to Use**: Understanding current system, designing new features, accurate architecture reference
 
@@ -90,26 +90,6 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### [runtime-components.md](./runtime-components.md)
-**Purpose**: Explains the distinction between user-facing nodes and internal runtime components.
-
-**Key Contents**:
-- User-facing nodes vs runtime components
-- WorkflowExecutor as example runtime component
-- Design principles for separation
-- Guidelines for adding new components
-
-**Critical Insights**:
-- Users work with nodes; runtime makes them work
-- Runtime components have special privileges
-- Clear boundaries: nodes in `nodes/`, runtime in `runtime/`
-
-**When to Use**: Understanding internal architecture, adding new runtime features
-
-**Status**: ✅ Current
-
----
-
 ## Historical Documents (`/historical/`)
 
 > **Note**: Design-time documents with valuable rationale but may not reflect current implementation. See `historical/CLAUDE.md` for context.
@@ -127,6 +107,13 @@ This inventory describes **what's inside each documentation file** to help AI ag
 | [mcp-integration-original.md](./historical/mcp-integration-original.md) | MCP design document (superseded) |
 | [agent-guide-pre-task71.md](./historical/agent-guide-pre-task71.md) | Pre-task71 agent guide |
 | [github-nodes-original.md](./historical/github-nodes-original.md) | Deprecated GitHub nodes (use MCP instead) |
+| [execution-reference-original.md](./historical/execution-reference-original.md) | v2.0 vision with fictional features (moved 2026-01) |
+| [node-reference-original.md](./historical/node-reference-original.md) | Outdated parameter fallback pattern (moved 2026-01) |
+| [planner-specification.md](./historical/planner-specification.md) | Legacy planner spec, many features never implemented (moved 2026-01) |
+| [planner-debugging.md](./historical/planner-debugging.md) | Planner debugging with inaccurate details (moved 2026-01) |
+| [thinking-tokens-optimization.md](./historical/thinking-tokens-optimization.md) | Obsolete Anthropic-specific features (moved 2026-01) |
+| [prompt-caching-architecture.md](./historical/prompt-caching-architecture.md) | Obsolete Anthropic cache API (moved 2026-01) |
+| [simonw-llm-patterns/](./historical/simonw-llm-patterns/) | Pre-implementation research for Task 95 (moved 2026-01) |
 
 **Status**: ⚠️ All historical documents are design-time artifacts
 
@@ -160,7 +147,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 > **Note**: The Core Concepts directory now contains only `shared-store.md`. Previously included documents have been moved:
 > - **schemas.md** → moved to `reference/ir-schema.md` (it's a spec, not a concept)
 > - **registry.md** → merged into `architecture.md#node-naming`
-> - **runtime.md** → moved to `future-version/flow-safe-caching.md` (mostly unimplemented)
+> - **runtime.md** → moved to `.taskmaster/feature-dump/` (mostly unimplemented future features)
 
 ## Features Directory (`/features/`)
 
@@ -187,30 +174,6 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 ---
 
-### [planner.md](./features/planner.md)
-**Purpose**: Central validation and IR generation engine for both natural language and CLI inputs.
-
-**Key Contents**:
-- Dual-mode operation (NL with LLM vs CLI validation-only)
-- Template string composition and variable flow
-- **"Find or Build" pattern for semantic workflow discovery**
-- Metadata extraction from docstrings
-- Validation framework with "early and often" principle
-- Integration with shared store and proxy
-
-**Critical Insights**:
-- Template-driven approach: LLM generates `${variable}` placeholders
-- Planner is normal pocketflow flow, not hard-coded
-- Both paths use same infrastructure
-- Critical stages: Intent → Template → Selection → Validation
-- Type shadow store deferred to v2.0
-
-**When to Use**: Implementing natural language planning, CLI validation, understanding compilation
-
-**Status**: ✅ MVP (built after core)
-
----
-
 ### [shell-pipes.md](./features/shell-pipes.md)
 **Purpose**: Native Unix shell pipe integration for seamless command-line workflows.
 
@@ -231,145 +194,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **Status**: ✅ MVP
 
----
-
-### [workflow-analysis.md](./features/workflow-analysis.md)
-**Purpose**: Technical analysis comparing inefficient AI slash commands with deterministic workflows.
-
-**Key Contents**:
-- Analysis of Anthropic's slash command pattern
-- Hidden costs of repeated reasoning
-- Detailed fix-github-issue transformation
-- Token usage and execution comparisons
-- When to use each approach
-
-**Critical Insights**:
-- Core: AI intelligence better for tasks than orchestration
-- claude-code receives comprehensive planner instructions
-- 10x improvement possible (1000-2000 tokens → minimal)
-- Template-driven preserves context without overhead
-- Middle ground: Start with slash commands, codify patterns
-
-**When to Use**: Understanding value proposition, seeing workflow examples, explaining benefits
-
-**Status**: ✅ MVP
-
----
-
-### [debugging.md](./features/debugging.md)
-**Purpose**: Comprehensive guide to planner debugging capabilities including progress indicators, trace files, and troubleshooting.
-
-**Key Contents**:
-- Real-time progress indicators
-- Trace file structure and analysis
-- CLI flags (--no-trace, --planner-timeout)
-- LLM call capture and inspection
-- Common debugging scenarios
-- Troubleshooting guide
-
-**Critical Insights**:
-- Progress indicators always displayed during planning
-- Traces automatically saved on failure
-- All LLM prompts/responses captured
-- Path A (reuse) vs Path B (generate) tracking
-- Timeout detection with automatic trace saving
-
-**When to Use**: Debugging failed workflow generation, optimizing prompts, performance analysis, understanding planner decisions
-
-**Status**: ✅ MVP
-
----
-
-### [mcp-integration.md](./features/mcp-integration.md)
-**Purpose**: Specification for Model Context Protocol integration (now implemented).
-
-**Key Contents**:
-- Unified registry approach
-- Wrapper node generation
-- Natural interface mapping
-- Error handling and transport
-- Complete integration examples
-
-**Critical Insights**:
-- MCP is FULLY IMPLEMENTED (stdio + http transports)
-- MCPNode executes any MCP tool in workflows
-- pflow-as-MCP-server exposes 11 tools for AI agents
-- Supports authentication for http transport
-
-**When to Use**: Understanding MCP integration, using MCP tools in workflows, exposing pflow to AI agents
-
-**Status**: ✅ Implemented
-
 ## Reference Directory (`/reference/`)
-
-### [cli-reference.md](./reference/cli-reference.md)
-**Purpose**: Authoritative CLI interface reference with syntax, operators, and composition.
-
-**Key Contents**:
-- Basic syntax and grammar definition
-- `>>` operator vs shell pipes (`|`)
-- Flag resolution algorithm
-- Template variables and resolution
-- Shell pipe integration
-
-**Critical Insights**:
-- "Type flags; engine decides" philosophy
-- Nodes should check `stdin` as fallback
-- `>>` passes structured data, not text streams
-- Flows are fail-fast by default
-- Template variables check shared store first
-
-**When to Use**: Implementing CLI parsing, flag handling, shell integration, user interaction
-
-**Status**: ✅ MVP
-
----
-
-### [execution-reference.md](./reference/execution-reference.md)
-**Purpose**: Authoritative execution model and runtime behavior reference.
-
-**Key Contents**:
-- Static execution model (immutable flows)
-- 7-step execution pipeline
-- Node safety model with `@flow_safe`
-- Error categorization by namespace
-- Retry mechanisms
-
-**Critical Insights**:
-- Opt-in purity model - explicit `@flow_safe` for caching
-- Flows completely static - no dynamic topology
-- Only transient errors retryable
-- Multiple validation levels
-- Execution context provides debugging hooks
-
-**When to Use**: Implementing runtime engine, error handling, caching, execution flow
-
-**Status**: ✅ MVP
-
----
-
-### [node-reference.md](./reference/node-reference.md)
-**Purpose**: Common patterns and best practices for node implementation consistency.
-
-**Key Contents**:
-- Check shared store first pattern
-- Node lifecycle implementation
-- Error handling guidelines
-- Testing patterns
-- Documentation requirements
-
-**Critical Insights**:
-- Shared store priority over params for dynamic data
-- Clear interface documentation required
-- All nodes inherit from `pocketflow.Node`
-- Comprehensive tests verify functionality and priority
-- Specific error messages for missing values
-
-**When to Use**: Before implementing ANY node, ensuring consistency, following patterns
-
-**Status**: ✅ MVP
-
----
 
 ### [ir-schema.md](./reference/ir-schema.md)
 **Purpose**: JSON schema governance for Flow IR and Node Metadata artifacts.
@@ -462,135 +287,6 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 **Status**: ✅ MVP
 
----
-
-### [simonw-llm-patterns/FINAL-ANALYSIS.md](./implementation-details/simonw-llm-patterns/FINAL-ANALYSIS.md)
-**Purpose**: Analysis of Simon Willison's llm library patterns and their alignment with pflow architecture.
-
-**Key Contents**:
-- Core architecture alignment with pocketflow lifecycle
-- Eight specific pattern recommendations from llm library
-- Integration architecture (wrapper pattern)
-- Benefits of adoption (CLI polish, plugins, proven patterns)
-- Implementation priority recommendations
-
-**Critical Insights**:
-- `llm` library fits perfectly in exec() phase of nodes
-- Wrapper pattern preserves pocketflow architecture
-- Default command pattern ideal for pflow CLI
-- Plugin ecosystem provides immediate value
-- All patterns respect prep/exec/post separation
-
-**When to Use**: Understanding llm library integration, implementing LLM nodes, CLI design decisions
-
-**Status**: ✅ MVP
-
----
-
-### [simonw-llm-patterns/IMPLEMENTATION-GUIDE.md](./implementation-details/simonw-llm-patterns/IMPLEMENTATION-GUIDE.md)
-**Purpose**: Concrete implementation guide for integrating llm library patterns into pflow tasks.
-
-**Key Contents**:
-- Quick start checklist with dependencies
-- Task-specific implementations for each pflow task
-- LLMNode wrapper implementation example
-- Template system integration
-- Database and plugin configuration
-
-**Critical Insights**:
-- Provides task-by-task integration examples
-- Shows how to wrap llm library in pocketflow nodes
-- Demonstrates respecting architectural boundaries
-- Includes testing approaches
-- Maps llm features to pflow requirements
-
-**When to Use**: Implementing LLM functionality, following integration patterns, task implementation
-
-**Status**: ✅ MVP
-
-## Future Version Directory (`/future-version/`)
-
-### [flow-safe-caching.md](./future-version/flow-safe-caching.md)
-**Purpose**: Defines caching strategy and node safety model with `@flow_safe` decorator.
-
-**Key Contents**:
-- Side-effect declaration and node safety
-- Node classification (impure default vs pure)
-- Caching strategy and eligibility
-- Cache key computation and storage
-- Retry mechanisms and safety
-
-**Critical Insights**:
-- Opt-in purity model - all nodes impure unless `@flow_safe`
-- Only `@flow_safe` nodes can be cached or retried
-- Cache key: node hash + params + input data hash
-- No need to enumerate side effects - only certify purity
-- Caching respects proxy mappings
-
-**When to Use**: Implementing caching, designing retryable nodes, using `@flow_safe`, debugging cache behavior
-
-**Status**: ❌ v2.0+ (Not implemented)
-
----
-
-### [json-extraction.md](./future-version/json-extraction.md)
-**Purpose**: v3.0 feature for automatic JSON field extraction (with critical concerns).
-
-**Key Contents**:
-- JSON path syntax and mapping extensions
-- Planner integration for structure detection
-- Enhanced proxy implementation
-- Performance optimization
-- **Section 13: Critical Analysis**
-
-**Critical Insights**:
-- WARNING: Section 13 questions feature alignment with philosophy
-- Would violate "explicit over magic" principle
-- Increases complexity beyond the minimal framework ideal
-- Recommendation: Use explicit JSON nodes instead
-
-**When to Use**: Evaluating JSON processing approaches, understanding design trade-offs
-
-**Status**: ❌ v3.0 (May be abandoned)
-
----
-
-### [llm-node-gen.md](./future-version/llm-node-gen.md)
-**Purpose**: v3.0 capability for LLM-assisted node development enhancing productivity.
-
-**Key Contents**:
-- LLM-assisted generation workflows
-- Future CLI commands
-- Metadata infrastructure integration
-- Quality assurance processes
-- System prompts
-
-**Critical Insights**:
-- LLM assists but does NOT replace static ecosystem
-- All generated nodes require human review
-- Builds on metadata infrastructure
-- Emphasizes code + documentation consistency
-- Static nodes remain foundation
-
-**When to Use**: Planning developer tooling, understanding AI-enhanced development
-
-**Status**: ❌ v3.0
-
----
-
-### [registry-versioning.md](./future-version/registry-versioning.md)
-**Purpose**: Planned node namespacing and versioning system for future registry evolution.
-
-**Key Contents**:
-- Namespace + name + semver syntax (`<namespace>/<name>@<semver>`)
-- Version resolution strategies
-- Migration path from current simple naming
-- Compatibility considerations
-
-**When to Use**: Planning future registry enhancements, understanding namespacing design
-
-**Status**: ❌ v2.0+ (Not implemented)
-
 ## Vision Directory (`/vision/`)
 
 > **Warning**: These documents describe potential FUTURE directions, NOT current implementation.
@@ -652,7 +348,7 @@ This inventory describes **what's inside each documentation file** to help AI ag
 
 1. **Starting Implementation** (pflow development): Read [architecture.md](./architecture.md) → [pflow-pocketflow-integration-guide.md](./pflow-pocketflow-integration-guide.md)
 2. **Understanding Project Status**: Check root `CLAUDE.md` for authoritative project status
-3. **Writing New Nodes**: Read [pflow-pocketflow-integration-guide.md](./pflow-pocketflow-integration-guide.md) → [simple-nodes.md](./features/simple-nodes.md) → [node-reference.md](./reference/node-reference.md)
+3. **Writing New Nodes**: Read [pflow-pocketflow-integration-guide.md](./pflow-pocketflow-integration-guide.md) → [simple-nodes.md](./features/simple-nodes.md) → [enhanced-interface-format.md](./reference/enhanced-interface-format.md)
 4. **Building Workflows** (users/agents): Use JSON workflows via CLI - see `pflow instructions usage`
 5. **Understanding Patterns**: [shared-store.md](./core-concepts/shared-store.md) is most referenced and central to architecture
 6. **Historical Context**: [historical/](./historical/) contains design-time documents - valuable for "why" but may be outdated

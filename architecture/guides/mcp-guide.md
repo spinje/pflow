@@ -9,11 +9,14 @@ MCP (Model Context Protocol) is an open standard that enables AI systems to inte
 ### 1. Add an MCP Server
 
 ```bash
-# Add the official filesystem server
-pflow mcp add filesystem npx -- -y @modelcontextprotocol/server-filesystem /tmp
+# Add from inline JSON (simple format - recommended for CLI)
+pflow mcp add '{"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]}}'
 
-# Add GitHub server (requires GITHUB_TOKEN environment variable)
-pflow mcp add github npx -- -y @modelcontextprotocol/server-github -e GITHUB_TOKEN=${GITHUB_TOKEN}
+# Add GitHub server with environment variable
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}}}'
+
+# Add from a config file
+pflow mcp add ./github.mcp.json
 ```
 
 ### 2. Discover Available Tools
@@ -103,13 +106,49 @@ MCP server configurations are stored in `~/.pflow/mcp-servers.json`:
 }
 ```
 
+### Config File Format
+
+MCP server configurations can be stored in `.mcp.json` files. The format is compatible with Claude Desktop and other MCP tools:
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    }
+  }
+}
+```
+
+pflow also accepts a simpler direct format (without the `mcpServers` wrapper):
+
+```json
+{
+  "github": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-github"],
+    "env": {
+      "GITHUB_TOKEN": "${GITHUB_TOKEN}"
+    }
+  }
+}
+```
+
 ### Environment Variables
 
 Use `${VAR}` syntax for environment variable expansion:
 
 ```bash
-# The ${GITHUB_TOKEN} will be replaced with actual env var value
-pflow mcp add github npx -- -y @modelcontextprotocol/server-github -e GITHUB_TOKEN=${GITHUB_TOKEN}
+# Environment variables in JSON configs are expanded at runtime
+pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_TOKEN": "${GITHUB_TOKEN}"}}}'
 ```
 
 ## Available MCP Servers
@@ -224,6 +263,27 @@ If an MCP server updates its tools:
 pflow mcp sync filesystem --force
 ```
 
+## Running pflow as an MCP Server
+
+pflow can also run as an MCP server itself, exposing its workflow capabilities as tools for AI agents.
+
+```bash
+# Start pflow as an MCP server (stdio transport)
+pflow mcp serve
+
+# With debug logging
+pflow mcp serve --debug
+```
+
+This exposes pflow's workflow building and execution capabilities as programmatic tools for AI agents:
+- Discover existing workflows and nodes
+- Execute workflows with structured output
+- Validate workflows before execution
+- Save workflows to the global library
+- Configure settings and API keys
+
+**Note**: This command is typically invoked by AI agents/clients, not directly by users. The server uses stdio transport where stdin receives JSON-RPC requests and stdout sends responses.
+
 ## Troubleshooting
 
 ### Server Not Starting
@@ -261,16 +321,33 @@ pflow mcp tools <server-name>
 - Check server documentation for access requirements
 - Some servers require authentication tokens
 
+## Transport Support
+
+### stdio (Production-Ready)
+
+The stdio transport is fully supported and recommended for most use cases:
+- Reliable subprocess communication
+- Works with all standard MCP servers
+- Automatic process management
+
+### HTTP (Experimental)
+
+HTTP transport code exists but is not fully functional:
+- Connection and handshake issues remain
+- Not recommended for production use
+- May be improved in future releases
+
 ## Limitations (MVP)
 
 Current implementation supports:
-- ✅ stdio transport only
+- ✅ stdio transport (production-ready)
 - ✅ Text content handling
 - ✅ Manual tool discovery via sync
 - ✅ Basic error handling
+- ✅ pflow as MCP server (`pflow mcp serve`)
 
 Future enhancements will add:
-- HTTP/SSE transports
+- HTTP/SSE transports (stable)
 - Binary content (images, files)
 - Connection pooling
 - OAuth authentication

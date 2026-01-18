@@ -47,13 +47,13 @@ shell --command="git commit -m 'Fix issue 1234'"
 
 | Node | Purpose | Interface |
 |------|---------|-----------|
-| **[`llm`](../core-node-packages/llm-nodes.md)** | General-purpose LLM processing | Reads: `prompt` → Writes: `response` |
-| **`read-file`** | Read file contents | Reads: `file_path` → Writes: `content` |
-| **`write-file`** | Write file contents | Reads: `content`, `file_path` → Writes: `written` |
-| **`copy-file`** | Copy a file | Reads: `source`, `destination` → Writes: `copied` |
-| **`shell`** | Execute shell commands | Reads: `command` → Writes: `stdout`, `stderr` |
-| **`http`** | Make HTTP requests | Reads: `url`, `method` → Writes: `response` |
-| **[`claude-code`](../core-node-packages/claude-nodes.md)** | Claude Code CLI for complex tasks | Reads: `instructions` → Writes: `code_report` |
+| **[`llm`](../core-node-packages/llm-nodes.md)** | General-purpose LLM processing | Params: `prompt` → Writes: `response` |
+| **`read-file`** | Read file contents | Params: `file_path` → Writes: `content` |
+| **`write-file`** | Write file contents | Params: `content`, `file_path` → Writes: `written` |
+| **`copy-file`** | Copy a file | Params: `source`, `destination` → Writes: `copied` |
+| **`shell`** | Execute shell commands | Params: `command` → Writes: `stdout`, `stderr` |
+| **`http`** | Make HTTP requests | Params: `url`, `method` → Writes: `response` |
+| **[`claude-code`](../core-node-packages/claude-nodes.md)** | Claude Code CLI for complex tasks | Params: `instructions` → Writes: `code_report` |
 
 ### The LLM Node: Smart Exception to Prevent Proliferation
 
@@ -75,7 +75,7 @@ class ReadFileNode(Node):  # Use Node for retry support
     Reads the contents of a file from the local filesystem.
 
     Interface:
-    - Reads: shared["file_path"]: str  # Path to file to read
+    - Params: file_path: str  # Path to file to read
     - Writes: shared["content"]: str  # File contents
     - Writes: shared["error"]: str  # Error message if operation failed
     - Actions: default (success), not_found (file doesn't exist)
@@ -182,8 +182,8 @@ This consistency provides significant advantages:
 ```bash
 # The key names make the data flow obvious
 read-file --file_path=data.json >>      # Writes: shared["content"]
-llm --prompt="Analyze ${content}" >>    # Reads: shared["content"], Writes: shared["response"]
-write-file analysis.md                  # Reads: shared["response"] as content
+llm --prompt="Analyze ${content}" >>    # Params: prompt (with template), Writes: shared["response"]
+write-file analysis.md                  # Params: content=${response}
 ```
 
 No documentation needed - the natural interfaces guide composition.
@@ -202,9 +202,8 @@ $ pflow registry list file
 
 # Get detailed interface for specific node
 $ pflow registry describe read-file
-Reads: shared["file_path"]
+Params: file_path
 Writes: shared["content"]
-Params: --file_path
 ```
 
 ### Reduced Cognitive Load
@@ -367,9 +366,9 @@ class ExtractJsonFieldNode(Node):
     """Extract a field from JSON data.
 
     Interface:
-    - Reads: shared["json_data"]: dict  # JSON data to extract from
-    - Writes: shared["extracted"]: any  # Extracted field value
+    - Params: json_data: dict  # JSON data to extract from
     - Params: field: str  # JSON path to extract (e.g., "data.items[0].name")
+    - Writes: shared["extracted"]: any  # Extracted field value
     """
 
     def exec(self, prep_res):

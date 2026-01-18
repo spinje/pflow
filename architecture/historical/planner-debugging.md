@@ -1,3 +1,14 @@
+> **HISTORICAL DOCUMENT**: Describes planner debugging (planner is legacy).
+>
+> **Known inaccuracies:**
+> - Progress indicator format differs from actual implementation
+> - Trace file structure doesn't match `workflow_trace.py`
+> - `--no-trace` behavior described inversely (traces are enabled by default)
+>
+> For current workflow tracing, traces are saved to `~/.pflow/debug/workflow-trace-*.json`
+
+---
+
 # Planner Debugging Features
 
 > **Navigation**: [Index](../index.md) → Features → Debugging

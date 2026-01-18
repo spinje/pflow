@@ -1,3 +1,13 @@
+> **HISTORICAL DOCUMENT**: Obsolete after Task 95 (llm library integration, 2025-12-19).
+>
+> This document describes Anthropic-specific prompt caching via `cache_blocks` parameter.
+> The `llm` library now abstracts provider-specific caching. While caching may still occur
+> at the provider level, pflow no longer exposes explicit cache control.
+>
+> **Status**: Superseded by llm library integration.
+
+---
+
 # Prompt Caching Architecture
 
 ## Overview

@@ -1,3 +1,16 @@
+> **HISTORICAL DOCUMENT**: The planner is legacy and being phased out.
+>
+> **Why this is historical:**
+> - The `=>` CLI pipe syntax shown throughout was never implemented
+> - Many features (lockfile signatures, type shadow store, CLI autocomplete) were never built
+> - AI agents should use CLI primitives instead: `pflow registry discover`, `pflow workflow discover`
+>
+> **Current approach**: Write JSON workflows directly, validate with `pflow --validate-only`
+>
+> See `pflow instructions usage` for the current agent guide.
+
+---
+
 # Planner Responsibility & Functionality Spec
 
 > **Version**: MVP

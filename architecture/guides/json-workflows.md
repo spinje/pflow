@@ -6,32 +6,31 @@ While pflow excels at natural language workflow creation, you can also define wo
 
 ### Minimal Valid Workflow
 
-The simplest valid workflow JSON requires only three fields:
+The simplest valid workflow JSON requires only two fields:
 
 ```json
 {
   "ir_version": "0.1.0",
   "nodes": [
     {
-      "id": "my-node",
-      "type": "echo",
+      "id": "hello",
+      "type": "shell",
       "params": {
-        "message": "Hello, World!"
+        "command": "echo 'Hello, World!'"
       }
     }
-  ],
-  "edges": []
+  ]
 }
 ```
 
 Save this as `hello.json` and run:
 ```bash
-pflow --file hello.json
+pflow hello.json
 ```
 
 ## Important Requirements
 
-### ⚠️ Required Fields
+### Required Fields
 
 1. **`ir_version`** (REQUIRED) - Must be `"0.1.0"`
    - Without this field, pflow won't recognize your JSON as a workflow
@@ -40,22 +39,27 @@ pflow --file hello.json
 2. **`nodes`** (REQUIRED) - Array of node definitions
    - Each node needs: `id`, `type`, and optionally `params`
 
-3. **`edges`** (REQUIRED) - Array of connections between nodes
-   - Can be empty `[]` for single-node workflows
+### Optional Fields
 
-### ❌ Common Mistakes
+- **`edges`** - Array of connections between nodes (defaults to `[]` for single-node workflows)
+- **`metadata`** - Workflow metadata (name, description, author, etc.)
+- **`inputs`** - Define workflow parameters with types and defaults
+- **`outputs`** - Map internal values to workflow outputs
+- **`trigger_node`** - Specify which node starts the workflow
+
+### Common Mistakes
 
 **DON'T add these fields at the root level:**
 - `name` - Use metadata.name instead
 - `description` - Use metadata.description instead
 - `output_key` - Use outputs array instead
-- `input_params` - Use input_params with proper schema
+- `input_params` - Use inputs with proper schema
 
 **Wrong:**
 ```json
 {
-  "name": "my-workflow",  // ❌ Not allowed at root
-  "description": "...",    // ❌ Not allowed at root
+  "name": "my-workflow",  // Not allowed at root
+  "description": "...",    // Not allowed at root
   "ir_version": "0.1.0",
   "nodes": [...],
   "edges": []
@@ -67,13 +71,29 @@ pflow --file hello.json
 {
   "ir_version": "0.1.0",
   "metadata": {
-    "name": "my-workflow",      // ✅ Inside metadata
-    "description": "..."         // ✅ Inside metadata
+    "name": "my-workflow",      // Inside metadata
+    "description": "..."         // Inside metadata
   },
   "nodes": [...],
   "edges": []
 }
 ```
+
+## Available Node Types
+
+pflow provides these core node types:
+
+| Type | Description |
+|------|-------------|
+| `shell` | Execute shell commands |
+| `http` | Make HTTP requests |
+| `llm` | Call LLM models (via llm library) |
+| `read-file` | Read file contents |
+| `write-file` | Write content to file |
+| `copy-file` | Copy files |
+| `move-file` | Move files |
+| `delete-file` | Delete files |
+| `mcp-*` | MCP tool bridge nodes |
 
 ## Accessing Output
 
@@ -81,12 +101,45 @@ Node outputs are namespaced under the node ID. To access the output:
 
 ```bash
 # If your node has id "read-file"
-pflow --file workflow.json --output-key read-file
+pflow workflow.json --output-key read-file
 
 # The node stores data at:
 # - {node-id}.result (standard output)
 # - {node-id}.{specific-keys} (node-specific outputs)
 ```
+
+## Template Variables
+
+Use template variables to pass data between nodes. Outputs are namespaced by node ID:
+
+```json
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "fetch",
+      "type": "http",
+      "params": {
+        "url": "https://api.example.com/data"
+      }
+    },
+    {
+      "id": "process",
+      "type": "llm",
+      "params": {
+        "prompt": "Summarize this data: ${fetch.response}"
+      }
+    }
+  ],
+  "edges": [
+    {"from": "fetch", "to": "process"}
+  ]
+}
+```
+
+**Template syntax**: `${node-id.output-key}` or `${node-id.output-key.nested.path}`
+
+For complete template syntax and type preservation rules, see the [Template Variables Reference](../reference/template-variables.md).
 
 ## MCP Workflows
 
@@ -103,8 +156,7 @@ With MCP (Model Context Protocol) support, you can use any registered MCP tool:
         "path": "/path/to/file.txt"
       }
     }
-  ],
-  "edges": []
+  ]
 }
 ```
 
@@ -117,7 +169,7 @@ pflow mcp add filesystem npx -- -y @modelcontextprotocol/server-filesystem /tmp
 pflow mcp sync filesystem
 
 # Now run your workflow
-pflow --file mcp-workflow.json --output-key read-file
+pflow mcp-workflow.json --output-key read-file
 ```
 
 ## Multi-Node Workflows
@@ -130,7 +182,7 @@ Connect nodes using edges:
   "nodes": [
     {
       "id": "fetch",
-      "type": "fetch-url",
+      "type": "http",
       "params": {
         "url": "https://api.example.com/data"
       }
@@ -139,30 +191,56 @@ Connect nodes using edges:
       "id": "process",
       "type": "llm",
       "params": {
-        "prompt": "Summarize this data: ${content}"
+        "prompt": "Summarize this data: ${fetch.response}"
       }
     }
   ],
   "edges": [
-    {
-      "source": "fetch",
-      "target": "process",
-      "action": "default"
-    }
+    {"from": "fetch", "to": "process"}
   ]
 }
 ```
 
+## Batch Processing
+
+Nodes can process arrays of items using the `batch` configuration:
+
+```json
+{
+  "ir_version": "0.1.0",
+  "nodes": [
+    {
+      "id": "list-files",
+      "type": "shell",
+      "params": {
+        "command": "find . -name '*.txt' -type f"
+      }
+    },
+    {
+      "id": "summarize",
+      "type": "llm",
+      "params": {
+        "prompt": "Summarize: ${file.content}"
+      },
+      "batch": {
+        "items": "${list-files.files}",
+        "as": "file",
+        "parallel": true,
+        "max_concurrent": 5
+      }
+    }
+  ],
+  "edges": [
+    {"from": "list-files", "to": "summarize"}
+  ]
+}
+```
+
+For batch configuration options, see the [IR Schema Reference](../reference/ir-schema.md#batch-processing-configuration).
+
 ## Full Schema Reference
 
 For complete documentation of all available fields, see [IR Schema Documentation](../reference/ir-schema.md).
-
-### Optional Fields
-
-- `metadata` - Workflow metadata (name, description, author, etc.)
-- `input_params` - Define workflow parameters with types and defaults
-- `outputs` - Map internal values to workflow outputs
-- `trigger_node` - Specify which node starts the workflow
 
 ## Debugging Tips
 
@@ -181,10 +259,23 @@ For complete documentation of all available fields, see [IR Schema Documentation
    - Move descriptive fields into `metadata` object
    - Ensure all node types are registered in the registry
 
+4. **Template not resolving?**
+   - Use the `${node-id.output-key}` format
+   - Check that the source node runs before the consuming node
+   - Use `pflow validate workflow.json` to check templates
+
 ## Examples
 
 See the `examples/` directory for more workflow JSON examples:
-- `examples/simple-llm.json` - Basic LLM workflow
-- `examples/multi-step.json` - Multi-node workflow with edges
-- `examples/mcp-filesystem.json` - MCP filesystem operations
-- `examples/github-automation.json` - GitHub API automation
+
+### Core Examples (`examples/core/`)
+- [`examples/core/minimal.json`](../../examples/core/minimal.json) - Simplest valid workflow
+- [`examples/core/simple-pipeline.json`](../../examples/core/simple-pipeline.json) - Multi-node pipeline with edges
+- [`examples/core/template-variables.json`](../../examples/core/template-variables.json) - Template variable usage
+
+### MCP Examples
+- [`examples/mcp-filesystem.json`](../../examples/mcp-filesystem.json) - MCP filesystem operations
+
+### Advanced Examples (`examples/advanced/`)
+- [`examples/advanced/content-pipeline.json`](../../examples/advanced/content-pipeline.json) - Multi-stage content generation
+- [`examples/advanced/github-workflow.json`](../../examples/advanced/github-workflow.json) - GitHub API automation

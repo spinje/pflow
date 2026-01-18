@@ -117,5 +117,4 @@ Native integration with Unix shell pipes positions pflow as a highly intuitive, 
 ## See Also
 
 - [Shared Store](../core-concepts/shared-store.md) - Reserved `shared["stdin"]` key
-- [CLI Reference](../reference/cli-reference.md) - CLI syntax and commands
-- [Execution Reference](../reference/execution-reference.md) - Caching and execution
+- [Architecture](../architecture.md) - CLI interface overview

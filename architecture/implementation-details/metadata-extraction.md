@@ -35,8 +35,8 @@ This document defines the infrastructure for extracting structured metadata from
 This metadata extraction infrastructure directly supports several core pflow systems:
 
 ### Planner Discovery Integration
->
-> **See**: [Planner Responsibility Spec](../features/planner.md#node-discovery)
+
+> **Note**: The planner is a legacy component being phased out. See [Planner Specification (Historical)](../historical/planner-specification.md) for reference.
 
 The extraction process feeds the planner's metadata-driven selection:
 
@@ -48,7 +48,7 @@ The extraction process feeds the planner's metadata-driven selection:
 
 ### Registry Integration
 >
-> **See**: [Node Naming](../architecture.md#node-naming) and [Registry Versioning](../future-version/registry-versioning.md)
+> **See**: [Node Naming](../architecture.md#node-naming) and `.taskmaster/feature-dump/registry-versioning.md` for design notes
 
 Metadata extraction occurs during node installation:
 

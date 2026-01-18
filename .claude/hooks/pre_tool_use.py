@@ -10,47 +10,55 @@ from pathlib import Path
 
 def is_dangerous_rm_command(command):
     """
-    Comprehensive detection of dangerous rm commands.
-    Matches various forms of rm -rf and similar destructive patterns.
+    Detection of dangerous rm commands.
+    Only blocks rm -rf variants and rm -r on dangerous paths.
+    Allows simple 'rm file1 file2' commands.
     """
     # Normalize command by removing extra spaces and converting to lowercase
     normalized = ' '.join(command.lower().split())
-    
-    # Pattern 1: Standard rm -rf variations
-    patterns = [
-        r'\brm\s+.*-[a-z]*r[a-z]*f',  # rm -rf, rm -fr, rm -Rf, etc.
-        r'\brm\s+.*-[a-z]*f[a-z]*r',  # rm -fr variations
-        r'\brm\s+--recursive\s+--force',  # rm --recursive --force
-        r'\brm\s+--force\s+--recursive',  # rm --force --recursive
-        r'\brm\s+-r\s+.*-f',  # rm -r ... -f
-        r'\brm\s+-f\s+.*-r',  # rm -f ... -r
-    ]
-    
-    # Check for dangerous patterns
-    for pattern in patterns:
-        if re.search(pattern, normalized):
-            return True
-    
-    # Pattern 2: Check for rm with recursive flag targeting dangerous paths
-    # Note: We check for -r flag right after rm (not hyphens in filenames)
-    dangerous_paths = [
-        r'^/',          # Root directory
-        r'^/\*',        # Root with wildcard
-        r'^\.\.',       # Parent directory references
-        r'^\*',         # Wildcards
-        r'^\.$',        # Current directory only
+
+    # Only check commands where rm is at a command position
+    # (start of string, after pipe, after semicolon, after &&, after ||)
+    # This avoids false positives from rm appearing in quoted strings or arguments
+    rm_at_command_position = r'(^|[|;&])\s*rm\s+'
+    if not re.search(rm_at_command_position, normalized):
+        return False
+
+    # Pattern 1: Block rm -rf variants (recursive + force combined)
+    # Flags must be immediately after rm, not embedded in filenames
+    dangerous_flag_patterns = [
+        r'(^|[|;&])\s*rm\s+-[a-z]*r[a-z]*f',  # rm -rf, rm -fr (flag right after rm)
+        r'(^|[|;&])\s*rm\s+-[a-z]*f[a-z]*r',  # rm -fr variations (flag right after rm)
+        r'(^|[|;&])\s*rm\s+--recursive\s+--force',  # rm --recursive --force
+        r'(^|[|;&])\s*rm\s+--force\s+--recursive',  # rm --force --recursive
+        r'(^|[|;&])\s*rm\s+-r\s+-f',  # rm -r -f (separate flags)
+        r'(^|[|;&])\s*rm\s+-f\s+-r',  # rm -f -r (separate flags)
     ]
 
-    # Match rm with -r flag (flag must be right after rm, not a hyphen in filename)
-    if re.search(r'\brm\s+-[a-z]*r', normalized):  # If rm has recursive flag
-        # Extract paths from command (after the flags)
-        path_match = re.search(r'\brm\s+(?:-[a-z]+\s+)*(.+)', normalized)
-        if path_match:
-            paths_str = path_match.group(1)
-            for path in dangerous_paths:
-                if re.search(path, paths_str):
-                    return True
-    
+    for pattern in dangerous_flag_patterns:
+        if re.search(pattern, normalized):
+            return True
+
+    # Pattern 2: Block rm -r on dangerous root/wildcard paths only
+    # Simple 'rm /path/to/file' is allowed
+    if re.search(r'(^|[|;&])\s*rm\s+-[a-z]*r', normalized):  # Has recursive flag
+        dangerous_targets = [
+            r'\s/$',           # Ends with just /
+            r'\s/\s',          # Just / as argument
+            r'\s/\*',          # Root with wildcard /*
+            r'\s\.\.\s',       # Just .. as argument
+            r'\s\.\.$',        # Ends with ..
+            r'\s\*\s',         # Just * as argument
+            r'\s\*$',          # Ends with just *
+            r'\s\.\s',         # Just . as argument
+            r'\s\.$',          # Ends with just .
+            r'\s~/',           # Home directory
+            r'\s~/\*',         # Home with wildcard
+        ]
+        for pattern in dangerous_targets:
+            if re.search(pattern, normalized):
+                return True
+
     return False
 
 def is_env_file_access(tool_name, tool_input):

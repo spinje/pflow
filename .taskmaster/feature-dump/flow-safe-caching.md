@@ -39,7 +39,7 @@ This approach works because:
 2. **Every flow is confirmed by the user pre-run** — no hidden effects or implicit execution
 3. **Framework integration** — leverages pocketflow's existing safety patterns
 
-> **Implementation**: See [Node Reference](../reference/node-reference.md) for how to implement `@flow_safe` nodes
+> **Implementation**: See [Node Reference](../reference/enhanced-interface-format.md) for how to implement `@flow_safe` nodes
 
 ## Caching Strategy
 
@@ -96,7 +96,7 @@ MVP uses local filesystem: `~/.pflow/cache/<hash>.json`
 }
 ```
 
-> **Complete Details**: See [Execution Reference](../reference/execution-reference.md#retry-mechanisms) for full retry behavior
+> **Complete Details**: See [Execution Reference](../historical/execution-reference-original.md#retry-mechanisms) for full retry behavior
 
 ## Integration Notes
 
@@ -113,10 +113,10 @@ When retry logic becomes default or flows are shared across users, a comprehensi
 
 Until then: **`@flow_safe` is the contract. Everything else is opaque by design.**
 
-> **Execution Details**: See [Execution Reference](../reference/execution-reference.md) for flow immutability, testing framework, and future resilience features
+> **Execution Details**: See [Execution Reference](../historical/execution-reference-original.md) for flow immutability, testing framework, and future resilience features
 
 ## See Also
 
-- [Execution Reference](../reference/execution-reference.md) - Complete execution model
+- [Execution Reference](../historical/execution-reference-original.md) - Complete execution model
 - [Shared Store](../core-concepts/shared-store.md) - Node communication pattern
 - [IR Schema](../reference/ir-schema.md) - Runtime configuration in Flow IR

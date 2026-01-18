@@ -1,6 +1,6 @@
 # LLM Node Package Specification
 
-> **Prerequisites**: Before implementing or using this node, read the [Node Implementation Reference](../reference/node-reference.md) for common patterns and best practices.
+> **Prerequisites**: Before implementing or using this node, read the [Enhanced Interface Format](../reference/enhanced-interface-format.md) for common patterns and best practices.
 
 > **Note**: This package contains a single general-purpose `llm` node as a smart exception to the simple nodes pattern.
 
@@ -19,28 +19,36 @@ This single, flexible node handles all text generation and processing tasks thro
 The `LLM` node provides:
 
 * **General-purpose text processing** - handles any prompt-based task
-* **Consistent interface** - always reads `prompt`, writes `response`
-* **Future Simon Willison integration** - will wrap the `llm` CLI for model management
+* **Consistent interface** - prompt via params, writes `response` and `llm_usage`
+* **Simon Willison's llm library** - wraps the `llm` library for model management
 * **Smart exception design** - prevents proliferation of similar prompt nodes
-* **Simple MVP implementation** - just `--prompt` parameter, templates come later
+* **Auto-detection** - model is auto-detected via `llm` library when not specified
 
 ---
 
 ## 🔧 Interface
 
-| Interface  | Type  | Key in Shared Store | Description                          |
-| ---------- | ----- | ------------------- | ------------------------------------ |
-| **Input**  | `str` | `prompt`            | The prompt text to send to the model |
-| **Output** | `str` | `response`          | The model-generated output text      |
+| Interface  | Type  | Key | Description                          |
+| ---------- | ----- | --- | ------------------------------------ |
+| **Params** | `str` | `prompt` | Text prompt to send to model |
+| **Params** | `str` | `model` | Model identifier (optional, auto-detected via `llm` library) |
+| **Params** | `float` | `temperature` | Sampling temperature (default: 0.7) |
+| **Params** | `list[str]` | `images` | Image paths for multimodal (optional) |
+| **Writes** | `any` | `shared["response"]` | Model response (auto-parsed JSON or string) |
+| **Writes** | `dict` | `shared["llm_usage"]` | Token usage metrics |
 
 
 ### Natural Usage Pattern
 ```python
-# In shared store before LLM node
-shared["prompt"] = "Analyze this code for potential issues"
+# Node params configure the request
+node.set_params({
+    "prompt": "Analyze this code for potential issues",
+    "temperature": 0.5
+})
 
 # After LLM node execution
 shared["response"] = "The code has the following potential issues..."
+shared["llm_usage"] = {"input_tokens": 15, "output_tokens": 42, "model": "gpt-4o-mini"}
 ```
 
 ---
@@ -49,10 +57,11 @@ shared["response"] = "The code has the following potential issues..."
 
 | Param         | Type    | Default    | Description                                                    |
 | ------------- | ------- | ---------- | -------------------------------------------------------------- |
-| `model`       | `str`   | `"claude-sonnet-4-20250514"`  | Model name to use                                             |
+| `model`       | `str`   | `"auto"`   | Auto-detected via `llm` library (uses default model)          |
 | `temperature` | `float` | `0.7`      | Sampling temperature for creativity control                    |
 | `system`      | `str?`  | `None`     | Optional system prompt for behavior guidance                   |
 | `max_tokens`  | `int?`  | `None`     | Optional output limit (model-dependent)                       |
+| `images`      | `list[str]?` | `None` | Optional image paths for multimodal models                    |
 
 
 ---
@@ -99,7 +108,7 @@ The LLM node follows standard node patterns with:
 - LLM API call in `exec()` phase
 - Response storage in `post()` phase
 
-For complete implementation details, see [Node Reference](../reference/node-reference.md#common-node-templates).
+For complete implementation details, see [Enhanced Interface Format](../reference/enhanced-interface-format.md).
 
 ---
 
@@ -123,7 +132,7 @@ echo "AI Safety" | pflow llm --prompt="Write an introduction paragraph about thi
 pflow llm --prompt="Write a haiku about coding" --temperature=0.9
 
 # Technical analysis (conservative)
-pflow llm --prompt="Review this code for bugs" --temperature=0.1 --model=claude-sonnet-4-20250514
+pflow llm --prompt="Review this code for bugs" --temperature=0.1 --model=gpt-4o
 
 # With system prompt
 pflow llm --prompt="Explain quantum computing" --system="You are a physics professor"
@@ -140,23 +149,33 @@ pflow read-file research.md => \
 
 ---
 
-## 🔮 Future Integration: Simon Willison's LLM CLI
+## 🔮 Current Implementation: Simon Willison's LLM Library
 
-The LLM node is designed for future integration with [Simon Willison's `llm` CLI](https://github.com/simonw/llm):
+The LLM node is built on [Simon Willison's `llm` library](https://github.com/simonw/llm):
 
-### Planned Features (Post-MVP)
-- **Model Management**: Use `llm`'s model aliases and plugin system
-- **Multi-Provider Support**: OpenAI, Anthropic, local models, etc.
-- **Template System**: Advanced prompt templating capabilities
-- **Plugin Ecosystem**: Access to LLM plugins and extensions
+### Implemented Features
+- **Model Auto-Detection**: Uses `llm`'s default model when none specified
+- **Multi-Provider Support**: OpenAI, Anthropic, local models, and more via plugins
+- **Plugin Ecosystem**: Access to LLM plugins for additional models
+- **Token Tracking**: Usage metrics captured in `shared["llm_usage"]`
 
-### Current MVP vs Future
+### Usage Examples
 ```bash
-# MVP (simple)
+# Simple (uses auto-detected default model)
 pflow llm --prompt="Summarize this text"
 
-# Future (with llm CLI integration)
-pflow llm --model=claude-sonnet-4-20250514 --template=summary --input=text
+# With explicit model
+pflow llm --model=gpt-4o --prompt="Analyze this code"
+```
+
+### llm_usage Output
+The node writes token usage metrics to `shared["llm_usage"]`:
+```python
+{
+    "input_tokens": 150,    # Tokens in prompt
+    "output_tokens": 42,    # Tokens in response
+    "model": "gpt-4o-mini"  # Model used for generation
+}
 ```
 
 ---
@@ -167,8 +186,8 @@ pflow llm --model=claude-sonnet-4-20250514 --template=summary --input=text
 |-----------------|-----------|
 | **General-purpose approach** | Prevents node proliferation while maintaining flexibility |
 | **Simple prompt interface** | Keeps MVP focused, templates can come later |
-| **Shared store + params pattern** | Enables both dynamic and static configuration |
-| **Future llm CLI integration** | Leverages existing ecosystem instead of rebuilding |
+| **Params-only pattern** | All inputs via params, outputs to shared store |
+| **llm library integration** | Leverages existing ecosystem instead of rebuilding |
 | **Conservative defaults** | Temperature 0.7 balances creativity and consistency |
 
 ---
@@ -205,16 +224,18 @@ pflow web-fetch --url=example.com/article => \
 def test_llm_node():
     node = LLMNode()
     node.set_params({
-        "model": "claude-sonnet-4-20250514",
+        "prompt": "Explain machine learning in one sentence",
         "temperature": 0.5
     })
 
-    shared = {"prompt": "Explain machine learning in one sentence"}
+    shared = {}
     node.run(shared)
 
     assert "response" in shared
     assert len(shared["response"]) > 0
     assert "machine learning" in shared["response"].lower()
+    assert "llm_usage" in shared
+    assert "input_tokens" in shared["llm_usage"]
 ```
 
 ---
@@ -230,8 +251,8 @@ def test_llm_node():
 
 ### Maintaining Simplicity
 Even with future extensions, the core interface remains simple:
-- Input: `shared["prompt"]`
-- Output: `shared["response"]`
+- Input: `prompt` param
+- Output: `shared["response"]` and `shared["llm_usage"]`
 - Configuration: via params
 
 Additional features will be opt-in through parameters, keeping the basic usage straightforward.

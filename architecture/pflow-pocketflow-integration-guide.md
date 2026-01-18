@@ -8,8 +8,8 @@
 **Related Documents:**
 - **Framework**: pocketflow Source (`pocketflow/__init__.py`) | pocketflow Docs (`pocketflow/CLAUDE.md`)
 - **Architecture**: [Architecture](./architecture.md) | [Shared Store](./core-concepts/shared-store.md)
-- **Concepts**: [Planner](./features/planner.md) | [Execution Reference](./reference/execution-reference.md)
-- **Implementation**: [Runtime Components](./runtime-components.md) | [Runtime CLAUDE.md](../src/pflow/runtime/CLAUDE.md)
+- **Concepts**: [Planner](./historical/planner-specification.md) | [Execution Reference](./historical/execution-reference-original.md)
+- **Implementation**: [Runtime CLAUDE.md](../src/pflow/runtime/CLAUDE.md)
 
 ## Overview
 
@@ -261,7 +261,18 @@ def scan_for_nodes(directory):
 
 4. **~~SharedStore class~~** → `NamespacedSharedStore` was added for collision prevention (applied by compiler)
 5. **~~Simple template engine~~** → Template resolution grew to 600+ lines with path traversal, type preservation, auto JSON parsing
-6. **~~No wrapper classes~~** → Wrapper chain was added: Template → Namespace → Batch → Instrumented (applied by compiler)
+6. **~~No wrapper classes~~** → Wrapper chain was added (applied by compiler):
+   ```
+   InstrumentedWrapper (metrics, cache, trace)
+       ↓
+   BatchWrapper (if configured - iteration over arrays)
+       ↓
+   NamespacedWrapper (collision prevention)
+       ↓
+   TemplateAwareWrapper (${var} resolution)
+       ↓
+   ActualNode
+   ```
 7. **~~Simple registry~~** → Registry now includes metadata extraction, LLM-powered discovery
 8. **~~No metrics~~** → `MetricsCollector` tracks timing, tokens, costs
 

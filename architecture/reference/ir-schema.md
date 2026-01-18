@@ -35,8 +35,9 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 **Field Requirements:**
 
 - `$schema` dereferences a JSON-Schema; hard error if not recognised
+  > Note: The `$schema` URL is aspirational; the actual schema is defined in `src/pflow/core/ir_schema.py`.
 - `ir_version` uses semantic versioning; unknown higher major → refuse to run
-- `metadata.locked_nodes` mirrors version lockfile for deterministic execution (see [Registry Versioning](../future-version/registry-versioning.md))
+- `metadata.locked_nodes` mirrors version lockfile for deterministic execution (see `.taskmaster/feature-dump/registry-versioning.md` for design notes)
 - `metadata.planner_version` tracks planner that generated IR for provenance
 
 > **Example**: See [examples/core/minimal.json](../../examples/core/minimal.json) for the simplest valid Flow IR - a single node with no edges or metadata.
@@ -94,14 +95,12 @@ The optional `outputs` field declares what the workflow produces:
     "summary": {
       "type": "str",
       "description": "Generated summary of the video content",
-      "source_node": "create-summary",
-      "source_key": "response"
+      "source": "${create-summary.response}"
     },
     "metadata": {
       "type": "dict",
       "description": "Video metadata including title and duration",
-      "source_node": "fetch-metadata",
-      "source_key": "video_info"
+      "source": "${fetch-metadata.video_info}"
     }
   },
   "nodes": [...],
@@ -115,8 +114,9 @@ The optional `outputs` field declares what the workflow produces:
 |---|---|---|
 | `type` | string | Data type of the output |
 | `description` | string | Human-readable description |
-| `source_node` | string | ID of the node that produces this output |
-| `source_key` | string | Shared store key from the source node |
+| `source` | string | Template reference to the node output using `${node-id.key}` syntax |
+
+> **Template Syntax**: For complete template variable syntax and resolution rules, see [Template Variables Reference](./template-variables.md).
 
 ### Complete Example with Inputs and Outputs
 
@@ -145,14 +145,12 @@ The optional `outputs` field declares what the workflow produces:
     "summary": {
       "type": "str",
       "description": "Video summary in requested style",
-      "source_node": "summarize",
-      "source_key": "response"
+      "source": "${summarize.response}"
     },
     "word_count": {
       "type": "int",
       "description": "Word count of original transcript",
-      "source_node": "analyze",
-      "source_key": "stats.word_count"
+      "source": "${analyze.stats.word_count}"
     }
   },
   "nodes": [
@@ -398,9 +396,9 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 |---|---|---|
 | `id` | Unique token, `[A-Za-z0-9_-]{1,64}` | Flow-scoped identifier |
 | `registry_id` | Namespace/name format | References node in registry for metadata resolution |
-| `version` | Semantic version string | Resolved during [planner validation](../features/planner.md) |
+| `version` | Semantic version string | Resolved during [planner validation](../historical/planner-specification.md) |
 | `params` | Arbitrary JSON for node behavior | **Never** contains shared store keys or execution directives |
-| `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See [Flow-Safe Caching](../future-version/flow-safe-caching.md) |
+| `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See `.taskmaster/feature-dump/flow-safe-caching.md` for design notes |
 | `execution.use_cache` | Boolean, only for `@flow_safe` nodes | Cache eligibility enforced at runtime |
 | `execution.wait` | Float ≥ 0, retry delay in seconds | Used by pocketflow framework (`pocketflow/__init__.py`) |
 
@@ -483,7 +481,7 @@ Each result in the `results` array contains:
 
 **Template Resolution:**
 
-The item alias (default: `item`) is injected into the shared store for each iteration:
+The item alias (default: `item`) is injected into the shared store for each iteration, allowing templates like `${user.name}` to access properties of the current batch item.
 
 ```json
 {
@@ -491,6 +489,8 @@ The item alias (default: `item`) is injected into the shared store for each iter
   "params": {"prompt": "Greet ${user.name} from ${user.city}"}
 }
 ```
+
+> **Template Syntax**: For complete template variable syntax, type preservation, and resolution rules, see [Template Variables Reference](./template-variables.md).
 
 > **Implementation**: See `src/pflow/runtime/batch_node.py` for the `PflowBatchNode` wrapper that implements batch processing.
 
@@ -525,7 +525,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 - Clear data flow from input to output
 - Interface compatibility between connected nodes
 
-> **Flow Structure**: See [planner specification](../features/planner.md) for simple node sequencing
+> **Flow Structure**: See [planner specification](../historical/planner-specification.md) for simple node sequencing
 
 **Examples from the Repository:**
 - Sequential flow: [examples/core/simple-pipeline.json](../../examples/core/simple-pipeline.json) - Basic 3-node pipeline
@@ -566,16 +566,16 @@ The item alias (default: `item`) is injected into the shared store for each iter
 
 ## Side-Effect Model
 
-Node purity status determined by `@flow_safe` decorator (see [Flow-Safe Caching](../future-version/flow-safe-caching.md)). IR validation enforces purity constraints:
+Node purity status determined by `@flow_safe` decorator (see `.taskmaster/feature-dump/flow-safe-caching.md` for design notes). IR validation enforces purity constraints:
 
 - Only `@flow_safe` nodes may specify `max_retries > 0`
 - Only `@flow_safe` nodes may specify `use_cache: true`
 - Purity status read from node manifest; IR does not repeat it
-- Validation occurs during [planner pipeline](../features/planner.md)
+- Validation occurs during [planner pipeline](../historical/planner-specification.md)
 
 ---
 
-> **Execution Behavior**: See [Execution Reference](../reference/execution-reference.md) for failure semantics, retry configuration, and caching contracts
+> **Execution Behavior**: See [Execution Reference](../historical/execution-reference-original.md) for failure semantics, retry configuration, and caching contracts
 
 ---
 
@@ -596,7 +596,7 @@ Node purity status determined by `@flow_safe` decorator (see [Flow-Safe Caching]
 - **Edge validity**: Source and target nodes must exist
 - **Mapping validity**: Mapped keys must match node interfaces
 
-> **Validation Details**: See [Execution Reference](../reference/execution-reference.md#validation-pipeline) for complete validation pipeline
+> **Validation Details**: See [Execution Reference](../historical/execution-reference-original.md#validation-pipeline) for complete validation pipeline
 
 ---
 
@@ -644,7 +644,7 @@ Node purity status determined by `@flow_safe` decorator (see [Flow-Safe Caching]
 - Optional fields with sensible defaults
 - Clear validation rules for new features
 
-> **Implementation Details**: See [CLI Reference](./cli-reference.md) for registry commands and [Architecture](../architecture.md#node-naming) for naming conventions
+> **Implementation Details**: See `pflow registry --help` for registry commands and [Architecture](../architecture.md#node-naming) for naming conventions
 
 ---
 
@@ -708,7 +708,7 @@ The pflow project includes a comprehensive set of examples demonstrating various
 Basic patterns every user should understand:
 - **[minimal.json](../../examples/core/minimal.json)** - Simplest valid IR with a single node
 - **[simple-pipeline.json](../../examples/core/simple-pipeline.json)** - Basic 3-node sequential pipeline
-- **[template-variables.json](../../examples/core/template-variables.json)** - Using `${variable}` syntax for dynamic values
+- **[template-variables.json](../../examples/core/template-variables.json)** - Using `${variable}` syntax for dynamic values (see [Template Variables Reference](./template-variables.md) for complete syntax)
 - **[error-handling.json](../../examples/core/error-handling.json)** - Action-based routing for error recovery
 - **[proxy-mappings.json](../../examples/core/proxy-mappings.json)** - Interface adaptation with mappings
 
@@ -732,7 +732,8 @@ This document defines the JSON schemas for Flow IR and Node Metadata, providing 
 
 ## See Also
 
+- [Template Variables Reference](./template-variables.md) - Complete template syntax and resolution rules
 - [Shared Store](../core-concepts/shared-store.md) - Natural interface patterns
 - [Architecture](../architecture.md#node-naming) - Node naming conventions
 - [Execution Reference](./execution-reference.md) - Execution configuration
-- [Flow-Safe Caching](../future-version/flow-safe-caching.md) - Future caching and retry features
+- `.taskmaster/feature-dump/flow-safe-caching.md` - Future caching and retry features (design notes)

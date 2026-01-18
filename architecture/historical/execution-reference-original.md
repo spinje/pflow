@@ -1,3 +1,17 @@
+> **HISTORICAL DOCUMENT**: This describes v2.0 vision, not current implementation.
+>
+> **Fictional features documented here that DO NOT EXIST:**
+> - `@flow_safe` decorator (not implemented)
+> - `ExecutionContext` class (not implemented)
+> - 7-step execution pipeline (actual: 3-phase model)
+> - Error namespacing system (`cli:`, `planner:`, etc. - not implemented)
+> - `pflow.testing` module (not implemented)
+> - Automatic retry mechanisms (only in batch node)
+>
+> **For current execution model, see:** `src/pflow/execution/CLAUDE.md`
+
+---
+
 # Execution Reference
 
 > **Navigation**: [Index](../index.md) → Execution Reference
