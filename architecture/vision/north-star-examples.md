@@ -1,3 +1,12 @@
+---
+**Document Type**: Vision/Strategy (NOT current implementation)
+
+**For Current Architecture**: See `architecture/architecture.md`
+
+**Caveat**: The `>>` CLI syntax shown below was never implemented. pflow uses JSON workflow files with `pflow workflow.json` or `pflow saved-name`. The planner is now labeled "legacy" - AI agents should use CLI primitives directly.
+
+---
+
 # North Star Examples for pflow Natural Language Planning
 
 ## Primary Example: Generate Changelog 🌟

@@ -1,6 +1,8 @@
-# 🧠 **Epistemic Manifesto**
+---
+description: Read the Epistemic Manifesto for Deep Understanding and Robust Development
+---
 
-> **Version 2.0 – Principles for Deep Understanding and Robust Development**
+Read these Principles for Deep Understanding and Robust Development then think deeply how you can apply them to the current task. When you are done, and have understood every aspect of these principles, let the user know that you are ready for the next step.
 
 ---
 

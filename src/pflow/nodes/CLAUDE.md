@@ -2,6 +2,8 @@
 
 This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the PocketFlow retry pattern.
 
+> **Note:** Template resolution, namespacing, and instrumentation wrappers are applied automatically by the compiler at runtime. Node implementations should focus only on business logic - never implement these concerns yourself. See `src/pflow/runtime/CLAUDE.md` for details.
+
 ## 🚨 Critical Pattern: PocketFlow Node Error Handling
 
 **This is non-negotiable** - violating this pattern disables automatic retries, severely impacting reliability.
@@ -102,10 +104,20 @@ def test_node_retries_on_failure():
 
 - **file/** - File operations (read, write, copy, move, delete)
 - **llm/** - Language model interactions
-- **data/** - Data processing and transformation
-- **network/** - HTTP requests and API calls
-- **system/** - System operations
+- **shell/** - Shell command execution
+- **http/** - HTTP requests
+- **claude/** - Claude Code CLI integration
+- **mcp/** - MCP tool bridge
 - **test/** - Test utilities (echo node for workflow testing)
+
+## Deprecated Node Categories
+
+> ⚠️ **DEPRECATED**: The following node categories are deprecated and will be removed in a future version. Use `shell` node with CLI tools instead.
+
+- **git/** - ⚠️ DEPRECATED: Use `shell` node with `git` CLI instead
+  - Example: `shell --command="git status --porcelain"`
+- **github/** - ⚠️ DEPRECATED: Use `shell` node with `gh` CLI or MCP tools instead
+  - Example: `shell --command="gh issue view 123 --json title,body"`
 
 ## Registry Inclusion Rules
 

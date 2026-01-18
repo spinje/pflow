@@ -74,7 +74,7 @@ The goal is to enable local execution of intelligent workflows with the **minima
 
 ### Core Architecture
 
-pflow is built on the **PocketFlow** framework (~150-line Python library in `pocketflow/__init__.py`).
+pflow is built on the **PocketFlow** framework (~200-line Python library in `pocketflow/__init__.py`).
 
 > If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
 
@@ -363,72 +363,75 @@ Is this what you're expecting?
 
 MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
-**Implemented Capabilities:**
+### Implemented Capabilities
 
 **CLI & Execution:**
-Run workflows by name or file, shell pipe integration, named workflow save/load, batch processing, registry CLI (list/search/describe), workflow input/output declarations
+✅ Run workflows by name or file, shell pipe integration, named workflow save/load, batch processing, registry CLI (list/search/describe), workflow input/output declarations
 → Tasks 8, 10, 21, 22, 24, 96
 
 **Nodes:**
-shell, http, llm (via llm library), file (read/write/copy/move/delete), git, github, mcp, claude-code
+✅ shell, http, llm (via llm library), file (read/write/copy/move/delete), git, github, mcp, claude-code
 → Tasks 11, 12, 26, 41, 42, 54, 95
 
 **Templates & Data Flow:**
-${var} syntax, schema-aware type checking, auto JSON parsing, shared store with namespacing
+✅ ${var} syntax, schema-aware type checking, auto JSON parsing, shared store with namespacing
 → Tasks 9, 18, 84, 85, 103, 105
 
 **Workflow Validation:**
-Unified validation pipeline, pre-execution risk assessment for shell commands
+✅ Unified validation pipeline, pre-execution risk assessment for shell commands
 → Tasks 40, 63
 
 **MCP Integration:**
-MCP server support, http transport, pflow-as-MCP-server for agents
+✅ MCP server support, http transport, pflow-as-MCP-server for agents
 → Tasks 43, 47, 67, 72
 
 **Planner (legacy):**
-Natural language → workflow, runtime validation feedback, debugging/tracing
+✅ Natural language → workflow, runtime validation feedback, debugging/tracing
 → Tasks 17, 27, 52, 56
 
 **Settings & Security:**
-Node filtering, API key management, binary data support, security audit complete
+✅ Node filtering, API key management, binary data support, security audit complete
 → Tasks 50, 63, 80, 82, 83
 
 **Observability:**
-Metrics/tracing system, rerun command display, interactive/non-interactive output, user-friendly error messages
+✅ Metrics/tracing system, rerun command display, interactive/non-interactive output, user-friendly error messages
 → Tasks 32, 37, 53, 55
 
 **Agent Support:**
-CLI commands for agents, registry execute for node testing, LLM-powered discovery
+✅ CLI commands for agents, registry execute for node testing, LLM-powered discovery
 → Tasks 71, 76, 89
 
 **Recently Completed:**
-- Task 105: Auto-Parse JSON Strings During Nested Template Access
-- Task 103: Preserve Inline Object Type in Template Resolution
-- Task 102: Remove Parameter Fallback Pattern
-- Task 96: Support Batch Processing in Workflows
-- Task 95: Unify LLM Usage via Simon Willison's llm Library
+- ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
+- ✅ Task 103: Preserve Inline Object Type in Template Resolution
+- ✅ Task 102: Remove Parameter Fallback Pattern
+- ✅ Task 96: Support Batch Processing in Workflows
+- ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 
-**Planned:**
 
-**v0.8.0 - PyPI & Authoring:**
+### Planned Features (in order of priority)
+
+**v0.8.0 - PyPI release:**
 - Task 49: Publish to PyPI
+
+**v0.9.0 - Agent Authoring Experience:**
 - Task 104: Python Code Node
 - Task 107: Markdown Workflow Format
 - Task 108: Smart Trace Debug Output
 
-**v0.9.0 - Workflow Expressiveness:**
-- Task 38: Conditional Branching
+**v0.10.0 - Workflow Expressiveness:**
+- Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
 
-**v0.10.0 - Extended Features:**
+**v0.11.0 - Extended Features:**
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
 - Task 99: Expose Nodes as MCP Tools
 - Task 111: Batch Limit for Iteration
 
-**v0.11.0 - Performance:**
-- Task 39: Parallel Execution
+**v0.12.0 - Performance:**
+- Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
 - Task 106: Workflow Iteration Cache
@@ -463,6 +466,10 @@ CLI commands for agents, registry execute for node testing, LLM-powered discover
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
 
+> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
+
+### Project status tools
+
 > **Task commands:**
 > ```bash
 > ./scripts/tasks              # View summary
@@ -472,8 +479,6 @@ CLI commands for agents, registry execute for node testing, LLM-powered discover
 >
 > **Task files:** `.taskmaster/tasks/task_N/`
 > **Version history:** `.taskmaster/versions.md`
-
-> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 
 ## User Decisions and Recommendations
 
@@ -557,7 +562,7 @@ More importantly focus on architectural quality and code quality:
 
 ### Project-specific Memories
 
-- **CLI Development Principle**: never commit code unless explicitly instructed by the user
+- **CLI Development Principle**: NEVER either `git add`, `git commit` or `git push` code unless explicitly instructed by the user
 - **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
 
 ## Running pflow (for debugging, testing and development)

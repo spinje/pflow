@@ -578,8 +578,6 @@ This approach maintains pflow's philosophy of simplicity while adding the struct
 
 ## See Also
 
-- [Advanced Metadata Extraction](./advanced-metadata-extraction.md) - Current docstring-based approach
-- [LLM Node Generation](./llm-node-gen.md) - AI-assisted node development
-- [JSON Schema](../core-concepts/schemas.md) - Schema definitions and validation
-- [Registry System](../core-concepts/registry.md) - Node discovery and management
-- [Simple Nodes](../features/simple-nodes.md) - Node design principles
+- [Advanced Metadata Extraction](./advanced-metadata-extraction.md) - Current approach
+- [Architecture](../architecture.md#node-naming) - Node naming conventions
+- [IR Schema](../reference/ir-schema.md) - Schema definitions

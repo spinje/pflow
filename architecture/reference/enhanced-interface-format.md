@@ -19,9 +19,8 @@ The Enhanced Interface Format extends the original simple format with:
 Node description here.
 
 Interface:
-- Reads: shared["key"]: type  # Description
+- Params: param_name: type  # Description
 - Writes: shared["key"]: type  # Description
-- Params: param: type  # Description
 - Actions: action_name (description)
 """
 ```
@@ -72,14 +71,11 @@ Union types allow you to specify that a value can be one of multiple types using
 
 #### Type Syntax
 ```python
-# Input with type
-- Reads: shared["file_path"]: str
+# Parameter with type
+- Params: file_path: str
 
 # Output with type
 - Writes: shared["result"]: dict
-
-# Parameter with type
-- Params: timeout: int
 ```
 
 ### Semantic Descriptions
@@ -88,10 +84,10 @@ Descriptions are added using `#` comments after the type:
 
 ```python
 # Basic description
-- Reads: shared["file_path"]: str  # Path to the file to read
+- Params: file_path: str  # Path to the file to read
 
 # Description with details
-- Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+- Params: encoding: str  # File encoding (optional, default: utf-8)
 
 # Complex description with punctuation
 - Writes: shared["data"]: str  # Data: formatted as "key: value" pairs
@@ -106,13 +102,13 @@ Each input, output, or parameter can be on its own line for clarity:
 
 ```python
 Interface:
-- Reads: shared["config"]: dict  # Configuration object
-- Reads: shared["data"]: list  # Data array to process
-- Reads: shared["mode"]: str  # Processing mode
+- Params: config: dict  # Configuration object
+- Params: data: list  # Data array to process
+- Params: mode: str  # Processing mode
+- Params: validate: bool  # Validate input data (default: true)
 - Writes: shared["results"]: list  # Processed results
 - Writes: shared["stats"]: dict  # Processing statistics
 - Writes: shared["error"]: str  # Error message if failed
-- Params: validate: bool  # Validate input data (default: true)
 - Actions: default (success), error (failure)
 ```
 
@@ -122,7 +118,7 @@ Multiple items can still be comma-separated on one line:
 
 ```python
 Interface:
-- Reads: shared["x"]: int, shared["y"]: int  # Coordinates
+- Params: x: int, y: int  # Coordinates
 - Writes: shared["sum"]: int, shared["product"]: int  # Results
 ```
 
@@ -147,7 +143,7 @@ In this example:
 
 ## Structure Documentation
 
-For complex types like `dict` and `list`, structure can be documented using indentation:
+For complex output types like `dict` and `list`, structure can be documented using indentation:
 
 ```python
 Interface:
@@ -220,8 +216,9 @@ class GitHubIssueNode(Node):
     Fetch GitHub issue data with full metadata.
 
     Interface:
-    - Reads: shared["issue_number"]: int  # Issue number to fetch
-    - Reads: shared["repo"]: str  # Repository name (owner/repo format)
+    - Params: issue_number: int  # Issue number to fetch
+    - Params: repo: str  # Repository name (owner/repo format)
+    - Params: include_comments: bool  # Include issue comments (default: false)
     - Writes: shared["issue_data"]: dict  # Complete issue information
         - number: int  # Issue number
         - title: str  # Issue title
@@ -240,7 +237,6 @@ class GitHubIssueNode(Node):
           - title: str  # Milestone title
           - due_on: str  # Due date (ISO format)
     - Writes: shared["error"]: str  # Error message if request failed
-    - Params: include_comments: bool  # Include issue comments (default: false)
     - Actions: default (success), error (API error)
     """
 ```
@@ -249,7 +245,7 @@ This documentation will be parsed and displayed in the planning context as both 
 
 ## Migration from Simple Format
 
-### Old Format
+### Old Format (deprecated)
 ```python
 Interface:
 - Reads: shared["input1"], shared["input2"]
@@ -258,16 +254,18 @@ Interface:
 - Actions: default, error
 ```
 
-### Enhanced Format
+### Current Format (params-only for inputs)
 ```python
 Interface:
-- Reads: shared["input1"]: str  # First input value
-- Reads: shared["input2"]: int  # Second input value
+- Params: input1: str  # First input value
+- Params: input2: int  # Second input value
+- Params: extra_param: bool  # Additional parameter
 - Writes: shared["output"]: dict  # Processing result
 - Writes: shared["error"]: str  # Error message if failed
-- Params: extra_param: bool  # Additional parameter (not in Reads)
 - Actions: default (success), error (failure)
 ```
+
+**Key change**: Nodes no longer read from the shared store for inputs. All inputs come through params. The template system wires shared store data into params before execution.
 
 ## Best Practices
 
@@ -275,26 +273,26 @@ Interface:
 Even for simple string values, explicitly add `: str` for clarity:
 ```python
 # Good
-- Reads: shared["name"]: str  # User's name
+- Params: name: str  # User's name
 
 # Avoid
-- Reads: shared["name"]  # Will default to 'any' type
+- Params: name  # Will default to 'any' type
 ```
 
 ### 2. Write Clear Descriptions
 Focus on semantics, not just the type:
 ```python
 # Good
-- Reads: shared["timeout"]: int  # Request timeout in seconds
+- Params: timeout: int  # Request timeout in seconds
 
 # Too vague
-- Reads: shared["timeout"]: int  # Timeout value
+- Params: timeout: int  # Timeout value
 ```
 
 ### 3. Document Valid Values
 When applicable, mention valid values or ranges:
 ```python
-- Reads: shared["priority"]: int  # Task priority (1-5, higher is more urgent)
+- Params: priority: int  # Task priority (1-5, higher is more urgent)
 - Writes: shared["status"]: str  # Status code ('pending', 'running', 'complete', 'failed')
 ```
 
@@ -303,29 +301,25 @@ When you have more than 2-3 items, use multi-line format:
 ```python
 # Good - Easy to read
 Interface:
-- Reads: shared["source"]: str  # Source file path
-- Reads: shared["target"]: str  # Target file path
-- Reads: shared["overwrite"]: bool  # Overwrite if exists
+- Params: source: str  # Source file path
+- Params: target: str  # Target file path
+- Params: overwrite: bool  # Overwrite if exists
 - Writes: shared["copied"]: bool  # True if successful
 - Writes: shared["error"]: str  # Error message if failed
 
 # Harder to read
 Interface:
-- Reads: shared["source"]: str  # Source file path, shared["target"]: str  # Target file path, shared["overwrite"]: bool  # Overwrite if exists
+- Params: source: str, target: str, overwrite: bool  # File operation params
 ```
 
-### 5. Apply Exclusive Params Pattern
-Only list parameters that aren't already inputs:
+### 5. Separate Params from Outputs
+Params are inputs, Writes are outputs. Keep them clearly separated:
 ```python
-# Good - Only exclusive params
+# Good - Clear separation
 Interface:
-- Reads: shared["data"]: str  # Data to process
+- Params: data: str  # Data to process
 - Params: format: str  # Output format ('json' or 'xml')
-
-# Redundant - Avoid
-Interface:
-- Reads: shared["data"]: str  # Data to process
-- Params: data: str, format: str  # data is redundant!
+- Writes: shared["result"]: dict  # Processing result
 ```
 
 ## Common Patterns
@@ -333,8 +327,8 @@ Interface:
 ### File Operations
 ```python
 Interface:
-- Reads: shared["file_path"]: str  # Path to the file
-- Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
+- Params: file_path: str  # Path to the file
+- Params: encoding: str  # File encoding (optional, default: utf-8)
 - Writes: shared["content"]: str  # File contents
 - Writes: shared["error"]: str  # Error message if operation failed
 - Actions: default (success), error (failure)
@@ -343,24 +337,24 @@ Interface:
 ### API Calls
 ```python
 Interface:
-- Reads: shared["endpoint"]: str  # API endpoint URL
-- Reads: shared["method"]: str  # HTTP method (GET, POST, etc.)
-- Reads: shared["data"]: dict  # Request payload (optional)
+- Params: endpoint: str  # API endpoint URL
+- Params: method: str  # HTTP method (GET, POST, etc.)
+- Params: data: dict  # Request payload (optional)
+- Params: timeout: int  # Request timeout in seconds (default: 30)
 - Writes: shared["response"]: dict  # API response data
 - Writes: shared["status_code"]: int  # HTTP status code
 - Writes: shared["error"]: str  # Error message if request failed
-- Params: timeout: int  # Request timeout in seconds (default: 30)
 - Actions: default (success), error (failure)
 ```
 
 ### Data Processing
 ```python
 Interface:
-- Reads: shared["input_data"]: list  # Data to process
-- Reads: shared["config"]: dict  # Processing configuration
+- Params: input_data: list  # Data to process
+- Params: config: dict  # Processing configuration
+- Params: batch_size: int  # Processing batch size (default: 100)
 - Writes: shared["results"]: list  # Processed results
 - Writes: shared["metrics"]: dict  # Processing metrics
-- Params: batch_size: int  # Processing batch size (default: 100)
 - Actions: default
 ```
 
@@ -370,33 +364,33 @@ The current parser has some known limitations that you should be aware of:
 
 ### Critical Limitations
 
-1. **Single quotes not supported**: Use `shared["key"]` ✅, not `shared['key']` ❌
+1. **Single quotes not supported for Writes**: Use `shared["key"]` not `shared['key']`
    ```python
    # Works
-   - Reads: shared["file_path"]: str  # File path
+   - Writes: shared["result"]: str  # Result value
 
    # Breaks parser
-   - Reads: shared['file_path']: str  # File path
+   - Writes: shared['result']: str  # Result value
    ```
 
 2. **Empty components break parser**: Always include content after declarations
    ```python
    # Breaks parser
-   - Reads:
+   - Params:
    - Writes: shared["data"]: str
 
    # Works
-   - Reads: shared["input"]: str  # Input data
+   - Params: input: str  # Input data
    - Writes: shared["data"]: str  # Output data
    ```
 
 3. **Commas in descriptions can break parsing**: Use alternative phrasing
    ```python
    # May break
-   - Reads: shared["config"]: dict  # Config object, with settings, and defaults
+   - Params: config: dict  # Config object, with settings, and defaults
 
    # Better
-   - Reads: shared["config"]: dict  # Config object with settings and defaults
+   - Params: config: dict  # Config object with settings and defaults
    ```
 
 ### Minor Limitations
@@ -430,7 +424,7 @@ These limitations are well-documented and the parser works reliably for normal u
 - Multi-line interface documentation
 - **Full structure parsing** for nested dict and list types
 - **Structure display** in dual JSON + paths format for planning contexts
-- Exclusive params pattern (params not in Reads)
+- Params-only input pattern (all inputs via params, no Reads)
 - Parser support for all basic types (str, int, float, bool, dict, list)
 
 ## Future Enhancements
@@ -453,14 +447,14 @@ class ProcessDataNode(pocketflow.Node):
     Process data with configurable options.
 
     Interface:
-    - Reads: shared["input_file"]: str  # Path to input data file
-    - Reads: shared["output_dir"]: str  # Output directory path
-    - Reads: shared["config"]: dict  # Processing configuration
+    - Params: input_file: str  # Path to input data file
+    - Params: output_dir: str  # Output directory path
+    - Params: config: dict  # Processing configuration
+    - Params: validate: bool  # Validate input before processing (default: true)
+    - Params: compress: bool  # Compress output file (default: false)
     - Writes: shared["processed_file"]: str  # Path to processed file
     - Writes: shared["statistics"]: dict  # Processing statistics
     - Writes: shared["error"]: str  # Error message if processing failed
-    - Params: validate: bool  # Validate input before processing (default: true)
-    - Params: compress: bool  # Compress output file (default: false)
     - Actions: default (success), error (failure)
     """
 
@@ -470,9 +464,9 @@ class ProcessDataNode(pocketflow.Node):
 ```
 
 This example demonstrates:
-- Multiple inputs with different types
-- Clear semantic descriptions
-- Exclusive parameters (not repeating inputs)
+- All inputs declared as Params (not Reads)
+- Clear semantic descriptions with types
+- Outputs written to shared store
 - Proper action documentation
 
 ## Validation

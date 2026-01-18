@@ -116,9 +116,5 @@ Native integration with Unix shell pipes positions pflow as a highly intuitive, 
 
 ## See Also
 
-- **Architecture**: [CLI Runtime](./cli-runtime.md) - How stdin integrates with shared store and CLI resolution
-- **Architecture**: [Shared Store](../core-concepts/shared-store.md) - Reserved `shared["stdin"]` key and natural interfaces
-- **Patterns**: [Workflow Analysis](./workflow-analysis.md) - Philosophy of AI workflow composition
-- **Components**: [Planner](./planner.md) - How piped input works with natural language planning
-- **Components**: [Runtime](../core-concepts/runtime.md) - How stdin content affects caching and execution
-- **Implementation**: [Components](../architecture/components.md) - Shell integration in MVP component list
+- [Shared Store](../core-concepts/shared-store.md) - Reserved `shared["stdin"]` key
+- [Architecture](../architecture.md) - CLI interface overview

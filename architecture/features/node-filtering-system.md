@@ -33,11 +33,13 @@ Registry File → load() → Settings Filter → Filtered Nodes → Consumers
      "registry": {
        "nodes": {
          "allow": ["*"],
-         "deny": []
+         "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"]
        }
      }
    }
    ```
+
+   > **Note**: Git and GitHub nodes are denied by default as they are deprecated in favor of MCP integrations.
 
 4. **Environment Override**
    - `PFLOW_INCLUDE_TEST_NODES=true` includes internal test nodes regardless of patterns

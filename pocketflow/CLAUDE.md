@@ -1,6 +1,6 @@
 # PocketFlow Repository Map & Inventory
 
-pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`).
+pflow is built on the **PocketFlow** framework (~200-line Python library in `pocketflow/__init__.py`).
 
 > Important to note: `pflow` is a CLI tool that extends the PocketFlow framework to allow users to build workflows and pipelines using the PocketFlow framework more easily. It is not an LLM application, but rather a CLI tool that extends the PocketFlow framework to allow users to build workflows and pipelines using the PocketFlow framework more easily.
 

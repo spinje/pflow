@@ -14,7 +14,10 @@
       "Bash(chmod:*)",
       "Bash(touch:*)"
     ],
-    "deny": []
+    "deny": [],
+    "ask": [
+      "Bash(rm:*)"
+    ]
   },
   "hooks": {
     "PreToolUse": [

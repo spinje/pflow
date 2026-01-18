@@ -2,7 +2,7 @@
 
 > **Version**: v3.0
 > **MVP Status**: ⏳ Future (v3.0)
-> For complete MVP boundaries, see [MVP Implementation Guide](../features/mvp-implementation-guide.md)
+> For complete MVP boundaries, see [MVP Implementation Guide](../historical/mvp-implementation-guide.md)
 
 > **Status**: Future Feature - Not part of MVP architecture
 > **Dependencies**: Requires node-metadata-extraction infrastructure
@@ -384,10 +384,6 @@ The future is bright for LLM-assisted development that respects and enhances the
 
 ## See Also
 
-- **Architecture**: [MVP Implementation Guide](../features/mvp-implementation-guide.md) - Understanding MVP boundaries before future features
-- **Foundation**: [Metadata Extraction](../implementation-details/metadata-extraction.md) - Infrastructure this feature builds upon
-- **Patterns**: [Simple Nodes](../features/simple-nodes.md) - Design patterns LLM will follow when generating nodes
-- **Components**: [Registry](../core-concepts/registry.md) - How generated nodes integrate with discovery system
-- **Components**: [JSON Schemas](../core-concepts/schemas.md) - Metadata format for generated nodes
-- **Related Features**: [JSON Extraction](./json-extraction.md) - Another v3.0 feature for consideration
-- **Philosophy**: [Workflow Analysis](../features/workflow-analysis.md) - Balance between AI assistance and determinism
+- [Metadata Extraction](../implementation-details/metadata-extraction.md) - Foundation for generation
+- [Architecture](../architecture.md#node-naming) - Node naming conventions
+- [Simple Nodes](../features/simple-nodes.md) - Design patterns to follow

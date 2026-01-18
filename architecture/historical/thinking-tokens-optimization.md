@@ -1,3 +1,13 @@
+> **HISTORICAL DOCUMENT**: Obsolete after Task 95 (llm library integration, 2025-12-19).
+>
+> This document describes Anthropic-specific thinking token optimization that was never
+> implemented. The `llm` library now provides a provider-agnostic interface, making
+> Anthropic-specific features like thinking tokens inaccessible through pflow.
+>
+> **Status**: Never implemented, now incompatible with current architecture.
+
+---
+
 # Thinking Tokens Optimization for Complex Workflow Generation
 
 ## Executive Summary

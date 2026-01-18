@@ -1,3 +1,15 @@
+---
+**⚠️ HISTORICAL DOCUMENT**
+
+**Reason**: This document was written when MCP was planned for v2.0. MCP is now FULLY IMPLEMENTED.
+
+**Current MCP Documentation**:
+- Implementation: `src/pflow/mcp/CLAUDE.md` (client-side)
+- Implementation: `src/pflow/mcp_server/CLAUDE.md` (server-side)
+- CLI commands: `pflow mcp --help`
+
+---
+
 # MCP Server Integration and Security Model
 
 > **Version**: v2.0

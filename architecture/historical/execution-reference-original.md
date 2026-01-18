@@ -1,3 +1,17 @@
+> **HISTORICAL DOCUMENT**: This describes v2.0 vision, not current implementation.
+>
+> **Fictional features documented here that DO NOT EXIST:**
+> - `@flow_safe` decorator (not implemented)
+> - `ExecutionContext` class (not implemented)
+> - 7-step execution pipeline (actual: 3-phase model)
+> - Error namespacing system (`cli:`, `planner:`, etc. - not implemented)
+> - `pflow.testing` module (not implemented)
+> - Automatic retry mechanisms (only in batch node)
+>
+> **For current execution model, see:** `src/pflow/execution/CLAUDE.md`
+
+---
+
 # Execution Reference
 
 > **Navigation**: [Index](../index.md) → Execution Reference
@@ -128,6 +142,8 @@ else:
 
 ## Node Safety Model
 
+> **⚠️ NOT IMPLEMENTED (v2.0+)**: The `@flow_safe` decorator and purity-based caching described below are post-MVP features. Currently, all nodes execute without these optimizations.
+
 pflow implements an **opt-in purity model** for safe node caching:
 
 ### The `@flow_safe` Decorator
@@ -220,6 +236,8 @@ All errors include structured context:
 ```
 
 ## Retry Mechanisms
+
+> **⚠️ NOT IMPLEMENTED (v2.0+)**: Automatic retry mechanisms are post-MVP features. Currently, node failures abort the flow immediately.
 
 ### Retry Configuration
 
@@ -355,6 +373,8 @@ assert len(get_exit_nodes(ir)) == 1
 
 ## Runtime Integration
 
+> **⚠️ PARTIALLY IMPLEMENTED**: Basic IR-to-Flow compilation exists in `src/pflow/runtime/compiler.py`. The `ExecutionContext` class with hooks described below is a post-MVP feature.
+
 ### Execution Engine Configuration
 
 ```python
@@ -424,6 +444,8 @@ class ExecutionContext:
 
 ## Performance Considerations
 
+> **⚠️ PARTIALLY IMPLEMENTED**: Basic execution works as described. Node-level caching (`@flow_safe` based) is a post-MVP feature.
+
 ### Execution Overhead
 
 | Operation | Typical Time | Notes |
@@ -450,6 +472,8 @@ class ExecutionContext:
 5. **Batch processing** support
 
 ## Testing Framework
+
+> **⚠️ NOT IMPLEMENTED (v2.0+)**: The `pflow.testing` module described below is a post-MVP feature. Current testing uses standard pytest with fixtures from `tests/shared/`.
 
 ### Unit Testing Nodes
 
@@ -529,8 +553,6 @@ for chunk in flow.stream(data_source):
 
 ## See Also
 
-- [Node Reference](node-reference.md) - Node implementation details
-- [CLI Reference](cli-reference.md) - How CLI commands execute
-- [Runtime](../core-concepts/runtime.md) - Caching and safety specifics
-- [Schemas](../core-concepts/schemas.md) - IR validation schemas
-- [Architecture](../architecture/architecture.md) - System design overview
+- [Flow-Safe Caching](../future-version/flow-safe-caching.md) - Caching and safety specifics (v2.0+)
+- [Node Reference](node-reference.md) - Node implementation patterns
+- [IR Schema](./ir-schema.md) - IR validation schemas

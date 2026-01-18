@@ -100,6 +100,15 @@ pflow settings list-env --show-values
 #   OPENAI_API_KEY: sk-proj-actual-key-here
 ```
 
+### Initializing Settings
+
+```bash
+# Create default settings file
+pflow settings init
+```
+
+Creates `~/.pflow/settings.json` with default configuration.
+
 ---
 
 ## Technical Implementation
@@ -112,7 +121,7 @@ pflow settings list-env --show-values
 └─────────────────────────────────────────┘
                   ↓
 ┌─────────────────────────────────────────┐
-│ CLI Command (settings.py)               │
+│ CLI Command (commands/settings.py)      │
 │ - Validates input                       │
 │ - Calls SettingsManager.set_env()      │
 └─────────────────────────────────────────┘
@@ -657,7 +666,7 @@ pflow workflow --param api_key=sk-override-value
 ## References
 
 ### Related Documentation
-- `architecture/core-concepts/schemas.md` - Workflow IR schema
+- `architecture/reference/ir-schema.md` - Workflow IR schema
 - `src/pflow/core/CLAUDE.md` - Settings implementation details
 - `tests/test_core/test_settings.py` - Test examples
 

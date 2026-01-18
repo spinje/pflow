@@ -1,3 +1,16 @@
+> **HISTORICAL DOCUMENT**: Uses outdated parameter fallback pattern removed in Task 102.
+>
+> **Key inaccuracy**: This document shows the old pattern where nodes could read from
+> both `self.params` AND `shared` store with fallback logic. After Task 102, nodes
+> use **params-only** pattern - all input wiring is done via templates (`${var}`).
+>
+> **For current node implementation patterns, see:**
+> - `architecture/reference/enhanced-interface-format.md` - Interface format
+> - `architecture/features/simple-nodes.md` - Node design philosophy
+> - `src/pflow/nodes/CLAUDE.md` - Implementation guide with retry patterns
+
+---
+
 # Node Implementation Reference
 
 This document provides common patterns and best practices for implementing nodes in pflow. All nodes should follow these patterns for consistency and proper integration with the pflow architecture.
@@ -7,7 +20,7 @@ This document provides common patterns and best practices for implementing nodes
 Before implementing any node, you should understand:
 - [Simple Node Architecture](../features/simple-nodes.md) - Single-purpose node design philosophy
 - [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow and communication
-- [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format specification
+- [Node Metadata Schema](./ir-schema.md#node-metadata-schema) - Interface format specification
 
 ## Common Implementation Patterns
 
@@ -172,11 +185,6 @@ This section documents user-facing node types that can be used in workflows. For
 
 ## See Also
 
-- [Simple Nodes Pattern](../features/simple-nodes.md) - Understanding single-purpose node design
-- [Shared Store Pattern](../core-concepts/shared-store.md) - Inter-node data flow
-- [Node Metadata Schema](../core-concepts/schemas.md#node-metadata-schema) - Interface format
-- **Node Package Specifications**:
-  - [GitHub Nodes](../core-node-packages/github-nodes.md)
-  - [Claude Nodes](../core-node-packages/claude-nodes.md)
-  - [CI Nodes](../core-node-packages/ci-nodes.md)
-  - [LLM Node](../core-node-packages/llm-nodes.md)
+- [Simple Nodes](../features/simple-nodes.md) - Node design philosophy
+- [Shared Store](../core-concepts/shared-store.md) - Inter-node data flow
+- [Node Metadata](./ir-schema.md#node-metadata-schema) - Interface format

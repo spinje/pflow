@@ -1,3 +1,14 @@
+---
+**⚠️ HISTORICAL DOCUMENT**
+
+**Superseded by**: `pflow instructions usage` (run this command for current agent guide)
+
+**Date**: Pre-January 2025 (before Task 71 CLI primitives)
+
+**Value**: Contains echo node testing pattern and workflow examples that may still be useful as reference.
+
+---
+
 # pflow Guide for AI Agents
 
 ## ⚠️ Critical Information

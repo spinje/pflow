@@ -1,3 +1,12 @@
+---
+**⚠️ HISTORICAL DOCUMENT**
+
+**Reason**: Describes autocomplete for `=>` CLI composition syntax that was never implemented. pflow uses JSON workflow files for composition.
+
+**For Current CLI**: See `architecture/reference/cli-reference.md` or run `pflow --help`
+
+---
+
 # Feature Specification: CLI Autocomplete for `pflow`
 
 > **MVP Status**: ✅ Core Feature (Basic autocomplete)

@@ -1,3 +1,10 @@
+---
+**Document Type**: Vision/Strategy (NOT current implementation)
+
+**For Current Architecture**: See `architecture/architecture.md`
+
+---
+
 # AI Agents Need Hands: Why Workflow Compilation is the Missing Piece
 
 ## The Hidden Cost of AI Reasoning
