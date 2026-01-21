@@ -377,7 +377,7 @@ Is this what you're expecting?
 
 **Pflow Project Documentation**:
 
-**`architecture/index.md`**: Comprehensive file-by-file inventory of all pflow documentation. Read this first to understand what documentation is available.
+**`architecture/CLAUDE.md`**: Documentation navigation guide with comprehensive file-by-file inventory. Read this first to understand what documentation is available.
 
 Folders:
 - `architecture/features/`: Feature specifications and guides

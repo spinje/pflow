@@ -52,39 +52,18 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ## Project Overview
 
-We are building a modular, CLI-first system called `pflow`.
+**pflow** is a CLI-first workflow execution system. AI agents create JSON workflow files, iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`) that communicate through a shared store.
 
-pflow is a CLI tool that runs workflows defined in JSON config files. AI agents (Claude Code, Cursor, etc.) can create these workflow files by calling pflow CLI commands, then run them later with `pflow my-workflow param1=value1 param2=value2`.
-
-**How it works mechanically (simplified):**
-1. AI agent (or legacy planner) generates a temporaryworkflow JSON file
-2. Can run it with `pflow ./my-workflow.json param1=value1` while iterating on the workflow
-3. When user is satisfied with the workflow, the Agent saves it with `pflow workflow save ./my-workflow.json --name my-workflow --description "Description of what it does"`
-4. `pflow my-workflow` runs the saved workflow
-5. Workflows are sequences of nodes: `shell`, `http`, `llm`, `file`, and dynamically loaded MCP tools
-
-**Interfaces:**
-- **Primary:** AI agents invoke pflow via CLI commands
-- **Experimental:** AI agents can also use pflow via MCP server (`src/pflow/mcp_server/`)
-- **Legacy:** Built-in planner for natural language → workflow (being phased out since most workflows needs to be iterated on rather than created in a one-shot prompt)
-
-The goal is to enable local execution of intelligent workflows with the **minimal viable set of features**. This MVP will later evolve into a scalable cloud-native service.
+> **For conceptual understanding** (why pflow exists, core bets, design decisions): See `architecture/overview.md`
+> **For technical architecture** (execution pipeline, abstractions, components): See `architecture/architecture.md`
 
 **Core Principle**: Fight complexity at every step. Build minimal, purposeful components that extend without rewrites.
 
-### Core Architecture
+### PocketFlow Foundation
 
-pflow is built on the **PocketFlow** framework (~200-line Python library in `pocketflow/__init__.py`).
+pflow is built on **PocketFlow** (~200-line Python library in `pocketflow/__init__.py`).
 
-> If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
-
-- **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
-- **Flows**: Orchestrate nodes into workflows (PocketFlow uses `>>` operator internally)
-- **CLI**: Execute workflows, discover and test nodes, manage saved workflows and settings
-- **Registry**: Discovery system for available nodes and their capabilities
-- **Shared Store**: In-memory dictionary for inter-node communication, keeping data handling separate from computation logic
-
-For a more indepth understanding of what documentation and examples that are available in the `pocketflow` folder, please read the `pocketflow/CLAUDE.md` for a detailed repository map and inventory.
+> When implementing features that use PocketFlow, always start by reading `pocketflow/__init__.py`, then `pocketflow/docs` and `pocketflow/cookbook` as needed. See `pocketflow/CLAUDE.md` for navigation.
 
 ### Development Commands
 
@@ -99,60 +78,19 @@ make test                      # Run all tests with pytest
 make check                     # Run all quality checks (lint, type check, etc.)
 ```
 
-### Design Constraints & MVP Scope
+### Key Principles
 
-**MVP Requirements** (0.6.0 - local-first CLI):
-- Compose and run flows using `pflow` CLI
-- Core nodes: `shell`, `http`, `llm`, `file` operations, MCP tools
-- Store intermediate data in shared store
-- Use shell pipe syntax for stdin/stdout integration
-- Pure Python, single-machine, stateless
-- Logging and tracing for debugging
-- AI agents can create/run workflows via CLI
-
-
-**Key Principles**:
-- **PocketFlow Foundation**: Always consider `pocketflow/__init__.py` first and evaluate examples in `pocketflow/cookbook` for implementation reference
-- **Shared Store Pattern**: All communication between nodes is done through the shared store
-- **Deterministic Structure**: Workflow execution order is fixed; individual node outputs (especially `llm`) may vary
-- **Atomic Nodes**: Nodes are isolated and focused on business logic only
-- **Agent-Friendly CLI**: CLI commands are the primary interface for AI agents to discover, create and run workflows
-- **Observability**: Clear logging and step-by-step traceability
+- **Shared Store Pattern**: All node communication through shared store
+- **Atomic Nodes**: Isolated, focused on business logic only
+- **Agent-Friendly CLI**: Primary interface for AI agents
 
 ### Technology Stack
 
-**Core Dependencies** (discuss before adding others):
-- `Python 3.10+` - Modern Python
-- `click` - CLI framework (more flexible than Typer)
-- `pydantic` - IR/metadata validation
-- `llm` - Simon Willison's LLM CLI integration and inspiration
+**Core**: Python 3.10+, click, pydantic, llm (Simon Willison's library)
 
-**Development Tools**:
-- `uv` - Fast Python package manager (ALWAYS use `uv pip` instead of `pip`, `uv python -m pytest` instead of `python -m pytest` etc.)
-- `pytest` - Testing framework
-- `mypy` - Type checking
-- `ruff` - Linting and formatting
-- `pre-commit` - Git hooks
-- `Mintlify` - Documentation (user-facing, in `docs/`)
-- `make` - Development automation
-
-### Architecture Components
-
-pflow is built on PocketFlow and extends it for CLI-based workflow execution.
-
-**PocketFlow Foundation** (see `pocketflow/__init__.py`):
-- Node lifecycle: `prep()` → `exec()` → `post()`
-- Flow orchestration with action-based transitions
-- Shared store pattern for inter-node data
-- `>>` operator for node chaining (used internally by compiler)
-
-**pflow Extensions:**
-- **CLI Layer**: Commands, stdin/stdout pipes, workflow save/load
-- **IR Compiler**: JSON workflow → PocketFlow Flow/Node objects
-- **Wrapper Chain**: Template resolution, namespacing, batch processing, instrumentation
-- **Platform Nodes**: shell, http, llm, file, git, github, mcp, claude-code
-- **Validation**: 6-layer pipeline (structure, data flow, templates, types, outputs)
-- **Observability**: Metrics, tracing, MD5-based caching
+**Development** (ALWAYS use `uv` instead of `pip`):
+- `uv` - Package manager (`uv pip`, `uv run pytest`)
+- `pytest`, `mypy`, `ruff`, `pre-commit`, `make`
 
 ### Project Structure
 
@@ -354,7 +292,7 @@ Is this what you're expecting?
 
 > Always read relevant docs before coding!
 
-- **pflow docs**: `architecture/index.md` (inventory), `architecture/CLAUDE.md` (navigation)
+- **pflow docs**: `architecture/CLAUDE.md` (navigation and inventory)
 - **PocketFlow docs**: `pocketflow/CLAUDE.md` (framework docs and cookbook)
 
 > Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation, examples and searching for code. If you need specific information, ask a subagent or multiple subagents to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.

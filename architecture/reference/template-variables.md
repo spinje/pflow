@@ -1774,11 +1774,10 @@ uv run pflow --param test_value=123 workflow.json
 
 ## Related Documentation
 
-- **IR Schema**: `architecture/core-concepts/ir-schema.md` - Complete JSON IR specification
-- **Shared Store**: `architecture/core-concepts/shared-store.md` - Inter-node communication
-- **Node Interfaces**: `architecture/implementation-details/node-interface-registry.md` - Type definitions
-- **Runtime Validation**: `architecture/implementation-details/runtime-validation.md` - Validation system
-- **Workflow Execution**: `architecture/reference/workflow-execution.md` - Execution lifecycle
+- **IR Schema**: [ir-schema.md](./ir-schema.md) - Complete JSON IR specification
+- **Shared Store**: [shared-store.md](../core-concepts/shared-store.md) - Inter-node communication
+- **Node Interfaces**: [enhanced-interface-format.md](./enhanced-interface-format.md) - Interface format for pflow nodes
+- **Architecture**: [architecture.md](../architecture.md#execution-pipeline) - Execution pipeline and lifecycle
 
 ---
 

@@ -19,6 +19,38 @@ pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line 
 
 **Fight complexity at every step.** Build minimal, purposeful components that extend without rewrites.
 
+### How It Works (Workflow Authoring)
+
+1. AI agent (or legacy planner) generates a temporary workflow JSON file
+2. Runs it with `pflow ./my-workflow.json param1=value1` while iterating
+3. When satisfied, saves with `pflow workflow save ./my-workflow.json --name my-workflow --description "..."`
+4. `pflow my-workflow` runs the saved workflow by name
+5. Workflows are sequences of nodes: `shell`, `http`, `llm`, `file`, and dynamically loaded MCP tools
+
+### Key Principles
+
+- **Shared Store Pattern**: All node communication through shared store
+- **Deterministic Structure**: Workflow execution order is fixed; individual node outputs (especially `llm`) may vary
+- **Atomic Nodes**: Isolated, focused on business logic only
+- **Agent-Friendly CLI**: Primary interface for AI agents to discover, create, and run workflows
+- **Observability**: Clear logging and step-by-step traceability
+
+### Technology Stack
+
+**Core Dependencies** (discuss before adding others):
+- `Python 3.10+` - Modern Python
+- `click` - CLI framework
+- `pydantic` - IR/metadata validation
+- `llm` - Simon Willison's LLM CLI integration
+
+**Development Tools**:
+- `uv` - Fast Python package manager (use `uv pip`, not `pip`)
+- `pytest` - Testing framework
+- `mypy` - Type checking
+- `ruff` - Linting and formatting
+- `pre-commit` - Git hooks
+- `make` - Development automation
+
 ## Interface Modes
 
 pflow provides three interface modes for different use cases:

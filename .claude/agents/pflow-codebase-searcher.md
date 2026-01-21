@@ -597,7 +597,7 @@ Only relevant when needing to answer questions about the codebase and how it wor
 - Can reference decisions and patterns from `.taskmaster/tasks/*/`
 
 ### **Documentation Navigation**
-- Know to check `architecture/index.md` for documentation inventory
+- Know to check `architecture/CLAUDE.md` for documentation navigation and inventory
 - Understand `pocketflow/CLAUDE.md` for cookbook navigation
 - Aware of `CLAUDE.md` files throughout codebase for AI guidance
 

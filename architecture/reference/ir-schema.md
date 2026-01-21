@@ -735,5 +735,5 @@ This document defines the JSON schemas for Flow IR and Node Metadata, providing 
 - [Template Variables Reference](./template-variables.md) - Complete template syntax and resolution rules
 - [Shared Store](../core-concepts/shared-store.md) - Natural interface patterns
 - [Architecture](../architecture.md#node-naming) - Node naming conventions
-- [Execution Reference](./execution-reference.md) - Execution configuration
+- [Architecture: Execution Pipeline](../architecture.md#execution-pipeline) - Execution configuration
 - `.taskmaster/feature-dump/flow-safe-caching.md` - Future caching and retry features (design notes)
