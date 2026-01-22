@@ -139,7 +139,9 @@ def read_stdin() -> str | None:
     try:
         content = sys.stdin.read()
 
-        # Treat empty stdin as no input per spec
+        # Treat empty stdin as no input
+        # This is intentional: distinguishing "user piped nothing" from "no pipe"
+        # is not reliably possible (especially with test frameworks like CliRunner)
         if content == "":
             return None
 

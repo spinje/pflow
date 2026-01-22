@@ -248,6 +248,39 @@ class TestDualModeStdinBehavior:
         written_content = output_file.read_text()
         assert written_content == "cli_value", f"Expected 'cli_value' but got '{written_content}'"
 
+    def test_empty_stdin_treated_as_no_input(self, tmp_path):
+        """Test that empty stdin is treated as no input (not routed).
+
+        Design decision: Empty stdin is treated as "no stdin" rather than
+        "stdin with empty content". This is because:
+        1. Distinguishing "user piped nothing" from "no pipe" is not reliably
+           possible (test frameworks like CliRunner always provide empty StringIO)
+        2. Most real use cases: empty stdin means "no input", not "input is empty"
+        3. If stdin input is required, user gets clear validation error
+
+        If a workflow needs to accept empty string as valid input, it should
+        use an optional input with a default, or accept via CLI parameter.
+        """
+        # Create a workflow with required stdin input
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${data}"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        # Pipe empty string - treated as no input
+        result = runner.invoke(main, [str(workflow_file)], input="")
+
+        # Should fail with "requires input" error (empty stdin = no stdin)
+        assert result.exit_code == 1
+        assert "data" in result.output.lower()  # Missing required input 'data'
+
 
 class TestRealShellIntegration:
     """Test actual shell behavior using subprocess for true integration.

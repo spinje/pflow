@@ -78,6 +78,46 @@ class TestWorkflowValidator:
         assert len(errors) > 0
         assert any("after" in e for e in errors)
 
+    def test_multiple_stdin_inputs_validation_error(self):
+        """Test that multiple stdin: true inputs are caught.
+
+        Only one input can receive piped stdin data. This validation ensures
+        early error detection during static validation (--validate-only)
+        rather than only at runtime.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+            "inputs": {
+                "data1": {"type": "string", "required": True, "stdin": True},
+                "data2": {"type": "string", "required": True, "stdin": True},
+            },
+        }
+
+        errors, warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+
+        assert len(errors) > 0
+        assert any("stdin" in e.lower() for e in errors)
+        assert any("data1" in e for e in errors)
+        assert any("data2" in e for e in errors)
+
+    def test_single_stdin_input_valid(self):
+        """Test that a single stdin: true input is valid."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "params": {"data": "${data}"}}],
+            "edges": [],
+            "inputs": {
+                "data": {"type": "string", "required": True, "stdin": True},
+            },
+        }
+
+        errors, warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+
+        # Should not have stdin-related errors
+        assert not any("stdin" in e.lower() for e in errors)
+
     def test_template_validation_errors(self, registry_with_nodes):
         """Test that template errors are caught when params provided."""
         workflow = {

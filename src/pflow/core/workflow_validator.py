@@ -32,11 +32,12 @@ class WorkflowValidator:
 
         Performs multiple validation checks:
         1. Structural validation - IR schema compliance
-        2. Data flow validation - Execution order and dependencies
-        3. Template validation - Variable resolution
-        4. Node type validation - Registry verification
-        5. Output source validation - Output node references
-        6. JSON string template validation - Anti-pattern detection
+        2. Stdin input validation - Only one stdin: true allowed
+        3. Data flow validation - Execution order and dependencies
+        4. Template validation - Variable resolution
+        5. Node type validation - Registry verification
+        6. Output source validation - Output node references
+        7. JSON string template validation - Anti-pattern detection
 
         Args:
             workflow_ir: Workflow to validate
@@ -56,11 +57,15 @@ class WorkflowValidator:
         struct_errors = WorkflowValidator._validate_structure(workflow_ir)
         errors.extend(struct_errors)
 
-        # 2. Data flow validation (NEW - ALWAYS run)
+        # 2. Stdin input validation (ALWAYS run - only one stdin: true allowed)
+        stdin_errors = WorkflowValidator._validate_stdin_inputs(workflow_ir)
+        errors.extend(stdin_errors)
+
+        # 3. Data flow validation (ALWAYS run)
         flow_errors = WorkflowValidator._validate_data_flow(workflow_ir)
         errors.extend(flow_errors)
 
-        # 3. Template validation (if params provided)
+        # 4. Template validation (if params provided)
         if extracted_params is not None:
             if registry is None:
                 registry = Registry()
@@ -70,19 +75,19 @@ class WorkflowValidator:
             errors.extend(template_errors)
             warnings.extend(template_warnings)
 
-        # 4. Node type validation (if not skipped)
+        # 5. Node type validation (if not skipped)
         if not skip_node_types:
             if registry is None:
                 registry = Registry()
             type_errors = WorkflowValidator._validate_node_types(workflow_ir, registry)
             errors.extend(type_errors)
 
-        # 5. Output source validation (ALWAYS run - validate output references)
+        # 6. Output source validation (ALWAYS run - validate output references)
         output_errors, output_warnings = WorkflowValidator._validate_output_sources(workflow_ir, registry)
         errors.extend(output_errors)
         warnings.extend(output_warnings)
 
-        # 6. JSON string template anti-pattern detection
+        # 7. JSON string template anti-pattern detection
         # Only run if registry available (need interface metadata for param types)
         if registry is not None:
             json_string_errors = WorkflowValidator._validate_json_string_templates(workflow_ir, registry)
@@ -117,6 +122,30 @@ class WorkflowValidator:
             # ValidationError.__str__() includes path, message, and suggestions
             error_msg = str(e)
             return [f"Structure: {error_msg}"]
+
+    @staticmethod
+    def _validate_stdin_inputs(workflow_ir: dict[str, Any]) -> list[str]:
+        """Validate that at most one input has stdin: true.
+
+        Args:
+            workflow_ir: Workflow to validate
+
+        Returns:
+            List of stdin validation errors
+        """
+        inputs = workflow_ir.get("inputs", {})
+        if not inputs:
+            return []
+
+        stdin_inputs = [name for name, spec in inputs.items() if spec.get("stdin") is True]
+
+        if len(stdin_inputs) > 1:
+            return [
+                f'Multiple inputs marked with "stdin": true: {", ".join(stdin_inputs)}. '
+                "Only one input can receive piped stdin."
+            ]
+
+        return []
 
     @staticmethod
     def _validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:

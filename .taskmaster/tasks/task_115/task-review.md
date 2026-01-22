@@ -97,6 +97,44 @@ stdin_has_data()
 
 **None significant**. The implementation is clean and follows existing patterns.
 
+### Design Decisions - Rejected Alternatives
+
+The following alternatives were considered during code review and explicitly rejected:
+
+**1. Implicit `stdin: true` for Single-Input Workflows**
+
+*Proposal*: When a workflow has exactly one input, automatically route stdin there without requiring explicit `stdin: true`.
+
+*Rejected because*:
+- **Explicit is predictable**: A workflow with `{"inputs": {"file_path": {"type": "string"}}}` wants a PATH, not piped file CONTENT. Implicit routing would cause unexpected behavior.
+- **Consistency**: Multi-input workflows require explicit declaration; single-input being implicit creates inconsistency.
+- **Low cost of explicit**: Adding `"stdin": true` is 5 characters - trivial burden for clear intent.
+- **Spec explicitly excluded this**: "Does not implement type-based auto-detection of stdin target"
+
+*Better alternative*: If users frequently forget `stdin: true`, consider a CLI warning: "Piped data ignored. Did you mean to add stdin: true to input 'data'?"
+
+**2. Type Coercion for Stdin Input**
+
+*Proposal*: When input declares `"type": "object"` and stdin contains valid JSON, auto-parse it.
+
+*Rejected because*:
+- **Adds magic behavior**: Parsing sometimes but not others is confusing
+- **Explicit is simpler**: Workflows can use `jq` or template expressions for parsing
+- **Error handling complexity**: What if JSON is malformed? Silent string fallback?
+- **Current approach is predictable**: Stdin is always a string; workflow decides how to use it
+
+**3. Empty Stdin as Valid Content**
+
+*Proposal*: Treat `echo -n "" | pflow` as routing empty string to the `stdin: true` input.
+
+*Rejected because*:
+- **Cannot reliably distinguish**: "User piped nothing" vs "no pipe at all" is not reliably detectable (test frameworks like CliRunner always provide empty StringIO)
+- **Practical semantics**: In real use cases, empty stdin typically means "no input", not "input is empty string"
+- **Clear error handling**: If stdin input is required, users get a clear validation error
+- **Workaround exists**: Workflows needing empty string can use optional inputs with defaults, or accept via CLI parameter
+
+These decisions prioritize predictability and explicitness over convenience, which aligns with pflow's design philosophy as an agent-friendly tool where behavior should be obvious from the workflow definition.
+
 ### Potential Future Work
 
 - **Auto `-p` flag**: When stdout is piped, auto-enable print mode (separate task)
@@ -134,7 +172,7 @@ stdin_has_data()
 
 | Scenario | Behavior |
 |----------|----------|
-| Empty stdin (`echo -n "" \| pflow`) | Routes empty string (valid content) |
+| Empty stdin (`echo -n "" \| pflow`) | Treated as no input (see design decision below) |
 | Binary stdin | Not routed, falls back to normal required input behavior |
 | Large stdin (>10MB) | Handled via temp file, not routed (text only) |
 | Formatted JSON output | jq may fail parsing multi-line JSON - use `-c` for compact |
