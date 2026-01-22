@@ -988,6 +988,176 @@ make test    # ✅ 4016 tests pass (4 new tests total)
 
 ---
 
+## [Session 6] - Simplified FIFO Detection (2026-01-22)
+
+### Context
+
+During code review, questions arose about the `select()` fallback complexity. Investigation revealed we could simplify significantly.
+
+### Investigation in Claude Code Environment
+
+Tested stdin behavior directly in Claude Code:
+
+```python
+# What is stdin in Claude Code?
+isatty(): False
+S_ISFIFO: False
+S_ISSOCK: False
+S_ISCHR: True    # Character device!
+
+# Does select() work?
+select(timeout=0): True   # Says data available
+select(timeout=0.1): False # Says no data
+
+# Is there actually data?
+os.read(fd, 1): BlockingIOError  # No actual data!
+sys.stdin.read(): HANGS FOREVER
+```
+
+**Key discovery**: `select()` **lies** on character devices - returns True even when no data exists.
+
+### Why pflow Worked Despite This
+
+When running `uv run pflow`:
+- `uv` sets up subprocess stdin differently
+- `sys.stdin.read()` returns empty string immediately (not hang)
+- The `if content == "": return None` check prevented issues
+
+But this was fragile and the `select()` logic was unreliable.
+
+### The Unix Standard Solution
+
+Researched how standard Unix tools (cat, grep, jq) handle stdin:
+
+```c
+if (isatty(STDIN_FILENO)) {
+    // Interactive mode
+} else {
+    read(STDIN_FILENO, buf, size);  // Just read, blocks until EOF
+}
+```
+
+**They don't use `select()`.** They just check `isatty()` and read.
+
+The difference for pflow: we need to handle Claude Code where stdin is a non-TTY character device with no data.
+
+### Simplified Approach
+
+**Only read from FIFO pipes** - everything else returns False:
+
+```python
+def stdin_has_data() -> bool:
+    if sys.stdin.isatty():
+        return False
+
+    # No real fileno = not a real fd (e.g., StringIO)
+    try:
+        fd = sys.stdin.fileno()
+    except:
+        return False
+
+    # Only FIFOs are real pipes
+    try:
+        mode = os.fstat(fd).st_mode
+        return stat.S_ISFIFO(mode)
+    except:
+        return False
+```
+
+**Removed:**
+- `import select` - no longer needed
+- `select.select()` call and fallback
+- `if content == "": return None` - empty string is valid Unix content
+
+### Behavior Matrix
+
+| Context | Has fileno? | Is FIFO? | stdin_has_data() |
+|---------|-------------|----------|------------------|
+| Real pipe (`echo x \| pflow`) | Yes | Yes | **True** |
+| Empty pipe (`echo -n "" \| pflow`) | Yes | Yes | **True** |
+| Claude Code (char device) | Yes | No | **False** |
+| CliRunner (StringIO) | No | - | **False** |
+| Terminal (TTY) | Yes | No | **False** (early return) |
+
+### Test Updates
+
+CliRunner tests that need stdin behavior now mock `stdin_has_data`:
+
+```python
+@patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+def test_stdin_routing(self, mock_stdin_has_data, tmp_path):
+    # CliRunner's StringIO is not a FIFO, so we mock the check
+    ...
+```
+
+Real pipe behavior tested via subprocess tests (unchanged).
+
+### Files Modified
+
+**Implementation:**
+- `src/pflow/core/shell_integration.py`:
+  - Removed `import select`
+  - Simplified `stdin_has_data()` to FIFO-only detection
+  - Removed empty string check from `read_stdin()`
+
+**Tests:**
+- `tests/test_cli/test_dual_mode_stdin.py`: Added `@patch` for stdin_has_data
+- `tests/test_core/test_stdin_no_hang.py`: Updated tests for new behavior
+- `tests/test_shell_integration.py`: Added `TestStdinHasData` class, updated tests
+
+### Benefits
+
+1. **Simpler**: No `select()` complexity or unreliable fallbacks
+2. **Correct**: Follows Unix standard - only read from pipes
+3. **Predictable**: FIFO = read, everything else = don't read
+4. **Empty stdin works**: `echo -n "" | pflow` routes empty string
+5. **Claude Code safe**: Character devices return False (no hang)
+6. **CliRunner compatible**: StringIO has no fileno → returns False
+
+### Verification
+
+```bash
+make check  # ✅ All checks pass
+make test   # ✅ 4019 tests pass
+```
+
+---
+
+## [Session 6 continued] - Binary Stdin Warning (2026-01-22)
+
+### Issue from Code Review
+
+PR review identified that when binary/large stdin is piped but can't be routed, users see a confusing "required input missing" error instead of an explanation.
+
+### Fix
+
+Added warning in `_route_stdin_to_params()` when binary/large data is detected but not routed:
+
+```python
+if stdin_text is None:
+    if isinstance(stdin_data, StdinData) and (stdin_data.binary_data or stdin_data.temp_path):
+        click.echo("⚠️  Stdin contains binary or large data", err=True)
+        click.echo("   Binary/large data is not automatically routed to workflow inputs.", err=True)
+        click.echo("   Consider using a file path parameter instead.", err=True)
+    return
+```
+
+### Behavior
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| Binary stdin + required input | "Workflow requires input 'data'" | Warning + same error |
+| Binary stdin + optional input | Silent | Warning shown |
+
+### Verification
+
+```bash
+make check  # ✅ All checks pass
+make test   # ✅ 4023 tests pass
+```
+
+---
+
 ## Task 115: FINAL STATUS ✅
 
 **All objectives achieved:**
@@ -997,5 +1167,7 @@ make test    # ✅ 4016 tests pass (4 new tests total)
 4. ✅ CLI parameters override piped stdin
 5. ✅ Workflow chaining via Unix pipes works
 6. ✅ Backward compatible (Claude Code, IDE environments)
-7. ✅ Comprehensive test coverage (4016 tests)
+7. ✅ Comprehensive test coverage (4023 tests)
 8. ✅ Windows limitations documented (Task 116)
+9. ✅ Simplified to Unix-standard FIFO-only detection
+10. ✅ Binary/large stdin shows helpful warning

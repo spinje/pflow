@@ -72,45 +72,64 @@ def test_read_stdin_enhanced_no_hang(monkeypatch):
     assert result is None
 
 
-def test_stdin_has_data_with_actual_data(monkeypatch):
-    """Test stdin_has_data returns True when data is available."""
-    import io
-    import sys
+def test_stdin_has_data_with_fifo(monkeypatch):
+    """Test stdin_has_data returns True for FIFO pipes."""
+    import stat
 
     from pflow.core.shell_integration import stdin_has_data
 
-    # Mock stdin with data
-    mock_stdin = io.StringIO("test data")
-    mock_stdin.isatty = lambda: False
-    monkeypatch.setattr("sys.stdin", mock_stdin)
+    # Mock stdin as FIFO pipe
+    class MockStdin:
+        closed = False
 
-    # Mock select to indicate data is available
-    def mock_select(rlist, wlist, xlist, timeout):
-        return ([sys.stdin], [], [])
+        def isatty(self):
+            return False
 
-    monkeypatch.setattr("select.select", mock_select)
+        def fileno(self):
+            return 0
 
-    # Should detect that stdin has data
+    monkeypatch.setattr("sys.stdin", MockStdin())
+
+    # Mock os.fstat to return FIFO mode
+    class MockStatResult:
+        st_mode = stat.S_IFIFO | 0o644
+
+    monkeypatch.setattr("os.fstat", lambda fd: MockStatResult())
+
+    # Should return True for FIFO
     assert stdin_has_data() is True
 
 
-def test_stdin_has_data_fallback_on_select_error(monkeypatch):
-    """Test stdin_has_data fallback behavior when select() fails."""
+def test_stdin_has_data_non_fifo_returns_false(monkeypatch):
+    """Test stdin_has_data returns False for non-FIFO (e.g., char device, socket).
+
+    This is the simplified behavior - only FIFOs are read.
+    Non-FIFO stdin (like in Claude Code) returns False to avoid hanging.
+    """
+    import stat
 
     from pflow.core.shell_integration import stdin_has_data
 
-    # Mock stdin as non-TTY
-    mock_stdin = type("MockStdin", (), {"isatty": lambda self: False})()
-    monkeypatch.setattr("sys.stdin", mock_stdin)
+    # Mock stdin as character device (like in Claude Code)
+    class MockStdin:
+        closed = False
 
-    # Mock select to raise an error (simulating platform incompatibility)
-    def mock_select(rlist, wlist, xlist, timeout):
-        raise ValueError("select not supported")
+        def isatty(self):
+            return False
 
-    monkeypatch.setattr("select.select", mock_select)
+        def fileno(self):
+            return 0
 
-    # Should fall back to detecting non-TTY
-    assert stdin_has_data() is True
+    monkeypatch.setattr("sys.stdin", MockStdin())
+
+    # Mock os.fstat to return character device mode (NOT FIFO)
+    class MockStatResult:
+        st_mode = stat.S_IFCHR | 0o644  # Character device
+
+    monkeypatch.setattr("os.fstat", lambda fd: MockStatResult())
+
+    # Should return False for non-FIFO
+    assert stdin_has_data() is False
 
 
 def test_stdin_has_data_returns_true_for_fifo(monkeypatch):
@@ -157,58 +176,36 @@ def test_stdin_has_data_returns_true_for_fifo(monkeypatch):
     assert stdin_has_data() is True
 
 
-def test_stdin_has_data_uses_select_for_non_fifo_non_tty(monkeypatch):
-    """Test stdin_has_data uses select() for non-FIFO non-TTY (e.g., Claude Code sockets).
+def test_stdin_has_data_socket_returns_false(monkeypatch):
+    """Test stdin_has_data returns False for socket stdin.
 
-    This preserves the fix for BF-20250112-stdin-hang-nontty-grep:
-    In Claude Code, stdin is a socket (non-TTY, non-FIFO) with no data.
-    We must use select() with timeout=0 to avoid hanging.
+    The simplified implementation only reads FIFOs.
+    Sockets (like in some environments) return False to avoid potential hangs.
     """
     import stat
 
     from pflow.core.shell_integration import stdin_has_data
 
-    # Mock stdin as non-TTY socket (not FIFO)
+    # Mock stdin as socket (not FIFO)
     class MockStdin:
-        def isatty(self):
-            return False
+        closed = False
 
-        @property
-        def closed(self):
+        def isatty(self):
             return False
 
         def fileno(self):
             return 0
 
-    mock_stdin = MockStdin()
-    monkeypatch.setattr("sys.stdin", mock_stdin)
+    monkeypatch.setattr("sys.stdin", MockStdin())
 
     # Mock os.fstat to return socket mode (NOT FIFO)
     class MockStatResult:
         st_mode = stat.S_IFSOCK | 0o644  # Socket, not FIFO
 
-    def mock_fstat(fd):
-        return MockStatResult()
+    monkeypatch.setattr("os.fstat", lambda fd: MockStatResult())
 
-    monkeypatch.setattr("os.fstat", mock_fstat)
-
-    # Mock select to return no data (simulating Claude Code with no input)
-    select_called = []
-
-    def mock_select(rlist, wlist, xlist, timeout):
-        select_called.append(timeout)
-        return ([], [], [])  # No data available
-
-    monkeypatch.setattr("select.select", mock_select)
-
-    # Should fall through to select() and return False (no data)
-    result = stdin_has_data()
-
-    # Verify select was called with timeout=0 (non-blocking)
-    assert len(select_called) == 1
-    assert select_called[0] == 0
-    # Should return False because select() indicates no data
-    assert result is False
+    # Should return False for socket (not a FIFO)
+    assert stdin_has_data() is False
 
 
 # Integration test - only ONE subprocess test to verify the actual fix

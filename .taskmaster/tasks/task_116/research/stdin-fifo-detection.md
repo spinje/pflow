@@ -1,6 +1,7 @@
 # Research: Windows Stdin FIFO Detection
 
 **Date:** 2026-01-22
+**Updated:** 2026-01-22 (simplified to FIFO-only)
 **Context:** Task 115 - Automatic Stdin Routing for Unix-First Piping
 **Researcher:** AI Agent
 
@@ -14,36 +15,45 @@ pflow -p workflow1.json | pflow workflow2.json
 
 This works on Unix by detecting if stdin is a FIFO pipe using `stat.S_ISFIFO()`. On Windows, this approach doesn't work.
 
-## Unix Implementation (Working)
+## Unix Implementation (Current - Simplified)
+
+After investigation, we simplified to **FIFO-only detection** - no `select()` needed:
 
 ```python
 # src/pflow/core/shell_integration.py
 
 def stdin_has_data() -> bool:
+    """Check if stdin is a real FIFO pipe that should be read."""
+    # Check closed first
+    try:
+        if sys.stdin.closed:
+            return False
+    except:
+        return False
+
+    # Check TTY
     if sys.stdin.isatty():
         return False
 
-    # Check for /dev/null
-    if sys.stdin.closed:
-        return False
+    # Check /dev/null
     if hasattr(sys.stdin, "name") and sys.stdin.name == os.devnull:
         return False
 
-    # FIFO detection - THIS IS THE KEY PART
+    # Check for real file descriptor (filters out StringIO)
     try:
-        mode = os.fstat(sys.stdin.fileno()).st_mode
-        if stat.S_ISFIFO(mode):
-            return True  # Real pipe - let caller block on read
-    except (OSError, AttributeError):
-        pass
+        fd = sys.stdin.fileno()
+    except:
+        return False  # No fileno = not real stdin (e.g., CliRunner)
 
-    # Non-blocking check for sockets (Claude Code)
+    # Only return True for FIFO pipes
     try:
-        rlist, _, _ = select.select([sys.stdin], [], [], 0)
-        return bool(rlist)
-    except (OSError, ValueError):
-        return not sys.stdin.isatty()  # Fallback
+        mode = os.fstat(fd).st_mode
+        return stat.S_ISFIFO(mode)
+    except:
+        return False
 ```
+
+**Key simplification:** No `select()` fallback. Only FIFOs return True.
 
 ## Windows Behavior Analysis
 
@@ -58,29 +68,34 @@ False
 >>> # Even for pipes, mode won't have S_IFIFO bit set on Windows
 ```
 
-### 2. select() Fails on Non-Sockets
+### 2. Current Simplified Behavior
 
-Python's `select.select()` on Windows only works with **sockets**:
-
-```python
->>> import select
->>> select.select([sys.stdin], [], [], 0)
-OSError: [WinError 10038] An operation was attempted on something that is not a socket
-```
-
-This is caught by our exception handler and falls back to `return not sys.stdin.isatty()`.
-
-### 3. Current Fallback Behavior
+With the new FIFO-only approach, Windows behavior is straightforward:
 
 | Scenario | Unix | Windows |
 |----------|------|---------|
 | TTY (interactive) | False | False |
-| FIFO pipe | True (S_ISFIFO) | True (fallback) |
-| Socket (Claude Code) | select() works | N/A on Windows |
-| /dev/null | False (explicit check) | False (explicit check) |
-| Non-TTY, no data | False (select) | True (fallback) ⚠️ |
+| FIFO pipe | True (S_ISFIFO) | **False** (no FIFO on Windows) |
+| File redirect | False | False |
+| /dev/null | False (explicit check) | False (NUL device) |
 
-The last case is the only potential issue - on Windows with non-TTY stdin but no data, we return True and could hang. This is rare.
+**Key change:** No fallback. Windows simply returns False for all piped input because `S_ISFIFO()` is always False.
+
+### 3. Impact on Windows Users
+
+**Stdin routing will NOT work on Windows** with the current implementation:
+
+```powershell
+# This will NOT work - stdin not detected
+echo "data" | pflow workflow.json
+```
+
+The workflow would fail with "Workflow requires input 'data'" because stdin is not detected.
+
+**This is acceptable because:**
+- pflow is explicitly Unix-first
+- Task 116 exists to track Windows compatibility
+- Users can use file input as workaround: `pflow workflow.json data="$(cat input.txt)"`
 
 ## Win32 API Solution Research
 
@@ -197,17 +212,22 @@ def stdin_has_data_msvcrt() -> bool:
 
 ### For Now (Unix-First)
 
-Keep current implementation. The fallback behavior is correct for most Windows pipe scenarios:
-- Piped stdin → True → works correctly
-- Console stdin → False → works correctly
-- Edge cases are rare
+Keep current FIFO-only implementation. Windows stdin routing is not supported:
+- Unix pipes → True → works correctly
+- Windows pipes → False → stdin not routed (explicit limitation)
+- Console stdin → False → works correctly on both platforms
+
+This is the cleanest approach - explicit platform behavior rather than unreliable heuristics.
 
 ### If Windows Support Becomes Important
 
-Implement Option A (PeekNamedPipe) with proper error handling:
+Implement platform-specific detection using Win32 API (Option A or B below):
 
 ```python
 def stdin_has_data() -> bool:
+    # Early checks (both platforms)
+    if sys.stdin.closed:
+        return False
     if sys.stdin.isatty():
         return False
 
@@ -215,20 +235,17 @@ def stdin_has_data() -> bool:
     if sys.platform == "win32":
         return _stdin_has_data_windows()
 
-    # Unix: FIFO detection
+    # Unix: FIFO-only detection
     try:
-        mode = os.fstat(sys.stdin.fileno()).st_mode
-        if stat.S_ISFIFO(mode):
-            return True
-    except (OSError, AttributeError):
-        pass
+        fd = sys.stdin.fileno()
+    except:
+        return False
 
-    # Unix: select() for sockets
     try:
-        rlist, _, _ = select.select([sys.stdin], [], [], 0)
-        return bool(rlist)
-    except (OSError, ValueError):
-        return not sys.stdin.isatty()
+        mode = os.fstat(fd).st_mode
+        return stat.S_ISFIFO(mode)
+    except:
+        return False
 ```
 
 ## Testing Requirements

@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-Implemented explicit stdin routing via `"stdin": true` input declarations, enabling Unix-style workflow chaining (`pflow -p workflow1.json | pflow workflow2.json`). The implementation required a critical fix for FIFO pipe detection to prevent the downstream workflow from checking stdin before upstream data arrives. All 4016 tests pass.
+Implemented explicit stdin routing via `"stdin": true` input declarations, enabling Unix-style workflow chaining (`pflow -p workflow1.json | pflow workflow2.json`). The final implementation uses FIFO-only detection - stdin is read only from real shell pipes, avoiding complexity with `select()` which proved unreliable. All 4019 tests pass.
 
 ## Implementation Overview
 
@@ -28,9 +28,11 @@ Implemented explicit stdin routing via `"stdin": true` input declarations, enabl
 
 The key insight was that stdin routing must happen **inside** `_validate_and_prepare_workflow_params()`, between parameter parsing and input validation. If routing happens after, required inputs fail validation before stdin is considered.
 
-For workflow chaining, the solution distinguishes between:
-- **FIFO pipes** (real `|` pipes): Return True immediately, let caller block on `sys.stdin.read()`
-- **Other non-TTY** (sockets like Claude Code): Use `select()` with timeout=0 to avoid hanging
+For stdin detection, the final solution is FIFO-only:
+- **FIFO pipes** (real `|` pipes): `stdin_has_data()` returns True, caller blocks on `sys.stdin.read()`
+- **Everything else** (terminals, sockets, char devices, StringIO): Returns False, no read attempted
+
+This is simpler than using `select()`, which proved unreliable (see Unexpected Discoveries).
 
 ## Files Modified/Created
 
@@ -89,9 +91,10 @@ stdin_has_data()
 | Decision | Reasoning | Alternative Considered |
 |----------|-----------|----------------------|
 | Explicit `stdin: true` declaration | Predictable, agent-friendly, no magic | Type-based auto-detection (rejected - too magical) |
-| FIFO detection via `stat.S_ISFIFO()` | Matches Unix tool behavior (cat, grep, jq) | Timeout-based waiting (rejected - unreliable) |
+| FIFO-only detection | Simple, reliable, matches Unix standard | `select()` check (rejected - lies on char devices) |
 | CLI param overrides stdin | Debugging/testing flexibility | Stdin always wins (rejected - less useful) |
 | Remove `${stdin}` entirely | `stdin: true` is strictly more flexible | Keep both patterns (rejected - confusing) |
+| Empty string is valid content | Unix standard - empty pipe routes empty string | Treat as no input (rejected - breaks Unix semantics) |
 
 ### Technical Debt Incurred
 
@@ -123,15 +126,16 @@ The following alternatives were considered during code review and explicitly rej
 - **Error handling complexity**: What if JSON is malformed? Silent string fallback?
 - **Current approach is predictable**: Stdin is always a string; workflow decides how to use it
 
-**3. Empty Stdin as Valid Content**
+**3. Using `select()` for Non-FIFO Detection**
 
-*Proposal*: Treat `echo -n "" | pflow` as routing empty string to the `stdin: true` input.
+*Proposal*: Use `select.select([sys.stdin], [], [], 0)` to check if data is available for non-FIFO stdin.
 
 *Rejected because*:
-- **Cannot reliably distinguish**: "User piped nothing" vs "no pipe at all" is not reliably detectable (test frameworks like CliRunner always provide empty StringIO)
-- **Practical semantics**: In real use cases, empty stdin typically means "no input", not "input is empty string"
-- **Clear error handling**: If stdin input is required, users get a clear validation error
-- **Workaround exists**: Workflows needing empty string can use optional inputs with defaults, or accept via CLI parameter
+- **`select()` lies on character devices**: In Claude Code, stdin is a char device where `select()` returns "ready" even with no data
+- **Complexity**: Added fallback logic that was still unreliable
+- **Unix tools don't do this**: cat, grep, jq just check `isatty()` and read
+
+*Final approach*: FIFO-only detection. If stdin is a FIFO pipe, read it. Otherwise, don't. Simple and reliable.
 
 These decisions prioritize predictability and explicitness over convenience, which aligns with pflow's design philosophy as an agent-friendly tool where behavior should be obvious from the workflow definition.
 
@@ -154,8 +158,9 @@ These decisions prioritize predictability and explicitness over convenience, whi
 |------|-------------------|
 | `test_workflow_chaining_producer_to_consumer` | **THE key test** - real subprocess pipe works |
 | `test_three_stage_pipeline` | Multi-stage piping works |
-| `test_stdin_has_data_returns_true_for_fifo` | FIFO detection returns True |
-| `test_stdin_has_data_uses_select_for_non_fifo_non_tty` | Claude Code (socket) uses select() |
+| `test_stdin_has_data_returns_true_for_fifo` | FIFO detection returns True for real pipes |
+| `test_stdin_has_data_non_fifo_returns_false` | Non-FIFO (char device, socket) returns False |
+| `test_stringio_returns_false` | CliRunner compatibility - StringIO returns False |
 | `test_stdin_error_when_no_stdin_input_declared` | Error message is agent-friendly |
 
 ## Unexpected Discoveries
@@ -164,31 +169,40 @@ These decisions prioritize predictability and explicitness over convenience, whi
 
 1. **Workflow chaining timing**: Shell starts both processes simultaneously. Process B checks stdin before Process A writes. This is why FIFO detection was essential.
 
-2. **Claude Code environment**: stdin is a socket (non-TTY, non-FIFO). The original `select()` fix must be preserved for sockets, only overridden for real FIFOs.
+2. **`select()` lies on character devices**: In Claude Code, stdin is a character device (S_ISCHR=True). `select()` returns "ready" even when no data exists, but `stdin.read()` hangs forever. This led to abandoning `select()` entirely in favor of FIFO-only detection.
 
-3. **SIGPIPE handling**: Already handled in main.py with `SIG_IGN`. Without this, large data piping would fail.
+3. **Claude Code stdin is NOT a socket**: Earlier assumption was wrong. It's a character device, which behaves differently. FIFO-only detection handles this correctly (char devices are not FIFOs → no read → no hang).
+
+4. **SIGPIPE handling**: Already handled in main.py with `SIG_IGN`. Without this, large data piping would fail.
 
 ### Edge Cases Found
 
 | Scenario | Behavior |
 |----------|----------|
-| Empty stdin (`echo -n "" \| pflow`) | Treated as no input (see design decision below) |
+| Empty stdin (`echo -n "" \| pflow`) | Routes empty string (valid content per Unix standard) |
 | Binary stdin | Not routed, falls back to normal required input behavior |
 | Large stdin (>10MB) | Handled via temp file, not routed (text only) |
 | Formatted JSON output | jq may fail parsing multi-line JSON - use `-c` for compact |
+| CliRunner tests | StringIO has no fileno → `stdin_has_data()` returns False → must mock for stdin tests |
 
 ## Patterns Established
 
 ### Reusable Patterns
 
-**FIFO Detection Pattern**:
+**FIFO-Only Stdin Detection** (the final, simplified approach):
 ```python
-import stat
-mode = os.fstat(sys.stdin.fileno()).st_mode
-if stat.S_ISFIFO(mode):
-    # Real pipe - block on read
-    return True
-# Socket/other - use non-blocking check
+def stdin_has_data() -> bool:
+    if sys.stdin.isatty():
+        return False
+    try:
+        fd = sys.stdin.fileno()
+    except:
+        return False  # StringIO has no fileno
+    try:
+        mode = os.fstat(fd).st_mode
+        return stat.S_ISFIFO(mode)  # Only True for real pipes
+    except:
+        return False
 ```
 
 **Agent-Friendly Error Messages**:
@@ -205,11 +219,13 @@ def _show_stdin_routing_error(ctx: click.Context) -> NoReturn:
 
 ### Anti-Patterns to Avoid
 
-1. **Don't use `select()` alone for pipe detection** - It fails for workflow chaining because downstream checks before upstream writes.
+1. **Don't use `select()` for stdin detection** - It lies on character devices (returns "ready" with no data). Use FIFO detection instead.
 
 2. **Don't put stdin in shared store** - It bypasses input validation and loses CLI override capability.
 
 3. **Don't auto-detect stdin target by type** - Explicit declaration is more predictable for agents.
+
+4. **Don't assume non-TTY means pipe** - Claude Code stdin is non-TTY but not a pipe. Only FIFOs are real pipes.
 
 ## Breaking Changes
 
@@ -245,9 +261,11 @@ None. FIFO detection is O(1) syscall. No memory overhead.
 
 ### Common Pitfalls
 
-1. **CliRunner doesn't simulate real pipes** - Use subprocess tests for pipe behavior
-2. **Don't forget SIGPIPE** - It's handled in main.py, must stay `SIG_IGN`
-3. **Stdin routing is BEFORE validation** - Position matters in `_validate_and_prepare_workflow_params()`
+1. **CliRunner doesn't simulate real pipes** - Use subprocess tests for real pipe behavior
+2. **CliRunner tests need mocking** - Mock `stdin_has_data` to return True when testing stdin routing with CliRunner
+3. **Don't forget SIGPIPE** - It's handled in main.py, must stay `SIG_IGN`
+4. **Stdin routing is BEFORE validation** - Position matters in `_validate_and_prepare_workflow_params()`
+5. **Don't use `select()` for stdin** - It lies on character devices; use FIFO detection
 
 ### Test-First Recommendations
 

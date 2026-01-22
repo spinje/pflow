@@ -1,5 +1,7 @@
 """Tests for pflow core CLI functionality."""
 
+from unittest.mock import patch
+
 import click.testing
 
 from pflow.cli.main import main
@@ -336,7 +338,8 @@ def test_stdin_data_with_args():
     assert "not a known workflow" in result.output
 
 
-def test_stdin_with_file_workflow():
+@patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+def test_stdin_with_file_workflow(mock_stdin_has_data):
     """Test that stdin data works with file-based workflows when stdin: true is declared."""
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():

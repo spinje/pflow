@@ -12,6 +12,7 @@ from pflow.core.shell_integration import (
     read_stdin,
     read_stdin_enhanced,
     read_stdin_with_limit,
+    stdin_has_data,
 )
 
 
@@ -29,30 +30,77 @@ class TestDetectStdin:
             assert detect_stdin() is True
 
 
+class TestStdinHasData:
+    """Test stdin_has_data() FIFO detection.
+
+    stdin_has_data() returns True only for real FIFO pipes.
+    This is Unix standard behavior - only read from actual pipes.
+    """
+
+    def test_tty_returns_false(self):
+        """Test that TTY returns False."""
+        with patch("sys.stdin.isatty", return_value=True):
+            assert stdin_has_data() is False
+
+    def test_stringio_returns_false(self):
+        """Test that StringIO (no fileno) returns False.
+
+        This is important for CliRunner compatibility.
+        """
+        mock_stdin = io.StringIO("test data")
+        with patch("sys.stdin", mock_stdin):
+            # StringIO doesn't have a real fileno, so it's not a FIFO
+            assert stdin_has_data() is False
+
+    def test_closed_stdin_returns_false(self):
+        """Test that closed stdin returns False."""
+        mock_stdin = io.StringIO("test")
+        mock_stdin.close()
+        with patch("sys.stdin", mock_stdin):
+            assert stdin_has_data() is False
+
+
 class TestReadStdin:
-    """Test stdin reading functionality."""
+    """Test stdin reading functionality.
+
+    Note: read_stdin() only reads from FIFO pipes (stdin_has_data() must return True).
+    For unit tests with StringIO, we mock stdin_has_data() to test the reading logic.
+    Real FIFO behavior is tested via subprocess in test_dual_mode_stdin.py.
+    """
 
     def test_no_stdin_returns_none(self):
         """Test that interactive terminal returns None."""
         with patch("sys.stdin.isatty", return_value=True):
             assert read_stdin() is None
 
-    def test_empty_stdin_returns_none(self):
-        """Test that empty piped input returns None."""
-        with patch("sys.stdin", io.StringIO("")), patch("sys.stdin.isatty", return_value=False):
+    def test_non_fifo_returns_none(self):
+        """Test that non-FIFO stdin (StringIO) returns None.
+
+        This is the new behavior - only FIFOs are read.
+        StringIO (used by CliRunner) returns None, not the content.
+        """
+        with patch("sys.stdin", io.StringIO("test")), patch("sys.stdin.isatty", return_value=False):
+            # StringIO is not a FIFO, so stdin_has_data() returns False
             assert read_stdin() is None
 
     def test_text_stdin_reads_correctly(self):
-        """Test that text content is read correctly."""
+        """Test that text content is read correctly when stdin is a FIFO."""
         test_content = "Hello, world!"
-        with patch("sys.stdin", io.StringIO(test_content)), patch("sys.stdin.isatty", return_value=False):
+        # Mock both stdin content AND stdin_has_data to simulate FIFO
+        with (
+            patch("sys.stdin", io.StringIO(test_content)),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
             assert read_stdin() == test_content
 
     def test_multiline_stdin_preserves_content(self):
         """Test that multiline content is preserved."""
         test_content = "Line 1\nLine 2\nLine 3"
         # Add trailing newline as real stdin would
-        with patch("sys.stdin", io.StringIO(test_content + "\n")), patch("sys.stdin.isatty", return_value=False):
+        with (
+            patch("sys.stdin", io.StringIO(test_content + "\n")),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
             # Should strip only the trailing newline
             assert read_stdin() == test_content
 
@@ -60,15 +108,32 @@ class TestReadStdin:
         """Test that intentional whitespace is preserved."""
         test_content = "  indented  \n  content  "
         # Add trailing newline
-        with patch("sys.stdin", io.StringIO(test_content + "\n")), patch("sys.stdin.isatty", return_value=False):
+        with (
+            patch("sys.stdin", io.StringIO(test_content + "\n")),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
             # Should only strip the final newline
             assert read_stdin() == test_content
 
     def test_unicode_content(self):
         """Test that Unicode content is handled correctly."""
         test_content = "Hello 世界 🌍"
-        with patch("sys.stdin", io.StringIO(test_content)), patch("sys.stdin.isatty", return_value=False):
+        with (
+            patch("sys.stdin", io.StringIO(test_content)),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
             assert read_stdin() == test_content
+
+    def test_empty_stdin_returns_empty_string(self):
+        """Test that empty FIFO pipe returns empty string (not None).
+
+        This is Unix standard behavior - empty content is valid content.
+        """
+        with (
+            patch("sys.stdin", io.StringIO("")),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
+            assert read_stdin() == ""
 
     def test_invalid_utf8_raises_error(self):
         """Test that invalid UTF-8 raises UnicodeDecodeError."""
@@ -116,14 +181,22 @@ class TestDetermineStdinMode:
 
 
 class TestIntegration:
-    """Integration tests for the complete flow."""
+    """Integration tests for the complete flow.
+
+    Note: These tests mock stdin_has_data() to simulate FIFO behavior
+    since StringIO is not a real FIFO. Real FIFO tests are in
+    test_dual_mode_stdin.py using subprocess.
+    """
 
     def test_full_workflow_detection_flow(self):
         """Test complete flow for workflow detection."""
         workflow = {"ir_version": "1.0", "nodes": []}
         workflow_str = json.dumps(workflow)
 
-        with patch("sys.stdin", io.StringIO(workflow_str)), patch("sys.stdin.isatty", return_value=False):
+        with (
+            patch("sys.stdin", io.StringIO(workflow_str)),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
             # Read stdin
             content = read_stdin()
             assert content is not None
@@ -136,7 +209,10 @@ class TestIntegration:
         """Test complete flow for data input."""
         data = "Some user data"
 
-        with patch("sys.stdin", io.StringIO(data)), patch("sys.stdin.isatty", return_value=False):
+        with (
+            patch("sys.stdin", io.StringIO(data)),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
+        ):
             # Read stdin
             content = read_stdin()
             assert content is not None
@@ -322,7 +398,7 @@ class TestReadStdinEnhanced:
     def test_text_stdin(self):
         """Test reading text stdin."""
         with (
-            patch("sys.stdin.isatty", return_value=False),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
             patch("sys.stdin.buffer.read", side_effect=[b"Hello World", b""]),
         ):
             result = read_stdin_enhanced()
@@ -333,7 +409,7 @@ class TestReadStdinEnhanced:
     def test_binary_stdin(self):
         """Test reading binary stdin."""
         with (
-            patch("sys.stdin.isatty", return_value=False),
+            patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
             patch("sys.stdin.buffer.read", side_effect=[b"Hello\x00World", b""]),
         ):
             result = read_stdin_enhanced()

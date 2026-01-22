@@ -12,15 +12,25 @@ Track Windows compatibility issues and potential improvements. pflow is designed
 
 ## Known Windows Issues
 
-### 1. Stdin FIFO Detection (Task 115 Research)
+### 1. Stdin FIFO Detection (Task 115 - Updated)
 
 **Problem:** `stat.S_ISFIFO()` always returns `False` on Windows because Windows doesn't have Unix FIFO pipes.
 
-**Current Behavior:** Falls back to `return not sys.stdin.isatty()` which assumes piped stdin has data.
+**Current Behavior (Simplified):** After Task 115 simplification, we use FIFO-only detection:
+- Only `stat.S_ISFIFO()` is checked
+- No fallbacks, no `select()` complexity
+- On Windows: always returns `False` for piped input
 
-**Impact:** Workflow chaining (`pflow A | pflow B`) works, but rare edge cases (non-TTY with no data) could hang.
+**Impact:** **Stdin routing does NOT work on Windows.** Piping data will not be detected:
+```powershell
+# This does NOT work on Windows
+echo "data" | pflow workflow.json
+# Error: Workflow requires input 'data'
+```
 
-**Potential Fix:** Use Win32 API `PeekNamedPipe()` via ctypes:
+**Workaround:** Use file input or CLI parameters instead of piping.
+
+**Potential Fix:** Add platform-specific detection using Win32 API:
 
 ```python
 if sys.platform == "win32":
@@ -28,7 +38,11 @@ if sys.platform == "win32":
     from ctypes import wintypes
     kernel32 = ctypes.windll.kernel32
     handle = kernel32.GetStdHandle(-10)  # STD_INPUT_HANDLE
-    if kernel32.GetFileType(handle) == 3:  # FILE_TYPE_PIPE
+    file_type = kernel32.GetFileType(handle)
+    if file_type == 3:  # FILE_TYPE_PIPE
+        # Option A: Assume pipe has data (simple)
+        return True
+        # Option B: Use PeekNamedPipe (accurate)
         available = wintypes.DWORD()
         kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None)
         return available.value > 0
@@ -38,13 +52,11 @@ if sys.platform == "win32":
 
 ---
 
-### 2. select() on Stdin
+### 2. select() Not Used (Removed)
 
-**Problem:** Python's `select.select()` on Windows only works with sockets, not file handles.
+**Previous Problem:** Python's `select.select()` on Windows only works with sockets.
 
-**Current Behavior:** Caught by exception handler, falls back to TTY check.
-
-**Impact:** Non-blocking stdin checks don't work on Windows.
+**Current Status:** `select()` was **removed** from stdin handling in Task 115 simplification. This issue no longer applies.
 
 ---
 
@@ -99,8 +111,9 @@ if sys.platform == "win32":
 |------|----------|-----------|
 | 2026-01-22 | Create placeholder task | Document findings from Task 115 |
 | 2026-01-22 | Defer implementation | Unix-first tool, current fallbacks are acceptable |
+| 2026-01-22 | Simplified to FIFO-only | Removed unreliable `select()` fallback; Windows stdin not supported |
 
 ## Related
 
 - Task 115: Automatic Stdin Routing for Unix-First Piping
-- Bugfix BF-20250112-stdin-hang-nontty-grep: Original stdin hang fix
+- Task 115 Session 6: Simplified FIFO detection (removed select() complexity)

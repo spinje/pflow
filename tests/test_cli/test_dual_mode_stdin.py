@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -54,7 +55,8 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
 class TestDualModeStdinBehavior:
     """Test dual-mode stdin behavior through actual CLI usage."""
 
-    def test_file_workflow_with_stdin_data_routes_to_input(self, tmp_path):
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_file_workflow_with_stdin_data_routes_to_input(self, mock_stdin_has_data, tmp_path):
         """Test that stdin data is routed to input marked with stdin: true."""
         # Create a workflow with stdin: true input
         workflow = {
@@ -157,7 +159,8 @@ class TestDualModeStdinBehavior:
         assert result.exit_code == 1
         assert "not found" in result.output.lower()
 
-    def test_stdin_error_when_no_stdin_input_declared(self, tmp_path):
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_stdin_error_when_no_stdin_input_declared(self, mock_stdin_has_data, tmp_path):
         """Test that piping to workflow without stdin: true shows helpful error.
 
         This is the main error path users will hit when they try to pipe data
@@ -416,7 +419,8 @@ class TestBinaryAndLargeStdinBehavior:
 
             os.unlink(binary_file)
 
-    def test_very_large_stdin_handled_appropriately(self, tmp_path):
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_very_large_stdin_handled_appropriately(self, mock_stdin_has_data, tmp_path):
         """Test that very large stdin is handled without crashing.
 
         The test verifies that pflow can receive and route large stdin data

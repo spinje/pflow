@@ -3152,6 +3152,12 @@ def _route_stdin_to_params(
     """
     stdin_text = _extract_stdin_text(stdin_data)
     if stdin_text is None:
+        # Check if stdin was binary/large file (detected but not routable)
+        if isinstance(stdin_data, StdinData) and (stdin_data.binary_data or stdin_data.temp_path):
+            click.echo("⚠️  Stdin contains binary or large data", err=True)
+            click.echo("   Binary/large data is not automatically routed to workflow inputs.", err=True)
+            click.echo("   Consider using a file path parameter instead.", err=True)
+            click.echo("", err=True)
         return
 
     # Stdin has text content - try to route it
