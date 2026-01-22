@@ -349,6 +349,8 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
 ### Planned Features (in order of priority)
 
+- Task 115: Automatic Stdin Routing for Unix-First Piping
+
 **v0.8.0 - PyPI release:**
 - Task 49: Publish to PyPI
 
