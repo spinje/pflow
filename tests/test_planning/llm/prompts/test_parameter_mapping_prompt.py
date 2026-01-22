@@ -281,9 +281,9 @@ class TestParameterMappingPrompt:
             "generated_workflow": workflow_ir,  # Simulating Path B
         }
 
-        # Add stdin if provided
-        if test_case.stdin_data:
-            shared["stdin"] = test_case.stdin_data
+        # Note: stdin is now routed to workflow inputs via stdin: true
+        # in the workflow IR, not via shared["stdin"]. The test cases don't
+        # use stdin_data, so no additional setup is needed.
 
         try:
             # Run the node lifecycle

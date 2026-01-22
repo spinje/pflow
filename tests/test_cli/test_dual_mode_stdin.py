@@ -54,16 +54,17 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
 class TestDualModeStdinBehavior:
     """Test dual-mode stdin behavior through actual CLI usage."""
 
-    def test_file_workflow_with_stdin_data_shows_injection_message(self, tmp_path):
-        """Test that stdin data is injected when using file path directly."""
-        # Create a minimal valid workflow using echo node
+    def test_file_workflow_with_stdin_data_routes_to_input(self, tmp_path):
+        """Test that stdin data is routed to input marked with stdin: true."""
+        # Create a workflow with stdin: true input
         workflow = {
             "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True, "description": "Data from stdin"}},
             "nodes": [
                 {
                     "id": "test_echo",
                     "type": "echo",
-                    "params": {"message": "Test content"},
+                    "params": {"message": "${data}"},
                 }
             ],
             "edges": [],
@@ -79,11 +80,8 @@ class TestDualModeStdinBehavior:
         result = runner.invoke(main, ["--verbose", str(workflow_file)], input="Test stdin data")
 
         assert result.exit_code == 0
-        # Test that workflow executes successfully and stdin injection is handled
-        # The exact message format may vary (text vs JSON output), so test for key indicators
-        assert "Injected" in result.output or "stdin" in result.output.lower()
-        # Verify workflow executed (look for content or success indicators)
-        assert "Test content" in result.output or "executed" in result.output.lower()
+        # Verify workflow executed with stdin data routed to input
+        assert "Test stdin data" in result.output or "executed" in result.output.lower()
 
     def test_json_via_stdin_triggers_planner(self, tmp_path):
         """Test that JSON input via stdin triggers the planner (no longer direct workflow execution)."""
@@ -158,6 +156,97 @@ class TestDualModeStdinBehavior:
         # With new system, non-existent workflow names will fail
         assert result.exit_code == 1
         assert "not found" in result.output.lower()
+
+    def test_stdin_error_when_no_stdin_input_declared(self, tmp_path):
+        """Test that piping to workflow without stdin: true shows helpful error.
+
+        This is the main error path users will hit when they try to pipe data
+        to a workflow that hasn't declared which input should receive stdin.
+        """
+        # Create a workflow WITHOUT stdin: true on any input
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"path": {"type": "string", "required": True}},
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${path}"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(workflow_file)], input="piped data")
+
+        # Should fail with helpful error message
+        assert result.exit_code == 1
+        # Error message should explain how to fix it
+        assert "stdin" in result.output.lower()
+        assert "true" in result.output.lower()
+
+    def test_stdin_error_when_multiple_stdin_inputs(self, tmp_path):
+        """Test that workflow with multiple stdin: true inputs shows validation error.
+
+        Only one input can receive piped data - having multiple is ambiguous.
+        """
+        # Create a workflow with TWO stdin: true inputs (invalid)
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "input_a": {"type": "string", "required": True, "stdin": True},
+                "input_b": {"type": "string", "required": True, "stdin": True},
+            },
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(workflow_file)])
+
+        # Should fail validation
+        assert result.exit_code == 1
+        # Error should mention both input names
+        assert "input_a" in result.output
+        assert "input_b" in result.output
+        assert "stdin" in result.output.lower()
+
+    def test_cli_param_overrides_stdin(self, tmp_path):
+        """Test that CLI parameter takes precedence over piped stdin.
+
+        This allows users to debug/test workflows without changing piped data.
+        """
+        output_file = tmp_path / "output.txt"
+        # Create a workflow with stdin: true input that writes to file
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [
+                {
+                    "id": "write1",
+                    "type": "write-file",
+                    "params": {"file_path": str(output_file), "content": "${data}"},
+                }
+            ],
+            "edges": [],
+            "start_node": "write1",
+        }
+
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        # Pipe "piped_value" but also provide CLI param - CLI should win
+        result = runner.invoke(main, [str(workflow_file), "data=cli_value"], input="piped_value_ignored")
+
+        assert result.exit_code == 0
+        # Verify the CLI value was used, not the piped value
+        assert output_file.exists()
+        written_content = output_file.read_text()
+        assert written_content == "cli_value", f"Expected 'cli_value' but got '{written_content}'"
 
 
 class TestRealShellIntegration:
@@ -295,19 +384,26 @@ class TestBinaryAndLargeStdinBehavior:
             os.unlink(binary_file)
 
     def test_very_large_stdin_handled_appropriately(self, tmp_path):
-        """Test that very large stdin is handled without crashing."""
-        # Create a simple workflow using echo node
+        """Test that very large stdin is handled without crashing.
+
+        The test verifies that pflow can receive and route large stdin data
+        without memory issues or crashes. We use a write-file node which
+        can handle large data properly (written via Python, not shell argv).
+        """
+        output_file = tmp_path / "output.txt"
+        # Create a workflow with stdin: true input to accept large data
         workflow = {
             "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True, "description": "Large data"}},
             "nodes": [
                 {
-                    "id": "test_echo",
-                    "type": "echo",
-                    "params": {"message": "Test content"},
+                    "id": "write_data",
+                    "type": "write-file",
+                    "params": {"file_path": str(output_file), "content": "${data}"},
                 }
             ],
             "edges": [],
-            "start_node": "test_echo",
+            "start_node": "write_data",
         }
 
         workflow_file = tmp_path / "workflow.json"
@@ -321,5 +417,140 @@ class TestBinaryAndLargeStdinBehavior:
         result = runner.invoke(main, ["--verbose", str(workflow_file)], input=large_data)  # No --file flag
 
         # Should handle large data without crashing - success indicated by exit code 0
-        assert result.exit_code == 0
-        # The key test is that large data doesn't cause crashes
+        assert result.exit_code == 0, f"Expected success but got: {result.output}"
+        # Verify the data was actually written correctly
+        assert output_file.exists(), "Output file should have been created"
+        assert output_file.read_text() == large_data, "Large data should be written correctly"
+
+
+class TestWorkflowChaining:
+    """Test workflow chaining via Unix pipes.
+
+    These tests verify that `pflow -p workflow1.json | pflow workflow2.json` works correctly.
+    This is critical functionality for Unix-first piping behavior.
+
+    The key challenge: when shell pipes two processes, they start simultaneously.
+    Process B checks for stdin before Process A has produced output. The fix uses
+    FIFO detection to block appropriately on real pipes (matching cat/grep/jq behavior).
+    """
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+    def test_workflow_chaining_producer_to_consumer(self, tmp_path, uv_exe, prepared_subprocess_env):
+        """Test that two workflows can be chained via Unix pipe.
+
+        This is THE key test for stdin routing - it verifies that:
+        1. Producer workflow outputs data via -p flag
+        2. Consumer workflow receives and processes it via stdin: true
+
+        Without FIFO detection, this test would fail because the consumer
+        would check for stdin before the producer has written anything.
+        """
+        # Producer workflow: generates JSON array
+        producer = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "generate",
+                    "type": "shell",
+                    "params": {"command": "echo '[1,2,3]'"},
+                }
+            ],
+            "edges": [],
+            "start_node": "generate",
+            "outputs": {"result": {"source": "${generate.stdout}"}},
+        }
+
+        # Consumer workflow: counts array length
+        consumer = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [
+                {
+                    "id": "count",
+                    "type": "shell",
+                    "params": {"stdin": "${data}", "command": "jq length"},
+                }
+            ],
+            "edges": [],
+            "start_node": "count",
+            "outputs": {"count": {"source": "${count.stdout}"}},
+        }
+
+        producer_file = tmp_path / "producer.json"
+        consumer_file = tmp_path / "consumer.json"
+        producer_file.write_text(json.dumps(producer))
+        consumer_file.write_text(json.dumps(consumer))
+
+        env = prepared_subprocess_env
+
+        # Use shell=True to get actual pipe behavior
+        # This is the real Unix pipe test
+        cmd = f"{uv_exe} run pflow -p {producer_file} | {uv_exe} run pflow -p {consumer_file}"
+        result = subprocess.run(  # noqa: S602
+            cmd,
+            capture_output=True,
+            text=True,
+            shell=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, f"Pipeline failed: stdout={result.stdout}, stderr={result.stderr}"
+        # The output should be "3" (length of [1,2,3])
+        assert result.stdout.strip() == "3", f"Expected '3' but got '{result.stdout.strip()}'"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+    def test_three_stage_pipeline(self, tmp_path, uv_exe, prepared_subprocess_env):
+        """Test three workflows chained via pipes: producer | transform | consumer."""
+        # Producer: generates [1,2,3,4,5]
+        producer = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "gen", "type": "shell", "params": {"command": "echo '[1,2,3,4,5]'"}}],
+            "edges": [],
+            "start_node": "gen",
+            "outputs": {"result": {"source": "${gen.stdout}"}},
+        }
+
+        # Transform: doubles each element
+        transform = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [{"id": "double", "type": "shell", "params": {"stdin": "${data}", "command": "jq '[.[] * 2]'"}}],
+            "edges": [],
+            "start_node": "double",
+            "outputs": {"result": {"source": "${double.stdout}"}},
+        }
+
+        # Consumer: sums all elements
+        consumer = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [{"id": "sum", "type": "shell", "params": {"stdin": "${data}", "command": "jq 'add'"}}],
+            "edges": [],
+            "start_node": "sum",
+            "outputs": {"result": {"source": "${sum.stdout}"}},
+        }
+
+        producer_file = tmp_path / "producer.json"
+        transform_file = tmp_path / "transform.json"
+        consumer_file = tmp_path / "consumer.json"
+        producer_file.write_text(json.dumps(producer))
+        transform_file.write_text(json.dumps(transform))
+        consumer_file.write_text(json.dumps(consumer))
+
+        env = prepared_subprocess_env
+
+        # Three-stage pipeline
+        cmd = f"{uv_exe} run pflow -p {producer_file} | {uv_exe} run pflow -p {transform_file} | {uv_exe} run pflow -p {consumer_file}"
+        result = subprocess.run(  # noqa: S602
+            cmd,
+            capture_output=True,
+            text=True,
+            shell=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, f"Pipeline failed: stdout={result.stdout}, stderr={result.stderr}"
+        # [1,2,3,4,5] doubled = [2,4,6,8,10], sum = 30
+        assert result.stdout.strip() == "30", f"Expected '30' but got '{result.stdout.strip()}'"

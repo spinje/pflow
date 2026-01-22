@@ -162,8 +162,6 @@ class WorkflowExecutorService:
         Returns:
             Initialized shared store
         """
-        from pflow.core.shell_integration import populate_shared_store
-
         if shared_store is None:
             shared_store = {}
 
@@ -171,9 +169,8 @@ class WorkflowExecutorService:
         if execution_params:
             shared_store.update(execution_params)
 
-        # Add stdin data
-        if stdin_data:
-            populate_shared_store(shared_store, stdin_data)
+        # Note: stdin data is now routed to workflow inputs via stdin: true
+        # in the workflow IR, handled by _validate_and_prepare_workflow_params
 
         # Initialize metrics tracking
         if metrics_collector:

@@ -16,6 +16,7 @@ import contextlib
 import json
 import os
 import select
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -66,15 +67,15 @@ def detect_stdin() -> bool:
 
 
 def stdin_has_data() -> bool:
-    """Check if stdin actually has data available without blocking.
+    """Check if stdin actually has data available.
 
-    This function uses select() to check if stdin is ready for reading,
-    which helps avoid hanging when stdin is non-TTY but has no actual data.
-    This can happen in environments like Claude Code where stdin/stdout
-    are always non-TTY.
+    For FIFO pipes (from shell piping), we return True to let the caller
+    block on read - this matches Unix tool behavior (cat, grep, jq).
+    For other non-TTY cases (sockets, /dev/null), we use non-blocking check
+    to avoid hanging in environments like Claude Code.
 
     Returns:
-        True if stdin has data available, False otherwise
+        True if stdin has data available or is a pipe, False otherwise
     """
     if sys.stdin.isatty():
         return False
@@ -93,8 +94,19 @@ def stdin_has_data() -> bool:
         # stdin might not have these attributes in some environments
         pass
 
-    # Use select with 0 timeout to check if stdin is ready without blocking
-    # This avoids the hang when stdin is non-TTY but has no data
+    # Check if stdin is a FIFO (pipe from another process)
+    # For real pipes, return True and let the caller block on read
+    # This is correct Unix behavior - cat, grep, jq all do this
+    try:
+        mode = os.fstat(sys.stdin.fileno()).st_mode
+        if stat.S_ISFIFO(mode):
+            return True
+    except (OSError, AttributeError):
+        # fstat might fail in some environments
+        pass
+
+    # For other non-TTY cases (sockets, etc.), use non-blocking check
+    # This prevents hanging in environments like Claude Code
     try:
         rlist, _, _ = select.select([sys.stdin], [], [], 0)
         return bool(rlist)
@@ -195,19 +207,6 @@ def determine_stdin_mode(content: str) -> str:
 
     # Default to data mode
     return "data"
-
-
-def populate_shared_store(shared: dict, content: str) -> None:
-    """Add stdin content to shared store.
-
-    Args:
-        shared: The shared store dictionary
-        content: The stdin content to store
-
-    Side Effects:
-        Sets shared['stdin'] = content
-    """
-    shared["stdin"] = content
 
 
 def detect_binary_content(sample: bytes) -> bool:

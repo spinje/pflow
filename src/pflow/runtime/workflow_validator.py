@@ -114,6 +114,15 @@ def prepare_inputs(
         logger.debug("No inputs declared for workflow", extra={"phase": "input_validation"})
         return errors, defaults, env_param_names
 
+    # Check for multiple stdin: true inputs (only one allowed)
+    stdin_inputs = [name for name, spec in inputs.items() if spec.get("stdin") is True]
+    if len(stdin_inputs) > 1:
+        errors.append((
+            f'Multiple inputs marked with "stdin": true: {", ".join(stdin_inputs)}',
+            "inputs",
+            "Only one input can receive piped stdin",
+        ))
+
     logger.debug(
         "Validating workflow inputs", extra={"phase": "input_validation", "declared_inputs": list(inputs.keys())}
     )

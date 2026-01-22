@@ -215,38 +215,3 @@ class TestParameterManagementIntegration:
             assert action == "params_incomplete"
             assert set(shared["missing_params"]) == {"input_file", "limit"}
             assert "Missing required parameters" in caplog.text
-
-    def test_stdin_fallback_across_all_nodes(self, mock_llm_param_discovery, mock_llm_param_extraction):
-        """Test all nodes properly handle stdin as parameter source."""
-        with patch("llm.get_model") as mock_get_model:
-            # Discovery recognizes stdin
-            mock_model_discovery = Mock()
-            mock_model_discovery.prompt.return_value = mock_llm_param_discovery(parameters={}, stdin_type="text")
-
-            # Mapping extracts from stdin
-            mock_model_mapping = Mock()
-            mock_model_mapping.prompt.return_value = mock_llm_param_extraction(
-                extracted={"data": "from_stdin"}, missing=[], confidence=0.8
-            )
-
-            mock_get_model.side_effect = [mock_model_discovery, mock_model_mapping]
-
-            shared = {
-                "user_input": "process the piped input",
-                "stdin": "data_from_pipe",
-            }
-
-            # Discovery detects stdin
-            discovery_node = ParameterDiscoveryNode()
-            discovery_node.wait = 0  # Speed up tests
-            prep1 = discovery_node.prep(shared)
-            assert prep1["stdin_info"]["type"] == "text"
-            exec1 = discovery_node.exec(prep1)
-            assert exec1["stdin_type"] == "text"
-
-            # Mapping uses stdin
-            shared["found_workflow"] = {"ir": {"inputs": {}}}
-            mapping_node = ParameterMappingNode()
-            mapping_node.wait = 0  # Speed up tests
-            prep2 = mapping_node.prep(shared)
-            assert prep2["stdin_data"] == "data_from_pipe"

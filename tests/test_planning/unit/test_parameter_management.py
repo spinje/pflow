@@ -179,32 +179,6 @@ class TestParameterDiscoveryNode:
         assert exec_res["parameters"] == {}
         assert shared["discovered_params"] == {}
 
-    def test_detects_stdin_as_parameter_source(self, mock_llm_calls):
-        """Test node recognizes when stdin contains parameters."""
-        # Configure the global mock to indicate stdin as parameter source
-        mock_llm_calls.set_response(
-            "anthropic/claude-sonnet-4-5",
-            ParameterDiscovery,
-            {
-                "parameters": {},
-                "stdin_type": "text",
-                "reasoning": "Parameters should come from stdin",
-            },
-        )
-
-        node = ParameterDiscoveryNode()
-        node.wait = 0  # Speed up tests
-        shared = {
-            "user_input": "process the piped data",
-            "stdin": "data from pipe",
-        }
-
-        prep_res = node.prep(shared)
-        assert prep_res["stdin_info"]["type"] == "text"
-
-        exec_res = node.exec(prep_res)
-        assert exec_res["stdin_type"] == "text"
-
     def test_lazy_model_loading(self, mock_llm_calls):
         """Test model is loaded in exec(), not __init__()."""
         # Configure the global mock

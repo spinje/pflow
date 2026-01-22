@@ -11,7 +11,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, NoReturn, cast
 
 import click
 
@@ -3073,21 +3073,136 @@ def _validate_workflow_flags(workflow: tuple[str, ...], ctx: click.Context) -> N
         ctx.exit(1)
 
 
+def _find_stdin_input(workflow_ir: dict[str, Any]) -> str | None:
+    """Find the input marked with stdin: true.
+
+    Args:
+        workflow_ir: Workflow IR data
+
+    Returns:
+        Name of input with stdin: true, or None if no such input exists
+    """
+    inputs: dict[str, Any] = workflow_ir.get("inputs", {})
+    for name, spec in inputs.items():
+        if isinstance(spec, dict) and spec.get("stdin") is True:
+            return str(name)
+    return None
+
+
+def _extract_stdin_text(stdin_data: str | StdinData | None) -> str | None:
+    """Extract text content from stdin data.
+
+    Args:
+        stdin_data: Stdin data (string, StdinData, or None)
+
+    Returns:
+        Text content if available, None otherwise (for binary/large file/None cases)
+    """
+    if stdin_data is None:
+        return None
+    if isinstance(stdin_data, str):
+        return stdin_data
+    # StdinData object - only extract text_data, not binary or temp file
+    if stdin_data.text_data is not None:
+        return stdin_data.text_data
+    # Binary data or temp file path - do not route
+    return None
+
+
+def _show_stdin_routing_error(ctx: click.Context) -> NoReturn:
+    """Display error when stdin cannot be routed to workflow.
+
+    Args:
+        ctx: Click context (for exit)
+
+    Raises:
+        SystemExit: Always exits with code 1
+    """
+    click.echo("❌ Piped input cannot be routed to workflow", err=True)
+    click.echo("", err=True)
+    click.echo('   This workflow has no input marked with "stdin": true.', err=True)
+    click.echo('   To accept piped data, add "stdin": true to one input declaration.', err=True)
+    click.echo("", err=True)
+    click.echo("   Example:", err=True)
+    click.echo('     "inputs": {', err=True)
+    click.echo('       "data": {"type": "string", "required": true, "stdin": true}', err=True)
+    click.echo("     }", err=True)
+    click.echo("", err=True)
+    click.echo('   👉 Add "stdin": true to the input that should receive piped data', err=True)
+    ctx.exit(1)
+
+
+def _route_stdin_to_params(
+    ctx: click.Context,
+    stdin_data: str | StdinData | None,
+    workflow_ir: dict[str, Any],
+    params: dict[str, Any],
+) -> None:
+    """Route stdin content to the appropriate workflow input parameter.
+
+    Args:
+        ctx: Click context (for exit on error)
+        stdin_data: Stdin data (string, StdinData, or None)
+        workflow_ir: Workflow IR data
+        params: Parameters dict to modify in place
+
+    Side Effects:
+        Modifies params dict if stdin should be routed.
+        Calls ctx.exit(1) if stdin is piped but no target input exists.
+    """
+    stdin_text = _extract_stdin_text(stdin_data)
+    if stdin_text is None:
+        return
+
+    # Stdin has text content - try to route it
+    target_input = _find_stdin_input(workflow_ir)
+
+    if target_input is None:
+        # No stdin: true input - error if stdin is piped
+        _show_stdin_routing_error(ctx)
+
+    # Route stdin to target input (unless CLI override exists)
+    if target_input not in params:
+        params[target_input] = stdin_text
+
+
+def _load_settings_env() -> dict[str, str]:
+    """Load environment variables from settings.
+
+    Returns:
+        Dict of environment variables from settings, empty dict on error
+    """
+    try:
+        from pflow.core.settings import SettingsManager
+
+        manager = SettingsManager()
+        settings = manager.load()
+        return settings.env
+    except Exception as e:
+        # Non-fatal - continue with empty settings
+        logger.warning(f"Failed to load settings.env: {e}")
+        return {}
+
+
 def _validate_and_prepare_workflow_params(
-    ctx: click.Context, workflow_ir: dict[str, Any], remaining_args: tuple[str, ...]
+    ctx: click.Context,
+    workflow_ir: dict[str, Any],
+    remaining_args: tuple[str, ...],
+    stdin_data: str | StdinData | None = None,
 ) -> dict[str, Any]:
-    """Validate workflow parameters and apply defaults.
+    """Validate workflow parameters, route stdin, and apply defaults.
 
     Args:
         ctx: Click context
         workflow_ir: Workflow IR data
         remaining_args: Command line arguments for parameters
+        stdin_data: Optional stdin data (string, StdinData, or None)
 
     Returns:
         Validated and prepared parameters dictionary
 
     Raises:
-        SystemExit: If validation errors occur
+        SystemExit: If validation errors occur (including stdin routing errors)
     """
     # Parse parameters
     params = parse_workflow_params(remaining_args)
@@ -3099,25 +3214,15 @@ def _validate_and_prepare_workflow_params(
         click.echo("   👉 Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)", err=True)
         ctx.exit(1)
 
+    # Route stdin to workflow input marked with stdin: true
+    _route_stdin_to_params(ctx, stdin_data, workflow_ir, params)
+
     # Skip input validation if --validate-only (handled separately with dummy values)
     validate_only = ctx.obj.get("validate_only", False)
     if not validate_only:
-        # Import prepare_inputs from the right module
         from pflow.runtime.workflow_validator import prepare_inputs
 
-        # Load settings.env to populate workflow inputs
-        settings_env: dict[str, str] = {}
-        try:
-            from pflow.core.settings import SettingsManager
-
-            manager = SettingsManager()
-            settings = manager.load()
-            settings_env = settings.env
-        except Exception as e:
-            # Non-fatal - continue with empty settings
-            logger.warning(f"Failed to load settings.env: {e}")
-
-        # Validate with prepare_inputs (including settings.env)
+        settings_env = _load_settings_env()
         errors, defaults, env_param_names = prepare_inputs(workflow_ir, params, settings_env=settings_env)
         if errors:
             # Show user-friendly errors
@@ -3257,8 +3362,8 @@ def _handle_named_workflow(
         _show_workflow_help(first_arg, workflow_ir, source)
         return True
 
-    # Validate and prepare parameters
-    params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args)
+    # Validate and prepare parameters (including stdin routing)
+    params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args, stdin_data)
 
     # Store execution params for potential repair save (strip internal params)
     from .rerun_display import filter_user_params

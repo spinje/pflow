@@ -837,14 +837,10 @@ class ParameterDiscoveryNode(Node):
         model_name = self.params.get("model", "anthropic/claude-sonnet-4-5")
         temperature = self.params.get("temperature", 0.0)
 
-        # Check for stdin data (fallback parameter source)
+        # Note: stdin data is now routed to workflow inputs via stdin: true
+        # in the workflow IR, handled by the CLI. The planner no longer needs
+        # to know about stdin content.
         stdin_info = None
-        if shared.get("stdin"):
-            stdin_info = {"type": "text", "preview": str(shared["stdin"])[:500]}
-        elif shared.get("stdin_binary"):
-            stdin_info = {"type": "binary", "size": str(len(shared["stdin_binary"]))}
-        elif shared.get("stdin_path"):
-            stdin_info = {"type": "file", "path": shared["stdin_path"]}
 
         # Get planning context (might be empty string on error)
         planning_context = shared.get("planning_context", "")

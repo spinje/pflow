@@ -405,6 +405,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 112: Pre-execution Type Validation
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
+- Task 116: Windows Compatibility
 
 > We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 

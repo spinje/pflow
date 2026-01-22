@@ -9,7 +9,6 @@ from pflow.core.shell_integration import (
     detect_binary_content,
     detect_stdin,
     determine_stdin_mode,
-    populate_shared_store,
     read_stdin,
     read_stdin_enhanced,
     read_stdin_with_limit,
@@ -116,39 +115,6 @@ class TestDetermineStdinMode:
         assert determine_stdin_mode(content) == "workflow"
 
 
-class TestPopulateSharedStore:
-    """Test shared store population."""
-
-    def test_populate_empty_store(self):
-        """Test populating an empty shared store."""
-        shared = {}
-        content = "test data"
-        populate_shared_store(shared, content)
-        assert shared["stdin"] == content
-
-    def test_populate_existing_store(self):
-        """Test populating a store with existing data."""
-        shared = {"other_key": "other_value"}
-        content = "test data"
-        populate_shared_store(shared, content)
-        assert shared["stdin"] == content
-        assert shared["other_key"] == "other_value"
-
-    def test_overwrite_existing_stdin(self):
-        """Test that existing stdin value is overwritten."""
-        shared = {"stdin": "old data"}
-        content = "new data"
-        populate_shared_store(shared, content)
-        assert shared["stdin"] == content
-
-    def test_empty_content(self):
-        """Test that empty content is stored correctly."""
-        shared = {}
-        content = ""
-        populate_shared_store(shared, content)
-        assert shared["stdin"] == ""
-
-
 class TestIntegration:
     """Integration tests for the complete flow."""
 
@@ -179,10 +145,9 @@ class TestIntegration:
             mode = determine_stdin_mode(content)
             assert mode == "data"
 
-            # Populate shared store
-            shared = {}
-            populate_shared_store(shared, content)
-            assert shared["stdin"] == data
+            # Note: stdin is now routed to workflow inputs via stdin: true
+            # in the workflow IR, not via populate_shared_store
+            assert content == data
 
 
 class TestBinaryDetection:

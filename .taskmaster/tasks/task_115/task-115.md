@@ -2,7 +2,7 @@
 
 ## Description
 
-Enable Unix-style piping into workflows by automatically routing stdin to matching workflow inputs based on type detection. This makes `cat data.json | pflow transform.json | pflow analyze.json` work without special workflow configuration.
+Enable Unix-style piping into workflows by routing stdin to workflow inputs marked with `"stdin": true`. This makes `cat data.json | pflow transform.json | pflow analyze.json` work with explicit workflow configuration.
 
 ## Status
 not started
@@ -27,38 +27,32 @@ pflow workflow.json data='{"items": [1,2,3]}'
 ```
 
 **Root cause:**
-1. CLI injects piped stdin into `shared_storage["stdin"]` during execution
-2. Validation happens BEFORE execution and rejects `${stdin}` references
-3. No automatic bridge between piped stdin and declared workflow inputs
+1. CLI reads stdin but doesn't route it to workflow input parameters
+2. Validation happens BEFORE stdin could be injected, rejecting missing required inputs
+3. No mechanism to declare which workflow input should receive piped data
 
 **Current state:**
-- `src/pflow/cli/main.py` line 262: `shared_storage["stdin"] = stdin_data.text_data`
-- `_validate_before_execution()` runs at line 2164, before stdin injection
-- Workflows can't reference `${stdin}` without validation failure
+- `_validate_before_execution()` runs before stdin is available to inputs
+- Workflows must receive all required inputs via CLI - piping doesn't work
 
 ## Solution
 
-Implement automatic stdin routing based on type matching:
+Implement explicit stdin routing via `"stdin": true` input declaration:
 
 ### Algorithm
 
-1. **Detect stdin type** by parsing the piped content:
-   - `{"key": ...}` → object
-   - `[...]` → array
-   - `42`, `3.14` → number
-   - `true`/`false` → boolean
-   - Everything else → string
+1. **Check for `stdin: true` input** in workflow declaration
+2. **If found and stdin is piped**: Route stdin content to that input (unless CLI overrides)
+3. **If found but no stdin piped**: Input must be provided via CLI (normal required input behavior)
+4. **If not found**: Stdin is not routed - workflow doesn't accept piped input
 
-2. **Find matching inputs** in the workflow that accept this type
+### Key Design Principle
 
-3. **Route automatically** based on match count:
-   - **Exactly ONE match** → auto-route stdin to that input
-   - **ZERO matches** → error: "Stdin type X doesn't match any input"
-   - **MULTIPLE matches** → require explicit `"stdin": true` on one input
+Stdin routing is **explicit, not automatic**. No type detection, no auto-matching. The workflow author declares which input receives stdin by adding `"stdin": true`.
 
-### Explicit Declaration for Ambiguous Cases
+This gives flexibility: the same input can be provided via stdin OR CLI argument.
 
-When multiple inputs match the stdin type:
+### Explicit Declaration
 
 ```json
 {
@@ -73,34 +67,32 @@ The `"stdin": true` flag marks which input receives piped data.
 
 ### Examples
 
-**Case 1: Auto-routing (one string input)**
+**Case 1: Basic stdin input**
 ```json
 {
   "inputs": {
-    "data": {"type": "string", "required": true},
+    "data": {"type": "string", "required": true, "stdin": true},
     "limit": {"type": "number", "default": 10}
   }
 }
 ```
 ```bash
+# Via stdin
 echo "hello world" | pflow workflow.json
-# stdin is string, only one string input → routes to "data"
+# → data="hello world", limit=10
+
+# Via CLI (same workflow, different invocation)
+pflow workflow.json data="hello world" limit=5
+# → data="hello world", limit=5
 ```
 
-**Case 2: Auto-routing (one object input)**
-```json
-{
-  "inputs": {
-    "config": {"type": "object", "required": true}
-  }
-}
-```
+**Case 2: CLI overrides stdin**
 ```bash
-echo '{"debug": true}' | pflow workflow.json
-# stdin parses as object, one object input → routes to "config"
+echo "from pipe" | pflow workflow.json data="from cli"
+# → data="from cli" (CLI wins)
 ```
 
-**Case 3: Ambiguous (two string inputs)**
+**Case 3: Multiple inputs, one receives stdin**
 ```json
 {
   "inputs": {
@@ -112,130 +104,144 @@ echo '{"debug": true}' | pflow workflow.json
 ```bash
 echo "data" | pflow workflow.json template="Hello {name}"
 # stdin routes to "source" (has stdin: true)
-# "template" provided explicitly
+# "template" provided via CLI
 ```
 
 **Case 4: Pipeline composition**
 ```bash
-cat data.json | pflow transform.json | pflow analyze.json > report.md
-# Each workflow has one matching input, auto-routes through pipeline
+cat data.json | pflow -p transform.json | pflow analyze.json > report.md
+# Each workflow has stdin: true on its data input
+```
+
+**Case 5: No stdin: true = no piping**
+```json
+{
+  "inputs": {
+    "file_path": {"type": "string", "required": true}
+  }
+}
+```
+```bash
+echo "/tmp/data.json" | pflow workflow.json
+# Error: Workflow has no input marked with stdin: true
+# (Piping not supported for this workflow)
 ```
 
 ## Design Decisions
 
-- **Type detection before validation**: Parse stdin early, include detected type in validation context
-- **Conservative matching**: Only auto-route on exact type match, not coercion (string stdin won't route to object input)
-- **Explicit override**: CLI param always wins over stdin (`pflow workflow.json data="override"` ignores stdin)
-- **Error messages**: Clear errors for "no match" and "ambiguous" cases with suggestions
+- **Explicit declaration required**: Workflow author must add `"stdin": true` to one input - no auto-detection
+- **No type matching**: We don't detect stdin type or try to match it to inputs - explicit is better than magic
+- **No `${stdin}` in shared store**: Stdin ONLY routes to inputs with `stdin: true` - this ensures inputs work with both CLI and stdin
+- **CLI override**: CLI param always wins over stdin (`pflow workflow.json data="override"` ignores stdin)
+- **Single stdin input**: Only one input per workflow can have `stdin: true`
+- **Flexibility**: Same workflow works via piping OR CLI arguments - author declares once, users choose invocation style
 
 ## Implementation Notes
 
 ### Files to Modify
 
 1. **`src/pflow/cli/main.py`**:
-   - Add `_detect_stdin_type(stdin_data)` → returns detected type
-   - Add `_find_stdin_target(workflow_ir, stdin_type)` → returns input name or raises
+   - Add `_find_stdin_input(workflow_ir)` → returns input name with `stdin: true` or None
+   - Add `_route_stdin_to_params(stdin_data, workflow_ir, params)` → injects stdin into params
    - Modify stdin handling to inject into `execution_params` before validation
-   - Update `_validate_and_prepare_workflow_params()` to handle stdin routing
+   - Remove `populate_shared_store()` calls for stdin - the old `${stdin}` pattern is being removed entirely
 
 2. **`src/pflow/core/workflow_validator.py`**:
-   - Add support for `"stdin": true` input declaration
-   - Validate only one input has `stdin: true` per type
+   - Add validation that only one input has `stdin: true`
 
-3. **`src/pflow/core/ir_schema.py`** (if exists):
-   - Add `stdin` field to input schema
+3. **`src/pflow/core/ir_schema.py`**:
+   - Add `stdin` boolean field to input schema
 
-### Type Detection Logic
-
-```python
-def _detect_stdin_type(content: str) -> str:
-    """Detect the type of stdin content."""
-    content = content.strip()
-
-    # Try JSON parse first
-    try:
-        parsed = json.loads(content)
-        if isinstance(parsed, dict):
-            return "object"
-        elif isinstance(parsed, list):
-            return "array"
-        elif isinstance(parsed, bool):
-            return "boolean"
-        elif isinstance(parsed, (int, float)):
-            return "number"
-        else:
-            return "string"
-    except json.JSONDecodeError:
-        pass
-
-    # Not valid JSON - treat as string
-    return "string"
-```
-
-### Stdin Target Resolution
+### Stdin Input Resolution
 
 ```python
-def _find_stdin_target(workflow_ir: dict, stdin_type: str) -> str:
-    """Find which input should receive stdin."""
+def _find_stdin_input(workflow_ir: dict) -> str | None:
+    """Find the input marked with stdin: true."""
     inputs = workflow_ir.get("inputs", {})
 
-    # First check for explicit stdin: true
-    explicit = [name for name, spec in inputs.items()
-                if spec.get("stdin") is True]
-    if len(explicit) == 1:
-        return explicit[0]
-    if len(explicit) > 1:
-        raise ValueError("Multiple inputs marked with stdin: true")
+    stdin_inputs = [name for name, spec in inputs.items()
+                    if spec.get("stdin") is True]
 
-    # Auto-match by type
-    matching = [name for name, spec in inputs.items()
-                if spec.get("type") == stdin_type]
+    if len(stdin_inputs) == 0:
+        return None
+    if len(stdin_inputs) == 1:
+        return stdin_inputs[0]
 
-    if len(matching) == 1:
-        return matching[0]
-    elif len(matching) == 0:
-        raise ValueError(f"No input accepts stdin type '{stdin_type}'")
-    else:
-        names = ", ".join(matching)
+    raise ValueError(
+        f"Multiple inputs marked with stdin: true: {', '.join(stdin_inputs)}. "
+        f"Only one input can receive piped stdin."
+    )
+```
+
+### Stdin Routing Logic
+
+```python
+def _route_stdin_to_params(
+    stdin_data: str | None,
+    workflow_ir: dict,
+    params: dict,
+) -> dict:
+    """Route stdin to the appropriate input parameter."""
+    if stdin_data is None:
+        return params
+
+    target = _find_stdin_input(workflow_ir)
+
+    if target is None:
+        # No stdin: true input - error if user is piping
         raise ValueError(
-            f"Multiple inputs accept type '{stdin_type}': {names}. "
-            f"Add '\"stdin\": true' to one input to disambiguate."
+            "Workflow has no input marked with stdin: true. "
+            "Add '\"stdin\": true' to an input to enable piping."
         )
+
+    # CLI param overrides stdin
+    if target in params:
+        return params
+
+    # Route stdin to target input
+    result = params.copy()
+    result[target] = stdin_data
+    return result
 ```
 
 ## Verification
 
-1. **Basic piping works**:
+1. **Basic piping works** (workflow has `stdin: true` on data input):
    ```bash
    echo '{"items": [1,2,3]}' | pflow test-workflow.json
    ```
 
 2. **Pipeline composition works**:
    ```bash
-   cat data.json | pflow step1.json | pflow step2.json
+   cat data.json | pflow -p step1.json | pflow step2.json
    ```
 
-3. **Type detection is accurate**:
-   - JSON objects → object
-   - JSON arrays → array
-   - Numbers → number
-   - Booleans → boolean
-   - Plain text → string
-
-4. **Ambiguous cases error clearly**:
+3. **Same workflow works via CLI**:
    ```bash
-   echo "text" | pflow two-string-inputs.json
-   # Error: Multiple inputs accept type 'string': input1, input2.
-   #        Add '"stdin": true' to one input to disambiguate.
+   pflow test-workflow.json data='{"items": [1,2,3]}'
    ```
 
-5. **Explicit param overrides stdin**:
+4. **No stdin: true errors clearly**:
+   ```bash
+   echo "text" | pflow no-stdin-workflow.json
+   # Error: Workflow has no input marked with stdin: true.
+   #        Add '"stdin": true' to an input to enable piping.
+   ```
+
+5. **Multiple stdin: true errors clearly**:
+   ```bash
+   # Workflow with two stdin: true inputs
+   # Error: Multiple inputs marked with stdin: true: input1, input2.
+   #        Only one input can receive piped stdin.
+   ```
+
+6. **CLI param overrides stdin**:
    ```bash
    echo "ignored" | pflow workflow.json data="used"
    # Uses "used", not "ignored"
    ```
 
-6. **Backward compatibility**: Existing workflows without piping still work
+7. **Workflows without stdin: true**: Work normally via CLI args (just can't receive piped input)
 
 ## Additional Discovery: Output Side Also Broken
 
@@ -273,7 +279,7 @@ Both issues need resolution:
 
 | Issue | Current State | Fix |
 |-------|---------------|-----|
-| stdin routing | Broken - not routed to inputs | This task (auto-route by type) |
+| stdin routing | Broken - not routed to inputs | This task (explicit `stdin: true` on input) |
 | stdout output | Broken - goes to stderr | Either: (a) auto-detect piped stdout, or (b) make `-p` default when stdout is pipe |
 
 **Ideal end state:**
@@ -296,10 +302,10 @@ cat data.json | pflow transform.json | pflow analyze.json > report.md
 }
 ```
 
-**Test workflow B (consumes input):**
+**Test workflow B (consumes input via stdin):**
 ```json
 {
-  "inputs": {"data": {"type": "string", "required": true}},
+  "inputs": {"data": {"type": "string", "required": true, "stdin": true}},
   "nodes": [{"id": "count", "type": "shell", "params": {
     "stdin": "${data}", "command": "jq 'length'"
   }}],
@@ -339,9 +345,10 @@ After implementation, update documentation to reflect Unix-first piping as a cor
 ## Unix-First Design
 
 pflow workflows are first-class CLI citizens:
-- **stdin routing**: Piped input automatically routes to matching workflow inputs
+- **stdin routing**: Piped input routes to inputs marked with `stdin: true`
 - **stdout output**: Workflow results go to stdout for pipeline composition
 - **Composability**: Mix with any Unix tool (jq, grep, awk, curl)
+- **Flexibility**: Same workflow works via piping OR CLI arguments
 
 This enables:
 ```bash
@@ -372,15 +379,15 @@ for repo in frontend backend api; do
 done
 ```
 
-**Document stdin: true flag for ambiguous cases:**
+**Document stdin: true flag for enabling piping:**
 ```json
 {
   "inputs": {
-    "source": {"type": "string", "required": true, "stdin": true},
-    "config": {"type": "string", "required": true}
+    "data": {"type": "object", "required": true, "stdin": true}
   }
 }
 ```
+The `stdin: true` flag marks which input receives piped data. Without it, the workflow cannot accept piped input. This same input can also be provided via CLI argument.
 
 ### 3. Verification Checklist
 
@@ -393,6 +400,6 @@ After docs are updated, verify:
 ## Related
 
 - Unix-first positioning in pflow marketing/docs
-- `src/pflow/core/shell_integration.py` - existing stdin handling
-- Current stdin injection: `src/pflow/cli/main.py:259-272`
+- `src/pflow/core/shell_integration.py` - stdin reading utilities (to be simplified)
+- `src/pflow/cli/main.py` - CLI parameter handling and validation flow
 - Output mode logic: `src/pflow/cli/main.py:332-378` (`_output_with_header` function)

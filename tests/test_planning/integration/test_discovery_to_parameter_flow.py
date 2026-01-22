@@ -591,17 +591,16 @@ class TestSharedStoreIntegration:
 
             shared = {
                 "user_input": "Process this data",
-                "stdin": "col1,col2\nval1,val2",  # Use 'stdin' not 'stdin_data'
+                "stdin": "col1,col2\nval1,val2",  # Still present but planner ignores it
             }
 
-            # ParameterDiscoveryNode should detect and preserve stdin metadata
+            # ParameterDiscoveryNode no longer detects stdin (Task 115)
+            # stdin routing now happens in CLI via stdin: true input flag
             discovery_node = ParameterDiscoveryNode(wait=0)
             prep_res = discovery_node.prep(shared)
 
-            # Check stdin detection - it's stored as stdin_info
-            assert prep_res["stdin_info"] is not None
-            assert prep_res["stdin_info"]["type"] == "text"
-            assert "col1" in prep_res["stdin_info"]["preview"]
+            # stdin_info is now always None - stdin routing happens in CLI
+            assert prep_res["stdin_info"] is None
 
             exec_res = discovery_node.exec(prep_res)
             discovery_node.post(shared, prep_res, exec_res)

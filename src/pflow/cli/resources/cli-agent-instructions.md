@@ -855,7 +855,8 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
       "type": "string|number|boolean|array|object",
       "description": "What this parameter is for",
       "required": true|false,
-      "default": "value"  // Only if required: false
+      "default": "value",  // Only if required: false
+      "stdin": true|false  // If true, piped stdin routes here (only one input can have this)
     }
   },
   "nodes": [
@@ -1176,6 +1177,14 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
       "required": false,
       "default": {"key": "value"},
       "description": "Configuration object"
+    },
+
+    // Stdin - receives piped input (e.g., cat data.json | pflow workflow.json)
+    "data": {
+      "type": "string",
+      "required": true,
+      "stdin": true,
+      "description": "Data from stdin or CLI"
     }
   }
 }
