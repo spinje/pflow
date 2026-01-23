@@ -3113,22 +3113,87 @@ def _show_stdin_routing_error(ctx: click.Context) -> NoReturn:
     """Display error when stdin cannot be routed to workflow.
 
     Args:
-        ctx: Click context (for exit)
+        ctx: Click context (for exit and output_format)
 
     Raises:
         SystemExit: Always exits with code 1
     """
-    click.echo("❌ Piped input cannot be routed to workflow", err=True)
-    click.echo("", err=True)
-    click.echo('   This workflow has no input marked with "stdin": true.', err=True)
-    click.echo('   To accept piped data, add "stdin": true to one input declaration.', err=True)
-    click.echo("", err=True)
-    click.echo("   Example:", err=True)
-    click.echo('     "inputs": {', err=True)
-    click.echo('       "data": {"type": "string", "required": true, "stdin": true}', err=True)
-    click.echo("     }", err=True)
-    click.echo("", err=True)
-    click.echo('   👉 Add "stdin": true to the input that should receive piped data', err=True)
+    output_format = ctx.obj.get("output_format", "text")
+    verbose = ctx.obj.get("verbose", False)
+
+    if output_format == "json":
+        workflow_metadata = ctx.obj.get("workflow_metadata")
+        error_output: dict[str, Any] = {
+            "success": False,
+            "error": "Piped input cannot be routed to workflow",
+            "validation_errors": [
+                'This workflow has no input marked with "stdin": true. '
+                'To accept piped data, add "stdin": true to one input declaration.'
+            ],
+        }
+        if workflow_metadata:
+            error_output["metadata"] = workflow_metadata
+        click.echo(json.dumps(error_output, indent=2 if verbose else None))
+    else:
+        click.echo("❌ Piped input cannot be routed to workflow", err=True)
+        click.echo("", err=True)
+        click.echo('   This workflow has no input marked with "stdin": true.', err=True)
+        click.echo('   To accept piped data, add "stdin": true to one input declaration.', err=True)
+        click.echo("", err=True)
+        click.echo("   Example:", err=True)
+        click.echo('     "inputs": {', err=True)
+        click.echo('       "data": {"type": "string", "required": true, "stdin": true}', err=True)
+        click.echo("     }", err=True)
+        click.echo("", err=True)
+        click.echo('   👉 Add "stdin": true to the input that should receive piped data', err=True)
+    ctx.exit(1)
+
+
+def _output_validation_errors(
+    ctx: click.Context,
+    errors: list[tuple[str, str, str]],
+    error_summary: str = "Validation failed",
+) -> NoReturn:
+    """Output validation errors respecting output_format.
+
+    Args:
+        ctx: Click context (for output_format, verbose, workflow_metadata)
+        errors: List of (message, path, suggestion) tuples from prepare_inputs()
+        error_summary: High-level error description for JSON mode
+
+    Raises:
+        SystemExit: Always exits with code 1
+    """
+    output_format = ctx.obj.get("output_format", "text")
+    verbose = ctx.obj.get("verbose", False)
+
+    if output_format == "json":
+        workflow_metadata = ctx.obj.get("workflow_metadata")
+        # Convert tuple errors to structured format
+        validation_errors = []
+        for msg, path, suggestion in errors:
+            error_entry: dict[str, str] = {"message": msg}
+            if path and path != "root":
+                error_entry["path"] = path
+            if suggestion:
+                error_entry["suggestion"] = suggestion
+            validation_errors.append(error_entry)
+
+        error_output: dict[str, Any] = {
+            "success": False,
+            "error": error_summary,
+            "validation_errors": validation_errors,
+        }
+        if workflow_metadata:
+            error_output["metadata"] = workflow_metadata
+        click.echo(json.dumps(error_output, indent=2 if verbose else None))
+    else:
+        for msg, path, suggestion in errors:
+            click.echo(f"❌ {msg}", err=True)
+            if path and path != "root":
+                click.echo(f"   At: {path}", err=True)
+            if suggestion:
+                click.echo(f"   👉 {suggestion}", err=True)
     ctx.exit(1)
 
 
@@ -3231,14 +3296,7 @@ def _validate_and_prepare_workflow_params(
         settings_env = _load_settings_env()
         errors, defaults, env_param_names = prepare_inputs(workflow_ir, params, settings_env=settings_env)
         if errors:
-            # Show user-friendly errors
-            for msg, path, suggestion in errors:
-                click.echo(f"❌ {msg}", err=True)
-                if path and path != "root":
-                    click.echo(f"   At: {path}", err=True)
-                if suggestion:
-                    click.echo(f"   👉 {suggestion}", err=True)
-            ctx.exit(1)
+            _output_validation_errors(ctx, errors, "Input validation failed")
 
         # Apply defaults
         if defaults:

@@ -591,3 +591,174 @@ class TestWorkflowChaining:
         assert result.returncode == 0, f"Pipeline failed: stdout={result.stdout}, stderr={result.stderr}"
         # [1,2,3,4,5] doubled = [2,4,6,8,10], sum = 30
         assert result.stdout.strip() == "30", f"Expected '30' but got '{result.stdout.strip()}'"
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+    def test_empty_pipe_routes_empty_string(self, tmp_path, uv_exe, prepared_subprocess_env):
+        """Test that empty pipe (echo -n '') routes empty string to stdin: true input.
+
+        This is Unix-standard behavior: empty piped content IS valid content.
+        With FIFO-only detection, real pipes are always read regardless of content.
+        The empty string is routed to the stdin: true input.
+
+        This test uses write-file node because shell nodes may have issues with
+        empty stdin. The write-file node writes the content directly via Python.
+        """
+        output_file = tmp_path / "output.txt"
+
+        # Workflow that writes stdin content wrapped in markers
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [
+                {
+                    "id": "write",
+                    "type": "write-file",
+                    "params": {"file_path": str(output_file), "content": "got:[${data}]"},
+                }
+            ],
+            "edges": [],
+            "start_node": "write",
+        }
+
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        env = prepared_subprocess_env
+
+        # Pipe empty string using printf (more portable than echo -n)
+        cmd = f"printf '' | {uv_exe} run pflow {workflow_file}"
+        result = subprocess.run(  # noqa: S602
+            cmd,
+            capture_output=True,
+            text=True,
+            shell=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert result.returncode == 0, f"Failed: stdout={result.stdout}, stderr={result.stderr}"
+        # Verify empty string was routed (file contains "got:[]")
+        assert output_file.exists(), "Output file should exist"
+        content = output_file.read_text()
+        assert content == "got:[]", f"Expected 'got:[]' but got '{content}'"
+
+
+class TestJSONOutputFormat:
+    """Test JSON output format for stdin routing errors."""
+
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_stdin_error_json_output_when_no_stdin_input(self, mock_stdin, tmp_path):
+        """Test that stdin routing error outputs JSON when --output-format json."""
+        # Create workflow WITHOUT stdin: true
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"path": {"type": "string", "required": True}},
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output-format", "json", str(workflow_file)], input="piped data")
+
+        assert result.exit_code == 1
+        # Output should be valid JSON
+        output = json.loads(result.output)
+        assert output["success"] is False
+        assert "error" in output
+        assert "Piped input cannot be routed" in output["error"]
+        assert "validation_errors" in output
+        assert isinstance(output["validation_errors"], list)
+        assert len(output["validation_errors"]) > 0
+        assert "stdin" in output["validation_errors"][0].lower()
+
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_stdin_error_text_output_default(self, mock_stdin, tmp_path):
+        """Test that stdin routing error outputs text by default."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"path": {"type": "string", "required": True}},
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(workflow_file)], input="piped data")
+
+        assert result.exit_code == 1
+        # Output should be plain text with emoji
+        assert "❌" in result.output
+        assert "stdin" in result.output.lower()
+        # Should NOT be valid JSON
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
+
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_multiple_stdin_error_json_output(self, mock_stdin, tmp_path):
+        """Test that multiple stdin validation error outputs JSON when --output-format json."""
+        # Create workflow with MULTIPLE stdin: true inputs
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "data1": {"type": "string", "required": True, "stdin": True},
+                "data2": {"type": "string", "required": True, "stdin": True},
+            },
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, ["--output-format", "json", str(workflow_file)], input="piped data")
+
+        assert result.exit_code == 1
+        # Output should be valid JSON
+        output = json.loads(result.output)
+        assert output["success"] is False
+        assert "error" in output
+        assert "validation_errors" in output
+        assert isinstance(output["validation_errors"], list)
+        # Should have structured error with path and suggestion
+        multi_stdin_error = next(
+            (e for e in output["validation_errors"] if "Multiple inputs" in e.get("message", "")),
+            None,
+        )
+        assert multi_stdin_error is not None
+        assert "path" in multi_stdin_error
+        assert "suggestion" in multi_stdin_error
+
+    @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+    def test_multiple_stdin_error_text_output(self, mock_stdin, tmp_path):
+        """Test that multiple stdin validation error outputs text by default."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "data1": {"type": "string", "required": True, "stdin": True},
+                "data2": {"type": "string", "required": True, "stdin": True},
+            },
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+            "start_node": "echo1",
+        }
+        workflow_file = tmp_path / "workflow.json"
+        workflow_file.write_text(json.dumps(workflow))
+
+        runner = CliRunner()
+        result = runner.invoke(main, [str(workflow_file)], input="piped data")
+
+        assert result.exit_code == 1
+        # Output should be plain text with emoji and structure
+        assert "❌" in result.output
+        assert "Multiple inputs" in result.output
+        assert "At:" in result.output
+        assert "👉" in result.output
+        # Should NOT be valid JSON
+        with pytest.raises(json.JSONDecodeError):
+            json.loads(result.output)
