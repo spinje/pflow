@@ -1171,3 +1171,82 @@ make test   # ✅ 4023 tests pass
 8. ✅ Windows limitations documented (Task 116)
 9. ✅ Simplified to Unix-standard FIFO-only detection
 10. ✅ Binary/large stdin shows helpful warning
+
+---
+
+## [Session 7] - JSON Error Output Fix (2026-01-23)
+
+### Problem Discovered
+
+When using `--output-format json`, stdin routing errors output plain text instead of JSON:
+
+```bash
+echo "data" | uv run pflow --output-format json workflow-no-stdin.json
+# Output: ❌ Piped input cannot be routed to workflow (WRONG - should be JSON)
+```
+
+This breaks JSON consumers (CI/CD pipelines, programmatic tools, agents).
+
+### Fix Applied
+
+**1. Modified `_show_stdin_routing_error()` (lines 3112-3149)**
+
+Added `output_format` check:
+- JSON mode: Outputs `{"success": false, "error": "...", "validation_errors": [...]}`
+- Text mode: Unchanged (preserves emojis, examples, formatting)
+
+**2. Added `_output_validation_errors()` helper (lines 3152-3196)**
+
+Central function for `prepare_inputs()` validation errors:
+- Handles tuple errors `(message, path, suggestion)`
+- Outputs structured JSON with path/suggestion fields
+- Preserves text formatting for text mode
+
+**3. Updated `prepare_inputs()` error display (line 3299)**
+
+Replaced inline error display with call to `_output_validation_errors()`.
+
+### Tests Added
+
+Added `TestJSONOutputFormat` class in `tests/test_cli/test_dual_mode_stdin.py`:
+1. `test_stdin_error_json_output_when_no_stdin_input` - No stdin: true → JSON
+2. `test_stdin_error_text_output_default` - No stdin: true → Text
+3. `test_multiple_stdin_error_json_output` - Multiple stdin → JSON
+4. `test_multiple_stdin_error_text_output` - Multiple stdin → Text
+
+### Broader Investigation
+
+During this fix, discovered a systemic issue: **~72% of error paths ignore `--output-format json`**.
+
+Created comprehensive Task 117 to address this:
+- Unified JSON error structure for all error types
+- Central error output infrastructure
+- Coverage across all CLI modules (main.py, registry.py, registry_run.py, workflow.py)
+
+### Verification
+
+```bash
+# JSON output for stdin routing error
+echo "data" | uv run pflow --output-format json /tmp/no-stdin.json
+# {"success": false, "error": "Piped input cannot be routed to workflow", "validation_errors": [...]}
+
+# JSON output for multiple stdin error
+echo "data" | uv run pflow --output-format json /tmp/multi-stdin.json
+# {"success": false, "error": "Input validation failed", "validation_errors": [{...}]}
+
+make check  # ✅ All checks pass
+make test   # ✅ 4025 tests pass (2 new tests)
+```
+
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `src/pflow/cli/main.py` | Added JSON support to `_show_stdin_routing_error()`, added `_output_validation_errors()` |
+| `tests/test_cli/test_dual_mode_stdin.py` | Added `TestJSONOutputFormat` class with 4 tests |
+| `.taskmaster/tasks/task_117/task-117.md` | Comprehensive update with investigation findings |
+| `.taskmaster/tasks/task_117/starting-context/braindump-json-error-investigation.md` | Tacit knowledge for Task 117 |
+
+### Commit
+
+`8672c3a fix: add JSON error output for stdin routing and validation errors [skip review]`
