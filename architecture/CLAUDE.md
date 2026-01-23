@@ -290,16 +290,16 @@ Each entry includes:
 
 **Key Contents**:
 - Motivation for shell pipe support
-- How piped content populates `shared["stdin"]`
-- Integration with CLI and natural language flows
+- Workflow input `stdin: true` declaration pattern
+- FIFO-only pipe detection (prevents hanging)
+- CLI override behavior and workflow chaining
 - Similarity to llm CLI patterns
-- Trace and cache handling
 
 **Critical Insights**:
-- Reserved key `shared["stdin"]` for all piped input
-- Nodes check stdin as fallback or planner creates mapping
-- Piped content hashed for reproducibility
-- Preserves all pflow guarantees
+- Stdin routes to workflow input marked with `"stdin": true`
+- FIFO detection via `stat.S_ISFIFO()` (not `select()`)
+- CLI parameters override piped stdin
+- Only one input per workflow can receive stdin
 
 **When to Use**: Implementing stdin detection, Unix integration, handling piped input
 

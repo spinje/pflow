@@ -108,9 +108,9 @@ class SharedStore(dict):
 
 # RIGHT - Simple validation functions
 def validate_shared_store(shared):
-    """Validate reserved keys and patterns."""
-    if "stdin" in shared and not isinstance(shared["stdin"], str):
-        raise ValueError("stdin must be string")
+    """Validate system keys and patterns."""
+    if "__execution__" in shared and not isinstance(shared["__execution__"], dict):
+        raise ValueError("__execution__ must be dict")
     return True
 
 # In use:

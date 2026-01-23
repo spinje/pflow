@@ -36,37 +36,62 @@ pflow's shell integration mirrors this intuitive behavior, ensuring familiarity 
 
 ### Basic Usage
 
+Workflows declare which input receives piped data using `"stdin": true`:
+
+```json
+{
+  "inputs": {
+    "data": {"type": "string", "required": true, "stdin": true}
+  },
+  "nodes": [...]
+}
+```
+
 ```bash
 cat article.md | pflow summarize-text
 ```
 
 This will:
 
-1. Detect that input is piped via `stdin`.
-2. Place the piped content into the shared store under the reserved key `shared["stdin"]`.
-3. The `summarize-text` node (or the first node in the flow) then utilizes this `shared["stdin"]` content. This can happen in a few ways:
-    *   The node itself is designed to check `shared["stdin"]` for input if its primary named input key (e.g., `shared["text"]`) is not populated.
-    *   The planner (for NL-generated flows) or CLI processing logic (for direct CLI flows) generates an Intermediate Representation (IR) that includes an explicit mapping from the node's primary input key to `shared["stdin"]`.
-4. Execute the flow as if the content had been provided through an explicitly named shared store key.
+1. Detect that input is piped via `stdin` (FIFO pipe detection).
+2. Find the workflow input marked with `"stdin": true`.
+3. Route the piped content to that input parameter.
+4. Execute the workflow with the stdin content as the input value.
 
-### Advanced NL-based Usage
+**Key behaviors:**
+- CLI parameters override stdin: `echo "ignored" | pflow workflow.json data="used"`
+- Only one input per workflow can have `stdin: true`
+- Same workflow works via piping OR CLI arguments
 
-Natural language planner seamlessly supports piped input:
+### Workflow Chaining
+
+With stdin routing, workflows can be chained like Unix tools:
 
 ```bash
-kubectl logs my-pod | pflow "extract errors and summarize"
+# Pipeline composition
+cat data.json | pflow -p transform.json | pflow analyze.json > report.md
+
+# Mix with Unix tools
+pflow -p fetch-prs.json | jq '.[] | select(.urgent)' | pflow notify.json
 ```
 
-Here, the NL planner identifies appropriate nodes. It will generate a flow where `shared["stdin"]` is populated with the log data, and the first relevant node in the generated flow is configured (either by its design or via an IR mapping) to process the content from `shared["stdin"]`.
-
+The `-p` flag outputs to stdout for pipeline composition.
 
 ### Internal Implementation
 
-* **Detection:** pflow detects if `stdin` is not a TTY and has content.
-* **Mapping Logic:** Piped content is primarily placed into `shared["stdin"]`.
-    *   **Planner-driven Mapping**: For NL-generated flows, the planner may create an explicit IR mapping from a node's input key (e.g., `text`) to `shared["stdin"]`.
-    *   **Node Convention**: Nodes can be designed to check `shared["stdin"]` as a fallback if their primary named input key is not found in the shared store.
-* **Trace & Cache:** Input from `shared["stdin"]` is hashed, its content may be saved (e.g., to a file like `stdin.<hash>.txt` for tracing purposes), and the hash is included in the trace and lockfile to ensure caching and reproducibility.
+* **FIFO Detection:** `stdin_has_data()` uses `stat.S_ISFIFO()` to detect real shell pipes
+  - Returns True only for FIFO pipes (real `|` pipes)
+  - Returns False for char devices (Claude Code), sockets, StringIO
+  - Prevents hanging in non-pipe environments
+
+* **Routing Logic:** Stdin routes to workflow input with `"stdin": true`
+  - `_find_stdin_input()` locates the target input
+  - `_route_stdin_to_params()` injects stdin into execution params
+  - Routing happens BEFORE input validation (so required inputs are satisfied)
+
+* **CLI Override:** CLI parameters take precedence over piped stdin
+
+* **Error Handling:** Clear error if stdin is piped but no `stdin: true` input exists
 
 ### Advanced Unix Integration
 
@@ -116,5 +141,6 @@ Native integration with Unix shell pipes positions pflow as a highly intuitive, 
 
 ## See Also
 
-- [Shared Store](../core-concepts/shared-store.md) - Reserved `shared["stdin"]` key
+- [Shared Store](../core-concepts/shared-store.md) - Node communication patterns
 - [Architecture](../architecture.md) - CLI interface overview
+- [IR Schema](../reference/ir-schema.md) - Workflow input declarations including `stdin: true`

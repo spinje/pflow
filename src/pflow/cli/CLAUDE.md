@@ -358,23 +358,38 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 - No progress indicators
 - Clean output for piping
 
-### 5. Stdin Handling
+### 5. Stdin Handling (Task 115)
 
-**Dual-Mode Reading** (_read_stdin_data, line 125):
-1. Simple text reading first (backward compatibility)
-2. Enhanced reading only if text fails (binary/large data)
+**FIFO-Only Detection** (`stdin_has_data()`):
+- Uses `stat.S_ISFIFO()` to detect real shell pipes
+- Returns True only for FIFO pipes (e.g., `echo x | pflow`)
+- Returns False for char devices (Claude Code), sockets, StringIO (tests)
+- Prevents hanging in non-pipe environments
 
 **StdinData Structure**:
 - `text_data`: UTF-8 text under 10MB
 - `binary_data`: Binary content under 10MB
 - `temp_path`: Path to temp file for large content
 
-**Critical Issue**: `populate_shared_store()` in execution module only handles strings, not `StdinData` objects. Binary/large data may be lost in execution path.
+**Stdin Routing to Workflow Inputs**:
+Stdin routes to workflow input declared with `"stdin": true`:
 
-**Shared Store Keys**:
-- `shared["stdin"]` - Text data (backward compatible)
-- `shared["stdin_binary"]` - Binary data
-- `shared["stdin_path"]` - Path to temp file
+```json
+"inputs": {
+  "data": {"type": "string", "required": true, "stdin": true}
+}
+```
+
+**Routing Logic** (`_route_stdin_to_params()`, line ~3200):
+1. `_find_stdin_input()` - finds input with `stdin: true`
+2. If found and stdin has text data → inject into params
+3. CLI params override stdin (if same input provided via CLI)
+4. Error if stdin piped but no `stdin: true` input exists
+
+**Key Behaviors**:
+- Only text data is routed (binary/large data shows warning)
+- Only one input per workflow can have `stdin: true`
+- Validation happens AFTER stdin routing (so required inputs are satisfied)
 
 ### 6. Parameter Handling
 
@@ -562,19 +577,16 @@ Click's `CliRunner` always returns `False` for `isatty()`, preventing true inter
 
 ## Known Issues and Critical Findings
 
-### 1. Stdin Handling Bug
-`populate_shared_store()` in execution module only accepts strings, but CLI creates `StdinData` objects for binary/large data. This causes binary data loss in execution path.
-
-### 2. No MCP Process Management
+### 1. No MCP Process Management
 MCP server processes are not tracked or cleaned up on termination. Servers may remain running after CLI exits.
 
-### 3. Test Node Detection
+### 2. Test Node Detection
 Hardcoded test node list plus pattern matching. Environment override `PFLOW_INCLUDE_TEST_NODES` has highest priority.
 
-### 4. Registry Format Inconsistency
+### 3. Registry Format Inconsistency
 Two save methods create format confusion. Pattern matching checks multiple fields due to inconsistent metadata.
 
-### 5. Click Testing Limitation
+### 4. Click Testing Limitation
 `CliRunner` always returns `False` for `isatty()`, preventing interactive mode testing in unit tests.
 
 ## Task 71 Enhancements: Agent-First CLI

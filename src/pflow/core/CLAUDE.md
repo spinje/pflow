@@ -131,21 +131,23 @@ Enables pflow to work seamlessly in Unix pipelines:
 
 **Core Functions**:
 - **`detect_stdin()`**: Checks if stdin is piped (not TTY)
-- **`stdin_has_data()`**: Non-blocking check for available stdin data (prevents hanging)
+- **`stdin_has_data()`**: FIFO-only pipe detection - returns True only for real shell pipes
+  - Uses `stat.S_ISFIFO()` to detect real pipes (avoids hanging on sockets/char devices)
+  - Claude Code stdin is a character device, not FIFO - returns False (prevents hang)
 - **`determine_stdin_mode()`**: Identifies stdin content (workflow JSON vs data)
   - **⚠️ UNUSED**: Function exists but never called in CLI
 - **`read_stdin_enhanced()`**: Reads stdin with binary/size handling
-- **`populate_shared_store()`**: Adds stdin content to workflow shared store
-  - **🐛 BUG**: Only accepts `str` but CLI passes `StdinData` objects for binary/large data
+
+**Stdin Routing** (Task 115):
+- Stdin is routed to workflow inputs via `"stdin": true` declaration
+- Routing happens in CLI (`_route_stdin_to_params()`) before input validation
+- CLI parameters override piped stdin
+- Only one input per workflow can have `stdin: true`
 
 **Memory Management**:
 - Default limit: 10MB (configurable via `PFLOW_STDIN_MEMORY_LIMIT`)
 - Automatic temp file creation for large inputs
 - Binary detection using null byte sampling in first 8KB
-
-**Critical Issues**:
-- **Data Loss Bug**: Binary/large file data not properly passed to nodes due to type mismatch
-- **Missing Integration**: StdinData objects created but execution layer only handles strings
 
 ### 4. workflow_manager.py - Workflow Lifecycle Management
 
@@ -504,11 +506,11 @@ Aggregates and exposes the module's functionality:
 **Exported from shell_integration.py**:
 - `StdinData`
 - `detect_stdin`
+- `detect_binary_content`
 - `determine_stdin_mode`
 - `read_stdin`
 - `read_stdin_enhanced`
 - `read_stdin_with_limit`
-- `populate_shared_store`
 - `stdin_has_data`
 
 **Exported from workflow_data_flow.py**:
@@ -734,8 +736,7 @@ The core module is used throughout pflow:
 2. **Shell Injection Risk**: Unvalidated parameters could contain shell special characters
 
 ### 🐛 Active Bugs
-1. **Stdin Data Loss**: Binary/large files not properly passed to nodes (type mismatch in `populate_shared_store()`)
-2. **Broken LLM Aliases**: Two aliases point to non-existent pricing entries
+1. **Broken LLM Aliases**: Two aliases point to non-existent pricing entries
 
 ### ⚠️ Dead Code
 1. **Unused Exceptions**: WorkflowExecutionError, CircularWorkflowReferenceError, RuntimeValidationError defined but never raised

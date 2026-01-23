@@ -212,7 +212,7 @@ validator - "complete" >> finalizer
 - **Performance**: Zero overhead when no mapping needed (direct pass-through)
 - **Activation**: Only when IR defines mappings for a node
 - **Collision Detection**: Works with validation utilities to detect and map around key conflicts between nodes
-- **Reserved Keys**: Protects reserved keys like `stdin` from being overwritten by nodes
+- **Reserved Keys**: Protects system-reserved keys (prefixed with `__`) from being overwritten by nodes
 
 ### 3. Params (Flat Structure)
 
@@ -243,7 +243,7 @@ This decouples node logic from flow orchestration. The complexity becomes a prop
 **Important**: Natural naming patterns (like using `shared["text"]` instead of `shared["data"]`) are **guidelines for clarity**, not enforced rules:
 
 - **Node developers** define their own naming conventions
-- **Framework validates** only reserved keys (like `stdin`) and collisions
+- **Framework validates** only system-reserved keys (`__` prefixed) and collisions
 - **Natural names** improve readability but aren't required
 - **Each node** documents its interface in the docstring
 
@@ -590,7 +590,7 @@ With namespacing:
 shared = {
   "github": {"response": "..."},
   "gitlab": {"response": "..."},
-  "stdin": "..."  # CLI input remains at root
+  "__execution__": {...}  # System keys remain at root
 }
 ```
 
