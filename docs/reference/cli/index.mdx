@@ -115,14 +115,35 @@ pflow my-workflow input=data.txt count=10 enabled=true
 
 ## Stdin input
 
-Pipe data into workflows:
+Pipe data into workflows that declare an input with `"stdin": true`:
 
 ```bash
 echo "test content" | pflow my-workflow
 cat data.csv | pflow csv-analyzer
 ```
 
-Stdin data is available in the workflow as `${stdin}`.
+The workflow must have an input marked to receive stdin:
+
+```json
+{
+  "inputs": {
+    "data": {"type": "string", "required": true, "stdin": true}
+  }
+}
+```
+
+Piped data routes to this input automatically. CLI parameters override stdin if both are provided:
+
+```bash
+# CLI parameter wins - "override" is used, not piped content
+echo "piped" | pflow my-workflow data="override"
+```
+
+For workflow chaining, use the `-p` flag to output results for the next workflow:
+
+```bash
+pflow -p step1.json | pflow -p step2.json | pflow step3.json
+```
 
 ## Output modes
 

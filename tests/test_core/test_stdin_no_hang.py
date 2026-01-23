@@ -72,45 +72,140 @@ def test_read_stdin_enhanced_no_hang(monkeypatch):
     assert result is None
 
 
-def test_stdin_has_data_with_actual_data(monkeypatch):
-    """Test stdin_has_data returns True when data is available."""
-    import io
-    import sys
+def test_stdin_has_data_with_fifo(monkeypatch):
+    """Test stdin_has_data returns True for FIFO pipes."""
+    import stat
 
     from pflow.core.shell_integration import stdin_has_data
 
-    # Mock stdin with data
-    mock_stdin = io.StringIO("test data")
-    mock_stdin.isatty = lambda: False
-    monkeypatch.setattr("sys.stdin", mock_stdin)
+    # Mock stdin as FIFO pipe
+    class MockStdin:
+        closed = False
 
-    # Mock select to indicate data is available
-    def mock_select(rlist, wlist, xlist, timeout):
-        return ([sys.stdin], [], [])
+        def isatty(self):
+            return False
 
-    monkeypatch.setattr("select.select", mock_select)
+        def fileno(self):
+            return 0
 
-    # Should detect that stdin has data
+    monkeypatch.setattr("sys.stdin", MockStdin())
+
+    # Mock os.fstat to return FIFO mode
+    class MockStatResult:
+        st_mode = stat.S_IFIFO | 0o644
+
+    monkeypatch.setattr("os.fstat", lambda fd: MockStatResult())
+
+    # Should return True for FIFO
     assert stdin_has_data() is True
 
 
-def test_stdin_has_data_fallback_on_select_error(monkeypatch):
-    """Test stdin_has_data fallback behavior when select() fails."""
+def test_stdin_has_data_non_fifo_returns_false(monkeypatch):
+    """Test stdin_has_data returns False for non-FIFO (e.g., char device, socket).
+
+    This is the simplified behavior - only FIFOs are read.
+    Non-FIFO stdin (like in Claude Code) returns False to avoid hanging.
+    """
+    import stat
 
     from pflow.core.shell_integration import stdin_has_data
 
-    # Mock stdin as non-TTY
-    mock_stdin = type("MockStdin", (), {"isatty": lambda self: False})()
+    # Mock stdin as character device (like in Claude Code)
+    class MockStdin:
+        closed = False
+
+        def isatty(self):
+            return False
+
+        def fileno(self):
+            return 0
+
+    monkeypatch.setattr("sys.stdin", MockStdin())
+
+    # Mock os.fstat to return character device mode (NOT FIFO)
+    class MockStatResult:
+        st_mode = stat.S_IFCHR | 0o644  # Character device
+
+    monkeypatch.setattr("os.fstat", lambda fd: MockStatResult())
+
+    # Should return False for non-FIFO
+    assert stdin_has_data() is False
+
+
+def test_stdin_has_data_returns_true_for_fifo(monkeypatch):
+    """Test stdin_has_data returns True immediately for FIFO pipes.
+
+    This is critical for workflow chaining (pflow A | pflow B).
+    When stdin is a FIFO pipe, we return True immediately so the caller
+    blocks on read() - matching Unix tool behavior (cat, grep, jq).
+    """
+    import stat
+
+    from pflow.core.shell_integration import stdin_has_data
+
+    # Mock stdin as non-TTY FIFO pipe
+    class MockFileno:
+        def __call__(self):
+            return 0  # fake fd
+
+    class MockStdin:
+        def isatty(self):
+            return False
+
+        @property
+        def closed(self):
+            return False
+
+        def fileno(self):
+            return 0
+
+    mock_stdin = MockStdin()
     monkeypatch.setattr("sys.stdin", mock_stdin)
 
-    # Mock select to raise an error (simulating platform incompatibility)
-    def mock_select(rlist, wlist, xlist, timeout):
-        raise ValueError("select not supported")
+    # Mock os.fstat to return FIFO mode
+    class MockStatResult:
+        st_mode = stat.S_IFIFO | 0o644  # FIFO with read/write permissions
 
-    monkeypatch.setattr("select.select", mock_select)
+    def mock_fstat(fd):
+        return MockStatResult()
 
-    # Should fall back to detecting non-TTY
+    monkeypatch.setattr("os.fstat", mock_fstat)
+
+    # Should return True immediately for FIFO without checking select
+    # This is the key behavior for workflow chaining
     assert stdin_has_data() is True
+
+
+def test_stdin_has_data_socket_returns_false(monkeypatch):
+    """Test stdin_has_data returns False for socket stdin.
+
+    The simplified implementation only reads FIFOs.
+    Sockets (like in some environments) return False to avoid potential hangs.
+    """
+    import stat
+
+    from pflow.core.shell_integration import stdin_has_data
+
+    # Mock stdin as socket (not FIFO)
+    class MockStdin:
+        closed = False
+
+        def isatty(self):
+            return False
+
+        def fileno(self):
+            return 0
+
+    monkeypatch.setattr("sys.stdin", MockStdin())
+
+    # Mock os.fstat to return socket mode (NOT FIFO)
+    class MockStatResult:
+        st_mode = stat.S_IFSOCK | 0o644  # Socket, not FIFO
+
+    monkeypatch.setattr("os.fstat", lambda fd: MockStatResult())
+
+    # Should return False for socket (not a FIFO)
+    assert stdin_has_data() is False
 
 
 # Integration test - only ONE subprocess test to verify the actual fix

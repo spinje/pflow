@@ -263,6 +263,11 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "description": "Data type hint",
                     },
                     "default": {"description": "Default value if not provided"},
+                    "stdin": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Whether this input receives piped stdin data",
+                    },
                 },
                 "additionalProperties": False,
             },

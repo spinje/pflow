@@ -24,7 +24,6 @@ SECURITY ISSUES:
 These are REAL integration tests that use actual files and execution.
 """
 
-import json
 import tempfile
 from pathlib import Path
 
@@ -202,9 +201,9 @@ class TestCalculatorNode(Node):
 
             flow = compile_ir_to_flow(workflow_ir, registry)
 
-            # Simulate stdin JSON data
-            stdin_data = {"x": 7, "y": 3, "operation": "multiply"}
-            shared = {"stdin": json.dumps(stdin_data)}
+            # Pass calculation parameters directly (previously tested via shared["stdin"])
+            # Note: stdin is now routed to workflow inputs via stdin: true
+            shared = {"x": 7, "y": 3, "operation": "multiply"}
             flow.run(shared)
 
             # Verify results (with namespacing)

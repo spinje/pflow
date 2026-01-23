@@ -5,17 +5,23 @@ stdin input, enabling dual-mode stdin handling in pflow workflows.
 
 The module supports:
 - Detection of piped stdin vs interactive terminal
+- FIFO-based pipe detection (only reads from real shell pipes)
 - Reading text data from stdin with UTF-8 encoding
 - Binary data detection and handling
 - Large file streaming to temporary storage
 - Determining if stdin contains workflow JSON or data
-- Populating the shared store with stdin content
+
+Key Design Decision:
+    stdin_has_data() returns True ONLY for FIFO pipes (real shell pipes).
+    This avoids hanging in environments like Claude Code where stdin is a
+    character device that never sends EOF. See stdin_has_data() docstring
+    for detailed rationale.
 """
 
 import contextlib
 import json
 import os
-import select
+import stat
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -66,73 +72,104 @@ def detect_stdin() -> bool:
 
 
 def stdin_has_data() -> bool:
-    """Check if stdin actually has data available without blocking.
+    """Check if stdin is a real pipe (FIFO) that should be read.
 
-    This function uses select() to check if stdin is ready for reading,
-    which helps avoid hanging when stdin is non-TTY but has no actual data.
-    This can happen in environments like Claude Code where stdin/stdout
-    are always non-TTY.
+    Returns True ONLY for real FIFO pipes (from shell piping like `echo x | pflow`).
+    Returns False for everything else: terminals, sockets, character devices, StringIO.
+
+    Design Decision - Why FIFO-only, not select():
+    -----------------------------------------------
+    We previously used `select.select([sys.stdin], [], [], 0)` to check for data.
+    This was UNRELIABLE because:
+
+    1. In Claude Code, stdin is a character device (S_ISCHR=True)
+    2. select() LIES on character devices - returns "ready" even with no data
+    3. Calling stdin.read() then hangs forever waiting for EOF that never comes
+
+    The Unix standard approach (used by cat, grep, jq) is simpler:
+    - Check isatty() - if terminal, no stdin
+    - Otherwise just read() - blocks until data or EOF
+
+    But we can't "just read" because Claude Code's stdin never sends EOF.
+    Solution: Only read from FIFO pipes. Real shell pipes are FIFOs.
+    Character devices, sockets, StringIO are not - we skip them.
+
+    Environment Behavior:
+    --------------------
+    | Environment              | stdin type      | S_ISFIFO | Result        |
+    |--------------------------|-----------------|----------|---------------|
+    | `echo x \\| pflow`        | FIFO pipe       | True     | Read (block)  |
+    | `echo -n "" \\| pflow`    | FIFO pipe       | True     | Read (empty)  |
+    | Claude Code              | char device     | False    | Skip (no hang)|
+    | CliRunner (tests)        | StringIO        | N/A      | Skip (no fd)  |
+    | Interactive terminal     | TTY             | N/A      | Skip (early)  |
+
+    For detailed investigation history, see:
+    .taskmaster/tasks/task_115/implementation/progress-log.md (Session 6)
 
     Returns:
-        True if stdin has data available, False otherwise
+        True if stdin is a FIFO pipe, False otherwise
     """
-    if sys.stdin.isatty():
-        return False
-
-    # Check if stdin is closed or /dev/null (common when subprocess.DEVNULL is used)
-    # This prevents hanging on Linux when stdin is redirected to /dev/null
+    # Check if stdin is closed first (before any other operations)
     try:
         if sys.stdin.closed:
             return False
+    except (AttributeError, OSError):
+        return False
 
-        # Additional check: if stdin is /dev/null, it won't have real data
-        # This is a common pattern when subprocess.DEVNULL is used
+    # Check if TTY (interactive terminal)
+    try:
+        if sys.stdin.isatty():
+            return False
+    except (AttributeError, OSError, ValueError):
+        return False
+
+    # Check if /dev/null
+    try:
         if hasattr(sys.stdin, "name") and sys.stdin.name == os.devnull:
             return False
     except (AttributeError, OSError):
-        # stdin might not have these attributes in some environments
         pass
 
-    # Use select with 0 timeout to check if stdin is ready without blocking
-    # This avoids the hang when stdin is non-TTY but has no data
+    # Check if stdin has a real file descriptor
+    # StringIO (CliRunner) doesn't have one
     try:
-        rlist, _, _ = select.select([sys.stdin], [], [], 0)
-        return bool(rlist)
-    except (OSError, ValueError):
-        # select() might fail on some platforms or file types
-        # In that case, fall back to assuming stdin has data if it's not a TTY
-        return not sys.stdin.isatty()
+        fd = sys.stdin.fileno()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+    # Check if stdin is a FIFO (real pipe)
+    # Only FIFOs should be read - this is Unix standard behavior
+    try:
+        mode = os.fstat(fd).st_mode
+        return stat.S_ISFIFO(mode)
+    except OSError:
+        return False
 
 
 def read_stdin() -> str | None:
     """Read all stdin content if available.
 
-    This function maintains backward compatibility while internally using
-    the enhanced stdin handling. For binary or large files, returns None
-    and the caller should check the enhanced read_stdin_enhanced() function.
+    Only reads if stdin is a real FIFO pipe (Unix standard behavior).
+    Empty string is valid content and will be returned (not treated as None).
 
     Returns:
-        Content string if stdin has text data under memory limit,
-        None if no stdin, empty, binary, or over limit
+        Content string if stdin is a pipe (including empty string),
+        None if no pipe or binary/over limit
 
     Raises:
         UnicodeDecodeError: If stdin contains invalid UTF-8
     """
-    # Check if stdin actually has data available to avoid hanging
+    # Only read if stdin is a real FIFO pipe
     if not stdin_has_data():
         return None
 
-    # For backward compatibility, we still use the simple text reading
-    # This ensures existing code continues to work
     try:
         content = sys.stdin.read()
 
-        # Treat empty stdin as no input per spec
-        if content == "":
-            return None
-
         # Strip trailing newline only (not all whitespace)
         # This preserves intentional whitespace in data
+        # Note: empty string is valid content per Unix standard
         if content and content.endswith("\n"):
             content = content[:-1]
 
@@ -195,19 +232,6 @@ def determine_stdin_mode(content: str) -> str:
 
     # Default to data mode
     return "data"
-
-
-def populate_shared_store(shared: dict, content: str) -> None:
-    """Add stdin content to shared store.
-
-    Args:
-        shared: The shared store dictionary
-        content: The stdin content to store
-
-    Side Effects:
-        Sets shared['stdin'] = content
-    """
-    shared["stdin"] = content
 
 
 def detect_binary_content(sample: bytes) -> bool:

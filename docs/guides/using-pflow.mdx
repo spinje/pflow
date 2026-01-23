@@ -93,8 +93,8 @@ You don't *have to* go through your agent. Saved workflows are CLI commands you 
 # Run a saved workflow
 pflow analyze-logs input=./logs/api.log
 
-# Use in a script
-cat data.csv | pflow --output-format json process-csv > output.json
+# Pipe data through a workflow
+cat data.csv | pflow -p --output-format json process-csv > output.json
 
 # Schedule with cron
 0 9 * * * pflow daily-report >> ~/reports/daily.md
@@ -106,6 +106,16 @@ This is useful for:
 - **Scripts** - Chain workflows with other tools
 
 See [CLI overview](/reference/cli/index) for all options.
+
+### Unix piping
+
+Chain workflows together using pipes:
+
+```bash
+pflow -p step1.json | pflow -p step2.json | pflow step3.json
+```
+
+See [Stdin input](/reference/cli/index#stdin-input) for how workflows receive piped data.
 
 ## Summary
 

@@ -345,11 +345,9 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - ✅ Task 102: Remove Parameter Fallback Pattern
 - ✅ Task 96: Support Batch Processing in Workflows
 - ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
-
+- ✅ Task 115: Automatic Stdin Routing for Unix-First Piping
 
 ### Planned Features (in order of priority)
-
-- Task 115: Automatic Stdin Routing for Unix-First Piping
 
 **v0.8.0 - PyPI release:**
 - Task 49: Publish to PyPI
@@ -362,6 +360,9 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 **v0.10.0 - Workflow Expressiveness:**
 - Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
+
+**v0.10.1 - Bug Fixes:**
+- Task 117: JSON Error Output for Stdin Routing
 
 **v0.11.0 - Extended Features:**
 - Task 46: Workflow Export to Zero-Dependency Code
@@ -405,6 +406,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 112: Pre-execution Type Validation
 - Task 113: TypeScript Code Node
 - Task 114: Lightweight Custom Nodes
+- Task 116: Windows Compatibility
 
 > We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
 

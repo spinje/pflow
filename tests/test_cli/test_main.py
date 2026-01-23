@@ -1,5 +1,7 @@
 """Tests for pflow core CLI functionality."""
 
+from unittest.mock import patch
+
 import click.testing
 
 from pflow.cli.main import main
@@ -336,14 +338,16 @@ def test_stdin_data_with_args():
     assert "not a known workflow" in result.output
 
 
-def test_stdin_with_file_workflow():
-    """Test that stdin data works with file-based workflows."""
+@patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
+def test_stdin_with_file_workflow(mock_stdin_has_data):
+    """Test that stdin data works with file-based workflows when stdin: true is declared."""
     runner = click.testing.CliRunner()
     with runner.isolated_filesystem():
-        # Create a test workflow file
+        # Create a test workflow file with stdin: true input
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
+            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${data}"}}],
             "edges": [],
         }
         import json
@@ -351,12 +355,12 @@ def test_stdin_with_file_workflow():
         with open("workflow.json", "w") as f:
             json.dump(workflow, f)
 
-        # File workflow with stdin data
+        # File workflow with stdin data - should route to the stdin: true input
         result = runner.invoke(main, ["./workflow.json"], input="stdin-data")
 
-        # Should execute the JSON workflow
+        # Should execute the JSON workflow with stdin routed to 'data' input
         assert result.exit_code == 0
-        assert "test" in result.output or "Workflow executed" in result.output
+        assert "stdin-data" in result.output or "Workflow" in result.output
 
 
 # Tests for context storage
