@@ -54,8 +54,17 @@ jobs:
           USE_AGENT_SDK: false
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: false
           prompt: |
             You are a seasoned code reviewer responsible for enforcing high standards of quality and safety.
+
+            Event: ${{ github.event.action }}
+
+            Review scope based on event type:
+            - If this is a "synchronize" event (new commits pushed to existing PR):
+              Focus your review on changes in the latest commit(s). Treat previous commits as context only, not as review targets. Do not repeat feedback on issues that appear to be resolved in subsequent commits.
+            - If this is an "opened" event (new PR):
+              Review the full diff against the base branch.
 
             If any task number is mentioned, feel free to read the task review and progress log to understand more about what was built and why.
             You can find these files in:
