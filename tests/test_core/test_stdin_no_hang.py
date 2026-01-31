@@ -149,12 +149,18 @@ def test_read_stdin_enhanced_returns_none_without_fifo(monkeypatch):
 
 
 @pytest.mark.integration
-def test_stdin_no_hang_integration(tmp_path, uv_exe, prepared_subprocess_env):
+@pytest.mark.serial
+def test_stdin_no_hang_integration(tmp_path, uv_exe):
     """Integration test: pflow doesn't hang when stdout is non-TTY.
 
     Verifies the core bug fix: when pflow is piped (e.g. `pflow ... | grep`),
     it should complete normally instead of hanging on stdin.read().
+
+    Uses a minimal registry (only shell node) to keep subprocess startup fast.
+    The signal here is "did it complete within timeout" so startup speed matters.
     """
+    import os
+
     workflow = {
         "ir_version": "0.1.0",
         "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo 'test output'"}}],
@@ -164,6 +170,16 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe, prepared_subprocess_env):
     workflow_path = tmp_path / "test.json"
     workflow_path.write_text(json.dumps(workflow))
 
+    # Minimal env with only the shell node — keeps subprocess startup fast
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
+
+    pflow_dir = tmp_path / ".pflow"
+    pflow_dir.mkdir(exist_ok=True)
+    registry_data = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
+    (pflow_dir / "registry.json").write_text(json.dumps(registry_data))
+
     try:
         result = subprocess.run(
             [uv_exe, "run", "pflow", str(workflow_path)],
@@ -171,7 +187,7 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe, prepared_subprocess_env):
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
             text=True,
-            env=prepared_subprocess_env,
+            env=env,
             timeout=5,
         )
 
