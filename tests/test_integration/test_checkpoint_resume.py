@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import patch
 
 from pflow.execution.workflow_execution import execute_workflow
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 
 class CountingNode(Node):

@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from pflow.pocketflow import BaseNode, Flow
 from pflow.registry import Registry
 from pflow.runtime.compiler import (
     CompilationError,
@@ -20,7 +21,6 @@ from pflow.runtime.compiler import (
     _wire_nodes,
     compile_ir_to_flow,
 )
-from pocketflow import BaseNode, Flow
 
 
 def create_test_registry() -> tuple[Registry, dict]:

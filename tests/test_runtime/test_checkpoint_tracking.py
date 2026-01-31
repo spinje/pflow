@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
+from pflow.pocketflow import Node
 from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-from pocketflow import Node
 
 
 class SideEffectNode(Node):

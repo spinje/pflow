@@ -6,8 +6,8 @@ structures are properly resolved before being passed to the inner node.
 
 import pytest
 
+from pflow.pocketflow import BaseNode
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
-from pocketflow import BaseNode
 
 
 class MockNode(BaseNode):

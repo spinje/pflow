@@ -7,9 +7,9 @@ with TemplateAwareNodeWrapper.
 
 from unittest.mock import Mock
 
+from pflow.pocketflow import BaseNode
 from pflow.runtime.compiler import _apply_template_wrapping
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
-from pocketflow import BaseNode
 
 
 class TestCompilerTemplateWrapping:

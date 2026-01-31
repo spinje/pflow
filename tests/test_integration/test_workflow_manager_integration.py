@@ -19,10 +19,10 @@ import pytest
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.planning.context_builder import build_planning_context
+from pflow.pocketflow import Node
 from pflow.registry.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
-from pocketflow import Node
 
 
 @pytest.fixture

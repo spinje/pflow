@@ -11,7 +11,7 @@ This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the
 ### The Pattern
 
 ```python
-from pocketflow import Node  # NOT BaseNode!
+from pflow.pocketflow import Node  # NOT BaseNode!
 from .exceptions import NonRetriableError
 
 class ExampleNode(Node):
@@ -238,7 +238,7 @@ You can write this in a node's docstring:
 - Full pattern documentation: `/.taskmaster/knowledge/patterns.md` - "PocketFlow Node Error Handling"
 - Anti-pattern to avoid: `/.taskmaster/knowledge/pitfalls.md` - "Catching Exceptions in exec()"
 - Architectural decision: `/.taskmaster/knowledge/decisions.md` - "All pflow Nodes Must Follow PocketFlow Retry Pattern"
-- PocketFlow documentation: `/pocketflow/docs/core_abstraction/node.md`
+- PocketFlow documentation: `src/pflow/pocketflow/docs/core_abstraction/node.md`
 
 ## Quick Checklist
 

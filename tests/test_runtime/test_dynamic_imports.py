@@ -4,9 +4,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime.compiler import CompilationError, import_node_class
-from pocketflow import BaseNode
 
 
 class MockValidNode(BaseNode):

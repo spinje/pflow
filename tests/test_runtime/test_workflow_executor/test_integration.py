@@ -5,10 +5,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
-from pocketflow import BaseNode
 
 
 class TestWorkflowExecutorIntegration:
@@ -23,7 +23,7 @@ class TestWorkflowExecutorIntegration:
         Returns:
             Context manager for mocking imports
         """
-        from pocketflow import BaseNode
+        from pflow.pocketflow import BaseNode
 
         # Default mock ExampleNode if not provided
         if mock_test_node_class is None:

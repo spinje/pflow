@@ -38,7 +38,7 @@ import os
 import re
 from typing import Any, Optional
 
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 # Import Claude Agent SDK (renamed from Claude Code SDK)
 try:

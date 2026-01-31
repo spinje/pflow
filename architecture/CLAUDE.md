@@ -2,7 +2,7 @@
 
 > **Purpose**: This guide helps AI assistants navigate pflow architecture documentation. It provides both navigation guidance (WHEN/WHY to read files) and a detailed inventory (WHAT's inside each file).
 
-> **PocketFlow documentation**: The documentation for `pocketflow` is in the `pocketflow/docs` folder. For a complete understanding of the foundation pflow is built on, reading the relevant documentation for `pocketflow` is strongly recommended.
+> **PocketFlow documentation**: The documentation for `pocketflow` is in the `src/pflow/pocketflow/docs` folder. For a complete understanding of the foundation pflow is built on, reading the relevant documentation for `pocketflow` is strongly recommended.
 
 ## Quick Start (for AI Agents)
 
@@ -485,7 +485,7 @@ For deeper implementation details (WHAT and HOW), these CLAUDE.md files provide 
 | CLI commands | `src/pflow/cli/CLAUDE.md` | Routing, subcommands, agent features |
 | Core components | `src/pflow/core/CLAUDE.md` | Workflow manager, validation, settings |
 | MCP server | `src/pflow/mcp_server/CLAUDE.md` | 3-layer architecture, 11 tools |
-| PocketFlow framework | `pocketflow/CLAUDE.md` | Framework basics, docs/cookbook links |
+| PocketFlow framework | `src/pflow/pocketflow/CLAUDE.md` | Framework basics and docs |
 
 **When to consult these files:**
 - Implementing a new feature in that area

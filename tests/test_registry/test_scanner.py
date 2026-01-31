@@ -80,7 +80,7 @@ class TestScannerBehavior:
             # Create file with Node import
             node_file = base_dir / "node_based.py"
             node_file.write_text('''
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 class NodeBasedClass(Node):
     """This inherits from Node."""
@@ -91,7 +91,7 @@ class NodeBasedClass(Node):
             # Create file with BaseNode import
             basenode_file = base_dir / "basenode_based.py"
             basenode_file.write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class BaseNodeClass(BaseNode):
     """This inherits from BaseNode."""
@@ -120,7 +120,7 @@ class BaseNodeClass(BaseNode):
             import_err_file.write_text("""
 import nonexistent_module
 
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class WontLoad(BaseNode):
     def exec(self, shared):
@@ -158,7 +158,7 @@ def broken(:
             # Create node with custom name
             custom_file = base_dir / "custom.py"
             custom_file.write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class CustomNode(BaseNode):
     """Node with custom name."""
@@ -186,7 +186,7 @@ class CustomNode(BaseNode):
 
             multi_file = base_dir / "multi_inherit.py"
             multi_file.write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class Mixin:
     def mixin_method(self):
@@ -218,7 +218,7 @@ class MultiInheritNode(BaseNode, Mixin):
 
             indirect_file = base_dir / "indirect.py"
             indirect_file.write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class IntermediateNode(BaseNode):
     """An intermediate base class."""
@@ -260,7 +260,7 @@ class IndirectNode(IntermediateNode):
 
             # Add a node in the deepest directory
             node_content = '''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class DeepNode(BaseNode):
     """A deeply nested node."""
@@ -413,7 +413,7 @@ class TestScannerIntegrationScenarios:
             # Create valid node
             valid_file = base_dir / "valid.py"
             valid_file.write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 class ValidNode(BaseNode):
     """A valid node among errors."""
@@ -427,7 +427,7 @@ class ValidNode(BaseNode):
             # Create file with import error
             (base_dir / "import_error.py").write_text("""
 import nonexistent
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 class BadNode(BaseNode):
     def exec(self, shared): pass
 """)
@@ -448,7 +448,7 @@ class BadNode(BaseNode):
         with tempfile.TemporaryDirectory() as tmpdir1, tempfile.TemporaryDirectory() as tmpdir2:
             # Create node in first directory
             (Path(tmpdir1) / "node1.py").write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 class Node1(BaseNode):
     """First test node."""
     def exec(self, shared): pass
@@ -456,7 +456,7 @@ class Node1(BaseNode):
 
             # Create node in second directory
             (Path(tmpdir2) / "node2.py").write_text('''
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 class Node2(BaseNode):
     """Second test node."""
     def exec(self, shared): pass

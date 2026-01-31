@@ -136,7 +136,7 @@ class TestBatchNodeUpstreamStderr:
     def test_batch_error_includes_upstream_stderr(self):
         """When batch fails due to empty upstream output, error includes stderr."""
         # Create a mock inner node
-        from pocketflow import Node
+        from pflow.pocketflow import Node
 
         class MockNode(Node):
             def exec(self, prep_res):
@@ -171,7 +171,7 @@ class TestBatchNodeUpstreamStderr:
 
     def test_batch_error_without_upstream_stderr_is_clean(self):
         """When upstream has no stderr, error message is clean (no extra context)."""
-        from pocketflow import Node
+        from pflow.pocketflow import Node
 
         class MockNode(Node):
             def exec(self, prep_res):
@@ -204,7 +204,7 @@ class TestBatchNodeUpstreamStderr:
 
     def test_batch_none_error_includes_upstream_stderr(self):
         """When template resolves to None, error includes upstream stderr."""
-        from pocketflow import Node
+        from pflow.pocketflow import Node
 
         class MockNode(Node):
             def exec(self, prep_res):

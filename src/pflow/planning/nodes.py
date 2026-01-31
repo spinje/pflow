@@ -29,8 +29,8 @@ from pflow.planning.context_builder import (
 )
 from pflow.planning.error_handler import create_fallback_response
 from pflow.planning.utils.llm_helpers import parse_structured_response
+from pflow.pocketflow import Node
 from pflow.registry import Registry
-from pocketflow import Node
 
 logger = logging.getLogger(__name__)
 

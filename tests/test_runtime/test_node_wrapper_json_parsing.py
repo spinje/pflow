@@ -8,8 +8,8 @@ import json
 
 import pytest
 
+from pflow.pocketflow import Node
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
-from pocketflow import Node
 
 
 class SimpleNode(Node):

@@ -63,9 +63,9 @@ The goal is to enable local execution of intelligent workflows with the **minima
 
 ### Core Architecture
 
-pflow is built on the **PocketFlow** framework (100-line Python library in `pocketflow/__init__.py`).
+pflow is built on the **PocketFlow** framework (100-line Python library in `src/pflow/pocketflow/__init__.py`).
 
-> If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `pocketflow/__init__.py` and then the documentation in `pocketflow/docs` and examples in `pocketflow/cookbook` when needed.
+> If you need to implement a new feature that includes using pocketflow, and dont have a good understanding of what pocketflow is or how it works always start by reading the source code in `src/pflow/pocketflow/__init__.py` and then the documentation in `src/pflow/pocketflow/docs` and examples in `examples` when needed.
 
 - **Nodes**: Self-contained tasks (`prep()` → `exec()` → `post()`) that communicate through a shared store using intuitive keys (`shared["text"]`, `shared["url"]`)
 - **Flows**: Orchestrate nodes into workflows using the pocketflow framework with `>>` operator chaining
@@ -113,7 +113,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - Web UI, interactive prompting
 
 **Key Principles**:
-- **PocketFlow Foundation**: Always consider `pocketflow/__init__.py` first and evaluate examples in `pocketflow/cookbook` for implementation reference
+- **PocketFlow Foundation**: Always consider `src/pflow/pocketflow/__init__.py` first and evaluate examples in `examples` for implementation reference
 - **Shared Store Pattern**: All communication between nodes is done through the shared store
 - **Deterministic Execution**: Reproducible workflows
 - **Atomic Nodes**: Nodes are isolated and focused on business logic only
@@ -392,19 +392,19 @@ Folders:
 
 **PocketFlow Documentation**:
 - `pocketflow/CLAUDE.md`: Complete reference for available documentation and cookbook examples
-- `pocketflow/docs/guide.md`: Guide to using PocketFlow (partial relevance for CLI tool)
-- `pocketflow/docs/core_abstraction/`: Documentation on Node, Flow, Shared Store
-- `pocketflow/docs/design_pattern/`: Workflow, Agent, RAG, Map Reduce patterns
-- `pocketflow/cookbook/`: Examples and tutorials for custom nodes and flows
+- `src/pflow/pocketflow/docs/guide.md`: Guide to using PocketFlow (partial relevance for CLI tool)
+- `src/pflow/pocketflow/docs/core_abstraction/`: Documentation on Node, Flow, Shared Store
+- `src/pflow/pocketflow/docs/design_pattern/`: Workflow, Agent, RAG, Map Reduce patterns
+- `examples/`: Examples and tutorials for custom nodes and flows
 
 **PocketFlow Core Components**:
-- **Node**: Basic building block with `prep()`, `exec()`, `post()` lifecycle (see `pocketflow/docs/core_abstraction/node.md`)
-- **Flow**: Orchestrator connecting nodes using action strings for transitions (see `pocketflow/docs/core_abstraction/flow.md`)
-- **Shared Store**: In-memory dictionary for inter-node communication (see `pocketflow/docs/core_abstraction/communication.md`)
+- **Node**: Basic building block with `prep()`, `exec()`, `post()` lifecycle (see `src/pflow/pocketflow/docs/core_abstraction/node.md`)
+- **Flow**: Orchestrator connecting nodes using action strings for transitions (see `src/pflow/pocketflow/docs/core_abstraction/flow.md`)
+- **Shared Store**: In-memory dictionary for inter-node communication (see `src/pflow/pocketflow/docs/core_abstraction/communication.md`)
 - **Batch**: Components for data-intensive tasks (BatchNode, BatchFlow)
 - **Async & Parallel**: Advanced components (excluded from MVP)
 
-Always read the documentation in `pocketflow/docs` and relevant examples in `pocketflow/cookbook` when needed for any task that requires using the pocketflow framework.
+Always read the documentation in `src/pflow/pocketflow/docs` and relevant examples in `examples` when needed for any task that requires using the pocketflow framework.
 
 *All documentation follows a single-source-of-truth principle. Each concept has one canonical document, with other documents linking to it rather than duplicating content.*
 
@@ -413,7 +413,7 @@ Always read the documentation in `pocketflow/docs` and relevant examples in `poc
 ### Current State of the Project
 
 The codebase is in early development with these tasks completed:
-- ✅ PocketFlow framework added to the codebase including `pocketflow/docs` and `pocketflow/cookbook`
+- ✅ PocketFlow framework added to the codebase including `src/pflow/pocketflow/docs` and `examples`
 - ✅ Comprehensive documentation infrastructure in `architecture/`
 - ✅ Development tooling and testing setup
 - ✅ Task 1: Package setup and CLI entry point with `pflow` command and version subcommand

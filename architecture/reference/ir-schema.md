@@ -400,7 +400,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 | `params` | Arbitrary JSON for node behavior | **Never** contains shared store keys or execution directives |
 | `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See `.taskmaster/feature-dump/flow-safe-caching.md` for design notes |
 | `execution.use_cache` | Boolean, only for `@flow_safe` nodes | Cache eligibility enforced at runtime |
-| `execution.wait` | Float ≥ 0, retry delay in seconds | Used by pocketflow framework (`pocketflow/__init__.py`) |
+| `execution.wait` | Float ≥ 0, retry delay in seconds | Used by pocketflow framework (`src/pflow/pocketflow/__init__.py`) |
 
 > **Note (v2.0+)**: The `max_retries` and `use_cache` constraints reference the
 > planned `@flow_safe` purity model. For current versions, nodes should omit these

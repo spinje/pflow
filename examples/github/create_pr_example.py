@@ -12,7 +12,7 @@ from pathlib import Path
 # Add pflow to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from pocketflow import Flow
+from pflow.pocketflow import Flow
 from src.pflow.nodes.github.create_pr import GitHubCreatePRNode
 
 

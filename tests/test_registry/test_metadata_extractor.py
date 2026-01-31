@@ -9,7 +9,7 @@ REFACTOR HISTORY:
 
 import pytest
 
-import pocketflow
+from pflow import pocketflow
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 

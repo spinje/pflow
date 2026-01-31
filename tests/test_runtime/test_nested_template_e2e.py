@@ -9,10 +9,10 @@ import os
 import tempfile
 from unittest.mock import Mock
 
+from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
-from pocketflow import BaseNode
 
 
 class TestNestedTemplateE2E:

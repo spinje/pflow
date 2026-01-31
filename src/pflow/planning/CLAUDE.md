@@ -4,7 +4,7 @@
 
 Natural Language Planner transforms requests into executable PocketFlow workflows via multi-stage LLM pipeline.
 
-**Core Dependency**: Built on PocketFlow framework (`pocketflow/__init__.py`)
+**Core Dependency**: Built on PocketFlow framework (`src/pflow/pocketflow/__init__.py`)
 - All nodes inherit from `pocketflow.Node` with `prep()`, `exec()`, `post()` lifecycle
 - Nodes communicate via shared store dictionary
 - Flow orchestrates node execution based on action strings

@@ -177,8 +177,8 @@ class TestMetadataInjectionInWorkflow:
         Real Bug: If metadata is shared/leaked between nodes, wrong tools execute.
         This actually caught a bug where all nodes got the same metadata!
         """
+        from pflow.pocketflow import BaseNode
         from pflow.runtime.compiler import compile_ir_to_flow
-        from pocketflow import BaseNode
 
         workflow_ir = {
             "name": "multi-mcp",

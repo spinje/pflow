@@ -2171,7 +2171,7 @@ def execute_json_workflow(
 
     # Hide PocketFlow warnings in non-verbose mode
     if not verbose:
-        warnings.filterwarnings("ignore", message="Flow ends:*", module="pocketflow")
+        warnings.filterwarnings("ignore", message="Flow ends:*", module="pflow.pocketflow")
 
     try:
         # Get planner model from context for repair service (with smart default)

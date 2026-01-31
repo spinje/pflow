@@ -17,8 +17,8 @@ from pflow.core.ir_schema import ValidationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
+from pflow.pocketflow import BaseNode, Flow
 from pflow.registry import Registry
-from pocketflow import BaseNode, Flow
 
 from .namespaced_wrapper import NamespacedNodeWrapper
 from .node_wrapper import TemplateAwareNodeWrapper

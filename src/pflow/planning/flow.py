@@ -28,7 +28,7 @@ from pflow.planning.nodes import (
     WorkflowDiscoveryNode,
     WorkflowGeneratorNode,
 )
-from pocketflow import Flow, Node
+from pflow.pocketflow import Flow, Node
 
 logger = logging.getLogger(__name__)
 
