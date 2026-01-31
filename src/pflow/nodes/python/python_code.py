@@ -18,6 +18,7 @@ Example workflow usage:
 import ast
 import io
 import logging
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
@@ -76,6 +77,38 @@ def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
     """
     base = type_str.split("[")[0].strip()
     return _TYPE_MAP.get(base)
+
+
+def _extract_error_location(exc: Exception, code: str) -> str:
+    """Extract a human-readable error location from an exception's traceback.
+
+    Filters traceback to frames from user code (filename='<code>') and
+    returns the line number with the source text for context.
+
+    Returns empty string if no location info is available (e.g. TimeoutError
+    has no traceback from user code).
+    """
+    tb = getattr(exc, "__traceback__", None)
+    if tb is None:
+        return ""
+
+    # Filter to frames from user code only
+    frames = traceback.extract_tb(tb)
+    user_frames = [f for f in frames if f.filename == "<code>"]
+    if not user_frames:
+        return ""
+
+    last = user_frames[-1]
+    lineno = last.lineno
+    if lineno is None:
+        return ""
+
+    lines = code.splitlines()
+    source_line = lines[lineno - 1].strip() if lineno <= len(lines) else ""
+
+    if source_line:
+        return f"  at line {lineno}: {source_line}"
+    return f"  at line {lineno}"
 
 
 class PythonCodeNode(Node):
@@ -254,11 +287,15 @@ class PythonCodeNode(Node):
 
         Runs in a worker thread via ThreadPoolExecutor. Captured output is
         stored in the namespace under ``__stdout__`` and ``__stderr__`` keys.
+
+        Uses compile() with filename='<code>' so traceback frames from user
+        code are identifiable and line numbers can be extracted for error messages.
         """
+        compiled = compile(code, "<code>", "exec")
         stdout_buf = io.StringIO()
         stderr_buf = io.StringIO()
         with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
-            exec(code, namespace)  # noqa: S102
+            exec(compiled, namespace)  # noqa: S102
         namespace["__stdout__"] = stdout_buf.getvalue()
         namespace["__stderr__"] = stderr_buf.getvalue()
 
@@ -266,7 +303,12 @@ class PythonCodeNode(Node):
         """Extract and validate the code parameter."""
         code = self.params.get("code")
         if not isinstance(code, str) or not code.strip():
-            raise ValueError("Code parameter cannot be empty")
+            raise ValueError(
+                "Missing required 'code' parameter\n\n"
+                "Provide a Python code string with type-annotated inputs and result.\n"
+                "Example:\n"
+                '  "code": "data: list\\nresult: list = data[:10]"'
+            )
         return code
 
     def _validate_timeout(self) -> int | float:
@@ -318,18 +360,55 @@ class PythonCodeNode(Node):
 
     @staticmethod
     def _format_exec_error(exc: Exception, prep_res: dict[str, Any]) -> str:
-        """Format an execution exception into a user-friendly error string."""
+        """Format an execution exception into a user-friendly error string.
+
+        Extracts line number from traceback when available, and provides
+        actionable suggestions for each error type so AI agents can self-correct.
+        """
+        code = prep_res.get("code", "")
+        location = _extract_error_location(exc, code)
+
         if isinstance(exc, TimeoutError):
-            return f"Python code execution timed out after {prep_res['timeout']} seconds"
+            timeout = prep_res["timeout"]
+            return (
+                f"Python code execution timed out after {timeout} seconds\n\n"
+                f"Suggestions:\n"
+                f'  - Increase timeout: "timeout": {int(timeout * 2)}\n'
+                f"  - Check for infinite loops or blocking I/O in code\n"
+                f"  - Break long computation into multiple code nodes"
+            )
         if isinstance(exc, NameError):
             var_name = getattr(exc, "name", str(exc))
-            return (
-                f"Undefined variable '{var_name}'\n\n"
-                f"Suggestions:\n"
-                f"  - Ensure all variables are defined in code or provided as inputs\n"
+            msg = f"Undefined variable '{var_name}'"
+            if location:
+                msg += f"\n{location}"
+            msg += (
+                f"\n\nSuggestions:\n"
+                f'  - Add \'{var_name}\' to the inputs dict: "inputs": {{"{var_name}": ...}}\n'
+                f"  - Or define '{var_name}' in the code before use\n"
                 f"  - Check for typos in variable names"
             )
+            return msg
         if isinstance(exc, ImportError):
             module = getattr(exc, "name", str(exc))
-            return f"Module '{module}' not found\n\nSuggestions:\n  - Install with: uv pip install {module}"
-        return f"Code execution failed: {exc}"
+            msg = f"Module '{module}' not found"
+            if location:
+                msg += f"\n{location}"
+            msg += (
+                f"\n\nSuggestions:\n"
+                f"  - Install with: uv pip install {module}\n"
+                f'  - Add to requires field: "requires": ["{module}"]'
+            )
+            return msg
+
+        # Generic runtime error — include line number + traceback context
+        exc_type = type(exc).__name__
+        msg = f"{exc_type}: {exc}"
+        if location:
+            msg += f"\n{location}"
+        msg += (
+            "\n\nSuggestions:\n"
+            "  - Fix the error in the code string above\n"
+            "  - Check input data types and values match expectations"
+        )
+        return msg

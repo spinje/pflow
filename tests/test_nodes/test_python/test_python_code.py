@@ -332,16 +332,19 @@ class TestSafetyAndErrors:
             )
         assert exc_info.value.lineno is not None
 
-    def test_runtime_error_returns_error_action(self):
-        """Runtime errors (ZeroDivisionError etc.) route to error action."""
+    def test_runtime_error_includes_line_number(self):
+        """Runtime errors include the line number and source for debugging."""
         shared: dict = {}
         action = run_code_node(
             shared,
-            code="result: int = 1 / 0",
+            code="x: int = 1\ny: int = 0\nresult: int = x / y",
             inputs={},
         )
         assert action == "error"
-        assert "error" in shared
+        assert "ZeroDivisionError" in shared["error"]
+        assert "at line 3" in shared["error"]
+        assert "x / y" in shared["error"]
+        assert "Suggestions:" in shared["error"]
 
     def test_success_returns_default_action(self):
         """Successful execution routes to default action."""
@@ -365,12 +368,12 @@ class TestEdgeCases:
 
     def test_empty_code_rejected(self):
         shared: dict = {}
-        with pytest.raises(ValueError, match="cannot be empty"):
+        with pytest.raises(ValueError, match="Missing required 'code' parameter"):
             run_code_node(shared, code="", inputs={})
 
     def test_whitespace_only_code_rejected(self):
         shared: dict = {}
-        with pytest.raises(ValueError, match="cannot be empty"):
+        with pytest.raises(ValueError, match="Missing required 'code' parameter"):
             run_code_node(shared, code="   \n  \n  ", inputs={})
 
     def test_negative_timeout_rejected(self):
