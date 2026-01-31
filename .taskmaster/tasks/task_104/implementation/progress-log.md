@@ -255,12 +255,23 @@ Result: 31 tests passing (updated 3 assertion patterns for new messages, added l
 
 ---
 
+## [11] - Fix: Flaky timeout test on CI (Linux/Python 3.10)
+
+CI failure: `test_timeout_stops_long_running_code` — on slow Linux CI with Python 3.10, the 0.01s timeout vs 0.1s sleep had too small a margin. Two problems:
+
+1. **Timing race**: ThreadPoolExecutor thread startup overhead on slow CI could mean `time.sleep(0.1)` completed before the 0.01s timeout was checked.
+2. **Result set before sleep**: `result: int = 0` was set BEFORE `time.sleep(0.1)`, so if the sleep completed, the node succeeded instead of timing out.
+
+Fix: `time.sleep(10)` with `timeout=0.5` (20x margin). Sleep placed BEFORE result assignment so timeout is the only path to success. The zombie sleep thread self-terminates after 10s (not an infinite loop).
+
+---
+
 ## Final State
 
 - **4 files created**, 0 existing files modified
-- **31 tests**, all passing in **0.35s**
+- **31 tests**, all passing
 - **`make check`** clean (ruff, mypy, deptry)
-- **`make test`** — 4059 tests in ~7s (no regression)
+- **`make test`** — 4059 tests, no regression
 - **1 critical bug found and fixed** (ThreadPoolExecutor timeout)
 - **Integration seams verified**: registry discovery, template resolution in nested dicts, namespaced output
 - **All error messages agent-friendly**: every error path includes what went wrong, where (line number when applicable), and actionable suggestions

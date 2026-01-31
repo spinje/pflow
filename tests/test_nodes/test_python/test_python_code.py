@@ -289,10 +289,13 @@ class TestSafetyAndErrors:
     def test_timeout_stops_long_running_code(self):
         """Infinite/slow code doesn't hang the workflow."""
         shared: dict = {}
+        # Sleep BEFORE result assignment so if timeout fails the result is also missing.
+        # Use 10s sleep vs 0.5s timeout (20x margin) for CI reliability.
+        # The zombie sleep thread self-terminates after 10s.
         action = run_code_node(
             shared,
-            code="import time\nresult: int = 0\ntime.sleep(0.1)",
-            timeout=0.01,
+            code="import time\ntime.sleep(10)\nresult: int = 0",
+            timeout=0.5,
             inputs={},
         )
         assert action == "error"
