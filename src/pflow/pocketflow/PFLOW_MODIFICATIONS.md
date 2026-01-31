@@ -4,7 +4,7 @@ This file documents modifications made to PocketFlow for pflow's use case.
 
 ## Modified Files
 
-### 1. `pocketflow/__init__.py` - Flow._orch() method (pflow-specific)
+### 1. `src/pflow/pocketflow/__init__.py` - Flow._orch() method (pflow-specific)
 
 **Line 104-105**: Added conditional parameter setting
 
@@ -14,7 +14,7 @@ if params is not None:
     curr.set_params(p)
 ```
 
-### 2. `pocketflow/__init__.py` - AsyncNode._exec() method (upstream sync)
+### 2. `src/pflow/pocketflow/__init__.py` - AsyncNode._exec() method (upstream sync)
 
 **Line 141-146**: Aligned retry tracking with sync Node implementation
 

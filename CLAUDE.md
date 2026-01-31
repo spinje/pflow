@@ -104,14 +104,12 @@ pflow/
 ├── architecture/           # Architecture and design specifications
 ├── examples/               # Example workflows and usage patterns
 ├── scripts/                # Development and debugging scripts
-├── pocketflow/             # Embedded PocketFlow framework
-│   ├── __init__.py         # Core PocketFlow classes (Node, Flow, Shared Store)
-│   ├── docs/               # PocketFlow documentation
-│   ├── cookbook/           # PocketFlow example flows and patterns
-│   ├── research/           # PocketFlow research notes
-│   ├── tests/              # PocketFlow test suite
-│   └── PFLOW_MODIFICATIONS.md # Notes on PocketFlow changes for pflow
 ├── src/pflow/              # Main pflow implementation
+│   ├── pocketflow/         # Embedded PocketFlow framework (~200 lines)
+│   │   ├── __init__.py     # Core PocketFlow classes (Node, Flow, Shared Store)
+│   │   ├── LICENSE         # PocketFlow MIT License
+│   │   ├── PFLOW_MODIFICATIONS.md
+│   │   └── docs/           # PocketFlow documentation
 │   ├── cli/                # CLI entrypoints and subcommands
 │   │   ├── main.py         # Primary CLI (run workflows, I/O handling, validation)
 │   │   ├── main_wrapper.py # Routes first arg to mcp/registry/workflow/settings groups
