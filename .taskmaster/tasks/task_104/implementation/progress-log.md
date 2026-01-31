@@ -205,10 +205,62 @@ Result: 31 tests, all passing in 0.35s. `make check` clean.
 
 ---
 
+## [10] - Error message audit and fix for AI agent consumption
+
+Audited all 13 error paths. Found 3 weak spots where an AI agent iterating on a workflow wouldn't get enough information to self-correct:
+
+### Fix 1: Empty code message (Low impact)
+**Before**: `"Code parameter cannot be empty"` — doesn't name the param or show what a valid value looks like.
+**After**:
+```
+Missing required 'code' parameter
+
+Provide a Python code string with type-annotated inputs and result.
+Example:
+  "code": "data: list\nresult: list = data[:10]"
+```
+
+### Fix 2: Timeout — no suggestion (Medium impact)
+**Before**: `"Python code execution timed out after 30 seconds"` — tells what happened but not what to do.
+**After**:
+```
+Python code execution timed out after 30 seconds
+
+Suggestions:
+  - Increase timeout: "timeout": 60
+  - Check for infinite loops or blocking I/O in code
+  - Break long computation into multiple code nodes
+```
+
+### Fix 3: Generic runtime errors — no line number, no context (High impact)
+**Before**: `"Code execution failed: division by zero"` — no line number, no source context, no suggestion.
+**After**:
+```
+ZeroDivisionError: division by zero
+  at line 3: result: int = x / y
+
+Suggestions:
+  - Fix the error in the code string above
+  - Check input data types and values match expectations
+```
+
+**Key implementation change**: `_execute_code` now uses `compile(code, '<code>', 'exec')` instead of raw `exec(code)`. This tags user code frames with filename `'<code>'` so `_extract_error_location()` can filter the traceback to only user frames and extract the line number + source text.
+
+Also improved NameError and ImportError messages to include line location and more specific fix suggestions (e.g., "Add to inputs dict" for NameError, "Add to requires field" for ImportError).
+
+- mypy fix: `FrameSummary.lineno` is `int | None` in type stubs — added None guard.
+- ruff auto-fixed f-string formatting in error messages.
+
+Result: 31 tests passing (updated 3 assertion patterns for new messages, added line number assertion to runtime error test). `make check` clean.
+
+---
+
 ## Final State
 
 - **4 files created**, 0 existing files modified
 - **31 tests**, all passing in **0.35s**
 - **`make check`** clean (ruff, mypy, deptry)
+- **`make test`** — 4059 tests in ~7s (no regression)
 - **1 critical bug found and fixed** (ThreadPoolExecutor timeout)
 - **Integration seams verified**: registry discovery, template resolution in nested dicts, namespaced output
+- **All error messages agent-friendly**: every error path includes what went wrong, where (line number when applicable), and actionable suggestions
