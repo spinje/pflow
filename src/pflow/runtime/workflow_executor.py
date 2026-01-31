@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from pflow.core.workflow_manager import WorkflowManager
+from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.template_resolver import TemplateResolver
-from pocketflow import BaseNode
 
 logger = logging.getLogger(__name__)
 

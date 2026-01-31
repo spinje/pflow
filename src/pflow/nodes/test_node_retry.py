@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from typing import Any
 
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 
 class RetryExampleNode(Node):

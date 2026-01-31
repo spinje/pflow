@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.ir_schema import ValidationError
+from pflow.pocketflow import BaseNode
 from pflow.runtime.compiler import compile_ir_to_flow
-from pocketflow import BaseNode
 
 
 class MockNode(BaseNode):

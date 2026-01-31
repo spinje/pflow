@@ -96,7 +96,7 @@ class TestWorkflowGeneratorNodeStructure:
 
     def test_class_name_and_inheritance(self):
         """Test that the class name is WorkflowGeneratorNode and inherits from Node."""
-        from pocketflow import Node
+        from pflow.pocketflow import Node
 
         assert WorkflowGeneratorNode.__name__ == "WorkflowGeneratorNode"
         assert issubclass(WorkflowGeneratorNode, Node)

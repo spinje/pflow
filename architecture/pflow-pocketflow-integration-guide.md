@@ -6,7 +6,7 @@
 ## Navigation
 
 **Related Documents:**
-- **Framework**: pocketflow Source (`pocketflow/__init__.py`) | pocketflow Docs (`pocketflow/CLAUDE.md`)
+- **Framework**: pocketflow Source (`src/pflow/pocketflow/__init__.py`) | pocketflow Docs (`src/pflow/pocketflow/CLAUDE.md`)
 - **Architecture**: [Architecture](./architecture.md) | [Shared Store](./core-concepts/shared-store.md)
 - **Concepts**: [Planner](./historical/planner-specification.md) | [Execution Reference](./historical/execution-reference-original.md)
 - **Implementation**: [Runtime CLAUDE.md](../src/pflow/runtime/CLAUDE.md)
@@ -40,7 +40,7 @@ class PflowExecutionEngine:
         # Don't do this!
 
 # RIGHT - Use pocketflow directly
-from pocketflow import Flow
+from pflow.pocketflow import Flow
 flow = Flow(start=first_node)
 result = flow.run(shared)
 ```
@@ -78,7 +78,7 @@ class PflowNode(pocketflow.Node):
     pass  # This adds nothing!
 
 # RIGHT - Direct inheritance
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 class ReadFileNode(Node):
     def prep(self, shared):
@@ -184,7 +184,7 @@ def categorize_flags(flags_dict, node_metadata):
 ```python
 def compile_ir_to_flow(ir_json):
     """Convert JSON IR to executable pocketflow.Flow."""
-    from pocketflow import Flow
+    from pflow.pocketflow import Flow
     from pflow.registry import get_node_class
 
     # Create nodes

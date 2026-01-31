@@ -13,7 +13,7 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
-from pocketflow import BaseNode
+from pflow.pocketflow import BaseNode
 
 
 class FailingNode(BaseNode):

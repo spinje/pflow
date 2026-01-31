@@ -6,7 +6,7 @@ from typing import Any
 
 import requests
 
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 
 class HttpNode(Node):

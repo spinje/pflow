@@ -13,9 +13,9 @@ The fix: nodes read only from `self.params`. Templates handle all data wiring.
 
 import pytest
 
+from pflow.pocketflow import Node
 from pflow.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
-from pocketflow import Node
 
 # =============================================================================
 # Test Nodes (simulating real node behavior)

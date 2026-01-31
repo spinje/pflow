@@ -271,7 +271,7 @@ def test_structure_mode_shows_flattened_paths(runner, mock_registry):
     MockRegistry, instance = mock_registry
 
     # Create a mock node that returns complex nested data
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class ComplexOutputNode(Node):
         """Node that returns nested structure."""
@@ -334,7 +334,7 @@ def test_parameter_type_inference_boolean(runner, mock_registry):
     MockRegistry, instance = mock_registry
 
     # Create a node that expects boolean
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class BoolTestNode(Node):
         """Node that uses boolean parameter."""
@@ -376,7 +376,7 @@ def test_parameter_type_inference_integers(runner, mock_registry):
     """Test that integer parameters are inferred correctly."""
     MockRegistry, instance = mock_registry
 
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class IntTestNode(Node):
         """Node that uses integer parameter."""
@@ -412,7 +412,7 @@ def test_parameter_type_inference_json(runner, mock_registry):
     """Test that JSON parameters are parsed correctly."""
     MockRegistry, instance = mock_registry
 
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class JsonTestNode(Node):
         """Node that uses JSON parameter."""
@@ -474,7 +474,7 @@ def test_mcp_node_short_form_resolution(runner, mock_registry):
     """Test that MCP node short form resolves to full format."""
     MockRegistry, instance = mock_registry
 
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class MockMCPNode(Node):
         """Mock MCP node."""
@@ -504,7 +504,7 @@ def test_mcp_node_resolution_feedback_in_verbose_mode(runner, mock_registry):
     """Test that resolved node name is shown in verbose mode."""
     MockRegistry, instance = mock_registry
 
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class MockMCPNode(Node):
         """Mock MCP node."""
@@ -568,7 +568,7 @@ def test_missing_required_parameter_shows_error(runner, mock_registry):
     """Test that missing required parameter shows clear error."""
     MockRegistry, instance = mock_registry
 
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class StrictNode(Node):
         """Node that requires parameters."""
@@ -626,7 +626,7 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
     MockRegistry, instance = mock_registry
 
     # Create a mock node that returns JSON string (common with MCP nodes)
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class JsonStringNode(Node):
         """Node that returns JSON as string."""
@@ -660,7 +660,7 @@ def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
     """Test that structure mode shows array notation for lists."""
     MockRegistry, instance = mock_registry
 
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class NestedArrayNode(Node):
         """Node that returns nested arrays."""
@@ -698,7 +698,7 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
     MockRegistry, instance = mock_registry
 
     # MCP nodes often return both 'result' and 'server_TOOL_result' with same data
-    from pocketflow import Node
+    from pflow.pocketflow import Node
 
     class DuplicateOutputNode(Node):
         """Node that returns duplicate outputs."""

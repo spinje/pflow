@@ -209,7 +209,7 @@ class DebugWrapper:
         return getattr(self._wrapped, name)
 
     def __copy__(self) -> "DebugWrapper":
-        """CRITICAL: Flow uses copy.copy() on nodes (lines 99, 107 of pocketflow/__init__.py)
+        """CRITICAL: Flow uses copy.copy() on nodes (lines 99, 107 of src/pflow/pocketflow/__init__.py)
         This MUST be implemented or Flow will break when it copies nodes!
         """
         import copy
@@ -226,7 +226,7 @@ class DebugWrapper:
     def __sub__(self, action: str) -> Any:
         """Support the - operator for flow connections."""
         # Import here to avoid circular dependency
-        from pocketflow import _ConditionalTransition
+        from pflow.pocketflow import _ConditionalTransition
 
         # Create a conditional transition with the wrapper as source
         return _ConditionalTransition(self, action)

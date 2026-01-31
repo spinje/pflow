@@ -4,6 +4,7 @@ version = "0.0.1"
 description = "cli"
 authors = [{ name = "Andreas Falcone", email = "pflow-cli@gmail.com" }]
 readme = { file = "README.md", content-type = "text/markdown" }
+license = { file = "LICENSE" }
 keywords = ['python']
 requires-python = ">=3.10,<4.0"
 classifiers = [
@@ -63,7 +64,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pflow", "pocketflow"]
+packages = ["src/pflow"]
 
 [tool.mypy]
 files = ["src"]
@@ -74,14 +75,14 @@ check_untyped_defs = true
 warn_return_any = true
 warn_unused_ignores = true
 show_error_codes = true
-exclude = ["pocketflow", "scripts/debug", ".claude", "scratchpads"]
+exclude = ["scripts/debug", ".claude", "scratchpads"]
 
 [[tool.mypy.overrides]]
-module = "pocketflow.*"
+module = "pflow.pocketflow.*"
 ignore_errors = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "pocketflow/tests"]
+testpaths = ["tests"]
 markers = [
     "serial: marks tests that must run sequentially (deselect with '-m \"not serial\"')",
     "integration: marks integration tests that spawn subprocesses",
@@ -93,7 +94,7 @@ markers = [
 target-version = "py39"
 line-length = 120
 fix = true
-exclude = ["pocketflow/*", "scripts/*", ".claude/*", "scratchpads/*", "examples/*"]
+exclude = ["src/pflow/pocketflow/*", "tests/pocketflow/*", "scripts/*", ".claude/*", "scratchpads/*", "examples/*"]
 
 [tool.ruff.lint]
 select = [
@@ -153,6 +154,4 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP001 = ["pocketflow"]
 DEP002 = ["llm-anthropic", "llm-gemini"]  # Plugins for llm library, loaded dynamically not imported
-DEP003 = ["pocketflow"]

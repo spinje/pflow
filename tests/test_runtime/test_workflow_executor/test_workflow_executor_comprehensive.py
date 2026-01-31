@@ -5,9 +5,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime.workflow_executor import WorkflowExecutor
-from pocketflow import BaseNode
 
 
 # Test node that fails during execution

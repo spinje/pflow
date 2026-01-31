@@ -36,4 +36,10 @@ claude-agent-sdk (https://github.com/anthropics/claude-agent-sdk-python)
 Copyright (c) Anthropic, PBC
 Licensed under MIT License
 
+PocketFlow (https://github.com/The-Pocket/PocketFlow) - EMBEDDED COMPONENT
+Copyright (c) 2024 Zachary Huang
+Licensed under MIT License
+Embedded in this distribution under src/pflow/pocketflow/
+See src/pflow/pocketflow/LICENSE for full license text.
+
 For full license texts, see the respective project repositories.

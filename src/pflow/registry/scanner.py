@@ -171,7 +171,7 @@ def _prepare_syspaths(directories: list[Path]) -> list[Path]:
         List of paths to add to sys.path
     """
     project_root = Path(__file__).parent.parent.parent.parent
-    pocketflow_path = project_root / "pocketflow"
+    pocketflow_path = project_root / "src" / "pflow" / "pocketflow"
 
     syspaths = [project_root]
     if pocketflow_path.exists():
@@ -249,7 +249,7 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
     with temporary_syspath(syspaths):
         # Import pocketflow to get BaseNode reference
         try:
-            import pocketflow
+            from pflow import pocketflow
 
             BaseNode = pocketflow.BaseNode
         except ImportError:

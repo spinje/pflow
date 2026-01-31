@@ -122,7 +122,7 @@ Calibrate search depth based on the task complexity:
    Runtime compilation → src/pflow/runtime/compiler.py
    Registry operations → src/pflow/registry/registry.py
    Workflow management → src/pflow/core/workflow_manager.py
-   PocketFlow framework → pocketflow/__init__.py
+   PocketFlow framework → src/pflow/pocketflow/__init__.py
    ```
 
 3. **Follow Import Chains**
@@ -133,7 +133,7 @@ Calibrate search depth based on the task complexity:
 4. **Cross-Reference Patterns**
    - Implementation → Test: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`
    - Node → Documentation: Check docstrings for Interface components
-   - Feature → Examples: Look in `pocketflow/cookbook/` for patterns
+   - Feature → Examples: Look in `examples/` for patterns
 
 5. **Parallel Search Approach**
    - Look for both implementation AND tests
@@ -234,7 +234,7 @@ Always structure responses as:
 
 ### **Use Case 1: "How do nodes communicate?"**
 You would search:
-- `pocketflow/docs/core_abstraction/communication.md` for concepts
+- `src/pflow/pocketflow/docs/core_abstraction/communication.md` for concepts
 - `src/pflow/nodes/*/` for shared store usage patterns
 - `tests/test_nodes/*/` for communication testing examples
 - Return: Shared store pattern with specific examples from multiple nodes
@@ -251,7 +251,7 @@ You would search:
 ### **Use Case 3: "Show me how to implement a new node"**
 You would search:
 - Existing nodes in `src/pflow/nodes/file/read_file.py` as pattern
-- `pocketflow/__init__.py` for Node base class
+- `src/pflow/pocketflow/__init__.py` for Node base class
 - Tests in `tests/test_nodes/test_file/` for testing patterns
 - Documentation on Enhanced Interface Format
 - Return: Complete pattern with implementation, testing, and registration steps
@@ -279,10 +279,10 @@ CONFLICT DETECTED:
 - Documentation claims: "Node inherits from pocketflow.BaseNode"
   (search: "inherits" in architecture/core-concepts/registry.md)
 - Code shows: All nodes inherit from 'Node' class
-  (search: "from pocketflow import Node" in src/pflow/nodes/)
+  (search: "from pflow.pocketflow import Node" in src/pflow/nodes/)
 - Investigation: 'Node' is enhanced BaseNode with retry logic
-  (search: "class Node(BaseNode)" in pocketflow/__init__.py)
-- Resolution: Trust code - use 'from pocketflow import Node'
+  (search: "class Node(BaseNode)" in src/pflow/pocketflow/__init__.py)
+- Resolution: Trust code - use 'from pflow.pocketflow import Node'
 - Action needed: Both are correct - Node extends BaseNode, nodes should use Node
 ```
 
@@ -402,12 +402,12 @@ src/pflow/
 - `CLAUDE.md` - Complete repository map and navigation guide
 - `PFLOW_MODIFICATIONS.md` - pflow-specific changes to framework
 
-**Documentation** (`pocketflow/docs/`):
+**Documentation** (`src/pflow/pocketflow/docs/`):
 - `guide.md` - Framework usage guide
 - `core_abstraction/` - Node lifecycle, Flow orchestration, communication patterns
 - `design_pattern/` - Workflow, agent, RAG patterns
 
-**Cookbook** (`pocketflow/cookbook/`):
+**Cookbook** (`examples/`):
 40+ examples from simple to complex:
 - Basic: `pocketflow-hello-world`, `pocketflow-chat`, `pocketflow-node`
 - Patterns: `pocketflow-workflow`, `pocketflow-agent`, `pocketflow-rag`
@@ -559,13 +559,13 @@ tests/
 1. Start at entry point: `src/pflow/cli/main.py`
 2. Follow imports to feature module
 3. Check corresponding test in `tests/test_*`
-4. Look for examples in `examples/` or `pocketflow/cookbook/`
+4. Look for examples in `examples/` or `examples/`
 
 **To understand a concept**:
 1. Check `architecture/core-concepts/` for theory
 2. Find implementation in `src/pflow/`
 3. Look at tests for usage patterns
-4. Check `pocketflow/docs/` for framework concepts
+4. Check `src/pflow/pocketflow/docs/` for framework concepts
 
 **To trace execution flow**:
 ```
@@ -580,8 +580,8 @@ CLI (cli/main.py)
 **To find node patterns**:
 - Implementation: `src/pflow/nodes/{type}/{name}.py`
 - Tests: `tests/test_nodes/test_{type}/test_{name}.py`
-- Framework base: `pocketflow/__init__.py` (Node class)
-- Examples: `pocketflow/cookbook/pocketflow-node/`
+- Framework base: `src/pflow/pocketflow/__init__.py` (Node class)
+- Examples: `examples/pocketflow-node/`
 
 ## Special Knowledge Areas
 
@@ -598,7 +598,7 @@ Only relevant when needing to answer questions about the codebase and how it wor
 
 ### **Documentation Navigation**
 - Know to check `architecture/CLAUDE.md` for documentation navigation and inventory
-- Understand `pocketflow/CLAUDE.md` for cookbook navigation
+- Understand `src/pflow/pocketflow/CLAUDE.md` for cookbook navigation
 - Aware of `CLAUDE.md` files throughout codebase for AI guidance
 
 ### **Knowledge Base Expertise** (.taskmaster/knowledge/)

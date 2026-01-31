@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, cast
 
-import pocketflow
+from pflow import pocketflow
 
 # Set up module logger
 logger = logging.getLogger(__name__)

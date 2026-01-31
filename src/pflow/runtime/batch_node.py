@@ -77,8 +77,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from pflow.core.json_utils import try_parse_json
+from pflow.pocketflow import Node
 from pflow.runtime.template_resolver import TemplateResolver
-from pocketflow import Node
 
 logger = logging.getLogger(__name__)
 

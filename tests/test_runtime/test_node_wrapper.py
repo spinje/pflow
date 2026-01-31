@@ -4,8 +4,8 @@ from unittest.mock import Mock
 
 import pytest
 
+from pflow.pocketflow import Node
 from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
-from pocketflow import Node
 
 
 class WrapperTestNode(Node):

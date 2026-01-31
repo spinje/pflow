@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 logger = logging.getLogger(__name__)
 

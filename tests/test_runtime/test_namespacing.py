@@ -1,8 +1,8 @@
 """Tests for automatic namespacing functionality."""
 
+from pflow.pocketflow import Node
 from pflow.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
-from pocketflow import Node
 
 
 class SimpleOutputNode(Node):

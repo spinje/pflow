@@ -5,7 +5,7 @@
 
 ## Overview
 
-pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line Python framework in `pocketflow/__init__.py`). It enables AI agents and users to create, save, and execute workflows defined in JSON configuration files.
+pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line Python framework in `src/pflow/pocketflow/__init__.py`). It enables AI agents and users to create, save, and execute workflows defined in JSON configuration files.
 
 ### Primary Interfaces
 
@@ -504,7 +504,7 @@ Users simply specify `type: "workflow"` - they don't need to know about Workflow
 
 ## Related Documents
 
-- **PocketFlow**: `pocketflow/CLAUDE.md` - Framework documentation
+- **PocketFlow**: `src/pflow/pocketflow/CLAUDE.md` - Framework documentation
 - **Integration Guide**: `architecture/pflow-pocketflow-integration-guide.md`
 - **Node Interface Format**: `architecture/reference/enhanced-interface-format.md`
 - **Shared Store**: `architecture/core-concepts/shared-store.md`

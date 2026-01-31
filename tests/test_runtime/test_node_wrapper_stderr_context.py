@@ -17,7 +17,7 @@ class TestNodeWrapperUpstreamStderr:
 
     def test_unresolved_template_includes_upstream_stderr(self):
         """Unresolved template error should include upstream shell stderr."""
-        from pocketflow import Node
+        from pflow.pocketflow import Node
 
         class MockNode(Node):
             def exec(self, prep_res):
@@ -56,7 +56,7 @@ class TestNodeWrapperUpstreamStderr:
 
     def test_no_stderr_context_when_upstream_has_no_stderr(self):
         """No upstream context should appear when shell has no stderr."""
-        from pocketflow import Node
+        from pflow.pocketflow import Node
 
         class MockNode(Node):
             def exec(self, prep_res):

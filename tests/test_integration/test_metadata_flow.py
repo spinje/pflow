@@ -7,7 +7,7 @@ This tests the integration between:
 3. Context builder formatting
 """
 
-import pocketflow
+from pflow import pocketflow
 from pflow.planning.context_builder import _format_node_section_enhanced
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 

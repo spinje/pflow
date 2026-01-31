@@ -282,7 +282,7 @@ class TestCompileIrToFlow:
 
             # Test that compilation succeeded and produced working flow
             assert flow is not None
-            from pocketflow import Flow
+            from pflow.pocketflow import Flow
 
             assert isinstance(flow, Flow)
 

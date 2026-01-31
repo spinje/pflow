@@ -61,9 +61,9 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ### PocketFlow Foundation
 
-pflow is built on **PocketFlow** (~200-line Python library in `pocketflow/__init__.py`).
+pflow is built on **PocketFlow** (~200-line Python library in `src/pflow/pocketflow/__init__.py`).
 
-> When implementing features that use PocketFlow, always start by reading `pocketflow/__init__.py`, then `pocketflow/docs` and `pocketflow/cookbook` as needed. See `pocketflow/CLAUDE.md` for navigation.
+> When implementing features that use PocketFlow, always start by reading `src/pflow/pocketflow/__init__.py`, then `src/pflow/pocketflow/docs` as needed. See `src/pflow/pocketflow/CLAUDE.md` for navigation.
 
 ### Development Commands
 
@@ -293,7 +293,8 @@ Is this what you're expecting?
 > Always read relevant docs before coding!
 
 - **pflow docs**: `architecture/CLAUDE.md` (navigation and inventory)
-- **PocketFlow docs**: `pocketflow/CLAUDE.md` (framework docs and cookbook)
+- **PocketFlow docs**: `src/pflow/pocketflow/CLAUDE.md` (framework docs)
+- **PocketFlow tests**: `tests/pocketflow/` (framework test suite)
 
 > Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation, examples and searching for code. If you need specific information, ask a subagent or multiple subagents to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
 
