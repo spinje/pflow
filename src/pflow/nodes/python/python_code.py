@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
 
-from pocketflow import Node
+from pflow.pocketflow import Node
 
 logger = logging.getLogger(__name__)
 
