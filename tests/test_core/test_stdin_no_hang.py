@@ -9,6 +9,11 @@ Key behavior tested:
 - Non-FIFO (char devices, sockets): stdin_has_data() returns False
 - StringIO (CliRunner): stdin_has_data() returns False
 - Integration: pflow subprocess doesn't hang with non-TTY stdout
+
+Note: stdin_has_data() uses FIFO-only detection (stat.S_ISFIFO), NOT select().
+select() was removed in Task 115 Session 6 because it lies on character devices
+(returns "ready" even when no data exists, causing stdin.read() to hang forever).
+See shell_integration.py docstring and Task 115 progress log for full history.
 """
 
 import json
@@ -57,8 +62,11 @@ def test_stdin_has_data_returns_true_for_fifo(monkeypatch):
 def test_stdin_has_data_returns_false_for_char_device(monkeypatch):
     """stdin_has_data returns False for character devices (e.g. Claude Code).
 
-    Claude Code's stdin is a char device where read() hangs forever.
-    FIFO-only detection avoids this.
+    This is the original regression case (BF-20250112-stdin-hang-nontty-grep):
+    Claude Code's stdin is a char device (S_ISCHR=True) where select() returns
+    "ready" but read() hangs forever. FIFO-only detection avoids this.
+    Not a duplicate of the socket test — char device is the specific environment
+    that triggered the original bug.
     """
     import stat
 
@@ -170,7 +178,9 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
     workflow_path = tmp_path / "test.json"
     workflow_path.write_text(json.dumps(workflow))
 
-    # Minimal env with only the shell node — keeps subprocess startup fast
+    # Deliberately NOT using prepared_subprocess_env here. This test detects hangs
+    # via timeout, so subprocess startup speed directly affects reliability.
+    # A minimal registry (one node) starts faster than the full registry (~30 nodes).
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["PFLOW_INCLUDE_TEST_NODES"] = "true"
@@ -183,9 +193,9 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
     try:
         result = subprocess.run(
             [uv_exe, "run", "pflow", str(workflow_path)],
-            stdout=subprocess.PIPE,
+            stdout=subprocess.PIPE,  # Non-TTY stdout — this is the test condition
             stderr=subprocess.PIPE,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,  # No stdin data — the scenario that triggered the original hang
             text=True,
             env=env,
             timeout=5,
