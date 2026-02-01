@@ -20,6 +20,7 @@ import io
 import logging
 import traceback
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import redirect_stderr, redirect_stdout
 from typing import Any
 
@@ -368,7 +369,7 @@ class PythonCodeNode(Node):
         code = prep_res.get("code", "")
         location = _extract_error_location(exc, code)
 
-        if isinstance(exc, TimeoutError):
+        if isinstance(exc, (TimeoutError, FuturesTimeoutError)):
             timeout = prep_res["timeout"]
             return (
                 f"Python code execution timed out after {timeout} seconds\n\n"
