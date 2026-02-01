@@ -3,14 +3,19 @@
 ## Description
 Create a native Python code node that executes Python code with direct access to input data as native objects. This solves the shell node limitation of single stdin input and avoids JSON serialization/escaping issues by running Python code in-process.
 
+**Key Innovation**: Native Python objects + required type hints → enables IDE support for markdown workflows (Task 107).
+
 ## Status
 not started
 
 ## Dependencies
-- Task 103: Preserve Inline Object Type in Template Resolution - While not strictly required, Task 103's inline object pattern (`{"a": "${a}", "b": "${b}"}`) could inform how code node handles multiple inputs. However, the code node can proceed independently since it receives inputs as native Python objects, not serialized strings.
+None (Task 103 not required - code node uses different approach)
 
 ## Priority
 medium
+
+## Specification
+See `.taskmaster/tasks/task_104/starting-context/task-104-spec.md` for complete implementation details.
 
 ## Details
 
@@ -32,144 +37,71 @@ Current workaround for multiple inputs requires temp files:
 
 This is verbose and clunky.
 
-### Proposed Solution
-
-A native Python code node that:
-- Receives multiple inputs as **native Python objects** (no serialization)
-- Executes Python code **in-process** (no subprocess overhead)
-- Returns results directly (no output parsing)
+### Solution
 
 ```json
 {
   "id": "transform",
   "type": "code",
   "params": {
-    "inputs": {"data": "${data}", "config": "${config}"},
-    "code": "result = f\"{data['name']} - {config['setting']}\"",
-    "requires": []
+    "inputs": {
+      "data": "${fetch.result}",
+      "count": 10
+    },
+    "code": "data: list[dict]\ncount: int\n\nresult: list = data[:count]"
   }
 }
 ```
 
-Example with dependencies:
+**With external libraries:**
 ```json
 {
   "id": "analyze",
   "type": "code",
   "params": {
-    "inputs": {"records": "${fetch.result}"},
-    "code": "import pandas as pd\ndf = pd.DataFrame(records)\nresult = df.describe().to_dict()",
+    "inputs": {"records": "${api.data}"},
+    "code": "import pandas as pd\n\nrecords: list[dict]\n\ndf = pd.DataFrame(records)\nresult: dict = df.describe().to_dict()",
     "requires": ["pandas"]
   }
 }
 ```
 
-### Design Decisions
+## Key Decisions
 
-**Python-only (MVP)**:
-- pflow IS Python, so guaranteed available
-- No dependency checks needed
-- Can run in-process (fast, simple)
-- Later could add jq, JavaScript, etc.
+**Type annotations REQUIRED** (for Task 107 markdown workflow IDE support):
+- All inputs must have type annotations: `data: list`
+- Result must have type annotation: `result: dict = {...}`
+- Enables Python tooling (mypy, LSP) in markdown code blocks
 
-**In-process execution**:
-- Use `exec()` with full Python access
-- Inputs injected as local variables
-- `result` variable captured as output
-- All imports allowed (no sandbox restrictions for MVP - see braindump for rationale)
+**No sandboxing** (explicit decision - see braindump):
+- Unrestricted `__builtins__` and imports
+- Users need real libraries (pandas, youtube-transcript-api, etc.)
+- Container sandboxing deferred to Task 87
 
-**Interface**:
-```python
-class CodeNode(Node):
-    """Execute Python code with native object inputs."""
+**Timeout via ThreadPoolExecutor**:
+- Cross-platform (unlike signal.alarm)
+- Default 30s, configurable
+- Follows pflow patterns
 
-    # Params:
-    # - inputs: dict mapping variable names to template values
-    # - code: Python code string to execute
-    # - requires: optional list of package dependencies (documentation/validation)
-    # - timeout: optional execution timeout (default: 30s)
+**Single output** (`result` variable):
+- User can return dict for structured data
+- Multiple outputs deferred to future enhancement
 
-    # Outputs:
-    # - result: the value of 'result' variable after execution
-    # - stdout: captured print() output (optional)
-```
+## Implementation Notes
 
-**Dependency declaration**:
-- Optional `requires` field lists package dependencies: `["pandas", "numpy"]`
-- For documentation and future validation (not enforcement for MVP)
-- Could enable auto-install or containerization later
+**File locations**:
+- Node: `src/pflow/nodes/python/python_code.py`
+- Tests: `tests/test_nodes/test_python/test_python_code.py`
 
-### Key Technical Considerations
+**Key implementation details**:
+- Use `ast.parse()` to extract type annotations (15 lines, built-in)
+- Use `concurrent.futures.ThreadPoolExecutor` for timeout
+- Use `contextlib.redirect_stdout/stderr` for output capture
+- Follow standard node pattern: prep/exec/exec_fallback/post
+- Validate types in prep() before execution
+- Let exceptions bubble in exec() for retry mechanism
 
-1. **No Sandbox (MVP Decision)**:
-   - Python language-level sandboxing is fundamentally bypassable (object traversal escapes)
-   - Users need full Python access (pandas, youtube-transcript-api, etc.)
-   - Container-level sandboxing would require serialization, negating native objects value
-   - All imports allowed - user's responsibility
-   - Consider timeout for runaway code
-
-2. **Error Handling**:
-   - Capture Python exceptions with full tracebacks
-   - Report line numbers in user's code
-   - Clear error messages for missing `result` variable
-
-3. **Variable Injection**:
-   - Each key in `inputs` becomes a local variable
-   - Types preserved (dict stays dict, list stays list)
-   - No JSON serialization needed
-
-4. **Output Capture**:
-   - Primary: `result` variable value
-   - Optional: capture `print()` statements to `stdout` output
-
-### Comparison with Alternatives
-
-| Approach | Multiple Inputs | Serialization | Code Readability | Error Messages |
-|----------|----------------|---------------|------------------|----------------|
-| Shell + stdin | ❌ One | ❌ JSON roundtrip | ❌ Escaped strings | ❌ Shell errors |
-| Shell + Python -c | ❌ One | ❌ JSON roundtrip | ❌ String in string | ❌ Shell errors |
-| Code node | ✅ Unlimited | ✅ Native objects | ✅ Clean code | ✅ Python traceback |
-
-## Test Strategy
-
-### Unit Tests
-
-1. **Basic execution**:
-   - Simple code with single input returns correct result
-   - Multiple inputs accessible as variables
-   - Different types preserved (dict, list, str, int, bool)
-
-2. **Output handling**:
-   - `result` variable captured correctly
-   - Missing `result` produces clear error
-   - `print()` captured to stdout output
-
-3. **Error handling**:
-   - Syntax errors report line numbers
-   - Runtime errors include traceback
-   - Timeout triggers for infinite loops
-
-4. **Import handling**:
-   - Standard library imports work (json, re, math, etc.)
-   - Third-party imports work if installed (pandas, etc.)
-   - Clear error message when import fails (module not found)
-
-### Integration Tests
-
-1. **Workflow integration**:
-   - Code node receives template-resolved inputs
-   - Output flows to downstream nodes
-   - Works with namespacing
-
-2. **Real-world transformations**:
-   - Combine two dicts
-   - Filter/map list items
-   - String formatting with multiple data sources
-
-## Open Questions
-
-1. **`requires` field behavior**: Is it optional or required? What happens when deps aren't installed - error, warning, or just documentation?
-
-2. **Sandbox for MVP**: Dropped per braindump discussion. No restricted builtins, all imports allowed.
-
-3. **Task 107 integration**: How does `requires` appear in markdown frontmatter?
+**Context files**:
+- `braindump-sandbox-decision-reversal.md` - Why no sandboxing
+- `task-104-handover.md` - Origin story and technical context
+- `task-104-spec.md` - Complete specification

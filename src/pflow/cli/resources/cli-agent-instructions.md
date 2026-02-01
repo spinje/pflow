@@ -16,7 +16,7 @@ You help users build **reusable workflows** - automated sequences that transform
 ### 🎯 Primary Decision Rule + Quick Wins
 
 **THE fundamental decision (saves 50-75% of LLM costs):**
-Structured data (JSON/CSV/XML) → `shell` node · Unstructured → `llm` node
+Data transformation → `code` node · External tools/side effects → `shell` node · Interpretation/judgment → `llm` node
 
 **Quick wins (memorize these):**
 - **Workflow exists?** → Use it (5 sec vs 60 min to build)
@@ -32,7 +32,7 @@ Structured data (JSON/CSV/XML) → `shell` node · Unstructured → `llm` node
 
 **Why edges vs templates matter**: Edges define a simple execution timeline (when), while templates enable flexible data composition (what). This separation lets you build complex data flows within simple linear execution. Edges control when nodes run (the timeline). Templates control what data each node sees (the history it can access).
 
-**Why shell+jq over LLM for structured data**: Structured operations should be deterministic. Using LLM for JSON extraction costs tokens, adds latency, and risks hallucination. Shell+jq is free, instant, and precise. Reserve LLM for tasks requiring understanding, not extraction.
+**Why code/shell over LLM for structured data**: Structured operations should be deterministic. Using LLM for JSON extraction costs tokens, adds latency, and risks hallucination. Code nodes are free, instant, and operate on native objects. Reserve LLM for tasks requiring understanding, not extraction.
 
 **Why test only what you'll use**: Testing every node output wastes time and adds complexity. If you're passing `${node.result}` wholesale to an LLM or service, that component handles any structure. Only investigate structure when you need specific paths like `${node.result.data.items[0].id}`.
 
@@ -99,24 +99,24 @@ fetch-data → process-data → save-results
     },
     {
       "id": "step3-transform",
-      "type": "shell",
+      "type": "code",
       "params": {
-        "stdin": "${step1-fetch.response.items}",  // Template extracts .items, jq transforms
-        "command": "jq 'map({id, name: .title}) | sort_by(.name)'"
+        "inputs": {"items": "${step1-fetch.response.items}"},  // Template extracts .items, code transforms
+        "code": "items: list\n\nresult: list = [{'id': i['id'], 'name': i['title']} for i in items]"
       }
     },
     {
       "id": "step4-analyze",
       "type": "llm",
       "params": {
-        "prompt": "Analyze this data from ${step3-transform.stdout} fetched at ${step2-timestamp.stdout}"
+        "prompt": "Analyze this data from ${step3-transform.result} fetched at ${step2-timestamp.stdout}"
       }
     },
     {
       "id": "step5-report",
       "type": "llm",
       "params": {
-        "prompt": "Create report:\nRaw: ${step1-fetch.response}\nItems: ${step3-transform.stdout}\nAnalysis: ${step4-analyze.response}\nTime: ${step2-timestamp.stdout}"
+        "prompt": "Create report:\nRaw: ${step1-fetch.response}\nItems: ${step3-transform.result}\nAnalysis: ${step4-analyze.response}\nTime: ${step2-timestamp.stdout}"
       }
     }
   ],
@@ -162,7 +162,7 @@ This accumulation pattern is fundamental - each node adds to the available data 
 fetch-api → save-raw → extract-fields → format → send-slack
 
 Problem: If templates couldn't jump, 'format' would never see the raw API response
-Solution: 'format' uses BOTH ${extract-fields.stdout} AND ${fetch-api.response}
+Solution: 'format' uses BOTH ${extract-fields.result} AND ${fetch-api.response}
 Result: Formatted output includes both extracted data and original context
 ```
 
@@ -234,11 +234,17 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 ### Node Type Selection (pflow-Specific)
 
 **Which pflow node to use:**
-- **Structured data** (JSON/CSV/XML) → `shell` node with jq/awk/grep commands
-  - Use macOS-compatible (BSD) commands, not GNU-specific extensions (e.g., sed: use `-E` not `-r`, `[^X]*` not `.*?`)
+- **Data transformation** (filter, reshape, merge, compute) → `code` node with Python
+  - Receives native objects from upstream nodes (no serialization)
+  - Supports multiple inputs from different nodes
+  - Type-annotated Python code for clarity and validation
+- **External tools & side effects** → `shell` node
+  - CLI tools: git, curl, docker, ffmpeg, terraform, npm
+  - System commands: mkdir, chmod, which
+  - Any program where the exit code or side effect is the point
+  - Use macOS-compatible (BSD) commands, not GNU-specific extensions
   - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
-  - Test shell commands independently before integrating into workflow
-- **Unstructured data** → `llm` node (costs per workflow execution)
+- **Unstructured data / interpretation** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
 - **Binary/streaming data** → `shell` node with curl
 - **Service-specific APIs** → `mcp-{service}-{TOOL}` nodes (auto-auth)
@@ -349,8 +355,8 @@ Is it an MCP node?
          ├─ YES → Will you extract specific fields?
          │        ├─ YES → Test with real endpoint
          │        └─ NO → Skip testing
-         └─ NO → Is it complex shell+jq?
-                  ├─ YES → Test transformation logic
+         └─ NO → Is it a shell node with complex CLI tool pipelines?
+                  ├─ YES → Test pipeline output
                   └─ NO → Skip testing
 ```
 
@@ -578,7 +584,7 @@ Is this value in the user's request?
 ├─ YES → Is it marked with "always" or "only"?
 │        ├─ YES → Hardcode it
 │        └─ NO → Make it an input
-└─ NO → Is it implementation detail (prompt, jq command, script)?
+└─ NO → Is it implementation detail (prompt, Python code, shell command)?
          ├─ YES → Hardcode it (users don't customize implementation)
          └─ NO → Is it a system constraint?
                   ├─ YES → Hardcode it
@@ -587,7 +593,7 @@ Is this value in the user's request?
                            └─ NO → Hardcode it
 ```
 
-**Key insight**: LLM prompts, jq transformation commands, and shell scripts are HOW the workflow works, not WHAT it processes. These stay hardcoded unless the user specifically asks to customize them.
+**Key insight**: LLM prompts, Python code, and shell commands are HOW the workflow works, not WHAT it processes. These stay hardcoded unless the user specifically asks to customize them.
 
 **Input examples with rationale:**
 ```json
@@ -660,30 +666,46 @@ Is this value in the user's request?
       }
     },
 
-    // Shell node with stdin
-    // The "stdin" param is PIPED to the command (not a shell variable).
-    // Use commands that read stdin: jq, cat, grep, etc.
+    // Shell node - run external tools and commands
+    // $var = shell variable, ${var} = pflow template (don't mix up)
     {
-      "id": "filter-and-reshape",
+      "id": "get-git-log",
       "type": "shell",
-      "purpose": "Filter active items and reshape",
+      "purpose": "Get recent commits",
       "params": {
-        "stdin": "${fetch-with-auth.response.data.items}",
-        "command": "jq '[.[] | select(.status == \"active\") | {id, name, value: .metrics.value}]'"
+        "command": "git log --oneline -${limit}"
       }
     },
 
-    // Shell with pipes: when Unix tools (sort, uniq, grep, head) beat pure jq
+    // Code node - transform data between nodes
+    // Templates go in "inputs", Python code in "code"
+    // All inputs and result MUST have type annotations
     {
-      "id": "extract-and-dedupe",
-      "type": "shell",
-      "purpose": "Extract unique names as JSON array",
+      "id": "filter-and-reshape",
+      "type": "code",
+      "purpose": "Filter active items and reshape",
       "params": {
-        "stdin": "${fetch-with-auth.response.data.items}",
-        "command": "jq -r '.[].name' | sort -u | jq -R -s 'split(\"\\n\") | map(select(. != \"\"))'"
+        "inputs": {
+          "items": "${fetch-with-auth.response.data.items}"
+        },
+        "code": "items: list\n\nresult: list = [{'id': i['id'], 'name': i['name'], 'value': i['metrics']['value']} for i in items if i['status'] == 'active']"
       }
     },
-    // $var = shell variable, ${var} = pflow template (don't mix up)
+
+    // Code node with multiple inputs and structured result
+    // Downstream nodes access fields: ${merge-data.result.summary}, ${merge-data.result.count}
+    {
+      "id": "merge-data",
+      "type": "code",
+      "purpose": "Merge and summarize data from two sources",
+      "params": {
+        "inputs": {
+          "api_data": "${fetch-with-auth.response.data.items}",
+          "db_records": "${query-db.result}"
+        },
+        "code": "api_data: list\ndb_records: list\n\nmerged = api_data + db_records\nresult: dict = {'items': merged, 'count': len(merged), 'summary': f'{len(api_data)} from API, {len(db_records)} from DB'}"
+      }
+    },
 
     // LLM with structured prompt
     {
@@ -691,7 +713,7 @@ Is this value in the user's request?
       "type": "llm",
       "purpose": "Analyze data with specific criteria",
       "params": {
-        "prompt": "Analyze this data according to these criteria:\n\nData:\n${filter-and-reshape.stdout}\n\nCriteria:\n1. Identify patterns\n2. Find anomalies\n3. Suggest improvements\n\nFormat your response as:\n- Patterns: ...\n- Anomalies: ...\n- Improvements: ...",
+        "prompt": "Analyze this data according to these criteria:\n\nData:\n${filter-and-reshape.result}\n\nCriteria:\n1. Identify patterns\n2. Find anomalies\n3. Suggest improvements\n\nFormat your response as:\n- Patterns: ...\n- Anomalies: ...\n- Improvements: ...",
         "temperature": 0.7,
         "model": "gpt-4"
       }
@@ -718,6 +740,14 @@ Is this value in the user's request?
   ]
 }
 ```
+
+⚠️ **Code node rules:**
+- Templates go in `inputs`, NEVER in `code` (code is literal Python, not a template)
+- All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
+- Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
+- Use `object` as type when you don't know the type (skips validation)
+- Single output via `result` variable — use dict for structured output
+- Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
 ### Step 9: VALIDATE - Understanding Validation Errors
 
@@ -894,7 +924,7 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 
 #### Critical: Automatic JSON Parsing for Simple Templates
 
-**Simple templates (`${var}`) automatically parse JSON strings.** This enables shell+jq workflows without intermediate extraction steps.
+**Simple templates (`${var}`) automatically parse JSON strings.** This enables direct data access without intermediate extraction steps.
 
 **Two contexts where auto-parsing occurs:**
 
@@ -913,7 +943,7 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 | `{"resp": "${http.response}"}` | `'{"status": "ok"}'` | `{"resp": {"status": "ok"}}` |
 | `{"items": "${mcp-node.result}"}` | `'[{"id": 1}, {"id": 2}]'` | `{"items": [{"id": 1}, {"id": 2}]}` |
 | `{"config": "${read-file.content}"}` | `'{"debug": true}'` | `{"config": {"debug": true}}` |
-| `{"count": "${jq-node.stdout}"}` | `'42\n'` | `{"count": 42}` |
+| `{"count": "${shell-node.stdout}"}` | `'42\n'` | `{"count": 42}` |
 | `{"valid": "${check.stdout}"}` | `'true'` | `{"valid": true}` |
 | `{"text": "${any.output}"}` | `'plain text'` | `{"text": "plain text"}` |
 
@@ -950,28 +980,20 @@ Complex templates bypass parsing:
   "params": {"prompt": "Analyze: ${http-fetch.response}"}  // Works directly
 }
 
-// ✅ RIGHT - Combine multiple sources in inline object (any node types work)
+// ✅ RIGHT - Combine and transform multiple sources with code node
 {
   "id": "process",
-  "type": "shell",
+  "type": "code",
   "params": {
-    "stdin": {
+    "inputs": {
       "api_data": "${http-fetch.response}",       // HTTP node
       "db_records": "${mcp-postgres.result}",     // MCP node
       "local_config": "${read-config.content}"    // File node
     },
-    "command": "jq '.api_data.items + .db_records'"
+    "code": "api_data: dict\ndb_records: list\nlocal_config: dict\n\nresult: list = api_data['items'] + db_records"
   }
 }
 ```
-
-**When you DO need jq:**
-- Filtering: `jq 'map(select(.active))'`
-- Computation: `jq '[.[].amount] | add'`
-- Reshaping: `jq 'map({id, name: .title})'`
-- Validation: `jq 'if has("items") then . else error("missing") end'`
-
-**How to verify:** Test with your EXACT source output format. If it works in `registry run`, it will work in the workflow.
 
 #### Automatic JSON Serialization for String-Typed Parameters
 
@@ -990,74 +1012,49 @@ Works with or without template variables. Handles nested objects and arrays.
 
 #### Transformation Complexity Checklist
 
-**Before adding any extraction/processing steps (grep, sed, jq, etc.):**
+**Before adding processing steps:**
 
 1. **Can the source produce cleaner output?**
    - LLM: Add "Return ONLY valid JSON, no other text" to prompt
-   - LLM: Need title + content? Ask for both in one call, not separate LLM nodes
-   - Shell: Use `-r` flag in jq to remove quotes
    - HTTP: Check if API has a `format=json` parameter
    - **If yes → Fix at source instead of adding nodes**
 
-2. **Is each transformation adding risk?**
-   - Valid JSON → grep → sed → BROKEN JSON (common!)
-   - Each pipe is a new failure point, not a safety layer
-   - **Principle: More steps = more risk, not more safety**
-   - **Better**: Single `jq` command vs multiple grep/sed pipes
-
-3. **Have you tested EACH transformation step independently?**
-   - Test what the source node actually outputs
-   - Test what your extraction produces FROM THAT OUTPUT
-   - Not with "cleaned" test data
-   ```bash
-   # Step 1: Get actual upstream output
-   pflow registry run llm prompt="..." # See what LLM produces
-
-   # Step 2: Test your extraction with that EXACT output
-   pflow registry run shell \
-     stdin="[actual LLM output here]" \
-     command="your grep/sed/jq command"
-   # See what extraction produces - often broken!
-   ```
-   - **Each step should make data CLEANER, not messier**
-
-4. **Are you solving a real problem or preventing an imaginary one?**
+2. **Are you solving a real problem or preventing an imaginary one?**
    - ✅ Real: "Parse error when running" → Add transformation
    - ❌ Imaginary: "Might fail, better be safe" → Don't add
    - **Test first. Transform only if test fails.**
 
 **The golden rule:** Every transformation step must solve a verified problem, not prevent a hypothetical one.
 
-#### Template Variables vs jq: Decision Rule
+#### Extraction vs Transformation: Decision Rule
 
 **Extraction (getting data) → Templates**
-**Transformation (changing data) → jq**
-**Combining/concatenating → Templates or shell**
+**Transformation (changing data) → code node**
 **Interpretation (creative decisions) → LLM**
 
 ```
 Need data at specific path? → ${node.result.data.items[0].name}
-Need to compute/transform?  → jq 'map(...)', jq 'length', jq 'select(...)'
-Need to combine/append?     → Templates: "${a}\n${b}" or shell: printf/echo
+Need to compute/transform?  → code node
+Need to combine/append?     → code node or templates
 Need to interpret meaning?  → LLM
 ```
 
 **⚠️ The LLM test**: Can you write a deterministic algorithm for it?
-- **YES** (fixed structure, no creative decisions) → shell/templates, NOT LLM
+- **YES** (fixed structure, no creative decisions) → code/shell/templates, NOT LLM
 - **NO** (requires judgment: what to emphasize, summarize, what matters) → LLM
 
 | Task | Deterministic? | Use |
 |------|----------------|-----|
-| "Append section X to document" | YES - fixed structure | shell |
-| "Combine A and B into report" | YES - concatenation | shell |
+| "Append section X to document" | YES - fixed structure | code node |
+| "Combine A and B into report" | YES - concatenation | code node |
 | "Create summary of this data" | NO - deciding importance | LLM |
 | "Format for human readability" | DEPENDS - see below | ? |
 
 **"Format" is ambiguous** - ask: is the output structure fixed?
-- "Add markdown headers and bullet points" → YES, deterministic → shell/jq
+- "Add markdown headers and bullet points" → YES, deterministic → code node
 - "Format as professional report" → NO, requires judgment → LLM
 
-Common mistake: Using jq for extraction creates unnecessary nodes. Templates handle all path traversal automatically.
+Common mistake: Using LLM for extraction creates unnecessary nodes. Templates handle all path traversal automatically.
 
 #### All Template Patterns
 ```json
@@ -1106,7 +1103,7 @@ Common mistake: Using jq for extraction creates unnecessary nodes. Templates han
     ],
 
     // In shell commands - use pflow variables directly (they resolve before shell runs)
-    "command": "mkdir -p ${output_dir}/images && echo '${data}' | jq '.items[0:${limit}]'",
+    "command": "mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}",
 
     // Direct values (no template)
     "method": "POST",
@@ -1200,18 +1197,18 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
 |-----------|-------|-----|---------------|
 | MCP nodes | **DEPENDS** | See decision tree above | Actual paths if needed |
 | New HTTP API | **DEPENDS** | Only if extracting fields | Response structure |
-| Complex jq | **ALWAYS** | Verify transformation logic | Does filter work? Correct output? |
-| Shell with pipes | **YES** | Chain might fail | Each pipe stage output |
+| Code node | **NO** | Python errors are clear and actionable | - |
+| Shell (CLI pipelines) | **YES** | Chain might fail | Each pipe stage output |
 | Simple shell | **NO** | Predictable output | - |
 | File read/write | **NO** | Known interface | - |
 | LLM | **NO** | Flexible output | - |
 | Known HTTP | **NO** | Structure documented | - |
 
 **Testing shell pipelines independently:**
-When building complex shell commands (especially with grep/sed/jq), test the complete pipeline outside pflow first:
+When building shell commands with piped CLI tools (e.g., git log | head, curl | grep), test the complete pipeline outside pflow first:
 ```bash
 # Test with actual data source before integrating:
-curl -s "https://example.com/data" | grep 'pattern' | sed 's/old/new/' | jq '.'
+curl -s "https://example.com/api" | head -20
 
 # Once verified, integrate into workflow
 ```
@@ -1322,7 +1319,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
 
 **This is the most important pattern. Master it completely.**
 
-**Rule**: If you can describe the PATH, use template variables. Use jq ONLY for transformation/computation. Use LLM only for interpretation.
+**Rule**: If you can describe the PATH, use template variables. Use code node for transformation/computation. Use LLM only for interpretation.
 
 **❌ WRONG - Using LLM for structured extraction:**
 ```json
@@ -1357,14 +1354,15 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
 }
 ```
 
-**When to use jq (transformation, not extraction):**
+**When to use code node (transformation, not extraction):**
 ```json
 {
   "id": "calculate-total",
-  "type": "shell",
+  "type": "code",
+  "purpose": "Compute sum of all pricing amounts",
   "params": {
-    "stdin": "${data.items}",
-    "command": "jq '[.[].pricing.amount] | add'"  // Computing sum - needs jq
+    "inputs": {"items": "${data.items}"},
+    "code": "items: list\n\nresult: float = sum(i['pricing']['amount'] for i in items)"
   }
 }
 ```
@@ -1384,26 +1382,26 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
     },
     {
       "id": "validate-structure",
-      "type": "shell",
+      "type": "code",
       "purpose": "Ensure data has required fields",
       "params": {
-        "stdin": "${fetch-raw.response}",
-        "command": "jq 'if has(\"items\") and has(\"metadata\") then . else error(\"Invalid structure\") end'"
+        "inputs": {"data": "${fetch-raw.response}"},
+        "code": "data: dict\n\nif 'items' not in data or 'metadata' not in data:\n    raise ValueError('Invalid structure: missing items or metadata')\nresult: dict = data"
       }
     },
     {
       "id": "transform-data",
-      "type": "shell",
+      "type": "code",
       "purpose": "Reshape to our format",
       "params": {
-        "stdin": "${validate-structure.stdout.items}",
-        "command": "jq '[.[] | {id, name: .title, value: .metrics.current}]'"
+        "inputs": {"items": "${validate-structure.result.items}"},
+        "code": "items: list\n\nresult: list = [{'id': i['id'], 'name': i['title'], 'value': i['metrics']['current']} for i in items]"
       }
     },
     {
       "id": "enrich-with-analysis",
       "type": "llm",
-      "batch": {"items": "${transform-data.stdout}", "parallel": true},
+      "batch": {"items": "${transform-data.result}", "parallel": true},
       "purpose": "Add insights to each item",
       "params": {
         "prompt": "Analyze this metric and add insights:\n${item}\n\nProvide: trend, risk_level, recommendation"
@@ -1467,7 +1465,7 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
 }
 ```
 
-**Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use shell/templates instead.
+**Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use code node or templates instead.
 
 ### Pattern: Batch Processing
 
@@ -1599,13 +1597,13 @@ ${previous.results[${item.idx}]}      // Access by item field
 
 #### 6. Wrong tool for task
 **Impact**: Expensive, slow, unreliable
-**Fix**: Templates for extraction, shell+jq for transformation, LLM for meaning
-**Example**: `${node.data.field}` to extract, jq to filter/reshape, LLM to interpret
+**Fix**: Templates for extraction, code node for transformation, LLM for meaning
+**Example**: `${node.data.field}` to extract, code node to filter/reshape, LLM to interpret
 
 #### 7. Missing format step
 **Impact**: Raw JSON in user-facing outputs
 **Fix**: Add formatting node before delivery - but choose the right tool:
-- **Fixed structure** (headers, bullets, tables with known columns) → shell/jq
+- **Fixed structure** (headers, bullets, tables with known columns) → code node
 - **Requires judgment** (what to emphasize, summarize, professional tone) → LLM
 
 #### 8. Manual JSON string construction for string-typed params
@@ -1670,7 +1668,7 @@ I need to clarify a few details:
 | No inputs | Not reusable | Extract all values as inputs |
 | 30+ nodes | Too complex | Break into multiple workflows |
 | Repetitive nodes | Inefficient | Use batch with inline array |
-| LLM for extraction | Expensive & unreliable | Templates for paths, jq for transformation |
+| LLM for extraction | Expensive & unreliable | Templates for paths, code node for transformation |
 | Hardcoded credentials | Security risk | Use inputs + settings |
 | No output formatting | Poor UX | Add format step |
 | Generic names | Hard to discover | Use descriptive names |
@@ -1751,13 +1749,14 @@ Simple operations? → Skip
 **Which tool to use?**
 ```
 Extract nested field? → Template variable ${node.path.to.field}
-Transform/compute? → shell+jq
-Combine/concatenate? → Templates "${a}\n${b}" or shell (NOT LLM)
-Parse text → structured? → shell+jq (NEVER LLM)
+Transform/compute?    → code node
+Combine/concatenate?  → code node or templates
+Parse text → structured? → code node (NEVER LLM)
 Need meaning/reasoning? → LLM (only if creative decisions needed)
-File download? → shell+curl
-JSON API? → http node
-Service-specific? → MCP node
+Run external tool?    → shell node (git, curl, docker, ffmpeg)
+File download?        → shell+curl
+JSON API?             → http node
+Service-specific?     → MCP node
 ```
 
 ### Workflow Naming Convention
@@ -1773,7 +1772,7 @@ Format: `verb-noun-qualifier`
 |---------|----------------|------------|
 | **Manual JSON string construction** | Trying to build `"{\"key\": \"${val}\"}"` | Use object syntax: `{"key": "${val}"}` - auto-serializes with proper escaping |
 | **Using Slack as default example** | Document bias from old examples | Rotate between service categories |
-| **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract paths, jq transforms |
+| **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract paths, code node transforms |
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
 | **Creating defensive extraction steps** | Fear of malformed data | Nodes handle parsing automatically |
 | **Ignoring workflow discovery** | Eager to build something new | ALWAYS check existing workflows first |
@@ -1787,7 +1786,7 @@ Format: `verb-noun-qualifier`
 2. **Understand edges vs templates** - Execution order vs data access
 3. **Test only when needed** - Skip if passing whole `${node.result}`
 4. **Phase complex workflows** - Build incrementally
-5. **Use templates for extraction, jq for transformation** - LLM only for meaning
+5. **Use templates for extraction, code node for transformation** - LLM only for meaning
 6. **Every value becomes input** - Unless explicitly "always"
 7. **Format user-facing output** - Never show raw JSON
 8. **Document actual structures** - Not what docs claim
