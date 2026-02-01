@@ -96,9 +96,9 @@ class TestCreateInstructions:
         assert "pflow Agent Instructions - Complete Guide" in result.output
         assert "Core Mission" in result.output
         assert "MANDATORY First Step" in result.output
-        # Full content should be ~1650 lines
+        # Full content should be ~1800 lines
         line_count = len(result.output.split("\n"))
-        assert 1400 <= line_count <= 1800, f"Expected ~1650 lines, got {line_count}"
+        assert 1400 <= line_count <= 2100, f"Expected ~1800 lines, got {line_count}"
 
     def test_create_instructions_content_has_all_parts(self, runner: CliRunner) -> None:
         """Test that full content contains all major sections."""

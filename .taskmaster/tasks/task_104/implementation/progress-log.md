@@ -266,12 +266,57 @@ Fix: `time.sleep(10)` with `timeout=0.5` (20x margin). Sleep placed BEFORE resul
 
 ---
 
+---
+
+## Phase 5: Agent Instructions Update
+
+## [12] - The three-node mental model and why "no caveats" matters
+
+The code node doesn't just add a capability — it **redefines what shell is for**. The user's insight crystallized into a clean three-way split:
+- **Shell** = run a program (side effects, exit codes, external tools)
+- **Code** = transform data (filter, reshape, merge, compute on native objects)
+- **LLM** = interpret/judge (creative decisions, understanding)
+
+The critical decision: jq/awk/sed for inter-node data transformation is now an anti-pattern. Not "secondary" or "use code node first" — gone entirely from recommended patterns. The user was explicit: "no caveats that can confuse." A document that shows both approaches will have agents follow whichever they read last.
+
+This forced a complete re-evaluation of the 1800-line agent instructions. ~90% of the document is node-agnostic (edges, templates, testing, MCP discovery) and needed no changes. The remaining ~10% was the jq-as-transformation guidance scattered across 31 locations — every decision tree, every example, every quick reference that said "shell+jq" for data work.
+
+---
+
+## [13] - What the instructions update revealed about the old mental model
+
+The previous framing was binary: "structured data → shell, unstructured → LLM." This created a blind spot — shell was both "run programs" AND "transform data," and agents couldn't distinguish when to use which. The code node doesn't just replace jq; it **separates concerns** that were conflated.
+
+Key insights from the edit:
+
+**Cascading template references**: Changing a node from shell to code changes its output key from `stdout` to `result`. Every downstream `${node.stdout}` must become `${node.result}`. This cascaded through 5 template references across the document. Missing any one would create a broken example that agents would copy.
+
+**The Complexity Checklist shrank by 60%**: The old checklist (30 lines) existed because shell pipelines are fragile — "Valid JSON → grep → sed → BROKEN JSON." Code node eliminates this entire failure class. The principles survive (fix at source, solve real problems) but the shell-specific advice is dead weight.
+
+**jq has exactly two legitimate remaining uses**: (1) developer debugging on trace files (`cat trace.json | jq '...'`) and (2) text→JSON array conversion in shell pipelines for batch processing. Everything else is code node territory.
+
+**Example ordering teaches the mental model**: In the Node Creation Patterns section, the order HTTP → Shell → Code → LLM → MCP implicitly teaches "shell runs programs, code transforms data, LLM interprets." Agents learn from example order, not just text.
+
+**Token impact was net negative**: The document got ~17 lines shorter while gaining full code node documentation. The Complexity Checklist simplification (-18 lines) more than offset the gotchas block (+8 lines).
+
+---
+
+## [14] - Manual workflow testing: documentation examples must actually work
+
+Created 8 test workflows from every code node example in the agent instructions and ran them as real pflow workflows. All passed.
+
+The most important test was the **pipeline** (validate-structure → transform-data) because it exercises template chaining: `${validate-structure.result.items}` accessing a nested field from a code node's dict output. This is the exact pattern agents will use most — chaining code nodes where each one's output feeds the next through template references.
+
+This also caught a missing comma in the JSON examples (between nodes in the array) that would have caused agents to get syntax errors when copy-pasting.
+
+**Insight**: Documentation examples are code. They should be tested like code. An agent that copies a broken example will waste its entire context window debugging a documentation bug.
+
+---
+
 ## Final State
 
-- **4 files created**, 0 existing files modified
-- **31 tests**, all passing
-- **`make check`** clean (ruff, mypy, deptry)
-- **`make test`** — 4059 tests, no regression
-- **1 critical bug found and fixed** (ThreadPoolExecutor timeout)
-- **Integration seams verified**: registry discovery, template resolution in nested dicts, namespaced output
-- **All error messages agent-friendly**: every error path includes what went wrong, where (line number when applicable), and actionable suggestions
+- **31 tests**, all passing. `make check` clean. `make test` — 4059 tests, no regression.
+- **Agent instructions updated** (`cli-agent-instructions.md`): 31 changes, document speaks with one voice
+- **All 8 manual workflow tests pass**: every code node example verified as working pflow workflow
+- **Change spec**: `scratchpads/code-node-instructions/pass3-findings.md` — authoritative reference for what changed and why
+- **Remaining work**: Same changes likely needed in `mcp-agent-instructions.md`, `mcp-sandbox-agent-instructions.md`, and planner prompts — not scoped for this session
