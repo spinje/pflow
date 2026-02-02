@@ -369,6 +369,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 94: Display Available LLM Models
 - Task 99: Expose Nodes as MCP Tools
 - Task 111: Batch Limit for Iteration
+- Task 118: Code and Shell Linting
 
 **v0.12.0 - Performance:**
 - Task 39: Task Parallelism in Workflows

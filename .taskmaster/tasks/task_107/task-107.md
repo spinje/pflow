@@ -2,13 +2,12 @@
 
 ## Description
 
-A new workflow authoring format using markdown that compiles to the existing IR. Optimizes for LLM authoring with literate programming, lintable code blocks, and significant token efficiency gains. The format treats LLMs as the primary authors while accidentally being highly readable by humans.
+Replace JSON as the workflow file format with markdown. The markdown format compiles to the same in-memory dict (IR) that JSON currently produces — all existing validation, compilation, and execution is reused unchanged. The format uses standard markdown structure (headings, code blocks, bullet-point properties) optimized for LLM authoring, with inline documentation that makes workflows self-explaining.
 
 ## Status
 not started
 
 ## Priority
-
 high
 
 ## Problem
@@ -25,188 +24,291 @@ vs just writing text in a code block.
 ```json
 "command": "jq -r 'to_entries | map(\"### Image \" + (.key + 1 | tostring) + \"\\n\" + .value.response) | join(\"\\n\")'"
 ```
-- Can't lint
-- Can't test
-- Errors only at runtime
-- Even LLMs struggle to read/modify
+- Can't lint, can't test, errors only at runtime
 
 **Documentation is separate:**
 - `workflow.json` + `README.md` = two files that drift apart
-- No way to explain WHY a node exists
+- The `purpose` field is one line, no formatting
 
 **Token inefficiency:**
 - Escaped newlines (`\n`), quotes everywhere
 - ~20-40% more tokens than necessary
 
+## Why This Matters
+
+**LLMs are the users, not humans.** This reframe changes everything:
+- "Users need to learn new format" → LLMs already know markdown
+- "Novel = scary" → LLMs don't feel fear
+- "Maintain ecosystem compatibility" → What ecosystem? We're pre-release
+
+The current JSON format is already unusable by humans (editing a prompt on one escaped line). We're not losing human-friendliness — we're gaining it as a side benefit of optimizing for LLMs.
+
+**Literate workflows — documentation IS code:**
+- The workflow file IS the documentation. Not `workflow.json` + separate `README.md`
+- Renders beautifully on GitHub
+- Self-documenting by default — prose is required, not optional
+- Can explain WHY a node exists, not just WHAT it does
+- Can include links, examples, blockquotes, formatted lists
+- This replaces the one-line `purpose` field with free-form prose
+
+**Python over jq (enabled by Task 104):**
+- Most shell nodes existed for jq data transforms — cryptic, unlintable
+- Python code blocks are readable, lintable (`ast.parse()`), testable, familiar
+- The markdown format's value increases dramatically with lintable Python replacing jq
+
 ## Solution
 
-Markdown format with:
+Markdown replaces JSON as the **only** workflow file format. File extension: `.pflow.md`. The internal dict (IR) remains for programmatic use (MCP server, visualization, export). Zero users means zero backwards compatibility concerns.
 
-**YAML frontmatter** for structured metadata:
-```yaml
----
-name: generate-changelog
-inputs:
-  since_tag: { type: string, default: "" }
-outputs:
-  version: ${compute.stdout}
-edges: [get-tag, analyze, refine, format]
----
+### Format Structure
+
+Three heading levels, one universal entity pattern:
+
+```
+#     Workflow title + description prose
+##    Section (Inputs, Steps, Outputs)
+###   Entity (input, node, or output)
+        prose text      → description
+        - key: value    → params (YAML list items, merged into dict)
+        ```lang param```→ code blocks (content or structured data)
 ```
 
-**`## heading`** for node IDs with inline parameters:
-```markdown
-## analyze
-type: llm
-model: gpt-4
+### Complete Example
+
+`````markdown
+# Webpage to Markdown
+
+Convert a webpage to clean markdown with AI-powered image analysis.
+
+## Inputs
+
+### target_url
+
+Webpage URL to convert to markdown.
+
+- type: string
+- required: true
+
+### describe_images
+
+Use vision AI to extract content from images.
+
+- type: boolean
+- default: true
+
+## Steps
+
+### fetch
+
+Fetch markdown via Jina Reader.
+
+- type: http
+- url: https://r.jina.ai/${target_url}
+
+### analyze
+
+Analyze each image with vision AI.
+
+- type: llm
+- model: gemini-3-flash-preview
+- images: ${item}
+
+```yaml batch
+items: ${extract-images.stdout}
+parallel: true
+max_concurrent: 40
 ```
 
-**Language-tagged code blocks** for content:
-- ` ```prompt ` — LLM prompts (just text, no escaping)
-- ` ```shell ` — Shell commands (lintable with shellcheck)
-- ` ```python ` — Python code (lintable with ruff/mypy)
-- ` ```batch ` — Batch configuration (YAML)
-- ` ```stdin ` — Stdin object (YAML)
+````markdown prompt
+Extract the information from this image.
 
-**Prose documentation inline:**
-```markdown
-## fetch
-type: http
-url: https://r.jina.ai/${target_url}
+* Diagram/flowchart: mermaid code only (```mermaid block)
+* Chart/graph: data values and labels
+* Screenshot: visible text and UI elements
+````
 
-Uses [Jina Reader](https://r.jina.ai) for conversion. We chose Jina over
-Trafilatura because it handles SPAs and paywalled content better.
-```
+### save-article
 
-## Design Decisions
+Save the article markdown to disk.
 
-**Markdown → IR, not → JSON:**
-- Compile directly to internal representation
-- JSON becomes an optional export, not the source format
-- Like TypeScript → JavaScript
+- type: write-file
+- file_path: ${compute-filename.stdout}
+- content: ${fetch.response}
 
-**LLMs are the users:**
-- Humans rarely edit workflows directly
-- When they do, it's tweaking prompts — which is just editing text
-- "Novel format" concern is irrelevant if users never see it
+## Outputs
 
-**Python over jq (requires Task 104):**
-- Most shell nodes exist for jq data transforms
-- Python is readable, lintable, testable, familiar
-- jq is powerful but cryptic
+### file_path
 
-**Edges explicit in frontmatter:**
-- Could infer from template references
-- Explicit is clearer — frontmatter is the "wiring diagram"
+Path to the saved markdown file.
 
-**Literate workflows:**
-- Documentation IS the workflow file
-- Renders beautifully on GitHub
-- Self-documenting by default
+- source: ${compute-filename.stdout}
+`````
 
-**Documentation flexibility (replaces `purpose` field):**
-- JSON's `purpose` field: one line, no formatting, terse
-- Markdown: free-form prose anywhere in the file
-- Can explain WHY, not just WHAT
-- Can include links, examples, blockquotes, lists
-- Documentation can be:
-  - Inline with each node (right after the heading)
-  - At the end of the file (like a README appendix)
-  - Mixed (brief inline, detailed at end)
-- The format accommodates minimal or extensive documentation
+## Design Decisions (all resolved)
 
-**Labeled blocks for complex params:**
-- Simple params inline: `type: llm`, `model: gpt-4`
-- Complex configs in blocks: ` ```batch `, ` ```stdin `
+Full details in `.taskmaster/tasks/task_107/research/design-decisions.md` (25 numbered decisions with reasoning and verification).
+
+### Architecture
+
+1. **Markdown-only** — JSON workflow files no longer supported as input. One parser, one format.
+2. **Markdown → dict (IR), not → JSON** — `parse_markdown(content) -> dict` produces the same dict shape that `json.load()` would. No JSON intermediate step.
+3. **All existing validation reused** — parser produces the dict, all 6 validation layers run unchanged.
+4. **Edges from document order** — linear only (no explicit edge declarations). Order of `###` headings in `## Steps` determines execution sequence.
+5. **Name from filename** — `generate-changelog.pflow.md` → name `generate-changelog`. The `#` heading is a display title.
+
+### Format
+
+6. **No authoring frontmatter** — `## Inputs` / `## Steps` / `## Outputs` sections replace YAML frontmatter. Frontmatter is only for system metadata on saved workflows (added by pflow, never by agents).
+7. **One universal pattern** — inputs, nodes, and outputs ALL use: `###` heading + prose description + `- key: value` params + optional code blocks.
+8. **`- key: value` parsed as YAML** — list items collected from anywhere in an entity, joined, parsed by `yaml.safe_load()`, merged into a dict. Supports YAML nesting for complex values.
+9. **Code block tag: `language param_name`** — first word = editor highlighting, last word = parser mapping. E.g., `shell command`, `python code`, `yaml batch`, `markdown prompt`.
+10. **Descriptions required** — all entities must have prose description text. Replaces the `purpose` field.
+11. **`*` for doc bullets, `-` for params** — all `-` lines are params, `*` lines are prose.
+12. **Nested fences** — 4+ backticks for prompts containing triple-backtick examples. Verified with CommonMark spec and Python parsers.
+
+### Parser & Validation
+
+13. **Custom line-by-line parser** — no markdown library. ~250-350 lines of state machine code. Delegates YAML to PyYAML, Python syntax to `ast.parse()`.
+14. **`ast.parse()` for Python code blocks** — at parse time with markdown line numbers. YAML config blocks validated by `yaml.safe_load()`. Nothing for shell/prompt.
+15. **Unknown param warnings** — compare params against registry interface metadata during compilation. Catches typos and accidental documentation-as-param.
+16. **Markdown-native errors** — reference headings, code blocks, line numbers. Not abstract IR paths.
+
+### What's NOT in scope
+
+- Full linting (ruff, shellcheck) → Task 118
+- Required param pre-validation → [Issue #76](https://github.com/spinje/pflow/issues/76)
+- Type stubs / mypy integration → future
+- Shell node refactor for variable injection → Task 118
+- Round-trip conversion (markdown ↔ JSON)
+- Multi-file workflows
 
 ## Dependencies
 
-- **Task 104: Python Script Node** — Enables lintable data transformations, replaces most jq usage
-- **Task 49: PyPI Release** — Complete v0.6.0 first, this is v0.7.0+
+- **Task 104: Python Code Node** — ✅ Completed. Enables lintable `python code` blocks.
 
-## Implementation Notes
+## Implementation Scope
 
-### Parser approach
+### New code
 
-1. Use existing markdown library (mistune or markdown-it-py)
-2. Extract YAML frontmatter (between `---` markers)
-3. Split by `## ` headings to identify nodes
-4. For each node:
-   - Parse inline `key: value` lines as parameters
-   - Extract code blocks by language tag
-   - Collect prose as documentation (optional field in IR?)
-5. Compile to existing IR structure
+1. **Markdown parser** (`src/pflow/core/markdown_parser.py` or similar)
+   - Custom line-by-line state machine
+   - Extracts frontmatter (saved workflows), headings, code blocks, `- ` params, prose
+   - Tracks line numbers for every element
+   - Produces IR dict in same shape as current JSON workflows
+   - `ast.parse()` on Python code blocks
+   - `yaml.safe_load()` on YAML config blocks
 
-### Code block mapping
+### Modified code (7 JSON parse points)
 
-| Block type | Maps to |
-|------------|---------|
-| ` ```prompt ` | `params.prompt` |
-| ` ```shell ` | `params.command` |
-| ` ```python ` | `params.code` (Task 104) |
-| ` ```batch ` | `batch` config |
-| ` ```stdin ` | `params.stdin` |
-| ` ```images ` | `params.images` |
+| # | File | Change |
+|---|------|--------|
+| 1 | `src/pflow/cli/main.py:172` | Replace `json.loads()` with markdown parser |
+| 2 | `src/pflow/runtime/compiler.py:157` | Update `_parse_ir_input()` |
+| 3 | `src/pflow/core/workflow_manager.py:205` | Save/load as `.pflow.md` with frontmatter |
+| 4 | `src/pflow/mcp_server/utils/resolver.py:61` | Parse markdown files |
+| 5 | `src/pflow/runtime/workflow_executor.py:246` | Parse nested workflow files |
+| 6 | `src/pflow/core/workflow_save_service.py:176` | Parse markdown in workflow save operations |
+| 7 | `src/pflow/planning/context_builder.py:255` | Parse markdown in discovery workflow scanning |
 
-### Error messages
+### Error messages (~10-12 JSON references to update)
 
-Since markdown always parses successfully, all errors are semantic:
-- "Node 'foo' missing required field 'type'" with line number
-- "Unknown template reference '${bar.stdout}'" with line number
-- "Edge references unknown node 'baz'"
+| File | Current | Target |
+|------|---------|--------|
+| `cli/main.py:133` | "Invalid JSON syntax" | Markdown parse errors |
+| `cli/main.py:155` | "Fix the JSON syntax error" | Markdown-specific guidance |
+| `ir_schema.py:481` | "Invalid JSON: {e}" | YAML/structure errors |
+| `ir_schema.py:370-387` | `_get_output_suggestion()` JSON examples | Update to markdown syntax |
+| `workflow_manager.py:214` | "Invalid JSON in workflow" | Markdown parse errors |
+| `workflow_executor.py:248` | "Invalid JSON in workflow file" | Markdown parse errors |
+| `workflow_executor.py:254` | "Workflow must be a JSON object" | Update |
+| `workflow_validator.py:497` | "Replace JSON string with object syntax" | Remove (JSON anti-pattern not relevant) |
+| `workflow_save_service.py:183` | "Invalid JSON in {path}" | Markdown parse errors |
+| `mcp_server/utils/resolver.py:64` | "Invalid JSON in file" | Markdown parse errors |
 
-### Linting integration
+Note: MCP config messages in `mcp/manager.py` and `cli/mcp.py` also mention JSON but are about MCP server configs, not workflows — no change needed.
 
-Code blocks can be extracted and linted:
-```bash
-# Shell blocks
-shellcheck <(extract-blocks shell workflow.md)
+### Unknown param warnings (new validation)
 
-# Python blocks
-ruff check <(extract-blocks python workflow.md)
-```
+During compilation (where template validation already happens), compare node params against `interface["params"]` keys from registry metadata. Warn on unknown params with "did you mean?" suggestions.
 
-Existing tools work because we use standard language tags.
+### Existing examples
 
-### Example: webpage-to-markdown workflow
+Convert JSON workflows in `examples/` to `.pflow.md` format. These serve as both test cases and documentation.
 
-See conversation for full example. Key insight: the workflow becomes self-documenting with inline prose explaining design decisions, tradeoffs, and usage.
+## Code Block Mapping
+
+| Tag pattern | Highlights as | Maps to | Used by |
+|---|---|---|---|
+| `shell command` | bash | `params.command` | shell nodes |
+| `python code` | Python | `params.code` | code nodes |
+| `prompt` | plain | `params.prompt` | llm nodes |
+| `markdown prompt` | markdown | `params.prompt` | llm nodes |
+| `source` | plain | output `source` | outputs |
+| `markdown source` | markdown | output `source` | outputs |
+| `yaml batch` | YAML | `batch` (top-level) | batched nodes |
+| `yaml stdin` | YAML | `params.stdin` | nodes with stdin |
+| `yaml headers` | YAML | `params.headers` | http nodes |
+
+Rule: last word = param name, preceding word = language hint. Parser only uses last word.
+
+Exception: `yaml batch` maps to top-level `batch` field, not `params.batch`.
+
+## IR Node Field Mapping (verified)
+
+Top-level node fields (`additionalProperties: False`):
+
+| Field | Required | Maps from |
+|-------|----------|-----------|
+| `id` | Yes | `###` heading text |
+| `type` | Yes | `- type:` param (extracted from params, moved to top level) |
+| `purpose` | No | Prose description (joined with `\n\n`, stripped) |
+| `params` | No | All other `- key: value` params + code block content |
+| `batch` | No | `yaml batch` code block (parsed as YAML dict) |
 
 ## Verification
 
 **Parser correctness:**
-- Extracts frontmatter (inputs, outputs, edges)
-- Identifies nodes by heading
-- Parses inline parameters
-- Extracts code blocks with correct types
-- Handles edge cases (prompts containing markdown)
+- Parses complete workflows (convert existing JSON examples, compare IR dicts)
+- Handles all entity types (inputs, nodes, outputs)
+- Extracts code blocks with correct param mapping
+- Handles nested fences (4+ backticks)
+- Tracks line numbers accurately
+- Rejects invalid workflows with clear, markdown-native errors
 
 **Execution equivalence:**
 - Convert existing JSON workflows to markdown
-- Both produce identical execution results
+- Parse both → compare resulting IR dicts
+- Execute both → compare results
 
-**Linting works:**
-- shellcheck catches errors in ` ```shell ` blocks
-- ruff/mypy catch errors in ` ```python ` blocks
-- Line numbers map back to markdown source
+**Validation works:**
+- All 6 existing validation layers pass on markdown-produced dicts
+- Markdown-specific validation catches: missing descriptions, duplicate params, unknown code block tags, unclosed fences, YAML syntax errors
+- Unknown param warnings fire correctly
+
+**Integration:**
+- CLI: `pflow run workflow.pflow.md` works
+- Saved workflows: `pflow workflow save` stores as `.pflow.md` with frontmatter
+- MCP server: resolves and executes markdown workflows
+- Nested workflows: markdown files referenced by workflow nodes
 
 **Token efficiency:**
 - Measure token count for same workflow in JSON vs markdown
-- Expect 20-40% reduction
+- Expect 20-40% reduction (escaped `\n`, redundant quotes eliminated)
 
-**LLM authoring:**
-- Have Claude/GPT generate workflows in markdown format
+**LLM authoring quality:**
+- Have LLMs generate workflows in markdown format
 - Compare error rate and quality vs JSON generation
+- The format should be what LLMs naturally produce — familiar from READMEs, API docs, SOPs
 
-## Open Questions
+## Example Workflows for Conversion
 
-1. **Documentation field in IR?** — Should prose be preserved in IR or discarded after parsing?
-2. **Multiple code blocks?** — What if a node has two ` ```shell ` blocks?
-3. **Nested markdown in prompts?** — How to handle prompts that contain code block examples?
-4. **File extension?** — `.md`, `.pflow.md`, `.pflow`?
+These existing JSON workflows should be converted to `.pflow.md` as test cases:
+- `examples/real-workflows/generate-changelog/workflow.json` — complex (15 nodes, batch, multiple outputs)
+- `examples/real-workflows/webpage-to-markdown/workflow.json` — medium complexity (already shown in markdown in the format spec)
 
-## References
+## Research & Design Documents
 
-- Conversation explored JSON vs YAML vs XML vs Markdown tradeoffs
-- `examples/real-workflows/generate-changelog/` — Complex workflow that motivated this
-- `examples/real-workflows/webpage-to-markdown/` — Simpler workflow shown in markdown format
+All design decisions, verified assumptions, and format specification:
+- `.taskmaster/tasks/task_107/research/design-decisions.md` — 25 decisions with reasoning and codebase verification
+- `.taskmaster/tasks/task_107/research/format-spec-decisions.md` — complete format spec with examples and parsing rules
+- `.taskmaster/tasks/task_107/research/braindump-format-design-session.md` — implementation insights and warnings
