@@ -642,7 +642,7 @@ Example:
 - Code preserved for re-enabling after prompt rewrite
 
 **Context builder** (integration point #7):
-- `planning/context_builder.py:255` `_try_load_workflow()` expects JSON metadata wrapper format
+- `planning/context_builder.py:237` `_load_single_workflow()` expects JSON metadata wrapper format
 - Gated with same pattern — discovery workflow scanning disabled
 - Only affects `pflow workflow discover` when scanning saved workflows
 
@@ -825,7 +825,7 @@ Every place a workflow file is loaded or saved, needing update to use the markdo
 | 4 | `mcp_server/utils/resolver.py:61` | `resolve_workflow()` | `.ir` + raw content detection | Markdown content vs library name vs file path |
 | 5 | `runtime/workflow_executor.py:246` | `_load_workflow_from_path()` | `.ir` | Nested workflow loading |
 | 6 | `core/workflow_save_service.py:176` | `_load_from_file_path()` | `.ir` + raw content | Save preserves content |
-| 7 | `planning/context_builder.py:255` | `_try_load_workflow()` | Gated (Decision 26) | Discovery scanning disabled |
+| 7 | `planning/context_builder.py:237` | `_load_single_workflow()` | Gated (Decision 26) | Discovery scanning disabled |
 
 **Note**: `runtime/compiler.py:157` `_parse_ir_input()` was previously listed as an integration point but no production code passes strings to it. No change needed.
 

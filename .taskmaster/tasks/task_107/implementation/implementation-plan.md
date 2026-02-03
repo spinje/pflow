@@ -648,16 +648,61 @@ tests/test_integration/test_context_builder_integration.py (planner context buil
 - `make check` — lint (ruff) and type check (mypy) pass
 - Fix any issues
 
-### 4.2 Manual testing
+### 4.2 CLI integration testing
 
-- `uv run pflow examples/core/minimal.pflow.md` — basic execution
-- `uv run pflow workflow save examples/core/minimal.pflow.md --name test-workflow` → saves with frontmatter
-- `uv run pflow test-workflow` → loads from saved, executes
-- `uv run pflow workflow list` → shows saved workflows
-- `uv run pflow workflow describe test-workflow` → shows interface info
-- Test error case: pass a `.json` file → graceful error message
+Run each command and verify expected behavior. An agent can execute these sequentially.
 
-### 4.3 Documentation
+**Prerequisites**: A valid `.pflow.md` example exists (e.g., `examples/core/minimal.pflow.md`).
+
+**Core workflow lifecycle**:
+
+| # | Command | Expected |
+|---|---------|----------|
+| 1 | `uv run pflow examples/core/minimal.pflow.md` | Executes successfully |
+| 2 | `uv run pflow --validate-only examples/core/minimal.pflow.md` | Validates, exits 0 |
+| 3 | `uv run pflow workflow save examples/core/minimal.pflow.md --name test-md` | Saves with frontmatter to `~/.pflow/workflows/test-md.pflow.md` |
+| 4 | `uv run pflow test-md` | Loads saved workflow, executes |
+| 5 | `uv run pflow --validate-only test-md` | Validates saved workflow |
+| 6 | `uv run pflow workflow list` | Shows `test-md` with description |
+| 7 | `uv run pflow workflow list --json` | JSON output includes `test-md` |
+| 8 | `uv run pflow workflow describe test-md` | Shows inputs/outputs interface |
+| 9 | `uv run pflow workflow save examples/core/minimal.pflow.md --name test-md --force` | Overwrites existing |
+
+**Error cases**:
+
+| # | Command | Expected |
+|---|---------|----------|
+| 10 | `uv run pflow old-workflow.json` | Graceful error: "JSON format no longer supported, use .pflow.md" |
+| 11 | `uv run pflow "generate a changelog from git"` | Gated planner message with `.pflow.md` example |
+| 12 | `uv run pflow nonexistent.pflow.md` | File not found error |
+| 13 | `uv run pflow --validate-only examples/invalid/missing-type.pflow.md` | Validation error with line number |
+
+**Piped input**:
+
+| # | Command | Expected |
+|---|---------|----------|
+| 14 | `echo '{"url":"https://example.com"}' \| uv run pflow examples/core/minimal.pflow.md` | Executes with piped params (if workflow accepts stdin) |
+
+**Cleanup**: `uv run pflow workflow delete test-md` (or manual removal of `~/.pflow/workflows/test-md.pflow.md`)
+
+### 4.3 MCP tool testing (lower priority)
+
+Test after CLI testing is complete. Requires MCP server restart after installation.
+
+| # | Tool | Input | Expected |
+|---|------|-------|----------|
+| 1 | `workflow_execute` | file path (`.pflow.md`) | Executes successfully |
+| 2 | `workflow_execute` | raw markdown content string | Parses and executes |
+| 3 | `workflow_execute` | saved workflow name | Loads from library |
+| 4 | `workflow_validate` | file path | Validates, returns result |
+| 5 | `workflow_validate` | raw markdown content | Validates content |
+| 6 | `workflow_save` | file path | Saves to library |
+| 7 | `workflow_save` | raw markdown content | Saves content to library |
+| 8 | `workflow_describe` | saved name | Shows interface |
+
+**Out of scope**: MCP agent instruction files (`mcp-agent-instructions.md`, `mcp-sandbox-agent-instructions.md`) are already outdated and will be updated in a separate task.
+
+### 4.4 Documentation
 
 - Add `src/pflow/core/CLAUDE.md` entry for `markdown_parser.py`
 - Update `tests/shared/README.md` with `markdown_utils` documentation
@@ -747,8 +792,9 @@ Phase 3.3 (Update test files)       }
 Phase 3.4 (Update validation tests) }
 
 Phase 4.1 (make test + make check)
-Phase 4.2 (Manual testing)
-Phase 4.3 (Documentation)
+Phase 4.2 (CLI integration testing)
+Phase 4.3 (MCP tool testing)        } Lower priority, requires server restart
+Phase 4.4 (Documentation)
 
 Phase 5 (Agent instructions — collaborative with user)
 ```
@@ -847,3 +893,8 @@ These have been verified against the actual codebase and can be trusted:
 ### Agent instructions (Phase 5)
 - `src/pflow/cli/resources/cli-agent-instructions.md` — ~13 JSON references updated
 - `src/pflow/cli/resources/cli-basic-usage.md` — if applicable
+
+### Out of scope for this task
+- `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` — already outdated, separate task
+- `src/pflow/mcp_server/resources/instructions/mcp-sandbox-agent-instructions.md` — same
+- `src/pflow/mcp_server/server.py:20` — instruction string references JSON, separate task
