@@ -1264,10 +1264,6 @@ Their priorities (in order):
 - `src/pflow/mcp_server/tools/execution_tools.py:150-224` — MCP save tool
 - `src/pflow/execution/executor_service.py:520` — `update_metadata()` caller (still active — uses frontmatter)
 
-### Starting context (only if you need background on WHY decisions were made)
-- `.taskmaster/tasks/task_107/starting-context/braindump-implementation-context.md`
-- `.taskmaster/tasks/task_107/starting-context/braindump-comprehensive-format-exploration.md`
-
 ### Architecture
 - `architecture/architecture.md` — overall pflow architecture
 - `src/pflow/pocketflow/__init__.py` — the underlying framework (~200 lines)

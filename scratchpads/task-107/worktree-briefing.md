@@ -12,17 +12,14 @@ You are now in an isolated git worktree specifically created for this task. This
 
 ## Instructions
 
-First, evaluate the current plan and then verify it against the codebase to find the final wrong assumptions we have been making and clear all ambiguity and contradictions.
+You are together with the user going to refine the implementation plan to be as complete and accurate as possible.
 
 ### Required Reading
 
-1. `.taskmaster/tasks/task_107/task-107.md`
-2. `.taskmaster/tasks/task_107/starting-context/format-specification.md`
-3. `.taskmaster/tasks/task_107/implementation/implementation-plan.md`
+1. `.claude/commands/epistemic-manifesto.md` - Read this first to set your mindset for the task.
+2. `.taskmaster/tasks/task_107/task-107.md`
+3. `.taskmaster/tasks/task_107/starting-context/format-specification.md`
+4. `.taskmaster/tasks/task_107/implementation/implementation-plan.md`
 
-### Objectives
+Dont read anything else, wait for further discussion or instructions.
 
-1. Find **internal contradictions** within and between the documents
-2. Identify as many things as possible that need to be explored further
-3. Think deeply about how this should be implemented and everything we need to know about the codebase to integrate this feature perfectly
-4. Create a detailed plan for the implementation that makes no assumptions and reduces the risk of speedbumps in implementation as low as possible.
