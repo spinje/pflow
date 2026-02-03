@@ -1,8 +1,30 @@
-# Task 107: Implementation Plan
+# Task 107: Implementation Plan (v2)
 
-> Based on codebase verification against spec. All assumptions verified.
-> See `scratchpads/task-107/codebase-verification-report.md` for the reasoning trail.
-> This plan is self-contained — the implementing agent should not need the verification report.
+> Self-contained plan. The implementing agent needs only this file and `format-specification.md`.
+> All contradictions from v1 resolved. All codebase assumptions verified. All ambiguities settled.
+
+---
+
+## Settled Decisions
+
+These were ambiguities or contradictions in the previous plan version. All resolved.
+
+| # | Decision | Resolution |
+|---|----------|------------|
+| D1 | Parser error type | Custom `MarkdownParseError(ValueError)` with `line` and `suggestion` fields. Existing `except ValueError` catches still work. |
+| D2 | Planner gated UX | Show: `"Natural language workflow generation is temporarily unavailable. Provide a workflow file (.pflow.md) or saved workflow name instead. Example: pflow ./my-workflow.pflow.md"` |
+| D3 | Unknown param warning location | Layer 8 in `WorkflowValidator.validate()` (not compiler). Benefits `--validate-only` and MCP validation. Validator already accepts optional `registry` parameter. |
+| D4 | Save() signature | `save(name, markdown_content, metadata=None)`. No `description` parameter — it's embedded in the markdown content. Save trusts the caller (pre-validated). Zero parsing in save. |
+| D5 | Node ID regex | `^[a-z][a-z0-9_-]*$` — starts with lowercase letter, then letters/digits/hyphens/underscores. |
+| D6 | Prose joining | Consecutive prose lines joined with `\n`. Groups separated by blank lines/params/code blocks joined with `\n\n`. Final result stripped. |
+| D7 | `- ` without key:value | Error after YAML parse: validate each item is a dict. If not: `"Line 15: '- This is just a note' is not a valid parameter. Use * for documentation bullets."` |
+| D8 | rich_metadata | Flatten into top-level frontmatter. Update ~6 callers that access `metadata["rich_metadata"]`. |
+| D9 | Planner/repair tests | Gate with `pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")`. |
+| D10 | Agent instructions | Update as Phase 5 (collaborative with user). |
+| D11 | ir_to_markdown() | Robust test utility in `tests/shared/markdown_utils.py`. Test-only, not production. |
+| D12 | MCP content detection | Newline = content, `.pflow.md` suffix = file path, single-line = library name. Dict OK for execute/validate, ERROR for save. |
+| D13 | YAML block scalars | Continuation rule (indented lines after `- key:`) naturally captures `|` and `>` block scalars. Test explicitly. |
+| D14 | Frontmatter YAML roundtrip | Use `yaml.dump(data, default_flow_style=False, sort_keys=False)`. Accept minor formatting drift on repeated updates. Not a functional issue. |
 
 ---
 
@@ -20,51 +42,81 @@ if name.endswith(".pflow"):
     name = name[:-6]
 ```
 
-Affected: `WorkflowManager.list_all()`, `load()`, `exists()`, `delete()`, `get_path()`.
+Affected: `WorkflowManager.list_all()`, `load()`, `exists()`, `delete()`, `get_path()` — **8 locations** with hardcoded `.json`.
 
 ### G2. MCP resolver returns a 3-tuple, not 2-tuple
 
 `resolve_workflow()` in `mcp_server/utils/resolver.py` returns `(workflow_ir | None, error | None, source: str)`.
-The third element `source` is one of: `"direct"`, `"library"`, `"file"`, or `""` on error.
+The third element `source` is one of: `"direct"`, `"library"`, `"file"`, `"content"`, or `""` on error.
 All callers destructure three values. Don't lose it.
 
 ### G3. CLI has a secondary `.json` stripping function
 
-`_try_load_workflow_from_registry()` at `cli/main.py:196-204` strips `.json` from identifiers to find saved workflows:
+`_try_load_workflow_from_registry()` at `cli/main.py:196-204` strips `.json` from identifiers:
 ```python
 if identifier.lower().endswith(".json"):
     name = identifier[:-5]
-    if wm.exists(name):
-        return wm.load_ir(name), "saved"
 ```
-Must update this to strip `.pflow.md` instead. Easy to miss because the primary `_is_path_like()` function gets all the attention.
+Must update to strip `.pflow.md` instead.
 
 ### G4. CLI checks `source == "json_error"`
 
-`_handle_workflow_not_found()` at `cli/main.py:3466` checks for `source == "json_error"` to decide whether the error was already displayed. Rename this sentinel to `"parse_error"` and update all producers/consumers.
+`_handle_workflow_not_found()` at `cli/main.py:~3466` checks for `source == "json_error"`. Rename to `"parse_error"` and update all producers/consumers.
 
-### G5. CLI stores source path with `.json` check
+### G5. CLI stores source path with TWO `.json` checks
 
-`_setup_workflow_execution()` at `cli/main.py:3384`:
+`_setup_workflow_execution()` at `cli/main.py:~3384`:
 ```python
+# Check 1: source file path storage
 if source == "file" and first_arg.endswith(".json"):
     ctx.obj["source_file_path"] = first_arg
+
+# Check 2: workflow name stripping (lines ~3387-3389)
+workflow_name = first_arg.replace(".json", "") if first_arg.endswith(".json") else first_arg
 ```
-Must update to `.pflow.md`. Without this, repair save handlers won't know the original file.
+Both must update to `.pflow.md`.
 
-### G6. `format_save_success()` still needs the IR dict
+### G6. `is_likely_workflow_name()` checks `.json`
 
-Both CLI (`cli/commands/workflow.py:389`) and MCP (`mcp_server/services/execution_service.py:495`) call:
+At `cli/main.py:~3574`:
 ```python
-format_save_success(name=name, saved_path=saved_path, workflow_ir=validated_ir, metadata=metadata)
+text.lower().endswith(".json")
 ```
-The formatter uses the IR dict to display interface info (inputs/outputs). Even though the save pipeline now passes markdown content instead of IR+description, the formatter still needs the parsed IR. Solution: parse the markdown content once to get both the IR (for the formatter) and the original content (for saving).
+Must update to also check `.pflow.md`.
+
+### G7. `format_save_success()` needs the IR dict
+
+Both CLI and MCP call `format_save_success(name, saved_path, workflow_ir, metadata)`. The formatter uses IR to display interface info (inputs/outputs). Save pipeline passes markdown content, but the formatter still needs the parsed IR. Solution: callers parse once, keep both the IR (for formatter) and original content (for save).
+
+### G8. MCP save chain is 6 functions deep
+
+The save flow isn't just the resolver — it's:
+```
+workflow_save() → ExecutionService.save_workflow() → _load_and_validate_workflow_for_save()
+  → resolve_workflow() → load_and_validate_workflow() → save_workflow_with_options()
+    → WorkflowManager.save()
+```
+Every function passes IR dicts and a separate `description` string. ALL need signature changes.
+
+### G9. `rich_metadata` callers to update
+
+These callers access `metadata["rich_metadata"]` and must change to top-level access:
+
+| File | Access Pattern | New Pattern |
+|------|---------------|-------------|
+| `execution/formatters/workflow_describe_formatter.py:56` | `metadata.get("rich_metadata", {})` | Direct field access on metadata |
+| `execution/formatters/discovery_formatter.py:102` | `workflow["rich_metadata"]` | Direct field access |
+| `execution/formatters/history_formatter.py:23-54` | Reads `execution_count`, `last_execution_timestamp`, etc. | Same fields, different nesting |
+| `planning/context_builder.py:451-483` | Reads `description`, `search_keywords`, `capabilities` | Direct field access |
+| `cli/main.py:1204-1221` | Constructs `rich_metadata` dict for save | Pass as flat `metadata` |
+| `cli/main.py:1273-1286` | Same pattern, second occurrence | Same fix |
+| `core/workflow_manager.py:323-334` | `update_metadata()` writes to `rich_metadata` | Write to top-level frontmatter |
 
 ---
 
 ## Phase 0: Preparation
 
-No new features. Just foundation changes that make everything else possible.
+No new features. Foundation changes that make everything else possible.
 
 ### 0.1 Move PyYAML to main dependencies
 
@@ -78,14 +130,21 @@ Run `uv lock`.
 
 Simple if-guards. No code deleted.
 
-**Gating points** (each gets an `if` guard + comment):
+**Production gating points** (each gets an `if` guard + comment):
 
-1. `cli/main.py` - planner call site (~line 3912-3924): Skip `_execute_with_planner()`, show error message instead
-2. `cli/main.py` - `--auto-repair` flag: Disable flag, show deprecation message if used
-3. `cli/repair_save_handlers.py` - entry point `save_repaired_workflow()`: Early return with warning
-4. `cli/commands/workflow.py` - `--generate-metadata` flag: Disable processing
-5. `mcp_server/tools/execution_tools.py` - `generate_metadata` parameter: Ignore if True
-6. `planning/context_builder.py` - `_load_single_workflow()` (~line 237): Return None with warning
+1. `cli/main.py` ~line 3922: Skip `_execute_with_planner()`, show error message (D2)
+2. `cli/main.py` `--auto-repair` flag (~line 3759): Show deprecation message if used
+3. `cli/repair_save_handlers.py:14` `save_repaired_workflow()`: Early return with warning
+4. `cli/commands/workflow.py` `--generate-metadata` flag: Disable processing
+5. `mcp_server/tools/execution_tools.py` `generate_metadata` parameter: Ignore if True
+6. `planning/context_builder.py` `_load_single_workflow()` (~line 237): Return None with warning
+
+**Test gating** (D9):
+
+7. `tests/test_planning/` — all test files: `@pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")`
+8. `tests/test_cli/test_repair_save_handlers.py` — skip
+9. `tests/test_cli/test_auto_repair_flag.py` — skip
+10. `tests/test_integration/test_context_builder_integration.py` — skip (uses planner context builder)
 
 **Pattern**:
 ```python
@@ -99,27 +158,38 @@ Simple if-guards. No code deleted.
 
 Function `ir_to_markdown(ir_dict: dict, title: str = "Test Workflow") -> str` that generates minimal valid `.pflow.md` from an IR dict.
 
-Handles:
-- `ir["inputs"]` -> `## Inputs` with `### name` + description + `- key: value` params
-- `ir["nodes"]` -> `## Steps` with `### id` + purpose/description + `- type: ...` + params + code blocks
-- `ir["outputs"]` -> `## Outputs` with `### name` + description + `- source: ...`
-- `params.command` -> `` ```shell command `` code block
-- `params.prompt` -> `` ```prompt `` code block
-- `params.code` -> `` ```python code `` code block
-- `batch` -> `` ```yaml batch `` code block
-- Complex `params.stdin` (dict/list) -> `` ```yaml stdin `` code block
-- Complex `params.headers` (dict) -> `` ```yaml headers `` code block
-- Generates placeholder descriptions for entities that lack them
+**Serialization rules** (D11):
+- `str`, `int`, `float`, `bool` params: inline `- key: value`
+- `params.command`: ```` ```shell command ```` code block
+- `params.prompt`: ```` ```prompt ```` code block
+- `params.code`: ```` ```python code ```` code block
+- `batch` dict: ```` ```yaml batch ```` code block
+- Complex `params.stdin` (dict/list): ```` ```yaml stdin ```` code block
+- Complex `params.headers` (dict): ```` ```yaml headers ```` code block
+- Other complex params (dict/list): inline YAML via `yaml.dump(value, default_flow_style=True)`
+- Entities without descriptions get placeholder: `"Step description."`
+- `ir["inputs"]` → `## Inputs` with `### name` sections
+- `ir["nodes"]` → `## Steps` with `### id` sections
+- `ir["outputs"]` → `## Outputs` with `### name` sections
+
+**Also create**: `write_workflow_file(ir_dict, path, title="Test Workflow")` helper that writes markdown to a `.pflow.md` file.
 
 This utility is test-only infrastructure. Not production code.
-
-**Also create**: `write_workflow_file(ir_dict, path, title="Test Workflow")` helper that writes the markdown to a `.pflow.md` file.
 
 ---
 
 ## Phase 1: Parser Core
 
 ### 1.1 Create `src/pflow/core/markdown_parser.py`
+
+**Exception type** (D1):
+```python
+class MarkdownParseError(ValueError):
+    def __init__(self, message: str, line: int | None = None, suggestion: str | None = None):
+        self.line = line
+        self.suggestion = suggestion
+        super().__init__(message)
+```
 
 **Return type**:
 ```python
@@ -129,7 +199,7 @@ class MarkdownParseResult:
     title: str | None                     # H1 heading text
     description: str | None               # H1 prose (between # and first ##)
     metadata: dict[str, Any] | None       # Frontmatter (None for authored files)
-    source: str                           # Original markdown content
+    source: str                           # Original markdown content (for save operations)
 ```
 
 **Main function**: `parse_markdown(content: str) -> MarkdownParseResult`
@@ -152,27 +222,34 @@ for line_num, line in enumerate(content.splitlines(), 1):
     # Then prose
 ```
 
-**Parsing rules** (from spec, verified against codebase):
+**Parsing rules** (verified against codebase):
 
-1. Frontmatter: `---` at line 1 -> extract until closing `---` -> `yaml.safe_load()`
-2. H1: `# Title` -> `result.title = "Title"`
-3. H1 prose: everything between `#` and first `##` -> `result.description`
+1. Frontmatter: `---` at line 1 → extract until closing `---` → `yaml.safe_load()`
+2. H1: `# Title` → `result.title = "Title"`
+3. H1 prose: everything between `#` and first `##` → `result.description` (D6: paragraphs joined with `\n\n`)
 4. H2 sections: case-insensitive match for `Inputs`, `Steps`, `Outputs`
    - Unknown sections silently ignored
    - Near-miss warning for `Input`, `Output`, `Step` (missing 's')
-5. H3 entities: heading text = entity ID/name
+5. H3 entities: heading text = entity ID/name, validated against regex `^[a-z][a-z0-9_-]*$` (D5)
 6. Within entity:
-   - `- ` lines + indented continuations -> collect as YAML items
-   - Code fences -> extract with info string tag
-   - Everything else -> prose (description/purpose)
-7. Parse collected `- ` lines as YAML sequence -> merge into dict
+   - `- ` lines + indented continuations → collect as YAML items (includes block scalars `|` and `>` — D13)
+   - Code fences → extract with info string tag
+   - Everything else → prose (description/purpose)
+7. Parse collected `- ` lines as YAML sequence → merge into dict. Validate each item is a dict (D7).
 8. Route params by section type:
-   - **Inputs**: all params -> input dict directly (no `params` wrapper). Valid fields: `description`, `required`, `type`, `default`, `stdin`. Schema has `additionalProperties: False`.
-   - **Outputs**: all params -> output dict directly (no `params` wrapper). Valid fields: `description`, `type`, `source`. Schema has `additionalProperties: False`.
-   - **Nodes**: `type` -> top-level `node["type"]`, prose -> `node["purpose"]`, `yaml batch` code block -> top-level `node["batch"]`, everything else -> `node["params"]`. `params` has `additionalProperties: True`.
+   - **Inputs**: all params → input dict directly (no `params` wrapper). Valid fields: `description`, `required`, `type`, `default`, `stdin`. Schema: `additionalProperties: False`.
+   - **Outputs**: all params → output dict directly (no `params` wrapper). Valid fields: `description`, `type`, `source`. Schema: `additionalProperties: False`.
+   - **Nodes**: `type` → top-level, prose → `purpose`, `yaml batch` code block → top-level `batch`, everything else → `params`. `params`: `additionalProperties: True`.
 9. Generate edges: `[{"from": nodes[i]["id"], "to": nodes[i+1]["id"]} for i in range(len(nodes) - 1)]`
-   - **Edge generation is mandatory**. An empty edges array causes `build_execution_order()` to assign all nodes `in_degree=0`, producing non-deterministic ordering.
-   - Edge field format: use `"from"` / `"to"` (the compiler's `_wire_nodes()` also accepts `"source"` / `"target"` but `"from"` / `"to"` is the convention in existing JSON workflows).
+   - **Edge generation is mandatory**. Empty edges causes non-deterministic ordering.
+   - Use `"from"` / `"to"` field names (convention in existing workflows).
+
+**YAML continuation collection rules** (precise definition):
+- A `- ` line starts a new YAML item
+- Subsequent lines indented more than the `- ` are continuations (covers block scalars `|`, `>`)
+- A blank line, another `- ` line, or a non-indented non-blank line terminates the continuation
+- Non-contiguous items (separated by prose) are collected independently
+- All collected items joined with `\n` and parsed as a single YAML sequence via `yaml.safe_load()`
 
 **Code block tag mapping** (last word = param name, preceding word = language hint):
 
@@ -182,32 +259,34 @@ for line_num, line in enumerate(content.splitlines(), 1):
 | `python code` | `params.code` | code nodes |
 | `prompt` | `params.prompt` | llm nodes |
 | `markdown prompt` | `params.prompt` | llm nodes |
-| `source` | output `source` | outputs |
-| `markdown source` | output `source` | outputs |
+| `source` | output `source` (top-level) | outputs |
+| `markdown source` | output `source` (top-level) | outputs |
+| `json source` | output `source` (top-level) | outputs |
 | `yaml batch` | top-level `batch` (NOT `params.batch`) | batched nodes |
 | `yaml stdin` | `params.stdin` | nodes with stdin |
 | `yaml headers` | `params.headers` | http nodes |
 | `yaml output_schema` | `params.output_schema` | claude-code nodes |
 
-**Top-level IR fields** (the parser produces a subset, `normalize_ir()` adds the rest):
+**Top-level IR fields** (parser produces a subset, `normalize_ir()` adds the rest):
 - Parser produces: `nodes`, `edges`, `inputs` (default `{}`), `outputs` (default `{}`)
-- `normalize_ir()` adds: `ir_version` ("0.1.0"), and would add `edges` if missing (but parser always provides them)
-- Unused defaults (don't produce): `start_node`, `mappings`, `enable_namespacing`, `template_resolution_mode`
-- Top-level schema has `additionalProperties: False` — don't produce any extra fields
+- `normalize_ir()` adds: `ir_version` ("0.1.0")
+- Don't produce: `start_node`, `mappings`, `enable_namespacing`, `template_resolution_mode` (use defaults)
+- Top-level schema: `additionalProperties: False` — no extra fields
 
 **Validation at parse time**:
 - Missing descriptions (required for all entities)
-- Bare code blocks (no info string) -> suggest tag based on node type
+- Bare code blocks (no info string) → suggest tag based on node type
 - Duplicate params (same key inline + code block)
-- Unclosed code fences -> clear error with opening line reference
-- YAML syntax errors -> clear error with line range
-- Invalid node ID format (must be lowercase, alphanumeric, hyphens/underscores, no spaces)
+- Unclosed code fences → error with opening line reference
+- YAML syntax errors → error with line range
+- Non-dict YAML items → error suggesting `*` for bullets (D7)
+- Invalid node ID format → error with regex (D5)
 - Missing `## Steps` section
 - Empty `## Steps` (no `###` entities)
 - Near-miss section names (`## Input` vs `## Inputs`)
 - One code block per param-name tag per entity
 - `ast.parse()` on Python code blocks (with offset line numbers)
-- `yaml.safe_load()` on YAML config blocks
+- `yaml.safe_load()` on YAML config blocks (e.g., `yaml batch`, `yaml headers`)
 
 **Error format**:
 ```
@@ -225,19 +304,21 @@ Add a text paragraph between the heading and the parameters:
 ### 1.2 Parser tests (`tests/test_core/test_markdown_parser.py`)
 
 Test categories:
-1. **Complete workflow parsing** - full example from spec
-2. **Section handling** - case-insensitive, optional sections, unknown sections
-3. **Entity parsing** - IDs, descriptions, params, code blocks
-4. **YAML param parsing** - flat, nested, non-contiguous, comments
-5. **Code block parsing** - info strings, nested fences, content extraction
-6. **Param routing** - input flat, output flat, node with params wrapper
-7. **Edge generation** - correct from document order
-8. **Frontmatter** - parsing, stripping, None for authored files
-9. **Validation errors** - each rule produces correct error with line number
-10. **Edge cases** - empty sections, minimal workflow, large workflows
-11. **`ast.parse()`** - Python code block syntax validation
-12. **`yaml.safe_load()`** - YAML config block validation
-13. **IR equivalence** - parsed markdown produces same IR as manually constructed dict
+1. **Complete workflow parsing** — full example from format-specification.md
+2. **Section handling** — case-insensitive, optional sections, unknown sections, near-miss warnings
+3. **Entity parsing** — IDs, descriptions, params, code blocks, ID validation
+4. **YAML param parsing** — flat, nested, non-contiguous, comments, block scalars (`|`, `>`)
+5. **Code block parsing** — info strings, nested fences (4+ backticks), content extraction
+6. **Param routing** — input flat, output flat, node with params wrapper, `type`/`batch` to top-level
+7. **Edge generation** — correct from document order, single node (no edges)
+8. **Frontmatter** — parsing, stripping, None for authored files
+9. **Prose joining** — paragraphs, mixed with params, stripped whitespace (D6)
+10. **Validation errors** — each rule produces `MarkdownParseError` with correct line number
+11. **Non-dict YAML items** — `- note` without colon produces clear error (D7)
+12. **`ast.parse()`** — Python code block syntax validation with correct line offsets
+13. **`yaml.safe_load()`** — YAML config block validation
+14. **IR equivalence** — parsed markdown produces same IR as manually constructed dict
+15. **Edge cases** — empty sections, minimal workflow (single node), large workflows
 
 ---
 
@@ -246,106 +327,130 @@ Test categories:
 ### 2.1 CLI integration (`cli/main.py`)
 
 **Changes**:
-1. `_is_path_like()` (line 157): Add `.pflow.md` check
+
+1. `_is_path_like()` (~line 157): Add `.pflow.md` check
    ```python
    identifier.lower().endswith(".json") or identifier.lower().endswith(".pflow.md")
    ```
-   Note: Keep `.json` check temporarily for graceful error if someone passes a JSON file.
+   Keep `.json` check for graceful error ("JSON workflow format is no longer supported. Use .pflow.md format instead.").
 
-2. `_try_load_workflow_from_file()` (line 162): Replace JSON loading with markdown parsing
+2. `_try_load_workflow_from_file()` (~line 162): Replace JSON loading with markdown parsing
    ```python
-   from pflow.core.markdown_parser import parse_markdown
-
    result = parse_markdown(content)
    workflow_ir = result.ir
    normalize_ir(workflow_ir)
+   # Store result for save operations
+   ctx_or_stash = result  # implementation detail
    return workflow_ir, "file"
    ```
-   Also store the original content for save operations (see G5).
+   On `MarkdownParseError`: display error with line numbers, return `(None, "parse_error")`.
 
-3. Replace `_show_json_syntax_error()` (line 131) with markdown error display.
+3. Replace `_show_json_syntax_error()` (~line 131) with markdown error display using `MarkdownParseError` fields.
 
-4. Update `resolve_workflow()` (line 207) docstring and comments.
+4. **[G3]** `_try_load_workflow_from_registry()` (~line 196): Strip `.pflow.md` suffix.
+   ```python
+   if identifier.lower().endswith(".pflow.md"):
+       name = identifier[:-9]  # len(".pflow.md") == 9
+   ```
 
-5. **[G3]** Update `_try_load_workflow_from_registry()` (line 196): Currently strips `.json` suffix. Update to strip `.pflow.md` suffix instead.
+5. **[G4]** `_handle_workflow_not_found()` (~line 3466): Rename `"json_error"` → `"parse_error"`.
 
-6. **[G4]** Update `_handle_workflow_not_found()` (line 3466): Rename `"json_error"` sentinel to `"parse_error"`.
+6. **[G5]** `_setup_workflow_execution()` (~line 3384): Both `.json` checks → `.pflow.md`.
 
-7. **[G5]** Update `_setup_workflow_execution()` (line 3384): Change `.json` check to `.pflow.md`.
+7. **[G6]** `is_likely_workflow_name()` (~line 3574): Add `.pflow.md` check.
+
+8. Help text updates: Lines ~3674, ~3695, ~3761 — change `workflow.json` → `workflow.pflow.md`.
+
+9. `resolve_workflow()` (~line 207): Update docstring and comments.
 
 ### 2.1b CLI save command (`cli/commands/workflow.py`)
 
-1. Remove `--description` (`required=True`) option from `save_workflow` command (line 350). Description is now extracted from H1 prose.
-2. Update `_load_and_normalize_workflow()` (line 220): read file content as text, parse markdown, validate.
+1. **Remove `--description`** (`required=True`) option from `save_workflow` command (~line 350). Description is now embedded in markdown.
+2. Update `_load_and_normalize_workflow()` (~line 220): read file content as text, parse markdown, validate.
 3. Pass original markdown content (not IR dict) to `save_workflow_with_options()`.
-4. **[G6]** After parsing, pass the IR to `format_save_success()` for display (the formatter needs it for interface info).
-5. Update docstring examples (`.json` -> `.pflow.md`).
-6. Gate `--generate-metadata` flag (Decision 26 — already in Phase 0.2).
+4. **[G7]** After parsing, pass the IR to `format_save_success()` for display.
+5. Update docstring examples (`.json` → `.pflow.md`).
+6. Gate `--generate-metadata` flag (already in Phase 0.2).
 
 ### 2.2 WorkflowManager (`core/workflow_manager.py`)
 
-**Complete rewrite of storage format**:
+**Complete rewrite of storage format.** All 8 `.json` references become `.pflow.md` (G1).
 
-1. All `.json` -> `.pflow.md` in path construction (8 locations — see G1).
-
-2. **[G1]** Name derivation fix for double extension:
+1. **Name derivation helper**:
    ```python
-   # "my-workflow.pflow.md" -> stem = "my-workflow.pflow" -> strip ".pflow"
-   name = file_path.stem
-   if name.endswith(".pflow"):
-       name = name[:-6]
+   def _name_from_path(file_path: Path) -> str:
+       name = file_path.stem
+       if name.endswith(".pflow"):
+           name = name[:-6]
+       return name
    ```
-   Affected methods: `list_all()` (line 257), and anywhere `file_path.stem` is used as the workflow name.
 
-3. `save()` signature change:
+2. **`save()` signature** (D4):
    ```python
    def save(self, name: str, markdown_content: str, metadata: dict | None = None) -> str:
    ```
-   - Parse markdown to validate (raises on error)
-   - Extract description from H1 prose
-   - Create frontmatter YAML with metadata fields
-   - Write: `---\n{frontmatter}---\n\n{markdown_body}`
+   - Validate workflow name
+   - Build frontmatter dict: `created_at`, `updated_at`, `version: "1.0.0"`, plus any `metadata` fields (flat, no `rich_metadata` wrapper)
+   - Write: `---\n{yaml.dump(frontmatter)}---\n\n{markdown_content}`
+   - Atomic write (temp file + `os.link()`)
+   - Return absolute path string
+   - **No parsing**. Caller pre-validated.
 
-4. `load()` returns a dict with the same shape as the current JSON wrapper for caller compatibility:
+3. **`load()` returns flat structure** (D8):
    ```python
    {
-       "name": name,                    # from filename (strip .pflow suffix)
-       "description": result.description,  # from H1 prose
-       "ir": result.ir,                 # parsed IR dict
+       "name": name,                         # from filename
+       "description": result.description,    # from H1 prose
+       "ir": result.ir,                      # parsed IR dict
        "created_at": frontmatter.get("created_at"),
        "updated_at": frontmatter.get("updated_at"),
        "version": frontmatter.get("version"),
-       # flattened metadata fields:
+       # Flattened — was in rich_metadata:
        "execution_count": frontmatter.get("execution_count", 0),
        "last_execution_timestamp": frontmatter.get("last_execution_timestamp"),
        "last_execution_success": frontmatter.get("last_execution_success"),
        "last_execution_params": frontmatter.get("last_execution_params"),
-       # rich_metadata preserved for callers that check it:
-       "rich_metadata": {k: v for k, v in frontmatter.items() if k not in TOP_LEVEL_FIELDS},
+       "search_keywords": frontmatter.get("search_keywords"),
+       "capabilities": frontmatter.get("capabilities"),
+       "typical_use_cases": frontmatter.get("typical_use_cases"),
    }
    ```
 
-5. `load_ir()`: parse markdown, return `result.ir`
+4. **`load_ir()`**: parse markdown, return `result.ir`
 
-6. `list_all()`: glob `*.pflow.md`, apply G1 name derivation
+5. **`list_all()`**: glob `*.pflow.md`, use `_name_from_path()` for name derivation
 
-7. `update_metadata()`:
+6. **`update_metadata()`** redesign:
    - Read file content as text
    - Split frontmatter from body (find `---` boundaries)
-   - Parse frontmatter with `yaml.safe_load()`
-   - Update fields (special-case `execution_count` increment, same as current code)
-   - Serialize with `yaml.dump()`
+   - `yaml.safe_load(frontmatter)` → dict
+   - Special-case `execution_count` (increment, same as current)
+   - Update other fields
+   - `yaml.dump(data, default_flow_style=False, sort_keys=False)` (D14)
    - Reassemble: `---\n{frontmatter}---\n\n{body}`
    - Atomic write (temp file + `os.replace()`)
-   - The markdown body is NEVER touched by metadata updates.
+   - Markdown body is NEVER modified
 
-8. Flatten `rich_metadata` into top-level frontmatter fields. Current `rich_metadata` nesting was an artifact of the JSON wrapper.
+7. **`update_ir()`**: Preserve method but mark as unused (gated repair was only caller). Tests gated (D9).
+
+8. **Remove `_create_metadata_wrapper()`** — replaced by frontmatter generation in save().
+
+### 2.2b Update `rich_metadata` callers (G9)
+
+All callers change from `metadata.get("rich_metadata", {})` to direct field access:
+
+1. `execution/formatters/workflow_describe_formatter.py:56`: `metadata` directly (fields are top-level now)
+2. `execution/formatters/discovery_formatter.py:102`: Same
+3. `execution/formatters/history_formatter.py:23-54`: Signature may need update if it received `rich_metadata` dict
+4. `planning/context_builder.py:451-483`: Direct field access (but context_builder is gated — still update for correctness)
+5. `cli/main.py:1204-1221, 1273-1286`: Build flat `metadata` dict instead of `rich_metadata` wrapper
+6. `core/workflow_manager.py:323-334`: `update_metadata()` writes to top-level frontmatter
 
 ### 2.3 Workflow save service (`core/workflow_save_service.py`)
 
-1. `_load_from_file()` (line 160): use markdown parser (reads `.pflow.md`, parses, returns IR)
-2. `load_and_validate_workflow()` (line 208): handle markdown content/path
-3. `save_workflow_with_options()` (line 254) signature change:
+1. `_load_from_file()` (~line 160): Use markdown parser instead of `json.load()`
+2. `load_and_validate_workflow()` (~line 208): Handle markdown content/path
+3. **`save_workflow_with_options()` signature change**:
    ```python
    def save_workflow_with_options(
        name: str,
@@ -355,64 +460,85 @@ Test categories:
        metadata: Optional[dict[str, Any]] = None,
    ) -> Path:
    ```
-   - Parses markdown to validate IR (rejects invalid content)
-   - Extracts description from H1 prose via `MarkdownParseResult`
    - Passes content + metadata to `WorkflowManager.save()`
-4. Remove separate `description` parameter throughout save chain
+   - No separate `description` parameter
+4. Remove `description` parameter throughout save chain
 
 ### 2.4 MCP resolver (`mcp_server/utils/resolver.py`)
 
-**[G2]** Preserve the 3-tuple return: `(workflow_ir | None, error | None, source: str)`.
+**[G2]** Preserve 3-tuple return: `(workflow_ir | None, error | None, source: str)`.
 
-**String detection for execute/validate** (newline-based):
-1. **Dict** -> use as IR directly (source=`"direct"`) — backward compat
-2. **String with `\n`** -> raw markdown content -> parse with markdown parser (source=`"content"`)
-3. **String ending `.pflow.md`** (single-line) -> file path -> read and parse (source=`"file"`)
-4. **Single-line string** -> try as library name (source=`"library"`), then as file path (source=`"file"`)
-5. Not found -> suggestions
+**String detection for execute/validate** (D12):
+1. **Dict** → use as IR directly (source=`"direct"`) — backward compat
+2. **String with `\n`** → raw markdown content → parse (source=`"content"`)
+3. **String ending `.pflow.md`** (single-line) → file path → read and parse (source=`"file"`)
+4. **Single-line string** → try as library name (source=`"library"`), then as file path (source=`"file"`)
+5. Not found → suggestions
 
-Update error messages (JSON -> markdown).
+Update error messages (JSON → markdown).
 
-### 2.5 MCP save tool (`mcp_server/tools/execution_tools.py` + services)
+### 2.5 MCP save tool and service (G8)
 
-**Critical insight**: Save needs ORIGINAL markdown content, not just IR dict. The save tool has its own resolution path separate from execute/validate — it cannot use `resolve_workflow()` which discards original content.
+**The save flow must preserve original markdown content.** This requires restructuring the entire MCP save chain.
 
-1. Remove `description` parameter from tool signature (extracted from H1 prose)
+**New MCP save flow**:
+```
+workflow_save(workflow_str, name, force)           # Tool layer
+  → ExecutionService.save_workflow(workflow_str, name, force)  # Service layer
+    → detect: content (has \n) or path (ends .pflow.md)
+    → read file if path → markdown_content
+    → result = parse_markdown(markdown_content)    # validates, extracts IR + description
+    → save_workflow_with_options(name, markdown_content, force=force)
+      → WorkflowManager.save(name, markdown_content, metadata)
+    → return format_save_success(name, path, result.ir, ...)  # IR for display
+```
+
+**Changes to `mcp_server/tools/execution_tools.py`**:
+1. Remove `description` parameter from tool signature
 2. Remove `generate_metadata` parameter (gated in Phase 0.2)
-3. **Save-specific string detection** in `ExecutionService.save_workflow()`:
-   - String with `\n` -> raw markdown content -> parse to validate, save content with frontmatter
-   - String ending `.pflow.md` -> file path -> read file, parse to validate, save file content with frontmatter
-   - Dict -> ERROR ("Pass markdown content or file path, not an IR dict")
-   - Single-line non-path string -> ERROR ("Workflow already saved — use a file path or raw markdown content")
-4. **[G6]** Parse markdown once to get both IR (for `format_save_success()` formatter) and original content (for saving). Don't parse twice.
-5. Update `save_workflow_with_options()` call to pass `markdown_content` instead of `workflow_ir + description`.
+3. Update `Field(description=...)` documentation to mention `.pflow.md`
+
+**Changes to `mcp_server/services/execution_service.py`**:
+1. `save_workflow()` — remove `description` and `generate_metadata` params
+2. New save-specific detection (NOT using `resolve_workflow()` which discards content):
+   - String with `\n` → raw markdown content → parse to validate, save content
+   - String ending `.pflow.md` → file path → read file, parse to validate, save content
+   - Dict → ERROR ("Pass markdown content or file path, not an IR dict")
+   - Single-line non-path string → ERROR ("Already saved — use file path or raw content")
+3. `_save_and_format_result()` — receives markdown_content instead of workflow_ir + description
+4. Parse once, use IR for `format_save_success()`, use content for saving
 
 ### 2.6 Runtime workflow executor (`runtime/workflow_executor.py`)
 
-1. `_load_workflow_file()` (line 237): use markdown parser instead of `json.load()`
-2. Update error messages ("Invalid JSON" -> markdown parse errors)
-3. Update type check (line 254): `"Workflow must be a JSON object"` -> appropriate markdown error
+1. `_load_workflow_file()` (~line 237): use markdown parser instead of `json.load()`
+2. Update error messages ("Invalid JSON" → markdown parse errors)
+3. Update type check (~line 254): "Workflow must be a JSON object" → appropriate markdown error
 
-### 2.7 Error messages
+### 2.7 Error messages (~10-12 locations)
 
-Update all ~10 locations identified in spec:
-- `cli/main.py:131-154` -> replace `_show_json_syntax_error()` with markdown error display
-- `ir_schema.py:370-387` -> `_get_output_suggestion()`: update JSON examples to markdown syntax
-- `ir_schema.py:481` -> keep as-is (the `validate_ir()` string path uses `json.loads()` but is rarely triggered in production — no production code passes strings)
-- `workflow_manager.py:213` -> `json.JSONDecodeError` catch -> markdown parse errors
-- `workflow_executor.py:248,254` -> markdown parse errors
-- `workflow_validator.py:435-505` -> remove JSON string anti-pattern validation (layer 7 of 7 validation layers). This detected manually-constructed JSON strings — irrelevant with markdown.
-- `workflow_save_service.py:182-183` -> markdown parse errors
-- `resolver.py:63-64` -> markdown parse errors
+| File | Change |
+|------|--------|
+| `cli/main.py:~131-154` | Replace `_show_json_syntax_error()` with `MarkdownParseError` display |
+| `ir_schema.py:~370-387` | `_get_output_suggestion()`: JSON examples → markdown syntax |
+| `ir_schema.py:~481` | Keep as-is (`validate_ir()` string path, rarely used, no prod code passes strings) |
+| `workflow_manager.py:~213` | `json.JSONDecodeError` catch → `MarkdownParseError` |
+| `workflow_executor.py:~248,254` | Markdown parse errors |
+| `workflow_validator.py:~435-505` | **Remove** JSON string anti-pattern validation (layer 7) |
+| `workflow_save_service.py:~182-183` | Markdown parse errors |
+| `resolver.py:~63-64` | Markdown parse errors |
+| `repair_save_handlers.py:~67` | `.json` in display message (but gated — low priority) |
+| `cli/main.py:~3674,3695,3761` | Help text: `workflow.json` → `workflow.pflow.md` |
 
-### 2.8 Unknown param warnings
+### 2.8 Unknown param warnings (D3)
 
-During compilation, after template validation:
-1. For each node, get `interface["params"]` from registry metadata via `registry.get_nodes_metadata([node_type])` -> `metadata[node_type]["interface"]["params"]`
-2. Each param is a dict with `"key"`, `"type"`, `"description"` fields
-3. Compare node `params` keys against interface param keys
-4. Warn on unknown params with "did you mean?" suggestions using `find_similar_items()` from `core/suggestion_utils.py`
-5. Hook into compiler at template validation call site (`compiler.py` ~line 1058-1075, where `TemplateValidator.validate_workflow_templates()` is called)
+Add as **layer 8** in `WorkflowValidator.validate()` (after existing layer 7 removal):
+
+1. For each node, get `interface["params"]` from registry via `registry.get_nodes_metadata([node_type])`
+2. `interface["params"]` is a list of `{"key": "url", "type": "str", "description": "..."}` dicts
+3. Extract param key set: `{p["key"] for p in interface["params"]}`
+4. Compare node `params` keys against interface param keys
+5. Warn on unknown params with "did you mean?" via `find_similar_items()` from `core/suggestion_utils.py`
+6. Return warnings (not errors) — unknown params don't break execution
 
 ---
 
@@ -420,21 +546,25 @@ During compilation, after template validation:
 
 ### 3.1 Convert example workflows
 
-Convert all 33 `.json` files to `.pflow.md`:
-- Write markdown versions manually (not using test utility — these are documentation)
-- Verify IR equivalence by parsing both and comparing dicts
-- Delete original `.json` files
+Convert `.json` workflow files to `.pflow.md` (write manually — these are documentation).
+Verify IR equivalence: parse both JSON and markdown versions, compare resulting IR dicts.
+Delete original `.json` workflow files after verification.
 
 Priority order:
-1. `examples/core/` (5 files) — used in parameterized tests
-2. `examples/invalid/` (4 files -> replaced with markdown invalid examples)
-3. `examples/real-workflows/` (4 files) — complex, good integration tests
-4. `examples/advanced/` (3 files)
-5. Rest (17 files)
+- `examples/core/` (5 files) — used in parameterized tests
+- `examples/real-workflows/` (4 files) — complex, good integration tests
+- `examples/advanced/` (3 files)
+- `examples/nodes/` (4+ files)
+- Other example directories
+
+**Do NOT convert** non-workflow JSON files:
+- `examples/mcp-pflow/example-claude-desktop-config.json` — MCP config, not workflow
+
+Delete original `.json` workflow files after conversion.
 
 ### 3.2 Create markdown invalid examples
 
-Replace JSON invalid examples with markdown equivalents:
+Replace `examples/invalid/` JSON files with markdown equivalents:
 - `missing-steps.pflow.md` — No `## Steps` section
 - `missing-type.pflow.md` — Node without `- type:` param
 - `missing-description.pflow.md` — Entity without prose
@@ -442,50 +572,71 @@ Replace JSON invalid examples with markdown equivalents:
 - `bare-code-block.pflow.md` — Code block without tag
 - `duplicate-param.pflow.md` — Same param inline + code block
 - `duplicate-ids.pflow.md` — Two nodes with same `###` heading
+- `yaml-syntax-error.pflow.md` — Bad YAML in params
 
-Note: Old JSON invalid examples tested JSON-specific errors:
-- `missing-version.json` becomes irrelevant — `normalize_ir()` adds `ir_version` automatically
-- `bad-edge-ref.json` tested edges referencing non-existent nodes — with markdown, edges are auto-generated from document order, so this specific scenario can't happen. Template references to non-existent nodes are caught by template validation.
-- `duplicate-ids.json` and `wrong-types.json` have markdown equivalents above
+Old JSON invalid examples (`missing-version.json`, `bad-edge-ref.json`, `duplicate-ids.json`, `wrong-types.json`) are deleted — they tested JSON-specific errors or scenarios that can't occur with markdown (e.g., bad edge refs, since edges are auto-generated).
 
-### 3.3 Update test files (17 files)
+### 3.3 Update test files
 
-For each test file that writes JSON workflow files to disk:
-1. Import `ir_to_markdown` from `tests/shared/markdown_utils`
-2. Replace `json.dump(workflow, f)` with writing markdown content
-3. Change file extensions from `.json` to `.pflow.md`
-4. Update CLI invocations to use `.pflow.md` paths
-5. Update error message assertions (JSON -> markdown)
+**Complete list of test files writing JSON workflows to disk** (25+ files, 200+ occurrences):
 
-**Full list of affected test files**:
 ```
-tests/test_cli/test_main.py (20+ occurrences)
-tests/test_cli/test_workflow_output_handling.py
+# CLI tests
+tests/test_cli/test_main.py                          (~20 occurrences)
+tests/test_cli/test_workflow_output_handling.py       (~25 occurrences)
 tests/test_cli/test_workflow_output_source_simple.py
 tests/test_cli/test_workflow_resolution.py
-tests/test_cli/test_repair_save_handlers.py
-tests/test_cli/test_json_error_handling.py
-tests/test_cli/test_auto_repair_flag.py
-tests/test_integration/test_sigpipe_regression.py (8 occurrences)
-tests/test_integration/test_metrics_integration.py (10+ occurrences)
-tests/test_integration/test_e2e_workflow.py
+tests/test_cli/test_json_error_handling.py            → rename to test_parse_error_handling.py
+tests/test_cli/test_workflow_save_cli.py              (~13 occurrences)
+tests/test_cli/test_workflow_save.py                  (~8 occurrences)
+tests/test_cli/test_validate_only.py                  (~11 occurrences)
+tests/test_cli/test_dual_mode_stdin.py                (~18 occurrences)
+tests/test_cli/test_shell_stderr_warnings.py          (~9 occurrences)
+tests/test_cli/test_enhanced_error_output.py          (~9 occurrences)
+
+# Integration tests
+tests/test_integration/test_sigpipe_regression.py     (~8 occurrences)
+tests/test_integration/test_metrics_integration.py    (~10+ occurrences)
+tests/test_integration/test_e2e_workflow.py           (~11 occurrences)
 tests/test_integration/test_workflow_manager_integration.py
 tests/test_integration/test_workflow_outputs_namespaced.py
-tests/test_integration/test_context_builder_integration.py
+
+# Runtime tests
 tests/test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py
 tests/test_runtime/test_workflow_executor/test_workflow_name.py
 tests/test_runtime/test_workflow_executor/test_integration.py
 tests/test_runtime/test_nested_template_e2e.py
+
+# Core tests
+tests/test_core/test_workflow_manager.py              (~3 occurrences, edge cases)
+tests/test_core/test_workflow_manager_update_ir.py    (~9 occurrences, tests dead code — leave or skip)
 ```
 
-Special cases:
-- `test_json_error_handling.py` -> rename to `test_parse_error_handling.py`, rewrite for markdown errors
-- `test_workflow_resolution.py` -> add `.pflow.md` extension tests, update `.json` stripping tests
+**Gated tests (D9) — skip, don't convert:**
+```
+tests/test_planning/                                   (all files — planner gated)
+tests/test_cli/test_repair_save_handlers.py            (repair gated)
+tests/test_cli/test_auto_repair_flag.py                (repair gated)
+tests/test_integration/test_context_builder_integration.py (planner context builder gated)
+```
+
+**For each non-gated test file:**
+1. Import `ir_to_markdown` from `tests/shared/markdown_utils`
+2. Replace `json.dump(workflow, f)` / `write_text(json.dumps(...))` with writing markdown
+3. Change file extensions from `.json` to `.pflow.md`
+4. Update CLI invocations to use `.pflow.md` paths
+5. Update error message assertions (JSON → markdown)
+
+**Special cases:**
+- `test_json_error_handling.py` → rename to `test_parse_error_handling.py`, rewrite for markdown errors
+- `test_workflow_resolution.py` → add `.pflow.md` extension tests, update `.json` stripping tests
+- `test_workflow_manager.py` → edge case tests (invalid content, corruption) need markdown equivalents
+- `test_workflow_manager_update_ir.py` → tests dead code. Leave tests but they test a gated method.
 
 ### 3.4 Update example validation tests
 
-- `test_example_validation.py`: change `rglob("*.json")` to `rglob("*.pflow.md")`, update parsing from `json.load()` to markdown parser
-- `test_ir_examples.py`: update 7 hardcoded paths (e.g., `"invalid/missing-version.json"` -> new markdown invalid examples), update parameterized test file lists
+- `test_example_validation.py`: change `rglob("*.json")` to `rglob("*.pflow.md")`, exclude non-workflow JSON (MCP configs), update parsing to use markdown parser
+- `test_ir_examples.py`: update ~11 hardcoded paths to new `.pflow.md` files and new invalid examples
 
 ---
 
@@ -500,70 +651,54 @@ Special cases:
 ### 4.2 Manual testing
 
 - `uv run pflow examples/core/minimal.pflow.md` — basic execution
-- `uv run pflow workflow save examples/real-workflows/generate-changelog/workflow.pflow.md --name test-workflow` -> saves with frontmatter
-- `uv run pflow test-workflow` -> loads from saved, executes
-- `uv run pflow workflow list` -> shows saved workflows
-- `uv run pflow workflow describe test-workflow` -> shows interface
+- `uv run pflow workflow save examples/core/minimal.pflow.md --name test-workflow` → saves with frontmatter
+- `uv run pflow test-workflow` → loads from saved, executes
+- `uv run pflow workflow list` → shows saved workflows
+- `uv run pflow workflow describe test-workflow` → shows interface info
+- Test error case: pass a `.json` file → graceful error message
 
 ### 4.3 Documentation
 
 - Add `src/pflow/core/CLAUDE.md` entry for `markdown_parser.py`
-- Update any code comments referencing JSON workflow files
 - Update `tests/shared/README.md` with `markdown_utils` documentation
+- Update code comments referencing JSON workflow files
 
 ---
 
-## Critical Flow: Save Pipeline Redesign
+## Phase 5: Agent Instructions (collaborative with user)
 
-The save pipeline is the most complex integration change. Here's the full picture:
+Update `src/pflow/cli/resources/cli-agent-instructions.md` (~13 references to JSON):
+- All `workflow.json` examples → `.pflow.md`
+- All JSON workflow syntax examples → markdown format examples
+- Update save command examples (remove `--description`)
+- **This phase is done collaboratively with the user**, not autonomously
 
-### Current save flow (JSON)
+Also update `src/pflow/cli/resources/cli-basic-usage.md` if it references JSON workflow files.
 
+---
+
+## Save Pipeline: Complete Flow
+
+### Current flow (JSON)
 ```
-CLI:  file_path -> json.load() -> IR dict -> validate -> save(name, ir, description)
-MCP:  workflow (dict/name/path) -> resolve_workflow() -> IR dict -> validate -> save(name, ir, description)
+CLI:  file_path → json.load() → IR dict → validate → save(name, ir, description)
+MCP:  workflow → resolve_workflow() → IR dict → validate → save(name, ir, description)
 ```
 
-`WorkflowManager.save()` receives: `(name, ir_dict, description)` -> creates metadata wrapper -> `json.dump(wrapper)`
-
-### New save flow (Markdown)
-
+### New flow (Markdown)
 ```
-CLI:  file_path -> read content -> parse_markdown() -> validate IR -> save(name, markdown_content)
-MCP:  workflow (md string or path) -> read/detect -> parse_markdown() -> validate IR -> save(name, markdown_content)
+CLI:  file_path → read content → parse_markdown() → validate IR → save(name, content, metadata)
+MCP:  workflow_str → detect type → read if path → parse_markdown() → validate → save(name, content, metadata)
 ```
 
-`WorkflowManager.save()` receives: `(name, markdown_content)` -> parse to extract description + validate -> prepend frontmatter -> write text
+### Key principles
+1. **Content preservation**: Save stores ORIGINAL markdown. Author's formatting survives save/load.
+2. **No description parameter**: Embedded in markdown content. load() extracts via parsing.
+3. **No IR-to-markdown serialization**: Never convert IR back to markdown. Original content preserved.
+4. **Frontmatter is additive**: Prepended on save, stripped on load. Body never modified.
+5. **Parse once**: Callers parse markdown once, get both IR (for validation/display) and content (for save).
 
-### Key differences
-
-1. **Content preservation**: Save stores ORIGINAL markdown, not serialized IR. Author's formatting, comments, and prose survive save/load cycles.
-2. **Description extraction**: No separate `description` parameter. Extracted from H1 prose by the parser.
-3. **No IR-to-file serialization**: We never need to convert IR back to markdown. The original content is always preserved.
-4. **Frontmatter is additive**: Prepended to original content on save, stripped on load. Body is never modified.
-
-### Callers that need updating
-
-| Caller | Current call | New call |
-|--------|-------------|----------|
-| `cli/commands/workflow.py:381` | `_save_with_overwrite_check(name, ir, description, metadata, force)` | `_save_with_overwrite_check(name, markdown_content, metadata, force)` |
-| `workflow_save_service.py:296` | `manager.save(name, workflow_ir, description, metadata)` | `manager.save(name, markdown_content, metadata)` |
-| `mcp_server/services/execution_service.py:487-493` | `save_workflow_with_options(name, ir, description, force, metadata)` | `save_workflow_with_options(name, markdown_content, force=force, metadata=metadata)` |
-
-### update_metadata() redesign
-
-Current: `load(name)` -> full JSON dict -> update fields -> `json.dump(entire_thing)`
-
-New:
-1. Read file content as text
-2. Split: find `---` boundaries -> frontmatter YAML + markdown body
-3. `yaml.safe_load(frontmatter)` -> update dict fields
-4. `yaml.dump(updated_frontmatter)` -> reassemble with body
-5. Atomic write
-
-The markdown body is NEVER touched by metadata updates.
-
-### Frontmatter fields (flattened from rich_metadata)
+### Frontmatter fields (flat — D8)
 
 ```yaml
 ---
@@ -575,7 +710,7 @@ last_execution_timestamp: "2026-01-14T23:03:06.823108"
 last_execution_success: true
 last_execution_params:
   version: "1.0.0"
-keywords:
+search_keywords:
   - changelog
   - git
 capabilities:
@@ -583,26 +718,25 @@ capabilities:
 ---
 ```
 
-All fields that were in `rich_metadata` move to top-level frontmatter.
-
 ---
 
 ## Implementation Order (Critical Path)
 
 ```
-Phase 0.1 (PyYAML dep)
+Phase 0.1 (PyYAML dep)              }
 Phase 0.2 (Gate planner/repair)     } Can be done in parallel
 Phase 0.3 (Test utility)            }
 
-Phase 1.1 (Parser core)             } Sequential - parser first
+Phase 1.1 (Parser core)             } Sequential — parser first
 Phase 1.2 (Parser tests)            } then tests
 
 Phase 2.1 (CLI integration)         }
 Phase 2.1b (CLI save command)       }
-Phase 2.2 (WorkflowManager)         } Sequential - CLI first (primary entry),
-Phase 2.3 (Save service)            } then manager, then others
+Phase 2.2 (WorkflowManager)         } Sequential — CLI first (primary entry),
+Phase 2.2b (rich_metadata callers)  } then manager, then others
+Phase 2.3 (Save service)            }
 Phase 2.4 (MCP resolver)            }
-Phase 2.5 (MCP save tool)           } Can parallel with 2.4
+Phase 2.5 (MCP save tool+service)   } Can parallel with 2.4
 Phase 2.6 (Runtime executor)        } Can parallel with 2.4
 Phase 2.7 (Error messages)          } Interleaved with above
 Phase 2.8 (Unknown param warnings)  } After all integration done
@@ -615,7 +749,59 @@ Phase 3.4 (Update validation tests) }
 Phase 4.1 (make test + make check)
 Phase 4.2 (Manual testing)
 Phase 4.3 (Documentation)
+
+Phase 5 (Agent instructions — collaborative with user)
 ```
+
+---
+
+## Risk Assessment
+
+### High Risk
+- **MCP save flow restructuring (G8)**: 6 functions deep, all need signature changes. Dual data flow (IR for display, content for save).
+- **Test migration scope**: 200+ disk-write occurrences across 25+ files. `ir_to_markdown()` must handle ALL IR patterns used in tests.
+- **WorkflowManager rewrite**: Complete rewrite of save/load/update cycle. Many callers depend on return structure.
+
+### Medium Risk
+- **YAML continuation parsing**: Block scalars, flow sequences, nested dicts under `- ` lines. Must handle correctly or error clearly.
+- **Frontmatter management**: `update_metadata()` must correctly split/merge without corrupting markdown body. Edge case: authored file (no frontmatter) being updated after first execution.
+- **rich_metadata flattening (G9)**: 6 callers to update. All use safe `.get()` patterns, but verify each.
+
+### Low Risk
+- **Gating planner/repair**: Simple if-guards.
+- **PyYAML dependency move**: Trivial pyproject.toml change.
+- **Error message updates**: Find-and-replace style.
+- **Unknown param warnings**: Additive, no existing behavior changed.
+
+---
+
+## Verified Codebase Facts
+
+These have been verified against the actual codebase and can be trusted:
+
+- `normalize_ir()` adds `ir_version: "0.1.0"`, `edges: []` if missing, renames `parameters` → `params`
+- Top-level IR: 9 fields, `additionalProperties: False`
+- Node schema: `id` + `type` required; `purpose`, `params`, `batch` optional; `additionalProperties: False`
+- Input schema: `description`, `required`, `type`, `default`, `stdin`; `additionalProperties: False`
+- Output schema: `description`, `type`, `source`; `additionalProperties: False`
+- Batch schema: `items` required, 7 fields total, `additionalProperties: False`
+- `params` has `additionalProperties: True` (unknown params silently accepted — hence the warning feature)
+- `purpose` field is optional, unused at runtime (only legacy planner references it)
+- All existing workflows are linear chains (verified via generate-changelog: 17 nodes, 16 edges, pure linear)
+- `_wire_nodes()` accepts both `from`/`to` and `source`/`target` field names
+- `_get_start_node()` uses first node in the `nodes` array
+- Template validator loads interface metadata via `registry.get_nodes_metadata()`
+- `interface["params"]` is a list of `{"key": ..., "type": ..., "description": ...}` dicts
+- 7 validation layers in `WorkflowValidator`; layer 7 is JSON string anti-pattern (to be removed)
+- `WorkflowValidator.validate()` accepts optional `registry: Optional[Registry] = None`
+- `find_similar_items()` exists in `suggestion_utils.py` with substring/fuzzy matching
+- Workflow name derived from filename (not stored in file content)
+- No production code passes strings to `_parse_ir_input()` in compiler (only tests)
+- `validate_ir()` accepts strings via `json.loads()` but this path is unused in production
+- Context builder function is `_load_single_workflow()` (not `_try_load_workflow()` as spec says)
+- MCP resolver returns 3-tuple: `(ir | None, error | None, source: str)`
+- WorkflowManager has 8 locations with hardcoded `.json`
+- `repair_save_handlers.py` creates `.repaired.json` files (gated, no change needed)
 
 ---
 
@@ -625,32 +811,39 @@ Phase 4.3 (Documentation)
 - `src/pflow/core/markdown_parser.py` (~300-400 lines)
 - `tests/test_core/test_markdown_parser.py` (~500-700 lines)
 - `tests/shared/markdown_utils.py` (~100-150 lines)
-- `examples/invalid/*.pflow.md` (7 new files)
+- `examples/invalid/*.pflow.md` (8 new files)
 
 ### Modified files (major changes)
-- `src/pflow/core/workflow_manager.py` (complete storage format rewrite)
-- `src/pflow/core/workflow_save_service.py` (markdown loading, save signature change)
-- `src/pflow/cli/main.py` (parser integration, gating, error messages)
-- `src/pflow/cli/commands/workflow.py` (remove --description, save flow change)
-- `src/pflow/mcp_server/utils/resolver.py` (markdown loading, content detection)
-- `src/pflow/mcp_server/tools/execution_tools.py` (parameter changes)
-- `src/pflow/mcp_server/services/execution_service.py` (save flow change)
-- `src/pflow/runtime/workflow_executor.py` (markdown loading)
+- `src/pflow/core/workflow_manager.py` — complete storage format rewrite
+- `src/pflow/core/workflow_save_service.py` — markdown loading, save signature change
+- `src/pflow/cli/main.py` — parser integration, gating, error messages, multiple `.json` refs
+- `src/pflow/cli/commands/workflow.py` — remove `--description`, save flow change
+- `src/pflow/mcp_server/utils/resolver.py` — markdown loading, content detection
+- `src/pflow/mcp_server/tools/execution_tools.py` — parameter changes, documentation
+- `src/pflow/mcp_server/services/execution_service.py` — save flow restructure (G8)
+- `src/pflow/runtime/workflow_executor.py` — markdown loading
 
 ### Modified files (minor changes)
-- `pyproject.toml` (PyYAML dependency)
-- `src/pflow/core/ir_schema.py` (error message examples)
-- `src/pflow/core/workflow_validator.py` (remove JSON anti-pattern layer 7)
-- `src/pflow/cli/repair_save_handlers.py` (gated)
-- `src/pflow/planning/context_builder.py` (gated)
-- `src/pflow/runtime/compiler.py` (unknown param warnings)
-- `src/pflow/runtime/template_validator.py` (unknown param warnings)
+- `pyproject.toml` — PyYAML dependency
+- `src/pflow/core/ir_schema.py` — error message examples
+- `src/pflow/core/workflow_validator.py` — remove layer 7, add layer 8 (unknown param warnings)
+- `src/pflow/cli/repair_save_handlers.py` — gated
+- `src/pflow/planning/context_builder.py` — gated
+- `src/pflow/execution/formatters/workflow_describe_formatter.py` — flat metadata access (G9)
+- `src/pflow/execution/formatters/discovery_formatter.py` — flat metadata access (G9)
+- `src/pflow/execution/formatters/history_formatter.py` — flat metadata access (G9)
+- `src/pflow/cli/main.py:1204-1286` — flat metadata construction (G9)
 
 ### Converted files
-- 33 `.json` -> `.pflow.md` in `examples/`
-- 4 old invalid examples deleted, 7 new ones created
+- ~30 `.json` → `.pflow.md` in `examples/` (excluding non-workflow JSON like MCP configs)
+- 4 old invalid examples deleted, 8 new ones created
 
 ### Updated test files
-- 17 test files updated to write `.pflow.md` instead of `.json`
+- 25+ test files updated to write `.pflow.md` instead of `.json`
 - 2 example validation test files updated
-- 1 test file renamed (`test_json_error_handling.py` -> `test_parse_error_handling.py`)
+- 1 test file renamed (`test_json_error_handling.py` → `test_parse_error_handling.py`)
+- ~6 test files gated (planner/repair tests)
+
+### Agent instructions (Phase 5)
+- `src/pflow/cli/resources/cli-agent-instructions.md` — ~13 JSON references updated
+- `src/pflow/cli/resources/cli-basic-usage.md` — if applicable
