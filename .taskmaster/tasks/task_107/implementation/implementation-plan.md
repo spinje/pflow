@@ -176,6 +176,8 @@ Function `ir_to_markdown(ir_dict: dict, title: str = "Test Workflow") -> str` th
 
 This utility is test-only infrastructure. Not production code.
 
+**Battle-test before Phase 3**: Before the fork point, validate `ir_to_markdown()` against a sample of actual IR dicts from test files (pick 3-4 files with different patterns — batch, stdin, code nodes, outputs). If the utility produces invalid markdown for an IR pattern used in tests, forks will get stuck. Fix edge cases before forking.
+
 ---
 
 ## Phase 1: Parser Core
@@ -326,13 +328,15 @@ Test categories:
 
 ### 2.1 CLI integration (`cli/main.py`)
 
+> **Note**: Line numbers below (~157, ~162, ~3384, etc.) were verified during spec research but may have drifted. Search by function name, not line number.
+
 **Changes**:
 
 1. `_is_path_like()` (~line 157): Add `.pflow.md` check
    ```python
    identifier.lower().endswith(".json") or identifier.lower().endswith(".pflow.md")
    ```
-   Keep `.json` check for graceful error ("JSON workflow format is no longer supported. Use .pflow.md format instead.").
+   Keep `.json` in `_is_path_like()` so it's still recognized as a file path (not sent to planner or registry lookup). The actual error is raised in `_try_load_workflow_from_file()` — check for `.json` extension BEFORE attempting to parse, and return a clear error: "JSON workflow format is no longer supported. Use .pflow.md format instead." Don't attempt to parse `.json` files as markdown.
 
 2. `_try_load_workflow_from_file()` (~line 162): Replace JSON loading with markdown parsing
    ```python
@@ -435,9 +439,23 @@ Test categories:
 
 8. **Remove `_create_metadata_wrapper()`** — replaced by frontmatter generation in save().
 
+9. **Write WorkflowManager tests** for the new format. This is the single point of failure — every integration point depends on it. Test before proceeding:
+   - `save()` → creates `.pflow.md` with correct frontmatter
+   - `load()` → returns flat metadata structure with all fields
+   - `load_ir()` → returns correct IR from `.pflow.md`
+   - `update_metadata()` → read/modify/write frontmatter without touching markdown body
+   - `update_metadata()` on a file with no prior execution fields (first execution after save)
+   - `list_all()` → finds `.pflow.md` files, derives names correctly (G1)
+   - `_name_from_path()` → handles `.pflow.md` double extension
+   - `exists()`, `delete()`, `get_path()` → use `.pflow.md` extension
+
 ### 2.2b Update `rich_metadata` callers (G9)
 
-All callers change from `metadata.get("rich_metadata", {})` to direct field access:
+All callers change from `metadata.get("rich_metadata", {})` to direct field access.
+
+**Watch for tests**: Some tests may construct metadata dicts with the old `rich_metadata` wrapper shape. These won't be caught by the test gating (D9) since they're in non-planner test files. Search for `rich_metadata` across all test files and update any that construct or assert on the old shape.
+
+Callers to update:
 
 1. `execution/formatters/workflow_describe_formatter.py:56`: `metadata` directly (fields are top-level now)
 2. `execution/formatters/discovery_formatter.py:102`: Same
@@ -540,6 +558,23 @@ Add as **layer 8** in `WorkflowValidator.validate()` (after existing layer 7 rem
 5. Warn on unknown params with "did you mean?" via `find_similar_items()` from `core/suggestion_utils.py`
 6. Return warnings (not errors) — unknown params don't break execution
 
+### 2.9 Smoke test (gate for Phase 3)
+
+Before proceeding to Phase 3 and the fork point, verify the full workflow lifecycle works end-to-end. Write a minimal `.pflow.md` test file and run:
+
+1. `uv run pflow test-workflow.pflow.md` — executes successfully
+2. `uv run pflow --validate-only test-workflow.pflow.md` — validates, exits 0
+3. `uv run pflow workflow save test-workflow.pflow.md --name smoke-test` — saves with frontmatter
+4. `uv run pflow smoke-test` — loads saved workflow, executes
+5. `uv run pflow workflow list` — shows `smoke-test`
+6. `uv run pflow workflow describe smoke-test` — shows inputs/outputs
+7. `uv run pflow old-workflow.json` — graceful `.json` rejection error
+8. Cleanup: delete `smoke-test` from `~/.pflow/workflows/`
+
+Also battle-test `ir_to_markdown()` (Phase 0.3 note): pick 3-4 test files with diverse IR patterns, run their dicts through the utility, parse the output with the markdown parser, verify IR equivalence.
+
+**If any step fails, fix before forking.** The forks all depend on this working.
+
 ---
 
 ## Phase 3: Examples and Tests
@@ -637,6 +672,33 @@ tests/test_integration/test_context_builder_integration.py (planner context buil
 
 - `test_example_validation.py`: change `rglob("*.json")` to `rglob("*.pflow.md")`, exclude non-workflow JSON (MCP configs), update parsing to use markdown parser
 - `test_ir_examples.py`: update ~11 hardcoded paths to new `.pflow.md` files and new invalid examples
+
+### 3.F Fork Point: Parallel Execution of Phase 3
+
+> **Process reference**: See `implementation/progress-tracking.md` for fork invocation mechanics, prompt template, and progress log conventions.
+
+**Prerequisite**: Phases 0–2 complete. Parser working. `ir_to_markdown()` utility available. All integration points updated. `make check` passes (tests may fail — that's expected since examples/tests still reference JSON).
+
+**Why fork here**: Phase 3 is ~60% of total work volume (30 example conversions, 8 invalid examples, 25+ test files). The work is file-isolated, mechanical, and context-heavy — ideal for parallel forked agents that inherit the full session context.
+
+**Fork groups** (no file overlaps between groups):
+
+| Fork | Phase | Label | Files | Notes |
+|------|-------|-------|-------|-------|
+| A | 3.1 | `examples-core` | `examples/core/*.json` (5 files) | Used in parameterized tests — convert carefully |
+| B | 3.1 | `examples-real` | `examples/real-workflows/**/*.json` (4 files) | Complex workflows, good validation of parser |
+| C | 3.1 + 3.2 | `examples-rest` | `examples/advanced/`, `examples/nodes/`, other dirs + `examples/invalid/` (new files) | Convert remaining examples + create 8 invalid `.pflow.md` files |
+| D | 3.3 | `test-cli-heavy` | `tests/test_cli/test_main.py`, `tests/test_cli/test_workflow_output_handling.py`, `tests/test_cli/test_dual_mode_stdin.py` | Heaviest test files (~63 occurrences combined) |
+| E | 3.3 | `test-cli-rest` | `tests/test_cli/test_workflow_save_cli.py`, `tests/test_cli/test_workflow_save.py`, `tests/test_cli/test_validate_only.py`, `tests/test_cli/test_shell_stderr_warnings.py`, `tests/test_cli/test_enhanced_error_output.py`, `tests/test_cli/test_workflow_output_source_simple.py`, `tests/test_cli/test_workflow_resolution.py`, `tests/test_cli/test_json_error_handling.py` (rename to `test_parse_error_handling.py`) | Remaining CLI test files |
+| F | 3.3 | `test-integration` | `tests/test_integration/test_sigpipe_regression.py`, `tests/test_integration/test_metrics_integration.py`, `tests/test_integration/test_e2e_workflow.py`, `tests/test_integration/test_workflow_manager_integration.py`, `tests/test_integration/test_workflow_outputs_namespaced.py` | Integration test files |
+| G | 3.3 | `test-runtime-core` | `tests/test_runtime/test_workflow_executor/` (3 files), `tests/test_runtime/test_nested_template_e2e.py`, `tests/test_core/test_workflow_manager.py`, `tests/test_core/test_workflow_manager_update_ir.py` | Runtime + core test files |
+
+**Execution order**:
+1. Run fork A first (lightweight, primes the cache)
+2. After A completes, launch forks B–G in parallel (all benefit from cached context)
+3. After all forks complete, main agent runs Phase 3.4 (validation tests — depends on converted examples from A–C)
+
+**After forks complete**: Main agent reads all fork progress logs, runs `make test` + `make check`, fixes integration issues, then proceeds to Phase 4.
 
 ---
 
@@ -785,11 +847,18 @@ Phase 2.5 (MCP save tool+service)   } Can parallel with 2.4
 Phase 2.6 (Runtime executor)        } Can parallel with 2.4
 Phase 2.7 (Error messages)          } Interleaved with above
 Phase 2.8 (Unknown param warnings)  } After all integration done
+Phase 2.9 (Smoke test)              } GATE — must pass before forking
 
-Phase 3.1 (Convert examples)        }
-Phase 3.2 (Invalid examples)        } Can be parallelized
-Phase 3.3 (Update test files)       }
-Phase 3.4 (Update validation tests) }
+--- FORK POINT (see 3.F) ---
+Fork A: 3.1 examples-core            } First (primes cache)
+Fork B: 3.1 examples-real            }
+Fork C: 3.1+3.2 examples-rest        }
+Fork D: 3.3 test-cli-heavy           } Parallel (after A completes)
+Fork E: 3.3 test-cli-rest            }
+Fork F: 3.3 test-integration         }
+Fork G: 3.3 test-runtime-core        }
+--- RECONVENE ---
+Phase 3.4 (Update validation tests)  } Main agent (after forks)
 
 Phase 4.1 (make test + make check)
 Phase 4.2 (CLI integration testing)
