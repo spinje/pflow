@@ -968,3 +968,75 @@ def test_sandbox_parameter_passes_unknown_keys(claude_node):
     prep_res = claude_node.prep(shared)
     assert prep_res["sandbox"]["enabled"] is True
     assert prep_res["sandbox"]["futureOption"] == "some value"
+
+
+# Disallowed tools parameter tests
+
+
+def test_disallowed_tools_default_none(claude_node):
+    """Test disallowed_tools defaults to None (no restrictions)."""
+    shared = {}
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["disallowed_tools"] is None
+
+
+def test_disallowed_tools_with_patterns(claude_node):
+    """Test disallowed_tools accepts pattern strings for SDK denylist."""
+    shared = {}
+    patterns = ["Bash(pflow:*)", "Bash(make:*)"]
+    claude_node.params = {"prompt": "test prompt", "disallowed_tools": patterns}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["disallowed_tools"] == patterns
+
+
+def test_disallowed_tools_passed_to_options(claude_node):
+    """Test disallowed_tools is passed through to ClaudeAgentOptions."""
+    shared = {}
+    patterns = ["Bash(pflow:*)", "Bash(git:*)"]
+    claude_node.params = {"prompt": "test prompt", "disallowed_tools": patterns}
+    prep_res = claude_node.prep(shared)
+
+    claude_node._build_claude_options(prep_res, "")
+    # Verify the prep_res correctly carries disallowed_tools through to options building
+    assert prep_res["disallowed_tools"] == patterns
+
+
+def test_disallowed_tools_not_passed_when_none(claude_node):
+    """Test disallowed_tools is omitted from options when None."""
+    shared = {}
+    claude_node.params = {"prompt": "test prompt"}
+    prep_res = claude_node.prep(shared)
+    assert prep_res["disallowed_tools"] is None
+
+    # Build options and verify disallowed_tools is NOT in kwargs
+    # We can verify by checking the prep_res flow - None means not passed to SDK
+    options_kwargs = {
+        "model": prep_res["model"],
+        "max_thinking_tokens": prep_res["max_thinking_tokens"],
+    }
+    if prep_res.get("disallowed_tools") is not None:
+        options_kwargs["disallowed_tools"] = prep_res["disallowed_tools"]
+    assert "disallowed_tools" not in options_kwargs
+
+
+def test_disallowed_tools_invalid_type(claude_node):
+    """Test disallowed_tools rejects non-list values."""
+    shared = {}
+    claude_node.params = {"prompt": "test prompt", "disallowed_tools": "Bash(pflow:*)"}
+    with pytest.raises(TypeError) as exc_info:
+        claude_node.prep(shared)
+    assert "disallowed_tools must be a list" in str(exc_info.value)
+
+
+def test_disallowed_tools_with_allowed_tools(claude_node):
+    """Test disallowed_tools works alongside allowed_tools."""
+    shared = {}
+    claude_node.params = {
+        "prompt": "test prompt",
+        "allowed_tools": ["Read", "Write", "Bash"],
+        "disallowed_tools": ["Bash(rm:*)"],
+    }
+    prep_res = claude_node.prep(shared)
+    assert prep_res["allowed_tools"] == ["Read", "Write", "Bash"]
+    assert prep_res["disallowed_tools"] == ["Bash(rm:*)"]

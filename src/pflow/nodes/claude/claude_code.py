@@ -14,6 +14,7 @@ Interface:
 - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
 - Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
 - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
+- Params: disallowed_tools: list  # Tools to deny (default: None = no restrictions). Supports patterns like "Bash(git:*)"
 - Params: max_turns: int  # Maximum conversation turns (default: 50)
 - Params: max_thinking_tokens: int  # Maximum tokens for reasoning (default: 8000)
 - Params: timeout: int  # Execution timeout in seconds (default: 300; max: 3600)
@@ -231,6 +232,19 @@ class ClaudeCodeNode(Node):
             raise TypeError(f"allowed_tools must be a list, got {type(allowed_tools).__name__}")
         return allowed_tools
 
+    def _validate_disallowed_tools(self, disallowed_tools: Optional[list]) -> Optional[list]:
+        """Validate disallowed tools list.
+
+        If None or empty, no tools are blocked (SDK default).
+        If provided, pass through to SDK without validation - let SDK handle unknown patterns.
+        Supports pattern matching like "Bash(git:*)", "Bash(pflow:*)".
+        """
+        if not disallowed_tools:
+            return None  # No restrictions
+        if not isinstance(disallowed_tools, list):
+            raise TypeError(f"disallowed_tools must be a list, got {type(disallowed_tools).__name__}")
+        return disallowed_tools
+
     def _validate_max_turns(self, max_turns: Any) -> int:
         """Validate and convert max_turns parameter."""
         default_max_turns = 50
@@ -344,6 +358,9 @@ class ClaudeCodeNode(Node):
         # Validate tools (None = all tools available, including Task for subagents)
         allowed_tools = self._validate_tools(self.params.get("allowed_tools"))
 
+        # Validate disallowed tools (None = no restrictions)
+        disallowed_tools = self._validate_disallowed_tools(self.params.get("disallowed_tools"))
+
         # Validate numeric parameters
         max_turns = self._validate_max_turns(self.params.get("max_turns", 50))
         max_thinking_tokens = self._validate_max_thinking_tokens(self.params.get("max_thinking_tokens", 8000))
@@ -368,6 +385,7 @@ class ClaudeCodeNode(Node):
             "cwd": cwd,
             "model": model,
             "allowed_tools": allowed_tools,
+            "disallowed_tools": disallowed_tools,
             "max_turns": max_turns,
             "max_thinking_tokens": max_thinking_tokens,
             "system_prompt": system_prompt,
@@ -442,6 +460,10 @@ class ClaudeCodeNode(Node):
         # Only pass allowed_tools if explicitly set (None = all tools including Task for subagents)
         if prep_res["allowed_tools"] is not None:
             options_kwargs["allowed_tools"] = prep_res["allowed_tools"]
+
+        # Only pass disallowed_tools if explicitly set (None = no restrictions)
+        if prep_res.get("disallowed_tools") is not None:
+            options_kwargs["disallowed_tools"] = prep_res["disallowed_tools"]
 
         # Add session resumption if provided
         if prep_res["resume"]:
