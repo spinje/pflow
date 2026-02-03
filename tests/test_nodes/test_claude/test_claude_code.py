@@ -997,9 +997,9 @@ def test_disallowed_tools_passed_to_options(claude_node):
     claude_node.params = {"prompt": "test prompt", "disallowed_tools": patterns}
     prep_res = claude_node.prep(shared)
 
-    claude_node._build_claude_options(prep_res, "")
-    # Verify the prep_res correctly carries disallowed_tools through to options building
-    assert prep_res["disallowed_tools"] == patterns
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+        assert mock_options.call_args.kwargs["disallowed_tools"] == patterns
 
 
 def test_disallowed_tools_not_passed_when_none(claude_node):
@@ -1009,15 +1009,9 @@ def test_disallowed_tools_not_passed_when_none(claude_node):
     prep_res = claude_node.prep(shared)
     assert prep_res["disallowed_tools"] is None
 
-    # Build options and verify disallowed_tools is NOT in kwargs
-    # We can verify by checking the prep_res flow - None means not passed to SDK
-    options_kwargs = {
-        "model": prep_res["model"],
-        "max_thinking_tokens": prep_res["max_thinking_tokens"],
-    }
-    if prep_res.get("disallowed_tools") is not None:
-        options_kwargs["disallowed_tools"] = prep_res["disallowed_tools"]
-    assert "disallowed_tools" not in options_kwargs
+    with patch("pflow.nodes.claude.claude_code.ClaudeAgentOptions") as mock_options:
+        claude_node._build_claude_options(prep_res, "")
+        assert "disallowed_tools" not in mock_options.call_args.kwargs
 
 
 def test_disallowed_tools_invalid_type(claude_node):
