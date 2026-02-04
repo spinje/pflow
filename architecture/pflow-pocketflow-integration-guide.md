@@ -19,7 +19,7 @@ This document captures critical insights about how pflow and pocketflow integrat
 
 > **This guide is for pflow internal developers**, not for users or AI agents building workflows.
 
-**Users and AI agents** should ALWAYS use JSON workflows via the CLI (`pflow workflow.json`). They never interact with PocketFlow directly.
+**Users and AI agents** should ALWAYS use markdown workflows via the CLI (`pflow workflow.pflow.md`). They never interact with PocketFlow directly.
 
 **This guide covers two internal development patterns:**
 
@@ -27,7 +27,7 @@ This document captures critical insights about how pflow and pocketflow integrat
 
 2. **Direct PocketFlow flows** - Used ONLY in exceptional cases where pflow itself needs an internal workflow (e.g., the planner). This is rare and should be avoided unless there's a compelling reason. Currently only the planner uses this pattern.
 
-**For the compilation/runtime layer** where JSON IR is transformed into executable PocketFlow objects, see `src/pflow/runtime/CLAUDE.md`.
+**For the compilation/runtime layer** where the workflow IR is transformed into executable PocketFlow objects, see `src/pflow/runtime/CLAUDE.md`.
 
 ## Critical Insight #1: PocketFlow IS the Execution Engine
 
@@ -61,10 +61,10 @@ result = flow.run(shared)
 
 **What pflow adds**:
 - CLI interface and command parsing
-- JSON IR to Flow compilation
+- Markdown parser (`.pflow.md` → IR dict) and IR-to-Flow compilation
 - Node registry and discovery
 - Template variable resolution
-- Natural language planning
+- Natural language planning (currently gated — Task 107 Decision 26)
 
 ## Critical Insight #2: No Wrapper Classes Needed
 
@@ -175,21 +175,21 @@ def categorize_flags(flags_dict, node_metadata):
     return data_flags, param_flags
 ```
 
-## Critical Insight #7: JSON IR Compilation Pattern
+## Critical Insight #7: IR Compilation Pattern
 
 **What NOT to do**: Generate Python code strings or implement a complex compiler.
 
-**What to do**: Instantiate pocketflow objects from JSON.
+**What to do**: Instantiate pocketflow objects from the IR dict.
 
 ```python
-def compile_ir_to_flow(ir_json):
-    """Convert JSON IR to executable pocketflow.Flow."""
+def compile_ir_to_flow(ir_dict):
+    """Convert IR dict to executable pocketflow.Flow."""
     from pflow.pocketflow import Flow
     from pflow.registry import get_node_class
 
     # Create nodes
     nodes = {}
-    for node_spec in ir_json["nodes"]:
+    for node_spec in ir_dict["nodes"]:
         NodeClass = get_node_class(node_spec["type"])
         node = NodeClass()
         if "params" in node_spec:
@@ -197,7 +197,7 @@ def compile_ir_to_flow(ir_json):
         nodes[node_spec["id"]] = node
 
     # Connect nodes
-    for edge in ir_json["edges"]:
+    for edge in ir_dict["edges"]:
         from_node = nodes[edge["from"]]
         to_node = nodes[edge["to"]]
         action = edge.get("action", "default")
@@ -208,7 +208,7 @@ def compile_ir_to_flow(ir_json):
             from_node - action >> to_node
 
     # Create flow
-    start_node = nodes[ir_json["start_node"]]
+    start_node = nodes[ir_dict["start_node"]]
     return Flow(start=start_node)
 ```
 
@@ -238,7 +238,7 @@ def scan_for_nodes(directory):
 - Create detailed prompts for every node
 
 ```python
-# LLM output (JSON IR):
+# LLM output (IR dict — produced from .pflow.md by the markdown parser):
 {
     "nodes": [
         {"id": "n1", "type": "read-file", "params": {"file_path": "${input_file}"}},
@@ -303,13 +303,13 @@ This prevents the "framework on framework" anti-pattern and keeps pflow as a thi
 ## The Core Architecture
 
 ```
-User Input → CLI Parser → Flag Categorization → Planning (optional) → JSON IR →
+User Input → CLI Parser → Flag Categorization → Markdown Parser → IR dict →
 IR Compiler → pocketflow.Flow → Execution → Results
 
 Where:
 - CLI Parser: click-based command parsing
-- Planning: LLM generates workflow structure
-- IR Compiler: Converts JSON to pocketflow objects
+- Markdown Parser: .pflow.md → IR dict (same shape JSON produced)
+- IR Compiler: Converts IR dict to pocketflow objects
 - Execution: pocketflow handles everything
 ```
 

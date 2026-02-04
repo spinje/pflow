@@ -4,7 +4,7 @@
 
 ## What pflow Is
 
-pflow is a CLI-first workflow execution system that enables AI agents to create, save, and execute workflows defined in JSON. Built on PocketFlow (~200 lines of Python), it provides the infrastructure for workflows to persist, be discovered, reused, and composed.
+pflow is a CLI-first workflow execution system that enables AI agents to create, save, and execute workflows defined in markdown (`.pflow.md`). Built on PocketFlow (~200 lines of Python), it provides the infrastructure for workflows to persist, be discovered, reused, and composed.
 
 **The core value proposition:**
 > "Your agent solves the same problem from scratch. Full cost. Same latency. Same risk of failure. Every time. pflow turns that reasoning into workflows your agent can reuse. Plan once, run forever."
@@ -105,7 +105,7 @@ When you save a workflow, you're not making outputs deterministic. LLM nodes can
 - **Soft enforcement:** Reuse depends on an agent reading docs and inferring correctly
 - **Hard enforcement:** Reuse is structural, schema-validated, doesn't depend on inference
 
-pflow uses hard enforcement. Workflows are JSON with declared inputs, outputs, and node interfaces. This enables validation before execution, composition that scales, and discovery that works.
+pflow uses hard enforcement. Workflows are structured markdown (`.pflow.md`) with declared inputs, outputs, and node interfaces. This enables validation before execution, composition that scales, and discovery that works.
 
 **3. Deterministic by Default, Intelligent by Choice**
 
@@ -155,7 +155,7 @@ The agent handles the "what" (intent, selection). The workflow handles the "how"
 
 ### Workflows, Nodes, Shared Store
 
-**Workflows** are JSON files defining a sequence of nodes with inputs, outputs, and data flow.
+**Workflows** are markdown files (`.pflow.md`) defining a sequence of nodes with inputs, outputs, and data flow.
 
 **Nodes** are atomic operations: read a file, make an HTTP request, call an LLM, execute a shell command. Each node has declared inputs (params) and outputs (writes to shared store).
 
@@ -205,15 +205,16 @@ CLI-first aligns with this. File paths as shared state (cheaper than passing con
 
 MCP is supported for environments without terminal access, but CLI is recommended for iterative work.
 
-### JSON Workflows
+### Markdown Workflows (`.pflow.md`)
 
-- Machine-readable and validatable
-- AI agents can generate them
-- Version-controllable
+- Machine-readable and validatable (custom parser produces structured IR)
+- AI agents generate them naturally (markdown is dominant in LLM training data)
+- Version-controllable and renders as documentation on GitHub
 - Portable across systems
-- Schema-enforced structure
+- Schema-enforced structure (same IR validation as before)
+- Self-documenting: prose descriptions, code blocks with syntax highlighting, inline YAML params
 
-YAML would work. JSON was chosen for stricter parsing and explicit structure.
+Workflows use `.pflow.md` files — a markdown DSL parsed by a custom state machine into the same internal IR dict used for validation, compilation, and execution. JSON was the original format but was replaced in Task 107 because LLMs are the primary authors, and markdown eliminates escaping friction, enables inline documentation, and reduces token count by ~20-40%.
 
 ### Structure-Only Orchestration
 
@@ -277,7 +278,7 @@ pflow has a dual MCP role:
 
 The CLI is recommended for iterative work (building, debugging). The MCP server provides the same capabilities for environments like Claude Desktop where terminal access isn't available.
 
-**Legacy Planner:** Natural language to workflow conversion exists but may be deprecated in favor of agent-driven workflow creation.
+**Legacy Planner:** Natural language to workflow conversion is gated pending markdown format prompt rewrites (Task 107 Decision 26). The planner code is preserved but unreachable from CLI/MCP. Discovery commands (`pflow workflow discover`, `pflow registry discover`) remain active.
 
 ### Node Types
 
@@ -294,7 +295,7 @@ The CLI is recommended for iterative work (building, debugging). The MCP server 
 
 - **Workflow discovery:** Semantic search across saved workflows
 - **Registry discovery:** Find nodes by capability description
-- **Validation:** 6-layer validation before execution (structural, data flow, template, node type, output source, JSON anti-pattern)
+- **Validation:** 7-layer validation before execution (structural, stdin, data flow, template, node type, output source, unknown param warnings)
 - **Batch processing:** Process multiple items with same operation
 - **Template variables:** `${node.output}` syntax for data flow
 - **Structure-only mode:** Return schemas without data for token efficiency
@@ -326,8 +327,8 @@ Model arbitrage:
 
 ### Near-term Direction
 
-**Workflow authoring optimized for LLMs:**
-The current JSON format works but has friction - escaped strings, no inline documentation, cryptic data transformations. The direction is toward an authoring format that treats LLMs as the primary authors: literate workflows where documentation and code live together, lintable code blocks that standard tools can validate, and significant token efficiency gains. The authoring format changes; the execution model stays the same.
+**Workflow authoring optimized for LLMs (done — Task 107):**
+The markdown format (`.pflow.md`) replaced JSON, treating LLMs as primary authors: literate workflows where documentation and code live together, lintable code blocks that standard tools can validate, and ~20-40% token efficiency gains. The authoring format changed; the execution model stayed the same.
 
 **Native data transformation:**
 Most shell node usage is actually data transformation (filtering, mapping, formatting). Shell commands with jq one-liners are cryptic and error-prone. The direction is toward native code execution with multiple inputs as objects - readable, lintable, testable.

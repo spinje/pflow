@@ -40,16 +40,15 @@ pflow "read the config.json file from /tmp"
 # Direct node execution
 pflow mcp-filesystem-read_text_file path=/tmp/config.json
 
-# In a JSON workflow
-{
-  "ir_version": "0.1.0",
-  "nodes": [{
-    "id": "read",
-    "type": "mcp-filesystem-read_text_file",
-    "params": {"path": "/tmp/config.json"}
-  }],
-  "edges": []
-}
+# In a .pflow.md workflow
+## Steps
+
+### read
+
+Read a file from the filesystem MCP server.
+
+- type: mcp-filesystem-read_text_file
+- path: /tmp/config.json
 ```
 
 ## MCP Server Management
@@ -219,39 +218,39 @@ Returns result to workflow
 
 ### Using MCP Tools in Complex Workflows
 
-```json
-{
-  "ir_version": "0.1.0",
-  "nodes": [
-    {
-      "id": "list-issues",
-      "type": "mcp-github-list_issues",
-      "params": {
-        "repo": "myorg/myrepo",
-        "state": "open"
-      }
-    },
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Categorize these issues: ${list-issues.result}"
-      }
-    },
-    {
-      "id": "save-report",
-      "type": "mcp-filesystem-write_file",
-      "params": {
-        "path": "/tmp/issue-report.md",
-        "content": "${analyze.result}"
-      }
-    }
-  ],
-  "edges": [
-    {"source": "list-issues", "target": "analyze", "action": "default"},
-    {"source": "analyze", "target": "save-report", "action": "default"}
-  ]
-}
+````markdown
+# Issue Analysis
+
+Fetch open issues from GitHub, categorize them with an LLM, and save a report.
+
+## Steps
+
+### list-issues
+
+Fetch all open issues from the GitHub repository.
+
+- type: mcp-github-list_issues
+- repo: myorg/myrepo
+- state: open
+
+### analyze
+
+Categorize the issues by type and priority.
+
+- type: llm
+
+```prompt
+Categorize these issues: ${list-issues.result}
+```
+
+### save-report
+
+Save the categorized report to a file.
+
+- type: mcp-filesystem-write_file
+- path: /tmp/issue-report.md
+- content: ${analyze.result}
+````
 ```
 
 ### Forcing Tool Re-discovery

@@ -2,6 +2,8 @@
 
 Complete reference guide for template variables in pflow workflows.
 
+> **Note on examples**: JSON code blocks throughout this document show the **internal IR dict structure** that all workflows compile to. Users write `.pflow.md` markdown files, which `parse_markdown()` converts to this IR structure. Template syntax (`${node.output}`) works identically in both the authored markdown format and the internal IR.
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -568,7 +570,7 @@ Some nodes legitimately output data containing `${...}` patterns:
 try:
     execute_node(params)
 except ValueError as e:
-    # Triggers repair system
+    # Triggers repair system (currently gated — Task 107 Decision 26)
     repair_workflow(workflow_ir, error=e)
 ```
 
@@ -659,7 +661,7 @@ Did you mean: ${fetch.response.messages[0].text}?
 Common fix: Change ${fetch.response} to ${fetch.response.messages[0].text}
 ```
 
-This guides users (and the repair system) to the correct template path.
+This guides users to the correct template path. (The repair system, which also uses these suggestions, is currently gated — Task 107 Decision 26.)
 
 ### Type Checking Examples
 
@@ -800,8 +802,8 @@ These keys **always** go to the root shared store (bypassing namespaces):
 - `__cache_hits__` - Cache hit tracking
 - `__warnings__` - API warnings
 - `__template_errors__` - Template resolution errors
-- `__modified_nodes__` - Repair tracking
-- `__non_repairable_error__` - Skip repair flag
+- `__modified_nodes__` - Repair tracking (repair system gated — Task 107 Decision 26)
+- `__non_repairable_error__` - Skip repair flag (repair system gated)
 - `__progress_callback__` - Progress updates
 
 **Why?**: These are system-level metadata, not node outputs.
@@ -822,7 +824,7 @@ These keys **always** go to the root shared store (bypassing namespaces):
 #
 # Error: Template variable ${missing_variable} has no valid source
 # → Raises ValueError
-# → Triggers repair system
+# → Triggers repair system (currently gated — Task 107 Decision 26)
 ```
 
 **Permissive Mode**:
@@ -885,7 +887,7 @@ This prevents silent failures where some data is missing.
 
 ### Error Recovery
 
-pflow integrates template validation with the **repair system**:
+pflow integrates template validation with the **repair system** (currently gated pending markdown format prompt rewrites — Task 107 Decision 26):
 
 ```
 ┌─────────────────────────────────────┐
@@ -1510,7 +1512,7 @@ The `stdin` parameter passes data through a pipe, completely bypassing shell par
 - [ ] Replace all `$var` with `${var}`
 - [ ] Add braces around compound names: `$user_id` → `${user_id}`
 - [ ] Update nested paths: `$data.field` → `${data.field}`
-- [ ] Test workflows with `pflow validate workflow.json`
+- [ ] Test workflows with `pflow --validate-only workflow.pflow.md`
 
 ---
 
@@ -1757,24 +1759,24 @@ Unresolved template ${price} but it's actually data!
 
 ```bash
 # Validate without running
-uv run pflow validate workflow.json
+uv run pflow --validate-only workflow.pflow.md
 
 # Run with verbose logging
-uv run pflow --log-level DEBUG workflow.json
+uv run pflow --log-level DEBUG workflow.pflow.md
 
 # Run with trace file
-uv run pflow --trace workflow.json
+uv run pflow --trace workflow.pflow.md
 # → Outputs: ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 
 # Check specific parameter
-uv run pflow --param test_value=123 workflow.json
+uv run pflow --param test_value=123 workflow.pflow.md
 ```
 
 ---
 
 ## Related Documentation
 
-- **IR Schema**: [ir-schema.md](./ir-schema.md) - Complete JSON IR specification
+- **IR Schema**: [ir-schema.md](./ir-schema.md) - Complete IR specification
 - **Shared Store**: [shared-store.md](../core-concepts/shared-store.md) - Inter-node communication
 - **Node Interfaces**: [enhanced-interface-format.md](./enhanced-interface-format.md) - Interface format for pflow nodes
 - **Architecture**: [architecture.md](../architecture.md#execution-pipeline) - Execution pipeline and lifecycle

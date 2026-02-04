@@ -7,6 +7,8 @@ This document defines JSON schema governance for two key pflow artifacts:
 
 Both schemas work together to enable metadata-driven flow planning and validation.
 
+> **Format Note**: This document describes the **internal IR dict structure** that all workflows compile to. Users author workflows as `.pflow.md` markdown files, which `parse_markdown()` (in `src/pflow/core/markdown_parser.py`) converts to this IR structure. Fields like `ir_version` are added automatically by `normalize_ir()` and do not appear in authored `.pflow.md` files. The JSON examples below show the IR dict shape, not user-authored file format. For the authoring format, see the [format specification](../../.taskmaster/tasks/task_107/starting-context/format-specification.md).
+
 > **Architecture Context**: See [Node Metadata Strategy](../implementation-details/metadata-extraction.md) for extraction details and [Shared Store Pattern](../core-concepts/shared-store.md) for interface concepts.
 
 ---
@@ -40,7 +42,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 - `metadata.locked_nodes` mirrors version lockfile for deterministic execution (see `.taskmaster/feature-dump/registry-versioning.md` for design notes)
 - `metadata.planner_version` tracks planner that generated IR for provenance
 
-> **Example**: See [examples/core/minimal.json](../../examples/core/minimal.json) for the simplest valid Flow IR - a single node with no edges or metadata.
+> **Example**: See [examples/core/minimal.pflow.md](../../examples/core/minimal.pflow.md) for the simplest valid workflow — a single node with no edges or metadata. The markdown parser converts it to the IR dict structure shown above.
 
 ---
 
@@ -528,8 +530,8 @@ The item alias (default: `item`) is injected into the shared store for each iter
 > **Flow Structure**: See [planner specification](../historical/planner-specification.md) for simple node sequencing
 
 **Examples from the Repository:**
-- Sequential flow: [examples/core/simple-pipeline.json](../../examples/core/simple-pipeline.json) - Basic 3-node pipeline
-- Error handling: [examples/core/error-handling.json](../../examples/core/error-handling.json) - Action-based routing with error recovery
+- Sequential flow: [examples/core/simple-pipeline.pflow.md](../../examples/core/simple-pipeline.pflow.md) - Basic 3-node pipeline
+- Error handling: [examples/core/error-handling.pflow.md](../../examples/core/error-handling.pflow.md) - Action-based routing with error recovery
 
 ---
 
@@ -560,7 +562,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 
 > **Architecture Integration**: See [shared store pattern](../core-concepts/shared-store.md) for proxy implementation details
 
-> **Example**: See [examples/core/proxy-mappings.json](../../examples/core/proxy-mappings.json) for a complete example of using mappings to adapt incompatible node interfaces.
+> **Example**: See [examples/core/proxy-mappings.pflow.md](../../examples/core/proxy-mappings.pflow.md) for a complete example of using mappings to adapt incompatible node interfaces.
 
 ---
 
@@ -706,29 +708,33 @@ The pflow project includes a comprehensive set of examples demonstrating various
 
 ### Core Examples (`examples/core/`)
 Basic patterns every user should understand:
-- **[minimal.json](../../examples/core/minimal.json)** - Simplest valid IR with a single node
-- **[simple-pipeline.json](../../examples/core/simple-pipeline.json)** - Basic 3-node sequential pipeline
-- **[template-variables.json](../../examples/core/template-variables.json)** - Using `${variable}` syntax for dynamic values (see [Template Variables Reference](./template-variables.md) for complete syntax)
-- **[error-handling.json](../../examples/core/error-handling.json)** - Action-based routing for error recovery
-- **[proxy-mappings.json](../../examples/core/proxy-mappings.json)** - Interface adaptation with mappings
+- **[minimal.pflow.md](../../examples/core/minimal.pflow.md)** - Simplest valid workflow with a single node
+- **[simple-pipeline.pflow.md](../../examples/core/simple-pipeline.pflow.md)** - Basic 3-node sequential pipeline
+- **[template-variables.pflow.md](../../examples/core/template-variables.pflow.md)** - Using `${variable}` syntax for dynamic values (see [Template Variables Reference](./template-variables.md) for complete syntax)
+- **[error-handling.pflow.md](../../examples/core/error-handling.pflow.md)** - Action-based routing with error recovery
+- **[proxy-mappings.pflow.md](../../examples/core/proxy-mappings.pflow.md)** - Interface adaptation with mappings
 
 ### Advanced Examples (`examples/advanced/`)
 Complex real-world workflows:
-- **[github-workflow.json](../../examples/advanced/github-workflow.json)** - Automated GitHub issue resolution
-- **[content-pipeline.json](../../examples/advanced/content-pipeline.json)** - Multi-stage content generation
+- **[github-workflow.pflow.md](../../examples/advanced/github-workflow.pflow.md)** - Automated GitHub issue resolution
+- **[content-pipeline.pflow.md](../../examples/advanced/content-pipeline.pflow.md)** - Multi-stage content generation
 
 ### Invalid Examples (`examples/invalid/`)
-Common mistakes and their error messages:
-- **[missing-version.json](../../examples/invalid/missing-version.json)** - Missing required `ir_version`
-- **[bad-edge-ref.json](../../examples/invalid/bad-edge-ref.json)** - Edge references non-existent node
-- **[duplicate-ids.json](../../examples/invalid/duplicate-ids.json)** - Multiple nodes with same ID
-- **[wrong-types.json](../../examples/invalid/wrong-types.json)** - Incorrect field types
+Common mistakes and their error messages (markdown-specific validation):
+- **[missing-steps.pflow.md](../../examples/invalid/missing-steps.pflow.md)** - No `## Steps` section
+- **[missing-type.pflow.md](../../examples/invalid/missing-type.pflow.md)** - Node without `- type:` parameter
+- **[missing-description.pflow.md](../../examples/invalid/missing-description.pflow.md)** - Entity without prose description
+- **[unclosed-fence.pflow.md](../../examples/invalid/unclosed-fence.pflow.md)** - Unclosed code block
+- **[bare-code-block.pflow.md](../../examples/invalid/bare-code-block.pflow.md)** - Code block without tag
+- **[duplicate-param.pflow.md](../../examples/invalid/duplicate-param.pflow.md)** - Same param inline + code block
+- **[duplicate-ids.pflow.md](../../examples/invalid/duplicate-ids.pflow.md)** - Multiple nodes with same heading
+- **[yaml-syntax-error.pflow.md](../../examples/invalid/yaml-syntax-error.pflow.md)** - Bad YAML in params
 
-Each example includes a corresponding `.md` file explaining its purpose and patterns. Start with the core examples to understand fundamental concepts before exploring advanced patterns.
+Start with the core examples to understand fundamental concepts before exploring advanced patterns.
 
 ---
 
-This document defines the JSON schemas for Flow IR and Node Metadata, providing the foundation for validation, evolution, and metadata-driven planning capabilities.
+This document defines the schemas for Flow IR and Node Metadata, providing the foundation for validation, evolution, and metadata-driven planning capabilities.
 
 ## See Also
 

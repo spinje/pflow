@@ -111,13 +111,14 @@ Workflow Resolution
     └── Natural language: Legacy planner (gated)
     │
     ▼
-Validation Pipeline (5 layers)
+Validation Pipeline (6 layers)
     │
     ├── 1. Structural: Required fields, valid node types
     ├── 2. Data Flow: Template dependencies resolved
     ├── 3. Template: ${var} syntax valid
     ├── 4. Node Type: Nodes exist in registry
-    └── 5. Output: Declared outputs available
+    ├── 5. Output: Declared outputs available
+    └── 6. Unknown Params: Warns on unrecognized node params
     │
     ▼
 Compilation (runtime/compiler.py)
@@ -141,6 +142,23 @@ Output
 ```
 
 ## Key Abstractions
+
+### Markdown Parser
+
+The markdown parser (`src/pflow/core/markdown_parser.py`, ~350 lines) converts `.pflow.md` files into the same IR dict that validation, compilation, and execution operate on.
+
+**Key types:**
+- `MarkdownParseResult` — dataclass with `ir` (dict), `title` (str), `description` (str), `metadata` (dict, from frontmatter), `source` (original markdown content for save operations)
+- `MarkdownParseError(ValueError)` — includes `line` number and `suggestion` for markdown-native error messages
+
+**Main function:** `parse_markdown(content: str) -> MarkdownParseResult`
+
+**Architecture:** Line-by-line state machine. Delegates YAML param parsing to `yaml.safe_load()` and Python code block syntax checking to `ast.parse()`. Tracks line numbers throughout for error messages that reference markdown structure (e.g., `"Node '### fetch' (line 15) missing required 'type' parameter"`).
+
+**Pipeline:**
+```
+workflow.pflow.md → parse_markdown() → dict (IR) → normalize_ir() → validate → compile → execute
+```
 
 ### Shared Store Pattern
 
@@ -170,14 +188,11 @@ ActualNode (prep → exec → post)
 
 ### Template System
 
-Templates use `${variable}` syntax:
+Templates use `${variable}` syntax. In `.pflow.md` files, templates appear inline in params and code blocks:
 
-```json
-{
-  "params": {
-    "prompt": "Summarize: ${input_data}"
-  }
-}
+```markdown
+- prompt: Summarize: ${input_data}
+- url: https://api.example.com/${endpoint}
 ```
 
 **Features:**
@@ -287,15 +302,15 @@ pflow has complete MCP support in two directions:
 
 Workflows can call external MCP tools:
 
-```json
-{
-  "type": "mcp",
-  "params": {
-    "server": "filesystem",
-    "tool": "read_file",
-    "arguments": {"path": "${file_path}"}
-  }
-}
+```markdown
+### read-config
+
+Read the configuration file from the filesystem MCP server.
+
+- type: mcp
+- server: filesystem
+- tool: read_file
+- arguments: {"path": "${file_path}"}
 ```
 
 **Supported Transports:**
@@ -310,7 +325,7 @@ AI agents can use pflow via MCP (`src/pflow/mcp_server/`):
 - `workflow_discover` - LLM-powered workflow search
 - `workflow_execute` - Execute a workflow
 - `workflow_validate` - Validate workflow structure
-- `workflow_save` - Save a workflow
+- `workflow_save` - Save a workflow (accepts raw `.pflow.md` content or file path)
 - `workflow_list` - List saved workflows
 - `workflow_describe` - Get workflow details
 - `registry_discover` - LLM-powered node search
@@ -330,7 +345,7 @@ pflow can detect and repair certain workflow errors at runtime:
 3. **LLM-assisted repair** using Claude
 4. **Resume from checkpoint** (skip completed nodes)
 
-> **Note:** This feature is currently gated pending markdown format migration (Task 107). AI agents building workflows should use `pflow --validate-only` for pre-execution validation and iterate on `.pflow.md` files directly.
+> **⚠️ GATED (Task 107 Decision 26).** Repair prompts assume JSON workflow format. All code is preserved in `src/pflow/execution/repair_service.py` but unreachable from CLI and MCP. The `--auto-repair` CLI flag is disabled. Re-enabling requires rewriting repair prompts for the `.pflow.md` markdown format. AI agents building workflows should use `pflow --validate-only` for pre-execution validation and iterate on `.pflow.md` files directly.
 
 > **Implementation details:** See `src/pflow/execution/CLAUDE.md` for checkpoint structure, error categories, and repair loop implementation.
 
@@ -419,6 +434,22 @@ Description of the output.
 ├── debug/              # Execution traces
 └── mcp/                # MCP server configurations
 ```
+
+Saved workflows have YAML frontmatter prepended by `pflow workflow save`. Metadata fields are flat (no nesting wrapper):
+
+```yaml
+---
+created_at: "2026-01-14T15:43:57Z"
+updated_at: "2026-01-14T22:03:06Z"
+version: "1.0.0"
+execution_count: 8
+last_execution_success: true
+last_execution_params:
+  version: "1.0.0"
+---
+```
+
+The markdown body is never modified by metadata updates — `update_metadata()` reads the file, updates only the frontmatter YAML, and writes back with the original body intact.
 
 ## Design Decisions
 
