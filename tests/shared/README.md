@@ -42,6 +42,31 @@ def test_something(mock_llm_responses):
     assert result.workflow_name == "test-workflow"
 ```
 
+### markdown_utils.py
+
+Provides utilities for converting IR dicts to `.pflow.md` markdown format in tests. **This is the primary tool for any test that needs to write a workflow file to disk.**
+
+#### Key Functions:
+
+- `ir_to_markdown(ir_dict, title="Test Workflow", description=None) -> str`: Converts an IR dict to valid `.pflow.md` content
+- `write_workflow_file(ir_dict, path, title="Test Workflow", description=None)`: Writes an IR dict as a `.pflow.md` file
+
+#### Purpose:
+
+Replaces `json.dump(workflow, f)` in tests. Handles all IR patterns: shell commands → `shell command` code blocks, prompts → `markdown prompt` code blocks, Python code → `python code` code blocks, batch configs → `yaml batch` code blocks, complex params (stdin, headers) → appropriate YAML code blocks, and simple params as `- key: value` lines.
+
+#### Usage:
+
+```python
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
+
+# Convert IR to markdown string
+markdown = ir_to_markdown({"nodes": [{"id": "echo", "type": "shell", "params": {"command": "echo hello"}}]})
+
+# Write directly to file
+write_workflow_file(ir_dict, tmp_path / "workflow.pflow.md")
+```
+
 ### planner_block.py
 
 Provides a clean way to block the planner import for CLI and integration tests that need to test fallback behavior.

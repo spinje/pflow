@@ -93,7 +93,7 @@ Each entry includes:
 - Problem statement (using vs. creating, tool-by-tool orchestration pain)
 - Core bets (compile orchestration, structure > flexibility, deterministic by default)
 - Three-layer model (Agent → Workflows → Tools)
-- Design decisions (CLI-first, JSON workflows, structure-only orchestration)
+- Design decisions (CLI-first, markdown workflows, structure-only orchestration)
 - What pflow is NOT (vs. visual builders, agent frameworks, code sandboxes)
 - Vision and direction (substrate vision, economic context)
 - What's validated vs. what's a bet
@@ -136,7 +136,7 @@ Each entry includes:
 ---
 
 #### [pflow-pocketflow-integration-guide.md](./pflow-pocketflow-integration-guide.md)
-**Purpose**: Critical guide for **pflow internal developers** writing platform nodes or extending pflow internals. NOT for users building workflows (they use JSON via CLI).
+**Purpose**: Critical guide for **pflow internal developers** writing platform nodes or extending pflow internals. NOT for users building workflows (they use `.pflow.md` files via CLI).
 
 **Key Contents**:
 - 10 critical insights about pflow-pocketflow integration
@@ -219,23 +219,9 @@ Each entry includes:
 ### Guides (`/guides/`)
 
 #### [json-workflows.md](./guides/json-workflows.md)
-**Purpose**: Practical guide for writing JSON workflow files directly.
+**Purpose**: Historical guide for writing JSON workflow files directly. JSON workflow format has been replaced by markdown (`.pflow.md`) as of Task 107.
 
-**Key Contents**:
-- Minimal valid workflow example
-- Required fields (`ir_version`, `nodes`)
-- Optional fields (`edges`, `metadata`, `inputs`, `outputs`, `trigger_node`)
-- Common mistakes and troubleshooting
-- Node types and parameter examples
-
-**Critical Insights**:
-- `ir_version: "0.1.0"` is REQUIRED - without it pflow won't recognize the file as a workflow
-- Each node needs `id`, `type`, and optionally `params`
-- Single-node workflows don't need `edges`
-
-**When to Use**: Creating workflows manually, debugging workflow JSON, understanding IR structure practically
-
-**Status**: ✅ Current
+**Status**: ⚠️ Historical (superseded by `.pflow.md` format — see `format-specification.md` in Task 107)
 
 ---
 

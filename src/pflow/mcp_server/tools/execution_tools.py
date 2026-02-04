@@ -31,8 +31,9 @@ async def workflow_execute(
 
     Input Types:
     1. Workflow name: "my-workflow" (from saved library)
-    2. File path: "./workflow.json" (for agents with filesystem access)
-    3. Inline IR: {...} (for sandboxed agents or programmatic building)
+    2. File path: "./workflow.pflow.md" (for agents with filesystem access)
+    3. Raw markdown content: "# Title\\n## Steps\\n..." (inline .pflow.md content)
+    4. Inline IR: {...} (for sandboxed agents or programmatic building)
 
     Built-in behaviors:
     - Trace always saved to ~/.pflow/debug/workflow-trace-{name}-{timestamp}.json
@@ -50,7 +51,7 @@ async def workflow_execute(
 
         # Execute workflow from file
         # ⚠️ Use when you have filesystem access (non-sandbox agents)
-        workflow="./workflows/my-workflow.json"
+        workflow="./workflows/my-workflow.pflow.md"
         parameters={...}
 
         # Execute inline workflow IR
@@ -96,7 +97,7 @@ async def workflow_validate(
     """STATIC validation of workflow structure WITHOUT execution.
 
     Checks:
-    - Schema compliance (JSON structure, required fields)
+    - Schema compliance (required fields, correct structure)
     - Data flow correctness (execution order, no cycles)
     - Template structure (${node.output} references)
     - Node types exist in registry
@@ -113,7 +114,7 @@ async def workflow_validate(
 
         # Validate workflow file
         # ⚠️ Use when you have filesystem access
-        workflow="./workflow.json"
+        workflow="./workflow.pflow.md"
 
         # Validate inline workflow IR
         # ⚠️ Use in sandboxed environments
@@ -150,71 +151,50 @@ async def workflow_validate(
 @mcp.tool()
 async def workflow_save(
     workflow: Annotated[
-        str | dict[str, Any],
+        str,
         Field(
             description=(
                 "Workflow to save. Can be:\n"
-                "  - Path to workflow JSON file: '.pflow/workflows/my-workflow.json'\n"
-                '  - Workflow IR object: {"nodes": [...], "edges": [...], "inputs": {...}, "outputs": {...}}'
+                "  - Raw .pflow.md content (markdown string with newlines)\n"
+                "  - Path to .pflow.md file: './my-workflow.pflow.md'"
             )
         ),
     ],
     name: str = Field(..., description="Unique workflow name (format: lowercase-with-hyphens, max 50 chars)"),
-    description: str = Field(..., description="One-line summary of what the workflow does"),
     force: bool = Field(False, description="Whether to overwrite existing workflow with same name"),
-    generate_metadata: bool = Field(
-        False,
-        description="Whether to generate AI-powered metadata for better discovery",
-    ),
 ) -> str:
     """Save workflow to global library for reuse.
 
     Purpose: Make workflows reusable by name. Save ONLY workflows you'll execute multiple times.
     Don't save: One-off workflows, tests, experiments.
 
-    Validates and normalizes the workflow before saving.
+    Validates the workflow before saving. Description is extracted from the
+    markdown content (prose after the # title heading).
     Name must be lowercase letters, numbers, and hyphens only (max 50 chars).
 
     By default, saving fails if a workflow with the same name exists.
     Use force=true to overwrite existing workflows.
 
-    generate_metadata flag:
-    - Set to true for better workflow_discover results (uses LLM, adds 2-5s latency)
-    - Use when: Creating reusable workflows for others
-    - Skip when: Personal workflows, tests, experiments
-
     Examples:
-        # Save workflow from file (minimal options)
+        # Save workflow from file
         # ⚠️ Use when you have filesystem access
-        workflow="./path/to/workflow.json"
+        workflow="./path/to/my-workflow.pflow.md"
         name="my-workflow"
-        description="Brief description of what workflow does"
         force=False
-        generate_metadata=False
 
-        # Save inline workflow with all options
-        # ⚠️ Use when building workflows programmatically
-        workflow={
-            "inputs": {...},
-            "nodes": [...],
-            "edges": [...],
-            "outputs": {...}
-        }
-
-        name="workflow-name"
-        description="Detailed description of what this workflow does"
-        force=True
-        generate_metadata=True
+        # Save raw markdown content
+        workflow="# My Workflow\\n\\nDescription.\\n\\n## Steps\\n..."
+        name="my-workflow"
 
     Returns:
         Formatted success message with location and execution hint
-        "✓ Saved workflow 'name' to library\n  Location: /path/to/workflow.json\n  ✨ Execute with: pflow name param=<value>"
+        "✓ Saved workflow 'name' to library\n  Location: /path/to/workflow.pflow.md\n  ✨ Execute with: pflow name param=<value>"
     """
-    logger.debug(f"workflow_save called: name={name}, force={force}, generate_metadata={generate_metadata}")
+    logger.debug(f"workflow_save called: name={name}, force={force}")
 
     def _sync_save() -> str:
         """Synchronous save operation."""
-        return ExecutionService.save_workflow(workflow, name, description, force, generate_metadata)
+        return ExecutionService.save_workflow(workflow, name, force)
 
     # Run in thread pool
     result = await asyncio.to_thread(_sync_save)

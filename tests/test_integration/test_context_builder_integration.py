@@ -11,11 +11,16 @@ import time
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from pflow.planning.context_builder import (
     build_discovery_context,
     build_planning_context,
 )
 from pflow.registry import Registry
+
+# GATED: Context builder tests skipped pending markdown format migration (Task 107).
+pytestmark = pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
 
 
 class TestDiscoveryPlanningFlow:

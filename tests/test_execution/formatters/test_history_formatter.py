@@ -265,11 +265,9 @@ class TestIntegrationWithFormatters:
                 "description": "Test workflow",
                 "version": "1.0.0",
             },
-            "rich_metadata": {
-                "execution_count": 5,
-                "last_execution_timestamp": "2025-10-18T22:01:49",
-                "last_execution_success": True,
-            },
+            "execution_count": 5,
+            "last_execution_timestamp": "2025-10-18T22:01:49",
+            "last_execution_success": True,
         }
 
         result = format_workflow_metadata(workflow)
@@ -287,12 +285,10 @@ class TestIntegrationWithFormatters:
         metadata = {
             "description": "Test workflow",
             "ir": {"inputs": {}, "outputs": {}},
-            "rich_metadata": {
-                "execution_count": 3,
-                "last_execution_timestamp": "2025-10-18T22:01:49",
-                "last_execution_success": True,
-                "last_execution_params": {"param": "value"},
-            },
+            "execution_count": 3,
+            "last_execution_timestamp": "2025-10-18T22:01:49",
+            "last_execution_success": True,
+            "last_execution_params": {"param": "value"},
         }
 
         result = format_workflow_interface("test-workflow", metadata)

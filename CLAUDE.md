@@ -52,7 +52,7 @@ This file provides guidance to Claude Code when working with code and documentat
 
 ## Project Overview
 
-**pflow** is a CLI-first workflow execution system. AI agents create JSON workflow files, iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`) that communicate through a shared store.
+**pflow** is a CLI-first workflow execution system. AI agents create markdown workflow files (`.pflow.md`), iterate on them via CLI, then save them for reuse. Workflows chain nodes (`shell`, `http`, `llm`, `file`, `mcp`) that communicate through a shared store.
 
 > **For conceptual understanding** (why pflow exists, core bets, design decisions): See `architecture/overview.md`
 > **For technical architecture** (execution pipeline, abstractions, components): See `architecture/architecture.md`
@@ -136,6 +136,7 @@ pflow/
 │   │   ├── suggestion_utils.py  # "Did you mean" suggestions for workflow/node names
 │   │   ├── user_errors.py   # User-friendly CLI error types and formatting
 │   │   ├── validation_utils.py # Parameter name validation helpers
+│   │   ├── markdown_parser.py  # Markdown workflow parser (.pflow.md → IR dict)
 │   │   ├── workflow_data_flow.py # Data-flow validation and execution order
 │   │   ├── workflow_manager.py   # Saved workflow storage and metadata
 │   │   ├── workflow_save_service.py # Shared workflow save functions (CLI/MCP)
@@ -198,6 +199,7 @@ pflow/
 │   ├── shared/              # Shared test utilities and fixtures
 │   │   ├── README.md        # Usage docs for shared testing utilities
 │   │   ├── llm_mock.py      # LLM-level mock preventing real API calls
+│   │   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for tests
 │   │   ├── planner_block.py # Fixture to block planner import for fallback tests
 │   │   └── registry_utils.py # Ensure a test registry from core nodes
 │   ├── test_cli/            # CLI tests
@@ -322,8 +324,8 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 ✅ MCP server support, http transport, pflow-as-MCP-server for agents
 → Tasks 43, 47, 67, 72
 
-**Planner (legacy):**
-✅ Natural language → workflow, runtime validation feedback, debugging/tracing
+**Planner (gated — Task 107):**
+✅ Natural language → workflow, runtime validation feedback, debugging/tracing (currently gated pending markdown format prompt rewrite)
 → Tasks 17, 27, 52, 56
 
 **Settings & Security:**
@@ -339,6 +341,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 → Tasks 71, 76, 89
 
 **Recently Completed:**
+- ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
 - ✅ Task 103: Preserve Inline Object Type in Template Resolution
 - ✅ Task 102: Remove Parameter Fallback Pattern
@@ -353,7 +356,6 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
 **v0.9.0 - Agent Authoring Experience:**
 - Task 104: Python Code Node
-- Task 107: Markdown Workflow Format
 - Task 108: Smart Trace Debug Output
 
 **v0.10.0 - Workflow Expressiveness:**
@@ -511,7 +513,7 @@ More importantly focus on architectural quality and code quality:
 
 ```bash
 # Run a workflow from a file (useful for testing and for AI agents iterating on workflows)
-uv run pflow workflow.json
+uv run pflow workflow.pflow.md
 ```
 
 ```bash

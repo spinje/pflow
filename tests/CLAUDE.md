@@ -11,6 +11,7 @@ tests/
 ├── shared/                # Shared test utilities and mocks
 │   ├── __init__.py       # Package marker
 │   ├── llm_mock.py       # LLM-level mock (prevents API calls)
+│   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for writing .pflow.md test files
 │   ├── planner_block.py  # Planner blocker for CLI tests
 │   └── README.md         # Documentation for shared utilities
 ├── test_cli/              # CLI command tests
@@ -107,7 +108,7 @@ assert result.exit_code == 0
 ```
 
 ### 2. Core Tests (`test_core/`)
-- **test_ir_schema.py**: JSON IR schema validation
+- **test_ir_schema.py**: IR schema validation
 - **test_ir_examples.py**: Real-world IR examples and edge cases
 
 **Key Focus**: Schema compliance, validation errors, edge cases

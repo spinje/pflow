@@ -1,6 +1,5 @@
 """Tests for workflow save functionality in CLI."""
 
-import json
 import os
 import subprocess
 import sys
@@ -9,6 +8,7 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
+from tests.shared.markdown_utils import write_workflow_file
 
 
 @pytest.fixture(scope="module")
@@ -68,8 +68,8 @@ class TestWorkflowSaveCLI:
     def test_save_prompt_not_shown_for_file_input(self, runner, sample_workflow, tmp_path):
         """Test that save prompt is not shown when workflow comes from file."""
         # Create a workflow file
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(sample_workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(sample_workflow, workflow_file)
 
         # Run with file input (no --file flag needed anymore)
         result = runner.invoke(main, [str(workflow_file)])
@@ -79,10 +79,8 @@ class TestWorkflowSaveCLI:
 
     def test_save_prompt_not_shown_in_non_interactive_mode(self, runner, sample_workflow, tmp_path):
         """Test that save prompt is not shown in non-interactive mode (piped input)."""
-        # For stdin JSON workflows, we need to save to a file and reference it
-        # The CLI no longer accepts JSON workflows directly via stdin
-        workflow_file = tmp_path / "stdin_workflow.json"
-        workflow_file.write_text(json.dumps(sample_workflow))
+        workflow_file = tmp_path / "stdin_workflow.pflow.md"
+        write_workflow_file(sample_workflow, workflow_file)
 
         # Simulate non-interactive mode (stdin is not a TTY in tests)
         # Save prompts are only shown for generated workflows from natural language
@@ -116,8 +114,8 @@ class TestWorkflowSaveCLI:
         }
 
         # Write to file since CLI no longer accepts JSON via stdin directly
-        workflow_file = tmp_path / "invalid_workflow.json"
-        workflow_file.write_text(json.dumps(invalid_workflow))
+        workflow_file = tmp_path / "invalid_workflow.pflow.md"
+        write_workflow_file(invalid_workflow, workflow_file)
 
         result = runner.invoke(main, [str(workflow_file)])
 
@@ -139,8 +137,8 @@ class TestWorkflowSaveCLI:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow, workflow_file)
 
         # Find uv executable
         _ = uv_exe  # Ensure fixture is requested for skip behavior without using it
@@ -181,8 +179,8 @@ class TestWorkflowSaveCLI:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow, workflow_file)
 
         # Test that --save flag is accepted with --output-format json
         result = runner.invoke(main, ["--save", "--output-format", "json", str(workflow_file)])
@@ -200,8 +198,8 @@ class TestWorkflowSaveCLI:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow, workflow_file)
 
         # Test that --save flag is accepted with -p
         result = runner.invoke(main, ["--save", "-p", str(workflow_file)])
@@ -219,8 +217,8 @@ class TestWorkflowSaveCLI:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow, workflow_file)
 
         # Test that --no-save flag is accepted
         result = runner.invoke(main, ["--no-save", "-p", str(workflow_file)])
@@ -238,8 +236,8 @@ class TestWorkflowSaveCLI:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow, workflow_file)
 
         # Test that --save flag is accepted by the CLI
         result = runner.invoke(main, ["--save", str(workflow_file)])

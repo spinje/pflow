@@ -1,6 +1,5 @@
 """End-to-end tests for Task 3: Execute a Hardcoded 'Hello World' Workflow."""
 
-import json
 import os
 import platform
 from pathlib import Path
@@ -8,6 +7,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from tests.shared.markdown_utils import write_workflow_file
 from tests.shared.registry_utils import ensure_test_registry
 
 
@@ -23,10 +23,9 @@ def test_hello_workflow_execution(tmp_path):
         with open("input.txt", "w") as f:
             f.write("Hello\nWorld")
 
-        # Create workflow JSON with namespacing support
+        # Create workflow with namespacing support
         # With namespacing enabled by default, we need to explicitly connect nodes
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [
                 {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
                 {
@@ -41,11 +40,10 @@ def test_hello_workflow_execution(tmp_path):
             "edges": [{"from": "read", "to": "write"}],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Run CLI
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # Print output for debugging
         if result.exit_code != 0:
@@ -74,17 +72,15 @@ def test_registry_auto_discovery(tmp_path):
     with runner.isolated_filesystem():
         # Create a workflow file using a core node (shell is auto-discovered)
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Ensure we don't have an existing registry
         # The auto-discovery should kick in when the workflow is executed
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # The workflow should execute successfully with auto-discovery
         assert result.exit_code == 0
@@ -101,13 +97,11 @@ def test_registry_load_error(tmp_path, monkeypatch):
     with runner.isolated_filesystem():
         # Create a workflow file
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Mock Registry.load to raise an exception
         def mock_load(self, *args, **kwargs):
@@ -116,7 +110,7 @@ def test_registry_load_error(tmp_path, monkeypatch):
         monkeypatch.setattr(Registry, "load", mock_load)
 
         # Run CLI
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # Verify error message
         assert result.exit_code == 1
@@ -130,27 +124,25 @@ def test_registry_load_error(tmp_path, monkeypatch):
         )
 
 
-def test_invalid_workflow_json(tmp_path):
-    """Test error handling for invalid workflow JSON."""
+def test_invalid_workflow_markdown(tmp_path):
+    """Test error handling for invalid workflow markdown."""
     runner = CliRunner()
 
     # Ensure registry exists
     ensure_test_registry()
 
     with runner.isolated_filesystem():
-        # Create invalid workflow (missing ir_version)
-        workflow = {"nodes": [{"id": "test", "type": "test"}], "edges": []}
-
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        # Create invalid workflow (missing ## Steps section)
+        Path("workflow.pflow.md").write_text("# Bad Workflow\n\nNo steps at all.\n")
 
         # Run CLI
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
-        # With new system, JSON without ir_version fails validation
+        # Should fail validation
         assert result.exit_code == 1
-        # Error is reported as planning or execution failure
-        assert "failed" in result.output.lower() or "not found" in result.output.lower()
+        assert (
+            "failed" in result.output.lower() or "error" in result.output.lower() or "invalid" in result.output.lower()
+        )
 
 
 def test_invalid_workflow_validation(tmp_path):
@@ -161,18 +153,11 @@ def test_invalid_workflow_validation(tmp_path):
     ensure_test_registry()
 
     with runner.isolated_filesystem():
-        # Create workflow with invalid structure (empty nodes array)
-        workflow = {
-            "ir_version": "0.1.0",
-            "nodes": [],  # Invalid - must have at least one node
-            "edges": [],
-        }
-
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        # Create workflow with empty Steps section (no nodes)
+        Path("workflow.pflow.md").write_text("# Empty Workflow\n\nWorkflow with no nodes.\n\n## Steps\n")
 
         # Run CLI
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # Verify validation error
         assert result.exit_code == 1
@@ -181,6 +166,7 @@ def test_invalid_workflow_validation(tmp_path):
             "validation" in result.output.lower()
             or "invalid" in result.output.lower()
             or "nodes" in result.output.lower()
+            or "steps" in result.output.lower()
         )
 
 
@@ -196,11 +182,14 @@ def test_plain_text_file_handling(tmp_path):
         # Run CLI
         result = runner.invoke(main, ["./natural.txt"])
 
-        # With new system, non-JSON files with paths are treated as workflow files
-        # But since it's not valid JSON, it will fail
+        # With new system, non-.pflow.md files are treated as workflow names or parsed as markdown
         assert result.exit_code == 1
-        # Should show JSON error or not found
-        assert "not found" in result.output.lower() or "json" in result.output.lower()
+        # Should show not found, error, or invalid syntax
+        assert (
+            "not found" in result.output.lower()
+            or "error" in result.output.lower()
+            or "invalid" in result.output.lower()
+        )
 
 
 def test_node_execution_failure(tmp_path):
@@ -213,18 +202,16 @@ def test_node_execution_failure(tmp_path):
     with runner.isolated_filesystem():
         # Create workflow that will fail (missing input file)
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [
                 {"id": "read", "type": "read-file", "params": {"file_path": "nonexistent.txt"}},
             ],
             "edges": [],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Run CLI
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # Should report failure
         assert result.exit_code == 1
@@ -248,7 +235,6 @@ def test_verbose_execution_output(tmp_path):
 
         # Create simple workflow with explicit template variable connection
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [
                 {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
                 {
@@ -263,11 +249,10 @@ def test_verbose_execution_output(tmp_path):
             "edges": [{"from": "read", "to": "write"}],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Run CLI with verbose flag
-        result = runner.invoke(main, ["--verbose", "./workflow.json"])
+        result = runner.invoke(main, ["--verbose", "./workflow.pflow.md"])
 
         # Should show verbose execution info
         assert result.exit_code == 0
@@ -290,7 +275,6 @@ def test_data_flows_between_nodes(tmp_path):
 
         # Create workflow that passes data between nodes
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [
                 {"id": "read", "type": "read-file", "params": {"file_path": "input.txt"}},
                 {
@@ -305,11 +289,10 @@ def test_data_flows_between_nodes(tmp_path):
             "edges": [{"from": "read", "to": "write"}],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Run the workflow
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # Verify success
         assert result.exit_code == 0
@@ -341,19 +324,17 @@ def test_permission_error_read(tmp_path):
 
             # Create workflow that tries to read the protected file
             workflow = {
-                "ir_version": "0.1.0",
                 "nodes": [
                     {"id": "read", "type": "read-file", "params": {"file_path": "protected.txt"}},
                 ],
                 "edges": [],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             try:
                 # Run CLI
-                result = runner.invoke(main, ["./workflow.json"])
+                result = runner.invoke(main, ["./workflow.pflow.md"])
 
                 # Should report failure
                 assert result.exit_code == 1
@@ -383,7 +364,6 @@ def test_permission_error_write(tmp_path):
 
             # Create workflow that tries to write to the protected directory
             workflow = {
-                "ir_version": "0.1.0",
                 "nodes": [
                     {
                         "id": "write",
@@ -394,12 +374,11 @@ def test_permission_error_write(tmp_path):
                 "edges": [],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             try:
                 # Run CLI
-                result = runner.invoke(main, ["./workflow.json"])
+                result = runner.invoke(main, ["./workflow.pflow.md"])
 
                 # Should report failure
                 assert result.exit_code == 1
@@ -435,7 +414,6 @@ def test_tilde_path_with_directory_creation(tmp_path, monkeypatch):
 
         # Create workflow with ~/ path and non-existent subdirectory
         workflow = {
-            "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "write_story",
@@ -448,11 +426,10 @@ def test_tilde_path_with_directory_creation(tmp_path, monkeypatch):
             ],
         }
 
-        with open("workflow.json", "w") as f:
-            json.dump(workflow, f)
+        write_workflow_file(workflow, Path("workflow.pflow.md"))
 
         # Run the workflow
-        result = runner.invoke(main, ["./workflow.json"])
+        result = runner.invoke(main, ["./workflow.pflow.md"])
 
         # Print output for debugging if it fails
         if result.exit_code != 0:

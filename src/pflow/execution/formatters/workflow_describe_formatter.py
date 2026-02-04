@@ -53,7 +53,6 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
     """
     ir = metadata.get("ir", {})
     description = metadata.get("description", "No description")
-    rich_metadata = metadata.get("rich_metadata", {})
 
     # Build formatted sections
     lines = []
@@ -62,8 +61,8 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
     lines.append(f"Workflow: {name}")
     lines.append(f"Description: {description}")
 
-    # Execution history (if available)
-    if execution_history := _format_execution_history_section(rich_metadata):
+    # Execution history (if available) — fields are top-level in flat metadata
+    if execution_history := _format_execution_history_section(metadata):
         lines.append(execution_history)
 
     # Inputs section
@@ -78,19 +77,19 @@ def format_workflow_interface(name: str, metadata: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _format_execution_history_section(rich_metadata: dict[str, Any]) -> str:
+def _format_execution_history_section(metadata: dict[str, Any]) -> str:
     """Format the execution history section.
 
     Args:
-        rich_metadata: Workflow rich_metadata containing execution history
+        metadata: Workflow metadata (flat structure, execution fields at top level)
 
     Returns:
         Formatted execution history section or empty string if no history
     """
-    if not rich_metadata:
+    if not metadata:
         return ""
 
-    history = format_execution_history(rich_metadata, mode="detailed")
+    history = format_execution_history(metadata, mode="detailed")
     if not history:
         return ""
 

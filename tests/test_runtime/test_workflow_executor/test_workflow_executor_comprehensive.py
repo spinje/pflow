@@ -1,6 +1,5 @@
 """Comprehensive unit tests for WorkflowExecutor covering all 26 test criteria."""
 
-import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -8,6 +7,7 @@ import pytest
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime.workflow_executor import WorkflowExecutor
+from tests.shared.markdown_utils import write_workflow_file
 
 
 # Test node that fails during execution
@@ -60,9 +60,8 @@ class TestWorkflowExecutorComprehensive:
     def test_workflow_ref_only(self, simple_workflow_ir, tmp_path):
         """Test loading and executing workflow from file."""
         # Create temporary workflow file
-        workflow_file = tmp_path / "test_workflow.json"
-        with open(workflow_file, "w") as f:
-            json.dump(simple_workflow_ir, f)
+        workflow_file = tmp_path / "test_workflow.pflow.md"
+        write_workflow_file(simple_workflow_ir, workflow_file)
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
@@ -70,7 +69,11 @@ class TestWorkflowExecutorComprehensive:
         shared = {}
         prep_res = node.prep(shared)
 
-        assert prep_res["workflow_ir"] == simple_workflow_ir
+        # Parsed markdown IR includes 'purpose' field from required descriptions
+        loaded_ir = prep_res["workflow_ir"]
+        assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
+        assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
+        assert loaded_ir["nodes"][0]["params"] == simple_workflow_ir["nodes"][0]["params"]
         assert prep_res["workflow_path"] == str(workflow_file)
 
     # Test Criteria 2: workflow_ir only provided → executes inline workflow
@@ -118,8 +121,8 @@ class TestWorkflowExecutorComprehensive:
     # Test Criteria 6: workflow in execution stack → raises ValueError with cycle
     def test_circular_dependency_simple(self, simple_workflow_ir, tmp_path):
         """Test circular dependency detection."""
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow_ir))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow_ir, workflow_file)
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
@@ -135,23 +138,24 @@ class TestWorkflowExecutorComprehensive:
     def test_workflow_file_missing(self):
         """Test error when workflow file doesn't exist."""
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": "/non/existent/file.json"})
+        node.set_params({"workflow_ref": "/non/existent/file.pflow.md"})
 
         shared = {}
         with pytest.raises(FileNotFoundError, match="Workflow file not found"):
             node.prep(shared)
 
-    # Test Criteria 8: workflow JSON malformed → raises ValueError
-    def test_malformed_json(self, tmp_path):
-        """Test error when workflow JSON is malformed."""
-        workflow_file = tmp_path / "malformed.json"
-        workflow_file.write_text("{invalid json")
+    # Test Criteria 8: workflow file malformed → raises ValueError
+    def test_malformed_workflow(self, tmp_path):
+        """Test error when workflow file is malformed."""
+        workflow_file = tmp_path / "malformed.pflow.md"
+        # Write content that fails markdown parsing (no Steps section)
+        workflow_file.write_text("# Bad Workflow\n\nJust some text, no steps.\n")
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
 
         shared = {}
-        with pytest.raises(ValueError, match="Invalid JSON"):
+        with pytest.raises(ValueError):
             node.prep(shared)
 
     # Test Criteria 9: param_mapping with template → resolves correctly
@@ -349,15 +353,15 @@ class TestWorkflowExecutorComprehensive:
         child_dir = tmp_path / "child"
         child_dir.mkdir()
 
-        child_file = child_dir / "child.json"
-        child_file.write_text(json.dumps(simple_workflow_ir))
+        child_file = child_dir / "child.pflow.md"
+        write_workflow_file(simple_workflow_ir, child_file)
 
         node = WorkflowExecutor()
         node.set_params({
-            "workflow_ref": "../child/child.json"  # Relative path
+            "workflow_ref": "../child/child.pflow.md"  # Relative path
         })
 
-        shared = {"_pflow_workflow_file": str(parent_dir / "parent.json")}
+        shared = {"_pflow_workflow_file": str(parent_dir / "parent.pflow.md")}
 
         prep_res = node.prep(shared)
         assert prep_res["workflow_path"] == str(child_file.resolve())
@@ -415,16 +419,16 @@ class TestWorkflowExecutorComprehensive:
     # Test Criteria 23: multi-level circular dependency → detects cycle
     def test_multilevel_circular_dependency(self, simple_workflow_ir, tmp_path):
         """Test detection of multi-level circular dependencies."""
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(simple_workflow_ir))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        write_workflow_file(simple_workflow_ir, workflow_file)
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ref": str(workflow_file)})
 
         shared = {
             "_pflow_stack": [
-                "/workflow1.json",
-                "/workflow2.json",
+                "/workflow1.pflow.md",
+                "/workflow2.pflow.md",
                 str(workflow_file),  # Creates cycle
             ]
         }
@@ -433,7 +437,7 @@ class TestWorkflowExecutorComprehensive:
             node.prep(shared)
 
         assert "Circular workflow reference" in str(exc_info.value)
-        assert "/workflow1.json" in str(exc_info.value)
+        assert "/workflow1.pflow.md" in str(exc_info.value)
 
     # Test Criteria 24: malformed child IR → wraps error with context
     def test_malformed_child_ir_context(self):

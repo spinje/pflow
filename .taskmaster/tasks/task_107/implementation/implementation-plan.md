@@ -827,46 +827,75 @@ capabilities:
 
 ---
 
-## Implementation Order (Critical Path)
+## Implementation Order and Fork Assignments
+
+**Operating model**: The main agent orchestrates — it reads docs, plans, launches forks, reviews results, and runs `make test` + `make check`. All coding is done by forked agents via `pflow fork-session`. The main agent may do trivial fixes (1-2 line integration issues after fork review) but does not implement features.
+
+**Why**: Forked agents get a fresh context window dedicated to their assignment. The main agent preserves context for orchestration across the full task lifecycle.
+
+### Fork assignment table
+
+Each row is a `pflow fork-session` invocation. Sequential forks wait for the previous to complete. Parallel forks are launched together.
+
+| Fork | Phase | Label | Files (create/modify) | Depends on | Notes |
+|------|-------|-------|----------------------|------------|-------|
+| F0 | 0.1 + 0.2 | `prep-gating` | `pyproject.toml`, 6 production files, 10 test files | — | PyYAML dep + planner/repair gating. Can run in parallel with F0b. |
+| F0b | 0.3 + 1.1 + 1.2 | `parser-core` | `tests/shared/markdown_utils.py`, `src/pflow/core/markdown_parser.py`, `tests/test_core/test_markdown_parser.py` | F0 | Test utility + parser + parser tests as one unit. Test-as-you-go: parser and tests written together. |
+| F1 | 2.1 + 2.1b | `cli-integration` | `src/pflow/cli/main.py`, `src/pflow/cli/commands/workflow.py` | F0b | CLI file loading, path detection, error display, save command. |
+| F2 | 2.2 + 2.2b | `workflow-manager` | `src/pflow/core/workflow_manager.py`, 6 `rich_metadata` caller files (see G9) | F0b | WorkflowManager rewrite + flat metadata callers. |
+| F3 | 2.3 | `save-service` | `src/pflow/core/workflow_save_service.py` | F1, F2 | Depends on CLI + WorkflowManager signatures being settled. |
+| F4 | 2.4 + 2.5 | `mcp-integration` | `src/pflow/mcp_server/utils/resolver.py`, `src/pflow/mcp_server/tools/execution_tools.py`, `src/pflow/mcp_server/services/execution_service.py` | F0b, F2 | MCP resolver + save tool restructure (G8). |
+| F5 | 2.6 | `runtime-executor` | `src/pflow/runtime/workflow_executor.py` | F0b | Nested workflow loading. Can parallel with F3, F4. |
+| F6 | 2.7 + 2.8 | `errors-warnings` | `src/pflow/core/ir_schema.py`, `src/pflow/core/workflow_validator.py` | F0b | Error message updates + unknown param warning layer. Can parallel with F5. |
+| — | 2.9 | Smoke test | — | F1–F6 | **GATE.** Main agent runs smoke test. Must pass before Phase 3. |
+| F7 | 3.1 | `examples-core` | `examples/core/*.json` → `.pflow.md` | Gate | First Phase 3 fork (primes cache). |
+| F8 | 3.1 | `examples-real` | `examples/real-workflows/**/*.json` → `.pflow.md` | F7 | Parallel batch starts after F7. |
+| F9 | 3.1 + 3.2 | `examples-rest` | `examples/advanced/`, `examples/nodes/`, `examples/invalid/` | F7 | Parallel with F8. |
+| F10 | 3.3 | `test-cli-heavy` | 3 heaviest CLI test files (~63 occurrences) | F7 | Parallel with F8, F9. |
+| F11 | 3.3 | `test-cli-rest` | 8 remaining CLI test files | F7 | Parallel. |
+| F12 | 3.3 | `test-integration` | 5 integration test files | F7 | Parallel. |
+| F13 | 3.3 | `test-runtime-core` | 6 runtime + core test files | F7 | Parallel. |
+| — | 3.4 | Validation tests | `test_example_validation.py`, `test_ir_examples.py` | F7–F13 | Main agent or single fork after reconvene. |
+| F14 | 4.1–4.4 | `polish` | Documentation, CLAUDE.md updates | 3.4 | Final polish fork. |
+| — | 5 | Agent instructions | `cli-agent-instructions.md`, `cli-basic-usage.md` | F14 | Collaborative with user — not a fork. |
+
+### Execution flow
 
 ```
-Phase 0.1 (PyYAML dep)              }
-Phase 0.2 (Gate planner/repair)     } Can be done in parallel
-Phase 0.3 (Test utility)            }
-
-Phase 1.1 (Parser core)             } Sequential — parser first
-Phase 1.2 (Parser tests)            } then tests
-
-Phase 2.1 (CLI integration)         }
-Phase 2.1b (CLI save command)       }
-Phase 2.2 (WorkflowManager)         } Sequential — CLI first (primary entry),
-Phase 2.2b (rich_metadata callers)  } then manager, then others
-Phase 2.3 (Save service)            }
-Phase 2.4 (MCP resolver)            }
-Phase 2.5 (MCP save tool+service)   } Can parallel with 2.4
-Phase 2.6 (Runtime executor)        } Can parallel with 2.4
-Phase 2.7 (Error messages)          } Interleaved with above
-Phase 2.8 (Unknown param warnings)  } After all integration done
-Phase 2.9 (Smoke test)              } GATE — must pass before forking
-
---- FORK POINT (see 3.F) ---
-Fork A: 3.1 examples-core            } First (primes cache)
-Fork B: 3.1 examples-real            }
-Fork C: 3.1+3.2 examples-rest        }
-Fork D: 3.3 test-cli-heavy           } Parallel (after A completes)
-Fork E: 3.3 test-cli-rest            }
-Fork F: 3.3 test-integration         }
-Fork G: 3.3 test-runtime-core        }
---- RECONVENE ---
-Phase 3.4 (Update validation tests)  } Main agent (after forks)
-
-Phase 4.1 (make test + make check)
-Phase 4.2 (CLI integration testing)
-Phase 4.3 (MCP tool testing)        } Lower priority, requires server restart
-Phase 4.4 (Documentation)
-
-Phase 5 (Agent instructions — collaborative with user)
+F0 (prep-gating)
+  ↓
+F0b (parser-core) — parser + tests + ir_to_markdown utility
+  ↓
+F1 (cli) ──────────┐
+F2 (workflow-mgr) ──┤
+F5 (runtime) ───────┤── can parallel (no file overlaps)
+F6 (errors) ────────┘
+  ↓
+F3 (save-service) ── depends on F1, F2 signatures
+F4 (mcp) ─────────── depends on F0b, F2
+  ↓
+SMOKE TEST GATE (main agent, Phase 2.9)
+  ↓
+F7 (examples-core) ── primes fork cache
+  ↓
+F8, F9, F10, F11, F12, F13 ── parallel batch
+  ↓
+RECONVENE + Phase 3.4 (main agent)
+  ↓
+F14 (polish)
+  ↓
+Phase 5 (collaborative with user)
 ```
+
+### Fork sizing guidance
+
+- **Small forks** (F0, F5, F6): 1-3 files, focused scope. Complete in <15 min.
+- **Medium forks** (F1, F2, F3, F4, F7-F13): 3-8 files, clear boundaries. Complete in <30 min.
+- **Large forks** (F0b): Parser + tests is the biggest single unit. May need 30-60 min. Cannot be split further because parser and tests must co-evolve.
+
+### Key constraint: file isolation
+
+No two concurrent forks may modify the same file. The table above ensures this. If the main agent discovers a file overlap during planning, one fork must wait for the other.
 
 ---
 

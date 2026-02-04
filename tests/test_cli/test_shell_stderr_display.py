@@ -11,6 +11,7 @@ import json
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from tests.shared.markdown_utils import write_workflow_file
 
 
 class TestShellStderrDisplay:
@@ -37,8 +38,8 @@ class TestShellStderrDisplay:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, ["--verbose", str(workflow_path)])
@@ -65,8 +66,8 @@ class TestShellStderrDisplay:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
@@ -101,8 +102,8 @@ class TestShellStderrDisplay:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, ["--verbose", str(workflow_path)])
@@ -131,8 +132,8 @@ class TestShellStderrDisplay:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, ["--verbose", str(workflow_path)])

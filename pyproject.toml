@@ -28,6 +28,7 @@ dependencies = [
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-agent-sdk>=0.1.17", # Claude Agent SDK for agentic development node
+    "PyYAML>=6.0.0", # YAML parsing for markdown workflow format params and frontmatter
     "llm-gemini>=0.28.1", # Google Gemini models including Gemini 3 Flash
 ]
 
@@ -154,4 +155,4 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["llm-anthropic", "llm-gemini"]  # Plugins for llm library, loaded dynamically not imported
+DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser (Task 107, in progress)

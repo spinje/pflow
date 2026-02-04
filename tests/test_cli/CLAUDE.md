@@ -1,12 +1,10 @@
 # tests/test_cli/CLAUDE.md
 
-## Critical: Planner is Blocked
+## Critical: Planner is Gated
 
-**Planner blocker from tests/shared/planner_block.py** triggers fallback behavior:
-- Applied via `conftest.py` to all CLI tests automatically
-- Makes `from pflow.planning import create_planner_flow` raise ImportError
-- This triggers fallback to old behavior: `"Collected workflow from args: ..."`
-- **DO NOT** remove or modify this blocker without understanding the implications
+**Planner is gated at the production level** (Task 107 — pending markdown format prompt rewrite):
+- The planner entry point in `cli/main.py` shows a user-facing message instead of invoking the planner
+- **Planner blocker from tests/shared/planner_block.py** is still applied via `conftest.py` as an additional safety layer
 - Same blocker is used by test_integration tests for consistency
 
 **LLM calls are prevented globally** by `tests/conftest.py`
@@ -23,8 +21,8 @@ CLI tests expect **blocked planner behavior**:
 
 The CLI now supports **direct execution** bypassing the planner:
 - `my-workflow param=value` → Tries to load and execute directly (100ms)
-- `pflow --file workflow.json param=value` → Direct execution with params
-- If workflow not found → Falls back to planner
+- `pflow workflow.pflow.md param=value` → Direct execution with params
+- If workflow not found → Shows error with suggestions (planner is gated)
 
 Detection logic in `src/pflow/cli/main.py::is_likely_workflow_name()`:
 - `my-workflow param=value` → Detected as workflow (has params)

@@ -18,15 +18,19 @@ shell node level. They test:
 - Shell conditional matching
 - Large data flow through the pipeline
 - Graceful handling when stdin isn't consumed
+
+FIX HISTORY:
+- 2025-02: Migrated from JSON to .pflow.md markdown format (Task 107)
 """
 
-import json
 import platform
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from tests.shared.markdown_utils import write_workflow_file
 from tests.shared.registry_utils import ensure_test_registry
 
 # Data size that exceeds pipe buffer to trigger the bug condition
@@ -105,13 +109,12 @@ class TestWorkflowBooleanParameterExecution:
                 ],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             # Run with skip_processing=false - this triggers the non-consuming branch
             # Before the fix: exit 141, no output, no trace
             # After the fix: completes successfully
-            result = runner.invoke(main, ["./workflow.json", "skip_processing=false"])
+            result = runner.invoke(main, ["./workflow.pflow.md", "skip_processing=false"])
 
             # Debug output if test fails
             if result.exit_code != 0:
@@ -167,11 +170,10 @@ class TestWorkflowBooleanParameterExecution:
                 "edges": [{"from": "read-data", "to": "conditional-process"}],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             # Run with skip_processing=true - this triggers echo (also doesn't consume stdin!)
-            result = runner.invoke(main, ["./workflow.json", "skip_processing=true"])
+            result = runner.invoke(main, ["./workflow.pflow.md", "skip_processing=true"])
 
             assert result.exit_code == 0
             assert "Workflow completed" in result.output or "Workflow executed successfully" in result.output
@@ -210,11 +212,10 @@ class TestWorkflowBooleanParameterExecution:
                 "edges": [{"from": "read", "to": "process"}],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             # Run WITHOUT providing the parameter - should use default (False)
-            result = runner.invoke(main, ["./workflow.json"])
+            result = runner.invoke(main, ["./workflow.pflow.md"])
 
             assert result.exit_code == 0, f"Failed with: {result.output}"
             assert "Workflow completed" in result.output or "Workflow executed successfully" in result.output
@@ -250,10 +251,9 @@ class TestLargeDataFlowWithShellNodes:
                 "edges": [{"from": "read", "to": "ignore-stdin"}],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
-            result = runner.invoke(main, ["./workflow.json"])
+            result = runner.invoke(main, ["./workflow.pflow.md"])
 
             # Should NOT crash with exit 141
             assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
@@ -297,10 +297,9 @@ class TestLargeDataFlowWithShellNodes:
                 ],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
-            result = runner.invoke(main, ["./workflow.json"])
+            result = runner.invoke(main, ["./workflow.pflow.md"])
 
             assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"
 
@@ -381,11 +380,10 @@ Conclusion paragraph.
                 ],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             # THE CRITICAL TEST: describe_images=false with large stdin
-            result = runner.invoke(main, ["./workflow.json", "describe_images=false"])
+            result = runner.invoke(main, ["./workflow.pflow.md", "describe_images=false"])
 
             # Before fix: exit 141, silent failure
             # After fix: completes successfully
@@ -395,8 +393,6 @@ Conclusion paragraph.
             assert "Workflow completed" in result.output or "Workflow executed successfully" in result.output
 
             # Verify the output is correct
-            from pathlib import Path
-
             images_content = Path("images.json").read_text().strip()
             assert images_content == "[]", f"Expected '[]', got: {images_content}"
 
@@ -443,10 +439,9 @@ Conclusion paragraph.
                 ],
             }
 
-            with open("workflow.json", "w") as f:
-                json.dump(workflow, f)
+            write_workflow_file(workflow, Path("workflow.pflow.md"))
 
             # Both steps skip processing (both don't consume stdin)
-            result = runner.invoke(main, ["./workflow.json", "step1_process=false", "step2_process=false"])
+            result = runner.invoke(main, ["./workflow.pflow.md", "step1_process=false", "step2_process=false"])
 
             assert result.exit_code == 0, f"Exit {result.exit_code}: {result.output}"

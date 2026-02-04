@@ -247,7 +247,7 @@ shared["__cache_hits__"] = ["fetch", "analyze"]  # Nodes that used cache
 
 ### 1. CLI Integration
 
-**Entry Point**: `cli/main.py` function `execute_json_workflow()` calls `execute_workflow()`
+**Entry Point**: `cli/main.py` calls `execute_workflow()`
 
 **Key Parameters Passed**:
 - `workflow_ir`: The workflow to execute
@@ -305,9 +305,8 @@ RepairService uses as cache_blocks for LLM
 - Propagated to nested workflows
 
 **WorkflowManager Integration**:
-- `update_metadata()` - Track execution history
-- `update_ir()` - Save repaired workflows preserving metadata
-- `load_ir()` - Load saved workflows by name
+- `update_metadata()` - Track execution history (writes to YAML frontmatter in `.pflow.md` files)
+- `load_ir()` - Load saved workflows by name (parses `.pflow.md` files)
 
 ### 5. Tracing and Metrics
 
@@ -420,14 +419,7 @@ shared["__template_errors__"] = {"node": {...}} # Template errors in permissive 
 
 ### 4. Repair Save Behavior
 
-**Default Behavior** (changed in Task 68):
-- File workflows: Overwrite original with `.backup`
-- Saved workflows: Update via `WorkflowManager.update_ir()`
-- Planner workflows: Save as `workflow-repaired-TIMESTAMP.json`
-
-**`--no-update` Flag**:
-- File workflows: Create `.repaired.json`
-- Saved workflows: Save to `~/.pflow/workflows/repaired/`
+> **GATED (Task 107)**: The repair system is gated pending markdown format migration. `--auto-repair` is disabled. All repair code is preserved but unreachable from CLI.
 
 ## Performance Characteristics
 

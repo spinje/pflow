@@ -3,6 +3,20 @@
 > Standard process for all agents working on implementation tasks.
 > Main agents and fork-session subagents follow the same format but write to separate files.
 
+## Operating Model: Main Agent as Orchestrator
+
+**The main agent does NOT write code directly.** All coding is done by forked agents via `pflow fork-session`. The main agent's role is:
+
+1. **Read and understand** — task documents, spec, implementation plan, codebase
+2. **Plan fork assignments** — break each phase into fork-sized units with clear file boundaries
+3. **Launch forks** — via `pflow fork-session` with precise prompts
+4. **Review results** — read fork progress logs, run `make test` and `make check`
+5. **Coordinate** — fix integration issues between forks, update progress log, proceed to next phase
+
+This applies to ALL phases, not just Phase 3. Even small phases (like Phase 0 gating) should be forked. The main agent may do trivial fixes (1-2 line integration fixes after fork review) but should not implement features or write substantial code.
+
+**Why**: Forked agents get a fresh context window dedicated to their assignment. The main agent preserves its context for orchestration across the full task lifecycle.
+
 ## File Locations
 
 | Agent type | Progress log path |

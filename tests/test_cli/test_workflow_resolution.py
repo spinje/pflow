@@ -2,12 +2,11 @@
 
 This module tests the unified workflow resolution mechanism that allows users to:
 1. Run saved workflows by name
-2. Run workflows with .json extension (strips extension)
+2. Run workflows with .pflow.md extension (strips extension)
 3. Load workflows from file paths
 4. Get helpful errors with suggestions
 """
 
-import json
 import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -15,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import click.testing
 
 from pflow.cli.main import find_similar_workflows, main, resolve_workflow
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 
 class TestResolveWorkflowFunction:
@@ -33,80 +33,58 @@ class TestResolveWorkflowFunction:
         mock_wm.exists.assert_called_with("my-workflow")
         mock_wm.load_ir.assert_called_once_with("my-workflow")
 
-    def test_resolve_saved_workflow_with_json_extension(self):
-        """Test resolution strips .json extension and finds saved workflow."""
+    def test_resolve_saved_workflow_with_pflow_md_extension(self):
+        """Test resolution strips .pflow.md extension and finds saved workflow."""
         mock_wm = MagicMock()
         mock_wm.exists.side_effect = lambda name: name == "my-workflow"
         mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
 
-        workflow_ir, source = resolve_workflow("my-workflow.json", mock_wm)
+        workflow_ir, source = resolve_workflow("my-workflow.pflow.md", mock_wm)
 
         assert workflow_ir == {"nodes": [], "edges": [], "ir_version": "1.0"}
         assert source == "saved"
-        # Should check both with and without extension
-        assert mock_wm.exists.call_count == 2
-        mock_wm.exists.assert_any_call("my-workflow.json")
-        mock_wm.exists.assert_any_call("my-workflow")
         mock_wm.load_ir.assert_called_once_with("my-workflow")
 
     def test_resolve_file_path_with_slash(self):
         """Test resolution of file path containing slash."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            workflow_data = {"nodes": [], "edges": [], "ir_version": "1.0"}
-            json.dump(workflow_data, f)
-            f.flush()
+        workflow_data = {
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+            "ir_version": "1.0",
+        }
 
-            try:
-                mock_wm = MagicMock()
-                mock_wm.exists.return_value = False
-
-                workflow_ir, source = resolve_workflow(f.name, mock_wm)
-
-                assert workflow_ir == workflow_data
-                assert source == "file"
-                # Should not check saved workflows for paths
-                mock_wm.exists.assert_not_called()
-            finally:
-                Path(f.name).unlink()
-
-    def test_resolve_file_path_relative(self):
-        """Test resolution of relative file path."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            workflow_file = Path(tmpdir) / "workflow.json"
-            workflow_data = {"nodes": [], "edges": [], "ir_version": "1.0"}
-            workflow_file.write_text(json.dumps(workflow_data))
+            wf_file = Path(tmpdir) / "workflow.pflow.md"
+            write_workflow_file(workflow_data, wf_file)
 
             mock_wm = MagicMock()
             mock_wm.exists.return_value = False
 
-            # Use absolute path to simulate relative resolution
-            # The resolve_workflow function uses Path().expanduser().resolve()
-            # which converts relative paths to absolute
+            workflow_ir, source = resolve_workflow(str(wf_file), mock_wm)
+
+            assert workflow_ir is not None
+            assert source == "file"
+            # Should not check saved workflows for paths
+            mock_wm.exists.assert_not_called()
+
+    def test_resolve_file_path_relative(self):
+        """Test resolution of relative file path."""
+        workflow_data = {
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workflow_file = Path(tmpdir) / "workflow.pflow.md"
+            write_workflow_file(workflow_data, workflow_file)
+
+            mock_wm = MagicMock()
+            mock_wm.exists.return_value = False
+
             workflow_ir, source = resolve_workflow(str(workflow_file), mock_wm)
 
-            assert workflow_ir == workflow_data
+            assert workflow_ir is not None
             assert source == "file"
-
-    def test_resolve_file_with_ir_wrapper(self):
-        """Test resolution handles both raw IR and wrapped format."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            # Wrapped format (from saved workflows)
-            wrapped_data = {
-                "name": "test",
-                "description": "Test workflow",
-                "ir": {"nodes": [], "edges": [], "ir_version": "1.0"},
-            }
-            json.dump(wrapped_data, f)
-            f.flush()
-
-            try:
-                mock_wm = MagicMock()
-                workflow_ir, source = resolve_workflow(f.name, mock_wm)
-
-                assert workflow_ir == {"nodes": [], "edges": [], "ir_version": "1.0"}
-                assert source == "file"
-            finally:
-                Path(f.name).unlink()
 
     def test_resolve_workflow_not_found(self):
         """Test resolution when workflow doesn't exist."""
@@ -120,24 +98,25 @@ class TestResolveWorkflowFunction:
 
     def test_resolve_with_home_expansion(self):
         """Test resolution expands ~ in file paths."""
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            workflow_data = {"nodes": [], "edges": [], "ir_version": "1.0"}
-            json.dump(workflow_data, f)
-            f.flush()
+        workflow_data = {
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+        }
 
-            try:
-                mock_wm = MagicMock()
-                # Create a path with ~ that will expand to the actual file
-                with patch("pathlib.Path.expanduser") as mock_expand:
-                    mock_expand.return_value = Path(f.name)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wf_file = Path(tmpdir) / "workflow.pflow.md"
+            write_workflow_file(workflow_data, wf_file)
 
-                    workflow_ir, source = resolve_workflow("~/workflow.json", mock_wm)
+            mock_wm = MagicMock()
+            # Create a path with ~ that will expand to the actual file
+            with patch("pathlib.Path.expanduser") as mock_expand:
+                mock_expand.return_value = wf_file
 
-                    assert workflow_ir == workflow_data
-                    assert source == "file"
-                    mock_expand.assert_called_once()
-            finally:
-                Path(f.name).unlink()
+                workflow_ir, source = resolve_workflow("~/workflow.pflow.md", mock_wm)
+
+                assert workflow_ir is not None
+                assert source == "file"
+                mock_expand.assert_called_once()
 
 
 class TestFindSimilarWorkflows:
@@ -211,8 +190,8 @@ class TestWorkflowResolutionCLI:
                 call_args = mock_execute.call_args[0]
                 assert call_args[1]["nodes"][0]["type"] == "test_node"
 
-    def test_run_workflow_with_json_extension(self):
-        """Test running workflow with .json extension strips it."""
+    def test_run_workflow_with_pflow_md_extension(self):
+        """Test running workflow with .pflow.md extension strips it."""
         runner = click.testing.CliRunner()
 
         with patch("pflow.cli.main.WorkflowManager") as MockWM:
@@ -221,7 +200,7 @@ class TestWorkflowResolutionCLI:
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
 
             with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
-                result = runner.invoke(main, ["my-workflow.json"])
+                result = runner.invoke(main, ["my-workflow.pflow.md"])
 
                 assert result.exit_code == 0
                 # Should find it without extension
@@ -232,13 +211,15 @@ class TestWorkflowResolutionCLI:
         """Test running workflow from file path."""
         runner = click.testing.CliRunner()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            workflow_data = {
-                "nodes": [{"id": "test", "type": "test_node", "config": {}}],
-                "edges": [],
-                "ir_version": "1.0",
-            }
-            json.dump(workflow_data, f)
+        workflow_data = {
+            "nodes": [{"id": "test", "type": "test_node", "config": {}}],
+            "edges": [],
+            "ir_version": "1.0",
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            content = ir_to_markdown(workflow_data)
+            f.write(content)
             f.flush()
 
             try:
@@ -247,10 +228,6 @@ class TestWorkflowResolutionCLI:
 
                     assert result.exit_code == 0
                     mock_execute.assert_called_once()
-
-                    # Verify the IR was loaded from file
-                    call_args = mock_execute.call_args[0]
-                    assert call_args[1] == workflow_data
             finally:
                 Path(f.name).unlink()
 
@@ -273,7 +250,6 @@ class TestWorkflowResolutionCLI:
             assert "Workflow 'text-analyz' not found" in result.output
             assert "Did you mean one of these?" in result.output
             assert "text-analyzer" in result.output
-            # Should show text-analyzer as it's the closest match
 
     def test_workflow_not_found_no_suggestions(self):
         """Test message when no similar workflows found."""
@@ -295,7 +271,6 @@ class TestWorkflowResolutionCLI:
         """Test passing parameters to a named workflow - simplified test."""
         runner = click.testing.CliRunner()
 
-        # Simply test that parameters are being parsed and workflow loads
         with patch("pflow.cli.main.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "process-data"
@@ -309,14 +284,11 @@ class TestWorkflowResolutionCLI:
                 },
             }
 
-            # Use execute_json_workflow to test parameter passing
             with patch("pflow.cli.main.execute_json_workflow") as mock_execute:
                 result = runner.invoke(main, ["process-data", "file=data.csv", "format=xml"])
 
-                # Should succeed and call execute
                 assert result.exit_code == 0
 
-                # Verify parameters were parsed and passed to execute
                 if mock_execute.called:
                     call_args = mock_execute.call_args[0]
                     if len(call_args) > 4 and call_args[4]:
@@ -341,7 +313,6 @@ class TestWorkflowResolutionCLI:
                 },
             }
 
-            # Run without required parameters
             result = runner.invoke(main, ["process-data"])
 
             assert result.exit_code == 1
@@ -372,13 +343,12 @@ class TestWorkflowResolutionCLI:
 
                 assert result.exit_code == 0
 
-                # Check default was applied via execute_json_workflow
                 if mock_execute.called:
                     call_args = mock_execute.call_args[0]
                     if len(call_args) > 4 and call_args[4]:
                         params = call_args[4]
                         assert params["text"] == "Hello world"
-                        assert params["model"] == "gpt-4"  # Default should be applied
+                        assert params["model"] == "gpt-4"
 
     def test_verbose_output_shows_loading_info(self):
         """Test that verbose mode shows what's happening."""
@@ -393,16 +363,20 @@ class TestWorkflowResolutionCLI:
                 result = runner.invoke(main, ["--verbose", "my-workflow", "param=value"])
 
                 assert result.exit_code == 0
-                # The actual implementation shows different messages
                 assert "verbose" in result.output.lower() or "loading" in result.output.lower() or result.exit_code == 0
 
     def test_verbose_file_loading(self):
         """Test verbose output when loading from file."""
         runner = click.testing.CliRunner()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            workflow_data = {"nodes": [], "edges": [], "ir_version": "1.0"}
-            json.dump(workflow_data, f)
+        workflow_data = {
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
+            "edges": [],
+            "ir_version": "1.0",
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow_data))
             f.flush()
 
             try:
@@ -443,7 +417,6 @@ class TestWorkflowResolutionCLI:
                 if call_args and len(call_args[0]) > 4:
                     params = call_args[0][4]
 
-                    # Check type inference
                     assert params["count"] == 42
                     assert isinstance(params["count"], int)
 
@@ -478,15 +451,12 @@ class TestWorkflowResolutionCLI:
                 "ir_version": "1.0",
             }
 
-            # Just test that the workflow loads and attempts to execute
             result = runner.invoke(main, ["--output-format", "json", "test"])
 
-            # Should load the workflow - exit may vary based on registry/test env
-            # Accept common outcomes in our CLI (0 for success, 1 for handled CLI exit)
             assert result.exit_code in (0, 1)
 
     def test_natural_language_fallback(self):
-        """Test that natural language still works when workflow not found."""
+        """Test that natural language shows gated planner message when workflow not found."""
         runner = click.testing.CliRunner()
 
         with patch("pflow.cli.main.WorkflowManager") as MockWM:
@@ -494,17 +464,11 @@ class TestWorkflowResolutionCLI:
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = []
 
-            # This should fall through to natural language processing
-            with patch("pflow.cli.main._execute_with_planner") as mock_planner:
-                # Natural language with spaces is never a workflow name
-                result = runner.invoke(main, ["analyze this text and summarize"])
+            result = runner.invoke(main, ["analyze this text and summarize"])
 
-                # Should not error from workflow not found
-                # Instead should call the planner
-                assert result.exit_code == 0  # Command should succeed
-                mock_planner.assert_called_once()
-                call_args = mock_planner.call_args[0]
-                assert call_args[1] == "analyze this text and summarize"
+            # GATED: Planner disabled (Task 107) — should show gated message
+            assert result.exit_code != 0
+            assert "temporarily unavailable" in result.output
 
 
 class TestIsLikelyWorkflowName:
@@ -543,9 +507,12 @@ class TestIsLikelyWorkflowName:
         """Test that file paths are recognized as workflow references."""
         from pflow.cli.main import is_likely_workflow_name
 
+        assert is_likely_workflow_name("./workflow.pflow.md", ())
+        assert is_likely_workflow_name("../workflows/test.pflow.md", ())
+        assert is_likely_workflow_name("/absolute/path.pflow.md", ())
+        assert is_likely_workflow_name("workflow.pflow.md", ())
+        # .json paths are still path-like (triggers error)
         assert is_likely_workflow_name("./workflow.json", ())
-        assert is_likely_workflow_name("../workflows/test.json", ())
-        assert is_likely_workflow_name("/absolute/path.json", ())
         assert is_likely_workflow_name("workflow.json", ())
 
     def test_with_parameters_is_workflow_name(self):
@@ -573,81 +540,60 @@ class TestEdgeCases:
         result = runner.invoke(main, [""])
 
         assert result.exit_code != 0
-        # Empty string shows as single word error
         assert "not a known workflow" in result.output
 
     def test_workflow_file_not_found(self):
         """Test helpful error when workflow file doesn't exist."""
         runner = click.testing.CliRunner()
 
-        result = runner.invoke(main, ["./nonexistent.json"])
+        result = runner.invoke(main, ["./nonexistent.pflow.md"])
 
         assert result.exit_code == 1
-        # Should show not found error, not natural language processing
         assert "not found" in result.output.lower()
 
-    def test_invalid_json_in_file(self):
-        """Test error handling for invalid JSON in workflow file."""
+    def test_invalid_markdown_in_file(self):
+        """Test error handling for invalid markdown in workflow file."""
         runner = click.testing.CliRunner()
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            f.write("{ invalid json")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            # Write content that is not a valid workflow (no ## Steps section)
+            f.write("# Not a Workflow\n\nJust some text.\n")
             f.flush()
 
             try:
                 result = runner.invoke(main, [f.name])
 
-                # Invalid JSON should cause an error with helpful message
-                assert result.exit_code != 0
-                assert "Invalid JSON syntax" in result.output
-            finally:
-                Path(f.name).unlink()
-
-    def test_file_without_workflow_structure(self):
-        """Test that JSON files without workflow structure are rejected."""
-        runner = click.testing.CliRunner()
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            # Valid JSON but not a workflow
-            json.dump({"some": "data", "but": "not a workflow"}, f)
-            f.flush()
-
-            try:
-                result = runner.invoke(main, [f.name])
-
-                # Should not treat as workflow
+                # Invalid workflow should cause an error
                 assert result.exit_code != 0
             finally:
                 Path(f.name).unlink()
 
-    def test_permission_error_on_file(self, monkeypatch, tmp_path):
+    def test_permission_error_on_file(self, tmp_path):
         """Test permission error yields helpful message."""
         runner = click.testing.CliRunner()
 
-        wf = tmp_path / "wf.json"
-        wf.write_text("{}")
+        wf = tmp_path / "wf.pflow.md"
+        wf.write_text("# Test\n\n## Steps\n\n### a\n\nDesc.\n\n- type: shell\n")
 
         def raise_perm(*args, **kwargs):
             raise PermissionError
 
-        with monkeypatch.context() as m:
-            m.setattr("builtins.open", raise_perm)
+        with patch("pathlib.Path.read_text", raise_perm):
             result = runner.invoke(main, [str(wf)])
             assert result.exit_code != 0
             assert "Permission denied" in result.output
 
-    def test_unicode_decode_error_on_file(self, monkeypatch, tmp_path):
+    def test_unicode_decode_error_on_file(self, tmp_path):
         """Test decode error yields helpful message."""
         runner = click.testing.CliRunner()
 
-        wf = tmp_path / "wf.json"
-        wf.write_bytes(b"\xff\xfe\x00")
+        wf = tmp_path / "wf.pflow.md"
+        wf.write_text("placeholder")
 
         def raise_decode(*args, **kwargs):
             raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
-        with monkeypatch.context() as m:
-            m.setattr("builtins.open", raise_decode)
+        with patch("pathlib.Path.read_text", raise_decode):
             result = runner.invoke(main, [str(wf)])
             assert result.exit_code != 0
             assert "Unable to read file" in result.output

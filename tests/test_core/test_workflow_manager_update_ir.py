@@ -9,6 +9,10 @@ import pytest
 
 from pflow.core.workflow_manager import WorkflowManager, WorkflowNotFoundError, WorkflowValidationError
 
+# GATED: update_ir is dead code pending markdown format migration (Task 107).
+# The only caller (repair save handler) is gated. Skip all tests in this file.
+pytestmark = pytest.mark.skip(reason="update_ir gated pending markdown format migration (Task 107)")
+
 
 @pytest.fixture
 def workflow_manager():

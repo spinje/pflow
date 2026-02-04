@@ -17,6 +17,9 @@ from pflow.cli.repair_save_handlers import (
     save_repaired_workflow,
 )
 
+# GATED: Repair tests skipped pending markdown format migration (Task 107).
+pytestmark = pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
+
 
 @pytest.fixture
 def mock_ctx():

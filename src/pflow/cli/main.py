@@ -11,9 +11,12 @@ import sys
 import time
 import warnings
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 import click
+
+if TYPE_CHECKING:
+    from pflow.core.markdown_parser import MarkdownParseError
 
 from pflow.core import StdinData
 from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
@@ -128,79 +131,97 @@ def _read_stdin_data() -> tuple[str | None, StdinData | None]:
     return stdin_content, enhanced_stdin
 
 
-def _show_json_syntax_error(path: Path, content: str, error: json.JSONDecodeError) -> None:
-    """Show a helpful JSON syntax error message."""
-    click.echo(f"❌ Invalid JSON syntax in {path}", err=True)
-    click.echo(f"Error at line {error.lineno}, column {error.colno}: {error.msg}", err=True)
-    click.echo("", err=True)
+def _show_markdown_parse_error(path: Path, error: MarkdownParseError) -> None:
+    """Show a helpful markdown parse error message.
 
-    # Show the problematic line with context
-    lines = content.splitlines()
-    if 0 < error.lineno <= len(lines):
-        # Show the line before (if exists) for context
-        if error.lineno > 1:
-            click.echo(f"Line {error.lineno - 1}: {lines[error.lineno - 2]}", err=True)
-
-        # Show the problematic line
-        problematic_line = lines[error.lineno - 1]
-        click.echo(f"Line {error.lineno}: {problematic_line}", err=True)
-
-        # Show a pointer to the error position
-        if error.colno > 0:
-            pointer = " " * (len(f"Line {error.lineno}: ") + error.colno - 1) + "^"
-            click.echo(pointer, err=True)
-
-    click.echo("", err=True)
-    click.echo("Fix the JSON syntax error and try again.", err=True)
+    Args:
+        path: Path to the workflow file.
+        error: The parse error with line number and suggestion.
+    """
+    click.echo(f"❌ Invalid workflow syntax in {path}", err=True)
+    click.echo(f"  {error}", err=True)
 
 
 def _is_path_like(identifier: str) -> bool:
-    """Heuristic to determine if identifier looks like a file path or .json file."""
-    return (os.sep in identifier) or (os.altsep and os.altsep in identifier) or identifier.lower().endswith(".json")
+    """Heuristic to determine if identifier looks like a file path or workflow file."""
+    lower = identifier.lower()
+    return (
+        (os.sep in identifier)
+        or (os.altsep is not None and os.altsep in identifier)
+        or lower.endswith(".pflow.md")
+        or lower.endswith(".json")  # Recognized as path-like for rejection error
+        or lower.endswith(".md")  # Recognized as path-like for extension hint
+    )
 
 
 def _try_load_workflow_from_file(path: Path) -> tuple[dict | None, str | None]:
     """Attempt to load a workflow from a file path, with error reporting.
 
-    Returns a tuple of (workflow_ir, source). On handled errors, returns (None, "json_error").
+    Returns a tuple of (workflow_ir, source). On handled errors, returns (None, "parse_error").
     """
+    path_str = str(path).lower()
+
+    # Reject .json files with a clear migration message (before existence check)
+    if path_str.endswith(".json"):
+        click.echo(
+            f"❌ JSON workflow format is no longer supported: {path}\n"
+            "Workflow files use .pflow.md format.\n"
+            "Example: pflow ./my-workflow.pflow.md",
+            err=True,
+        )
+        return None, "parse_error"
+
+    # Reject .md files that aren't .pflow.md
+    if path_str.endswith(".md") and not path_str.endswith(".pflow.md"):
+        suggested = str(path).rsplit(".md", 1)[0] + ".pflow.md"
+        click.echo(
+            f"❌ Wrong file extension: {path}\nWorkflow files use .pflow.md extension.\nRename to: {suggested}",
+            err=True,
+        )
+        return None, "parse_error"
+
     if not path.exists():
         return None, None
+
     try:
-        with open(path, encoding="utf-8") as f:
-            content = f.read()
-            data = json.loads(content)
+        from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
-            # Extract IR if wrapped
-            workflow_ir = data["ir"] if isinstance(data, dict) and "ir" in data else data
+        content = path.read_text(encoding="utf-8")
+        result = parse_markdown(content)
+        workflow_ir = result.ir
 
-            # Auto-normalize: add missing boilerplate fields
-            # This reduces friction for agent-generated workflows
-            if isinstance(workflow_ir, dict):
-                from pflow.core import normalize_ir
+        # Auto-normalize: add missing boilerplate fields
+        from pflow.core import normalize_ir
 
-                normalize_ir(workflow_ir)
+        normalize_ir(workflow_ir)
 
-            return workflow_ir, "file"
-    except json.JSONDecodeError as e:
-        _show_json_syntax_error(path, content, e)
-        return None, "json_error"
+        return workflow_ir, "file"
+    except MarkdownParseError as e:
+        _show_markdown_parse_error(path, e)
+        return None, "parse_error"
     except PermissionError:
         click.echo(f"cli: Permission denied reading file: '{path}'. Check file permissions.", err=True)
-        return None, "json_error"
+        return None, "parse_error"
     except UnicodeDecodeError:
         click.echo(f"cli: Unable to read file: '{path}'. File must be valid UTF-8 text.", err=True)
-        return None, "json_error"
+        return None, "parse_error"
 
 
 def _try_load_workflow_from_registry(identifier: str, wm: WorkflowManager) -> tuple[dict | None, str | None]:
-    """Attempt to load a workflow from registry by name, including stripping .json suffix."""
+    """Attempt to load a workflow from registry by name, including stripping file extension."""
+    from pflow.core import normalize_ir
+
     if wm.exists(identifier):
-        return wm.load_ir(identifier), "saved"
-    if identifier.lower().endswith(".json"):
-        name = identifier[:-5]
+        ir = wm.load_ir(identifier)
+        normalize_ir(ir)
+        return ir, "saved"
+    # Strip .pflow.md extension and try again
+    if identifier.lower().endswith(".pflow.md"):
+        name = identifier[:-9]  # len(".pflow.md") == 9
         if wm.exists(name):
-            return wm.load_ir(name), "saved"
+            ir = wm.load_ir(name)
+            normalize_ir(ir)
+            return ir, "saved"
     return None, None
 
 
@@ -208,24 +229,24 @@ def resolve_workflow(identifier: str, wm: WorkflowManager | None = None) -> tupl
     """Resolve workflow from file path or saved name.
 
     Resolution order:
-    1. File paths (contains / or ends with .json)
+    1. File paths (contains / or ends with .pflow.md/.json)
     2. Exact saved workflow name
-    3. Saved workflow without .json extension
+    3. Saved workflow without .pflow.md extension
 
     Returns:
-        (workflow_ir, source) where source is 'file', 'saved', 'json_error', or None
+        (workflow_ir, source) where source is 'file', 'saved', 'parse_error', or None
     """
     if not wm:
         wm = WorkflowManager()
 
-    # 1. File path detection (platform separators) or .json (case-insensitive)
+    # 1. File path detection (platform separators or workflow file extension)
     if _is_path_like(identifier):
         path = Path(identifier).expanduser().resolve()
         ir, source = _try_load_workflow_from_file(path)
-        if ir is not None or source == "json_error":
+        if ir is not None or source == "parse_error":
             return ir, source
 
-    # 2/3. Saved workflow (exact name or .json-stripped)
+    # 2/3. Saved workflow (exact name or extension-stripped)
     ir, source = _try_load_workflow_from_registry(identifier, wm)
     if ir is not None:
         return ir, source
@@ -1197,28 +1218,28 @@ def _auto_save_workflow(ir_data: dict[str, Any], metadata: dict[str, Any] | None
 
         default_name = f"workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Use the AI-generated description if available
-    description = metadata.get("description", "") if metadata else ""
-
-    # Extract rich metadata if available
-    rich_metadata = None
+    # Extract flat metadata if available (no rich_metadata wrapper)
+    flat_metadata = None
     if metadata:
-        rich_metadata = {
+        flat_metadata = {
             "search_keywords": metadata.get("search_keywords", []),
             "capabilities": metadata.get("capabilities", []),
             "typical_use_cases": metadata.get("typical_use_cases", []),
         }
         # Filter out empty lists
-        rich_metadata = {k: v for k, v in rich_metadata.items() if v}
-        if not rich_metadata:
-            rich_metadata = None
+        flat_metadata = {k: v for k, v in flat_metadata.items() if v}
+        if not flat_metadata:
+            flat_metadata = None
 
     # Try to save with the generated name
+    # GATED: Planner is disabled (Task 107). This code path is unreachable.
+    # When re-enabled, the planner must produce markdown content instead of IR dicts.
+    # WorkflowManager.save() now expects (name, markdown_content, metadata=...).
     workflow_name = default_name
     counter = 1
     while True:
         try:
-            workflow_manager.save(workflow_name, ir_data, description, metadata=rich_metadata)
+            workflow_manager.save(workflow_name, ir_data, metadata=flat_metadata)  # type: ignore[arg-type]
             return (True, workflow_name)
         except WorkflowExistsError:
             # If name exists, append a counter
@@ -1254,7 +1275,6 @@ def _prompt_workflow_save(
 
     # Extract defaults from metadata if available
     default_name = metadata.get("suggested_name", "") if metadata else ""
-    default_description = metadata.get("description", "") if metadata else ""
 
     # Loop until successful save or user cancels
     while True:
@@ -1264,26 +1284,24 @@ def _prompt_workflow_save(
         else:
             workflow_name = click.prompt("Workflow name", type=str)
 
-        # Use the AI-generated description automatically (don't prompt)
-        # This reduces friction and the AI descriptions are high quality
-        description = default_description
-
         try:
-            # Extract rich metadata if available (excluding suggested_name and description)
-            rich_metadata = None
+            # Extract flat metadata if available (no rich_metadata wrapper)
+            flat_metadata = None
             if metadata:
-                rich_metadata = {
+                flat_metadata = {
                     "search_keywords": metadata.get("search_keywords", []),
                     "capabilities": metadata.get("capabilities", []),
                     "typical_use_cases": metadata.get("typical_use_cases", []),
                 }
                 # Filter out empty lists
-                rich_metadata = {k: v for k, v in rich_metadata.items() if v}
-                if not rich_metadata:
-                    rich_metadata = None
+                flat_metadata = {k: v for k, v in flat_metadata.items() if v}
+                if not flat_metadata:
+                    flat_metadata = None
 
-            # Save the workflow with metadata passed directly (not embedded in IR)
-            workflow_manager.save(workflow_name, ir_data, description, metadata=rich_metadata)
+            # GATED: Planner is disabled (Task 107). This code path is unreachable.
+            # When re-enabled, the planner must produce markdown content instead of IR dicts.
+            # WorkflowManager.save() now expects (name, markdown_content, metadata=...).
+            workflow_manager.save(workflow_name, ir_data, metadata=flat_metadata)  # type: ignore[arg-type]
             click.echo(f"\n✅ Workflow saved as '{workflow_name}'")
             return (True, workflow_name)  # Success, return saved status
         except WorkflowExistsError:
@@ -3022,7 +3040,14 @@ def _initialize_context(
     ctx.obj["cache_planner"] = cache_planner
     # Use smart default if no model specified (will be resolved when needed)
     ctx.obj["planner_model"] = planner_model  # None triggers auto-detection later
-    ctx.obj["auto_repair"] = auto_repair
+    # GATED: Auto-repair disabled pending markdown format migration (Task 107).
+    # Repair prompts assume JSON workflow format. Re-enable after prompt rewrite.
+    if auto_repair:
+        click.echo(
+            "Warning: --auto-repair is temporarily disabled pending markdown format migration.",
+            err=True,
+        )
+    ctx.obj["auto_repair"] = False  # Force disabled (Task 107 gating)
     ctx.obj["no_update"] = no_update
     ctx.obj["validate_only"] = validate_only
 
@@ -3381,11 +3406,11 @@ def _setup_workflow_execution(
     # Store workflow source and name for potential repair saving
     ctx.obj["workflow_source"] = source
 
-    if source == "file" and first_arg.endswith(".json"):
+    if source == "file" and first_arg.endswith(".pflow.md"):
         ctx.obj["source_file_path"] = first_arg
     elif source == "saved":
-        # Extract clean workflow name (strip any .json extension if present)
-        workflow_name = first_arg.replace(".json", "") if first_arg.endswith(".json") else first_arg
+        # Extract clean workflow name (strip file extension if present)
+        workflow_name = first_arg[:-9] if first_arg.lower().endswith(".pflow.md") else first_arg
         ctx.obj["workflow_name"] = workflow_name
 
     return metrics_collector
@@ -3416,7 +3441,7 @@ def _handle_named_workflow(
     Returns:
         True if workflow was executed, False otherwise
     """
-    if workflow_ir is None:
+    if workflow_ir is None and source != "parse_error":
         workflow_ir, source = resolve_workflow(first_arg)
     if not workflow_ir:
         return False
@@ -3462,12 +3487,33 @@ def _handle_workflow_not_found(ctx: click.Context, workflow_name: str, source: s
     Raises:
         SystemExit: Always exits with error
     """
-    # Check if it was a JSON error (already displayed)
-    if source == "json_error":
+    # Check if it was a parse error (already displayed)
+    if source == "parse_error":
         ctx.exit(1)
 
     # Workflow not found - show helpful error
     wm = WorkflowManager()
+    lower_name = workflow_name.lower()
+
+    # Extension-specific hints
+    if lower_name.endswith(".json"):
+        click.echo(
+            f"❌ JSON workflow format is no longer supported: {workflow_name}\n"
+            "Workflow files use .pflow.md format.\n"
+            "Example: pflow ./my-workflow.pflow.md",
+            err=True,
+        )
+        ctx.exit(1)
+    if lower_name.endswith(".md") and not lower_name.endswith(".pflow.md"):
+        suggested = workflow_name.rsplit(".md", 1)[0] + ".pflow.md"
+        click.echo(
+            f"❌ Wrong file extension: {workflow_name}\n"
+            f"Workflow files use .pflow.md extension.\n"
+            f"Rename to: {suggested}",
+            err=True,
+        )
+        ctx.exit(1)
+
     similar = find_similar_workflows(workflow_name, wm)
     click.echo(f"❌ Workflow '{workflow_name}' not found.", err=True)
 
@@ -3570,8 +3616,15 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     if " " in text:
         return False
 
-    # NEW: Detect file paths (platform separators) and .json (case-insensitive)
-    if os.sep in text or (os.altsep and os.altsep in text) or text.lower().endswith(".json"):
+    # Detect file paths (platform separators) and workflow file extensions
+    lower = text.lower()
+    if (
+        os.sep in text
+        or (os.altsep and os.altsep in text)
+        or lower.endswith(".pflow.md")
+        or lower.endswith(".json")
+        or lower.endswith(".md")
+    ):
         return True
 
     # If there are parameter-like arguments following (key=value), likely a workflow name
@@ -3671,7 +3724,7 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
         click.echo("", err=True)
         click.echo("Usage:", err=True)
         click.echo('  pflow "natural language prompt"    # Use quotes for planning', err=True)
-        click.echo("  pflow workflow.json                 # Run workflow from file", err=True)
+        click.echo("  pflow workflow.pflow.md                 # Run workflow from file", err=True)
         click.echo("  pflow my-workflow                   # Run saved workflow", err=True)
         click.echo("  pflow workflow list                 # List saved workflows", err=True)
         ctx.exit(1)
@@ -3692,7 +3745,7 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
     click.echo(f'  pflow "{joined}"', err=True)
     click.echo("", err=True)
     click.echo("Or use a workflow:", err=True)
-    click.echo("  pflow workflow.json", err=True)
+    click.echo("  pflow workflow.pflow.md", err=True)
     click.echo("  pflow my-workflow param=value", err=True)
     ctx.exit(1)
 
@@ -3787,7 +3840,7 @@ def workflow_command(
     \b
     Usage:
       pflow [OPTIONS] [WORKFLOW]...
-      pflow workflow.json
+      pflow workflow.pflow.md
       pflow my-workflow param=value
       command | pflow
 
@@ -3804,8 +3857,8 @@ def workflow_command(
       pflow my-workflow input=data.txt
 
       # Run workflow from file (no flag needed!)
-      pflow ./workflow.json
-      pflow ~/workflows/analysis.json
+      pflow ./workflow.pflow.md
+      pflow ~/workflows/analysis.pflow.md
 
       # Natural Language - use quotes for commands with spaces
       pflow "read the file data.txt and summarize it"
@@ -3909,19 +3962,15 @@ def workflow_command(
             _handle_invalid_planner_input(ctx, workflow)
             return
 
-        # Validate input for natural language processing
-        raw_input = _validate_and_join_workflow_input(workflow)
-
-        # Install Anthropic model wrapper ONLY for planner path
-        # This provides caching, thinking tokens, and structured output features
-        # that the planner requires. File/saved workflows use standard llm library.
-        _install_anthropic_model_if_needed(verbose)
-
-        # Multi-word or parameterized input: planner by design
-        cache_planner = ctx.obj.get("cache_planner", False)
-        _execute_with_planner(
-            ctx, raw_input, stdin_data, output_key, verbose, "args", trace_enabled, planner_timeout, cache_planner
+        # GATED: Planner disabled pending markdown format migration (Task 107).
+        # Planner prompts assume JSON workflow format. Re-enable after prompt rewrite.
+        click.echo(
+            "Natural language workflow generation is temporarily unavailable.\n"
+            "Provide a workflow file (.pflow.md) or saved workflow name instead.\n"
+            "Example: pflow ./my-workflow.pflow.md",
+            err=True,
         )
+        ctx.exit(1)
     finally:
         # Restore original logging levels if we changed them
         if "root" in original_log_levels:

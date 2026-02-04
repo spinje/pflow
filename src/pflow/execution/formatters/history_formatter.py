@@ -3,6 +3,8 @@
 This module provides formatting for workflow execution history across CLI and MCP interfaces.
 Formats timestamps, execution counts, and parameter history for display in discovery and describe tools.
 
+Expects flat metadata dicts with execution fields at top level (no rich_metadata wrapper).
+
 Usage:
     >>> from pflow.execution.formatters.history_formatter import format_execution_history
     >>> metadata = {
@@ -20,13 +22,13 @@ from typing import Any, Optional
 
 
 def format_execution_history(
-    rich_metadata: dict[str, Any],
+    metadata: dict[str, Any],
     mode: str = "compact",
 ) -> Optional[str]:
-    """Format execution history from rich_metadata.
+    """Format execution history from workflow metadata.
 
     Args:
-        rich_metadata: Workflow rich_metadata dict containing execution history
+        metadata: Workflow metadata dict (flat structure, execution fields at top level)
         mode: Display mode - "compact" for single line, "detailed" for multi-line
 
     Returns:
@@ -42,16 +44,16 @@ def format_execution_history(
         >>> "3 times" in result
         True
     """
-    if not rich_metadata:
+    if not metadata:
         return None
 
-    execution_count = rich_metadata.get("execution_count", 0)
+    execution_count = metadata.get("execution_count", 0)
     if execution_count == 0:
         return None
 
-    timestamp = rich_metadata.get("last_execution_timestamp")
-    success = rich_metadata.get("last_execution_success", True)
-    last_params = rich_metadata.get("last_execution_params", {})
+    timestamp = metadata.get("last_execution_timestamp")
+    success = metadata.get("last_execution_success", True)
+    last_params = metadata.get("last_execution_params", {})
 
     if mode == "compact":
         return _format_compact(execution_count, timestamp, success)

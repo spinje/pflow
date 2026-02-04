@@ -217,24 +217,51 @@ def _validate_discovery_query(query: str, command_name: str) -> str:
     return query
 
 
-def _load_and_normalize_workflow(file_path: str) -> dict[str, Any]:
-    """Load workflow from file and normalize IR structure.
+def _load_and_parse_workflow(file_path: str) -> tuple[dict[str, Any], str, str | None]:
+    """Load workflow from .pflow.md file, parse, and validate.
 
     Args:
-        file_path: Path to workflow JSON file
+        file_path: Path to workflow .pflow.md file
 
     Returns:
-        Validated and normalized workflow IR
+        Tuple of (validated_ir, markdown_content, description)
 
     Raises:
         SystemExit: If file can't be loaded or validation fails
     """
-    from pflow.core.workflow_save_service import load_and_validate_workflow
+    from pathlib import Path
+
+    from pflow.core import normalize_ir
+    from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+
+    path = Path(file_path)
+
+    # Reject .json files with a clear migration message
+    if path.suffix == ".json":
+        click.echo(
+            "Error: JSON workflow format is no longer supported. Use .pflow.md format instead.",
+            err=True,
+        )
+        sys.exit(1)
 
     try:
-        return load_and_validate_workflow(file_path, auto_normalize=True)
-    except (ValueError, FileNotFoundError) as e:
+        content = path.read_text(encoding="utf-8")
+        result = parse_markdown(content)
+
+        # Normalize IR (adds ir_version, etc.)
+        normalize_ir(result.ir)
+
+        # Validate IR structure (raises WorkflowValidationError on failure)
+        from pflow.core.ir_schema import validate_ir
+
+        validate_ir(result.ir)
+
+        return result.ir, content, result.description
+    except MarkdownParseError as e:
         click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except FileNotFoundError:
+        click.echo(f"Error: File not found: {file_path}", err=True)
         sys.exit(1)
     except Exception as e:
         click.echo(f"Error loading workflow: {e}", err=True)
@@ -251,6 +278,12 @@ def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metad
     Returns:
         Generated metadata dict or None
     """
+    # GATED: Metadata generation disabled pending markdown format migration (Task 107).
+    # Uses MetadataGenerationNode from planner which assumes JSON workflow format.
+    if generate_metadata:
+        click.echo("Warning: --generate-metadata is temporarily disabled pending markdown format migration.", err=True)
+    return None
+
     if not generate_metadata:
         return None
 
@@ -272,15 +305,12 @@ def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metad
     return metadata
 
 
-def _save_with_overwrite_check(
-    name: str, validated_ir: dict[str, Any], description: str, metadata: dict[str, Any] | None, force: bool
-) -> str:
+def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[str, Any] | None, force: bool) -> str:
     """Save workflow to library with overwrite handling.
 
     Args:
         name: Workflow name
-        validated_ir: Validated workflow IR
-        description: Workflow description
+        markdown_content: Original markdown content to save
         metadata: Optional metadata
         force: Whether to overwrite existing workflow
 
@@ -296,8 +326,7 @@ def _save_with_overwrite_check(
     try:
         saved_path = save_workflow_with_options(
             name=name,
-            workflow_ir=validated_ir,
-            description=description,
+            markdown_content=markdown_content,
             force=force,
             metadata=metadata,
         )
@@ -347,21 +376,18 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
 @workflow.command(name="save")
 @click.argument("file_path", type=click.Path(exists=True, readable=True))
 @click.option("--name", required=True, help="Workflow name (lowercase-with-hyphens, max 30 chars)")
-@click.option("--description", required=True, help="Brief description of workflow purpose")
 @click.option("--delete-draft", is_flag=True, help="Delete source file after save")
 @click.option("--force", is_flag=True, help="Overwrite existing workflow")
 @click.option("--generate-metadata", is_flag=True, help="Generate rich discovery metadata")
-def save_workflow(
-    file_path: str, name: str, description: str, delete_draft: bool, force: bool, generate_metadata: bool
-) -> None:
+def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool, generate_metadata: bool) -> None:
     """Save a workflow file to the global library.
 
-    Takes a workflow JSON file (typically a draft from .pflow/workflows/)
-    and saves it to the global library at ~/.pflow/workflows/ for reuse
-    across all projects.
+    Takes a .pflow.md workflow file and saves it to the global library
+    at ~/.pflow/workflows/ for reuse across all projects. The workflow
+    description is extracted from the markdown content (H1 prose).
 
     Example:
-        pflow workflow save .pflow/workflows/draft.json --name my-analyzer --description "Analyzes PRs"
+        pflow workflow save ./my-workflow.pflow.md --name my-analyzer
     """
     from pflow.core.workflow_save_service import validate_workflow_name
 
@@ -371,19 +397,19 @@ def save_workflow(
         click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
-    # Load and validate workflow
-    validated_ir = _load_and_normalize_workflow(file_path)
+    # Load, parse, and validate workflow
+    validated_ir, markdown_content, _description = _load_and_parse_workflow(file_path)
 
     # Generate metadata if requested
     metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
 
-    # Save workflow
-    saved_path = _save_with_overwrite_check(name, validated_ir, description, metadata, force)
+    # Save workflow (passes markdown content, not IR)
+    saved_path = _save_with_overwrite_check(name, markdown_content, metadata, force)
 
     # Delete draft if requested
     _delete_draft_if_requested(file_path, delete_draft)
 
-    # Format success message using shared formatter
+    # Format success message using shared formatter (needs IR for interface display)
     from pflow.execution.formatters.workflow_save_formatter import format_save_success
 
     success_message = format_save_success(

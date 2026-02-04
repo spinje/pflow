@@ -1,6 +1,5 @@
 """Integration tests for WorkflowExecutor with full workflow execution."""
 
-import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -9,6 +8,7 @@ from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
+from tests.shared.markdown_utils import write_workflow_file
 
 
 class TestWorkflowExecutorIntegration:
@@ -170,9 +170,8 @@ class TestWorkflowExecutorIntegration:
     @pytest.fixture
     def workflow_file(self, simple_workflow_ir, tmp_path):
         """Create a temporary workflow file."""
-        workflow_path = tmp_path / "test_workflow.json"
-        with open(workflow_path, "w") as f:
-            json.dump(simple_workflow_ir, f)
+        workflow_path = tmp_path / "test_workflow.pflow.md"
+        write_workflow_file(simple_workflow_ir, workflow_path)
         return workflow_path
 
     def test_inline_workflow_execution(self, simple_workflow_ir, mock_registry):

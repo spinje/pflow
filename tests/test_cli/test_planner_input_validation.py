@@ -117,6 +117,7 @@ class TestCLIBehaviorWithInvalidInput:
 class TestCLIBehaviorWithValidInput:
     """Integration tests for CLI behavior with valid input (should reach planner or workflow)."""
 
+    @pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
     def test_quoted_prompt_attempts_planner(self, monkeypatch):
         """Quoted multi-word prompt should attempt to use planner."""
         # Mock the planner to avoid real API calls

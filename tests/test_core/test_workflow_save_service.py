@@ -10,9 +10,11 @@ These tests act as guardrails for AI refactoring by catching real bugs in:
 
 Critical: These tests validate BUSINESS LOGIC, not UI/UX behavior.
 CLI tests validate command-line interface, these test the underlying functions.
+
+Updated for Task 107: Markdown workflow format (.pflow.md). File loading uses
+parse_markdown(), save uses markdown_content string instead of IR dict.
 """
 
-import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import Mock, patch
@@ -28,6 +30,7 @@ from pflow.core.workflow_save_service import (
     save_workflow_with_options,
     validate_workflow_name,
 )
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 
 class TestValidateWorkflowName:
@@ -200,12 +203,12 @@ class TestLoadAndValidateWorkflow:
         assert "name" not in result  # Extracted IR, not wrapper
 
     def test_load_from_file_path(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
-        """FILE SOURCE: Load from file path on filesystem.
+        """FILE SOURCE: Load from .pflow.md file path on filesystem.
 
         Bug prevented: File resolution broken, forcing workflow name lookups to fail.
         """
-        file_path = tmp_path / "test.json"
-        file_path.write_text(json.dumps(sample_ir))
+        file_path = tmp_path / "test.pflow.md"
+        write_workflow_file(sample_ir, file_path)
 
         result = load_and_validate_workflow(str(file_path))
 
@@ -224,7 +227,8 @@ class TestLoadAndValidateWorkflow:
             lambda self: setattr(self, "workflows_dir", tmp_path),
         ):
             manager = WorkflowManager()
-            manager.save("test-workflow", sample_ir, "Test")
+            markdown_content = ir_to_markdown(sample_ir)
+            manager.save("test-workflow", markdown_content)
 
             result = load_and_validate_workflow("test-workflow")
 
@@ -256,17 +260,17 @@ class TestLoadAndValidateWorkflow:
         with pytest.raises((ValueError, WorkflowValidationError)):
             load_and_validate_workflow(minimal_ir, auto_normalize=False)
 
-    def test_reject_invalid_json_in_file(self, tmp_path: Path) -> None:
-        """FILE ERROR: Reject malformed JSON with clear error.
+    def test_reject_invalid_markdown_in_file(self, tmp_path: Path) -> None:
+        """FILE ERROR: Reject malformed markdown with clear error.
 
-        Bug prevented: JSON parse errors surface as generic exceptions, no guidance.
+        Bug prevented: Parse errors surface as generic exceptions, no guidance.
         """
-        file_path = tmp_path / "bad.json"
-        file_path.write_text("{ invalid json }")
+        file_path = tmp_path / "bad.pflow.md"
+        file_path.write_text("This is not a valid workflow — no ## Steps section")
 
         assert file_path.exists(), "Test file should be created"
 
-        with pytest.raises(ValueError, match="Invalid JSON"):
+        with pytest.raises(ValueError, match="Invalid workflow|Missing"):
             load_and_validate_workflow(str(file_path))
 
     def test_reject_nonexistent_file(self) -> None:
@@ -275,7 +279,7 @@ class TestLoadAndValidateWorkflow:
         Bug prevented: Generic error when file doesn't exist, no suggestion about workflow names.
         """
         with pytest.raises(ValueError, match="not found"):
-            load_and_validate_workflow("/nonexistent/file.json")
+            load_and_validate_workflow("/nonexistent/file.pflow.md")
 
     def test_reject_nonexistent_workflow_name(self) -> None:
         """NAME ERROR: Clear error for missing workflow name.
@@ -285,7 +289,7 @@ class TestLoadAndValidateWorkflow:
         with pytest.raises(ValueError, match="not found"):
             load_and_validate_workflow("nonexistent-workflow-name")
 
-    def test_reject_invalid_workflow_structure(self, tmp_path: Path) -> None:
+    def test_reject_invalid_workflow_structure(self) -> None:
         """VALIDATION: Reject IR with structural errors.
 
         Bug prevented: Invalid workflows pass through, fail later during execution.
@@ -296,11 +300,8 @@ class TestLoadAndValidateWorkflow:
             "edges": [],
         }
 
-        file_path = tmp_path / "invalid.json"
-        file_path.write_text(json.dumps(invalid_ir))
-
         with pytest.raises((ValueError, WorkflowValidationError)):
-            load_and_validate_workflow(str(file_path))
+            load_and_validate_workflow(invalid_ir)
 
     def test_reject_invalid_output_sources(self, tmp_path: Path) -> None:
         """SEMANTIC VALIDATION: Reject workflows with invalid output sources.
@@ -319,12 +320,15 @@ class TestLoadAndValidateWorkflow:
             "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
             "edges": [],
             "outputs": {
-                "content": {"source": "nonexistent_node.output"}  # ← Invalid: node doesn't exist
+                "content": {
+                    "source": "nonexistent_node.output",
+                    "description": "Content from a nonexistent node",
+                }
             },
         }
 
-        file_path = tmp_path / "invalid_output.json"
-        file_path.write_text(json.dumps(invalid_ir))
+        file_path = tmp_path / "invalid_output.pflow.md"
+        write_workflow_file(invalid_ir, file_path)
 
         # Should reject due to output source validation
         with pytest.raises(WorkflowValidationError, match="nonexistent_node"):
@@ -345,14 +349,23 @@ class TestLoadAndValidateWorkflow:
             ],
             "edges": [{"from": "reader", "to": "processor"}],
             "outputs": {
-                "content": {"source": "reader.content"},  # Valid: node exists
-                "analysis": {"source": "processor.response"},  # Valid: node exists
-                "raw": {"source": "reader"},  # Valid: node reference without key
+                "content": {
+                    "source": "reader.content",
+                    "description": "Raw file content",
+                },
+                "analysis": {
+                    "source": "processor.response",
+                    "description": "LLM analysis result",
+                },
+                "raw": {
+                    "source": "reader",
+                    "description": "Full reader output",
+                },
             },
         }
 
-        file_path = tmp_path / "valid_output.json"
-        file_path.write_text(json.dumps(valid_ir))
+        file_path = tmp_path / "valid_output.pflow.md"
+        write_workflow_file(valid_ir, file_path)
 
         # Should accept without error
         result = load_and_validate_workflow(str(file_path))
@@ -380,19 +393,21 @@ class TestSaveWorkflowWithOptions:
 
         Bug prevented: Force flag required even for new workflows.
         """
+        markdown_content = ir_to_markdown(sample_ir)
+
         # Mock WorkflowManager to use tmp_path
         with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = False
-            mock_wm.save.return_value = tmp_path / "new-workflow.json"
+            mock_wm.save.return_value = str(tmp_path / "new-workflow.pflow.md")
             mock_wm_class.return_value = mock_wm
 
-            path = save_workflow_with_options("new-workflow", sample_ir, "Test", force=False)
+            path = save_workflow_with_options("new-workflow", markdown_content, force=False)
 
             mock_wm.exists.assert_called_once_with("new-workflow")
-            mock_wm.save.assert_called_once()
+            mock_wm.save.assert_called_once_with("new-workflow", markdown_content, None)
             mock_wm.delete.assert_not_called()
-            assert path == tmp_path / "new-workflow.json", "Should return path from WorkflowManager.save()"
+            assert path == Path(str(tmp_path / "new-workflow.pflow.md"))
 
     def test_save_existing_with_force_deletes_first(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """FORCE OVERWRITE: Must delete existing before saving.
@@ -400,25 +415,29 @@ class TestSaveWorkflowWithOptions:
         Bug prevented: Force flag doesn't delete, causing WorkflowManager to reject save.
         Critical: WorkflowManager.save() raises if file exists - MUST delete first.
         """
+        markdown_content = ir_to_markdown(sample_ir)
+
         # Mock WorkflowManager
         with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = True
-            mock_wm.save.return_value = tmp_path / "existing.json"
+            mock_wm.save.return_value = str(tmp_path / "existing.pflow.md")
             mock_wm_class.return_value = mock_wm
 
-            path = save_workflow_with_options("existing", sample_ir, "New description", force=True)
+            path = save_workflow_with_options("existing", markdown_content, force=True)
 
             # Verify delete was called before save
             mock_wm.delete.assert_called_once_with("existing")
-            mock_wm.save.assert_called_once()
-            assert path == tmp_path / "existing.json", "Should return path from WorkflowManager.save()"
+            mock_wm.save.assert_called_once_with("existing", markdown_content, None)
+            assert path == Path(str(tmp_path / "existing.pflow.md"))
 
     def test_save_existing_without_force_raises(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """OVERWRITE PROTECTION: Reject overwrite without force flag.
 
         Bug prevented: Silent overwrite of existing workflows, data loss risk.
         """
+        markdown_content = ir_to_markdown(sample_ir)
+
         # Mock WorkflowManager to simulate existing workflow
         with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
@@ -427,7 +446,7 @@ class TestSaveWorkflowWithOptions:
 
             # Try to save without force - should fail
             with pytest.raises(FileExistsError, match="already exists"):
-                save_workflow_with_options("existing", sample_ir, "New", force=False)
+                save_workflow_with_options("existing", markdown_content, force=False)
 
             # Verify existence was checked
             mock_wm.exists.assert_called_once_with("existing")
@@ -441,29 +460,29 @@ class TestSaveWorkflowWithOptions:
 
         Bug prevented: Metadata parameter ignored, CLI-generated metadata lost.
         """
+        markdown_content = ir_to_markdown(sample_ir)
         metadata = {"keywords": ["test"], "capabilities": ["testing"]}
 
         # Mock WorkflowManager
         with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = False
-            mock_wm.save.return_value = tmp_path / "with-metadata.json"
+            mock_wm.save.return_value = str(tmp_path / "with-metadata.pflow.md")
             mock_wm_class.return_value = mock_wm
 
-            path = save_workflow_with_options("with-metadata", sample_ir, "Test", metadata=metadata)
+            path = save_workflow_with_options("with-metadata", markdown_content, metadata=metadata)
 
             # Verify metadata was passed to save()
-            mock_wm.save.assert_called_once()
-            call_args = mock_wm.save.call_args
-            assert call_args[0][2] == "Test"  # description
-            assert call_args[0][3] == metadata  # metadata parameter
-            assert path == tmp_path / "with-metadata.json", "Should return path from WorkflowManager.save()"
+            mock_wm.save.assert_called_once_with("with-metadata", markdown_content, metadata)
+            assert path == Path(str(tmp_path / "with-metadata.pflow.md"))
 
     def test_delete_failure_raises_clear_error(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """DELETE ERROR: Clear error when delete fails during force overwrite.
 
         Bug prevented: Delete failure surfaces as generic error, unclear which workflow.
         """
+        markdown_content = ir_to_markdown(sample_ir)
+
         # Mock WorkflowManager with delete failure
         with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
@@ -472,7 +491,7 @@ class TestSaveWorkflowWithOptions:
             mock_wm_class.return_value = mock_wm
 
             with pytest.raises(WorkflowValidationError, match="Failed to delete"):
-                save_workflow_with_options("existing", sample_ir, "New", force=True)
+                save_workflow_with_options("existing", markdown_content, force=True)
 
 
 class TestGenerateWorkflowMetadata:

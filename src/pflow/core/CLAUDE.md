@@ -6,7 +6,8 @@ This file provides guidance for understanding and working with the pflow core mo
 
 The `core` module is responsible for:
 - **Workflow Management**: Centralized lifecycle management (save/load/list/delete) with format bridging
-- **Workflow Validation**: Defining and validating the JSON schema for pflow's Intermediate Representation (IR)
+- **Workflow Parsing**: Parsing `.pflow.md` markdown files into IR dicts
+- **Workflow Validation**: Defining and validating the schema for pflow's Intermediate Representation (IR)
 - **Shell Integration**: Handling stdin/stdout operations for CLI pipe syntax support
 - **Error Handling**: Providing a structured exception hierarchy for the entire pflow system
 - **Metrics & Costs**: Tracking execution performance and LLM usage costs
@@ -21,8 +22,9 @@ The `core` module is responsible for:
 src/pflow/core/
 ├── __init__.py              # Public API exports - aggregates functionality from all modules
 ├── exceptions.py            # Custom exception hierarchy for structured error handling
-├── ir_schema.py             # JSON schema definition and validation for workflow IR
+├── ir_schema.py             # IR schema definition and validation for workflow IR
 ├── llm_config.py            # LLM model configuration
+├── markdown_parser.py       # Markdown workflow parser (.pflow.md → IR dict)
 ├── llm_pricing.py           # Centralized LLM pricing and cost calculations
 ├── metrics.py               # Lightweight metrics collection for workflow execution
 ├── output_controller.py     # Central output control for interactive vs non-interactive modes
@@ -33,7 +35,7 @@ src/pflow/core/
 ├── user_errors.py           # User-friendly error formatting for CLI
 ├── validation_utils.py      # Shared validation utilities for parameters
 ├── workflow_data_flow.py    # Data flow and execution order validation
-├── workflow_manager.py      # Workflow lifecycle management with format transformation
+├── workflow_manager.py      # Workflow lifecycle management (.pflow.md with YAML frontmatter)
 ├── workflow_save_service.py # Shared workflow save operations (CLI/MCP)
 ├── workflow_status.py       # Tri-state workflow execution status enum
 ├── workflow_validator.py    # Unified workflow validation orchestrator
@@ -50,7 +52,7 @@ Defines the exception hierarchy used throughout pflow:
 - **`PflowError`**: Base exception for all pflow-specific errors (base class for all others)
 - **`WorkflowExecutionError`**: Tracks execution failures with workflow path chain
   - **⚠️ DEAD CODE**: Defined but never raised anywhere in codebase
-  - Designed to show execution hierarchy (e.g., "main.json → sub-workflow.json → failing-node")
+  - Designed to show execution hierarchy (e.g., "main.pflow.md → sub-workflow.pflow.md → failing-node")
 - **`CircularWorkflowReferenceError`**: Detects and reports circular workflow references
   - **⚠️ DEAD CODE**: Defined but never raised (should replace ValueError in WorkflowExecutor)
 - **`WorkflowExistsError`**: ✅ ACTIVELY USED in WorkflowManager.save() (line 112)
@@ -65,7 +67,7 @@ Defines the exception hierarchy used throughout pflow:
 ```python
 raise WorkflowExecutionError(
     "Node execution failed",
-    workflow_path="workflows/data-pipeline.json",
+    workflow_path="workflows/data-pipeline.pflow.md",
     original_error=original_exception
 )
 ```
@@ -75,9 +77,9 @@ raise WorkflowExecutionError(
 The heart of workflow representation in pflow:
 
 **Core Components**:
-- **`FLOW_IR_SCHEMA`**: JSON Schema (Draft 7) enforcing workflow structure
+- **`FLOW_IR_SCHEMA`**: JSON Schema (Draft 7) enforcing IR structure
 - **`ValidationError`**: Custom exception with helpful error messages and suggestions
-- **`validate_ir()`**: Main validation function supporting dict or JSON string input
+- **`validate_ir()`**: Main validation function supporting dict input
 
 **Schema Structure**:
 ```python
@@ -114,12 +116,26 @@ The heart of workflow representation in pflow:
 ```
 
 **Validation Features**:
-- JSON Schema structural validation
+- JSON Schema structural validation (on the IR dict)
 - Business logic checks (node reference integrity, duplicate ID detection)
 - Helpful error messages with fix suggestions
-- Path-specific error reporting (e.g., "nodes[2].type is required")
 
-### 3. shell_integration.py - CLI and Unix Pipe Support
+### 3. markdown_parser.py - Markdown Workflow Parser
+
+Parses `.pflow.md` files into IR dicts. This is the primary entry point for all workflow loading — replaces `json.load()` throughout the codebase.
+
+**Key Components**:
+- **`parse_markdown(content: str) -> MarkdownParseResult`**: Main parsing function
+- **`MarkdownParseError(ValueError)`**: Parse error with `line` and `suggestion` fields
+- **`MarkdownParseResult`**: Dataclass with `ir`, `title`, `description`, `metadata`, `source`
+
+**How it works**: Line-by-line state machine that extracts H1 title/description, `## Inputs`/`## Steps`/`## Outputs` sections, `### entity` headings with `- key: value` YAML params and fenced code blocks. Produces the same IR dict shape that JSON workflows produced. Delegates YAML parsing to `yaml.safe_load()`, Python syntax validation to `ast.parse()`.
+
+**Parser validates at parse time**: missing descriptions, bare code blocks, duplicate params, unclosed fences, YAML syntax errors, invalid node IDs, missing `## Steps` section.
+
+**Integration points**: Used by CLI (`cli/main.py`), WorkflowManager (`load`/`load_ir`), MCP resolver, runtime executor (nested workflows), and workflow save service.
+
+### 4. shell_integration.py - CLI and Unix Pipe Support
 
 Enables pflow to work seamlessly in Unix pipelines:
 
@@ -134,7 +150,7 @@ Enables pflow to work seamlessly in Unix pipelines:
 - **`stdin_has_data()`**: FIFO-only pipe detection - returns True only for real shell pipes
   - Uses `stat.S_ISFIFO()` to detect real pipes (avoids hanging on sockets/char devices)
   - Claude Code stdin is a character device, not FIFO - returns False (prevents hang)
-- **`determine_stdin_mode()`**: Identifies stdin content (workflow JSON vs data)
+- **`determine_stdin_mode()`**: Identifies stdin content type
   - **⚠️ UNUSED**: Function exists but never called in CLI
 - **`read_stdin_enhanced()`**: Reads stdin with binary/size handling
 
@@ -151,46 +167,49 @@ Enables pflow to work seamlessly in Unix pipelines:
 
 ### 4. workflow_manager.py - Workflow Lifecycle Management
 
-Centralizes all workflow operations and bridges the format gap between components:
+Centralizes all workflow operations:
 
 **Key Features**:
-- **Format Bridging**: Handles transformation between metadata wrapper and raw IR
+- **Markdown Storage**: Saved workflows are `.pflow.md` files with YAML frontmatter for system metadata
 - **Atomic Operations**: Thread-safe file operations prevent race conditions
 - **Name-Based References**: Workflows referenced by kebab-case names (e.g., "fix-issue")
-- **Storage Location**: `~/.pflow/workflows/*.json`
+- **Storage Location**: `~/.pflow/workflows/*.pflow.md`
 
 **Core Methods**:
-- **`save(name, workflow_ir, description)`**: Wraps IR in metadata, saves atomically using `os.link()`
-- **`load(name)`**: Returns full metadata wrapper (for Context Builder)
-- **`load_ir(name)`**: Returns just the IR (for WorkflowExecutor)
+- **`save(name, markdown_content, metadata)`**: Prepends YAML frontmatter to markdown content, saves atomically
+- **`load(name)`**: Returns flat metadata dict with parsed IR, description, and execution stats
+- **`load_ir(name)`**: Returns just the IR dict (for WorkflowExecutor)
 - **`list_all()`**: Lists all saved workflows with metadata
 - **`exists(name)`**: Checks if workflow exists
 - **`delete(name)`**: Removes workflow
 - **`get_path(name)`**: Returns absolute file path
-- **`update_metadata(name, updates)`**: Updates execution metadata after successful runs
-- **`update_ir(name, new_ir)`**: Updates workflow IR while preserving metadata (used by repair)
+- **`update_metadata(name, updates)`**: Updates YAML frontmatter without modifying the markdown body
+- **`update_ir(name, new_ir)`**: **⚠️ DEAD CODE** — preserved but unreachable (repair system gated, Task 107)
 
-**Storage Format**:
-```json
-{
-  "description": "Fixes GitHub issues",
-  "ir": { /* actual workflow IR */ },
-  "created_at": "2025-01-29T10:00:00+00:00",
-  "updated_at": "2025-01-29T10:00:00+00:00",
-  "version": "1.0.0",
-  "rich_metadata": {
-    "execution_count": 5,
-    "last_execution_timestamp": "2025-01-29T15:30:00",
-    "last_execution_success": true,
-    "last_execution_params": {"repo": "owner/repo"}
-  }
-}
+**Storage Format**: YAML frontmatter + original markdown content:
+```markdown
+---
+created_at: "2026-01-14T15:43:57.425006+00:00"
+updated_at: "2026-01-14T22:03:06.823530+00:00"
+version: "1.0.0"
+execution_count: 5
+last_execution_timestamp: "2026-01-14T15:30:00"
+last_execution_success: true
+last_execution_params:
+  repo: "owner/repo"
+---
+
+# Fix GitHub Issues
+
+Fixes GitHub issues automatically.
+
+## Steps
+...
 ```
 
-**Note**: The workflow `name` is NOT stored in the file - it is derived from the filename at load time.
-This ensures the filename is the single source of truth and prevents name/filename mismatches.
+**Note**: Metadata is flat (no `rich_metadata` wrapper). The workflow `name` is derived from the filename (`my-workflow.pflow.md` → `my-workflow`). The `description` is extracted from the H1 prose during `load()`, not stored separately in metadata.
 
-### 5. workflow_validator.py - Unified Validation System (NEW)
+### 5. workflow_validator.py - Unified Validation System
 
 Provides a single source of truth for all workflow validation:
 
@@ -216,7 +235,7 @@ def validate(
 
 **Critical Design Decision**: This replaces scattered validation logic that existed in multiple places (ValidatorNode, tests) with a unified system. Previously, tests had data flow validation that production lacked!
 
-### 6. workflow_data_flow.py - Execution Order Validation (NEW)
+### 6. workflow_data_flow.py - Execution Order Validation
 
 Ensures workflows will execute correctly at runtime:
 
@@ -446,9 +465,9 @@ Unified workflow save/load/validation for CLI and MCP server:
 
 **Key Functions**:
 - **`validate_workflow_name()`**: Name format validation (lowercase, numbers, hyphens; max 50 chars)
-- **`load_and_validate_workflow()`**: Multi-source loading (file/name/dict) with normalization
-- **`save_workflow_with_options()`**: Save with force overwrite handling
-- **`generate_workflow_metadata()`**: Optional LLM metadata (CLI-only, 10-30s)
+- **`load_and_validate_workflow()`**: Multi-source loading (file/name) with normalization
+- **`save_workflow_with_options(name, markdown_content, *, force, metadata)`**: Save with force overwrite handling
+- **`generate_workflow_metadata()`**: **⚠️ GATED** — disabled pending markdown format migration (Task 107)
 - **`delete_draft_safely()`**: Security-aware deletion (`.pflow/workflows/` only)
 
 **Reserved Names**: Set of 9 (`null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`)
@@ -523,20 +542,24 @@ Aggregates and exposes the module's functionality:
 
 ## Connection to Examples
 
-The `examples/` directory contains real-world usage of the IR schema:
+The `examples/` directory contains real-world usage of the IR schema, all in `.pflow.md` format:
 
 ### Valid Examples (tested by test_ir_examples.py)
-- **`examples/core/minimal.json`** - Demonstrates minimum requirements (single node workflow)
-- **`examples/core/simple-pipeline.json`** - Shows basic edge connections (read → copy → write)
-- **`examples/core/template-variables.json`** - Uses `$variable` substitution throughout workflow
-- **`examples/core/error-handling.json`** - Action-based routing with error and retry paths
-- **`examples/core/proxy-mappings.json`** - Interface adaptation using mappings section
+- **`examples/core/minimal.pflow.md`** - Demonstrates minimum requirements (single node workflow)
+- **`examples/core/simple-pipeline.pflow.md`** - Shows basic edge connections (read → copy → write)
+- **`examples/core/template-variables.pflow.md`** - Uses `${variable}` substitution throughout workflow
+- **`examples/core/error-handling.pflow.md`** - Action-based routing with error and retry paths
+- **`examples/core/proxy-mappings.pflow.md`** - Interface adaptation using mappings section
 
-### Invalid Examples (demonstrate validation errors)
-- **`examples/invalid/missing-version.json`** - Missing required ir_version field
-- **`examples/invalid/bad-edge-ref.json`** - Edge references non-existent node
-- **`examples/invalid/duplicate-ids.json`** - Duplicate node ID enforcement
-- **`examples/invalid/wrong-types.json`** - Type validation (string vs array vs object)
+### Invalid Examples (demonstrate markdown parse errors)
+- **`examples/invalid/missing-steps.pflow.md`** - No `## Steps` section
+- **`examples/invalid/missing-type.pflow.md`** - Node without `- type:` param
+- **`examples/invalid/missing-description.pflow.md`** - Entity without prose description
+- **`examples/invalid/unclosed-fence.pflow.md`** - Unclosed code block
+- **`examples/invalid/bare-code-block.pflow.md`** - Code block without tag
+- **`examples/invalid/duplicate-param.pflow.md`** - Same param inline + code block
+- **`examples/invalid/duplicate-ids.pflow.md`** - Two nodes with same heading
+- **`examples/invalid/yaml-syntax-error.pflow.md`** - Bad YAML in params
 
 ## Common Usage Patterns
 
@@ -546,15 +569,15 @@ from pflow.core import WorkflowManager, WorkflowExistsError
 
 workflow_manager = WorkflowManager()
 
-# Save a workflow
+# Save a workflow (pass original markdown content, not IR dict)
 try:
-    path = workflow_manager.save("data-pipeline", workflow_ir, "Processes daily data")
+    path = workflow_manager.save("data-pipeline", markdown_content)
     print(f"Saved to: {path}")
 except WorkflowExistsError:
     print("Workflow already exists!")
 
 # Load for different purposes
-metadata = workflow_manager.load("data-pipeline")  # Full metadata for display
+metadata = workflow_manager.load("data-pipeline")  # Flat metadata dict with IR
 workflow_ir = workflow_manager.load_ir("data-pipeline")  # Just IR for execution
 
 # List all workflows
@@ -601,7 +624,7 @@ try:
 except Exception as e:
     raise WorkflowExecutionError(
         "Failed to execute node",
-        workflow_path=current_workflow_path,
+        workflow_path=str(current_workflow_path),
         original_error=e
     )
 ```
@@ -630,6 +653,7 @@ When adding new features to the IR format:
 Each component has comprehensive test coverage:
 - `tests/test_core/test_exceptions.py` - Exception behavior and formatting
 - `tests/test_core/test_ir_schema.py` - Schema validation edge cases
+- `tests/test_core/test_markdown_parser.py` - Markdown parser (70 tests, 15 categories)
 - `tests/test_core/test_shell_integration.py` - Stdin handling scenarios
 - `tests/test_core/test_ir_examples.py` - Real-world example validation
 - `tests/test_core/test_workflow_validator.py` - Unified validation system tests
@@ -686,12 +710,12 @@ The core module is used throughout pflow:
 
 ## Design Decisions
 
-1. **Dual-Mode Stdin**: Supports both workflow JSON and data input via stdin
+1. **Stdin Routing**: Stdin data routed to workflow inputs via `stdin: true` declarations
 2. **Memory-Aware**: Handles large inputs without exhausting memory (10MB default, temp files for larger)
 3. **Helpful Errors**: ValidationError includes paths and fix suggestions; UserFriendlyError follows WHAT-WHY-HOW structure
 4. **Clean API**: __init__.py provides single import point for consumers
 5. **Type Annotations**: Full type hints for better IDE support
-6. **Format Bridging**: WorkflowManager handles metadata wrapper vs raw IR transformation transparently
+6. **Markdown Storage**: WorkflowManager stores `.pflow.md` files with YAML frontmatter for metadata
 7. **Atomic Operations**: WorkflowManager uses `os.link()` for creates, `os.replace()` for updates
 8. **Kebab-Case Names**: Workflow names use kebab-case for CLI friendliness (e.g., "fix-issue")
 9. **Unified Validation**: WorkflowValidator provides single source of truth for all validation
@@ -709,11 +733,11 @@ The core module is used throughout pflow:
 3. **Test edge cases**: Ensure validation catches all invalid states (missing fields, wrong types, bad references)
 4. **Keep examples updated**: Examples serve as both documentation and tests - maintain them carefully
 5. **Building MVP**: We do not need to worry about backward compatibility for now, no migrations are needed
-6. **Handle stdin modes explicitly**: Always check if stdin contains workflow JSON or data before processing
+6. **Handle stdin modes explicitly**: Stdin is routed to workflow inputs via `stdin: true` declarations
 7. **Preserve error context**: Use appropriate exception classes (though note some are underutilized)
 8. **Use WorkflowManager for all workflow operations**: Don't implement custom file loading/saving
 9. **Test concurrent access**: Always test with real threads when dealing with file operations
-10. **Handle format differences**: Use load() for metadata needs, load_ir() for execution needs
+10. **Handle load variants**: Use load() for metadata needs, load_ir() for execution needs
 11. **Track metrics properly**: Initialize `shared["__llm_calls__"]` list for LLM usage tracking
 12. **Use OutputController**: Create once, reuse throughout CLI command execution
 13. **Update pricing promptly**: Keep MODEL_PRICING current as providers change rates
@@ -747,7 +771,7 @@ The core module is used throughout pflow:
 
 1. **The Race Condition Discovery**: Initial tests were too shallow. Only when proper concurrent tests were written was a critical race condition discovered in WorkflowManager.save(). This was fixed using atomic file operations with os.link().
 
-2. **Format Bridging is Critical**: The system has a fundamental format mismatch - Context Builder expects metadata wrapper while WorkflowExecutor expects raw IR. WorkflowManager transparently handles this transformation.
+2. **Content Preservation is Critical**: Save operations store the original markdown content with YAML frontmatter prepended. The markdown body is never modified by metadata updates. WorkflowManager handles frontmatter read-modify-write transparently.
 
 3. **Test Quality Matters**: Always write real tests with actual threading, file I/O, and error conditions. Mocking too much can hide real bugs.
 

@@ -81,8 +81,8 @@ else:                           → Route to workflow_command()
 --save/--no-save       # Save generated workflow (default: save)
 --cache-planner        # Use cached planner results
 --planner-model        # LLM model for planning (default: auto-detect)
---auto-repair          # Enable auto-repair
---no-update            # Save repairs separately
+--auto-repair          # Enable auto-repair (GATED — Task 107)
+--no-update            # Save repairs separately (GATED — Task 107)
 --validate-only        # Validate workflow without executing (NEW in Task 71)
 workflow (nargs=-1)    # Catch-all for natural language or file path
 ```
@@ -96,16 +96,16 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
    - Workflow resolution (string vs file)
 
 2. **Workflow Resolution** (resolve_workflow, line 209):
-   - Try as file path
+   - Try as file path (`.pflow.md`)
    - Try as saved workflow name
-   - Fall back to natural language
+   - Natural language fallback (GATED — Task 107, planner prompts assume JSON)
 
 3. **Planning Phase**:
    - Create planner flow
    - Generate workflow IR
    - Handle save prompts
 
-4. **Execution Phase** (execute_json_workflow, line 1376):
+4. **Execution Phase** (execute_workflow, line 1376):
    - Setup execution environment
    - Call `execute_workflow()` from execution module
    - Handle results and repairs
@@ -146,16 +146,12 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 
 ### 4. Repair Save Handlers (`repair_save_handlers.py`)
 
-**Purpose**: Route repaired workflow saves based on source type.
+**GATED** (Task 107): Repair system disabled pending markdown format migration. All entry points return early with warning. Code preserved for re-enabling after prompt rewrite.
 
-**Three Save Strategies**:
+**Three Save Strategies** (when re-enabled):
 1. **Saved workflows**: Update via WorkflowManager.update_ir()
 2. **File workflows**: Overwrite original (with .backup)
-3. **Planner workflows**: Save as `workflow-repaired-TIMESTAMP.json`
-
-**--no-update Flag Effect**:
-- Saved: Save to `~/.pflow/workflows/repaired/`
-- File: Create `.repaired.json`
+3. **Planner workflows**: Save as repaired file
 
 ### 5. MCP Commands (`mcp.py`)
 
@@ -227,8 +223,9 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 
 **NEW: Workflow Save** (Task 71, lines 405-442):
 - Name validation: lowercase, numbers, hyphens only (max 30 chars)
-- Auto-normalization: adds `ir_version`, `edges` if missing
-- Optional `--generate-metadata` using `MetadataGenerationNode`
+- Accepts `.pflow.md` files (markdown format — Task 107)
+- `--description` flag removed (description extracted from markdown H1 prose — Task 107)
+- `--generate-metadata` gated (Task 107, planner prompts assume JSON)
 - Optional `--delete-draft` with safety check (only `.pflow/workflows/`)
 - Optional `--force` to overwrite existing workflows
 - Extracted to helper functions for clarity (lines 132-403)
@@ -277,7 +274,7 @@ pflow instructions create
 
 ### 1. Execution Module Integration
 
-**Via execute_json_workflow()** (line 1376):
+**Via execute_workflow()** (line 1376):
 ```python
 from pflow.execution.workflow_execution import execute_workflow
 
@@ -315,9 +312,8 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 
 **Workflow Save Service**: `commands/workflow.py` uses `core/workflow_save_service.py` for workflow save operations
 - `validate_workflow_name()` - Name format validation
-- `load_and_validate_workflow()` - Load and normalize from file
-- `save_workflow_with_options()` - Save with force/overwrite handling
-- `generate_workflow_metadata()` - Optional LLM metadata generation
+- `load_and_validate_workflow()` - Load and parse `.pflow.md` file
+- `save_workflow_with_options(name, markdown_content, *, force, metadata)` - Save with force/overwrite handling
 - `delete_draft_safely()` - Security-aware draft deletion
 
 ### 3. Context Management
@@ -372,12 +368,16 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 - `temp_path`: Path to temp file for large content
 
 **Stdin Routing to Workflow Inputs**:
-Stdin routes to workflow input declared with `"stdin": true`:
+Stdin routes to workflow input declared with `stdin: true`:
 
-```json
-"inputs": {
-  "data": {"type": "string", "required": true, "stdin": true}
-}
+```markdown
+### data
+
+Input data piped via stdin.
+
+- type: string
+- required: true
+- stdin: true
 ```
 
 **Routing Logic** (`_route_stdin_to_params()`, line ~3200):
@@ -413,18 +413,15 @@ Stdin routes to workflow input declared with `"stdin": true`:
 
 ## Key Data Flows
 
-### 1. Natural Language Flow
+### 1. Natural Language Flow (GATED — Task 107)
 ```
 User Input → Planning → Workflow IR → Execution → Display
-             ↓                         ↓
-           Save Prompt              Auto-repair
+             (gated)
 ```
 
 ### 2. File/Saved Workflow Flow
 ```
-Load Workflow → Validation → Execution → Display
-                              ↓
-                          Auto-repair
+Load .pflow.md → parse_markdown() → Validation → Execution → Display
 ```
 
 ### 3. Output Resolution
@@ -441,19 +438,18 @@ Shared Store → Auto-detection → Format (text/json) → Display
 ## Critical Behaviors
 
 ### 1. Workflow Resolution Priority
-1. Check if valid file path
+1. Check if valid file path (`.pflow.md`; `.json` → rejection error)
 2. Try loading from WorkflowManager
-3. Treat as natural language request
+3. Natural language request (GATED — Task 107)
 
 ### 2. Save Behavior
 - **Default**: Prompt to save after planning
 - **--no-save**: Skip save prompt
 - **Auto-save**: Non-interactive mode
 
-**Metadata Generation**:
-- AI-generated by `MetadataGenerationNode`
-- Includes: description, search_keywords, capabilities, typical_use_cases
-- Execution tracking: count, timestamps, params
+**Metadata Generation** (GATED — Task 107):
+- AI-generated metadata disabled pending markdown format migration
+- Execution tracking (count, timestamps, params) stored in YAML frontmatter
 
 ### 3. Interactive Detection
 
@@ -514,16 +510,16 @@ Shared Store → Auto-detection → Format (text/json) → Display
 
 ## Common Usage Patterns
 
-### Natural Language Execution
+### Natural Language Execution (GATED — Task 107)
 ```bash
-pflow "download the latest release notes from github"
-pflow "analyze this CSV and create a summary" < data.csv
+# Planner is gated pending markdown format migration.
+# Use file-based or saved workflow execution instead.
 ```
 
 ### File-based Execution
 ```bash
-pflow workflow.json param1=value1
-pflow ./my-workflow.json --auto-repair
+pflow workflow.pflow.md param1=value1
+pflow ./my-workflow.pflow.md
 ```
 
 ### Saved Workflow Execution
@@ -622,7 +618,7 @@ if validate_only:
 ```
 
 **What Gets Validated**:
-- ✅ Schema compliance (JSON structure, required fields)
+- ✅ Schema compliance (IR structure, required fields)
 - ✅ Data flow correctness (execution order, no cycles)
 - ✅ Template structure (`${node.output}` references)
 - ✅ Node types exist in registry
@@ -679,12 +675,11 @@ def discover_workflows(query: str):
 **Implementation**:
 ```python
 @workflow.command(name="save")
-def save_workflow(file_path, name, description, delete_draft, force, generate_metadata):
-    _validate_workflow_name(name)  # Lines 178-197
-    validated_ir = _load_and_normalize_workflow(file_path)  # Lines 200-302
-    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)  # Lines 305-336
-    saved_path = _save_with_overwrite_check(...)  # Lines 339-376
-    _delete_draft_if_requested(file_path, delete_draft)  # Lines 379-402
+def save_workflow(file_path, name, delete_draft, force):
+    _validate_workflow_name(name)
+    markdown_content, ir = _load_and_normalize_workflow(file_path)  # Parses .pflow.md
+    saved_path = _save_with_overwrite_check(...)  # Passes markdown_content to save
+    _delete_draft_if_requested(file_path, delete_draft)
 ```
 
 **Name Validation Rules** (lines 178-197):
@@ -695,10 +690,9 @@ def save_workflow(file_path, name, description, delete_draft, force, generate_me
 **Auto-Normalization** (lines 291-294):
 - Same as `--validate-only` (ir_version, edges)
 
-**Metadata Generation** (lines 305-336):
-- Uses `MetadataGenerationNode` for rich metadata
-- Generates keywords, capabilities, use cases
-- Optional via `--generate-metadata` flag
+**Metadata Generation** (GATED — Task 107):
+- `--generate-metadata` flag disabled pending markdown format migration
+- Was: `MetadataGenerationNode` for rich metadata (keywords, capabilities, use cases)
 
 **Safety Features** (lines 379-402):
 - `--delete-draft` only works in `.pflow/workflows/` directory

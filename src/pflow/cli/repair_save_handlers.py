@@ -19,6 +19,11 @@ def save_repaired_workflow(ctx: click.Context, repaired_workflow_ir: dict[str, A
     - file: Workflows from JSON files
     - other: Planner-generated workflows
     """
+    # GATED: Repair disabled pending markdown format migration (Task 107).
+    # Repair prompts assume JSON workflow format. Re-enable after prompt rewrite.
+    logger.warning("save_repaired_workflow called but repair is gated (Task 107)")
+    return
+
     source = ctx.obj.get("workflow_source")
     no_update = ctx.obj.get("no_update", False)
 

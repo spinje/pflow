@@ -243,6 +243,11 @@ def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
     Returns:
         Workflow data dict if valid, None otherwise
     """
+    # GATED: Context builder disabled pending markdown format migration (Task 107).
+    # Expects JSON metadata wrapper format. Re-enable after workflow format migration.
+    logger.warning(f"_load_single_workflow skipped (gated for Task 107): {json_file.name}")
+    return None
+
     try:
         # Read and parse JSON
         content = json_file.read_text()
@@ -262,7 +267,7 @@ def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
         workflow_data["name"] = json_file.stem
 
         logger.debug(f"Loaded workflow '{workflow_data['name']}' from {json_file.name}")
-        return workflow_data  # type: ignore[no-any-return]
+        return workflow_data  # type: ignore[no-any-return, unused-ignore]
 
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse JSON from {json_file.name}: {e}")
@@ -447,10 +452,8 @@ def _extract_workflow_description(workflow: dict[str, Any]) -> str:
     Returns:
         Description string or empty string
     """
-    # Get description from rich metadata or fallback to basic description
-    if "rich_metadata" in workflow and "description" in workflow["rich_metadata"]:
-        return str(workflow["rich_metadata"]["description"])
-    elif workflow.get("description", "").strip():
+    # Get description from workflow metadata (flat structure, no rich_metadata wrapper)
+    if workflow.get("description", "").strip():
         return str(workflow["description"]).strip()
     return ""
 
@@ -462,10 +465,9 @@ def _format_workflow_keywords(workflow: dict[str, Any], markdown_sections: list[
         workflow: Workflow metadata dict
         markdown_sections: List to append formatted keywords to
     """
-    if "rich_metadata" in workflow and "search_keywords" in workflow["rich_metadata"]:
-        keywords = workflow["rich_metadata"]["search_keywords"]
-        if keywords:
-            markdown_sections.append(f"Keywords: {', '.join(keywords)}")
+    keywords = workflow.get("search_keywords")
+    if keywords:
+        markdown_sections.append(f"Keywords: {', '.join(keywords)}")
 
 
 def _format_workflow_capabilities(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
@@ -475,12 +477,11 @@ def _format_workflow_capabilities(workflow: dict[str, Any], markdown_sections: l
         workflow: Workflow metadata dict
         markdown_sections: List to append formatted capabilities to
     """
-    if "rich_metadata" in workflow and "capabilities" in workflow["rich_metadata"]:
-        capabilities = workflow["rich_metadata"]["capabilities"]
-        if capabilities and len(capabilities) <= 3:  # Limit to avoid context bloat
-            markdown_sections.append("Capabilities:")
-            for capability in capabilities[:3]:  # Only show first 3
-                markdown_sections.append(f"- {capability}")
+    capabilities = workflow.get("capabilities")
+    if capabilities and len(capabilities) <= 3:  # Limit to avoid context bloat
+        markdown_sections.append("Capabilities:")
+        for capability in capabilities[:3]:  # Only show first 3
+            markdown_sections.append(f"- {capability}")
 
 
 def _format_single_workflow(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
@@ -774,25 +775,14 @@ def build_workflows_context(
             if node_flow:
                 entry_parts.append(f"   **Flow:** `{node_flow}`")
 
-        # Look for rich metadata in both places:
-        # 1. At wrapper level (for workflows saved after metadata generation)
-        # 2. Inside IR (for newly generated workflows)
-        metadata = workflow.get("rich_metadata", {})
-        if not metadata and ir:
-            # Fallback to checking inside IR for backwards compatibility
-            metadata = ir.get("metadata", {})
+        # Metadata fields are at top level (flat structure, no rich_metadata wrapper)
+        capabilities = workflow.get("capabilities", [])
+        if capabilities:
+            entry_parts.append(f"   **Can:** {', '.join(capabilities)}")
 
-        # Add metadata in compact format if present
-        if metadata:
-            # Capabilities on one line
-            capabilities = metadata.get("capabilities", [])
-            if capabilities:
-                entry_parts.append(f"   **Can:** {', '.join(capabilities)}")
-
-            # Use cases on one line
-            use_cases = metadata.get("typical_use_cases", [])
-            if use_cases:
-                entry_parts.append(f"   **For:** {', '.join(use_cases)}")
+        use_cases = workflow.get("typical_use_cases", [])
+        if use_cases:
+            entry_parts.append(f"   **For:** {', '.join(use_cases)}")
 
         sections.append("\n".join(entry_parts))
 

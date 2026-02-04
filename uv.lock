@@ -766,6 +766,7 @@ dependencies = [
     { name = "llm-gemini" },
     { name = "mcp", extra = ["cli"] },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "requests" },
 ]
 
@@ -795,6 +796,7 @@ requires-dist = [
     { name = "llm-gemini", specifier = ">=0.28.1" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.17.0" },
     { name = "pydantic" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "requests", specifier = ">=2.32.5" },
 ]
 
