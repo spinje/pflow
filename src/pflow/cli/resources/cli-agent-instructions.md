@@ -249,7 +249,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 ### Node Type Selection (pflow-Specific)
 
 **Which pflow node to use:**
-- **Data transformation** (filter, reshape, merge, compute) → `code` node with Python
+- **Data transformation** (filter, reshape, merge, compute, string parsing) → `code` node with Python
   - Receives native objects from upstream nodes (no serialization)
   - Supports multiple inputs from different nodes
   - Type-annotated Python code for clarity and validation
@@ -259,6 +259,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
   - Any program where the exit code or side effect is the point
   - Use macOS-compatible (BSD) commands, not GNU-specific extensions
   - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
+  - **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
 - **Unstructured data / interpretation** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
 - **Binary/streaming data** → `shell` node with curl
