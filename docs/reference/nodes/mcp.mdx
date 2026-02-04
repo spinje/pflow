@@ -60,9 +60,9 @@ All MCP nodes write to:
 
 For dict results, top-level fields are also extracted directly:
 
+If a tool returns `{"issue_url": "...", "issue_number": 123}`, the shared store contains:
+
 ```json
-// Tool returns: {"issue_url": "...", "issue_number": 123}
-// Shared store contains:
 {
   "result": {"issue_url": "...", "issue_number": 123},
   "github_create_issue_result": {"issue_url": "...", "issue_number": 123},
@@ -73,28 +73,23 @@ For dict results, top-level fields are also extracted directly:
 
 ## Example workflow
 
-```json
-{
-  "nodes": [
-    {
-      "id": "create_issue",
-      "type": "mcp-github-create_issue",
-      "params": {
-        "repository": "myorg/myrepo",
-        "title": "Bug: ${error_summary}",
-        "body": "${error_details}"
-      }
-    },
-    {
-      "id": "notify",
-      "type": "mcp-slack-send_message",
-      "params": {
-        "channel": "#alerts",
-        "text": "Created issue: ${create_issue.issue_url}"
-      }
-    }
-  ]
-}
+```markdown
+### create_issue
+
+Create a GitHub issue from the error summary.
+
+- type: mcp-github-create_issue
+- repository: myorg/myrepo
+- title: "Bug: ${error_summary}"
+- body: ${error_details}
+
+### notify
+
+Send a Slack notification with the issue link.
+
+- type: mcp-slack-send_message
+- channel: "#alerts"
+- text: "Created issue: ${create_issue.issue_url}"
 ```
 
 ## Setup

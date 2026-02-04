@@ -24,29 +24,25 @@ Your agent uses batch processing when tasks involve:
 
 A `batch` configuration is added to a node:
 
-```json
-{
-  "nodes": [
-    {
-      "id": "list_issues",
-      "type": "http",
-      "params": {
-        "url": "https://api.github.com/repos/owner/repo/issues"
-      }
-    },
-    {
-      "id": "classify",
-      "type": "llm",
-      "batch": {
-        "items": "${list_issues.response}",
-        "as": "issue"
-      },
-      "params": {
-        "prompt": "Classify this issue: ${issue.title}"
-      }
-    }
-  ]
-}
+```markdown
+## Steps
+
+### list_issues
+
+Fetch issues from the GitHub API.
+
+- type: http
+- url: https://api.github.com/repos/owner/repo/issues
+
+### classify
+
+Classify each issue by type.
+
+- type: llm
+- prompt: Classify this issue: ${issue.title}
+- batch:
+    items: ${list_issues.response}
+    as: issue
 ```
 
 This runs the `classify` node once for each issue. The `as: "issue"` creates a template variable `${issue}` that changes with each iteration.
@@ -69,13 +65,16 @@ This runs the `classify` node once for each issue. The `as: "issue"` creates a t
 
 Items are processed one at a time, in order:
 
-```json
-{
-  "batch": {
-    "items": "${files}",
-    "as": "file"
-  }
-}
+```markdown
+### process
+
+Read each file sequentially.
+
+- type: read-file
+- file_path: ${file}
+- batch:
+    items: ${files}
+    as: file
 ```
 
 This mode is chosen when:
@@ -87,15 +86,18 @@ This mode is chosen when:
 
 Multiple items are processed concurrently:
 
-```json
-{
-  "batch": {
-    "items": "${files}",
-    "as": "file",
-    "parallel": true,
-    "max_concurrent": 5
-  }
-}
+```markdown
+### process
+
+Read each file in parallel.
+
+- type: read-file
+- file_path: ${file}
+- batch:
+    items: ${files}
+    as: file
+    parallel: true
+    max_concurrent: 5
 ```
 
 This mode is chosen when:
@@ -113,14 +115,17 @@ This mode is chosen when:
 
 Execution stops immediately on first error:
 
-```json
-{
-  "batch": {
-    "items": "${files}",
-    "as": "file",
-    "error_handling": "fail_fast"
-  }
-}
+```markdown
+### process
+
+Process each file, stopping on first error.
+
+- type: read-file
+- file_path: ${file}
+- batch:
+    items: ${files}
+    as: file
+    error_handling: fail_fast
 ```
 
 This mode is chosen when:
@@ -131,14 +136,17 @@ This mode is chosen when:
 
 All items are processed, with errors collected:
 
-```json
-{
-  "batch": {
-    "items": "${files}",
-    "as": "file",
-    "error_handling": "continue"
-  }
-}
+```markdown
+### process
+
+Process each file, continuing on errors.
+
+- type: read-file
+- file_path: ${file}
+- batch:
+    items: ${files}
+    as: file
+    error_handling: continue
 ```
 
 This mode is chosen when:
@@ -165,17 +173,20 @@ The node output includes error details in this mode:
 
 Failed items can be automatically retried:
 
-```json
-{
-  "batch": {
-    "items": "${api_calls}",
-    "as": "call",
-    "parallel": true,
-    "max_retries": 3,
-    "retry_wait": 2,
-    "error_handling": "continue"
-  }
-}
+```markdown
+### process
+
+Process each API call with retries and error tolerance.
+
+- type: http
+- url: ${call.url}
+- batch:
+    items: ${api_calls}
+    as: call
+    parallel: true
+    max_retries: 3
+    retry_wait: 2
+    error_handling: continue
 ```
 
 This configuration retries each failed item up to 3 times, waiting 2 seconds between attempts. Common in scenarios involving:
@@ -230,104 +241,102 @@ Each result contains `item` (the original input) plus the inner node's outputs, 
 
 Subsequent nodes can access results:
 
-```json
-{
-  "prompt": "Summarize these classifications: ${classify.results}"
-}
+```markdown
+### summarize
+
+Summarize all the classifications.
+
+- type: llm
+- prompt: Summarize these classifications: ${classify.results}
 ```
 
 ## Examples
 
 ### Process files from directory listing
 
-```json
-{
-  "nodes": [
-    {
-      "id": "list",
-      "type": "shell",
-      "params": {
-        "command": "ls -1 *.md"
-      }
-    },
-    {
-      "id": "split",
-      "type": "shell",
-      "params": {
-        "stdin": "${list.stdout}",
-        "command": "tr '\\n' ',' | jq -Rc 'split(\",\") | map(select(length > 0))'"
-      }
-    },
-    {
-      "id": "read_all",
-      "type": "read-file",
-      "batch": {
-        "items": "${split.stdout}",
-        "as": "filename",
-        "parallel": true,
-        "max_concurrent": 10
-      },
-      "params": {
-        "file_path": "${filename}"
-      }
-    }
-  ]
-}
+````markdown
+## Steps
+
+### list
+
+List all markdown files.
+
+- type: shell
+
+```shell command
+ls -1 *.md
 ```
+
+### split
+
+Convert the file listing into a JSON array.
+
+- type: shell
+- stdin: ${list.stdout}
+
+```shell command
+tr '\n' ',' | jq -Rc 'split(",") | map(select(length > 0))'
+```
+
+### read_all
+
+Read each file in parallel.
+
+- type: read-file
+- file_path: ${filename}
+- batch:
+    items: ${split.stdout}
+    as: filename
+    parallel: true
+    max_concurrent: 10
+````
 
 ### API pagination pattern
 
-```json
-{
-  "nodes": [
-    {
-      "id": "get_pages",
-      "type": "shell",
-      "params": {
-        "command": "echo '[1,2,3,4,5]'"
-      }
-    },
-    {
-      "id": "fetch_all",
-      "type": "http",
-      "batch": {
-        "items": "${get_pages.stdout}",
-        "as": "page",
-        "parallel": true,
-        "max_concurrent": 3
-      },
-      "params": {
-        "url": "https://api.example.com/items?page=${page}"
-      }
-    }
-  ]
-}
+````markdown
+## Steps
+
+### get_pages
+
+Generate a list of page numbers.
+
+- type: shell
+
+```shell command
+echo '[1,2,3,4,5]'
 ```
+
+### fetch_all
+
+Fetch each page of results in parallel.
+
+- type: http
+- url: https://api.example.com/items?page=${page}
+- batch:
+    items: ${get_pages.stdout}
+    as: page
+    parallel: true
+    max_concurrent: 3
+````
 
 ### Fault-tolerant LLM processing
 
-```json
-{
-  "nodes": [
-    {
-      "id": "process",
-      "type": "llm",
-      "batch": {
-        "items": "${documents}",
-        "as": "doc",
-        "parallel": true,
-        "max_concurrent": 5,
-        "max_retries": 3,
-        "retry_wait": 2,
-        "error_handling": "continue"
-      },
-      "params": {
-        "prompt": "Summarize: ${doc.content}",
-        "model": "gpt-4"
-      }
-    }
-  ]
-}
+```markdown
+### process
+
+Summarize each document with retries and error tolerance.
+
+- type: llm
+- prompt: Summarize: ${doc.content}
+- model: gpt-4
+- batch:
+    items: ${documents}
+    as: doc
+    parallel: true
+    max_concurrent: 5
+    max_retries: 3
+    retry_wait: 2
+    error_handling: continue
 ```
 
 ## How your agent chooses settings

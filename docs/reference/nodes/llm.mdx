@@ -120,27 +120,27 @@ ollama pull llama3.2
 
 OpenRouter models use the `openrouter/provider/model` format:
 
-```json
-{
-  "type": "llm",
-  "params": {
-    "model": "openrouter/anthropic/claude-sonnet-4-5",
-    "prompt": "Summarize this"
-  }
-}
-```
+````markdown
+### summarize
+
+Summarize content using OpenRouter.
+
+- type: llm
+- model: openrouter/anthropic/claude-sonnet-4-5
+- prompt: Summarize this
+````
 
 Ollama models use the model name directly:
 
-```json
-{
-  "type": "llm",
-  "params": {
-    "model": "llama3.2",
-    "prompt": "Summarize this"
-  }
-}
-```
+````markdown
+### summarize
+
+Summarize content using a local model.
+
+- type: llm
+- model: llama3.2
+- prompt: Summarize this
+````
 
 See the [llm plugin directory](https://llm.datasette.io/en/stable/plugins/directory.html) for more providers including Mistral, Bedrock, and other local model options.
 
@@ -148,16 +148,15 @@ See the [llm plugin directory](https://llm.datasette.io/en/stable/plugins/direct
 
 The node automatically detects and parses JSON responses:
 
-```json
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {
-    "prompt": "List 3 colors as JSON array",
-    "model": "gpt-4o-mini"
-  }
-}
-```
+````markdown
+### analyze
+
+List colors as structured data.
+
+- type: llm
+- prompt: List 3 colors as JSON array
+- model: gpt-4o-mini
+````
 
 If the response is valid JSON (including markdown-wrapped JSON), `response` will be the parsed object/array. Otherwise, it's the raw string.
 
@@ -165,17 +164,16 @@ If the response is valid JSON (including markdown-wrapped JSON), `response` will
 
 For vision-capable models, pass image URLs or local file paths:
 
-```json
-{
-  "id": "describe",
-  "type": "llm",
-  "params": {
-    "prompt": "What's in this image?",
-    "model": "gpt-5.2",
-    "images": ["photo.jpg"]
-  }
-}
-```
+````markdown
+### describe
+
+Describe the contents of a photo.
+
+- type: llm
+- prompt: What's in this image?
+- model: gpt-5.2
+- images: ["photo.jpg"]
+````
 
 Supported formats: JPEG, PNG, GIF, WebP, PDF
 
@@ -187,75 +185,55 @@ Images can be:
 
 ### Basic prompt
 
-```json
-{
-  "nodes": [
-    {
-      "id": "summarize",
-      "type": "llm",
-      "params": {
-        "prompt": "Summarize: ${read.content}",
-        "model": "gpt-4o-mini"
-      }
-    }
-  ]
-}
-```
+````markdown
+### summarize
+
+Summarize the content from the previous step.
+
+- type: llm
+- prompt: Summarize: ${read.content}
+- model: gpt-4o-mini
+````
 
 ### With system prompt
 
-```json
-{
-  "nodes": [
-    {
-      "id": "translate",
-      "type": "llm",
-      "params": {
-        "system": "You are a translator. Respond only with the translation.",
-        "prompt": "Translate to Spanish: ${input.text}",
-        "temperature": 0.3
-      }
-    }
-  ]
-}
-```
+````markdown
+### translate
+
+Translate the input text to Spanish.
+
+- type: llm
+- system: You are a translator. Respond only with the translation.
+- prompt: Translate to Spanish: ${input.text}
+- temperature: 0.3
+````
 
 ### Structured output
 
-```json
-{
-  "nodes": [
-    {
-      "id": "extract",
-      "type": "llm",
-      "params": {
-        "system": "Extract entities as JSON with keys: people, places, organizations",
-        "prompt": "${document.content}"
-      }
-    }
-  ]
-}
-```
+````markdown
+### extract
+
+Extract named entities from the document.
+
+- type: llm
+- system: Extract entities as JSON with keys: people, places, organizations
+- prompt: ${document.content}
+````
 
 The response will be automatically parsed if it's valid JSON.
 
 ### Image analysis
 
-```json
-{
-  "nodes": [
-    {
-      "id": "analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Describe the main elements in this image",
-        "model": "gpt-5.2",
-        "images": ["${file_path}"]
-      }
-    }
-  ]
-}
-```
+````markdown
+### analyze
+
+Analyze the contents of a user-provided image.
+
+- type: llm
+- prompt: Describe the main elements in this image
+- model: gpt-5.2
+- images: ["${file_path}"]
+````
 
 ## Error handling
 

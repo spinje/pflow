@@ -64,103 +64,76 @@ If `method` is not specified:
 
 ### GET request
 
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "http",
-      "params": {
-        "url": "https://api.example.com/users"
-      }
-    }
-  ]
-}
+```markdown
+### fetch
+
+Fetch users from the API.
+
+- type: http
+- url: https://api.example.com/users
 ```
 
 ### POST with JSON body
 
-```json
-{
-  "nodes": [
-    {
-      "id": "create",
-      "type": "http",
-      "params": {
-        "url": "https://api.example.com/users",
-        "body": {
-          "name": "John",
-          "email": "john@example.com"
-        }
-      }
-    }
-  ]
-}
+```markdown
+### create
+
+Create a new user via POST request.
+
+- type: http
+- url: https://api.example.com/users
+- body:
+    name: John
+    email: john@example.com
 ```
 
 ### With authentication
 
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch_protected",
-      "type": "http",
-      "params": {
-        "url": "https://api.example.com/private",
-        "auth_token": "${api_token}"
-      }
-    }
-  ]
-}
+```markdown
+### fetch_protected
+
+Fetch data from a protected API endpoint.
+
+- type: http
+- url: https://api.example.com/private
+- auth_token: ${api_token}
 ```
 
 ### With query parameters
 
-```json
-{
-  "nodes": [
-    {
-      "id": "search",
-      "type": "http",
-      "params": {
-        "url": "https://api.example.com/search",
-        "params": {
-          "q": "pflow",
-          "page": 1,
-          "limit": 10
-        }
-      }
-    }
-  ]
-}
+```markdown
+### search
+
+Search the API with query parameters.
+
+- type: http
+- url: https://api.example.com/search
+- params:
+    q: pflow
+    page: 1
+    limit: 10
 ```
 
 Results in: `https://api.example.com/search?q=pflow&page=1&limit=10`
 
 ### Download binary file
 
-```json
-{
-  "nodes": [
-    {
-      "id": "download",
-      "type": "http",
-      "params": {
-        "url": "https://example.com/image.png"
-      }
-    },
-    {
-      "id": "save",
-      "type": "write-file",
-      "params": {
-        "file_path": "downloaded.png",
-        "content": "${download.response}",
-        "content_is_binary": "${download.response_is_binary}"
-      }
-    }
-  ]
-}
+```markdown
+### download
+
+Download a binary image file.
+
+- type: http
+- url: https://example.com/image.png
+
+### save
+
+Save the downloaded file to disk.
+
+- type: write-file
+- file_path: downloaded.png
+- content: ${download.response}
+- content_is_binary: ${download.response_is_binary}
 ```
 
 ## Error handling

@@ -101,29 +101,26 @@ The `sandbox` parameter controls command execution isolation. See the [Claude Ag
 
 Use `output_schema` to get structured JSON responses:
 
-```json
-{
-  "id": "review",
-  "type": "claude-code",
-  "params": {
-    "prompt": "Review this code for security issues: ${code.content}",
-    "output_schema": {
-      "risk_level": {
-        "type": "str",
-        "description": "high, medium, or low"
-      },
-      "issues": {
-        "type": "list",
-        "description": "List of security issues found"
-      },
-      "score": {
-        "type": "int",
-        "description": "Security score 1-10"
-      }
-    }
-  }
-}
+````markdown
+### review
+
+Review code for security issues and return structured results.
+
+- type: claude-code
+- prompt: Review this code for security issues: ${code.content}
+
+```yaml output_schema
+risk_level:
+  type: str
+  description: high, medium, or low
+issues:
+  type: list
+  description: List of security issues found
+score:
+  type: int
+  description: Security score 1-10
 ```
+````
 
 The response is automatically parsed and available as a dict:
 
@@ -147,69 +144,65 @@ ${review.result.score}       → 6
 
 ### Code generation
 
-```json
-{
-  "nodes": [
-    {
-      "id": "generate",
-      "type": "claude-code",
-      "params": {
-        "prompt": "Write a Python function to calculate Fibonacci numbers",
-        "max_turns": 1
-      }
-    }
-  ]
-}
+```markdown
+### generate
+
+Write a Python function to calculate Fibonacci numbers.
+
+- type: claude-code
+- prompt: Write a Python function to calculate Fibonacci numbers
+- max_turns: 1
 ```
 
 ### Code review with structured output
 
-```json
-{
-  "nodes": [
-    {
-      "id": "read",
-      "type": "read-file",
-      "params": { "file_path": "src/auth.py" }
-    },
-    {
-      "id": "review",
-      "type": "claude-code",
-      "params": {
-        "prompt": "Review this authentication code: ${read.content}",
-        "output_schema": {
-          "issues": { "type": "list", "description": "Problems found" },
-          "suggestions": { "type": "list", "description": "Improvements" },
-          "approved": { "type": "bool", "description": "Ready for production" }
-        }
-      }
-    }
-  ]
-}
+````markdown
+### read
+
+Read the authentication source code.
+
+- type: read-file
+- file_path: src/auth.py
+
+### review
+
+Review the authentication code and return structured findings.
+
+- type: claude-code
+- prompt: Review this authentication code: ${read.content}
+
+```yaml output_schema
+issues:
+  type: list
+  description: Problems found
+suggestions:
+  type: list
+  description: Improvements
+approved:
+  type: bool
+  description: Ready for production
 ```
+````
 
 ### File modification with sandbox
 
-```json
-{
-  "nodes": [
-    {
-      "id": "refactor",
-      "type": "claude-code",
-      "params": {
-        "prompt": "Refactor the User class to use dataclasses",
-        "cwd": "/path/to/project",
-        "allowed_tools": ["Read", "Write", "Edit"],
-        "sandbox": {
-          "enabled": true,
-          "autoAllowBashIfSandboxed": true,
-          "excludedCommands": ["docker"]
-        }
-      }
-    }
-  ]
-}
+````markdown
+### refactor
+
+Refactor the User class to use dataclasses.
+
+- type: claude-code
+- prompt: Refactor the User class to use dataclasses
+- cwd: /path/to/project
+- allowed_tools: ["Read", "Write", "Edit"]
+
+```yaml sandbox
+enabled: true
+autoAllowBashIfSandboxed: true
+excludedCommands:
+  - docker
 ```
+````
 
 ## Tool permissions
 

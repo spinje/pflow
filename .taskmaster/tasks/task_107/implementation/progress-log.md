@@ -772,3 +772,24 @@ Files modified:
 - `tests/test_execution/formatters/test_workflow_list_formatter.py` (1 assertion fix)
 
 Status: **All Task 107 work complete.** Phase 5 done (cli-agent-instructions.md + cli-basic-usage.md). Agent-friendly command output implemented and reviewed. 3608 passed, 516 skipped, 0 failed.
+
+## Entry 21: User-facing docs update (docs/ directory)
+
+### Full docs migration (Option A from plan)
+
+All 12 files with JSON workflow examples in `docs/` were updated to use `.pflow.md` markdown format. ~40 JSON workflow syntax examples converted across node references, how-it-works guides, CLI references, and guides. Changelog entry was skipped per plan.
+
+### Philosophical framing edits
+
+Added "executable documentation" framing to two files:
+
+1. **`docs/index.mdx`**: New "Workflows are documentation" section between "How pflow helps" and "Two ways to run workflows". Four sentences: `.pflow.md` is markdown that executes, renders as documentation on GitHub, runs as pipeline with pflow. No separate docs to maintain.
+
+2. **`docs/guides/using-pflow.mdx`**: Reframed line 11 from "markdown files with a simple structure" to "readable documents that double as executable pipelines" — acknowledges readability and rendering everywhere (GitHub, editors, markdown viewers) without disrupting the "your agent handles it" message.
+
+Files modified:
+- `docs/index.mdx`
+- `docs/guides/using-pflow.mdx`
+- ~10 other docs files (JSON→markdown migration by prior session)
+
+Status: All Task 107 work complete including user-facing documentation.
