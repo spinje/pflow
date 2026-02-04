@@ -650,7 +650,7 @@ def _check_param_code_block_conflicts(entity: _Entity, all_params: dict[str, Any
     """Check for params defined both inline and as code blocks."""
     code_param_names = {b.param_name for b in entity.code_blocks if b.param_name}
     for param_name in code_param_names:
-        if param_name in all_params and param_name not in ("batch",):
+        if param_name in all_params:
             block = next(b for b in entity.code_blocks if b.param_name == param_name)
             raise MarkdownParseError(
                 f"Parameter '{param_name}' is defined both inline and as a code block.",
@@ -705,6 +705,10 @@ def _build_node_dict(entity: _Entity) -> dict[str, Any]:
                 "    - type: shell"
             ),
         )
+
+    # Extract batch (goes to top-level, not params)
+    if "batch" in all_params:
+        node["batch"] = all_params.pop("batch")
 
     # Purpose from prose
     prose = _get_prose(entity)

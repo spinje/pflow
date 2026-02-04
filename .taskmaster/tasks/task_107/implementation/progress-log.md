@@ -688,3 +688,37 @@ Also fixed: stale `show_structure` command reference → `registry run`, "Step 1
 Files modified: `src/pflow/cli/resources/cli-agent-instructions.md`
 
 Status: Phase 5 cli-agent-instructions.md content complete pending parser fix for inline batch routing. Still need to check `cli-basic-usage.md`.
+
+## Entry 19: Parser fix — inline `- batch:` routing to top-level
+
+### Problem
+
+The parser only routed `batch` to top-level `node["batch"]` from `yaml batch` code blocks (in `_route_code_blocks_to_node()`). Inline `- batch:` with YAML nesting went to `params.batch` instead — meaning batch processing silently wouldn't work for agents following the updated instructions that show `- batch:` inline for simple cases.
+
+### Fix (2 production edits)
+
+1. **`_build_node_dict()`** (line 709-711): Added `batch` pop from `all_params` to `node["batch"]`, same pattern as the existing `type` extraction. This ensures inline `- batch:` routes to the correct top-level field.
+
+2. **`_check_param_code_block_conflicts()`** (line 653): Removed the `batch` exclusion from the duplicate check. Previously `batch` was excluded because inline went to `params` and code block went to `node` (different targets). Now both target `node["batch"]`, so having both is a genuine conflict and should error.
+
+### Tests added (3 new)
+
+- `test_inline_batch_to_top_level` — nested YAML `- batch:` with `items` + `parallel` routes to top-level, not params
+- `test_inline_batch_simple_to_top_level` — simple `- batch:` with just `items` routes correctly
+- `test_inline_and_code_block_batch_is_error` — both inline and `yaml batch` code block on same node raises `MarkdownParseError`
+
+### Stale test fix
+
+`test_instructions.py` assertion "Two Fundamental Concepts - Edges vs Templates" → "Step Order vs Templates" to match Entry 18's rename.
+
+### Verification
+
+- `make test`: 3602 passed, 516 skipped, 0 failed
+- `make check`: all pass (ruff, ruff-format, mypy, deptry clean)
+
+Files modified:
+- `src/pflow/core/markdown_parser.py` (2 edits)
+- `tests/test_core/test_markdown_parser.py` (3 new tests)
+- `tests/test_cli/test_instructions.py` (1 assertion fix)
+
+Status: Parser fix complete. Phase 5 cli-agent-instructions.md fully unblocked. Still need to check `cli-basic-usage.md`.

@@ -960,6 +960,84 @@ class TestParamRouting:
         # batch should NOT be in params
         assert "batch" not in node.get("params", {})
 
+    def test_inline_batch_to_top_level(self) -> None:
+        """Inline - batch: with nested YAML goes to top-level, not params."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### process
+
+            Processes items in batch.
+
+            - type: llm
+            - batch:
+                items: ${data.stdout}
+                parallel: true
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert "batch" in node
+        assert node["batch"]["items"] == "${data.stdout}"
+        assert node["batch"]["parallel"] is True
+        # batch should NOT be in params
+        assert "batch" not in node.get("params", {})
+
+    def test_inline_batch_simple_to_top_level(self) -> None:
+        """Inline - batch: with simple items template goes to top-level."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### process
+
+            Processes items.
+
+            - type: shell
+            - batch:
+                items: ${fetch.stdout}
+
+            ```shell command
+            echo ${item}
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert "batch" in node
+        assert node["batch"]["items"] == "${fetch.stdout}"
+        assert "batch" not in node.get("params", {})
+
+    def test_inline_and_code_block_batch_is_error(self) -> None:
+        """Having both inline - batch: and yaml batch code block is a conflict."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### process
+
+            Processes items.
+
+            - type: llm
+            - batch:
+                items: ${data.stdout}
+
+            ```yaml batch
+            items: ${other.stdout}
+            parallel: true
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match="defined both inline and as a code block"):
+            parse_markdown(content)
+
     def test_node_prose_to_purpose(self) -> None:
         result = parse_markdown(MINIMAL_WORKFLOW)
         node = result.ir["nodes"][0]
