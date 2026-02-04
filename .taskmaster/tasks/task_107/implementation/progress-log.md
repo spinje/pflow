@@ -793,3 +793,35 @@ Files modified:
 - ~10 other docs files (JSON→markdown migration by prior session)
 
 Status: All Task 107 work complete including user-facing documentation.
+
+## Entry 22: Architecture folder audit + updates
+
+### Investigation
+
+Launched 3 parallel `pflow-codebase-searcher` agents to audit `architecture/` for stale JSON workflow references, outdated code patterns, and stale inline examples. Found ~40+ stale references across 8 files.
+
+### Fixes (4 parallel forks)
+
+| Fork | Files | Changes |
+|------|-------|---------|
+| A | `overview.md`, `pflow-pocketflow-integration-guide.md`, `core-concepts/shared-store.md` | 19 edits: format refs → .pflow.md, "JSON Workflows" section → "Markdown Workflows", planner → "gated", validation layer count fixed, IR context note on shared-store examples |
+| B | `guides/json-workflows.md`, `reference/ir-schema.md` | Deprecation notice on json-workflows.md, IR clarifying note on ir-schema.md, all example file refs .json → .pflow.md, invalid examples updated to actual 8 markdown files |
+| C | `reference/template-variables.md` | 5 CLI commands .json → .pflow.md, 6 repair gating notes, clarifying note about IR format vs authored format |
+| D | `architecture/architecture.md`, `guides/mcp-guide.md` | New markdown_parser.py docs section, validation layers updated, repair gating strengthened, MCP parameter changes noted, metadata frontmatter documented, 2 workflow examples converted to .pflow.md |
+
+### Verification
+
+- `make test`: **3608 passed, 516 skipped, 0 failed**
+- `make check`: **all pass** (ruff, ruff-format, mypy, deptry clean)
+
+Files modified:
+- `architecture/overview.md`
+- `architecture/pflow-pocketflow-integration-guide.md`
+- `architecture/core-concepts/shared-store.md`
+- `architecture/guides/json-workflows.md`
+- `architecture/guides/mcp-guide.md`
+- `architecture/reference/ir-schema.md`
+- `architecture/reference/template-variables.md`
+- `architecture/architecture.md`
+
+Status: Architecture folder fully updated. All Task 107 work complete.
