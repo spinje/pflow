@@ -6,6 +6,7 @@ Focus on the contract: repair flag behavior, resume capability, recursion limits
 
 from unittest.mock import MagicMock, patch
 
+from pflow.core.workflow_status import WorkflowStatus
 from pflow.execution.workflow_execution import execute_workflow
 
 
@@ -91,7 +92,7 @@ class TestWorkflowExecution:
                     assert "shared_store" in kwargs or len(args) > 3
 
     def test_repair_disabled_returns_failure(self):
-        """Test that repair is skipped when disabled."""
+        """Test that repair is skipped when disabled but validation still runs."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "node1", "type": "test-node"}],
@@ -105,15 +106,19 @@ class TestWorkflowExecution:
             mock_result.errors = [{"message": "Error"}]
             mock_executor.execute_workflow.return_value = mock_result
 
-            with patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair:
-                result = execute_workflow(
-                    workflow_ir=workflow_ir,
-                    execution_params={},
-                    enable_repair=False,  # Disabled
-                )
+            # Must mock validator since validation now always runs
+            with patch("pflow.core.workflow_validator.WorkflowValidator") as MockValidator:
+                MockValidator.validate.return_value = ([], [])  # No validation errors
 
-                assert result.success is False
-                mock_repair.assert_not_called()
+                with patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair:
+                    result = execute_workflow(
+                        workflow_ir=workflow_ir,
+                        execution_params={},
+                        enable_repair=False,  # Disabled
+                    )
+
+                    assert result.success is False
+                    mock_repair.assert_not_called()
 
     def test_repair_failure_returns_original_error(self):
         """Test that repair failure returns the original error."""
@@ -272,3 +277,36 @@ class TestWorkflowExecution:
                                 if kwargs.get("context") == "resume":
                                     assert True  # Found resume context
                                     break
+
+    def test_repair_disabled_validates_before_execution(self):
+        """Test that enable_repair=False still validates and catches errors before execution."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "echo-hello", "type": "shell", "params": {"command": "echo", "args": ["hello"]}},
+                {
+                    "id": "bad-ref",
+                    "type": "shell",
+                    "params": {"command": "echo", "args": ["${fake-node.stdout}"]},
+                },
+            ],
+            "edges": [{"from": "echo-hello", "to": "bad-ref", "action": "default"}],
+        }
+
+        result = execute_workflow(
+            workflow_ir=workflow_ir,
+            execution_params={},
+            enable_repair=False,
+        )
+
+        # Must fail at validation, not runtime
+        assert result.success is False
+        assert result.status == WorkflowStatus.FAILED
+        assert result.action_result == "validation_failed"
+
+        # No nodes should have executed (no side effects)
+        assert result.shared_after == {}
+
+        # Error should mention the bad template reference
+        assert len(result.errors) > 0
+        assert any("fake-node" in err["message"] for err in result.errors)
