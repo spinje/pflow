@@ -840,3 +840,16 @@ Files modified:
 - `make check`: all pass
 
 Status: Fix complete. PR ready for merge.
+
+## Entry 24: MCP agent instructions — full markdown migration
+
+Updated MCP agent instruction files from JSON workflow examples to `.pflow.md` format. This was identified as technical debt in Entry 13 — agents using the MCP server's built-in instructions would produce invalid JSON workflows.
+
+Files modified:
+- `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` — full rewrite of workflow examples, save commands, and building guides from JSON to .pflow.md format
+- `src/pflow/mcp_server/resources/instructions/mcp-sandbox-agent-instructions.md` — same migration for sandbox mode instructions
+- `src/pflow/mcp_server/resources/instruction_resources.py` — updated instruction assembly/formatting
+- `src/pflow/cli/resources/cli-agent-instructions.md` — minor fix
+- `tests/test_mcp_server/test_instruction_resources.py` — updated test assertions
+
+Status: MCP instruction debt resolved. All agent-facing instruction surfaces now use .pflow.md format.

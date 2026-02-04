@@ -1768,7 +1768,7 @@ I need to clarify a few details:
 
 | What Docs Say | What You Get | How to Handle |
 |---------------|--------------|---------------|
-| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with regsitry run |
+| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with registry run |
 | "Optional parameter" | Actually required or fails | Always provide it |
 | "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
 | "String parameter" | Needs specific format | Test with examples |
