@@ -341,7 +341,6 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 → Tasks 71, 76, 89
 
 **Recently Completed:**
-- ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
 - ✅ Task 103: Preserve Inline Object Type in Template Resolution
 - ✅ Task 102: Remove Parameter Fallback Pattern
@@ -349,7 +348,8 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 - ✅ Task 115: Automatic Stdin Routing for Unix-First Piping
 - ✅ Task 104: Python Code Node
-- ✅ Task 108: Smart Trace Debug Output
+- ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
+
 
 ### Planned Features (in order of priority)
 
@@ -359,6 +359,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 **v0.9.0 - Workflow Expressiveness:**
 - Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
+- Task 108: Smart Trace Debug Output
 
 **v0.9.1 - Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
