@@ -825,3 +825,18 @@ Files modified:
 - `architecture/architecture.md`
 
 Status: Architecture folder fully updated. All Task 107 work complete.
+
+## Entry 23: PR review fix — `_parse_warnings` schema violation
+
+PR review (PR #80) identified that `_parse_warnings` was injected into `result.ir`, but the IR schema has `additionalProperties: False`. Any workflow with a near-miss section (e.g., `## Output`) would fail schema validation instead of producing a warning.
+
+Fix: Added `warnings: list[str]` field to `MarkdownParseResult`. Warnings now live on the result object, not in the IR dict.
+
+Files modified:
+- `src/pflow/core/markdown_parser.py` (dataclass field + assignment)
+- `tests/test_core/test_markdown_parser.py` (read from `result.warnings`)
+
+- `make test`: 3609 passed, 516 skipped, 0 failed
+- `make check`: all pass
+
+Status: Fix complete. PR ready for merge.

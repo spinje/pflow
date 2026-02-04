@@ -72,6 +72,7 @@ class MarkdownParseResult:
     description: str | None = None
     metadata: dict[str, Any] | None = None
     source: str = ""
+    warnings: list[str] = field(default_factory=list)
 
 
 # --- Internal types ---
@@ -396,9 +397,8 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
 
     result.ir = ir
 
-    # Attach warnings to result (for now, stored in IR metadata-like fashion)
     if warnings:
-        result.ir["_parse_warnings"] = warnings
+        result.warnings = warnings
 
     return result
 

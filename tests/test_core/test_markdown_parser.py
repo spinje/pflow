@@ -285,7 +285,7 @@ class TestSectionHandling:
             ```
         """)
         result = parse_markdown(content)
-        warnings = result.ir.get("_parse_warnings", [])
+        warnings = result.warnings
         assert any("Input" in w and "Inputs" in w for w in warnings)
 
     def test_missing_steps_section_error(self) -> None:
