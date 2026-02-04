@@ -432,3 +432,212 @@ Launched 6 parallel forks to update CLAUDE.md files across the codebase for JSON
 Files modified: 12 CLAUDE.md files + 1 README.md across the codebase.
 
 Status: **Phase 4.4 complete.** All documentation updated. Only Phase 5 (agent instructions — collaborative with user) remains.
+
+## Entry 12: Test quality audit + stale .json reference sweep
+
+### Test quality audit (4 parallel test-writer-fixer subagents)
+
+Verified all 516 skipped tests are legitimate (572 planner/repair gating + 63 pre-existing LLM API key skips, zero suspicious). Then audited all ~38 migrated test files across 4 parallel agents:
+
+| Agent | Scope | Result |
+|-------|-------|--------|
+| CLI Critical (7 files) | test_main, workflow_save*, validate_only, resolution, parse_error | Clean — 112 tests, no issues |
+| CLI Secondary (8 files) | output_handling, dual_mode_stdin, stderr, enhanced_error, validation | Clean — 94 tests, no issues |
+| Integration (5 files) | e2e, workflow_manager_integration, sigpipe, metrics, outputs | Clean — 57 tests, no issues |
+| Core/Runtime/MCP (16 files) | workflow_manager, ir_schema, executor_service, mcp_save, runtime | Clean — all pass, no issues |
+
+**No deleted important tests. No weakened assertions. No dropped edge cases.**
+
+### Stale .json reference sweep (3 parallel forks)
+
+Grepped entire codebase for remaining `workflow.json` / `.json` workflow references. Found 44 stale references across production code, MCP resources, and architecture docs. Launched 3 forks:
+
+| Fork | Area | Fixes |
+|------|------|-------|
+| b4b08e9 | Production code | 12 fixes: user_errors.py, workflow_save_formatter.py, context_builder.py, repair_save_handlers.py |
+| bdc839d | MCP resources | 9 fixes: server.py instruction string, instruction_resources.py CLI examples and save syntax |
+| bc44e7d | Architecture docs | 23 fixes: architecture.md (16), simple-nodes.md (1), shell-pipes.md (4), vision/ (2) |
+
+**Legitimate .json references verified and left alone:** trace files, settings.json, registry.json, cache files, CLI .json rejection checks, template_validator example paths.
+
+### Verification
+
+- `make test`: **3597 passed, 516 skipped, 0 failed**
+- `make check`: **all pass** (ruff, ruff-format, mypy, deptry clean)
+
+Status: **Phases 0-4 fully complete.** Only Phase 5 (agent instructions — collaborative with user) remains.
+
+## Resumption Checkpoint
+
+**Current state — ALL phases except Phase 5 complete:**
+
+| Phase | Status |
+|-------|--------|
+| 0.1 PyYAML dep | ✅ |
+| 0.2 Planner/repair gating | ✅ |
+| 0.3 Test utility (ir_to_markdown) | ✅ |
+| 1.1-1.2 Markdown parser + tests | ✅ |
+| 2.1-2.8 All integration (CLI, WM, save, MCP, runtime, errors) | ✅ |
+| 2.9 Smoke test gate | ✅ |
+| 3.1-3.4 Examples + tests + validation | ✅ |
+| 4.1 Quality checks (make test + make check) | ✅ |
+| 4.2 CLI integration testing (10 scenarios) | ✅ |
+| 4.4 Documentation (CLAUDE.md + README) | ✅ |
+| Audit: skipped tests | ✅ All legitimate |
+| Audit: test quality | ✅ No issues |
+| Audit: stale .json references | ✅ All fixed |
+| **5 Agent instructions** | **TODO — collaborative with user** |
+
+### What Phase 5 needs
+
+Update these two files (collaborative with user — not autonomous):
+- `src/pflow/cli/resources/cli-agent-instructions.md` — ~13 JSON references → .pflow.md format, update workflow examples, remove --description from save examples
+- `src/pflow/cli/resources/cli-basic-usage.md` — check for JSON workflow references
+
+These files are what agents see when running `pflow instructions usage`. The user wants to review changes since they directly affect LLM authoring experience.
+
+### Key facts for the next agent
+
+1. **All production code updated.** Parser, CLI, WorkflowManager, save service, MCP, runtime, errors — all working.
+2. **All tests pass.** 3597 passed, 516 skipped. All skips verified legitimate.
+3. **All test quality verified.** 4 parallel audits found zero issues across 38 migrated files.
+4. **All documentation updated.** 12 CLAUDE.md files + README + architecture docs + MCP resources.
+5. **All stale .json references fixed.** 44 fixes across production code, MCP, and docs.
+6. **make check passes.** ruff, ruff-format, mypy, deptry all clean.
+7. **Parser:** `src/pflow/core/markdown_parser.py` (~350 lines, 70 tests).
+8. **Test utility:** `tests/shared/markdown_utils.py` (`ir_to_markdown()`, `write_workflow_file()`).
+9. **Save preserves original markdown.** Frontmatter prepended on save, stripped on load.
+10. **Metadata is flat** (no `rich_metadata` wrapper).
+11. **Phase 5 is the ONLY remaining work.** Two files, collaborative with user.
+
+## Entry 13: MCP integration testing + real workflow verification
+
+Tested the full MCP tool interface and real saved workflows end-to-end.
+
+### MCP tool tests (10/10 passed)
+
+Validated all workflow-facing MCP tools: `workflow_validate` (raw content, file path, invalid content), `workflow_save` (raw content, file path), `workflow_describe`, `workflow_list`, `workflow_execute` (saved name, file path, raw content with inputs/outputs/params). All passed.
+
+### Saved workflow verification
+
+All saved `.pflow.md` workflows in `~/.pflow/workflows/` (with frontmatter from prior JSON-era executions) validate, load, describe, and execute correctly. Tested `directory-file-lister` (execute), `release-announcements` (describe with full metadata), and validated all 4 complex workflows.
+
+### Real workflow execution: release-announcements (8 nodes, 3 batch stages)
+
+Executed via CLI — all 8 nodes succeeded (51s, $0.14): extract-changelog → draft-announcements (3 batch) → critique-announcements (3 batch) → improve-announcements (3 batch) → post-to-slack → post-to-discord → save-x-post → format-output.
+
+Parsed IR verified byte-for-byte identical between `.pflow.md` and `.json` versions.
+
+### Pre-existing bug found: batch workflows fail through MCP
+
+Same workflow fails through MCP `workflow_execute` with "Unresolved variables in parameter 'prompt'" (no variables listed). Root cause: MCP path (`enable_repair=False`) skips template validation, which has a side effect of registering batch context variables (`item`, `__index__`). CLI has `_validate_before_execution()` that triggers this registration; MCP path does not. **Not caused by markdown migration** — pre-existing on main with JSON. Filed as [GitHub issue #79](https://github.com/spinje/pflow/issues/79).
+
+### MCP agent instructions gap identified
+
+Both `pflow://instructions` and `pflow://instructions/sandbox` MCP resources are entirely JSON-based — all workflow examples, save commands, and building guides use JSON format. Any agent following these instructions would produce workflows that fail on save. Deferred to after Phase 5 CLI instruction updates per user decision.
+
+Status: Phase 4 fully complete including MCP verification. Phase 5 (CLI agent instructions — collaborative with user) remains.
+
+## Entry 14: Nested workflow validation fixes + edge case verification
+
+### Nested workflow validation was broken (pre-existing)
+
+Tested `type: workflow` nodes end-to-end via CLI. Found two pre-existing issues:
+
+1. **`WorkflowValidator._validate_node_types()`** rejected `workflow` as "Unknown node type" because it's handled by the compiler, not registered in the node registry. Fix: added `compiler_special_types` allowlist.
+
+2. **`TemplateValidator._extract_node_outputs()`** didn't register outputs from `output_mapping` on workflow nodes, causing `${process.mapped_key}` to fail template validation. Fix: added `output_mapping` registration block that mirrors the compiler's existing logic.
+
+Both fixes are small (5-10 lines each) but critical — without them, any workflow using `type: workflow` fails validation.
+
+### Other fixes
+
+3. **output_mapping missing key warning** in `workflow_executor.py:post()`: When a child_key from output_mapping doesn't exist in child storage, now logs a warning with available keys (filtered to exclude internal `_pflow_*` and `__*__` keys).
+
+4. **Stdin error message** in `cli/main.py:3168`: Replaced stale JSON format example with `.pflow.md` markdown format.
+
+### Tests added
+
+- `test_workflow_node_type_bypasses_registry` — regression guard for the allowlist
+- `test_workflow_output_mapping_resolves_in_templates` — regression guard for output_mapping in template validation
+
+### Deferred to Task 59
+
+Tested 4 failure modes for nested workflows (missing params, wrong param names, wrong output keys, no mappings). Found several agent-facing UX issues:
+- Tracebacks shown to agents in compilation errors
+- Wrong param_mapping doesn't suggest available child inputs
+- Relative path resolution broken for top-level `workflow_ref` (missing `_pflow_workflow_file` in initial shared store)
+- Error message stacking in deeply nested failures
+
+Full details in braindump: `.taskmaster/tasks/task_59/starting-context/braindump-nested-workflow-gaps.md`
+
+### Pre-existing bug confirmed
+
+GitHub issue #79 (batch workflows fail through MCP) — found during MCP testing in Entry 13, not related to markdown migration.
+
+### Verification
+
+- `make test`: **3599 passed, 516 skipped, 0 failed**
+- `make check`: **all pass** (ruff, ruff-format, mypy, deptry clean)
+
+Files modified:
+- `src/pflow/core/workflow_validator.py` (allowlist)
+- `src/pflow/runtime/template_validator.py` (output_mapping registration)
+- `src/pflow/runtime/workflow_executor.py` (missing key warning)
+- `src/pflow/cli/main.py` (stdin error message)
+- `tests/test_core/test_workflow_validator.py` (2 new tests)
+
+Status: All verification complete. Phase 5 (CLI agent instructions — collaborative with user) is the only remaining work for Task 107.
+
+## Entry 15: Fix trace filenames + workflow_name cleanup
+
+### Problem
+
+Trace filenames were always generic (`workflow-trace-YYYYMMDD-HHMMSS.json`) because `WorkflowTraceCollector` was initialized with `ir_data.get("name", "workflow")` — the IR dict never has a `name` field. Pre-existing bug, not caused by markdown migration.
+
+### Fix
+
+Three changes to `cli/main.py`:
+
+1. **`_setup_workflow_execution()`**: For file-based workflows, derive `workflow_name` from filename stem and store in `ctx.obj["workflow_name"]`. Previously this key was only set for saved workflows.
+
+2. **`execute_workflow()` call**: Changed `WorkflowManager` gate from `if workflow_name` to `if ctx.obj.get("workflow_source") == "saved"`. Necessary because `workflow_name` is now set for all sources, but metadata updates only apply to saved workflows.
+
+3. **Trace collector init**: Simplified to `ctx.obj.get("workflow_name", "workflow")` — works for both sources.
+
+### Key design decision
+
+`workflow_name` is now always set (derived from filename or save name). The decision of whether to create a `WorkflowManager` for metadata updates is gated on `workflow_source == "saved"`, not on whether a name exists. One key, one meaning.
+
+### Verification
+
+- File workflow: `pflow examples/core/minimal.pflow.md` → trace `workflow-trace-minimal-...`, no metadata update attempted
+- Saved workflow: `pflow directory-file-lister` → trace `workflow-trace-directory-file-lister-...`, metadata updated
+- `make test`: 3599 passed, 516 skipped, 0 failed
+- `make check`: all pass
+
+Files modified:
+- `src/pflow/cli/main.py` (3 edits)
+- `src/pflow/cli/CLAUDE.md` (1 edit — updated ctx.obj docs for workflow_name/workflow_source)
+
+Status: Phase 5 (CLI agent instructions — collaborative with user) is the only remaining work for Task 107.
+
+## Entry 16: Final JSON syntax sweep + stdin example
+
+Swept all production code for remaining user-facing JSON workflow syntax via pflow-codebase-searcher audit.
+
+Fixes:
+- `src/pflow/nodes/python/python_code.py` — module docstring JSON example → markdown
+- `src/pflow/core/llm_config.py:454` — error message JSON node definition → markdown
+- `src/pflow/runtime/template_validator.py:1539-1542` — shell multi-stdin fix suggestion JSON examples → markdown
+- `tests/test_core/test_llm_config_workflow_model.py` — 2 test assertions updated for new format
+- `examples/core/stdin-echo.pflow.md` — new example demonstrating `- stdin: true` piped input
+
+Remaining JSON workflow syntax is only in MCP agent instruction files (Phase 5 scope) and internal docstrings (ir_schema.py, batch_node.py — low priority).
+
+Verified: piped stdin (`echo "hello" | pflow stdin-echo.pflow.md`) and `--validate-only` on saved workflow names both work.
+
+- `make test`: 3599 passed, 516 skipped, 0 failed
+- `make check`: all pass
+
+Status: Phase 5 (agent instructions — collaborative with user) is the only remaining work.

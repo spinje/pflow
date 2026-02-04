@@ -132,7 +132,7 @@ def get_instructions() -> str:
     - ❌ Dont have pflow cli installed and configured in their environment (check with `pflow --version` if you are unsure)
 
     Key differences for sandboxed environments:
-    - Have to use send workflow IR object instead of file path when using workflow_validate, workflow_execute, workflow_save tools
+    - Have to send workflow markdown content instead of file path when using workflow_validate, workflow_execute, workflow_save tools
     - No trace debugging (rely on workflow error outputs only)
     - Work entirely within sandbox constraints
 
@@ -154,7 +154,7 @@ def get_sandbox_instructions() -> str:
     - NO access to ~/.pflow/settings.json (can't read/write API keys)
     - NO access to trace files in ~/.pflow/debug/
     - Don't have pflow CLI installed in their environment
-    - Must send workflow IR objects instead of file paths
+    - Must send workflow markdown content instead of file paths
 
     Use cases: containerized agents, web-based AI assistants, CI/CD environments,
     multi-tenant systems, or any environment without shared access to the user's system.
@@ -198,10 +198,10 @@ Use these CLI tools to discover what you need:
 - `pflow registry search pattern` - Search for nodes by pattern
 
 ### Execution & Management
-- `pflow workflow.json param=value` - Run a workflow (trace saved by default)
-- `pflow --no-trace workflow.json` - Run without saving a trace
-- `pflow --validate-only workflow.json` - Validate before running
-- `pflow workflow save file name "description"` - Save to library
+- `pflow workflow.pflow.md param=value` - Run a workflow (trace saved by default)
+- `pflow --no-trace workflow.pflow.md` - Run without saving a trace
+- `pflow --validate-only workflow.pflow.md` - Validate before running
+- `pflow workflow save workflow.pflow.md --name name` - Save to library
 
 ### Settings & Configuration
 - `pflow settings set-env KEY value` - Store API keys securely
@@ -252,7 +252,7 @@ The instruction file could not be loaded from `~/.pflow/instructions/mcp-sandbox
 1. **Avoid passing credentials as workflow inputs**:
    - NO `~/.pflow/settings.json access`, ask user to set environment variables instead by using the `pflow settings set-env` cli command or other means
 
-2. **Send workflow IR object instead of file path**
+2. **Send workflow markdown content instead of file path**
    - This is applicable for workflow_validate, workflow_execute, workflow_save tools
    - Don't assume shared access to the user's system where pflow is installed
 
@@ -266,59 +266,69 @@ The instruction file could not be loaded from `~/.pflow/instructions/mcp-sandbox
 
 ## Example: Credentials as Workflow Inputs and saving to file
 
-```json
-{
-  "inputs": {
-    "api_token": {
-      "type": "string",
-      "required": true,
-      "description": "API authentication token"
-    },
-    "api_url": {
-      "type": "string",
-      "required": true,
-      "description": "API URL to fetch data from"
-    }
-  },
-  "nodes": [
-    {
-      "id": "call-api",
-      "type": "http",
-      "purpose": "call API",
-      "params": {
-        "url": "${api_url}",
-        "method": "GET",
-        "auth_token": "${api_token}"
-      }
-    },
-    {
-      "id": "save-to-file",
-      "type": "write-file",
-      "params": {
-        "file_path": "${output_file}",
-        "content": "${call-api.response.data}"
-      }
-    },
-  ],
-  "edges": [
-    {"from": "call-api", "to": "save-to-file"}
-  ],
-  "outputs": {
-    "result-file-path": {
-      "source": "${save-to-file.file-path}",
-      "description": "Path to file where API response data was saved"
-    }
-  }
-}
-```
+````markdown
+# API Fetch and Save
+
+Fetch data from an API and save the response to a file.
+
+## Inputs
+
+### api_token
+
+API authentication token.
+
+- type: string
+- required: true
+
+### api_url
+
+API URL to fetch data from.
+
+- type: string
+- required: true
+
+### output_file
+
+Path to save the API response data.
+
+- type: string
+- required: true
+
+## Steps
+
+### call-api
+
+Call the API with authentication.
+
+- type: http
+- url: ${api_url}
+- method: GET
+- auth_token: ${api_token}
+
+### save-to-file
+
+Save the API response data to a file.
+
+- type: write-file
+- file_path: ${output_file}
+- content: ${call-api.response.data}
+
+## Outputs
+
+### result-file-path
+
+Path to file where API response data was saved.
+
+- source: ${save-to-file.file-path}
+````
 
 **Run with**:
 ```bash
 # Avoid this
-pflow workflow.json api_token=YOUR_KEY_HERE api_url=https://api.example.com/data
+pflow workflow.pflow.md api_token=YOUR_KEY_HERE api_url=https://api.example.com/data
 
 # If credentials are set as environment variables, use this (no api_token input required)
-pflow workflow.json api_url=https://api.example.com/data
+pflow workflow.pflow.md api_url=https://api.example.com/data
 ```
 
 

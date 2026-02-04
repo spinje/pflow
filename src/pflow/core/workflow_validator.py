@@ -200,16 +200,22 @@ class WorkflowValidator:
         """
         errors = []
 
+        # Types handled specially by the compiler, not registered in the node registry
+        compiler_special_types = {"workflow", "pflow.runtime.workflow_executor"}
+
         try:
             # Extract all node types from the workflow
             node_types = {node.get("type") for node in workflow_ir.get("nodes", []) if node.get("type")}
 
-            if node_types:
+            # Filter out compiler-handled special types
+            registry_types = node_types - compiler_special_types
+
+            if registry_types:
                 # Get metadata for these specific node types
-                metadata = registry.get_nodes_metadata(node_types)
+                metadata = registry.get_nodes_metadata(registry_types)
 
                 # Check if any are unknown
-                for node_type in node_types:
+                for node_type in registry_types:
                     if node_type not in metadata:
                         errors.append(f"Unknown node type: '{node_type}'")
         except Exception as e:

@@ -16,7 +16,7 @@ def save_repaired_workflow(ctx: click.Context, repaired_workflow_ir: dict[str, A
 
     Routes to appropriate handler based on workflow source:
     - saved: Workflows from workflow manager
-    - file: Workflows from JSON files
+    - file: Workflows from .pflow.md files
     - other: Planner-generated workflows
     """
     # GATED: Repair disabled pending markdown format migration (Task 107).
@@ -65,11 +65,11 @@ def _save_repaired_saved_workflow(ctx: click.Context, repaired_workflow_ir: dict
             repaired_dir.mkdir(parents=True, exist_ok=True)
 
             # Save directly to filesystem
-            repaired_path = repaired_dir / f"{workflow_name}.json"
+            repaired_path = repaired_dir / f"{workflow_name}.pflow.md"
             with open(repaired_path, "w") as f:
                 json.dump(repaired_workflow_ir, f, indent=2)
 
-            click.echo(click.style(f"\n✅ Repaired workflow saved to: repaired/{workflow_name}.json", fg="green"))
+            click.echo(click.style(f"\n✅ Repaired workflow saved to: repaired/{workflow_name}.pflow.md", fg="green"))
 
             # Display rerun command with actual parameters
             from pflow.cli.rerun_display import display_file_rerun_commands
@@ -101,7 +101,7 @@ def _save_repaired_file_workflow(ctx: click.Context, repaired_workflow_ir: dict[
     Args:
         ctx: Click context with source_file_path
         repaired_workflow_ir: The repaired workflow IR
-        no_update: If True, create .repaired.json file; if False, overwrite original
+        no_update: If True, create .repaired.pflow.md file; if False, overwrite original
     """
     source_file_path = ctx.obj.get("source_file_path")
     if not source_file_path:
@@ -110,9 +110,9 @@ def _save_repaired_file_workflow(ctx: click.Context, repaired_workflow_ir: dict[
 
     try:
         if no_update:
-            # Create .repaired.json file
-            base_name = source_file_path.rsplit(".json", 1)[0]
-            repaired_path = f"{base_name}.repaired.json"
+            # Create .repaired.pflow.md file
+            base_name = source_file_path.rsplit(".pflow.md", 1)[0]
+            repaired_path = f"{base_name}.repaired.pflow.md"
 
             with open(repaired_path, "w") as f:
                 json.dump(repaired_workflow_ir, f, indent=2)
@@ -126,7 +126,7 @@ def _save_repaired_file_workflow(ctx: click.Context, repaired_workflow_ir: dict[
             display_file_rerun_commands(
                 file_path=repaired_path,
                 params=execution_params,
-                show_save_tip=False,  # No save tip for .repaired.json files
+                show_save_tip=False,  # No save tip for .repaired.pflow.md files
             )
         else:
             # Default: Overwrite original (no backup)
@@ -151,7 +151,7 @@ def _save_repaired_planner_workflow(ctx: click.Context, repaired_workflow_ir: di
         repaired_workflow_ir: The repaired workflow IR
     """
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    repaired_path = f"workflow-repaired-{timestamp}.json"
+    repaired_path = f"workflow-repaired-{timestamp}.pflow.md"
 
     try:
         with open(repaired_path, "w") as f:

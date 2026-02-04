@@ -225,7 +225,7 @@ class TemplateVariableError(UserFriendlyError):
             param_examples.append(f"--param {var_name}=<value>")
 
         suggestions = [
-            f"Provide them when running: pflow {workflow_name or 'workflow.json'} {' '.join(param_examples)}",
+            f"Provide them when running: pflow {workflow_name or 'workflow.pflow.md'} {' '.join(param_examples)}",
         ]
 
         # Add environment variable option

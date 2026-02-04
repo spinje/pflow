@@ -168,6 +168,72 @@ class TestWorkflowValidator:
         assert any("Unknown node type" in e for e in errors)
         assert any("unknown-node-type" in e for e in errors)
 
+    def test_workflow_node_type_bypasses_registry(self, registry_with_nodes):
+        """Test that 'workflow' type is accepted without registry lookup.
+
+        The 'workflow' type is handled specially by the compiler (not registered
+        in the node registry). The validator must not reject it as unknown.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "sub",
+                    "type": "workflow",
+                    "params": {
+                        "workflow_ref": "./child.pflow.md",
+                        "output_mapping": {"result": "sub_result"},
+                    },
+                },
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+
+        errors, warnings = WorkflowValidator.validate(workflow, registry=registry_with_nodes, skip_node_types=False)
+
+        # Should not have "Unknown node type" for workflow
+        assert not any("Unknown node type" in e for e in errors)
+
+    def test_workflow_output_mapping_resolves_in_templates(self, registry_with_nodes):
+        """Test that output_mapping keys from workflow nodes are available for template validation.
+
+        When a workflow node defines output_mapping, downstream nodes should be
+        able to reference those mapped keys via ${node_id.mapped_key}.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "sub",
+                    "type": "workflow",
+                    "params": {
+                        "workflow_ref": "./child.pflow.md",
+                        "output_mapping": {"child_result": "mapped_output"},
+                    },
+                },
+                {
+                    "id": "use-result",
+                    "type": "shell",
+                    "params": {
+                        "command": "echo ${sub.mapped_output}",
+                    },
+                },
+            ],
+            "edges": [{"from": "sub", "to": "use-result"}],
+            "inputs": {},
+        }
+
+        errors, warnings = WorkflowValidator.validate(
+            workflow,
+            extracted_params={},
+            registry=registry_with_nodes,
+            skip_node_types=False,
+        )
+
+        # Should not have template errors for ${sub.mapped_output}
+        assert not any("mapped_output" in e for e in errors)
+
     def test_skip_node_types_for_mocks(self, registry_with_nodes):
         """Test selective validation skipping for mock nodes."""
         workflow = {

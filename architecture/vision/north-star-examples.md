@@ -3,7 +3,7 @@
 
 **For Current Architecture**: See `architecture/architecture.md`
 
-**Caveat**: The `>>` CLI syntax shown below was never implemented. pflow uses JSON workflow files with `pflow workflow.json` or `pflow saved-name`. The planner is now labeled "legacy" - AI agents should use CLI primitives directly.
+**Caveat**: The `>>` CLI syntax shown below was never implemented. pflow uses markdown workflow files (`.pflow.md`) with `pflow workflow.pflow.md` or `pflow saved-name`. The planner is gated pending markdown format migration — AI agents should use CLI primitives directly.
 
 ---
 

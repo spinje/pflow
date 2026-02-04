@@ -1357,7 +1357,7 @@ def _prepare_execution_environment(
     if ctx.obj.get("trace", False):
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
-        workflow_trace = WorkflowTraceCollector(ir_data.get("name", "workflow"))
+        workflow_trace = WorkflowTraceCollector(ctx.obj.get("workflow_name", "workflow"))
         ctx.obj["workflow_trace"] = workflow_trace
 
     # Prepare execution params with verbose flag and LLM calls
@@ -2205,7 +2205,7 @@ def execute_json_workflow(
             resume_state=None,  # Fresh execution
             original_request=original_request,
             output=cli_output,
-            workflow_manager=WorkflowManager() if workflow_name else None,
+            workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "saved" else None,
             workflow_name=workflow_name,
             stdin_data=stdin_data,
             output_key=output_key,
@@ -3165,10 +3165,14 @@ def _show_stdin_routing_error(ctx: click.Context) -> NoReturn:
         click.echo('   This workflow has no input marked with "stdin": true.', err=True)
         click.echo('   To accept piped data, add "stdin": true to one input declaration.', err=True)
         click.echo("", err=True)
-        click.echo("   Example:", err=True)
-        click.echo('     "inputs": {', err=True)
-        click.echo('       "data": {"type": "string", "required": true, "stdin": true}', err=True)
-        click.echo("     }", err=True)
+        click.echo("   Example (.pflow.md format):", err=True)
+        click.echo("     ### data", err=True)
+        click.echo("", err=True)
+        click.echo("     Input data piped via stdin.", err=True)
+        click.echo("", err=True)
+        click.echo("     - type: string", err=True)
+        click.echo("     - required: true", err=True)
+        click.echo("     - stdin: true", err=True)
         click.echo("", err=True)
         click.echo('   👉 Add "stdin": true to the input that should receive piped data', err=True)
     ctx.exit(1)
@@ -3408,6 +3412,9 @@ def _setup_workflow_execution(
 
     if source == "file" and first_arg.endswith(".pflow.md"):
         ctx.obj["source_file_path"] = first_arg
+        # Derive workflow name from filename for traces/display
+        file_stem = Path(first_arg).stem
+        ctx.obj["workflow_name"] = file_stem[:-6] if file_stem.endswith(".pflow") else file_stem
     elif source == "saved":
         # Extract clean workflow name (strip file extension if present)
         workflow_name = first_arg[:-9] if first_arg.lower().endswith(".pflow.md") else first_arg

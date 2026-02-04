@@ -815,6 +815,17 @@ class TemplateValidator:
             if not node_type or not node_id:
                 continue
 
+            # Workflow nodes are handled specially by the compiler, not registered
+            # in the node registry. Their outputs come from output_mapping.
+            if node_type in ("workflow", "pflow.runtime.workflow_executor"):
+                output_mapping = node.get("params", {}).get("output_mapping", {})
+                for _child_key, parent_key in output_mapping.items():
+                    output_info = {"type": "any", "node_id": node_id, "node_type": node_type}
+                    node_outputs[parent_key] = output_info
+                    if enable_namespacing:
+                        node_outputs[f"{node_id}.{parent_key}"] = output_info
+                continue
+
             # Check for batch configuration
             batch_config = node.get("batch")
 
@@ -1526,9 +1537,19 @@ class TemplateValidator:
                         f'  "command": "{display_cmd}"\n\n'
                         f"FIX OPTIONS:\n\n"
                         f"1. Use temp files - write each data source to a file, then read in shell:\n"
-                        f'   {{"id": "save-a", "type": "write-file", "params": {{"path": "/tmp/a.json", "content": "${{data-a}}"}}}}\n'
-                        f'   {{"id": "save-b", "type": "write-file", "params": {{"path": "/tmp/b.json", "content": "${{data-b}}"}}}}\n'
-                        f'   {{"id": "process", "type": "shell", "params": {{"command": "jq -s \'.[0] * .[1]\' /tmp/a.json /tmp/b.json"}}}}\n\n'
+                        f"   ### save-a\n"
+                        f"   - type: write-file\n"
+                        f"   - file_path: /tmp/a.json\n"
+                        f"   - content: ${{data-a}}\n\n"
+                        f"   ### save-b\n"
+                        f"   - type: write-file\n"
+                        f"   - file_path: /tmp/b.json\n"
+                        f"   - content: ${{data-b}}\n\n"
+                        f"   ### process\n"
+                        f"   - type: shell\n"
+                        f"   ```shell command\n"
+                        f"   jq -s '.[0] * .[1]' /tmp/a.json /tmp/b.json\n"
+                        f"   ```\n\n"
                         f"2. Process each data source in separate shell nodes, combine results after\n\n"
                         f"3. Pass one via stdin, reference another via file\n\n"
                         f"4. Quote templates to accept JSON coercion (if you've verified they're safe):\n"

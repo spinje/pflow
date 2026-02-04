@@ -326,8 +326,8 @@ planner_flow.run(shared)  # Populates shared["workflow"]
 - `no_update`: Save repairs separately
 - `validate_only`: Validate without executing (NEW in Task 71)
 - `output_controller`: OutputController instance
-- `workflow_source`: "file", "saved", or None
-- `workflow_name`: For saved workflows
+- `workflow_source`: "file", "saved", or None (gates metadata updates)
+- `workflow_name`: Derived from filename (file) or save name (saved), used for traces/display
 - `source_file_path`: For file workflows
 - `execution_params`: User-provided parameters
 - `workflow_metadata`: Metadata for workflow

@@ -209,6 +209,12 @@ class WorkflowExecutor(BaseNode):
 
                 if child_key in child_storage:
                     shared[parent_key] = child_storage[child_key]
+                else:
+                    available = [k for k in child_storage if not k.startswith(("_pflow_", "__"))]
+                    logger.warning(
+                        f"output_mapping key '{child_key}' not found in child workflow storage. "
+                        f"Available keys: {available}"
+                    )
 
         # Return result action or default
         child_result = exec_res.get("result")

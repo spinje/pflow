@@ -450,8 +450,10 @@ Configure using one of these methods:
      pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
      pflow settings set-env GEMINI_API_KEY "..."
 
-  2. Specify model in workflow (per-node):
-     {{"id": "{node_id}", "type": "llm", "params": {{"model": "gpt-5.2", "prompt": "..."}}}}
+  2. Specify model in workflow (per-node, in .pflow.md):
+     ### {node_id}
+     - type: llm
+     - model: gpt-5.2
 
   3. Set pflow default model (overrides auto-detection):
      pflow settings llm set-default gpt-5.2

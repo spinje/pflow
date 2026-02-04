@@ -8,7 +8,7 @@ pflow implements a **simple, single-purpose node architecture** that dramaticall
 
 > **Note on Syntax**: The `>>` syntax below illustrates data flow between nodes conceptually.
 > This is PocketFlow's Python operator for node chaining (used internally by the compiler).
-> To run workflows, use JSON workflow files: `pflow workflow.json` or `pflow saved-name param=value`
+> To run workflows, use `.pflow.md` workflow files: `pflow workflow.pflow.md` or `pflow saved-name param=value`
 
 ### Before: Complex Action-Based Nodes
 ```bash

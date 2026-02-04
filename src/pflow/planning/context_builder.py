@@ -313,17 +313,17 @@ def _load_saved_workflows() -> list[dict[str, Any]]:
     workflows = []
 
     try:
-        # List all JSON files in the directory
-        json_files = list(workflows_dir.glob("*.json"))
+        # List all workflow files in the directory
+        workflow_files = list(workflows_dir.glob("*.pflow.md"))
 
-        if not json_files:
-            logger.debug("No workflow JSON files found")
+        if not workflow_files:
+            logger.debug("No workflow files found")
             return []
 
-        logger.debug(f"Found {len(json_files)} JSON files to process")
+        logger.debug(f"Found {len(workflow_files)} workflow files to process")
 
-        # Process each JSON file
-        for json_file in json_files:
+        # Process each workflow file
+        for json_file in workflow_files:
             workflow_data = _load_single_workflow(json_file)
             if workflow_data:
                 workflows.append(workflow_data)
