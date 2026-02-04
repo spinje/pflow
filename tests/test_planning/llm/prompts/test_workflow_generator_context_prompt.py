@@ -310,7 +310,7 @@ def validate_node_output_refs(workflow: dict, test_case: WorkflowTestCase) -> li
         if len(parts) != 2:
             continue
 
-        expected_node_pattern, expected_output = parts
+        _expected_node_pattern, expected_output = parts
 
         # Check if any actual ref has this output field
         matching_refs = [ref for ref in actual_refs if ref.endswith(f".{expected_output}")]

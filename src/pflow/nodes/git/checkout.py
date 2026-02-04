@@ -60,7 +60,7 @@ class GitCheckoutNode(Node):
             ValueError: If not in a git repository
         """
         cmd = ["git", "branch", "--show-current"]
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=True,
@@ -75,7 +75,7 @@ class GitCheckoutNode(Node):
                 raise ValueError(f"Directory '{cwd}' is not a git repository")
             # Could be detached HEAD state, try alternate method
             cmd_alt = ["git", "rev-parse", "--abbrev-ref", "HEAD"]
-            result_alt = subprocess.run(  # noqa: S603
+            result_alt = subprocess.run(
                 cmd_alt,
                 cwd=cwd,
                 capture_output=True,
@@ -104,7 +104,7 @@ class GitCheckoutNode(Node):
             True if there are uncommitted changes, False otherwise
         """
         cmd = ["git", "status", "--porcelain"]
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=True,
@@ -127,7 +127,7 @@ class GitCheckoutNode(Node):
             True if branch exists, False otherwise
         """
         cmd = ["git", "rev-parse", "--verify", f"refs/heads/{branch}"]
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=True,
@@ -165,7 +165,7 @@ class GitCheckoutNode(Node):
             subprocess.CalledProcessError: If stash command fails
         """
         cmd = ["git", "stash", "push", "-m", message]
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             cwd=cwd,
             capture_output=True,
@@ -301,7 +301,7 @@ class GitCheckoutNode(Node):
         if base and base != previous_branch:
             logger.info(f"Checking out base branch '{base}' first")
             base_cmd = ["git", "checkout", base]
-            base_result = subprocess.run(  # noqa: S603
+            base_result = subprocess.run(
                 base_cmd,
                 cwd=cwd,
                 capture_output=True,
@@ -326,7 +326,7 @@ class GitCheckoutNode(Node):
 
     def _execute_checkout(self, checkout_cmd: list[str], cwd: str, branch: str) -> None:
         """Execute the git checkout command and handle errors."""
-        checkout_result = subprocess.run(  # noqa: S603
+        checkout_result = subprocess.run(
             checkout_cmd,
             cwd=cwd,
             capture_output=True,

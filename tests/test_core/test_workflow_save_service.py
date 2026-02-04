@@ -270,7 +270,7 @@ class TestLoadAndValidateWorkflow:
 
         assert file_path.exists(), "Test file should be created"
 
-        with pytest.raises(ValueError, match="Invalid workflow|Missing"):
+        with pytest.raises(ValueError, match=r"Invalid workflow|Missing"):
             load_and_validate_workflow(str(file_path))
 
     def test_reject_nonexistent_file(self) -> None:

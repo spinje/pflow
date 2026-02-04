@@ -175,7 +175,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -196,7 +196,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0  # No error - dict serializes to JSON string
@@ -217,7 +217,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 1
@@ -241,7 +241,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -262,7 +262,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 1
@@ -281,7 +281,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -302,7 +302,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         # dict|str → str now passes because both dict and str can serialize to str
@@ -324,7 +324,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         # dict|str → int should fail because neither dict nor str can convert to int
@@ -360,7 +360,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -390,7 +390,7 @@ class TestTypeValidationIntegration:
             ],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 2  # str→int and dict→int both fail
@@ -411,7 +411,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 1
@@ -441,7 +441,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should have error about dict in shell command
         shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
@@ -467,7 +467,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should have error about list in shell command
         shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
@@ -494,7 +494,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # No shell-specific errors for stdin
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -516,7 +516,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # No errors for string in command
         assert len(errors) == 0
@@ -542,7 +542,7 @@ class TestTypeValidationIntegration:
             "edges": [],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should block dict workflow input in shell command
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -569,7 +569,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # No errors - accessing string field from dict is safe
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -598,7 +598,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm-node", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should pass - dict|str contains str, which is a safe type
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -624,7 +624,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -645,7 +645,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -666,7 +666,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -688,7 +688,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -717,7 +717,7 @@ class TestShellCommandGenericTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should block - base type "list" is blocked
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -741,7 +741,7 @@ class TestShellCommandGenericTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should pass - quoted template bypasses type check
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -771,7 +771,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -792,7 +792,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -814,7 +814,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -841,7 +841,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         # Should pass - quoted template with nested path is escaped
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -864,7 +864,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1  # Still blocked
@@ -886,7 +886,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1  # Still blocked
@@ -912,7 +912,7 @@ class TestShellCommandQuoteEscape:
             ],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0  # Both escaped
@@ -938,7 +938,7 @@ class TestShellCommandQuoteEscape:
             ],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1  # Only unquoted one blocked
@@ -960,7 +960,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -987,7 +987,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -1008,7 +1008,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -1029,7 +1029,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -1051,7 +1051,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0

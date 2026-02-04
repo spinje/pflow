@@ -277,7 +277,7 @@ class WriteFileNode(Node):
 
     def exec_fallback(self, prep_res: tuple[str | bytes, str, str, bool, bool], exc: Exception) -> str:
         """Handle final failure after all retries with user-friendly messages."""
-        _, file_path, _, append, _ = prep_res
+        _, file_path, _, _append, _ = prep_res
 
         logger.error(
             f"Failed to write file after {self.max_retries} retries",

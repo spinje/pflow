@@ -185,7 +185,7 @@ class TestWorkflowExecution:
 
                 # Verify checkpoint state was passed to executor
                 mock_executor.execute_workflow.assert_called_once()
-                args, kwargs = mock_executor.execute_workflow.call_args
+                _args, kwargs = mock_executor.execute_workflow.call_args
                 assert kwargs["shared_store"] == checkpoint_state
 
     def test_recursive_repair_disabled(self):
@@ -273,7 +273,7 @@ class TestWorkflowExecution:
                         if calls:  # If show_execution_start was called
                             # Check if context="resume" was passed
                             for call in calls:
-                                args, kwargs = call
+                                _args, kwargs = call
                                 if kwargs.get("context") == "resume":
                                     assert True  # Found resume context
                                     break

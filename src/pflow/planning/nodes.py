@@ -997,7 +997,7 @@ class ParameterDiscoveryNode(Node):
         Returns:
             Safe default ParameterDiscovery matching exec() return type
         """
-        safe_response, planner_error = create_fallback_response("ParameterDiscoveryNode", exc, prep_res)
+        safe_response, _planner_error = create_fallback_response("ParameterDiscoveryNode", exc, prep_res)
 
         # Note: We cannot store the error in shared store from exec_fallback
         # as shared store is not accessible here in PocketFlow architecture.
@@ -1337,7 +1337,7 @@ class RequirementsAnalysisNode(Node):
         Returns:
             Safe default RequirementsSchema matching exec() return type
         """
-        safe_response, planner_error = create_fallback_response("RequirementsAnalysisNode", exc, prep_res)
+        safe_response, _planner_error = create_fallback_response("RequirementsAnalysisNode", exc, prep_res)
 
         # Return a valid RequirementsSchema-like dict
         return safe_response or {
@@ -2548,7 +2548,7 @@ class ValidatorNode(Node):
             return {"errors": ["No workflow provided for validation"]}
 
         # Use unified WorkflowValidator for all validation
-        errors, warnings = WorkflowValidator.validate(
+        errors, _warnings = WorkflowValidator.validate(
             workflow,
             extracted_params=prep_res.get("extracted_params", {}),
             registry=self.registry,

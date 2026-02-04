@@ -97,7 +97,7 @@ class GitCommitNode(Node):
 
         # First, add files to staging area
         add_cmd = ["git", "add", *files]
-        add_result = subprocess.run(  # noqa: S603
+        add_result = subprocess.run(
             add_cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False
         )
 
@@ -113,7 +113,7 @@ class GitCommitNode(Node):
 
         # Now create the commit
         commit_cmd = ["git", "commit", "-m", message]
-        commit_result = subprocess.run(  # noqa: S603
+        commit_result = subprocess.run(
             commit_cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False
         )
 
@@ -135,7 +135,7 @@ class GitCommitNode(Node):
 
         # If we couldn't find SHA in the output, try getting it with rev-parse
         if not commit_sha:
-            rev_parse_result = subprocess.run(  # noqa: S603
+            rev_parse_result = subprocess.run(
                 ["git", "rev-parse", "HEAD"],  # noqa: S607
                 cwd=cwd,
                 capture_output=True,

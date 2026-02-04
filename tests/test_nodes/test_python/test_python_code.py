@@ -95,7 +95,7 @@ class TestNativeObjectExecution:
     def test_none_input_fails_type_check(self):
         """None input value fails type validation — catches upstream issues early."""
         shared: dict = {}
-        with pytest.raises(TypeError, match="data.*expects dict.*received NoneType"):
+        with pytest.raises(TypeError, match=r"data.*expects dict.*received NoneType"):
             run_code_node(
                 shared,
                 code="data: dict\nresult: str = 'done'",
@@ -130,7 +130,7 @@ class TestTypeAnnotationContract:
     def test_missing_input_annotation_rejected(self):
         """Input without type annotation in code is caught before execution."""
         shared: dict = {}
-        with pytest.raises(ValueError, match="missing type annotation.*data"):
+        with pytest.raises(ValueError, match=r"missing type annotation.*data"):
             run_code_node(
                 shared,
                 code="result: int = 42",
@@ -150,7 +150,7 @@ class TestTypeAnnotationContract:
     def test_input_type_mismatch_caught(self):
         """Wrong input type caught in prep with actionable error."""
         shared: dict = {}
-        with pytest.raises(TypeError, match="data.*expects list.*received dict"):
+        with pytest.raises(TypeError, match=r"data.*expects list.*received dict"):
             run_code_node(
                 shared,
                 code="data: list\nresult: int = 0",

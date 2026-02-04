@@ -77,7 +77,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert errors[0] == "Required input '${issue_number}' not provided - GitHub issue number to fix (required)"
@@ -103,7 +103,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert (
@@ -130,7 +130,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Required input '${config}' not provided - API configuration object (required)" in errors[0]
@@ -158,7 +158,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should have 2 errors: one for missing required input, one for undeclared variable
         assert len(errors) == 2
@@ -183,7 +183,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Template variable ${some_var} has no valid source" in errors[0]
@@ -215,7 +215,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 2
         # Check both errors are present (order not guaranteed)
@@ -243,7 +243,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert errors[0] == "Required input '${my_input}' not provided - (required)"
@@ -269,6 +269,8 @@ class TestEnhancedTemplateErrors:
 
         registry = create_mock_registry()
         # Provide the required input
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"issue_number": "123"}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"issue_number": "123"}, registry
+        )
 
         assert len(errors) == 0

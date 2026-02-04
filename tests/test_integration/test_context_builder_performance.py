@@ -250,7 +250,7 @@ class TestContextBuilderPerformance:
 
         # Test formatting without running out of memory
         start_time = time.time()
-        json_struct, paths = _format_structure_combined(large_structure)
+        _json_struct, paths = _format_structure_combined(large_structure)
         format_time = time.time() - start_time
 
         # Should complete in reasonable time

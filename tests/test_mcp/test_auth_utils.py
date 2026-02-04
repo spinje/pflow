@@ -124,7 +124,7 @@ class TestExpandEnvVarsNestedEnhanced:
             mock_settings = mock_settings_cls.return_value
             mock_settings.list_env.return_value = {}
 
-            with pytest.raises(ValueError, match="Missing environment variable.*MISSING_VAR"):
+            with pytest.raises(ValueError, match=r"Missing environment variable.*MISSING_VAR"):
                 expand_env_vars_nested({"key": "${MISSING_VAR}"}, include_settings=True, raise_on_missing=True)
 
     def test_multiple_missing_variables_in_error(self):

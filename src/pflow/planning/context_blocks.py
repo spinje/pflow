@@ -79,7 +79,7 @@ class PlannerContextBuilder:
             # Merge with the last block
             last_block = blocks[-1].copy()
             last_block["text"] = last_block["text"] + "\n\n" + new_text
-            return blocks[:-1] + [last_block]
+            return [*blocks[:-1], last_block]
 
         # Create new block (original behavior - always create new block unless at limit)
         new_block = cls._create_cache_block(new_text)

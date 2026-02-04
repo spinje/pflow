@@ -43,7 +43,7 @@ def _resolve_and_validate_workflow(
         If error_response is not None, workflow_ir will be None
     """
     # Resolve workflow to IR
-    workflow_ir, error, source = resolve_workflow(workflow)
+    workflow_ir, error, _source = resolve_workflow(workflow)
     if error or workflow_ir is None:
         return (
             None,
@@ -317,7 +317,7 @@ class ExecutionService(BaseService):
             Formatted text with validation results (same as CLI output)
         """
         # Resolve workflow to IR
-        workflow_ir, error, source = resolve_workflow(workflow)
+        workflow_ir, error, _source = resolve_workflow(workflow)
         if error or workflow_ir is None:
             return f"✗ Workflow not found: {error or 'Unknown error'}"
 
@@ -337,7 +337,7 @@ class ExecutionService(BaseService):
             # 2. Data flow validation (execution order, cycles)
             # 3. Template validation (${variable} resolution)
             # 4. Node type validation (registry verification)
-            errors, warnings = WorkflowValidator.validate(
+            errors, _warnings = WorkflowValidator.validate(
                 workflow_ir=workflow_ir,
                 extracted_params=dummy_params,
                 registry=registry,

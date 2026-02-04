@@ -284,7 +284,7 @@ class WorkflowValidator:
             # Parse source format: "node_id.output_key" or "node_id"
             if "." in source:
                 # Split on first dot only (supports nested keys like "node.a.b.c")
-                node_id, output_key = source.split(".", 1)
+                node_id, _output_key = source.split(".", 1)
             else:
                 # Reference to entire node output
                 node_id = source

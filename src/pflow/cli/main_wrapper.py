@@ -46,7 +46,7 @@ def cli_main() -> None:
         try:
             # Remove the first 'mcp' from arguments
             mcp_index = sys.argv.index("mcp")
-            sys.argv = [sys.argv[0]] + sys.argv[mcp_index + 1 :]
+            sys.argv = [sys.argv[0], *sys.argv[mcp_index + 1 :]]
             mcp()
         finally:
             sys.argv = original_argv
@@ -56,7 +56,7 @@ def cli_main() -> None:
         original_argv = sys.argv[:]
         try:
             registry_index = sys.argv.index("registry")
-            sys.argv = [sys.argv[0]] + sys.argv[registry_index + 1 :]
+            sys.argv = [sys.argv[0], *sys.argv[registry_index + 1 :]]
             registry()
         finally:
             sys.argv = original_argv
@@ -66,7 +66,7 @@ def cli_main() -> None:
         original_argv = sys.argv[:]
         try:
             workflow_index = sys.argv.index("workflow")
-            sys.argv = [sys.argv[0]] + sys.argv[workflow_index + 1 :]
+            sys.argv = [sys.argv[0], *sys.argv[workflow_index + 1 :]]
             workflow()
         finally:
             sys.argv = original_argv
@@ -76,7 +76,7 @@ def cli_main() -> None:
         original_argv = sys.argv[:]
         try:
             settings_index = sys.argv.index("settings")
-            sys.argv = [sys.argv[0]] + sys.argv[settings_index + 1 :]
+            sys.argv = [sys.argv[0], *sys.argv[settings_index + 1 :]]
             settings()
         finally:
             sys.argv = original_argv
@@ -86,7 +86,7 @@ def cli_main() -> None:
         original_argv = sys.argv[:]
         try:
             instructions_index = sys.argv.index("instructions")
-            sys.argv = [sys.argv[0]] + sys.argv[instructions_index + 1 :]
+            sys.argv = [sys.argv[0], *sys.argv[instructions_index + 1 :]]
             instructions()
         finally:
             sys.argv = original_argv
@@ -96,7 +96,7 @@ def cli_main() -> None:
         original_argv = sys.argv[:]
         try:
             read_fields_index = sys.argv.index("read-fields")
-            sys.argv = [sys.argv[0]] + sys.argv[read_fields_index + 1 :]
+            sys.argv = [sys.argv[0], *sys.argv[read_fields_index + 1 :]]
             read_fields()
         finally:
             sys.argv = original_argv

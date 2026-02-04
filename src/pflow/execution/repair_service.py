@@ -343,7 +343,7 @@ def _validate_repaired_workflow_static(repaired_ir: dict, execution_params: Opti
 
     try:
         registry = Registry()
-        validation_errors, validation_warnings = WorkflowValidator.validate(
+        validation_errors, _validation_warnings = WorkflowValidator.validate(
             repaired_ir,
             extracted_params=execution_params or {},
             registry=registry,

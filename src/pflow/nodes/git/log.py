@@ -152,7 +152,7 @@ class GitLogNode(Node):
             True if ref is a valid git reference, False if it's likely a date
         """
         # Try to resolve the ref using git rev-parse
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
             cwd=cwd,
             capture_output=True,
@@ -215,9 +215,7 @@ class GitLogNode(Node):
             cmd.extend(["--", prep_res["path"]])
 
         # Execute git log
-        result = subprocess.run(  # noqa: S603
-            cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False
-        )
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False)
 
         # Check for errors
         if result.returncode != 0:

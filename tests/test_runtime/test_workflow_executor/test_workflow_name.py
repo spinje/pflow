@@ -171,7 +171,7 @@ class TestWorkflowNameParameter:
         node.set_params({"workflow_name": "test"})
 
         shared = {}
-        with pytest.raises(ValueError, match="Failed to load workflow 'test'.*not found"):
+        with pytest.raises(ValueError, match=r"Failed to load workflow 'test'.*not found"):
             node.prep(shared)
 
     def test_workflow_name_integration(self, workflow_manager, simple_workflow_ir):

@@ -345,7 +345,7 @@ def read_stdin_with_limit(max_size: int | None = None) -> StdinData:
     # Check if we need to stream to temp file
     if len(sample) == BINARY_SAMPLE_SIZE:
         # More data might be available, check total size
-        chunks, total_size, peek = _read_within_memory_limit(sample, max_size)
+        chunks, _total_size, peek = _read_within_memory_limit(sample, max_size)
 
         if peek:
             # Need to stream to temp file

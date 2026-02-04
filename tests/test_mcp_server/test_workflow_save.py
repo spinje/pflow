@@ -193,7 +193,7 @@ class TestWorkflowSaveValidation:
         }
 
         markdown_content = ir_to_markdown(workflow)
-        with pytest.raises(ValueError, match="Invalid workflow|Unknown node type|this-does-not-exist"):
+        with pytest.raises(ValueError, match=r"Invalid workflow|Unknown node type|this-does-not-exist"):
             ExecutionService.save_workflow(workflow=markdown_content, name="test-invalid-node", force=True)
 
     def test_rejects_malformed_templates(self):
@@ -231,7 +231,7 @@ ${malformed
 ```
 """
 
-        with pytest.raises(ValueError, match="Invalid workflow|malformed|template"):
+        with pytest.raises(ValueError, match=r"Invalid workflow|malformed|template"):
             ExecutionService.save_workflow(workflow=markdown_content, name="test-malformed", force=True)
 
     def test_rejects_unused_inputs(self):
@@ -254,7 +254,7 @@ ${malformed
         }
 
         markdown_content = ir_to_markdown(workflow)
-        with pytest.raises(ValueError, match="Invalid workflow|unused|Declared input"):
+        with pytest.raises(ValueError, match=r"Invalid workflow|unused|Declared input"):
             ExecutionService.save_workflow(workflow=markdown_content, name="test-unused-input", force=True)
 
 

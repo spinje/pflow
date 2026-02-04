@@ -149,8 +149,11 @@ ignore = [
 "tests/test_integration/test_git_*.py" = ["S603", "S607"]  # Allow subprocess calls for git integration tests
 "tests/test_core/test_stdin_no_hang.py" = ["S603", "S607", "UP022"]  # Allow subprocess calls for testing stdin hang issue
 "src/pflow/nodes/shell/shell.py" = ["S602"]  # shell=True is intentional for shell node
-# S603: Safe subprocess use - validated with shutil.which(), allowlisted providers, no shell expansion
+# S603: Safe subprocess use - hardcoded commands, no user input
 "src/pflow/core/llm_config.py" = ["S603"]
+"src/pflow/nodes/git/*.py" = ["S603"]
+"src/pflow/nodes/github/*.py" = ["S603"]
+"tests/test_nodes/test_git/*.py" = ["S603", "S607"]
 
 [tool.ruff.format]
 preview = true

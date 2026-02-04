@@ -169,7 +169,7 @@ class TestRepairService:
             mock_get_model.assert_called_with("anthropic/claude-sonnet-4-5")
             # Verify deterministic temperature
             mock_model.prompt.assert_called_once()
-            args, kwargs = mock_model.prompt.call_args
+            _args, kwargs = mock_model.prompt.call_args
             assert kwargs.get("temperature") == 0.0
 
     def test_repair_workflow_no_errors(self):

@@ -490,7 +490,7 @@ class TestUnionTypeEdgeCases:
             },
         })
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should still work - empty string after strip is ignored
         assert len(errors) == 0, f"Expected no errors but got: {errors}"

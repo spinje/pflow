@@ -268,7 +268,7 @@ def test_json_output_bypasses_structure_formatting(runner, tmp_path):
 
 def test_structure_mode_shows_flattened_paths(runner, mock_registry):
     """Test structure mode shows flattened paths for template variables."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # Create a mock node that returns complex nested data
     from pflow.pocketflow import Node
@@ -331,7 +331,7 @@ def test_text_mode_displays_human_readable_output(runner, tmp_path):
 
 def test_parameter_type_inference_boolean(runner, mock_registry):
     """Test that boolean parameters are inferred correctly."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Create a node that expects boolean
     from pflow.pocketflow import Node
@@ -374,7 +374,7 @@ def test_parameter_type_inference_boolean(runner, mock_registry):
 
 def test_parameter_type_inference_integers(runner, mock_registry):
     """Test that integer parameters are inferred correctly."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     from pflow.pocketflow import Node
 
@@ -410,7 +410,7 @@ def test_parameter_type_inference_integers(runner, mock_registry):
 
 def test_parameter_type_inference_json(runner, mock_registry):
     """Test that JSON parameters are parsed correctly."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     from pflow.pocketflow import Node
 
@@ -446,7 +446,7 @@ def test_parameter_type_inference_json(runner, mock_registry):
 
 def test_invalid_parameter_names_are_rejected(runner, mock_registry):
     """Test that invalid parameter names (shell special chars) are rejected."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # Test various invalid parameter names
     invalid_params = [
@@ -472,7 +472,7 @@ def test_invalid_parameter_names_are_rejected(runner, mock_registry):
 
 def test_mcp_node_short_form_resolution(runner, mock_registry):
     """Test that MCP node short form resolves to full format."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     from pflow.pocketflow import Node
 
@@ -502,7 +502,7 @@ def test_mcp_node_short_form_resolution(runner, mock_registry):
 
 def test_mcp_node_resolution_feedback_in_verbose_mode(runner, mock_registry):
     """Test that resolved node name is shown in verbose mode."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     from pflow.pocketflow import Node
 
@@ -528,7 +528,7 @@ def test_mcp_node_resolution_feedback_in_verbose_mode(runner, mock_registry):
 
 def test_ambiguous_mcp_node_shows_all_matches(runner, mock_registry):
     """Test that ambiguous MCP node name shows all matching options."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add another node with similar name to create ambiguity
     nodes = instance.load.return_value
@@ -555,7 +555,7 @@ def test_ambiguous_mcp_node_shows_all_matches(runner, mock_registry):
 
 def test_unknown_node_shows_helpful_error(runner, mock_registry):
     """Test that unknown node shows helpful error with suggestions."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["run", "nonexistent-node"])
 
@@ -566,7 +566,7 @@ def test_unknown_node_shows_helpful_error(runner, mock_registry):
 
 def test_missing_required_parameter_shows_error(runner, mock_registry):
     """Test that missing required parameter shows clear error."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     from pflow.pocketflow import Node
 
@@ -606,7 +606,7 @@ def test_missing_required_parameter_shows_error(runner, mock_registry):
 
 def test_unknown_node_suggests_similar_names(runner, mock_registry):
     """Test that unknown node suggests similar node names."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["run", "read-files"])  # Typo: files instead of file
 
@@ -623,7 +623,7 @@ def test_unknown_node_suggests_similar_names(runner, mock_registry):
 
 def test_structure_mode_parses_json_strings(runner, mock_registry):
     """Test that structure mode parses JSON strings returned by MCP nodes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # Create a mock node that returns JSON string (common with MCP nodes)
     from pflow.pocketflow import Node
@@ -658,7 +658,7 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
 
 def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
     """Test that structure mode shows array notation for lists."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     from pflow.pocketflow import Node
 
@@ -695,7 +695,7 @@ def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
 
 def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
     """Test that structure mode deduplicates identical MCP outputs."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # MCP nodes often return both 'result' and 'server_TOOL_result' with same data
     from pflow.pocketflow import Node
@@ -790,7 +790,7 @@ def test_verbose_mode_shows_parameters(runner, tmp_path):
 
 def test_json_mode_error_response_is_valid(runner, mock_registry):
     """Test that JSON mode returns valid JSON even on errors."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["run", "nonexistent-node", "--output-format", "json"])
 

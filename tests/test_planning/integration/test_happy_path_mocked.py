@@ -276,7 +276,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_discovers_changelog_workflow(self, north_star_workflows):
         """Test discovery of the primary North Star example: changelog generation."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -331,7 +331,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_discovers_triage_report_workflow(self, north_star_workflows):
         """Test discovery of issue triage report workflow."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -366,7 +366,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_partial_match_triggers_path_b(self, north_star_workflows):
         """Test that partial/vague matches don't trigger Path A."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -404,7 +404,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_changelog_different_phrasings(self, north_star_workflows):
         """Test that various ways users phrase changelog requests work."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -453,7 +453,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_release_notes_vs_changelog_distinction(self, north_star_workflows):
         """Test that system distinguishes between release notes and changelogs."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -489,7 +489,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_confidence_threshold_with_north_star(self, north_star_workflows):
         """Test that confidence thresholds work correctly with North Star workflows."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -526,7 +526,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_workflow_with_parameters(self, north_star_workflows):
         """Test that workflows with parameters are still discovered correctly."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -564,7 +564,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_similar_but_different_workflows(self, north_star_workflows):
         """Test that system correctly distinguishes between similar workflows."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -608,7 +608,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_workflow_value_proposition(self, north_star_workflows):
         """Test that North Star workflows are actually valuable and worth reusing."""
-        workflows_dir, workflows = north_star_workflows
+        _workflows_dir, workflows = north_star_workflows
 
         # Verify each North Star workflow has characteristics of valuable automation
         # workflows is a tuple: (dir, list_of_workflows)
@@ -647,7 +647,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_verbose_changelog_prompt_triggers_path_b(self, north_star_workflows):
         """Test that verbose north star prompt triggers Path B (generation)."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -687,7 +687,7 @@ class TestNorthStarWorkflowDiscovery:
 
     def test_verbose_triage_prompt_with_double_the(self, north_star_workflows):
         """Test triage report verbose prompt with intentional double 'the'."""
-        workflows_dir, workflows = north_star_workflows
+        workflows_dir, _workflows = north_star_workflows
 
         # Create workflow manager instance with test directory
         test_manager = WorkflowManager(workflows_dir=str(workflows_dir))
@@ -819,7 +819,7 @@ class TestWorkflowDiscoveryHappyPath:
 
     def test_finds_exact_match_workflow(self, setup_workflow_directory, caplog):
         """Test that WorkflowDiscoveryNode finds an exact matching workflow."""
-        workflows_dir, workflows = setup_workflow_directory
+        workflows_dir, _workflows = setup_workflow_directory
 
         # Create a real WorkflowManager with our test directory
         test_manager = WorkflowManager(workflows_dir=workflows_dir)
@@ -879,7 +879,7 @@ class TestWorkflowDiscoveryHappyPath:
 
     def test_finds_csv_processing_workflow(self, setup_workflow_directory):
         """Test finding a CSV processing workflow for a CSV-related query."""
-        workflows_dir, workflows = setup_workflow_directory
+        workflows_dir, _workflows = setup_workflow_directory
 
         # Create a real WorkflowManager with our test directory
         test_manager = WorkflowManager(workflows_dir=workflows_dir)
@@ -923,7 +923,7 @@ class TestWorkflowDiscoveryHappyPath:
           and context_builder._workflow_manager to ensure workflows are
           discoverable.
         """
-        workflows_dir, workflows = setup_workflow_directory
+        workflows_dir, _workflows = setup_workflow_directory
 
         # Create a real WorkflowManager with our test directory
         test_manager = WorkflowManager(workflows_dir=workflows_dir)
@@ -987,7 +987,7 @@ class TestWorkflowDiscoveryHappyPath:
           and context_builder._workflow_manager to ensure workflows are
           discoverable.
         """
-        workflows_dir, workflows = setup_workflow_directory
+        workflows_dir, _workflows = setup_workflow_directory
 
         # Create a real WorkflowManager with our test directory
         test_manager = WorkflowManager(workflows_dir=workflows_dir)

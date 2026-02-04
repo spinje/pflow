@@ -47,7 +47,7 @@ class ListPrsNode(Node):
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Extract and validate inputs from shared store with parameter fallback."""
         # Check authentication first
-        auth_result = subprocess.run(  # noqa: S603
+        auth_result = subprocess.run(
             ["gh", "auth", "status"],  # noqa: S607
             capture_output=True,
             text=True,
@@ -103,7 +103,7 @@ class ListPrsNode(Node):
         cmd.extend(["--limit", str(prep_res["limit"])])
 
         # Execute command - NO try/except! Let exceptions bubble for retry
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,

@@ -75,7 +75,7 @@ class TestAtomicWriteProtection:
 
             def failing_mkstemp(*args, **kwargs):
                 # Create temp file but simulate crash before writing completes
-                fd, path = original_mkstemp(*args, **kwargs)
+                fd, _path = original_mkstemp(*args, **kwargs)
                 os.write(fd, b'{"partial":')  # Incomplete JSON
                 raise OSError("Process crashed during write")
 

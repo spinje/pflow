@@ -44,7 +44,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1, f"Expected 1 error but got {len(errors)}: {errors}"
         assert "Malformed template syntax" in errors[0]
@@ -66,7 +66,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Malformed template syntax" in errors[0]
@@ -87,7 +87,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Malformed template syntax" in errors[0]
@@ -114,7 +114,7 @@ class TestMalformedTemplateDetection:
             "shell": {"interface": {"inputs": [], "outputs": [{"key": "result", "type": "str"}], "params": []}}
         })
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should detect the malformed template
         assert any("Malformed template syntax" in err for err in errors)
@@ -142,7 +142,7 @@ class TestMalformedTemplateDetection:
             "shell": {"interface": {"inputs": [], "outputs": [{"key": "result", "type": "str"}], "params": []}}
         })
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should NOT have malformed template errors
         assert not any("Malformed template syntax" in err for err in errors)
@@ -170,7 +170,7 @@ class TestMalformedTemplateDetection:
             "shell": {"interface": {"inputs": [], "outputs": [], "params": []}},
         })
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should NOT have malformed template errors
         assert not any("Malformed template syntax" in err for err in errors)
@@ -190,7 +190,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"http": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Malformed template syntax" in errors[0]
@@ -211,7 +211,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should detect malformed template in the list
         malformed_errors = [err for err in errors if "Malformed template syntax" in err]
@@ -233,7 +233,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should have no errors
         assert len(errors) == 0
@@ -257,7 +257,7 @@ class TestMalformedTemplateEdgeCases:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # Double ${{ means 2 ${, but only 1 valid template
         assert any("Malformed template syntax" in err for err in errors)
@@ -277,7 +277,7 @@ class TestMalformedTemplateEdgeCases:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Found 2 '${' but only 0 valid template(s)" in errors[0]

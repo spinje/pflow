@@ -745,14 +745,14 @@ class TestGitCheckoutNodeIntegration:
 
         # Create a temporary git repository
         os.chdir(tmp_path)
-        subprocess.run(["git", "init"], check=True)  # noqa: S603, S607
-        subprocess.run(["git", "config", "user.email", "test@test.com"], check=True)  # noqa: S603, S607
-        subprocess.run(["git", "config", "user.name", "Test User"], check=True)  # noqa: S603, S607
+        subprocess.run(["git", "init"], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], check=True)
 
         # Create initial commit
         (tmp_path / "README.md").write_text("# Test Repo")
-        subprocess.run(["git", "add", "README.md"], check=True)  # noqa: S603, S607
-        subprocess.run(["git", "commit", "-m", "Initial commit"], check=True)  # noqa: S603, S607
+        subprocess.run(["git", "add", "README.md"], check=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], check=True)
 
         # Test checkout node
         node = GitCheckoutNode()
@@ -765,7 +765,7 @@ class TestGitCheckoutNodeIntegration:
         assert shared["branch_created"] is True
 
         # Verify branch was actually created
-        result = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, check=True)  # noqa: S603, S607
+        result = subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True, check=True)
         assert result.stdout.strip() == "feature/test"
 
 

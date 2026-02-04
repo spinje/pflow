@@ -868,7 +868,7 @@ def validate_node_output_refs(workflow: dict, test_case: WorkflowTestCase, error
         if len(parts) != 2:
             continue  # Skip malformed expectations
 
-        expected_node_pattern, expected_output = parts
+        _expected_node_pattern, expected_output = parts
 
         # Check if any actual ref has this output field
         # We're flexible on node naming but strict on output field

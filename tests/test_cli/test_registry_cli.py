@@ -103,7 +103,7 @@ def mock_registry():
 # --- Criterion 1: First list command creates registry.json with core nodes ---
 def test_list_first_time_creates_registry(runner, mock_registry):
     """Test that first list command triggers auto-discovery and creates registry."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Simulate first time (registry doesn't exist)
     instance.registry_path.exists.return_value = False
@@ -118,7 +118,7 @@ def test_list_first_time_creates_registry(runner, mock_registry):
 # --- Criterion 2: List command with --json outputs valid JSON structure ---
 def test_list_json_output(runner, mock_registry):
     """Test that list --json outputs valid JSON structure."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["list", "--json"])
 
@@ -144,7 +144,7 @@ def test_list_json_output(runner, mock_registry):
 # --- Criterion 3: Describe existing node shows full interface ---
 def test_describe_existing_node(runner, mock_registry):
     """Test that describe shows full interface for existing node."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["describe", "read-file"])
 
@@ -160,7 +160,7 @@ def test_describe_existing_node(runner, mock_registry):
 # --- Criterion 4: Describe missing node exits with code 1 ---
 def test_describe_missing_node(runner, mock_registry):
     """Test that describe exits with code 1 for missing node."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["describe", "non-existent-node"])
 
@@ -171,7 +171,7 @@ def test_describe_missing_node(runner, mock_registry):
 
 def test_describe_missing_node_with_suggestions(runner, mock_registry):
     """Test that describe shows suggestions for similar nodes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["describe", "read"])
 
@@ -186,7 +186,7 @@ def test_describe_missing_node_with_suggestions(runner, mock_registry):
 # --- Criteria 5-9: List with filter functionality (formerly search) ---
 def test_search_file_returns_file_nodes(runner, mock_registry):
     """Test that list 'file' returns read-file and write-file nodes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Mock search results (list with filter uses search internally)
     instance.search.return_value = [
@@ -204,7 +204,7 @@ def test_search_file_returns_file_nodes(runner, mock_registry):
 
 def test_search_exact_match_scores_100(runner, mock_registry):
     """Test that exact match 'read-file' scores 100."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.return_value = [
         ("read-file", instance.load.return_value["read-file"], 100),
@@ -219,7 +219,7 @@ def test_search_exact_match_scores_100(runner, mock_registry):
 
 def test_search_prefix_scores_90(runner, mock_registry):
     """Test that prefix 'read' scores 90 for read-file."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.return_value = [
         ("read-file", instance.load.return_value["read-file"], 90),
@@ -234,7 +234,7 @@ def test_search_prefix_scores_90(runner, mock_registry):
 
 def test_search_substring_scores_70(runner, mock_registry):
     """Test that substring 'ead' scores 70 for read-file."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.return_value = [
         ("read-file", instance.load.return_value["read-file"], 70),
@@ -249,7 +249,7 @@ def test_search_substring_scores_70(runner, mock_registry):
 
 def test_search_description_scores_50(runner, mock_registry):
     """Test that description search 'content' scores 50 for write-file."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.return_value = [
         ("write-file", instance.load.return_value["write-file"], 50),
@@ -264,7 +264,7 @@ def test_search_description_scores_50(runner, mock_registry):
 
 def test_search_json_output(runner, mock_registry):
     """Test that list with filter --json outputs valid JSON."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.return_value = [
         ("read-file", instance.load.return_value["read-file"], 100),
@@ -292,7 +292,7 @@ def test_search_json_output(runner, mock_registry):
 
 def test_search_no_results(runner, mock_registry):
     """Test list with filter with no results."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.return_value = []
 
@@ -305,7 +305,7 @@ def test_search_no_results(runner, mock_registry):
 # --- Criteria 10-14: Scan functionality ---
 def test_scan_non_existent_path_shows_error(runner, mock_registry):
     """Test that scan shows error for non-existent path."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     with runner.isolated_filesystem():
         result = runner.invoke(registry, ["scan", "/non/existent/path"])
@@ -316,7 +316,7 @@ def test_scan_non_existent_path_shows_error(runner, mock_registry):
 
 def test_scan_valid_path_shows_security_warning(runner, mock_registry):
     """Test that scan shows security warning for valid path."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Mock scan results
     instance.scan_user_nodes.return_value = [
@@ -336,7 +336,7 @@ def test_scan_valid_path_shows_security_warning(runner, mock_registry):
 
 def test_scan_confirmation_n_aborts(runner, mock_registry):
     """Test that scan confirmation 'n' aborts without changes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {"name": "custom-node", "class_name": "CustomNode", "interface": {"description": "A custom node"}}
@@ -355,7 +355,7 @@ def test_scan_confirmation_n_aborts(runner, mock_registry):
 
 def test_scan_with_force_skips_confirmation(runner, mock_registry):
     """Test that scan --force skips confirmation."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {"name": "custom-node", "class_name": "CustomNode", "interface": {"description": "A custom node"}}
@@ -377,7 +377,7 @@ def test_scan_with_force_skips_confirmation(runner, mock_registry):
 
 def test_scan_adds_nodes_with_type_user(runner, mock_registry):
     """Test that scan adds nodes with type 'user'."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {"name": "custom-node", "class_name": "CustomNode", "interface": {"description": "A custom node"}}
@@ -397,7 +397,7 @@ def test_scan_adds_nodes_with_type_user(runner, mock_registry):
 
 def test_scan_json_output(runner, mock_registry):
     """Test scan --json output."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {"name": "custom-node", "class_name": "CustomNode", "interface": {"description": "A custom node"}}
@@ -422,7 +422,7 @@ def test_scan_json_output(runner, mock_registry):
 
 def test_scan_default_path(runner, mock_registry):
     """Test scan with default path (~/.pflow/nodes/)."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # Mock the default path existence check
     default_path = Path.home() / ".pflow" / "nodes"
@@ -462,7 +462,7 @@ def test_scan_default_path(runner, mock_registry):
 # --- Criteria 15-16: Node type detection ---
 def test_registry_marks_mcp_node_type(runner, mock_registry):
     """Test that registry marks 'mcp-github-tool' as type 'mcp'."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["list"])
 
@@ -482,7 +482,7 @@ def test_registry_marks_mcp_node_type(runner, mock_registry):
 
 def test_registry_marks_core_node_type(runner, mock_registry):
     """Test that registry marks 'read-file' as type 'core'."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["list"])
 
@@ -504,7 +504,7 @@ def test_registry_marks_core_node_type(runner, mock_registry):
 
 def test_describe_shows_correct_node_type(runner, mock_registry):
     """Test that describe shows correct node type."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # Test core node - new format uses markdown headings
     result = runner.invoke(registry, ["describe", "read-file"])
@@ -594,7 +594,7 @@ def test_main_wrapper_preserves_argv_after_registry():
 # --- Additional edge cases and error handling ---
 def test_list_error_handling(runner, mock_registry):
     """Test list command error handling."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Simulate an exception
     instance.load.side_effect = Exception("Database error")
@@ -607,7 +607,7 @@ def test_list_error_handling(runner, mock_registry):
 
 def test_describe_json_output(runner, mock_registry):
     """Test describe --json output."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # New describe command doesn't support --json flag (it's for agent use)
     # It outputs markdown format for consumption by other tools
@@ -621,7 +621,7 @@ def test_describe_json_output(runner, mock_registry):
 
 def test_search_error_handling(runner, mock_registry):
     """Test list with filter error handling."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.search.side_effect = Exception("Search failed")
 
@@ -633,7 +633,7 @@ def test_search_error_handling(runner, mock_registry):
 
 def test_scan_invalid_nodes(runner, mock_registry):
     """Test scan handling of invalid nodes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {
@@ -657,7 +657,7 @@ def test_scan_invalid_nodes(runner, mock_registry):
 
 def test_scan_no_valid_nodes(runner, mock_registry):
     """Test scan when no valid nodes found."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {
@@ -679,7 +679,7 @@ def test_scan_no_valid_nodes(runner, mock_registry):
 
 def test_list_grouped_display(runner, mock_registry):
     """Test that list groups nodes by type correctly with new grouped display format."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add a user node to the test data
     test_nodes = instance.load.return_value.copy()
@@ -747,7 +747,7 @@ def test_list_grouped_display(runner, mock_registry):
 # --- Smart Name Resolution Tests ---
 def test_describe_simplified_mcp_name(runner, mock_registry):
     """Test that simplified MCP names work (e.g., slack-add-reaction -> mcp-slack-slack_add_reaction)."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add MCP nodes with realistic naming patterns
     test_nodes = instance.load.return_value.copy()
@@ -770,7 +770,7 @@ def test_describe_simplified_mcp_name(runner, mock_registry):
 
 def test_describe_tool_only_name_unique(runner, mock_registry):
     """Test that tool-only names work if unique (e.g., add-reaction)."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add a single MCP node with this tool name
     test_nodes = instance.load.return_value.copy()
@@ -793,7 +793,7 @@ def test_describe_tool_only_name_unique(runner, mock_registry):
 
 def test_describe_tool_only_name_not_unique(runner, mock_registry):
     """Test that tool-only names fail if not unique."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add multiple MCP nodes with similar tool names
     test_nodes = instance.load.return_value.copy()
@@ -821,7 +821,7 @@ def test_describe_tool_only_name_not_unique(runner, mock_registry):
 
 def test_describe_original_full_names_still_work(runner, mock_registry):
     """Test that original full names still work."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     # Test core node with original name
     result = runner.invoke(registry, ["describe", "read-file"])
@@ -836,7 +836,7 @@ def test_describe_original_full_names_still_work(runner, mock_registry):
 
 def test_describe_suggestions_include_simplified_names(runner, mock_registry):
     """Test that helpful suggestions include simplified names when not found."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add MCP nodes
     test_nodes = instance.load.return_value.copy()
@@ -866,7 +866,7 @@ def test_describe_suggestions_include_simplified_names(runner, mock_registry):
 
 def test_describe_filesystem_mcp_name_resolution(runner, mock_registry):
     """Test name resolution for filesystem MCP nodes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add filesystem MCP node
     test_nodes = instance.load.return_value.copy()
@@ -896,7 +896,7 @@ def test_describe_filesystem_mcp_name_resolution(runner, mock_registry):
 # --- Grouped Display Tests ---
 def test_list_grouped_display_section_headers(runner, mock_registry):
     """Test that the list output includes section headers like 'Core Packages:' and 'MCP Servers:'."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["list"])
 
@@ -908,7 +908,7 @@ def test_list_grouped_display_section_headers(runner, mock_registry):
 
 def test_list_grouped_display_mcp_tools(runner, mock_registry):
     """Test that MCP nodes are grouped correctly under their servers."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add multiple MCP nodes from different servers
     test_nodes = instance.load.return_value.copy()
@@ -949,7 +949,7 @@ def test_list_grouped_display_mcp_tools(runner, mock_registry):
 
 def test_list_grouped_display_file_package(runner, mock_registry):
     """Test that file operations are grouped under 'file' package."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add more file nodes - need to specify the module path correctly for them to be detected as core
     test_nodes = instance.load.return_value.copy()
@@ -981,7 +981,7 @@ def test_list_grouped_display_file_package(runner, mock_registry):
 
 def test_list_empty_sections_not_shown(runner, mock_registry):
     """Test that empty sections are not displayed."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Remove all MCP nodes to have no MCP section
     test_nodes = {k: v for k, v in instance.load.return_value.items() if not k.startswith("mcp-")}
@@ -999,7 +999,7 @@ def test_list_empty_sections_not_shown(runner, mock_registry):
 
 def test_list_total_summary_counts(runner, mock_registry):
     """Test that the total summary correctly counts nodes by type."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Add various types of nodes
     test_nodes = instance.load.return_value.copy()
@@ -1025,7 +1025,7 @@ def test_list_total_summary_counts(runner, mock_registry):
 
 def test_describe_shows_example_usage(runner, mock_registry):
     """Test that describe shows example usage."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, _instance = mock_registry
 
     result = runner.invoke(registry, ["describe", "read-file"])
 
@@ -1037,7 +1037,7 @@ def test_describe_shows_example_usage(runner, mock_registry):
 
 def test_scan_confirmation_y_adds_nodes(runner, mock_registry):
     """Test that scan confirmation 'y' adds nodes."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     instance.scan_user_nodes.return_value = [
         {"name": "custom-node", "class_name": "CustomNode", "interface": {"description": "A custom node"}}
@@ -1055,7 +1055,7 @@ def test_scan_confirmation_y_adds_nodes(runner, mock_registry):
 
 def test_search_truncates_long_results(runner, mock_registry):
     """Test that list with filter truncates display for many results."""
-    MockRegistry, instance = mock_registry
+    _MockRegistry, instance = mock_registry
 
     # Create many search results
     results = []

@@ -447,7 +447,7 @@ def _perform_scan(reg: Registry, scan_path: Path, force: bool, output_json: bool
         return
 
     # Categorize nodes
-    valid_nodes, invalid_nodes = _categorize_nodes(user_nodes, output_json)
+    valid_nodes, _invalid_nodes = _categorize_nodes(user_nodes, output_json)
 
     if not valid_nodes:
         if output_json:

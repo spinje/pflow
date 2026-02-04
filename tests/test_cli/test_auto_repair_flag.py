@@ -73,7 +73,7 @@ class TestAutoRepairFlag:
 
                 # Check that repair was disabled (default)
                 mock_execute.assert_called_once()
-                args, kwargs = mock_execute.call_args
+                _args, kwargs = mock_execute.call_args
                 assert kwargs.get("enable_repair") is False
 
         finally:
@@ -106,7 +106,7 @@ class TestAutoRepairFlag:
 
                 # Check that repair was enabled
                 mock_execute.assert_called_once()
-                args, kwargs = mock_execute.call_args
+                _args, kwargs = mock_execute.call_args
                 assert kwargs.get("enable_repair") is True
 
         finally:
@@ -172,7 +172,7 @@ class TestAutoRepairFlag:
 
                 # Repair should be enabled
                 mock_execute.assert_called_once()
-                args, kwargs = mock_execute.call_args
+                _args, kwargs = mock_execute.call_args
                 assert kwargs.get("enable_repair") is True
 
         finally:

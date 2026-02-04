@@ -147,7 +147,7 @@ class GitStatusNode(Node):
         # cwd = prep_res.get("working_directory", None)
 
         # Execute git status with porcelain v2 format for machine-readable output
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             ["git", "status", "--porcelain=v2", "--branch"],  # noqa: S607
             cwd=cwd,
             capture_output=True,

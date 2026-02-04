@@ -128,9 +128,7 @@ class GitGetLatestTagNode(Node):
             cmd.append("refs/tags")
 
         # Execute git command
-        result = subprocess.run(  # noqa: S603
-            cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False
-        )
+        result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False)
 
         # Check for errors
         if result.returncode != 0:

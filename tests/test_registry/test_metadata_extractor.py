@@ -197,7 +197,7 @@ class TestMetadataExtractorBehavior:
 
             pass
 
-        with pytest.raises(ValueError, match="does not inherit from pocketflow.BaseNode"):
+        with pytest.raises(ValueError, match=r"does not inherit from pocketflow.BaseNode"):
             self.extractor.extract_metadata(NotANode)
 
     def test_validates_input_is_class(self):

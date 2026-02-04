@@ -112,14 +112,14 @@ class TestInvalidExamples:
         """Test missing Steps section produces correct error."""
         content = (examples_dir / "invalid/missing-steps.pflow.md").read_text()
 
-        with pytest.raises(MarkdownParseError, match="Missing.*Steps.*section"):
+        with pytest.raises(MarkdownParseError, match=r"Missing.*Steps.*section"):
             parse_markdown(content)
 
     def test_missing_type_error(self, examples_dir):
         """Test missing node type produces correct error."""
         content = (examples_dir / "invalid/missing-type.pflow.md").read_text()
 
-        with pytest.raises(MarkdownParseError, match="missing.*type.*parameter"):
+        with pytest.raises(MarkdownParseError, match=r"missing.*type.*parameter"):
             parse_markdown(content)
 
     def test_missing_description_error(self, examples_dir):

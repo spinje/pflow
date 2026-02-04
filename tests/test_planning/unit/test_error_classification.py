@@ -169,7 +169,7 @@ class TestErrorClassification:
             },
         }
 
-        safe_response, planner_error = create_fallback_response("ParameterMappingNode", exc, prep_res)
+        safe_response, _planner_error = create_fallback_response("ParameterMappingNode", exc, prep_res)
 
         # Should apply defaults where available
         assert safe_response["extracted"]["encoding"] == "utf-8"

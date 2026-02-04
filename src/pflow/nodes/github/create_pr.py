@@ -42,7 +42,7 @@ class GitHubCreatePRNode(Node):
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Extract and validate inputs from shared store with parameter fallback."""
         # Check authentication first
-        auth_result = subprocess.run(  # noqa: S603
+        auth_result = subprocess.run(
             ["gh", "auth", "status"],  # noqa: S607
             capture_output=True,
             text=True,
@@ -99,7 +99,7 @@ class GitHubCreatePRNode(Node):
             cmd.extend(["--repo", prep_res["repo"]])
 
         # Execute create command - NO try/except! Let exceptions bubble for retry
-        result = subprocess.run(  # noqa: S603
+        result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
@@ -132,9 +132,7 @@ class GitHubCreatePRNode(Node):
             cmd.extend(["--repo", prep_res["repo"]])
 
         # Execute view command to get full PR data
-        result = subprocess.run(  # noqa: S603
-            cmd, capture_output=True, text=True, shell=False, timeout=30
-        )
+        result = subprocess.run(cmd, capture_output=True, text=True, shell=False, timeout=30)
 
         # Check return code
         if result.returncode != 0:

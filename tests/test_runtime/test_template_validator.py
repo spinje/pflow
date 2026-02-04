@@ -247,7 +247,7 @@ class TestWorkflowValidation:
         params = {"url": "https://youtube.com/watch?v=xyz"}
         registry = create_mock_registry()
 
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0
 
     def test_missing_cli_parameter(self):
@@ -264,7 +264,7 @@ class TestWorkflowValidation:
         params = {}
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
         assert "Template variable ${url} has no valid source" in errors[0]
 
@@ -282,7 +282,7 @@ class TestWorkflowValidation:
         params = {}
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 3
         assert any("${param1}" in e for e in errors)
         assert any("${param2}" in e for e in errors)
@@ -308,7 +308,7 @@ class TestWorkflowValidation:
         params = {"url": "https://youtube.com/watch?v=xyz"}
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # No errors - transcript_data is from shared store
 
     def test_invalid_syntax_in_shared_vars(self):
@@ -322,7 +322,7 @@ class TestWorkflowValidation:
 
         params = {}
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 1
         assert "Template variable ${data..field} has no valid source" in errors[0]
 
@@ -346,7 +346,7 @@ class TestWorkflowValidation:
         params = {"config": {"setting": "value1", "other": "value2"}}
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # config is provided
 
     def test_no_templates_in_workflow(self):
@@ -361,7 +361,7 @@ class TestWorkflowValidation:
 
         params = {}
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0  # No templates, no errors
 
 
@@ -389,12 +389,12 @@ class TestRealWorldScenarios:
 
         # Test with missing URL
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 1
         assert "Template variable ${url} has no valid source" in errors[0]
 
         # Test with URL provided
-        errors, warnings = TemplateValidator.validate_workflow_templates(
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
             workflow_ir, {"url": "https://youtube.com"}, registry
         )
         assert len(errors) == 0  # transcript_data and summary are from shared store
@@ -419,19 +419,19 @@ class TestRealWorldScenarios:
 
         # Test with no params
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) == 2
         assert any("${repo}" in e for e in errors)
         assert any("${issue_number}" in e for e in errors)
 
         # Test with partial params
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
         assert len(errors) == 1
         assert "${issue_number}" in errors[0]
 
         # Test with all params
         params = {"repo": "pflow", "issue_number": "123"}
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, params, registry)
         assert len(errors) == 0
 
 
@@ -454,7 +454,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
             workflow_ir, {"items": ["a", "b", "c"]}, registry
         )
         assert len(errors) == 0, f"Unexpected errors: {errors}"
@@ -475,7 +475,9 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"records": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"records": ["a", "b"]}, registry
+        )
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_outputs_recognized(self):
@@ -499,7 +501,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_all_batch_outputs_available(self):
@@ -532,7 +534,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": []}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": []}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_items_template_validated(self):
@@ -553,7 +555,7 @@ class TestBatchTemplateValidation:
         registry = create_mock_registry()
 
         # With data provided - should pass (data is used in batch.items)
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_items_invalid_template_fails(self):
@@ -571,7 +573,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
         assert len(errors) > 0
         assert any("nonexistent_array" in e for e in errors)
 
@@ -597,7 +599,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
         # Should fail because batch node doesn't expose 'response' directly
         assert len(errors) > 0
         assert any("response" in e for e in errors)
@@ -617,7 +619,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
             workflow_ir, {"url": "https://youtube.com"}, registry
         )
         assert len(errors) == 0, f"Unexpected errors: {errors}"
@@ -650,7 +652,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
             workflow_ir, {"url": "https://youtube.com", "items": ["a", "b"]}, registry
         )
         assert len(errors) == 0, f"Unexpected errors: {errors}"
@@ -679,7 +681,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should NOT produce an error - results[0].response is valid
         assert len(errors) == 0, f"Unexpected errors for nested batch access: {errors}"
 
@@ -707,7 +709,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should NOT produce an error - results[0].item is valid (original batch input)
         assert len(errors) == 0, f"Unexpected errors for batch item field access: {errors}"
 
@@ -735,7 +737,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should NOT produce an error - deeply nested path is valid
         assert len(errors) == 0, f"Unexpected errors for deeply nested batch access: {errors}"
 
@@ -763,7 +765,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should produce an error - typo_field is not a valid output
         assert len(errors) == 1, f"Expected 1 error for invalid path, got: {errors}"
         assert "typo_field" in errors[0] or "results[0]" in errors[0]
@@ -794,7 +796,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
             workflow_ir, {"items": ["a", "b", "c"]}, registry
         )
         # Should NOT produce any "malformed template" errors
@@ -847,7 +849,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
 
         # CRITICAL: Should NOT fail with "does not output 'results[${item'"
         bad_errors = [e for e in errors if "results[${item" in e]

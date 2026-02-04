@@ -215,7 +215,7 @@ class TestTemplatePathExtractionGuards:
             }
         }
 
-        paths, has_any = extract_metadata_paths("test-node", registry)
+        paths, _has_any = extract_metadata_paths("test-node", registry)
 
         # Must include nested paths, not just top-level
         path_strings = [p[0] for p in paths]
@@ -235,7 +235,7 @@ class TestTemplatePathExtractionGuards:
         # MCP node pattern: result is JSON string, not dict
         outputs = {"result": '{"status": "success", "data": {"id": 123, "name": "test"}}'}
 
-        paths, warnings = extract_runtime_paths(outputs)
+        paths, _warnings = extract_runtime_paths(outputs)
 
         # Must parse JSON string and flatten
         path_strings = [p[0] for p in paths]

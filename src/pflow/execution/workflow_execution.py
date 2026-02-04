@@ -107,7 +107,7 @@ def _handle_validation_phase(
     from pflow.registry import Registry
 
     registry = Registry()
-    validation_errors, validation_warnings = WorkflowValidator.validate(
+    validation_errors, _validation_warnings = WorkflowValidator.validate(
         workflow_ir, extracted_params=execution_params or {}, registry=registry, skip_node_types=False
     )
 
@@ -551,7 +551,7 @@ def execute_workflow(
             from pflow.registry import Registry
 
             registry = Registry()
-            validation_errors, validation_warnings = WorkflowValidator.validate(
+            validation_errors, _validation_warnings = WorkflowValidator.validate(
                 workflow_ir, extracted_params=execution_params or {}, registry=registry, skip_node_types=False
             )
 

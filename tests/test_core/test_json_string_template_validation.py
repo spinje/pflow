@@ -184,7 +184,7 @@ class TestUnknownParamWarningsIntegration:
             "edges": [],
         }
 
-        errors, warnings = WorkflowValidator.validate(
+        _errors, warnings = WorkflowValidator.validate(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
@@ -211,7 +211,7 @@ class TestUnknownParamWarningsIntegration:
             "edges": [],
         }
 
-        errors, warnings = WorkflowValidator.validate(
+        _errors, warnings = WorkflowValidator.validate(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
@@ -237,7 +237,7 @@ class TestUnknownParamWarningsIntegration:
             "edges": [],
         }
 
-        errors, warnings = WorkflowValidator.validate(
+        _errors, warnings = WorkflowValidator.validate(
             workflow_ir=workflow_ir,
             extracted_params=None,
             registry=None,

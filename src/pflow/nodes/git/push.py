@@ -82,7 +82,7 @@ class GitPushNode(Node):
 
         # Execute git push command
         push_cmd = ["git", "push", remote, branch]
-        push_result = subprocess.run(  # noqa: S603
+        push_result = subprocess.run(
             push_cmd, cwd=cwd, capture_output=True, text=True, shell=False, timeout=30, check=False
         )
 
