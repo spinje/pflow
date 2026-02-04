@@ -641,3 +641,50 @@ Verified: piped stdin (`echo "hello" | pflow stdin-echo.pflow.md`) and `--valida
 - `make check`: all pass
 
 Status: Phase 5 (agent instructions — collaborative with user) is the only remaining work.
+
+## Entry 17: Phase 5 — cli-agent-instructions.md update + review
+
+### What was done
+
+Updated `src/pflow/cli/resources/cli-agent-instructions.md` — all 6 passes from the implementation plan in `scratchpads/phase5-agent-instructions/implementation-plan.md` were applied by a code-implementer subagent, then reviewed chunk-by-chunk by the main agent.
+
+### Issues found and fixed during review
+
+1. **"All Template Patterns" section still had JSON `"params": {...}` block** — Pass 3.6 was missed by the implementing agent. Replaced with markdown format showing params inside `### node` context.
+
+2. **Inline vs code block guideline was wrong** — initial replacement used key count (5+ keys) as the threshold. User correctly pointed out it's nesting depth that matters, not count. Rewrote guideline: "Inline `- key: value` for flat params and simple nesting. `yaml param_name` code block for deep nesting or batch config."
+
+3. **`yaml headers` and `yaml body` code blocks for flat structures** — the `fetch-with-auth` node in the Node Creation patterns section used `yaml headers` (3 flat keys) and `yaml body` (2 flat keys) as code blocks. These contradicted the guideline. Converted to inline `- headers:` and `- body:` nesting.
+
+4. **`yaml batch` code blocks for simple batch config** — three batch examples used `yaml batch` code blocks for 1-3 flat keys (`items`, `parallel`, `max_concurrent`). Converted to inline `- batch:` nesting. Left two complex batch examples (inline arrays of objects) as `yaml batch` code blocks. Updated key rules to reflect that batch can be inline or code block.
+
+### Parser fix needed: inline `- batch:` routing
+
+The parser currently only routes `batch` to the top-level node field from `yaml batch` code blocks. If an agent writes `- batch:` inline, it goes to `params.batch` (wrong). The parser needs a small fix (~3 lines) to also extract `batch` from inline params to top-level, same as it does for `type`.
+
+**What to fix**: In `src/pflow/core/markdown_parser.py`, function `_build_node_dict()`, add a `batch` pop from `all_params` to top-level `node["batch"]` — same pattern as the `type` extraction at line 695-696. Also add parser tests for inline `- batch:` routing.
+
+**Why this matters**: The agent instructions now show `- batch:` inline for simple cases. Without the parser fix, agents following the instructions would produce workflows where batch config silently goes to `params.batch` instead of top-level `batch`, causing batch processing to not work.
+
+**Priority**: Must be fixed before these instructions go live. Small, isolated change.
+
+Files modified:
+- `src/pflow/cli/resources/cli-agent-instructions.md` (Phase 5 updates + 4 review fixes)
+
+Status: Phase 5 cli-agent-instructions.md complete pending parser fix for inline batch routing. Still need to check `cli-basic-usage.md`.
+
+## Entry 18: Phase 5 — Philosophy and terminology polish
+
+Collaborative review with user on cli-agent-instructions.md. Three changes:
+
+1. **"Why pflow exists" reframed**: Combined with format framing — now defines pflow as "executable documentation" (`.pflow.md` reads like a runbook, prose = intent, params = behavior, code blocks = execution).
+
+2. **"Edges" terminology removed throughout**: Renamed to "step order" consistently — philosophy section, teaching section (lines 65-173), misunderstandings, Key Success Factors. Agents never write edges, so the term was confusing.
+
+3. **Quick Wins updated**: Dropped two niche items (`Prefer: wait=60`, auto-JSON-parsing) in favor of two format-relevant wins ("Step order = execution order", "Templates reach any previous step").
+
+Also fixed: stale `show_structure` command reference → `registry run`, "Step 12" → "Step 11", Phase numbering gap (1→3 → 1→2), `//` comments → `#`.
+
+Files modified: `src/pflow/cli/resources/cli-agent-instructions.md`
+
+Status: Phase 5 cli-agent-instructions.md content complete pending parser fix for inline batch routing. Still need to check `cli-basic-usage.md`.
