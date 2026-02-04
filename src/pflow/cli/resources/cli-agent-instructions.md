@@ -801,25 +801,10 @@ metadata:
 - Single output via `result` variable — use dict for structured output
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
-### Step 9: VALIDATE - Understanding Validation Errors
-
-```bash
-pflow --validate-only workflow.pflow.md
-```
-
-**Common validation errors with precise fixes:**
-
-| Error Message | Exact Cause | Precise Fix |
-|---------------|-------------|-------------|
-| `"Unknown node type 'mcp-slack-fetch'"` | Node type doesn't exist | Run `pflow registry discover "fetch Slack messages"` to find correct type |
-| `"Template variable '${channel_id}' not found in inputs or node outputs"` | Missing input declaration | Add a `### channel_id` section in `## Inputs` with type and description |
-| `"Node 'process' references '${analyze.result}' but 'analyze' hasn't executed yet"` | Wrong step order | Move `### analyze` above `### process` in `## Steps` |
-| `"Missing required parameter 'url' in node 'fetch'"` | Required param not set | Add `- url: ${api_url}` to the node's params |
-| `"Invalid input type: expected string, got number"` | Wrong type in template | Check source node output type |
-
-### Step 10: TEST - Systematic Testing
+### Step 9: TEST - Systematic Testing
 
 **Development loop: edit file → run from path → debug → repeat until working**
+Validation runs automatically before every execution — no separate validation step needed.
 
 ```bash
 # Run directly from file path during development (no saving needed)
@@ -830,9 +815,9 @@ Keep iterating on the `.pflow.md` file until the workflow executes successfully.
 
 **Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` contains events, nodes, outputs, errors and more
 
-### Step 11: SAVE - Make It Executable by Name (Final Step)
+### Step 10: SAVE - Make It Executable by Name (Final Step)
 
-⚠️ **Only do this AFTER your workflow runs successfully from the file path in Step 10.**
+⚠️ **Only do this AFTER your workflow runs successfully from the file path in Step 9.**
 
 **Your workflow currently works with:**
 ```bash
@@ -1837,7 +1822,6 @@ pflow read-fields exec-id field.path                 # Get actual field values i
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'          # Inspect trace (for debugging)
 
 # Workflow Operations
-pflow --validate-only workflow.pflow.md              # Check if workflow is valid
 pflow workflow.pflow.md param1=value1                # Run workflow from file (while developing)
 pflow workflow save workflow.pflow.md --name workflow-name  # Save workflow (when finished developing)
 
@@ -1907,7 +1891,7 @@ Format: `verb-noun-qualifier`
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
 | **Creating defensive extraction steps** | Fear of malformed data | Nodes handle parsing automatically |
 | **Ignoring workflow discovery** | Eager to build something new | ALWAYS check existing workflows first |
-| **Forgetting to save workflow** | Step 11 seems optional | Save is REQUIRED for name-based execution |
+| **Forgetting to save workflow** | Step 10 seems optional | Save is REQUIRED for name-based execution |
 | **Hardcoding service names** | Following specific examples | Use category patterns instead |
 | **Building all at once** | Want to show complete solution | Build core path first, test, then add |
 
