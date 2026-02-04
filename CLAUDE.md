@@ -348,24 +348,22 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - ✅ Task 96: Support Batch Processing in Workflows
 - ✅ Task 95: Unify LLM Usage via Simon Willison's llm Library
 - ✅ Task 115: Automatic Stdin Routing for Unix-First Piping
+- ✅ Task 104: Python Code Node
+- ✅ Task 108: Smart Trace Debug Output
 
 ### Planned Features (in order of priority)
 
 **v0.8.0 - PyPI release:**
 - Task 49: Publish to PyPI
 
-**v0.9.0 - Agent Authoring Experience:**
-- Task 104: Python Code Node
-- Task 108: Smart Trace Debug Output
-
-**v0.10.0 - Workflow Expressiveness:**
+**v0.9.0 - Workflow Expressiveness:**
 - Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
 
-**v0.10.1 - Bug Fixes:**
+**v0.9.1 - Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
 
-**v0.11.0 - Extended Features:**
+**v0.10.0 - Extended Features:**
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
@@ -373,7 +371,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 111: Batch Limit for Iteration
 - Task 118: Code and Shell Linting
 
-**v0.12.0 - Performance:**
+**v0.11.0 - Performance:**
 - Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
