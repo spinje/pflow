@@ -15,7 +15,7 @@ class TestWorkflowListFormatter:
 
         assert "No workflows saved yet." in result
         assert "To save a workflow:" in result
-        assert 'pflow "your task"' in result
+        assert "Create a .pflow.md workflow file" in result
 
     def test_format_single_workflow(self) -> None:
         """Test formatting single workflow."""

@@ -1,5 +1,7 @@
 # Planning Infrastructure - Minimal Guide
 
+> **GATED (Task 107)**: The planner system is gated pending markdown format migration. Planner prompts assume JSON workflow format. All code is preserved but entry points are guarded — CLI shows a "temporarily unavailable" message when natural language input is detected. Re-enable after prompt rewrite.
+
 ## Overview
 
 Natural Language Planner transforms requests into executable PocketFlow workflows via multi-stage LLM pipeline.

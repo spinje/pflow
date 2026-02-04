@@ -12,6 +12,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+from tests.shared.markdown_utils import write_workflow_file
+
 
 def invoke_cli(args: list[str]) -> Any:
     """Helper to invoke CLI with proper routing through main_wrapper.
@@ -88,8 +90,8 @@ class TestValidateOnlyNoExecution:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         # Run with --validate-only
         result = invoke_cli(["--validate-only", str(workflow_path)])
@@ -116,8 +118,8 @@ class TestValidateOnlyAutoNormalization:
         workflow = {"nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}]}
         # NO ir_version, NO edges
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -149,8 +151,8 @@ class TestValidateOnlyTemplateValidation:
             "edges": [{"from": "fetch", "to": "process"}],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -179,8 +181,8 @@ class TestValidateOnlyWithoutInputValues:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         # Run WITHOUT providing repo=... pr_number=... parameters
         result = invoke_cli(["--validate-only", str(workflow_path)])
@@ -204,8 +206,8 @@ class TestValidateOnlySkipsPrepareInputs:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -227,8 +229,8 @@ class TestValidateOnlyEdgeCases:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
@@ -236,16 +238,28 @@ class TestValidateOnlyEdgeCases:
         combined = (result.output + result.stderr).lower()
         assert "non_existent_node_type" in combined or "not found" in combined
 
-    def test_validate_only_handles_malformed_json(self, tmp_path: Path) -> None:
-        """Should show helpful error for invalid JSON."""
-        workflow_path = tmp_path / "bad.json"
-        workflow_path.write_text('{"nodes": [')  # Invalid JSON
+    def test_validate_only_handles_malformed_markdown(self, tmp_path: Path) -> None:
+        """Should show helpful error for invalid markdown workflow."""
+        workflow_path = tmp_path / "bad.pflow.md"
+        # Missing ## Steps section — invalid markdown workflow
+        workflow_path.write_text("# Bad Workflow\n\nJust some text, no steps.\n")
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
-        assert result.exit_code != 0, "Should have caught malformed JSON"
+        assert result.exit_code != 0, "Should have caught malformed workflow"
         combined = (result.output + result.stderr).lower()
-        assert "json" in combined or "syntax" in combined or "parse" in combined
+        assert "steps" in combined or "syntax" in combined or "parse" in combined
+
+    def test_validate_only_rejects_json_files(self, tmp_path: Path) -> None:
+        """Should show helpful error when a .json file is passed."""
+        workflow_path = tmp_path / "old.json"
+        workflow_path.write_text('{"nodes": []}')
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code != 0, "Should reject .json files"
+        combined = (result.output + result.stderr).lower()
+        assert "json" in combined or ".pflow.md" in combined
 
 
 class TestValidateOnlyJSONOutput:
@@ -259,8 +273,8 @@ class TestValidateOnlyJSONOutput:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
 
@@ -278,8 +292,8 @@ class TestValidateOnlyJSONOutput:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
 
@@ -307,31 +321,36 @@ class TestValidateOnlyWithComplexWorkflows:
             "edges": [{"from": "node1", "to": "node2"}, {"from": "node2", "to": "node3"}],
         }
 
-        workflow_path = tmp_path / "complex.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "complex.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
         # Should succeed - valid structure
         assert result.exit_code == 0, f"Failed: {result.output}\n{result.stderr}"
 
-    def test_validate_only_catches_circular_dependencies(self, tmp_path: Path) -> None:
-        """Should catch circular node dependencies."""
+    def test_validate_only_catches_forward_references(self, tmp_path: Path) -> None:
+        """Should catch forward node references (node referencing one that hasn't executed yet).
+
+        In the markdown format, edges are always linear (from document order), so
+        circular edges can't occur. But forward references (node1 referencing node2's
+        output when node2 comes later) are still caught by validation.
+        """
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {"id": "node1", "type": "shell", "params": {"command": "echo ${node2.stdout}"}},
                 {"id": "node2", "type": "shell", "params": {"command": "echo ${node1.stdout}"}},
             ],
-            "edges": [{"from": "node1", "to": "node2"}, {"from": "node2", "to": "node1"}],
+            "edges": [{"from": "node1", "to": "node2"}],
         }
 
-        workflow_path = tmp_path / "circular.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "forward-ref.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--validate-only", str(workflow_path)])
 
-        # Should fail - circular dependency
-        assert result.exit_code != 0, "Should have caught circular dependency"
+        # Should fail - forward reference
+        assert result.exit_code != 0, "Should have caught forward reference"
         combined = (result.output + result.stderr).lower()
-        assert "circular" in combined or "cycle" in combined or "dependency" in combined
+        assert "node1" in combined or "execution order" in combined or "reference" in combined

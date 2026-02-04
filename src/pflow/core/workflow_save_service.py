@@ -5,13 +5,13 @@ the CLI and MCP server, eliminating code duplication while maintaining
 separate interfaces optimized for each use case.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.exceptions import WorkflowValidationError
 from pflow.core.ir_schema import normalize_ir, validate_ir
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.workflow_manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
@@ -146,22 +146,22 @@ def _load_from_dict(source: dict[str, Any], auto_normalize: bool) -> dict[str, A
     """Load workflow from dict source.
 
     Args:
-        source: Dict containing workflow IR (or metadata wrapper)
+        source: Dict containing workflow IR
         auto_normalize: Whether to auto-add missing fields
 
     Returns:
         Validated workflow IR
     """
-    # Extract IR if wrapped in metadata
+    # Extract IR if wrapped (legacy compatibility)
     workflow_ir = source.get("ir", source)
     return _validate_and_normalize_ir(workflow_ir, auto_normalize, "Invalid workflow IR")
 
 
 def _load_from_file(path: Path, auto_normalize: bool) -> dict[str, Any]:
-    """Load workflow from file path.
+    """Load workflow from a .pflow.md file path.
 
     Args:
-        path: Path to JSON file
+        path: Path to .pflow.md file
         auto_normalize: Whether to auto-add missing fields
 
     Returns:
@@ -172,15 +172,12 @@ def _load_from_file(path: Path, auto_normalize: bool) -> dict[str, Any]:
         WorkflowValidationError: If IR validation fails
     """
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
+        content = path.read_text(encoding="utf-8")
+        result = parse_markdown(content)
+        return _validate_and_normalize_ir(result.ir, auto_normalize, f"Invalid workflow in {path}")
 
-        # Extract IR if wrapped
-        workflow_ir = data.get("ir", data)
-        return _validate_and_normalize_ir(workflow_ir, auto_normalize, f"Invalid workflow in {path}")
-
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Invalid JSON in {path}: {e}") from e
+    except MarkdownParseError as e:
+        raise ValueError(f"Invalid workflow in {path}: {e}") from e
     except (ValueError, WorkflowValidationError):
         raise
     except Exception as e:
@@ -213,7 +210,7 @@ def load_and_validate_workflow(
 
     Handles three input types:
     1. Dict: Use directly as IR (or extract from metadata wrapper)
-    2. File path: Load from JSON file
+    2. File path: Load from .pflow.md file
     3. Workflow name: Load from WorkflowManager
 
     Args:
@@ -253,20 +250,22 @@ def load_and_validate_workflow(
 
 def save_workflow_with_options(
     name: str,
-    workflow_ir: dict[str, Any],
-    description: str,
+    markdown_content: str,
     *,
     force: bool = False,
     metadata: Optional[dict[str, Any]] = None,
 ) -> Path:
     """Save workflow to library with existence checks and overwrite handling.
 
+    The caller must have already validated the markdown content (parsed and
+    validated the IR). This function handles existence checks, overwrite logic,
+    and delegates to WorkflowManager.save() which prepends frontmatter.
+
     Args:
         name: Workflow name (must be validated first using validate_workflow_name)
-        workflow_ir: Validated workflow IR
-        description: Workflow description
+        markdown_content: Original .pflow.md content string (pre-validated by caller)
         force: If True, overwrite existing workflow by deleting it first
-        metadata: Optional rich metadata dict (keywords, capabilities, use cases)
+        metadata: Optional metadata dict (keywords, capabilities, use cases)
 
     Returns:
         Path to saved workflow file
@@ -293,7 +292,7 @@ def save_workflow_with_options(
 
     # Save workflow
     try:
-        saved_path = manager.save(name, workflow_ir, description, metadata)
+        saved_path = manager.save(name, markdown_content, metadata)
         logger.info(f"Saved workflow '{name}' to {saved_path}")
         return Path(saved_path)
     except Exception as e:

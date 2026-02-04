@@ -1,7 +1,7 @@
 # Shared Store + Proxy Design Pattern in pflow
 
 > **Note on Syntax**: The `=>` examples below illustrate conceptual data flow between nodes.
-> pflow uses JSON workflow files for composition: `pflow workflow.json` or `pflow saved-name param=value`
+> pflow uses markdown workflow files (`.pflow.md`) for composition: `pflow workflow.pflow.md` or `pflow saved-name param=value`
 
 ## Navigation
 
@@ -39,7 +39,7 @@ Before diving into the autonomy principle, it's crucial to understand when to us
 
 ## Template Variable Resolution
 
-> **MVP Note**: Template variables are preserved in the JSON IR by the planner and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
+> **Note**: Template variables are preserved in the IR dict (produced from `.pflow.md` by the markdown parser) and resolved at runtime. This enables the "Plan Once, Run Forever" philosophy where workflows can be reused with different parameters.
 
 Template variables (`${variable}`) provide dynamic content substitution in node inputs, enabling sophisticated data flow between nodes. The CLI supports **$ variable substitution** for dynamic content access:
 
@@ -378,7 +378,9 @@ shared = {
 
 ## Intermediate Representation (IR)
 
-To enable agents to plan, inspect, mutate, and reason about flows without directly generating or editing Python code, `pflow` uses a structured JSON-based intermediate representation (IR).
+To enable agents to plan, inspect, mutate, and reason about flows without directly generating or editing Python code, `pflow` uses a structured intermediate representation (IR) — a Python dict produced by parsing `.pflow.md` files.
+
+> **Note**: The JSON examples below show the internal IR dict structure that the shared store and compiler operate on. Agents author workflows in `.pflow.md` markdown format, which the parser converts to this IR shape. See the Task 107 format specification for the authored format.
 
 The IR defines:
 
@@ -415,15 +417,15 @@ Example:
 
 Key change: Mappings are flow-level concern in IR, nodes just declare natural interfaces.
 
-### Why JSON IR?
+### Why a Structured IR?
 
 - **Introspectable** — agents and tools can analyze, visualize, or validate without executing code
 - **Composable** — subflows can be inserted, replaced, transformed
-- **Repairable** — if an agent makes a mistake, users or other agents can patch IR safely
+- **Repairable** — if an agent makes a mistake, users or other agents can patch the `.pflow.md` and re-parse
 - **Validated** — schemas and flow constraints (e.g. node types, mapping checks) can be enforced statically
 - **Future-proof** — IR can be converted to/from code, GUI flows, or CLI scripts without ambiguity
 
-Agents never generate node code directly. They output IR. IR is compiled into flow orchestration code using `set_params()` and pocketflow's flow wiring operators. Node logic lives in pre-written static classes.
+Agents author `.pflow.md` files, which the markdown parser converts to an IR dict. The IR is compiled into flow orchestration code using `set_params()` and pocketflow's flow wiring operators. Node logic lives in pre-written static classes.
 
 ## Developer Experience Benefits
 
@@ -650,4 +652,4 @@ The shared store pattern is fundamental to pflow and is used by:
 
 - [Architecture](../architecture.md) - System overview and CLI commands
 - [Template Variables](../reference/template-variables.md) - Complete template syntax reference
-- [IR Schema](../reference/ir-schema.md) - Workflow JSON format specification
+- [IR Schema](../reference/ir-schema.md) - Workflow IR dict structure specification

@@ -15,6 +15,7 @@ import pytest
 
 from pflow.cli.main import main
 from pflow.pocketflow import BaseNode
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 class MockOutputNode(BaseNode):
@@ -149,8 +150,8 @@ class TestWorkflowOutputHandling:
         }
 
         # Save workflow to a temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -183,8 +184,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -219,8 +220,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -260,8 +261,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -300,8 +301,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -329,8 +330,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -366,8 +367,8 @@ class TestWorkflowOutputHandling:
                 "nodes": [{"id": "test", "type": "test-node", "params": {"add_keys": keys_to_add}}],
             }
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-                json.dump(workflow, f)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+                f.write(ir_to_markdown(workflow))
                 workflow_file = f.name
 
             try:
@@ -397,8 +398,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -427,8 +428,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -463,8 +464,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -487,8 +488,8 @@ class TestWorkflowOutputHandling:
             "nodes": [{"id": "test", "type": "test-node", "params": {"add_keys": {"response": "Fallback response"}}}],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -521,8 +522,8 @@ class TestWorkflowOutputHandling:
                 "nodes": [{"id": "test", "type": "test-node", "params": {"add_keys": output_data}}],
             }
 
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-                json.dump(workflow, f)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+                f.write(ir_to_markdown(workflow))
                 workflow_file = f.name
 
             try:
@@ -558,8 +559,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -600,8 +601,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -646,8 +647,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -683,8 +684,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -717,8 +718,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -765,8 +766,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -802,8 +803,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -831,8 +832,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -867,8 +868,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -922,8 +923,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -952,8 +953,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -996,8 +997,8 @@ class TestWorkflowOutputHandling:
             ],
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:

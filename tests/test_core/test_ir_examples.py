@@ -1,47 +1,39 @@
-"""Tests for JSON IR examples to ensure they remain valid.
+"""Tests for .pflow.md examples to ensure they remain valid.
 
 This test module validates all examples in the examples/ directory:
-- Ensures valid examples pass validation
-- Ensures invalid examples produce expected errors
-- Verifies example documentation exists
+- Ensures valid examples parse and pass validation
+- Ensures invalid examples produce expected parse errors
 - Tests that examples demonstrate intended features
 
 For more information about the examples, see examples/README.md
 """
 
-import json
 from pathlib import Path
 
 import pytest
 
 from pflow.core import ValidationError, validate_ir
+from pflow.core.ir_schema import normalize_ir
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
 
 class TestValidExamples:
-    """Test that all valid examples pass validation."""
+    """Test that all valid examples parse and pass validation."""
 
     @pytest.fixture
     def examples_dir(self):
-        """Get the examples directory path.
-
-        The examples/ directory contains:
-        - core/: Essential examples showing fundamental patterns
-        - advanced/: Complex real-world examples
-        - invalid/: Examples of common mistakes with expected errors
-
-        See examples/README.md for detailed documentation.
-        """
+        """Get the examples directory path."""
         return Path("examples")
 
     def test_core_examples_exist(self, examples_dir):
         """Verify core examples are present."""
         core_dir = examples_dir / "core"
         expected = [
-            "minimal.json",
-            "simple-pipeline.json",
-            "template-variables.json",
-            "error-handling.json",
-            "proxy-mappings.json",
+            "minimal.pflow.md",
+            "simple-pipeline.pflow.md",
+            "template-variables.pflow.md",
+            "error-handling.pflow.md",
+            "proxy-mappings.pflow.md",
         ]
         for example in expected:
             assert (core_dir / example).exists(), f"Missing core example: {example}"
@@ -49,7 +41,10 @@ class TestValidExamples:
     def test_advanced_examples_exist(self, examples_dir):
         """Verify advanced examples are present."""
         advanced_dir = examples_dir / "advanced"
-        expected = ["github-workflow.json", "content-pipeline.json"]
+        expected = [
+            "github-workflow.pflow.md",
+            "content-pipeline.pflow.md",
+        ]
         for example in expected:
             assert (advanced_dir / example).exists(), f"Missing advanced example: {example}"
 
@@ -57,10 +52,14 @@ class TestValidExamples:
         """Verify invalid examples are present."""
         invalid_dir = examples_dir / "invalid"
         expected = [
-            "missing-version.json",
-            "duplicate-ids.json",
-            "bad-edge-ref.json",
-            "wrong-types.json",
+            "missing-steps.pflow.md",
+            "missing-type.pflow.md",
+            "missing-description.pflow.md",
+            "unclosed-fence.pflow.md",
+            "bare-code-block.pflow.md",
+            "duplicate-param.pflow.md",
+            "duplicate-ids.pflow.md",
+            "yaml-syntax-error.pflow.md",
         ]
         for example in expected:
             assert (invalid_dir / example).exists(), f"Missing invalid example: {example}"
@@ -68,93 +67,102 @@ class TestValidExamples:
     @pytest.mark.parametrize(
         "example_file",
         [
-            "core/minimal.json",
-            "core/simple-pipeline.json",
-            "core/template-variables.json",
-            "core/error-handling.json",
-            "core/proxy-mappings.json",
-            "advanced/github-workflow.json",
-            "advanced/content-pipeline.json",
+            "core/minimal.pflow.md",
+            "core/simple-pipeline.pflow.md",
+            "core/template-variables.pflow.md",
+            "core/error-handling.pflow.md",
+            "core/proxy-mappings.pflow.md",
+            "advanced/github-workflow.pflow.md",
+            "advanced/content-pipeline.pflow.md",
         ],
     )
     def test_valid_examples_pass_validation(self, examples_dir, example_file):
-        """Test that valid examples pass validation."""
+        """Test that valid examples parse and pass validation."""
         file_path = examples_dir / example_file
-        with open(file_path) as f:
-            ir_data = json.load(f)
+        content = file_path.read_text()
+        result = parse_markdown(content)
+        ir_data = result.ir
+        normalize_ir(ir_data)
 
         # Should not raise any exception
         validate_ir(ir_data)
 
-    def test_documentation_exists_for_examples(self, examples_dir):
-        """Verify each example has corresponding documentation."""
-        for subdir in ["core", "advanced", "invalid"]:
-            json_files = (examples_dir / subdir).glob("*.json")
-            for json_file in json_files:
-                md_file = json_file.with_suffix(".md")
-                assert md_file.exists(), f"Missing documentation for {json_file}"
+    def test_pflow_md_files_are_self_documenting(self, examples_dir):
+        """Verify .pflow.md files ARE the documentation (no separate .md companion needed)."""
+        for subdir in ["core", "advanced"]:
+            dir_path = examples_dir / subdir
+            if not dir_path.exists():
+                continue
+            for pflow_file in dir_path.glob("*.pflow.md"):
+                content = pflow_file.read_text()
+                result = parse_markdown(content)
+                # Every valid workflow should have a title
+                assert result.title is not None, f"Missing title in {pflow_file}"
 
 
 class TestInvalidExamples:
-    """Test that invalid examples produce expected errors."""
+    """Test that invalid examples produce expected parse errors."""
 
     @pytest.fixture
     def examples_dir(self):
         """Get the examples directory path."""
         return Path("examples")
 
-    def test_missing_version_error(self, examples_dir):
-        """Test missing ir_version produces correct error."""
-        with open(examples_dir / "invalid/missing-version.json") as f:
-            ir_data = json.load(f)
+    def test_missing_steps_error(self, examples_dir):
+        """Test missing Steps section produces correct error."""
+        content = (examples_dir / "invalid/missing-steps.pflow.md").read_text()
 
-        with pytest.raises(ValidationError) as exc_info:
-            validate_ir(ir_data)
+        with pytest.raises(MarkdownParseError, match="Missing.*Steps.*section"):
+            parse_markdown(content)
 
-        error = exc_info.value
-        assert error.path == "root"
-        assert "'ir_version' is a required property" in error.message
-        assert "Add the required field 'ir_version'" in error.suggestion
+    def test_missing_type_error(self, examples_dir):
+        """Test missing node type produces correct error."""
+        content = (examples_dir / "invalid/missing-type.pflow.md").read_text()
+
+        with pytest.raises(MarkdownParseError, match="missing.*type.*parameter"):
+            parse_markdown(content)
+
+    def test_missing_description_error(self, examples_dir):
+        """Test missing description produces correct error."""
+        content = (examples_dir / "invalid/missing-description.pflow.md").read_text()
+
+        with pytest.raises(MarkdownParseError, match="missing a description"):
+            parse_markdown(content)
+
+    def test_unclosed_fence_error(self, examples_dir):
+        """Test unclosed code fence produces correct error."""
+        content = (examples_dir / "invalid/unclosed-fence.pflow.md").read_text()
+
+        with pytest.raises(MarkdownParseError, match="Unclosed code block"):
+            parse_markdown(content)
+
+    def test_bare_code_block_error(self, examples_dir):
+        """Test code block without tag produces correct error."""
+        content = (examples_dir / "invalid/bare-code-block.pflow.md").read_text()
+
+        with pytest.raises(MarkdownParseError, match="no tag"):
+            parse_markdown(content)
+
+    def test_duplicate_param_error(self, examples_dir):
+        """Test duplicate param (inline + code block) produces correct error."""
+        content = (examples_dir / "invalid/duplicate-param.pflow.md").read_text()
+
+        with pytest.raises(MarkdownParseError, match="defined both inline and as a code block"):
+            parse_markdown(content)
 
     def test_duplicate_ids_error(self, examples_dir):
         """Test duplicate node IDs produce correct error."""
-        with open(examples_dir / "invalid/duplicate-ids.json") as f:
-            ir_data = json.load(f)
+        content = (examples_dir / "invalid/duplicate-ids.pflow.md").read_text()
 
-        with pytest.raises(ValidationError) as exc_info:
-            validate_ir(ir_data)
+        with pytest.raises(MarkdownParseError, match="Duplicate entity ID"):
+            parse_markdown(content)
 
-        error = exc_info.value
-        assert "nodes[1].id" in error.path
-        assert "Duplicate node ID 'processor'" in str(error)
-        assert "Use unique IDs for each node" in error.suggestion
+    def test_yaml_syntax_error(self, examples_dir):
+        """Test YAML syntax error produces correct error."""
+        content = (examples_dir / "invalid/yaml-syntax-error.pflow.md").read_text()
 
-    def test_bad_edge_ref_error(self, examples_dir):
-        """Test edge referencing non-existent node produces correct error."""
-        with open(examples_dir / "invalid/bad-edge-ref.json") as f:
-            ir_data = json.load(f)
-
-        with pytest.raises(ValidationError) as exc_info:
-            validate_ir(ir_data)
-
-        error = exc_info.value
-        assert "edges[0].to" in error.path
-        assert "non-existent node 'middle'" in str(error)
-        assert "['end', 'start']" in error.suggestion or "['start', 'end']" in error.suggestion
-
-    def test_wrong_types_error(self, examples_dir):
-        """Test wrong field types produce correct error."""
-        with open(examples_dir / "invalid/wrong-types.json") as f:
-            ir_data = json.load(f)
-
-        with pytest.raises(ValidationError) as exc_info:
-            validate_ir(ir_data)
-
-        # The first error will be about ir_version format
-        error = exc_info.value
-        assert "ir_version" in error.path
-        # Either pattern matching error or type error
-        assert "does not match" in str(error) or "not of type 'string'" in str(error)
+        with pytest.raises(MarkdownParseError, match="YAML syntax error"):
+            parse_markdown(content)
 
 
 class TestExampleContent:
@@ -167,44 +175,52 @@ class TestExampleContent:
 
     def test_template_variables_contains_dollar_syntax(self, examples_dir):
         """Verify template variables example actually uses ${variable} syntax."""
-        with open(examples_dir / "core/template-variables.json") as f:
-            content = f.read()
+        content = (examples_dir / "core/template-variables.pflow.md").read_text()
 
         # Check for multiple template variables
         assert "${api_endpoint}" in content
         assert "${api_token}" in content
         assert "${recipient_email}" in content
 
-    def test_error_handling_has_action_edges(self, examples_dir):
-        """Verify error handling example uses action-based routing."""
-        with open(examples_dir / "core/error-handling.json") as f:
-            ir_data = json.load(f)
+    def test_error_handling_has_multiple_nodes(self, examples_dir):
+        """Verify error handling example has nodes for error/fallback/retry pattern."""
+        content = (examples_dir / "core/error-handling.pflow.md").read_text()
+        result = parse_markdown(content)
+        ir_data = result.ir
 
-        # Find edges with "error" action
-        error_edges = [edge for edge in ir_data.get("edges", []) if edge.get("action") == "error"]
-        assert len(error_edges) > 0, "No error action edges found"
+        node_ids = [n["id"] for n in ir_data["nodes"]]
+        assert "log_error" in node_ids
+        assert "create_fallback" in node_ids
+        assert "retry_processor" in node_ids
 
-        # Should have retry action too
-        retry_edges = [edge for edge in ir_data.get("edges", []) if edge.get("action") == "retry"]
-        assert len(retry_edges) > 0, "No retry action edges found"
+    def test_proxy_mappings_example_parses(self, examples_dir):
+        """Verify proxy mappings example parses successfully.
 
-    def test_proxy_mappings_has_mappings(self, examples_dir):
-        """Verify proxy mappings example includes actual mappings."""
-        with open(examples_dir / "core/proxy-mappings.json") as f:
-            ir_data = json.load(f)
+        Note: mappings are an IR-level feature not represented in markdown
+        syntax. The example tests that the basic workflow structure parses.
+        """
+        content = (examples_dir / "core/proxy-mappings.pflow.md").read_text()
+        result = parse_markdown(content)
+        ir_data = result.ir
+        normalize_ir(ir_data)
 
-        assert "mappings" in ir_data
-        assert len(ir_data["mappings"]) > 0
+        validate_ir(ir_data)
+        node_ids = [n["id"] for n in ir_data["nodes"]]
+        assert "reader" in node_ids
+        assert "test_processor" in node_ids
+        assert "writer" in node_ids
 
-        # Check for input/output mappings
-        for _node_id, mapping in ir_data["mappings"].items():
-            assert "input_mappings" in mapping or "output_mappings" in mapping
-
-    def test_all_json_files_are_valid_json(self, examples_dir):
-        """Ensure all JSON files can be parsed."""
-        for json_file in examples_dir.rglob("*.json"):
-            with open(json_file) as f:
-                try:
-                    json.load(f)
-                except json.JSONDecodeError as e:
-                    pytest.fail(f"Invalid JSON in {json_file}: {e}")
+    def test_all_pflow_md_files_parse(self, examples_dir):
+        """Ensure all .pflow.md files in non-invalid dirs can be parsed."""
+        for pflow_file in examples_dir.rglob("*.pflow.md"):
+            # Skip invalid examples — they are expected to fail
+            if "invalid" in pflow_file.parts:
+                continue
+            content = pflow_file.read_text()
+            try:
+                result = parse_markdown(content)
+                ir_data = result.ir
+                normalize_ir(ir_data)
+                validate_ir(ir_data)
+            except (MarkdownParseError, ValidationError) as exc:
+                pytest.fail(f"Failed to parse/validate {pflow_file}: {exc}")

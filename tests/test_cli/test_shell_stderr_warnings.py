@@ -11,6 +11,7 @@ import json
 from click.testing import CliRunner
 
 from pflow.cli.main import _display_stderr_warnings, _format_node_status_line, main
+from tests.shared.markdown_utils import write_workflow_file
 
 
 class TestShellStderrWarnings:
@@ -37,8 +38,8 @@ class TestShellStderrWarnings:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -70,8 +71,8 @@ class TestShellStderrWarnings:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -97,8 +98,8 @@ class TestShellStderrWarnings:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -130,8 +131,8 @@ class TestShellStderrWarnings:
             "edges": [{"from": "node1-stderr", "to": "node2-stderr"}],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -164,8 +165,8 @@ class TestWorkflowLevelStderrIndicator:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -195,8 +196,8 @@ class TestWorkflowLevelStderrIndicator:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -229,8 +230,8 @@ class TestWorkflowLevelStderrIndicator:
             "edges": [{"from": "clean-node", "to": "stderr-node"}],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])
@@ -266,8 +267,8 @@ class TestStderrInJsonOutput:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
@@ -318,8 +319,8 @@ class TestPipelineFailureScenario:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_path)])

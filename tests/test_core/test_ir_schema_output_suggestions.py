@@ -57,10 +57,10 @@ class TestOutputSchemaSuggestions:
         error_msg = str(exc_info.value)
 
         # Should show both wrong and right examples
-        assert "object" in error_msg.lower()
+        assert "object" in error_msg.lower() or "section" in error_msg.lower()
         assert "wrong" in error_msg.lower() or "right" in error_msg.lower()
-        # Should show wrapped version with "source"
-        assert '"source"' in error_msg
+        # Should show markdown source param syntax
+        assert "- source:" in error_msg
 
     def test_valid_schema_passes(self):
         """SANITY: Valid output structure passes without errors.

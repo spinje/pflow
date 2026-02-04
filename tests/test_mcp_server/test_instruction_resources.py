@@ -69,7 +69,7 @@ class TestRegularInstructionResource:
         # Should return fallback message
         assert "Not Available" in content
         assert "Alternative Resources" in content
-        assert "pflow workflow discover" in content
+        assert "workflow_discover" in content
         assert "pflow settings set-env" in content  # Regular agents have settings
 
     def test_regular_fallback_message_structure(self):
@@ -78,7 +78,7 @@ class TestRegularInstructionResource:
 
         # Check for helpful sections
         assert "Alternative Resources" in fallback
-        assert "Discovery Commands" in fallback
+        assert "Discovery Tools" in fallback
         assert "Settings & Configuration" in fallback  # Regular agents have this
         assert "Manual Setup" in fallback
         assert "Troubleshooting" in fallback
@@ -87,9 +87,9 @@ class TestRegularInstructionResource:
         """Verify regular fallback includes settings commands."""
         fallback = _regular_fallback_message()
 
-        # Regular agents should have settings commands
+        # Regular agents should have settings commands and MCP tools
         assert "pflow settings set-env" in fallback
-        assert "pflow --no-trace" in fallback
+        assert "workflow_execute" in fallback
         assert "Store credentials" in fallback.lower() or "settings" in fallback.lower()
 
     @patch("pflow.mcp_server.resources.instruction_resources.MCP_AGENT_INSTRUCTIONS_PATH")

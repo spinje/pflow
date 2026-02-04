@@ -1,10 +1,10 @@
 """Runtime component for executing workflows as sub-workflows."""
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
@@ -209,6 +209,12 @@ class WorkflowExecutor(BaseNode):
 
                 if child_key in child_storage:
                     shared[parent_key] = child_storage[child_key]
+                else:
+                    available = [k for k in child_storage if not k.startswith(("_pflow_", "__"))]
+                    logger.warning(
+                        f"output_mapping key '{child_key}' not found in child workflow storage. "
+                        f"Available keys: {available}"
+                    )
 
         # Return result action or default
         child_result = exec_res.get("result")
@@ -235,25 +241,27 @@ class WorkflowExecutor(BaseNode):
         return path.resolve()
 
     def _load_workflow_file(self, path: Path) -> dict[str, Any]:
-        """Load workflow from file."""
+        """Load workflow from .pflow.md file."""
         # Check file exists
         if not path.exists():
             raise FileNotFoundError(f"Workflow file not found: {path}")
 
-        # Load and parse JSON
+        # Load and parse markdown workflow
         try:
-            with open(path) as f:
-                workflow_ir = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in workflow file: {e}") from e
+            content = path.read_text(encoding="utf-8")
         except Exception as e:
             raise OSError(f"Error reading workflow file: {e}") from e
 
+        try:
+            result = parse_markdown(content)
+        except MarkdownParseError as e:
+            raise ValueError(f"Invalid workflow file {path}: {e}") from e
+
+        workflow_ir = result.ir
+
         # Basic validation
-        if not isinstance(workflow_ir, dict):
-            raise TypeError("Workflow must be a JSON object")
         if "nodes" not in workflow_ir:
-            raise ValueError("Workflow must contain 'nodes' array")
+            raise ValueError(f"Workflow file {path} must contain a '## Steps' section with at least one node")
 
         return workflow_ir
 

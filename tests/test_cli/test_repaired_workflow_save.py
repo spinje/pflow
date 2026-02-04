@@ -9,6 +9,9 @@ from click.testing import CliRunner
 from pflow.cli.main import workflow_command
 from pflow.execution.executor_service import ExecutionResult
 
+# GATED: Repair save tests skipped pending markdown format migration (Task 107).
+pytestmark = pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
+
 
 class TestRepairedWorkflowSave:
     """Test saving repaired workflows to files."""

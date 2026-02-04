@@ -24,6 +24,7 @@ import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 @pytest.fixture(scope="module")
@@ -73,8 +74,8 @@ class TestDualModeStdinBehavior:
             "start_node": "test_echo",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         # Use file path directly (new interface - no --file flag)
@@ -175,8 +176,8 @@ class TestDualModeStdinBehavior:
             "start_node": "echo1",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)], input="piped data")
@@ -204,8 +205,8 @@ class TestDualModeStdinBehavior:
             "start_node": "echo1",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)])
@@ -238,8 +239,8 @@ class TestDualModeStdinBehavior:
             "start_node": "write1",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         # Pipe "piped_value" but also provide CLI param - CLI should win
@@ -273,8 +274,8 @@ class TestDualModeStdinBehavior:
             "start_node": "echo1",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         # Pipe empty string - treated as no input
@@ -300,7 +301,7 @@ class TestRealShellIntegration:
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
     def test_pipe_data_to_workflow_file_creates_expected_output(self, tmp_path, uv_exe, prepared_subprocess_env):
-        """Test actual shell pipe: echo 'data' | pflow workflow.json"""
+        """Test actual shell pipe: echo 'data' | pflow workflow.pflow.md"""
         # Create a workflow using echo node
         workflow = {
             "ir_version": "0.1.0",
@@ -315,8 +316,8 @@ class TestRealShellIntegration:
             "start_node": "test_echo",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         # Test real shell pipe
         env = prepared_subprocess_env
@@ -380,8 +381,8 @@ class TestBinaryAndLargeStdinBehavior:
             "start_node": "test_echo",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         # Create a temporary binary file to simulate binary stdin
         binary_data = b"Binary\x00Data\xff"
@@ -443,8 +444,8 @@ class TestBinaryAndLargeStdinBehavior:
             "start_node": "write_data",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         # Create large data (1MB)
         large_data = "x" * (1024 * 1024)
@@ -463,7 +464,7 @@ class TestBinaryAndLargeStdinBehavior:
 class TestWorkflowChaining:
     """Test workflow chaining via Unix pipes.
 
-    These tests verify that `pflow -p workflow1.json | pflow workflow2.json` works correctly.
+    These tests verify that `pflow -p workflow1.pflow.md | pflow workflow2.pflow.md` works correctly.
     This is critical functionality for Unix-first piping behavior.
 
     The key challenge: when shell pipes two processes, they start simultaneously.
@@ -513,10 +514,10 @@ class TestWorkflowChaining:
             "outputs": {"count": {"source": "${count.stdout}"}},
         }
 
-        producer_file = tmp_path / "producer.json"
-        consumer_file = tmp_path / "consumer.json"
-        producer_file.write_text(json.dumps(producer))
-        consumer_file.write_text(json.dumps(consumer))
+        producer_file = tmp_path / "producer.pflow.md"
+        consumer_file = tmp_path / "consumer.pflow.md"
+        producer_file.write_text(ir_to_markdown(producer))
+        consumer_file.write_text(ir_to_markdown(consumer))
 
         env = prepared_subprocess_env
 
@@ -568,12 +569,12 @@ class TestWorkflowChaining:
             "outputs": {"result": {"source": "${sum.stdout}"}},
         }
 
-        producer_file = tmp_path / "producer.json"
-        transform_file = tmp_path / "transform.json"
-        consumer_file = tmp_path / "consumer.json"
-        producer_file.write_text(json.dumps(producer))
-        transform_file.write_text(json.dumps(transform))
-        consumer_file.write_text(json.dumps(consumer))
+        producer_file = tmp_path / "producer.pflow.md"
+        transform_file = tmp_path / "transform.pflow.md"
+        consumer_file = tmp_path / "consumer.pflow.md"
+        producer_file.write_text(ir_to_markdown(producer))
+        transform_file.write_text(ir_to_markdown(transform))
+        consumer_file.write_text(ir_to_markdown(consumer))
 
         env = prepared_subprocess_env
 
@@ -620,8 +621,8 @@ class TestWorkflowChaining:
             "start_node": "write",
         }
 
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         env = prepared_subprocess_env
 
@@ -657,8 +658,8 @@ class TestJSONOutputFormat:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         result = runner.invoke(main, ["--output-format", "json", str(workflow_file)], input="piped data")
@@ -684,8 +685,8 @@ class TestJSONOutputFormat:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)], input="piped data")
@@ -712,8 +713,8 @@ class TestJSONOutputFormat:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         result = runner.invoke(main, ["--output-format", "json", str(workflow_file)], input="piped data")
@@ -747,8 +748,8 @@ class TestJSONOutputFormat:
             "edges": [],
             "start_node": "echo1",
         }
-        workflow_file = tmp_path / "workflow.json"
-        workflow_file.write_text(json.dumps(workflow))
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
 
         runner = CliRunner()
         result = runner.invoke(main, [str(workflow_file)], input="piped data")

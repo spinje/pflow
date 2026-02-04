@@ -39,27 +39,31 @@ The shell node executes commands with full Unix power - pipes, redirects, and al
 </Warning>
 
 **Correct** - data via stdin:
-```json
-{
-  "id": "process",
-  "type": "shell",
-  "params": {
-    "stdin": "${api.response}",
-    "command": "jq -r '.data.name'"
-  }
-}
+````markdown
+### process
+
+Process the API response with jq.
+
+- type: shell
+- stdin: ${api.response}
+
+```shell command
+jq -r '.data.name'
 ```
+````
 
 **Wrong** - data in command (will break on special characters):
-```json
-{
-  "id": "process",
-  "type": "shell",
-  "params": {
-    "command": "echo '${api.response}' | jq"
-  }
-}
+````markdown
+### process
+
+Process the API response with jq.
+
+- type: shell
+
+```shell command
+echo '${api.response}' | jq
 ```
+````
 
 ### stdin type handling
 
@@ -79,12 +83,18 @@ The shell node executes commands with full Unix power - pipes, redirects, and al
 
 The shell node validates that dicts and lists aren't embedded directly in command strings (which would break shell parsing). Data should go through `stdin` instead:
 
-```json
-{
-  "stdin": "${api.response}",
-  "command": "jq -r '.data.name'"
-}
+````markdown
+### process
+
+Process the API response with jq.
+
+- type: shell
+- stdin: ${api.response}
+
+```shell command
+jq -r '.data.name'
 ```
+````
 
 <Accordion title="Technical details">
   When a workflow is created, pflow checks if command templates contain dict or list variables. If found, you'll see an error like:
@@ -96,7 +106,10 @@ The shell node validates that dicts and lists aren't embedded directly in comman
   data contains special characters (quotes, braces, spaces) that break command syntax.
 
   FIX: Move data to stdin, keep command simple:
-    {"stdin": "${api.response}", "command": "jq '.field'"}
+    - stdin: ${api.response}
+    ```shell command
+    jq '.field'
+    ```
   ```
 
   This validation happens at workflow creation time (compile-time), not during execution, so you get immediate feedback.
@@ -111,7 +124,7 @@ The shell node validates that dicts and lists aren't embedded directly in comman
 </Warning>
 
 <Tip>
-  **You're in control.** Your agent asks before running workflows, and you can inspect the workflow JSON to see exactly what commands will execute. If you need stronger restrictions, you can disable shell entirely with `pflow settings deny shell` - but this significantly limits pflow's capabilities since shell is often used for data processing and filtering.
+  **You're in control.** Your agent asks before running workflows, and you can inspect the workflow to see exactly what commands will execute. If you need stronger restrictions, you can disable shell entirely with `pflow settings deny shell` - but this significantly limits pflow's capabilities since shell is often used for data processing and filtering.
 </Tip>
 
 ### Blocked patterns
@@ -147,96 +160,87 @@ Some commands return non-zero exit codes for valid "not found" results. The shel
 
 ### Basic command
 
-```json
-{
-  "nodes": [
-    {
-      "id": "list",
-      "type": "shell",
-      "params": {
-        "command": "ls -la /tmp"
-      }
-    }
-  ]
-}
+````markdown
+### list
+
+List files in the temp directory.
+
+- type: shell
+
+```shell command
+ls -la /tmp
 ```
+````
 
 ### Process JSON with jq
 
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "http",
-      "params": { "url": "https://api.example.com/data" }
-    },
-    {
-      "id": "extract",
-      "type": "shell",
-      "params": {
-        "stdin": "${fetch.response}",
-        "command": "jq -r '.items[].name'"
-      }
-    }
-  ]
-}
+````markdown
+### fetch
+
+Fetch data from the API.
+
+- type: http
+- url: https://api.example.com/data
+
+### extract
+
+Extract item names from the response.
+
+- type: shell
+- stdin: ${fetch.response}
+
+```shell command
+jq -r '.items[].name'
 ```
+````
 
 ### With environment variables
 
-```json
-{
-  "nodes": [
-    {
-      "id": "deploy",
-      "type": "shell",
-      "params": {
-        "command": "deploy.sh",
-        "env": {
-          "ENV": "production",
-          "DEBUG": "false"
-        },
-        "timeout": 120
-      }
-    }
-  ]
-}
+````markdown
+### deploy
+
+Run the deployment script.
+
+- type: shell
+- env:
+    ENV: production
+    DEBUG: "false"
+- timeout: 120
+
+```shell command
+deploy.sh
 ```
+````
 
 ### Working directory
 
-```json
-{
-  "nodes": [
-    {
-      "id": "build",
-      "type": "shell",
-      "params": {
-        "command": "npm run build",
-        "cwd": "/path/to/project"
-      }
-    }
-  ]
-}
+````markdown
+### build
+
+Build the project.
+
+- type: shell
+- cwd: /path/to/project
+
+```shell command
+npm run build
 ```
+````
 
 ### Ignoring errors
 
-```json
-{
-  "nodes": [
-    {
-      "id": "cleanup",
-      "type": "shell",
-      "params": {
-        "command": "rm -f temp/*.log",
-        "ignore_errors": true
-      }
-    }
-  ]
-}
+````markdown
+### cleanup
+
+Remove temporary log files.
+
+- type: shell
+- ignore_errors: true
+
+```shell command
+rm -f temp/*.log
 ```
+````
 
 ## Error handling
 

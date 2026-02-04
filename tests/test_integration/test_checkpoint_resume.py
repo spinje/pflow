@@ -213,7 +213,10 @@ class TestCheckpointResume:
             def get_node_class(node_type, registry):
                 return CountingNode
 
-            with patch("pflow.runtime.compiler.import_node_class", side_effect=get_node_class):
+            with (
+                patch("pflow.runtime.compiler.import_node_class", side_effect=get_node_class),
+                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+            ):
                 # Mock the hash computation to match our checkpoint
                 def mock_compute_hash(self, config):
                     # Return hash that matches our checkpoint
@@ -247,7 +250,7 @@ class TestCheckpointResume:
                 assert ("node3", "node_complete") in progress_events
 
     def test_no_repair_when_disabled(self):
-        """Test that repair is skipped when disabled."""
+        """Test that repair is skipped when disabled but validation still runs."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -266,6 +269,7 @@ class TestCheckpointResume:
 
             with (
                 patch("pflow.runtime.compiler.import_node_class", side_effect=get_node_class),
+                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
                 patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair,
             ):
                 # Execute with repair disabled

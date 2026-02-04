@@ -11,11 +11,15 @@ the behavior of workflow_validate.
 
 If these tests fail, someone likely broke the dummy parameter generation
 in workflow_save_service.py.
+
+Updated for Task 107: Markdown workflow format. ExecutionService.save_workflow()
+now accepts raw .pflow.md content strings instead of IR dicts.
 """
 
 import pytest
 
 from pflow.mcp_server.services.execution_service import ExecutionService
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 class TestWorkflowSaveWithInputs:
@@ -48,20 +52,18 @@ class TestWorkflowSaveWithInputs:
                 {
                     "id": "test-node",
                     "type": "llm",
-                    "params": {"prompt": "${message}"},  # Uses required input
+                    "params": {"prompt": "${message}"},
                 }
             ],
             "edges": [],
             "outputs": {"result": {"source": "${test-node.response}", "description": "Test output"}},
         }
 
-        # Should not raise - workflow is structurally valid even without runtime values
-        result = ExecutionService.save_workflow(
-            workflow=workflow, name="test-required-inputs", description="Test workflow", force=True
-        )
+        markdown_content = ir_to_markdown(workflow)
+        result = ExecutionService.save_workflow(workflow=markdown_content, name="test-required-inputs", force=True)
 
         assert isinstance(result, str), "Should return string"
-        assert "✓" in result or "Saved" in result, "Should indicate success"
+        assert "\u2713" in result or "Saved" in result, "Should indicate success"
         assert "test-required-inputs" in result, "Should mention workflow name"
 
     def test_save_workflow_with_optional_inputs(self):
@@ -88,19 +90,18 @@ class TestWorkflowSaveWithInputs:
                 {
                     "id": "test-node",
                     "type": "llm",
-                    "params": {"prompt": "${message}"},  # Uses optional input
+                    "params": {"prompt": "${message}"},
                 }
             ],
             "edges": [],
             "outputs": {"result": {"source": "${test-node.response}", "description": "Test output"}},
         }
 
-        result = ExecutionService.save_workflow(
-            workflow=workflow, name="test-optional-inputs", description="Test workflow", force=True
-        )
+        markdown_content = ir_to_markdown(workflow)
+        result = ExecutionService.save_workflow(workflow=markdown_content, name="test-optional-inputs", force=True)
 
         assert isinstance(result, str), "Should return string"
-        assert "✓" in result or "Saved" in result, "Should indicate success"
+        assert "\u2713" in result or "Saved" in result, "Should indicate success"
 
     def test_save_workflow_with_mixed_inputs(self):
         """Test saving workflow with both required and optional inputs.
@@ -130,7 +131,7 @@ class TestWorkflowSaveWithInputs:
                 },
                 {
                     "id": "post",
-                    "type": "llm",  # Using llm instead of MCP node for test
+                    "type": "llm",
                     "params": {"prompt": "Post to ${channel}: ${soften.response}"},
                 },
             ],
@@ -140,12 +141,11 @@ class TestWorkflowSaveWithInputs:
             },
         }
 
-        result = ExecutionService.save_workflow(
-            workflow=workflow, name="test-mixed-inputs", description="Test workflow", force=True
-        )
+        markdown_content = ir_to_markdown(workflow)
+        result = ExecutionService.save_workflow(workflow=markdown_content, name="test-mixed-inputs", force=True)
 
         assert isinstance(result, str), "Should return string"
-        assert "✓" in result or "Saved" in result, "Should indicate success"
+        assert "\u2713" in result or "Saved" in result, "Should indicate success"
 
     def test_save_workflow_with_no_inputs(self):
         """Sanity check: Workflows without inputs should still work.
@@ -166,12 +166,11 @@ class TestWorkflowSaveWithInputs:
             "outputs": {"result": {"source": "${test-node.response}", "description": "Test output"}},
         }
 
-        result = ExecutionService.save_workflow(
-            workflow=workflow, name="test-no-inputs", description="Test workflow", force=True
-        )
+        markdown_content = ir_to_markdown(workflow)
+        result = ExecutionService.save_workflow(workflow=markdown_content, name="test-no-inputs", force=True)
 
         assert isinstance(result, str), "Should return string"
-        assert "✓" in result or "Saved" in result, "Should indicate success"
+        assert "\u2713" in result or "Saved" in result, "Should indicate success"
 
 
 class TestWorkflowSaveValidation:
@@ -181,11 +180,11 @@ class TestWorkflowSaveValidation:
         """Ensure workflow_save still validates node types."""
         workflow = {
             "ir_version": "0.1.0",
-            "inputs": {"message": {"type": "string", "required": True}},
+            "inputs": {"message": {"type": "string", "required": True, "description": "Test message"}},
             "nodes": [
                 {
                     "id": "test-node",
-                    "type": "this-does-not-exist",  # ❌ Invalid
+                    "type": "this-does-not-exist",
                     "params": {"prompt": "${message}"},
                 }
             ],
@@ -193,55 +192,70 @@ class TestWorkflowSaveValidation:
             "outputs": {},
         }
 
+        markdown_content = ir_to_markdown(workflow)
         with pytest.raises(ValueError, match="Invalid workflow|Unknown node type|this-does-not-exist"):
-            ExecutionService.save_workflow(
-                workflow=workflow, name="test-invalid-node", description="Test workflow", force=True
-            )
+            ExecutionService.save_workflow(workflow=markdown_content, name="test-invalid-node", force=True)
 
     def test_rejects_malformed_templates(self):
-        """Ensure workflow_save still validates template syntax."""
-        workflow = {
-            "ir_version": "0.1.0",
-            "inputs": {"message": {"type": "string", "required": True}},
-            "nodes": [
-                {
-                    "id": "test-node",
-                    "type": "llm",
-                    "params": {"prompt": "${malformed"},  # ❌ Missing closing brace
-                }
-            ],
-            "edges": [],
-            "outputs": {},
-        }
+        """Ensure workflow_save still validates template syntax.
+
+        The malformed template ${malformed (missing closing brace) is in a
+        prompt code block. The markdown parser accepts it as content, but
+        IR validation catches the malformed template reference.
+        """
+        # Build markdown directly since ir_to_markdown won't produce malformed templates
+        markdown_content = """\
+# Test Workflow
+
+Test workflow with malformed template.
+
+## Inputs
+
+### message
+
+Test message input.
+
+- type: string
+- required: true
+
+## Steps
+
+### test-node
+
+Test node with malformed template.
+
+- type: llm
+
+```markdown prompt
+${malformed
+```
+"""
 
         with pytest.raises(ValueError, match="Invalid workflow|malformed|template"):
-            ExecutionService.save_workflow(
-                workflow=workflow, name="test-malformed", description="Test workflow", force=True
-            )
+            ExecutionService.save_workflow(workflow=markdown_content, name="test-malformed", force=True)
 
     def test_rejects_unused_inputs(self):
         """Ensure workflow_save detects unused declared inputs."""
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {
-                "used": {"type": "string", "required": True},
-                "unused": {"type": "string", "required": True},  # ⚠️ Declared but never used
+                "used": {"type": "string", "required": True, "description": "Used input"},
+                "unused": {"type": "string", "required": True, "description": "Unused input"},
             },
             "nodes": [
                 {
                     "id": "test-node",
                     "type": "llm",
-                    "params": {"prompt": "${used}"},  # Only uses 'used', not 'unused'
+                    "params": {"prompt": "${used}"},
                 }
             ],
             "edges": [],
             "outputs": {},
         }
 
+        markdown_content = ir_to_markdown(workflow)
         with pytest.raises(ValueError, match="Invalid workflow|unused|Declared input"):
-            ExecutionService.save_workflow(
-                workflow=workflow, name="test-unused-input", description="Test workflow", force=True
-            )
+            ExecutionService.save_workflow(workflow=markdown_content, name="test-unused-input", force=True)
 
 
 class TestWorkflowSaveNameValidation:
@@ -257,9 +271,9 @@ class TestWorkflowSaveNameValidation:
             "outputs": {},
         }
 
-        # Invalid characters in name
+        markdown_content = ir_to_markdown(workflow)
         with pytest.raises(ValueError, match="Invalid workflow name"):
-            ExecutionService.save_workflow(workflow=workflow, name="Invalid Name!", description="Test", force=True)
+            ExecutionService.save_workflow(workflow=markdown_content, name="Invalid Name!", force=True)
 
     def test_rejects_reserved_workflow_name(self):
         """Ensure reserved names are rejected."""
@@ -271,9 +285,9 @@ class TestWorkflowSaveNameValidation:
             "outputs": {},
         }
 
-        # Reserved name
+        markdown_content = ir_to_markdown(workflow)
         with pytest.raises(ValueError, match="reserved"):
-            ExecutionService.save_workflow(workflow=workflow, name="settings", description="Test", force=True)
+            ExecutionService.save_workflow(workflow=markdown_content, name="settings", force=True)
 
 
 class TestWorkflowSaveOverwrite:
@@ -289,18 +303,14 @@ class TestWorkflowSaveOverwrite:
             "outputs": {},
         }
 
-        # Save first time (use copy to avoid in-place metadata modification)
-        import copy
+        markdown_content = ir_to_markdown(workflow)
 
-        ExecutionService.save_workflow(
-            workflow=copy.deepcopy(workflow), name="test-duplicate", description="Test workflow", force=True
-        )
+        # Save first time
+        ExecutionService.save_workflow(workflow=markdown_content, name="test-duplicate", force=True)
 
         # Try to save again without force - should fail
         with pytest.raises(FileExistsError, match="already exists"):
-            ExecutionService.save_workflow(
-                workflow=copy.deepcopy(workflow), name="test-duplicate", description="Test workflow", force=False
-            )
+            ExecutionService.save_workflow(workflow=markdown_content, name="test-duplicate", force=False)
 
     def test_allows_overwrite_with_force(self):
         """Ensure workflows can be overwritten with force=True."""
@@ -312,16 +322,11 @@ class TestWorkflowSaveOverwrite:
             "outputs": {},
         }
 
-        # Save first time (use copy to avoid in-place metadata modification)
-        import copy
+        markdown_content = ir_to_markdown(workflow)
 
-        result1 = ExecutionService.save_workflow(
-            workflow=copy.deepcopy(workflow), name="test-overwrite", description="Test workflow", force=True
-        )
-        assert "✓" in result1 or "Saved" in result1
+        result1 = ExecutionService.save_workflow(workflow=markdown_content, name="test-overwrite", force=True)
+        assert "\u2713" in result1 or "Saved" in result1
 
         # Overwrite with force - should succeed
-        result2 = ExecutionService.save_workflow(
-            workflow=copy.deepcopy(workflow), name="test-overwrite", description="Test workflow", force=True
-        )
-        assert "✓" in result2 or "Saved" in result2
+        result2 = ExecutionService.save_workflow(workflow=markdown_content, name="test-overwrite", force=True)
+        assert "\u2713" in result2 or "Saved" in result2

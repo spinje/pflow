@@ -8,7 +8,7 @@ Once pflow is installed and connected to your AI tool, you don't need to learn a
 
 ## You don't need to learn the schema
 
-pflow workflows are JSON files with a specific structure - but you'll never need to write one manually. Your agent:
+pflow workflows are markdown files (`.pflow.md`) — readable documents that double as executable pipelines. Your agent writes them, but you can open any workflow to see exactly what it does and why. Just like any `.md` file, it renders everywhere — GitHub, your editor, any markdown viewer. Your agent:
 
 - Reads pflow's instructions automatically
 - Knows which nodes are available
@@ -112,7 +112,7 @@ See [CLI overview](/reference/cli/index) for all options.
 Chain workflows together using pipes:
 
 ```bash
-pflow -p step1.json | pflow -p step2.json | pflow step3.json
+pflow -p step1 | pflow -p step2 | pflow step3
 ```
 
 See [Stdin input](/reference/cli/index#stdin-input) for how workflows receive piped data.
@@ -122,7 +122,7 @@ See [Stdin input](/reference/cli/index#stdin-input) for how workflows receive pi
 | Task | Who handles it |
 |------|----------------|
 | Learning pflow commands | Your agent |
-| Writing workflow JSON | Your agent |
+| Writing workflows | Your agent |
 | Knowing which nodes exist | Your agent |
 | Configuring API keys | You (agent tells you the command) |
 | Discovering new capabilities | Your agent or you  |

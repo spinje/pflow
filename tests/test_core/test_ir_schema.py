@@ -319,7 +319,7 @@ class TestInvalidIR:
         with pytest.raises(ValueError) as exc_info:
             validate_ir("{invalid json")
 
-        assert "Invalid JSON" in str(exc_info.value)
+        assert "Invalid workflow data" in str(exc_info.value)
 
 
 class TestErrorMessages:

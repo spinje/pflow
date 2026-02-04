@@ -13,6 +13,8 @@ from io import StringIO
 from pathlib import Path
 from typing import Any
 
+from tests.shared.markdown_utils import write_workflow_file
+
 
 def invoke_cli(args: list[str]) -> Any:
     """Helper to invoke CLI with proper routing through main_wrapper.
@@ -99,8 +101,8 @@ class TestValidationBeforeExecution:
             "edges": [{"from": "step1", "to": "step2"}],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli([str(workflow_path)])
 
@@ -134,8 +136,8 @@ class TestValidationBeforeExecution:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli([str(workflow_path)])
 
@@ -164,8 +166,8 @@ class TestValidationBeforeExecution:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli(["--output-format", "json", str(workflow_path)])
 
@@ -201,8 +203,8 @@ class TestValidationBeforeExecution:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         result = invoke_cli([str(workflow_path)])
 
@@ -231,8 +233,8 @@ class TestValidationConsistency:
             "edges": [],
         }
 
-        workflow_path = tmp_path / "test.json"
-        workflow_path.write_text(json.dumps(workflow))
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
 
         # Run with --validate-only
         validate_result = invoke_cli(["--validate-only", str(workflow_path)])

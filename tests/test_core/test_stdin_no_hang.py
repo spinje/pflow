@@ -21,6 +21,8 @@ import subprocess
 
 import pytest
 
+from tests.shared.markdown_utils import write_workflow_file
+
 
 def test_stdin_has_data_returns_false_in_test_environment():
     """stdin_has_data returns False in pytest (no real pipe)."""
@@ -175,8 +177,8 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
         "edges": [],
     }
 
-    workflow_path = tmp_path / "test.json"
-    workflow_path.write_text(json.dumps(workflow))
+    workflow_path = tmp_path / "test.pflow.md"
+    write_workflow_file(workflow, workflow_path)
 
     # Deliberately NOT using prepared_subprocess_env here. This test detects hangs
     # via timeout, so subprocess startup speed directly affects reliability.

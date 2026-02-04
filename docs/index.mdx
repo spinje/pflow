@@ -26,6 +26,12 @@ pflow separates planning from execution:
 
 Nodes are individual tools (call an LLM or API, read a file, or any MCP tool). Workflows chain them together. Over time, your library grows - complex tasks become instant commands.
 
+## Workflows are documentation
+
+A pflow workflow is a `.pflow.md` file — a standard markdown document that happens to be executable. Headings describe inputs and steps. Prose explains intent. Code blocks contain the actual commands, prompts, and configuration.
+
+Open one on GitHub and it reads like documentation. Run it with pflow and it executes as a pipeline. Same file, both purposes. No separate documentation to maintain, no opaque config to decipher — the workflow explains itself.
+
 ## Two ways to run workflows
 
 **Agent-driven**: Your AI agent discovers, creates, and runs workflows through pflow. This is the primary flow - your agent handles automation tasks using workflows it has built.

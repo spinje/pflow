@@ -74,21 +74,24 @@ SANDBOX_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("mcp-sandbox-agent-inst
     This is a comprehensive guide covering:
     - The 10-step development loop (discover → design → build → test → save)
     - When to discover vs build new workflows (always discover first!)
-    - Critical patterns (use shell/jq for structured data extraction)
-    - Workflow structure and constraints (sequential execution only)
+    - Critical patterns (use templates for extraction, code nodes for transformation)
+    - Workflow structure (.pflow.md markdown format) and constraints (sequential execution only)
     - Template syntax and variables (${input}, ${node.output})
+    - Node selection (code node > shell+jq for data transforms, LLM only for interpretation)
     - Authentication and credential management
-    - Common patterns and complete examples
+    - Common patterns and complete examples (batch processing, pipelines, orchestration)
     - Troubleshooting and debugging techniques
     - What workflows CANNOT do (no conditionals, loops, or state)
 
     The instructions are organized into sections:
-    1. Quick Start & Decision Trees - Read first
-    2. The Agent Development Loop - 10 steps to follow
-    3. Building Workflows - Technical reference
-    4. Common Patterns - Real examples
-    5. Troubleshooting - Debug errors
-    6. Testing & Debugging - Validate and fix
+    1. Foundation & Mental Model - Core concepts
+    2. Node & Tool Selection - Decision rules
+    3. The Development Loop - 10 steps to follow
+    4. Technical Reference - Workflow format, templates, parameters
+    5. Testing & Debugging - Validate and fix
+    6. Workflow Patterns - Real examples
+    7. Troubleshooting - Debug errors
+    8. Quick Reference - Cheat sheets
 
     Note: You do NOT need to read this before using workflow_discover or workflow_execute
     if a workflow matches the user's request perfectly. This resource is only for when
@@ -132,7 +135,7 @@ def get_instructions() -> str:
     - ❌ Dont have pflow cli installed and configured in their environment (check with `pflow --version` if you are unsure)
 
     Key differences for sandboxed environments:
-    - Have to use send workflow IR object instead of file path when using workflow_validate, workflow_execute, workflow_save tools
+    - Have to send workflow markdown content instead of file path when using workflow_validate, workflow_execute, workflow_save tools
     - No trace debugging (rely on workflow error outputs only)
     - Work entirely within sandbox constraints
 
@@ -154,7 +157,7 @@ def get_sandbox_instructions() -> str:
     - NO access to ~/.pflow/settings.json (can't read/write API keys)
     - NO access to trace files in ~/.pflow/debug/
     - Don't have pflow CLI installed in their environment
-    - Must send workflow IR objects instead of file paths
+    - Must send workflow markdown content instead of file paths
 
     Use cases: containerized agents, web-based AI assistants, CI/CD environments,
     multi-tenant systems, or any environment without shared access to the user's system.
@@ -186,41 +189,35 @@ The instruction file could not be loaded from `~/.pflow/instructions/mcp-agent-i
 
 ## Alternative Resources
 
-Use these CLI tools to discover what you need:
+Use these MCP tools to discover what you need:
 
-### Discovery Commands (Use These First!)
-- `pflow workflow discover "your task description"` - Find existing workflows
-- `pflow registry discover "what you need to build"` - Find nodes with LLM selection
+### Discovery Tools (Use These First!)
+- `workflow_discover(query="your task description")` - Find existing workflows
+- `registry_discover(task="what you need to build")` - Find nodes with LLM selection
 
-### Manual Discovery Commands
-- `pflow workflow list` - Browse all saved workflows
-- `pflow registry describe node1 node2` - Get specific node specs
-- `pflow registry search pattern` - Search for nodes by pattern
+### Browse Tools
+- `workflow_list()` - Browse all saved workflows
+- `registry_describe(nodes=["node1", "node2"])` - Get specific node specs
+- `registry_list(filter_pattern="keyword")` - Search for nodes by keyword
 
-### Execution & Management
-- `pflow workflow.json param=value` - Run a workflow (trace saved by default)
-- `pflow --no-trace workflow.json` - Run without saving a trace
-- `pflow --validate-only workflow.json` - Validate before running
-- `pflow workflow save file name "description"` - Save to library
+### Execution & Management Tools
+- `workflow_execute(workflow="workflow.pflow.md", parameters={...})` - Run a workflow
+- `workflow_validate(workflow="workflow.pflow.md")` - Validate before running
+- `workflow_save(workflow="./workflow.pflow.md", name="name")` - Save to library
+- `registry_run(node_type="node", parameters={...})` - Test a node's output structure
 
-### Settings & Configuration
+### Settings & Configuration (CLI — settings MCP tools are disabled)
 - `pflow settings set-env KEY value` - Store API keys securely
-- `pflow settings get-env KEY` - Retrieve stored values
 - `pflow settings show` - Show all settings
-
-### Help & Documentation
-- `pflow --help` - See all available commands
-- `pflow registry --help` - Registry command help
-- `pflow workflow --help` - Workflow command help
 
 ## Key Principles (Quick Reference)
 
-1. **Always discover first**: Run `workflow discover` before building new
-2. **Use shell/jq for data**: Never use LLM for structured data extraction
+1. **Always discover first**: Run `workflow_discover()` before building new
+2. **Use templates for extraction, code nodes for transformation**: Never use LLM for structured data extraction
 3. **Sequential only**: Workflows are linear chains, no branches or loops
-4. **Test MCP nodes**: Always test with real data before building
+4. **Test MCP nodes**: Always test with `registry_run()` when accessing specific fields
 5. **Templates**: Use `${input}` for workflow inputs, `${node.output}` for node outputs
-6. **Store credentials**: Use `pflow settings set-env` for API keys
+6. **Store credentials**: Use `pflow settings set-env` for API keys (CLI command)
 
 ## Manual Setup
 
@@ -252,7 +249,7 @@ The instruction file could not be loaded from `~/.pflow/instructions/mcp-sandbox
 1. **Avoid passing credentials as workflow inputs**:
    - NO `~/.pflow/settings.json access`, ask user to set environment variables instead by using the `pflow settings set-env` cli command or other means
 
-2. **Send workflow IR object instead of file path**
+2. **Send workflow markdown content instead of file path**
    - This is applicable for workflow_validate, workflow_execute, workflow_save tools
    - Don't assume shared access to the user's system where pflow is installed
 
@@ -266,59 +263,69 @@ The instruction file could not be loaded from `~/.pflow/instructions/mcp-sandbox
 
 ## Example: Credentials as Workflow Inputs and saving to file
 
-```json
-{
-  "inputs": {
-    "api_token": {
-      "type": "string",
-      "required": true,
-      "description": "API authentication token"
-    },
-    "api_url": {
-      "type": "string",
-      "required": true,
-      "description": "API URL to fetch data from"
-    }
-  },
-  "nodes": [
-    {
-      "id": "call-api",
-      "type": "http",
-      "purpose": "call API",
-      "params": {
-        "url": "${api_url}",
-        "method": "GET",
-        "auth_token": "${api_token}"
-      }
-    },
-    {
-      "id": "save-to-file",
-      "type": "write-file",
-      "params": {
-        "file_path": "${output_file}",
-        "content": "${call-api.response.data}"
-      }
-    },
-  ],
-  "edges": [
-    {"from": "call-api", "to": "save-to-file"}
-  ],
-  "outputs": {
-    "result-file-path": {
-      "source": "${save-to-file.file-path}",
-      "description": "Path to file where API response data was saved"
-    }
-  }
-}
-```
+````markdown
+# API Fetch and Save
+
+Fetch data from an API and save the response to a file.
+
+## Inputs
+
+### api_token
+
+API authentication token.
+
+- type: string
+- required: true
+
+### api_url
+
+API URL to fetch data from.
+
+- type: string
+- required: true
+
+### output_file
+
+Path to save the API response data.
+
+- type: string
+- required: true
+
+## Steps
+
+### call-api
+
+Call the API with authentication.
+
+- type: http
+- url: ${api_url}
+- method: GET
+- auth_token: ${api_token}
+
+### save-to-file
+
+Save the API response data to a file.
+
+- type: write-file
+- file_path: ${output_file}
+- content: ${call-api.response.data}
+
+## Outputs
+
+### result-file-path
+
+Path to file where API response data was saved.
+
+- source: ${save-to-file.file-path}
+````
 
 **Run with**:
 ```bash
 # Avoid this
-pflow workflow.json api_token=YOUR_KEY_HERE api_url=https://api.example.com/data
+pflow workflow.pflow.md api_token=YOUR_KEY_HERE api_url=https://api.example.com/data
 
 # If credentials are set as environment variables, use this (no api_token input required)
-pflow workflow.json api_url=https://api.example.com/data
+pflow workflow.pflow.md api_url=https://api.example.com/data
 ```
 
 

@@ -89,7 +89,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(service_method)`
 **execution_tools.py** (4 tools):
 - `workflow_execute(workflow, parameters)`: Execute with agent defaults (no repair, JSON, traces)
 - `workflow_validate(workflow)`: Validate structure (schema, data flow, templates, node types)
-- `workflow_save(workflow_file, name, description, force, generate_metadata)`: Save to library
+- `workflow_save(workflow_file, name, force)`: Save to library
 - `registry_run(node_type, parameters)`: Test node to discover output structure
 
 **registry_tools.py** (3 tools):
@@ -231,7 +231,7 @@ All inherit from `BaseService`, all methods are `@classmethod` with `@ensure_sta
 - Uses SENSITIVE_KEYS from core/security_utils
 
 **resolver.py** - Workflow resolution:
-- `resolve_workflow()`: dict → library name → file path (with suggestions)
+- `resolve_workflow()`: dict → markdown content (has newline) → library name → file path (with suggestions)
 - `get_workflow_suggestions()`: Find similar names using substring matching
 
 **validation.py** - Security validation:
@@ -382,9 +382,10 @@ return {
 
 **Resolution order (utils/resolver.py)**:
 1. Dict input → Use as IR (`"direct"`)
-2. String → Try as library name (`"library"`)
-3. String → Try as file path (`"file"`)
-4. Failure → Return suggestions using substring matching
+2. String with newline → Raw markdown content → parse (`"content"`)
+3. String ending `.pflow.md` → File path → read and parse (`"file"`)
+4. Single-line string → Try as library name (`"library"`), then as file path (`"file"`)
+5. Failure → Return suggestions using substring matching
 
 ### 4. Validation Layers
 

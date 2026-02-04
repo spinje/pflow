@@ -491,9 +491,9 @@ def execute_workflow(
     3. Resume from checkpoint on runtime repairs
 
     When repair is DISABLED (--no-repair):
-    1. Skip ALL validation
+    1. Validate workflow (fail fast on errors, no repair attempted)
     2. Execute directly
-    3. Fail fast on any error
+    3. Fail fast on any runtime error
 
     Args:
         workflow_ir: The workflow IR to execute
@@ -601,13 +601,31 @@ def execute_workflow(
 
     else:
         # =================================================================
-        # REPAIR DISABLED: Skip all validation, execute directly
+        # REPAIR DISABLED: Validate first, fail fast on errors, no repair
         # =================================================================
+        from pflow.core.workflow_validator import WorkflowValidator
+        from pflow.registry import Registry
 
-        # Prepare shared store (with checkpoint if resuming) - use ternary operator
+        registry = Registry()
+        validation_errors, _warnings = WorkflowValidator.validate(
+            workflow_ir, extracted_params=execution_params or {}, registry=registry, skip_node_types=False
+        )
+
+        if validation_errors:
+            from pflow.core.workflow_status import WorkflowStatus
+
+            return ExecutionResult(
+                success=False,
+                status=WorkflowStatus.FAILED,
+                errors=[{"source": "validation", "message": err} for err in validation_errors[:3]],
+                shared_after={},
+                action_result="validation_failed",
+            )
+
+        # Prepare shared store (with checkpoint if resuming)
         shared_store = resume_state if resume_state else {}
 
-        # Execute without any validation
+        # Execute with template validation enabled
         result = executor.execute_workflow(
             workflow_ir=workflow_ir,
             execution_params=execution_params,
@@ -617,7 +635,7 @@ def execute_workflow(
             output_key=output_key,
             metrics_collector=metrics_collector,
             trace_collector=trace_collector,
-            validate=False,  # Skip ALL validation when repair disabled
+            validate=True,
         )
 
         return result

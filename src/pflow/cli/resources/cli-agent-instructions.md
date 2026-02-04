@@ -19,18 +19,18 @@ You help users build **reusable workflows** - automated sequences that transform
 Data transformation → `code` node · External tools/side effects → `shell` node · Interpretation/judgment → `llm` node
 
 **Quick wins (memorize these):**
-- **Workflow exists?** → Use it (5 sec vs 60 min to build)
+- **Workflow exists?** → Use it (5 sec vs 10 min to build)
+- **Step order = execution order** → No wiring needed, steps run top to bottom
 - **Passing `${node.result}` wholesale?** → Skip testing
-- **Async API?** → Try `Prefer: wait=60` header first
-- **JSON string in simple template?** → Auto-parses (any node type)
+- **Templates reach any previous step** → No need for pass-through nodes
 - **Same operation per item?** → `batch` config (Batch Processing pattern)
-- **Keep it simple** →  Don't invent requirements or add unnecessary nodes.
+- **Keep it simple** → Don't invent requirements or add unnecessary nodes.
 
 ### Core Philosophy - Understanding the WHY
 
-**Why pflow exists**: After an AI helps create a workflow, it runs forever without AI overhead. Deterministic execution means the same inputs always produce the same outputs. This is automation that doesn't "think" - it just executes reliably.
+**Why pflow exists**: Workflows are executable documentation. You write a `.pflow.md` file that reads like a runbook — prose explains intent, parameters define behavior, code blocks execute. Once built, the workflow runs deterministically forever without AI overhead: same inputs, same outputs, every time.
 
-**Why edges vs templates matter**: Edges define a simple execution timeline (when), while templates enable flexible data composition (what). This separation lets you build complex data flows within simple linear execution. Edges control when nodes run (the timeline). Templates control what data each node sees (the history it can access).
+**Why step order vs templates matter**: Step order defines WHEN nodes run (top to bottom in `## Steps`). Templates define WHAT DATA each node sees (any previous node's output). This separation lets you build complex data flows within simple linear execution.
 
 **Why code/shell over LLM for structured data**: Structured operations should be deterministic. Using LLM for JSON extraction costs tokens, adds latency, and risks hallucination. Code nodes are free, instant, and operate on native objects. Reserve LLM for tasks requiring understanding, not extraction.
 
@@ -62,12 +62,12 @@ Examples: Databases (PostgreSQL, MySQL), Chat (Slack, Discord), Cloud (S3, GCS),
 
 **Always test - never assume similarity.**
 
-### Two Fundamental Concepts - Edges vs Templates
+### Two Fundamental Concepts - Step Order vs Templates
 
 **This distinction causes 80% of workflow rebuilding. Understand it completely.**
 
-#### Concept 1: Execution Order (Edges)
-**Edges define WHEN nodes run** - strictly sequential, one after another.
+#### Concept 1: Execution Order (Step Order)
+**Step order defines WHEN nodes run** - strictly sequential, one after another.
 
 ```
 fetch-data → process-data → save-results
@@ -78,62 +78,77 @@ fetch-data → process-data → save-results
 - `save-results` starts ONLY after `process-data` completely finishes
 - No node can start until its predecessor completes
 - Each node has exactly ONE successor (except the last node which has none)
-- No parallel edges (use `batch` with `parallel: true` for concurrent operations)
+- No parallel execution (use `batch` with `parallel: true` for concurrent operations)
 
 #### Concept 2: Data Access (Templates)
 **Templates define WHAT DATA nodes can see** - any node can access any PREVIOUS node's output.
 
 **Critical example showing the difference:**
-```json
-{
-  "nodes": [
-    {
-      "id": "step1-fetch",
-      "type": "http",
-      "params": {"url": "${api_url}"}
-    },
-    {
-      "id": "step2-timestamp",
-      "type": "shell",
-      "params": {"command": "date +%Y-%m-%d"}
-    },
-    {
-      "id": "step3-transform",
-      "type": "code",
-      "params": {
-        "inputs": {"items": "${step1-fetch.response.items}"},  // Template extracts .items, code transforms
-        "code": "items: list\n\nresult: list = [{'id': i['id'], 'name': i['title']} for i in items]"
-      }
-    },
-    {
-      "id": "step4-analyze",
-      "type": "llm",
-      "params": {
-        "prompt": "Analyze this data from ${step3-transform.result} fetched at ${step2-timestamp.stdout}"
-      }
-    },
-    {
-      "id": "step5-report",
-      "type": "llm",
-      "params": {
-        "prompt": "Create report:\nRaw: ${step1-fetch.response}\nItems: ${step3-transform.result}\nAnalysis: ${step4-analyze.response}\nTime: ${step2-timestamp.stdout}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "step1-fetch", "to": "step2-timestamp"},
-    {"from": "step2-timestamp", "to": "step3-transform"},
-    {"from": "step3-transform", "to": "step4-analyze"},
-    {"from": "step4-analyze", "to": "step5-report"}
-  ]
-}
+`````markdown
+## Steps
+
+### step1-fetch
+
+Fetch data from the API.
+
+- type: http
+- url: ${api_url}
+
+### step2-timestamp
+
+Capture the current date for the report.
+
+- type: shell
+
+```shell command
+date +%Y-%m-%d
 ```
+
+### step3-transform
+
+Extract and reshape items from the API response.
+
+- type: code
+- inputs:
+    items: ${step1-fetch.response.items}
+
+```python code
+items: list
+
+result: list = [{'id': i['id'], 'name': i['title']} for i in items]
+```
+
+### step4-analyze
+
+Analyze the transformed data.
+
+- type: llm
+
+```prompt
+Analyze this data from ${step3-transform.result} fetched at ${step2-timestamp.stdout}
+```
+
+### step5-report
+
+Create a comprehensive report from all previous outputs.
+
+- type: llm
+
+```prompt
+Create report:
+Raw: ${step1-fetch.response}
+Items: ${step3-transform.result}
+Analysis: ${step4-analyze.response}
+Time: ${step2-timestamp.stdout}
+```
+`````
 
 **Key insights from this example:**
 - `step3-transform` accesses `step1-fetch.response.items` directly (skipping step2)
 - `step5-report` accesses ALL previous outputs (step1, step2, step3, step4)
-- Edges only control execution order, NOT data availability
-- Think of it as: edges create a timeline, templates access history
+- Edges (step order) only control execution sequence, NOT data availability
+- Think of it as: step order creates a timeline, templates access history
+- In `.pflow.md`, edges are implicit — steps execute top to bottom in document order
 
 **Data availability at each step:**
 | Execution Order | Data Available to This Node |
@@ -146,16 +161,16 @@ fetch-data → process-data → save-results
 
 This accumulation pattern is fundamental - each node adds to the available data pool.
 
-### Common Misunderstandings About Edges vs Templates
+### Common Misunderstandings About Step Order vs Templates
 
-❌ **Wrong**: "If I put nodes A→B→C, then C can only see B's output"
-✅ **Right**: C can access A, B, or both. Edges don't restrict data access.
+❌ **Wrong**: "If I put steps A→B→C, then C can only see B's output"
+✅ **Right**: C can access A, B, or both. Step order doesn't restrict data access.
 
-❌ **Wrong**: "I have to design nodes so each one only uses the previous one's data"
-✅ **Right**: Design nodes for their purpose. Then in templates, pull data from wherever you need.
+❌ **Wrong**: "I have to design steps so each one only uses the previous one's data"
+✅ **Right**: Design steps for their purpose. Then in templates, pull data from wherever you need.
 
-❌ **Wrong**: "Templates must follow the edge order"
-✅ **Right**: Templates can jump over nodes. Edges just define execution sequence.
+❌ **Wrong**: "Templates must follow the step order"
+✅ **Right**: Templates can jump over steps. Step order just defines execution sequence.
 
 **Real-world example showing why template jumping matters:**
 ```
@@ -234,7 +249,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 ### Node Type Selection (pflow-Specific)
 
 **Which pflow node to use:**
-- **Data transformation** (filter, reshape, merge, compute) → `code` node with Python
+- **Data transformation** (filter, reshape, merge, compute, string parsing) → `code` node with Python
   - Receives native objects from upstream nodes (no serialization)
   - Supports multiple inputs from different nodes
   - Type-annotated Python code for clarity and validation
@@ -244,6 +259,7 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
   - Any program where the exit code or side effect is the point
   - Use macOS-compatible (BSD) commands, not GNU-specific extensions
   - Use `$VAR` not `${VAR}` for shell variables (braces conflict with pflow template syntax)
+  - **Warning sign**: Long chains of `sed`, `awk`, `jq`, `tr`, `grep` piped together → use `code` node instead (more readable, portable, debuggable)
 - **Unstructured data / interpretation** → `llm` node (costs per workflow execution)
 - **JSON REST APIs** → `http` node
 - **Binary/streaming data** → `shell` node with curl
@@ -281,7 +297,7 @@ pflow workflow discover "exact user request, including all details"
 - **70-79%** → Suggest modifications
 - **<70%** → Build new (continue to Step 3)
 
-**Modify existing**: `cat ~/.pflow/workflows/[name].json` → Edit nodes/inputs/outputs → Validate (Step 9)
+**Modify existing**: `cat ~/.pflow/workflows/[name].pflow.md` → Edit sections → Validate (Step 9)
 
 ### Step 3: DISCOVER NODES - Finding Building Blocks
 
@@ -316,7 +332,7 @@ pflow registry discover "fetch JSON from REST API, extract specific fields, vali
 
 **API integration**: JSON APIs → `http` node · Binary/streaming/custom → `shell` node with curl
 
-#### Phase 3: Test Authentication
+#### Phase 2: Test Authentication
 ```bash
 # Test with minimal call
 pflow registry run http \
@@ -329,13 +345,15 @@ pflow registry run http \
 ## ⚡ STOP! Don't Test If You're Passing `${node.result}` Wholesale
 
 **If you're doing this, SKIP ALL TESTING:**
-```json
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {"prompt": "Analyze: ${fetch.result}"}  // Passing whole result = NO TEST NEEDED
-}
+```markdown
+### analyze
+
+Analyze fetched results.
+
+- type: llm
+- prompt: "Analyze: ${fetch.result}"
 ```
+Passing whole `${fetch.result}` = NO TEST NEEDED.
 
 **Only test when you need specific paths like `${node.result.data.items[0].id}`**
 
@@ -363,39 +381,40 @@ Is it an MCP node?
 **Key insight**: If you're just passing `${mcp-node.result}` to an LLM or another service, you don't need to know its structure. Only test when you need specific paths like `${mcp-node.result.data.field}` OR when unsure if the node accepts your data format.
 
 **Example - When to test vs skip:**
-```json
-{
-  "nodes": [
-    // Skip testing - passing whole result to next node
-    {
-      "id": "query-database",
-      "type": "mcp-postgres-QUERY",
-      "params": {"query": "${sql_query}"}
-    },
-    {
-      "id": "analyze-data",
-      "type": "llm",
-      "params": {
-        "prompt": "Analyze this data: ${query-database.result}"  // Whole result = no test needed
-      }
-    },
+`````markdown
+## Steps
 
-    // Need testing - accessing specific nested fields
-    {
-      "id": "fetch-pr",
-      "type": "mcp-github-GET_PR",
-      "params": {"pr": "${pr_number}"}
-    },
-    {
-      "id": "check-status",
-      "type": "shell",
-      "params": {
-        "command": "echo 'Status: ${fetch-pr.result.data.state}'"  // Specific path = test required
-      }
-    }
-  ]
-}
+### query-database
+
+Query the database. Skip testing — passing whole result to next node.
+
+- type: mcp-postgres-QUERY
+- query: ${sql_query}
+
+### analyze-data
+
+Analyze query results. Whole result = no test needed.
+
+- type: llm
+- prompt: "Analyze this data: ${query-database.result}"
+
+### fetch-pr
+
+Fetch PR details. Need testing — accessing specific nested fields.
+
+- type: mcp-github-GET_PR
+- pr: ${pr_number}
+
+### check-status
+
+Check PR status. Specific path `${fetch-pr.result.data.state}` = test required.
+
+- type: shell
+
+```shell command
+echo 'Status: ${fetch-pr.result.data.state}'
 ```
+`````
 
 **MCP Testing Protocol:**
 ```bash
@@ -438,7 +457,7 @@ Server C:  result.Items[]                   # DynamoDB style
 **Create a precise execution plan:**
 
 ```
-Execution Order (Edges):
+Execution Order (Step Order):
 1. fetch-data
 2. validate-data
 3. get-timestamp
@@ -462,37 +481,51 @@ Data Dependencies (Templates):
 
 **If complex workflow - Build incrementally, test each step with minimal data using `limit`, `filter`, `offset` or other similar parameters before adding more nodes and capabilities**
 
-⚠️ **CRITICAL: Development Format Rules**
+⚠️ **CRITICAL: Development Format**
 
-Your workflow file must contain ONLY these four top-level keys:
-- `inputs` (optional but recommended)
-- `nodes` (required)
-- `edges` (required)
-- `outputs` (optional)
+Workflows are `.pflow.md` files using standard markdown structure:
 
-**DO NOT include these fields** (they cause validation errors):
-- ❌ `name`
-- ❌ `description`
-- ❌ `version`
-- ❌ `created_at`, `updated_at`
-- ❌ Any other metadata fields
+````markdown
+# Workflow Title
 
-**Why?** The `pflow workflow save` command adds metadata automatically. Including them manually causes:
-```
-ValidationError: Additional properties are not allowed ('name', 'description' were unexpected)
-```
+Description of what the workflow does (becomes the workflow description on save).
 
-**Correct development format:**
-```json
-{
-  "inputs": {"param": {"type": "str", "required": true}},
-  "nodes": [...],
-  "edges": [...],
-  "outputs": {...}
-}
-```
+## Inputs
 
-Save this as `my-workflow.json` anywhere you like. The save command will add all required metadata later.
+### input_name
+
+Description of this input.
+
+- type: string
+- required: true
+
+## Steps
+
+### step-name
+
+Description of what this step does.
+
+- type: node-type
+- param: value
+
+## Outputs
+
+### output_name
+
+Description of this output.
+
+- source: ${step-name.result}
+````
+
+**Key rules:**
+- `## Inputs` and `## Outputs` are optional. `## Steps` is required (at least one node).
+- Execution order = document order. No explicit edges needed.
+- Every entity (`###` heading) must have a prose description.
+- Use `-` for parameters, `*` for documentation bullets.
+- Code blocks use tags: ` ```shell command `, ` ```python code `, ` ```prompt `
+- Batch config: inline `- batch:` for simple cases, ` ```yaml batch ` code block for complex inline arrays
+
+Save this as `my-workflow.pflow.md` anywhere you like. The save command will add metadata later.
 
 ---
 
@@ -506,71 +539,78 @@ Save this as `my-workflow.json` anywhere you like. The save command will add all
 - More than 15 nodes IF they're complex (20 simple shell commands might not need phasing)
 
 **Phase 1: Core Data Path (Test Immediately)**
-```json
-{
-  "inputs": {
-    "source_url": {"type": "string", "required": true, "description": "Data source"}
-  },
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "http",
-      "params": {"url": "${source_url}"}
-    },
-    {
-      "id": "test-output",
-      "type": "write-file",
-      "params": {
-        "file_path": "/tmp/test.json",
-        "content": "${fetch.response.data}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "fetch", "to": "test-output"}
-  ]
-}
-```
+`````markdown
+# Phase 1 Test
+
+Core data path test.
+
+## Inputs
+
+### source_url
+
+Data source URL.
+
+- type: string
+- required: true
+
+## Steps
+
+### fetch
+
+Fetch raw data from the source.
+
+- type: http
+- url: ${source_url}
+
+### test-output
+
+Write fetched data to disk for inspection.
+
+- type: write-file
+- file_path: /tmp/test.json
+- content: ${fetch.response.data}
+`````
 
 **Test before continuing:**
 ```bash
-pflow phase1.json source_url="https://api.example.com/data"
+pflow phase1.pflow.md source_url="https://api.example.com/data"
 # Verify: Is ${fetch.response.data} the structure you expected?
 ```
 
 **Phase 2: Add Processing (One Service at a Time)**
-```json
-// Add to existing nodes
-{
-  "id": "process",
-  "type": "llm",
-  "params": {
-    "prompt": "Analyze this data and extract key insights:\n${fetch.response.data}"
-  }
-}
+````markdown
+### process
+
+Analyze fetched data and extract key insights.
+
+- type: llm
+
+```prompt
+Analyze this data and extract key insights:
+${fetch.response.data}
 ```
+````
 
 **Phase 3: Add External Services**
-```json
-// Add each external service and test
-{
-  "id": "send-notification",
-  "type": "mcp-slack-send",
-  "params": {
-    "channel": "${notification_channel}",
-    "text": "${process.response}"
-  }
-}
+```markdown
+### send-notification
+
+Send analysis results to the team channel.
+
+- type: mcp-slack-send
+- channel: ${notification_channel}
+- text: ${process.response}
 ```
 
 **Phase 4: Polish and Outputs**
-```json
-// Add formatting, final outputs
-{
-  "outputs": {
-    "analysis": {"source": "${process.response}", "description": "Analysis results"}
-  }
-}
+```markdown
+## Outputs
+
+### analysis
+
+Analysis results from the LLM processing step.
+
+- source: ${process.response}
 ```
 
 <!-- PART 2 START: Building Workflows -->
@@ -596,198 +636,192 @@ Is this value in the user's request?
 **Key insight**: LLM prompts, Python code, and shell commands are HOW the workflow works, not WHAT it processes. These stay hardcoded unless the user specifically asks to customize them.
 
 **Input examples with rationale:**
-```json
-{
-  "inputs": {
-    // User value - becomes input
-    "api_endpoint": {
-      "type": "string",
-      "required": true,
-      "description": "API URL to fetch data from"
-    },
+```markdown
+## Inputs
 
-    // User mentioned but with default
-    "limit": {
-      "type": "number",
-      "required": false,
-      "default": 10,
-      "description": "Maximum items to process"
-    },
+### api_endpoint
 
-    // Not mentioned but configurable
-    "output_format": {
-      "type": "string",
-      "required": false,
-      "default": "json",
-      "description": "Output format (json, csv, xml)"
-    },
+API URL to fetch data from. User-specified value — always an input.
 
-    // Array input example
-    "tags": {
-      "type": "array",
-      "required": false,
-      "default": ["important"],
-      "description": "Tags to filter by"
-    },
+- type: string
+- required: true
 
-    // Object input example
-    "options": {
-      "type": "object",
-      "required": false,
-      "default": {"verbose": false},
-      "description": "Processing options"
-    }
-  }
-}
+### limit
+
+Maximum items to process. User mentioned but with sensible default.
+
+- type: number
+- required: false
+- default: 10
+
+### output_format
+
+Output format (json, csv, xml). Not mentioned but configurable.
+
+- type: string
+- required: false
+- default: "json"
+
+### tags
+
+Tags to filter by. Array input example.
+
+- type: array
+- required: false
+- default: ["important"]
+
+### options
+
+Processing options. Object input example.
+
+- type: object
+- required: false
+- default: {"verbose": false}
 ```
 
 #### Node Creation - Complete Patterns
 
-```json
-{
-  "nodes": [
-    // HTTP node with full options
-    {
-      "id": "fetch-with-auth",
-      "type": "http",
-      "purpose": "Fetch data from protected API",
-      "params": {
-        "url": "${api_url}",
-        "method": "POST",
-        "headers": {
-          "Authorization": "Bearer ${api_token}",
-          "Content-Type": "application/json",
-          "Accept": "application/json"
-        },
-        "body": {
-          "query": "${search_query}",
-          "limit": "${limit}"
-        }
-      }
-    },
+`````markdown
+## Steps
 
-    // Shell node - run external tools and commands
-    // $var = shell variable, ${var} = pflow template (don't mix up)
-    {
-      "id": "get-git-log",
-      "type": "shell",
-      "purpose": "Get recent commits",
-      "params": {
-        "command": "git log --oneline -${limit}"
-      }
-    },
+### fetch-with-auth
 
-    // Code node - transform data between nodes
-    // Templates go in "inputs", Python code in "code"
-    // All inputs and result MUST have type annotations
-    {
-      "id": "filter-and-reshape",
-      "type": "code",
-      "purpose": "Filter active items and reshape",
-      "params": {
-        "inputs": {
-          "items": "${fetch-with-auth.response.data.items}"
-        },
-        "code": "items: list\n\nresult: list = [{'id': i['id'], 'name': i['name'], 'value': i['metrics']['value']} for i in items if i['status'] == 'active']"
-      }
-    },
+Fetch data from protected API with authentication.
 
-    // Code node with multiple inputs and structured result
-    // Downstream nodes access fields: ${merge-data.result.summary}, ${merge-data.result.count}
-    {
-      "id": "merge-data",
-      "type": "code",
-      "purpose": "Merge and summarize data from two sources",
-      "params": {
-        "inputs": {
-          "api_data": "${fetch-with-auth.response.data.items}",
-          "db_records": "${query-db.result}"
-        },
-        "code": "api_data: list\ndb_records: list\n\nmerged = api_data + db_records\nresult: dict = {'items': merged, 'count': len(merged), 'summary': f'{len(api_data)} from API, {len(db_records)} from DB'}"
-      }
-    },
+- type: http
+- url: ${api_url}
+- method: POST
+- headers:
+    Authorization: Bearer ${api_token}
+    Content-Type: application/json
+    Accept: application/json
+- body:
+    query: ${search_query}
+    limit: ${limit}
 
-    // LLM with structured prompt
-    {
-      "id": "structured-analysis",
-      "type": "llm",
-      "purpose": "Analyze data with specific criteria",
-      "params": {
-        "prompt": "Analyze this data according to these criteria:\n\nData:\n${filter-and-reshape.result}\n\nCriteria:\n1. Identify patterns\n2. Find anomalies\n3. Suggest improvements\n\nFormat your response as:\n- Patterns: ...\n- Anomalies: ...\n- Improvements: ...",
-        "temperature": 0.7,
-        "model": "gpt-4"
-      }
-    },
+### get-git-log
 
-    // MCP node with nested parameters
-    {
-      "id": "update-service",
-      "type": "mcp-service-UPDATE",
-      "purpose": "Update external service with results",
-      "params": {
-        "resource_id": "${resource_id}",
-        "data": {
-          "status": "completed",
-          "results": "${structured-analysis.response}",
-          "timestamp": "${get-timestamp.stdout}",
-          "metadata": {
-            "source": "${api_url}",
-            "processed_count": "${limit}"
-          }
-        }
-      }
-    }
-  ]
+Get recent commits. Note: `$var` = shell variable, `${var}` = pflow template.
+
+- type: shell
+
+```shell command
+git log --oneline -${limit}
+```
+
+### filter-and-reshape
+
+Filter active items and reshape for downstream processing.
+Templates go in `inputs`, Python code in the code block.
+All inputs and result MUST have type annotations.
+
+- type: code
+- inputs:
+    items: ${fetch-with-auth.response.data.items}
+
+```python code
+items: list
+
+result: list = [
+    {'id': i['id'], 'name': i['name'], 'value': i['metrics']['value']}
+    for i in items
+    if i['status'] == 'active'
+]
+```
+
+### merge-data
+
+Merge and summarize data from two sources.
+Downstream nodes access fields: `${merge-data.result.summary}`, `${merge-data.result.count}`.
+
+- type: code
+- inputs:
+    api_data: ${fetch-with-auth.response.data.items}
+    db_records: ${query-db.result}
+
+```python code
+api_data: list
+db_records: list
+
+merged = api_data + db_records
+result: dict = {
+    'items': merged,
+    'count': len(merged),
+    'summary': f'{len(api_data)} from API, {len(db_records)} from DB'
 }
 ```
 
+### structured-analysis
+
+Analyze data with specific criteria.
+
+- type: llm
+- temperature: 0.7
+- model: gpt-4
+
+```prompt
+Analyze this data according to these criteria:
+
+Data:
+${filter-and-reshape.result}
+
+Criteria:
+1. Identify patterns
+2. Find anomalies
+3. Suggest improvements
+
+Format your response as:
+* Patterns: ...
+* Anomalies: ...
+* Improvements: ...
+```
+
+### update-service
+
+Update external service with results.
+
+- type: mcp-service-UPDATE
+- resource_id: ${resource_id}
+
+```yaml data
+status: completed
+results: ${structured-analysis.response}
+timestamp: ${get-timestamp.stdout}
+metadata:
+  source: ${api_url}
+  processed_count: ${limit}
+```
+`````
+
 ⚠️ **Code node rules:**
-- Templates go in `inputs`, NEVER in `code` (code is literal Python, not a template)
+- Templates go in `- inputs:` param, NEVER in the `python code` block (code is literal Python, not a template)
 - All inputs and `result` MUST have type annotations: `data: list`, `result: dict = ...`
 - Upstream JSON is auto-parsed before your code runs — if source is JSON, declare `dict`/`list` not `str`
 - Use `object` as type when you don't know the type (skips validation)
 - Single output via `result` variable — use dict for structured output
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
-### Step 9: VALIDATE - Understanding Validation Errors
-
-```bash
-pflow --validate-only workflow.json
-```
-
-**Common validation errors with precise fixes:**
-
-| Error Message | Exact Cause | Precise Fix |
-|---------------|-------------|-------------|
-| `"Unknown node type 'mcp-slack-fetch'"` | Node type doesn't exist | Run `pflow registry discover "fetch Slack messages"` to find correct type |
-| `"Template variable '${channel_id}' not found in inputs or node outputs"` | Missing input declaration | Add to inputs: `"channel_id": {"type": "string", "required": true, "description": "..."}` |
-| `"Node 'process' references '${analyze.result}' but 'analyze' hasn't executed yet"` | Wrong edge order | Fix edges so 'analyze' runs before 'process' |
-| `"Circular dependency detected: A -> B -> C -> A"` | Edge loop | Remove the edge that creates the cycle |
-| `"Missing required parameter 'url' in node 'fetch'"` | Required param not set | Add `"url": "${api_url}"` to node params |
-| `"Invalid input type: expected string, got number"` | Wrong type in template | Check source node output type |
-| `"Node 'x' is unreachable"` | No edge leading to node | Add edge from previous node |
-| `"Multiple edges from node 'x'"` | Violates linear chain | Remove extra edges, keep only one |
-
-### Step 10: TEST - Systematic Testing
+### Step 9: TEST - Systematic Testing
 
 **Development loop: edit file → run from path → debug → repeat until working**
+Validation runs automatically before every execution — no separate validation step needed.
 
 ```bash
 # Run directly from file path during development (no saving needed)
-pflow workflow.json param1=value1 param2=value2 limit=2
+pflow workflow.pflow.md param1=value1 param2=value2 limit=2
 ```
 
-Keep iterating on the JSON file until the workflow executes successfully. Do NOT save until it works.
+Keep iterating on the `.pflow.md` file until the workflow executes successfully. Do NOT save until it works.
 
 **Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` contains events, nodes, outputs, errors and more
 
-### Step 11: SAVE - Make It Executable by Name (Final Step)
+### Step 10: SAVE - Make It Executable by Name (Final Step)
 
-⚠️ **Only do this AFTER your workflow runs successfully from the file path in Step 10.**
+⚠️ **Only do this AFTER your workflow runs successfully from the file path in Step 9.**
 
 **Your workflow currently works with:**
 ```bash
-pflow/path/to/workflow.json param=value  # ✅ Works but requires full path
+pflow /path/to/workflow.pflow.md param=value  # ✅ Works but requires full path
 ```
 
 **To make it work with just a name (REQUIRED for reusability):**
@@ -798,22 +832,21 @@ pflow workflow-name param=value  # ❌ Won't work until you save it!
 **⚡ You MUST use the save command - this is NOT optional:**
 
 ```bash
-pflow workflow save /path/to/your-workflow.json \
-  --name workflow-name \
-  --description "Brief description of what it does"
+pflow workflow save /path/to/your-workflow.pflow.md \
+  --name workflow-name
 ```
 
 **What this command does:**
-- Adds required metadata for execution by name
+- Adds frontmatter metadata for execution by name
 - Saves to workflow library (`~/.pflow/workflows/`)
 - Makes the workflow reusable across projects
+- Description is extracted from the `#` title prose in your `.pflow.md` file
 
 **Example:**
 ```bash
 # Save your tested workflow
-pflow workflow save /tmp/api-processor.json \
-  --name api-data-processor \
-  --description "Fetches data from API, processes with custom logic, delivers results"
+pflow workflow save /tmp/api-processor.pflow.md \
+  --name api-data-processor
 
 # Now you can execute by name from anywhere
 pflow api-data-processor \
@@ -867,53 +900,61 @@ llm keys set anthropic --key "sk-ant-..."
 ```
 
 **Critical**: Settings variables and env variables must be declared as inputs (not auto-available):
-```json
-{
-  "inputs": {
-    "api_token": {"type": "string", "required": true, "description": "..."}
-  }
-}
+```markdown
+### api_token
+
+API authentication token.
+
+- type: string
+- required: true
 ```
-Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
+Example of using in nodes: `- Authorization: Bearer ${api_token}` (in headers)
 
 ### Workflow Structure Complete Reference
 
-```json
-{
-  "inputs": {
-    "param_name": {
-      "type": "string|number|boolean|array|object",
-      "description": "What this parameter is for",
-      "required": true|false,
-      "default": "value",  // Only if required: false
-      "stdin": true|false  // If true, piped stdin routes here (only one input can have this)
-    }
-  },
-  "nodes": [
-    {
-      "id": "descriptive-name",
-      "type": "node-type-from-registry",
-      "purpose": "What this step does",  // Optional but recommended for clarity
-      "params": {
-        "param1": "static_value",
-        "param2": "${input_name}",
-        "param3": "${other_node.output}"
-      }
-    }
-  ],
-  "edges": [
-    {"from": "node1", "to": "node2"}  // Linear chain only
-  ],
-  "outputs": {  // Optional - skip for automation workflows
-    "result_name": {
-      "source": "${final_node.output}",
-      "description": "What this output contains"
-    }
-  }
-}
-```
+`````markdown
+# Workflow Title
 
-**Key insight**: Outputs are optional. Automation workflows (send, post, update) often don't need outputs since success is visible through side effects.
+Description of the workflow. This becomes the description shown in `pflow workflow list`.
+
+## Inputs
+
+### param_name
+
+What this parameter is for.
+
+- type: string
+- required: true
+- default: "value"
+- stdin: true
+
+## Steps
+
+### descriptive-name
+
+What this step does and why.
+
+- type: node-type-from-registry
+- param1: static_value
+- param2: ${input_name}
+- param3: ${other_node.output}
+
+## Outputs
+
+### result_name
+
+What this output contains.
+
+- source: ${final_node.output}
+`````
+
+**Input fields**: `type` (string|number|boolean|array|object), `required` (true|false), `default` (only when required: false), `stdin` (true|false -- only one input can have this), description as prose.
+
+**Node fields**: `type` (required), all other params as `- key: value`. Code/prompts/batch go in tagged code blocks.
+
+**Execution order**: Top to bottom in `## Steps`. No explicit edges.
+
+**Outputs**: Optional -- skip for automation workflows (send, post, update).
 
 ### Template Variable Complete Reference
 
@@ -949,63 +990,77 @@ Example of using in nodes: `"Authorization": "Bearer ${api_token}"`
 
 **Escape Hatch** (force raw string):
 Complex templates bypass parsing:
-```json
-// Auto-parsed (simple template):
-{"data": "${json_var}"}
+```yaml
+# Auto-parsed (simple template):
+- data: ${json_var}
 
-// NOT parsed (complex templates):
-{"data": "${json_var} "}   // Trailing space
-{"data": "'${json_var}'"}  // Wrapped in quotes
-{"data": "raw: ${json_var}"}  // Has prefix
+# NOT parsed (complex templates):
+- data: "${json_var} "        # Trailing space
+- data: "'${json_var}'"       # Wrapped in quotes
+- data: "raw: ${json_var}"    # Has prefix
 ```
 
 **The Anti-Pattern to Avoid:**
-```json
-// ❌ WRONG - Unnecessary extraction before LLM
-{
-  "id": "extract-first",
-  "type": "shell",
-  "params": {"stdin": "${http-fetch.response}", "command": "jq '.'"}
-},
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {"prompt": "Analyze: ${extract-first.stdout}"}  // Extra step for nothing
-}
 
-// ✅ RIGHT - Pass directly to LLM
-{
-  "id": "analyze",
-  "type": "llm",
-  "params": {"prompt": "Analyze: ${http-fetch.response}"}  // Works directly
-}
+```markdown
+### extract-first
 
-// ✅ RIGHT - Combine and transform multiple sources with code node
-{
-  "id": "process",
-  "type": "code",
-  "params": {
-    "inputs": {
-      "api_data": "${http-fetch.response}",       // HTTP node
-      "db_records": "${mcp-postgres.result}",     // MCP node
-      "local_config": "${read-config.content}"    // File node
-    },
-    "code": "api_data: dict\ndb_records: list\nlocal_config: dict\n\nresult: list = api_data['items'] + db_records"
-  }
-}
+❌ WRONG — Unnecessary extraction before LLM.
+
+- type: shell
+- stdin: ${http-fetch.response}
+- command: jq '.'
+
+### analyze
+
+❌ Extra step for nothing.
+
+- type: llm
+- prompt: "Analyze: ${extract-first.stdout}"
 ```
+
+```markdown
+### analyze
+
+✅ RIGHT — Pass directly to LLM.
+
+- type: llm
+- prompt: "Analyze: ${http-fetch.response}"
+```
+
+````markdown
+### process
+
+✅ RIGHT — Combine and transform multiple sources with code node.
+
+- type: code
+- inputs:
+    api_data: ${http-fetch.response}
+    db_records: ${mcp-postgres.result}
+    local_config: ${read-config.content}
+
+```python code
+api_data: dict
+db_records: list
+local_config: dict
+
+result: list = api_data['items'] + db_records
+```
+````
 
 #### Automatic JSON Serialization for String-Typed Parameters
 
 Objects in `str`-typed params auto-serialize to JSON strings with proper escaping. Always use object syntax—never manually construct JSON strings.
 
-```json
-// ✅ Object syntax - auto-serializes with proper escaping
-"request_body": {"query": "${user_input}", "limit": 10}
-// Result: '{"query": "Hello \"world\"\\nLine 2", "limit": 10}'
+```yaml
+# ✅ Object syntax - auto-serializes with proper escaping
+- request_body:
+    query: ${user_input}
+    limit: 10
+# Result: '{"query": "Hello \"world\"\\nLine 2", "limit": 10}'
 
-// ❌ String syntax - breaks on quotes/newlines
-"request_body": "{\"query\": \"${user_input}\"}"
+# ❌ String syntax - breaks on quotes/newlines
+- request_body: '{"query": "${user_input}"}'
 ```
 
 Works with or without template variables. Handles nested objects and arrays.
@@ -1057,60 +1112,75 @@ Need to interpret meaning?  → LLM
 Common mistake: Using LLM for extraction creates unnecessary nodes. Templates handle all path traversal automatically.
 
 #### All Template Patterns
-```json
-{
-  "params": {
-    // Simple references
-    "basic_input": "${username}",
-    "basic_output": "${fetch.response}",
 
-    // Nested object access
-    "nested": "${fetch.data.user.email}",
+Templates work in any param value — inline `- key:` or code blocks:
 
-    // Array access
-    "first_item": "${fetch.items[0]}",
-    "specific_field": "${fetch.items[0].name}",
+```markdown
+### example-node
 
-    // Nested template: inner resolves first
-    "by_input": "${fetch.items[${choice}]}",  // choice=0,1,2 selects item
-
-    // Multiple templates in one string
-    "combined": "User ${username} data: ${fetch.response}",
-
-    // Complex path
-    "deep": "${fetch.result.data.users[0].profile.settings.email}",
-
-    // In JSON structures (types preserved - dicts stay dicts, not stringified)
-    "body": {
-      "user": "${username}",
-      "data": "${process.output}",
-      "metadata": {
-        "timestamp": "${get-time.stdout}",
-        "source": "${api_url}"
-      }
-    },
-
-    // Multi-source object - combine data from different nodes
-    "stdin": {
-      "config": "${fetch-config.response}",
-      "items": "${fetch-items.result}"
-    },
-
-    // Inline array - each element's templates resolved independently
-    "operations": [
-      {"task": "summarize", "input": "${source.result}"},
-      {"task": "translate", "input": "${source.result}", "lang": "es"}
-    ],
-
-    // In shell commands - use pflow variables directly (they resolve before shell runs)
-    "command": "mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}",
-
-    // Direct values (no template)
-    "method": "POST",
-    "static_value": 123
-  }
-}
+- basic_input: ${username}
+- basic_output: ${fetch.response}
+- nested: ${fetch.data.user.email}
+- first_item: ${fetch.items[0]}
+- specific_field: ${fetch.items[0].name}
+- by_input: ${fetch.items[${choice}]}
+- combined: "User ${username} data: ${fetch.response}"
+- deep: ${fetch.result.data.users[0].profile.settings.email}
+- method: POST
+- static_value: 123
 ```
+
+**Structured objects** — inline nesting or code block:
+
+```markdown
+### fetch-with-auth
+
+- type: http
+- url: ${api_url}
+- method: POST
+- headers:
+    Authorization: Bearer ${api_token}
+    Content-Type: application/json
+- body:
+    query: ${search_query}
+    limit: ${limit}
+```
+
+**When nesting gets deep** (objects within objects), use a `yaml param_name` code block for clarity:
+
+````markdown
+### update-record
+
+- type: http
+- url: ${api_url}
+- method: POST
+
+```yaml body
+query: ${search_query}
+filters:
+  status: active
+  tags:
+    - ${primary_tag}
+    - ${secondary_tag}
+  metadata:
+    source: ${source_name}
+    priority: high
+```
+````
+
+**Guideline**: Inline `- key: value` for flat params and simple nesting. `yaml param_name` code block for deep nesting or batch config. Both produce identical results.
+
+**In shell commands** — pflow variables resolve before the shell runs. Use a code block for multi-line or complex commands:
+
+````markdown
+### run-pipeline
+
+- type: shell
+
+```shell command
+mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
+```
+````
 
 #### Debugging Template Errors
 
@@ -1134,57 +1204,55 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch")
 
 ### Parameter Types - Complete Guide
 
-```json
-{
-  "inputs": {
-    // String - most common
-    "text_input": {
-      "type": "string",
-      "required": true,
-      "description": "Any text value"
-    },
+```markdown
+## Inputs
 
-    // Number - integers or floats
-    "count": {
-      "type": "number",
-      "required": false,
-      "default": 10,
-      "description": "Numeric value"
-    },
+### text_input
 
-    // Boolean - true/false
-    "verbose": {
-      "type": "boolean",
-      "required": false,
-      "default": false,
-      "description": "Enable verbose output"
-    },
+Any text value. String is the most common type.
 
-    // Array - list of values
-    "tags": {
-      "type": "array",
-      "required": false,
-      "default": ["default-tag"],
-      "description": "List of tags"
-    },
+- type: string
+- required: true
 
-    // Object - complex structure
-    "config": {
-      "type": "object",
-      "required": false,
-      "default": {"key": "value"},
-      "description": "Configuration object"
-    },
+### count
 
-    // Stdin - receives piped input (e.g., cat data.json | pflow workflow.json)
-    "data": {
-      "type": "string",
-      "required": true,
-      "stdin": true,
-      "description": "Data from stdin or CLI"
-    }
-  }
-}
+Numeric value — integers or floats.
+
+- type: number
+- required: false
+- default: 10
+
+### verbose
+
+Enable verbose output. Boolean — true/false.
+
+- type: boolean
+- required: false
+- default: false
+
+### tags
+
+List of tags. Array input.
+
+- type: array
+- required: false
+- default: ["default-tag"]
+
+### config
+
+Configuration object. Complex structure.
+
+- type: object
+- required: false
+- default: {"key": "value"}
+
+### data
+
+Data from stdin or CLI. Receives piped input (e.g., `cat data.json | pflow workflow.pflow.md`).
+
+- type: string
+- required: true
+- stdin: true
 ```
 
 <!-- PART 3 START: Testing & Reference -->
@@ -1269,7 +1337,7 @@ Available template paths (from actual output (4 of 31 shown)): # Smart filtering
 #### Phase 1: Identify Error Type
 
 ```bash
-pflow workflow.json param=value
+pflow workflow.pflow.md param=value
 # Read the error carefully
 ```
 
@@ -1322,148 +1390,177 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
 **Rule**: If you can describe the PATH, use template variables. Use code node for transformation/computation. Use LLM only for interpretation.
 
 **❌ WRONG - Using LLM for structured extraction:**
-```json
-{
-  "id": "extract-price",
-  "type": "llm",
-  "params": {
-    "prompt": "Extract the price from this JSON: ${data}"
-  }
-}
+```markdown
+### extract-price
+
+- type: llm
+- prompt: "Extract the price from this JSON: ${data}"
 ```
 
 **❌ ALSO WRONG - Using jq for simple path extraction:**
-```json
-{
-  "id": "extract-price",
-  "type": "shell",
-  "params": {
-    "stdin": "${data}",
-    "command": "jq -r '.items[0].pricing.amount'"  // Unnecessary node!
-  }
-}
+```markdown
+### extract-price
+
+- type: shell
+- stdin: ${data}
+- command: jq -r '.items[0].pricing.amount'
 ```
+Unnecessary node!
 
 **✅ CORRECT - Using template variables:**
-```json
-{
-  "id": "use-price",
-  "params": {
-    "amount": "${data.items[0].pricing.amount}"  // Direct path, no intermediate node
-  }
-}
+```yaml
+# Direct path, no intermediate node needed:
+- amount: ${data.items[0].pricing.amount}
 ```
 
 **When to use code node (transformation, not extraction):**
-```json
-{
-  "id": "calculate-total",
-  "type": "code",
-  "purpose": "Compute sum of all pricing amounts",
-  "params": {
-    "inputs": {"items": "${data.items}"},
-    "code": "items: list\n\nresult: float = sum(i['pricing']['amount'] for i in items)"
-  }
-}
+````markdown
+### calculate-total
+
+Compute sum of all pricing amounts.
+
+- type: code
+- inputs:
+    items: ${data.items}
+
+```python code
+items: list
+
+result: float = sum(i['pricing']['amount'] for i in items)
 ```
+````
 
 ### Pattern: Multi-Stage Data Pipeline
 
 **Use case**: Fetch → Validate → Transform → Enrich → Deliver
 
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch-raw",
-      "type": "http",
-      "purpose": "Get raw data from API",
-      "params": {"url": "${source_url}"}
-    },
-    {
-      "id": "validate-structure",
-      "type": "code",
-      "purpose": "Ensure data has required fields",
-      "params": {
-        "inputs": {"data": "${fetch-raw.response}"},
-        "code": "data: dict\n\nif 'items' not in data or 'metadata' not in data:\n    raise ValueError('Invalid structure: missing items or metadata')\nresult: dict = data"
-      }
-    },
-    {
-      "id": "transform-data",
-      "type": "code",
-      "purpose": "Reshape to our format",
-      "params": {
-        "inputs": {"items": "${validate-structure.result.items}"},
-        "code": "items: list\n\nresult: list = [{'id': i['id'], 'name': i['title'], 'value': i['metrics']['current']} for i in items]"
-      }
-    },
-    {
-      "id": "enrich-with-analysis",
-      "type": "llm",
-      "batch": {"items": "${transform-data.result}", "parallel": true},
-      "purpose": "Add insights to each item",
-      "params": {
-        "prompt": "Analyze this metric and add insights:\n${item}\n\nProvide: trend, risk_level, recommendation"
-      }
-    },
-    {
-      "id": "format-for-delivery",
-      "type": "llm",
-      "purpose": "Format for final output",
-      "params": {
-        "prompt": "Format this data as a markdown report:\n${enrich-with-analysis.results}\n\nInclude: summary, table, recommendations"
-      }
-    },
-    {
-      "id": "deliver",
-      "type": "write-file",
-      "params": {
-        "file_path": "${output_path}",
-        "content": "${format-for-delivery.response}"
-      }
-    }
-  ]
-}
+`````markdown
+## Steps
+
+### fetch-raw
+
+Get raw data from API.
+
+- type: http
+- url: ${source_url}
+
+### validate-structure
+
+Ensure data has required fields before processing.
+
+- type: code
+- inputs:
+    data: ${fetch-raw.response}
+
+```python code
+data: dict
+
+if 'items' not in data or 'metadata' not in data:
+    raise ValueError('Invalid structure: missing items or metadata')
+result: dict = data
 ```
+
+### transform-data
+
+Reshape API items to our internal format.
+
+- type: code
+- inputs:
+    items: ${validate-structure.result.items}
+
+```python code
+items: list
+
+result: list = [
+    {'id': i['id'], 'name': i['title'], 'value': i['metrics']['current']}
+    for i in items
+]
+```
+
+### enrich-with-analysis
+
+Add insights to each item using LLM batch processing.
+
+- type: llm
+- batch:
+    items: ${transform-data.result}
+    parallel: true
+
+```prompt
+Analyze this metric and add insights:
+${item}
+
+Provide: trend, risk_level, recommendation
+```
+
+### format-for-delivery
+
+Format enriched data as a markdown report.
+
+- type: llm
+
+```prompt
+Format this data as a markdown report:
+${enrich-with-analysis.results}
+
+Include: summary, table, recommendations
+```
+
+### deliver
+
+Write the final report to disk.
+
+- type: write-file
+- file_path: ${output_path}
+- content: ${format-for-delivery.response}
+`````
 
 ### Pattern: Service Orchestration with Formatting
 
 **Use case**: Multiple services with human-readable output
 
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch-service1",
-      "type": "mcp-service1-GET_DATA",
-      "params": {"resource": "${resource_id}"}
-    },
-    {
-      "id": "fetch-service2",
-      "type": "mcp-service2-LIST_ITEMS",
-      "params": {"filter": "${filter_criteria}"}
-    },
-    {
-      "id": "analyze-and-format",
-      "type": "llm",
-      "purpose": "Find relationships and format as report (one LLM call for both)",
-      "params": {
-        "prompt": "Analyze these two datasets and identify cross-references:\n\nService1: ${fetch-service1.result}\n\nService2: ${fetch-service2.result}\n\nFind relationships, correlations, and connections. Format as a professional report with markdown headers and sections."
-      }
-    },
-    {
-      "id": "send-report",
-      "type": "mcp-email-SEND",
-      "params": {
-        "to": "${recipient_email}",
-        "subject": "Data Analysis Report",
-        "body": "${analyze-and-format.response}"
-      }
-    }
-  ]
-}
-```
+`````markdown
+## Steps
+
+### fetch-service1
+
+Query primary data source.
+
+- type: mcp-service1-GET_DATA
+- resource: ${resource_id}
+
+### fetch-service2
+
+List items from secondary source.
+
+- type: mcp-service2-LIST_ITEMS
+- filter: ${filter_criteria}
+
+### analyze-and-format
+
+Find relationships between datasets and format as report. One LLM call for both analysis and formatting.
+
+- type: llm
+
+````prompt
+Analyze these two datasets and identify cross-references:
+
+Service1: ${fetch-service1.result}
+
+Service2: ${fetch-service2.result}
+
+Find relationships, correlations, and connections. Format as a professional report with markdown headers and sections.
+````
+
+### send-report
+
+Email the analysis report to the recipient.
+
+- type: mcp-email-SEND
+- to: ${recipient_email}
+- subject: Data Analysis Report
+- body: ${analyze-and-format.response}
+`````
 
 **Note**: `analyze-and-format` combines analysis and formatting in one LLM call - don't use separate LLM nodes when one can do both. If you just need to concatenate data with a fixed structure, use code node or templates instead.
 
@@ -1471,22 +1568,30 @@ cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
 
 Same operation × N items ("each", "for each", "in parallel" → batch, not single LLM). Add `batch` to any node:
 
-```json
-{
-  "id": "process-each",
-  "type": "llm",
-  "batch": {"items": "${source.files}"},
-  "params": {"prompt": "Analyze: ${item}"}
-}
+````markdown
+### process-each
 
-// Works with any node - shell example:
-{
-  "id": "fetch-each",
-  "type": "shell",
-  "batch": {"items": "${urls}", "parallel": true, "max_concurrent": 40},
-  "params": {"command": "curl -s '${item}'"}
-}
+Analyze each file.
+
+- type: llm
+- prompt: "Analyze: ${item}"
+- batch:
+    items: ${source.files}
+
+### fetch-each
+
+Fetch each URL in parallel.
+
+- type: shell
+- batch:
+    items: ${urls}
+    parallel: true
+    max_concurrent: 40
+
+```shell command
+curl -s '${item}'
 ```
+````
 
 Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Results: `${node.results}` (array in input order).
 
@@ -1509,48 +1614,56 @@ Results are always in input order. Each result contains `item` (original input) 
 
 **Inline array pattern** (parallel independent operations):
 Workflows are linear—this is the only way to run operations concurrently.
-```json
-{
-  "id": "multi-format",
-  "type": "llm",
-  "batch": {
-    "items": [
-      {"style": "executive-summary", "content": "${report.result}"},
-      {"style": "technical-details", "content": "${report.result}"},
-      {"style": "action-items", "content": "${report.result}"}
-    ],
-    "parallel": true
-  },
-  "params": {"prompt": "Reformat as ${item.style}:\n${item.content}"}
-}
+````markdown
+### multi-format
+
+Reformat the report in multiple styles concurrently.
+
+- type: llm
+- prompt: "Reformat as ${item.style}:\n${item.content}"
+
+```yaml batch
+items:
+  - style: executive-summary
+    content: ${report.result}
+  - style: technical-details
+    content: ${report.result}
+  - style: action-items
+    content: ${report.result}
+parallel: true
 ```
+````
 **Completely different operations** (each item defines its own prompt and data):
-```json
-{
-  "id": "parallel-tasks",
-  "type": "llm",
-  "batch": {
-    "items": [
-      {"prompt": "Summarize in 2 sentences: ${data}"},
-      {"prompt": "Extract action items from: ${data}"},
-      {"prompt": "Translate to Spanish: ${other-data}"}
-    ],
-    "parallel": true
-  },
-  "params": {"prompt": "${item.prompt}"}
-}
+````markdown
+### parallel-tasks
+
+Run completely different operations in parallel.
+
+- type: llm
+- prompt: ${item.prompt}
+
+```yaml batch
+items:
+  - prompt: "Summarize in 2 sentences: ${data}"
+  - prompt: "Extract action items from: ${data}"
+  - prompt: "Translate to Spanish: ${other-data}"
+parallel: true
 ```
+````
 Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
 
 **Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate:
 ```
-${previous.results[${__index__}]}     // Access by position
-${previous.results[${item.idx}]}      // Access by item field
+${previous.results[${__index__}]}     # Access by position
+${previous.results[${item.idx}]}      # Access by item field
 ```
 
 **Using results**:
-```json
-{"id": "report", "type": "llm", "params": {"prompt": "Summary of ${process-each.count} items:\n${process-each.results}"}}
+```markdown
+### report
+
+- type: llm
+- prompt: "Summary of ${process-each.count} items:\n${process-each.results}"
 ```
 
 ## Part 7: Reality Checks & Troubleshooting
@@ -1579,16 +1692,17 @@ ${previous.results[${item.idx}]}      // Access by item field
 **Fix**: Build in phases, test each phase
 **Phases**: Core path → External services → Processing → Output
 
-#### 4. Using wrong parameter name
-**Impact**: Validation errors
-**Fix**: Use `params` not `inputs` for nodes
-```json
-// ❌ Wrong
-{"id": "x", "inputs": {...}}
+#### 4. Putting templates in code blocks instead of inputs (code nodes)
+**Impact**: Template syntax in Python code causes parse errors
+**Fix**: Templates go in `- inputs:` parameter, code block is literal Python
+```markdown
+### transform
 
-// ✅ Correct
-{"id": "x", "params": {...}}
+- type: code
+- inputs:
+    data: ${fetch.result}
 ```
+Never put `${...}` inside a `python code` block — it's literal Python, not a template.
 
 #### 5. Over-specifying parameters
 **Impact**: Brittle workflows
@@ -1609,9 +1723,11 @@ ${previous.results[${item.idx}]}      // Access by item field
 #### 8. Manual JSON string construction for string-typed params
 **Impact**: JSON parsing errors when content contains quotes, newlines, or backslashes
 **Fix**: Use object syntax—pflow auto-serializes with proper escaping
-```json
-// ❌ "{\"data\": \"${input}\"}"   → breaks on special chars
-// ✅ {"data": "${input}"}         → auto-escapes correctly
+```yaml
+# ❌ Manual JSON string: '{"data": "${input}"}'  → breaks on special chars
+# ✅ Object syntax:
+- data: ${input}
+# → auto-escapes correctly
 ```
 
 ### Real Request Parsing - Handling Ambiguity
@@ -1620,7 +1736,7 @@ ${previous.results[${item.idx}]}      // Access by item field
 
 | User Says | Ambiguity | Clarification Approach |
 |-----------|-----------|------------------------|
-| "recent messages" | How many is recent? | Make input with default: `"limit": {"default": 10}` |
+| "recent messages" | How many is recent? | Add a `### limit` input with `- default: 10` |
 | "process the data" | What data? What processing? | Ask: "What's the data source? What processing do you need?" |
 | "send notification" | Where? To whom? | Ask: "Where should notifications go? (email, Slack, etc.)" |
 | "fast processing" | How fast? At what cost? | Explain tradeoff: "I can optimize for speed or thoroughness" |
@@ -1652,7 +1768,7 @@ I need to clarify a few details:
 
 | What Docs Say | What You Get | How to Handle |
 |---------------|--------------|---------------|
-| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with regsitry run |
+| `result: Any` | `result.data.tool_response.nested.deeply.value` | Always test structure with registry run |
 | "Optional parameter" | Actually required or fails | Always provide it |
 | "Returns array" | `{"items": [...], "metadata": {...}}` | Access via `.items` |
 | "String parameter" | Needs specific format | Test with examples |
@@ -1672,7 +1788,7 @@ I need to clarify a few details:
 | Hardcoded credentials | Security risk | Use inputs + settings |
 | No output formatting | Poor UX | Add format step |
 | Generic names | Hard to discover | Use descriptive names |
-| No purpose fields | Hard to understand | Add purpose to every node |
+| No descriptions | Hard to understand | Add description prose to every node |
 
 ### Reality vs Documentation Summary
 
@@ -1706,9 +1822,8 @@ pflow read-fields exec-id field.path                 # Get actual field values i
 cat ~/.pflow/debug/workflow-trace-*.json | jq '.'          # Inspect trace (for debugging)
 
 # Workflow Operations
-pflow --validate-only workflow.json                  # Check if workflow is valid
-pflow workflow.json param1=value1                    # Run workflow from file (while developing)
-pflow workflow save workflow-file.json --name workflow-name --description "description"  # Save workflow (when finished developing)
+pflow workflow.pflow.md param1=value1                # Run workflow from file (while developing)
+pflow workflow save workflow.pflow.md --name workflow-name  # Save workflow (when finished developing)
 
 # Settings & Auth
 pflow settings set-env KEY_NAME "value"             # Store credential
@@ -1740,7 +1855,7 @@ Otherwise → Hardcode
 
 **When to test?**
 ```
-Need specific nested fields? → Test with show_structure
+Need specific nested fields? → Test with `registry run`
 Passing whole result? → Skip testing
 Complex transformation? → Test
 Simple operations? → Skip
@@ -1776,14 +1891,14 @@ Format: `verb-noun-qualifier`
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
 | **Creating defensive extraction steps** | Fear of malformed data | Nodes handle parsing automatically |
 | **Ignoring workflow discovery** | Eager to build something new | ALWAYS check existing workflows first |
-| **Forgetting to save workflow** | Step 12 seems optional | Save is REQUIRED for name-based execution |
+| **Forgetting to save workflow** | Step 10 seems optional | Save is REQUIRED for name-based execution |
 | **Hardcoding service names** | Following specific examples | Use category patterns instead |
 | **Building all at once** | Want to show complete solution | Build core path first, test, then add |
 
 ### Key Success Factors
 
 1. **Always run workflow discovery first** - No exceptions
-2. **Understand edges vs templates** - Execution order vs data access
+2. **Understand step order vs templates** - Execution order vs data access
 3. **Test only when needed** - Skip if passing whole `${node.result}`
 4. **Phase complex workflows** - Build incrementally
 5. **Use templates for extraction, code node for transformation** - LLM only for meaning

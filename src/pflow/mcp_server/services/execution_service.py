@@ -363,26 +363,29 @@ class ExecutionService(BaseService):
 
     @classmethod
     @ensure_stateless
-    def save_workflow(
-        cls, workflow: Any, name: str, description: str, force: bool = False, generate_metadata: bool = False
-    ) -> str:
+    def save_workflow(cls, workflow: str, name: str, force: bool = False) -> str:
         """Save workflow to global library.
 
+        Accepts raw .pflow.md content or a file path. Does NOT use
+        resolve_workflow() — save needs to preserve the original markdown
+        content for storage (not just the parsed IR).
+
         Args:
-            workflow: Workflow path or IR dict
+            workflow: Raw markdown content (string with newlines) or path to .pflow.md file
             name: Workflow name (lowercase-with-hyphens)
-            description: Workflow description
             force: If True, overwrite existing workflow
-            generate_metadata: If True, generate rich metadata (keywords, capabilities, use cases) using AI
 
         Returns:
             Formatted success message (text) matching CLI output
 
         Raises:
-            ValueError: If workflow name is invalid, workflow not found, or validation fails
+            ValueError: If workflow name is invalid, content is invalid, or validation fails
             FileExistsError: If workflow exists and force=False
         """
+        from pflow.core.exceptions import WorkflowValidationError
+        from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
         from pflow.core.workflow_save_service import (
+            load_and_validate_workflow,
             validate_workflow_name,
         )
 
@@ -391,86 +394,49 @@ class ExecutionService(BaseService):
         if not is_valid:
             raise ValueError(f"Invalid workflow name: {error}")
 
-        # Load and validate workflow IR
-        workflow_ir = cls._load_and_validate_workflow_for_save(workflow)
+        # Determine markdown content from input
+        if "\n" in workflow:
+            # Raw markdown content
+            markdown_content = workflow
+        elif workflow.lower().endswith(".pflow.md") or Path(workflow).expanduser().exists():
+            # File path — read content
+            file_path = Path(workflow).expanduser()
+            if not file_path.exists():
+                raise ValueError(f"Workflow file not found: {workflow}")
+            markdown_content = file_path.read_text(encoding="utf-8")
+        else:
+            raise ValueError(f"Cannot save '{workflow}'. Pass raw .pflow.md content or a file path.")
 
-        # Generate rich metadata if requested (same as CLI)
-        # Note: name/description passed directly to save function, NOT embedded in IR
-        metadata_dict = cls._generate_metadata_if_requested(workflow_ir, generate_metadata)
-
-        # Save workflow and return success message
-        return cls._save_and_format_result(name, workflow_ir, description, force, metadata_dict)
-
-    @classmethod
-    def _load_and_validate_workflow_for_save(cls, workflow: Any) -> dict[str, Any]:
-        """Load and validate workflow IR for saving.
-
-        Args:
-            workflow: Workflow path or IR dict
-
-        Returns:
-            Validated workflow IR
-
-        Raises:
-            ValueError: If workflow not found or validation fails
-        """
-        from pflow.core.exceptions import WorkflowValidationError
-        from pflow.core.workflow_save_service import load_and_validate_workflow
-
-        # Resolve workflow to IR (MCP accepts dict/name/path)
-        workflow_ir, error, source = resolve_workflow(workflow)
-        if error or workflow_ir is None:
-            raise ValueError(error or "Workflow not found")
-
-        # Validate and normalize IR (mypy now knows workflow_ir is not None)
+        # Parse and validate — parse once, use IR for display, content for save
         try:
-            workflow_ir = load_and_validate_workflow(workflow_ir, auto_normalize=True)
+            result = parse_markdown(markdown_content)
+        except MarkdownParseError as e:
+            raise ValueError(f"Invalid workflow: {e}") from e
+
+        # Validate the parsed IR
+        try:
+            load_and_validate_workflow(result.ir, auto_normalize=True)
         except (ValueError, WorkflowValidationError) as e:
             raise ValueError(f"Invalid workflow: {e}") from e
 
-        return workflow_ir
-
-    @classmethod
-    def _generate_metadata_if_requested(
-        cls, workflow_ir: dict[str, Any], generate_metadata: bool
-    ) -> dict[str, Any] | None:
-        """Generate rich metadata if requested.
-
-        Args:
-            workflow_ir: Workflow IR dictionary
-            generate_metadata: Whether to generate metadata
-
-        Returns:
-            Generated metadata dict or None
-        """
-        from pflow.core.workflow_save_service import generate_workflow_metadata
-
-        if not generate_metadata:
-            return None
-
-        try:
-            return generate_workflow_metadata(workflow_ir)
-        except Exception as e:
-            logger.warning(f"Failed to generate metadata: {e}")
-            return None
+        # Save and format result
+        return cls._save_and_format_result(name, markdown_content, result.ir, force)
 
     @classmethod
     def _save_and_format_result(
         cls,
         name: str,
+        markdown_content: str,
         workflow_ir: dict[str, Any],
-        description: str,
         force: bool,
-        metadata_dict: dict[str, Any] | None,
     ) -> str:
         """Save workflow and format success message.
 
         Args:
             name: Workflow name
-            workflow_ir: Workflow IR dictionary
-            description: Workflow description
+            markdown_content: Original markdown content (preserved for save)
+            workflow_ir: Parsed workflow IR (used for display formatting)
             force: Whether to overwrite existing workflow
-            metadata_dict: Optional rich metadata
 
         Returns:
             Formatted success message
@@ -486,17 +452,15 @@ class ExecutionService(BaseService):
         try:
             saved_path = save_workflow_with_options(
                 name=name,
-                workflow_ir=workflow_ir,
-                description=description,
+                markdown_content=markdown_content,
                 force=force,
-                metadata=metadata_dict,
             )
 
             success_message = format_save_success(
                 name=name,
                 saved_path=str(saved_path),
                 workflow_ir=workflow_ir,
-                metadata=metadata_dict,
+                metadata=None,
             )
 
             return success_message

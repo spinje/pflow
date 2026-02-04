@@ -15,6 +15,9 @@ from pflow.planning.context_builder import (
     build_planning_context,
 )
 
+# GATED: Context builder tests skipped pending markdown format migration (Task 107).
+pytestmark = pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
+
 
 @pytest.fixture(autouse=True)
 def ensure_clean_mocks():

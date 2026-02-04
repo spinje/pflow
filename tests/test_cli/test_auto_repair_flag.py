@@ -15,6 +15,9 @@ import pytest
 from pflow.cli.main import main
 from pflow.pocketflow import BaseNode
 
+# GATED: Auto-repair tests skipped pending markdown format migration (Task 107).
+pytestmark = pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
+
 
 class FailingNode(BaseNode):
     """Node that always fails to test repair behavior."""

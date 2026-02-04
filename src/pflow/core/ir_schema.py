@@ -370,11 +370,12 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
         # Show correct example
         lines.extend([
             "\nExample:",
-            '  "story": {',
-            '    "description": "The generated story",',
-            '    "type": "string",',
-            '    "source": "${generate_story.response}"',
-            "  }",
+            "  ### story",
+            "",
+            "  The generated story.",
+            "",
+            "  - type: string",
+            "  - source: ${generate_story.response}",
         ])
 
         return "\n".join(lines)
@@ -382,9 +383,12 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
     # Case 2: Wrong type (string instead of object)
     if error.validator == "type" and "object" in str(error.validator_value):
         return (
-            "Each output must be an object, not a string.\n\n"
-            'Wrong: "story": "${generate_story.response}"\n'
-            'Right: "story": {"source": "${generate_story.response}"}'
+            "Each output must be a section with parameters, not a plain string.\n\n"
+            "Wrong: - source: ${generate_story.response}  (as a top-level value)\n"
+            "Right:\n"
+            "  ### story\n\n"
+            "  The generated story.\n\n"
+            "  - source: ${generate_story.response}"
         )
 
     # Case 3: Invalid type enum value
@@ -478,7 +482,7 @@ def validate_ir(data: Union[dict[str, Any], str]) -> None:
         try:
             data = json.loads(data)
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {e}") from e
+            raise ValueError(f"Invalid workflow data: {e}") from e
 
     # Create validator
     validator = Draft7Validator(FLOW_IR_SCHEMA)

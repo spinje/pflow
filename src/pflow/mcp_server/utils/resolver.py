@@ -1,14 +1,14 @@
 """Workflow resolution utilities for MCP server.
 
 This module provides functions to resolve workflow references
-(name, path, or IR) into executable workflow IR.
+(name, path, or raw markdown content) into executable workflow IR.
 """
 
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.workflow_manager import WorkflowManager
 
@@ -20,26 +20,79 @@ def resolve_workflow(workflow: str | dict[str, Any]) -> tuple[dict[str, Any] | N
 
     Resolution order:
     1. If dict: Use directly as IR
-    2. If string: Try as saved workflow name
-    3. If string: Try as file path
-    4. Return error with suggestions
+    2. If string with newline: Parse as raw markdown content
+    3. If string ending .pflow.md (single-line): Read as file path
+    4. If single-line string: Try as saved workflow name, then as file path
+    5. Return error with suggestions
 
     Args:
-        workflow: Workflow name, path, or IR dict
+        workflow: Workflow name, file path, raw markdown content, or IR dict
 
     Returns:
         Tuple of (workflow_ir, error_message, source)
-        Source is one of: "direct", "library", "file"
+        Source is one of: "direct", "library", "file", "content"
     """
     # Case 1: Direct IR dictionary
     if isinstance(workflow, dict):
         logger.debug("Using workflow as direct IR")
         return workflow, None, "direct"
 
-    # Case 2: String reference (name or path)
+    # Case 2: String reference
     if not isinstance(workflow, str):
         return None, f"Invalid workflow type: {type(workflow)}", ""
 
+    # Case 2a: Raw markdown content (contains newlines)
+    if "\n" in workflow:
+        logger.debug("Parsing workflow from raw markdown content")
+        try:
+            result = parse_markdown(workflow)
+            return result.ir, None, "content"
+        except MarkdownParseError as e:
+            return None, f"Invalid markdown content: {e}", ""
+        except Exception as e:
+            return None, f"Failed to parse markdown content: {e!s}", ""
+
+    # Case 2b: File path (ends with .pflow.md)
+    if workflow.lower().endswith(".pflow.md"):
+        path = Path(workflow).expanduser()
+        if path.exists() and path.is_file():
+            logger.debug(f"Loading workflow from file: {path}")
+            return _load_from_file(path)
+        else:
+            return None, f"Workflow file not found: {workflow}", ""
+
+    # Case 2c: Try as saved workflow name, then file path
+    return _resolve_by_name(workflow)
+
+
+def _load_from_file(path: Path) -> tuple[dict[str, Any] | None, str | None, str]:
+    """Load and parse a workflow file.
+
+    Args:
+        path: Path to the .pflow.md file
+
+    Returns:
+        Tuple of (workflow_ir, error_message, source)
+    """
+    try:
+        content = path.read_text(encoding="utf-8")
+        result = parse_markdown(content)
+        return result.ir, None, "file"
+    except MarkdownParseError as e:
+        return None, f"Invalid workflow file '{path}': {e}", ""
+    except Exception as e:
+        return None, f"Failed to read file: {e!s}", ""
+
+
+def _resolve_by_name(workflow: str) -> tuple[dict[str, Any] | None, str | None, str]:
+    """Resolve workflow by name, then file path, with suggestions on failure.
+
+    Args:
+        workflow: Workflow name or file path
+
+    Returns:
+        Tuple of (workflow_ir, error_message, source)
+    """
     # Try as saved workflow name
     manager = WorkflowManager()
     if manager.exists(workflow):
@@ -51,19 +104,11 @@ def resolve_workflow(workflow: str | dict[str, Any]) -> tuple[dict[str, Any] | N
             logger.exception(f"Failed to load workflow {workflow}")
             return None, "Failed to load workflow", ""
 
-    # Try as file path
-    path = Path(workflow).expanduser()  # Expand ~ to home directory
+    # Try as file path (without .pflow.md extension)
+    path = Path(workflow).expanduser()
     if path.exists() and path.is_file():
-        # No path validation needed - user is reading their own files on their own machine
         logger.debug(f"Loading workflow from file: {path}")
-        try:
-            with open(path) as f:
-                workflow_ir = json.load(f)
-            return workflow_ir, None, "file"
-        except json.JSONDecodeError as e:
-            return None, f"Invalid JSON in file: {e!s}", ""
-        except Exception as e:
-            return None, f"Failed to read file: {e!s}", ""
+        return _load_from_file(path)
 
     # Not found - provide suggestions
     suggestions = get_workflow_suggestions(workflow, manager)

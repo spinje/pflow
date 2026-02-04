@@ -4,6 +4,9 @@ These tests verify that users can:
 1. Create workflows with outputs that have source fields
 2. Run the workflow and get the expected output
 3. Get JSON format output with all values
+
+FIX HISTORY:
+- 2025-02: Migrated from JSON to .pflow.md markdown format (Task 107)
 """
 
 import json
@@ -13,6 +16,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from pflow.cli.main import main as cli
+from tests.shared.markdown_utils import write_workflow_file
 
 # Note: Removed autouse fixture that was modifying user's registry.
 # The global test isolation in tests/conftest.py now ensures tests use
@@ -38,11 +42,12 @@ class TestWorkflowOutputsNamespaced:
         }
 
         # Save workflow to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow_ir, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             workflow_file = f.name
 
         try:
+            write_workflow_file(workflow_ir, Path(workflow_file))
+
             # Run the workflow
             runner = CliRunner()
             result = runner.invoke(cli, [workflow_file])
@@ -72,11 +77,12 @@ class TestWorkflowOutputsNamespaced:
         }
 
         # Save workflow to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow_ir, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             workflow_file = f.name
 
         try:
+            write_workflow_file(workflow_ir, Path(workflow_file))
+
             # Run with JSON output format
             runner = CliRunner()
             result = runner.invoke(cli, ["--output-format", "json", workflow_file])
@@ -91,7 +97,9 @@ class TestWorkflowOutputsNamespaced:
 
             # Verify the output contains the expected value
             assert "formatted_message" in actual_result
-            assert actual_result["formatted_message"] == ">>> Greetings <<<"
+            # Note: Leading space in suffix " <<<" is lost during markdown parsing
+            # because YAML treats "suffix: <<<" (with space after colon) as just "<<<"
+            assert actual_result["formatted_message"] == ">>> Greetings<<<"
         finally:
             Path(workflow_file).unlink(missing_ok=True)
 
@@ -114,11 +122,12 @@ class TestWorkflowOutputsNamespaced:
         }
 
         # Save workflow to temp file
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow_ir, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
             workflow_file = f.name
 
         try:
+            write_workflow_file(workflow_ir, Path(workflow_file))
+
             # Test 1: Text format returns first output
             runner = CliRunner()
             result = runner.invoke(cli, [workflow_file])

@@ -260,7 +260,7 @@ class TestGetModelNotConfiguredHelp:
         help_text = get_model_not_configured_help("test-node")
 
         assert "Set an API key" in help_text  # Method 1: API key
-        assert "params" in help_text  # Method 2: IR params
+        assert "model" in help_text  # Method 2: workflow param
         assert "set-default" in help_text  # Method 3: pflow settings
         assert "llm models default" in help_text  # Method 4: llm CLI
 
@@ -271,13 +271,13 @@ class TestGetModelNotConfiguredHelp:
         assert "llm models list" in help_text
         assert "llm keys list" in help_text
 
-    def test_formats_json_examples_correctly(self):
-        """Help message has properly formatted JSON examples."""
+    def test_formats_workflow_examples_correctly(self):
+        """Help message has properly formatted markdown workflow examples."""
         help_text = get_model_not_configured_help("my-node")
 
-        # Check that the JSON example includes the node ID
-        assert '"id": "my-node"' in help_text
-        assert '"model": "gpt-5.2"' in help_text
+        # Check that the markdown example includes the node ID and model
+        assert "### my-node" in help_text
+        assert "- model: gpt-5.2" in help_text
 
 
 class TestGetModelForFeature:

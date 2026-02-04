@@ -243,6 +243,11 @@ def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
     Returns:
         Workflow data dict if valid, None otherwise
     """
+    # GATED: Context builder disabled pending markdown format migration (Task 107).
+    # Expects JSON metadata wrapper format. Re-enable after workflow format migration.
+    logger.warning(f"_load_single_workflow skipped (gated for Task 107): {json_file.name}")
+    return None
+
     try:
         # Read and parse JSON
         content = json_file.read_text()
@@ -262,7 +267,7 @@ def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
         workflow_data["name"] = json_file.stem
 
         logger.debug(f"Loaded workflow '{workflow_data['name']}' from {json_file.name}")
-        return workflow_data  # type: ignore[no-any-return]
+        return workflow_data  # type: ignore[no-any-return, unused-ignore]
 
     except json.JSONDecodeError as e:
         logger.warning(f"Failed to parse JSON from {json_file.name}: {e}")
@@ -308,17 +313,17 @@ def _load_saved_workflows() -> list[dict[str, Any]]:
     workflows = []
 
     try:
-        # List all JSON files in the directory
-        json_files = list(workflows_dir.glob("*.json"))
+        # List all workflow files in the directory
+        workflow_files = list(workflows_dir.glob("*.pflow.md"))
 
-        if not json_files:
-            logger.debug("No workflow JSON files found")
+        if not workflow_files:
+            logger.debug("No workflow files found")
             return []
 
-        logger.debug(f"Found {len(json_files)} JSON files to process")
+        logger.debug(f"Found {len(workflow_files)} workflow files to process")
 
-        # Process each JSON file
-        for json_file in json_files:
+        # Process each workflow file
+        for json_file in workflow_files:
             workflow_data = _load_single_workflow(json_file)
             if workflow_data:
                 workflows.append(workflow_data)
@@ -447,10 +452,8 @@ def _extract_workflow_description(workflow: dict[str, Any]) -> str:
     Returns:
         Description string or empty string
     """
-    # Get description from rich metadata or fallback to basic description
-    if "rich_metadata" in workflow and "description" in workflow["rich_metadata"]:
-        return str(workflow["rich_metadata"]["description"])
-    elif workflow.get("description", "").strip():
+    # Get description from workflow metadata (flat structure, no rich_metadata wrapper)
+    if workflow.get("description", "").strip():
         return str(workflow["description"]).strip()
     return ""
 
@@ -462,10 +465,9 @@ def _format_workflow_keywords(workflow: dict[str, Any], markdown_sections: list[
         workflow: Workflow metadata dict
         markdown_sections: List to append formatted keywords to
     """
-    if "rich_metadata" in workflow and "search_keywords" in workflow["rich_metadata"]:
-        keywords = workflow["rich_metadata"]["search_keywords"]
-        if keywords:
-            markdown_sections.append(f"Keywords: {', '.join(keywords)}")
+    keywords = workflow.get("search_keywords")
+    if keywords:
+        markdown_sections.append(f"Keywords: {', '.join(keywords)}")
 
 
 def _format_workflow_capabilities(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
@@ -475,12 +477,11 @@ def _format_workflow_capabilities(workflow: dict[str, Any], markdown_sections: l
         workflow: Workflow metadata dict
         markdown_sections: List to append formatted capabilities to
     """
-    if "rich_metadata" in workflow and "capabilities" in workflow["rich_metadata"]:
-        capabilities = workflow["rich_metadata"]["capabilities"]
-        if capabilities and len(capabilities) <= 3:  # Limit to avoid context bloat
-            markdown_sections.append("Capabilities:")
-            for capability in capabilities[:3]:  # Only show first 3
-                markdown_sections.append(f"- {capability}")
+    capabilities = workflow.get("capabilities")
+    if capabilities and len(capabilities) <= 3:  # Limit to avoid context bloat
+        markdown_sections.append("Capabilities:")
+        for capability in capabilities[:3]:  # Only show first 3
+            markdown_sections.append(f"- {capability}")
 
 
 def _format_single_workflow(workflow: dict[str, Any], markdown_sections: list[str]) -> None:
@@ -774,25 +775,14 @@ def build_workflows_context(
             if node_flow:
                 entry_parts.append(f"   **Flow:** `{node_flow}`")
 
-        # Look for rich metadata in both places:
-        # 1. At wrapper level (for workflows saved after metadata generation)
-        # 2. Inside IR (for newly generated workflows)
-        metadata = workflow.get("rich_metadata", {})
-        if not metadata and ir:
-            # Fallback to checking inside IR for backwards compatibility
-            metadata = ir.get("metadata", {})
+        # Metadata fields are at top level (flat structure, no rich_metadata wrapper)
+        capabilities = workflow.get("capabilities", [])
+        if capabilities:
+            entry_parts.append(f"   **Can:** {', '.join(capabilities)}")
 
-        # Add metadata in compact format if present
-        if metadata:
-            # Capabilities on one line
-            capabilities = metadata.get("capabilities", [])
-            if capabilities:
-                entry_parts.append(f"   **Can:** {', '.join(capabilities)}")
-
-            # Use cases on one line
-            use_cases = metadata.get("typical_use_cases", [])
-            if use_cases:
-                entry_parts.append(f"   **For:** {', '.join(use_cases)}")
+        use_cases = workflow.get("typical_use_cases", [])
+        if use_cases:
+            entry_parts.append(f"   **For:** {', '.join(use_cases)}")
 
         sections.append("\n".join(entry_parts))
 
@@ -1232,14 +1222,136 @@ def _format_outputs_with_access(node_data: dict, lines: list[str]) -> None:
         lines.append("**Outputs**: none")
 
 
-# REMOVED: Example generation functions - not needed after review
-# These functions were added but then removed as universal examples were deemed unnecessary
-# Keeping as comments for historical context
-#
-# def _get_file_path_example(key_lower: str) -> str:
-# def _get_example_value_for_key(key: str) -> str | None:
-# def _get_config_param_value(param_key: str) -> Any:
-# def _format_usage_example(node_type: str, node_data: dict, lines: list[str]) -> None:
+# Rich usage templates for core node types. Each is a list of indented lines
+# (4-space indent) that form a valid .pflow.md node snippet.
+_RICH_SNIPPETS: dict[str, list[str]] = {
+    "shell": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: shell",
+        "    - stdin: ${previous-step.response}",
+        "",
+        "    ```shell command",
+        "    your-command-here",
+        "    ```",
+    ],
+    "llm": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: llm",
+        "",
+        "    ```markdown prompt",
+        "    Your prompt here.",
+        "",
+        "    Context: ${previous-step.stdout}",
+        "    ```",
+    ],
+    "code": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: code",
+        "    - inputs:",
+        "        data: ${previous-step.result}",
+        "",
+        "    ```python code",
+        "    data: list = []",
+        "    result: list = [item for item in data if item]",
+        "    ```",
+    ],
+    "http": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: http",
+        "    - url: https://api.example.com/endpoint",
+        "    - method: GET",
+    ],
+    "claude-code": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: claude-code",
+        "    - model: claude-sonnet-4-5",
+        "",
+        "    ```markdown prompt",
+        "    Your task description here.",
+        "    ```",
+    ],
+    "write-file": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: write-file",
+        "    - file_path: ./output.txt",
+        "    - content: ${previous-step.response}",
+    ],
+}
+
+
+def _format_usage_snippet(node_type: str, node_data: dict, lines: list[str]) -> None:
+    """Append a .pflow.md usage snippet for the node.
+
+    Uses hardcoded rich templates for 6 core node types. Falls back to a
+    generic snippet built from the first 3 interface params for everything
+    else (including MCP nodes).
+
+    Args:
+        node_type: The workflow type string (e.g. "shell", "mcp-slack-SEND")
+        node_data: Node metadata dict with params, inputs, registry_info
+        lines: List to append formatted lines to
+    """
+    lines.append("")
+    lines.append("**Usage in .pflow.md:**")
+    lines.append("")
+
+    if node_type in _RICH_SNIPPETS:
+        lines.extend(_RICH_SNIPPETS[node_type])
+    else:
+        # Generic snippet from interface params
+        snippet_lines = [
+            "    ### step-name",
+            "",
+            "    Describe what this step does and why.",
+            "",
+            f"    - type: {node_type}",
+        ]
+
+        # Collect first 3 params for the example
+        all_params = node_data.get("params", []) or []
+        inputs = node_data.get("inputs", []) or []
+        combined = list(inputs) + list(all_params)
+        shown = 0
+        for param in combined:
+            if shown >= 3:
+                break
+            if isinstance(param, dict):
+                key = param.get("key", "")
+                if not key:
+                    continue
+                # First param gets a literal placeholder, subsequent get template refs
+                ptype = param.get("type", "str").lower()
+                if shown == 0:
+                    # First param is typically a target (channel, path, etc.) — literal
+                    placeholder = "value"
+                elif ptype in ("int", "integer", "number"):
+                    placeholder = "0"
+                elif ptype in ("bool", "boolean"):
+                    placeholder = "true"
+                else:
+                    placeholder = "${previous-step.response}"
+                snippet_lines.append(f"    - {key}: {placeholder}")
+                shown += 1
+
+        lines.extend(snippet_lines)
 
 
 def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
@@ -1271,6 +1383,9 @@ def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
 
     # Format outputs with access pattern
     _format_outputs_with_access(node_data, lines)
+
+    # Add .pflow.md usage snippet
+    _format_usage_snippet(node_type, node_data, lines)
 
     lines.append("")
     return "\n".join(lines)

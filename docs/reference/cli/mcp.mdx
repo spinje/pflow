@@ -312,20 +312,15 @@ Agents can use the shortest unambiguous name in workflows.
 
 After syncing, MCP tools work like any other node:
 
-```json
-{
-  "nodes": [
-    {
-      "id": "create-issue",
-      "type": "mcp-github-create-issue",
-      "params": {
-        "repo": "owner/repo",
-        "title": "Bug report",
-        "body": "Description of the bug"
-      }
-    }
-  ]
-}
+```markdown
+### create-issue
+
+Create a bug report issue on GitHub.
+
+- type: mcp-github-create-issue
+- repo: owner/repo
+- title: Bug report
+- body: Description of the bug
 ```
 
 ## File locations

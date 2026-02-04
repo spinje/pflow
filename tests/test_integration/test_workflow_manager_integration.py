@@ -6,9 +6,9 @@ FIX HISTORY:
 - 2024-01-30: Removed MockEchoNode.set_params() method - using proper initialization
 - 2024-01-30: Tests now validate real integration behavior vs mock behavior
 - 2024-01-31: Fixed MockEchoNode NameError by replacing with properly defined EchoTestNode
+- 2025-02: Migrated from JSON to .pflow.md markdown format (Task 107)
 """
 
-import json
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -17,12 +17,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.markdown_parser import MarkdownParseError
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.planning.context_builder import build_planning_context
 from pflow.pocketflow import Node
 from pflow.registry.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 @pytest.fixture
@@ -42,8 +44,6 @@ def workflow_manager(temp_workflows_dir):
 def sample_ir():
     """Sample workflow IR for testing."""
     return {
-        "ir_version": "0.1.0",
-        "description": "Test workflow",
         "inputs": {"text": {"type": "str", "description": "Input text"}},
         "outputs": {"result": {"type": "str", "description": "Processed result"}},
         "nodes": [
@@ -58,11 +58,15 @@ def sample_ir():
 
 
 @pytest.fixture
+def sample_markdown(sample_ir):
+    """Sample workflow as markdown content."""
+    return ir_to_markdown(sample_ir, title="Test Workflow", description="Test workflow")
+
+
+@pytest.fixture
 def another_ir():
     """Another sample workflow IR for testing multiple workflows."""
     return {
-        "ir_version": "0.1.0",
-        "description": "Another test workflow",
         "inputs": {"name": {"type": "str", "description": "User name"}},
         "outputs": {"greeting": {"type": "str", "description": "Greeting message"}},
         "nodes": [
@@ -74,6 +78,12 @@ def another_ir():
         ],
         "edges": [],
     }
+
+
+@pytest.fixture
+def another_markdown(another_ir):
+    """Another sample workflow as markdown content."""
+    return ir_to_markdown(another_ir, title="Another Workflow", description="Another test workflow")
 
 
 # Create a real test node class that follows proper pocketflow patterns
@@ -142,12 +152,11 @@ def test_registry(tmp_path):
 class TestWorkflowLifecycleIntegration:
     """Test full workflow lifecycle: save → list → load → execute."""
 
-    def test_save_list_load_execute_cycle(self, workflow_manager, sample_ir, test_registry):
+    def test_save_list_load_execute_cycle(self, workflow_manager, sample_ir, sample_markdown, test_registry):
         """Test complete workflow lifecycle."""
         # 1. Save a workflow
         workflow_name = "test-workflow"
-        description = "Test workflow for integration testing"
-        saved_path = workflow_manager.save(workflow_name, sample_ir, description)
+        saved_path = workflow_manager.save(workflow_name, sample_markdown)
 
         # Verify the file was created
         assert Path(saved_path).exists()
@@ -156,21 +165,23 @@ class TestWorkflowLifecycleIntegration:
         workflows = workflow_manager.list_all()
         assert len(workflows) == 1
         assert workflows[0]["name"] == workflow_name
-        assert workflows[0]["description"] == description
-        assert workflows[0]["ir"] == sample_ir
+        assert workflows[0]["description"] == "Test workflow"
 
         # 3. Load the workflow (full metadata)
         loaded_metadata = workflow_manager.load(workflow_name)
         assert loaded_metadata["name"] == workflow_name
-        assert loaded_metadata["description"] == description
-        assert loaded_metadata["ir"] == sample_ir
+        assert loaded_metadata["description"] == "Test workflow"
+        assert "ir" in loaded_metadata
         assert "created_at" in loaded_metadata
         assert "updated_at" in loaded_metadata
         assert loaded_metadata["version"] == "1.0.0"
 
         # 4. Load just the IR
         loaded_ir = workflow_manager.load_ir(workflow_name)
-        assert loaded_ir == sample_ir
+        # IR should have the core fields
+        assert loaded_ir["nodes"][0]["id"] == "echo1"
+        assert loaded_ir["nodes"][0]["type"] == "test_echo"
+        assert loaded_ir["nodes"][0]["params"]["message"] == "Hello ${text}"
 
         # 5. Execute the workflow using real compilation
         # Register our test node class in the global namespace for import
@@ -193,11 +204,11 @@ class TestWorkflowLifecycleIntegration:
             if hasattr(current_module, "TestEchoNode"):
                 delattr(current_module, "TestEchoNode")
 
-    def test_multiple_workflows_lifecycle(self, workflow_manager, sample_ir, another_ir):
+    def test_multiple_workflows_lifecycle(self, workflow_manager, sample_ir, sample_markdown, another_markdown):
         """Test managing multiple workflows."""
         # Save multiple workflows
-        workflow_manager.save("workflow-1", sample_ir, "First workflow")
-        workflow_manager.save("workflow-2", another_ir, "Second workflow")
+        workflow_manager.save("workflow-1", sample_markdown)
+        workflow_manager.save("workflow-2", another_markdown)
 
         # List should return both, sorted by name
         workflows = workflow_manager.list_all()
@@ -208,8 +219,8 @@ class TestWorkflowLifecycleIntegration:
         # Load each individually
         wf1 = workflow_manager.load_ir("workflow-1")
         wf2 = workflow_manager.load_ir("workflow-2")
-        assert wf1 == sample_ir
-        assert wf2 == another_ir
+        assert wf1["nodes"][0]["id"] == "echo1"
+        assert wf2["nodes"][0]["id"] == "greet1"
 
         # Delete one
         workflow_manager.delete("workflow-1")
@@ -227,11 +238,13 @@ class TestWorkflowLifecycleIntegration:
 class TestContextBuilderIntegration:
     """Test WorkflowManager integration with Context Builder."""
 
-    def test_context_builder_lists_saved_workflows(self, workflow_manager, sample_ir, another_ir, test_registry):
+    def test_context_builder_lists_saved_workflows(
+        self, workflow_manager, sample_markdown, another_markdown, test_registry
+    ):
         """Test that Context Builder correctly lists saved workflows."""
         # Save workflows
-        workflow_manager.save("ctx-workflow-1", sample_ir, "Context test 1")
-        workflow_manager.save("ctx-workflow-2", another_ir, "Context test 2")
+        workflow_manager.save("ctx-workflow-1", sample_markdown)
+        workflow_manager.save("ctx-workflow-2", another_markdown)
 
         # Mock the _get_workflow_manager to return our test manager
         with patch("pflow.planning.context_builder._get_workflow_manager", return_value=workflow_manager):
@@ -257,20 +270,20 @@ class TestContextBuilderIntegration:
             assert any(w["name"] == "ctx-workflow-1" for w in workflows)
             assert any(w["name"] == "ctx-workflow-2" for w in workflows)
 
-    def test_context_builder_workflow_format(self, workflow_manager, sample_ir, test_registry):
+    def test_context_builder_workflow_format(self, workflow_manager, sample_markdown, test_registry):
         """Test that Context Builder returns workflows in correct format."""
         # Save a workflow
-        workflow_manager.save("format-test", sample_ir, "Format test workflow")
+        workflow_manager.save("format-test", sample_markdown)
 
         # Get workflows as Context Builder would
         with patch("pflow.planning.context_builder._get_workflow_manager", return_value=workflow_manager):
             workflows = workflow_manager.list_all()
 
-            # Verify format matches what Context Builder expects
+            # Verify format matches what Context Builder expects (flat metadata)
             assert len(workflows) == 1
             workflow = workflows[0]
 
-            # Check metadata wrapper fields
+            # Check flat metadata fields
             assert "name" in workflow
             assert "description" in workflow
             assert "ir" in workflow
@@ -278,18 +291,15 @@ class TestContextBuilderIntegration:
             assert "updated_at" in workflow
             assert "version" in workflow
 
-            # IR should be nested inside metadata
-            assert workflow["ir"] == sample_ir
-
 
 class TestWorkflowExecutorIntegration:
     """Test WorkflowManager integration with WorkflowExecutor."""
 
-    def test_workflow_executor_loads_by_name(self, workflow_manager, sample_ir, test_registry):
+    def test_workflow_executor_loads_by_name(self, workflow_manager, sample_ir, sample_markdown, test_registry):
         """Test that WorkflowExecutor can load and execute workflows by name."""
         # Save a workflow
         workflow_name = "executor-test"
-        workflow_manager.save(workflow_name, sample_ir)
+        workflow_manager.save(workflow_name, sample_markdown)
 
         # Create WorkflowExecutor node
         with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
@@ -306,7 +316,7 @@ class TestWorkflowExecutorIntegration:
                 prep_res = executor.prep(shared)
 
                 # Verify workflow was loaded
-                assert prep_res["workflow_ir"] == sample_ir
+                assert prep_res["workflow_ir"]["nodes"][0]["type"] == "test_echo"
                 assert prep_res["workflow_source"] == f"name:{workflow_name}"
                 assert workflow_name in prep_res["workflow_path"]
 
@@ -329,56 +339,52 @@ class TestWorkflowExecutorIntegration:
             with pytest.raises(ValueError, match="Failed to load workflow 'non-existent'"):
                 executor.prep(shared)
 
-    def test_workflow_executor_priority_order(self, workflow_manager, sample_ir, another_ir):
+    def test_workflow_executor_priority_order(self, workflow_manager, sample_markdown, another_ir, tmp_path):
         """Test that workflow_name has priority over workflow_ref and workflow_ir."""
         # Save a workflow
-        workflow_manager.save("priority-test", sample_ir)
+        workflow_manager.save("priority-test", sample_markdown)
 
         # Create temp file with different workflow
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(another_ir, f)
-            temp_path = f.name
+        temp_path = tmp_path / "other.pflow.md"
+        from tests.shared.markdown_utils import write_workflow_file
 
-        try:
-            with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
-                # Provide all three parameters - workflow_name should win
-                executor = WorkflowExecutor()
-                executor.params = {
-                    "workflow_name": "priority-test",
-                    "workflow_ref": temp_path,
-                    "workflow_ir": {"dummy": "ir"},
-                }
+        write_workflow_file(another_ir, temp_path)
 
-                with pytest.raises(ValueError, match="Only one of"):
-                    executor.prep({})
+        with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
+            # Provide all three parameters - workflow_name should win
+            executor = WorkflowExecutor()
+            executor.params = {
+                "workflow_name": "priority-test",
+                "workflow_ref": str(temp_path),
+                "workflow_ir": {"dummy": "ir"},
+            }
 
-        finally:
-            Path(temp_path).unlink()
+            with pytest.raises(ValueError, match="Only one of"):
+                executor.prep({})
 
 
 class TestCLIIntegration:
     """Test WorkflowManager integration with CLI save functionality."""
 
-    def test_cli_save_workflow_prompt(self, workflow_manager, sample_ir):
+    def test_cli_save_workflow_prompt(self, workflow_manager, sample_markdown):
         """Test CLI workflow save functionality directly through WorkflowManager."""
         # Test the save functionality directly
         workflow_name = "cli-test-workflow"
-        description = "CLI test description"
 
         # Save workflow using WorkflowManager directly
-        saved_path = workflow_manager.save(workflow_name, sample_ir, description)
+        saved_path = workflow_manager.save(workflow_name, sample_markdown)
 
         # Verify workflow was saved
         assert workflow_manager.exists(workflow_name)
         saved = workflow_manager.load(workflow_name)
-        assert saved["description"] == description
-        assert saved["ir"] == sample_ir
+        assert saved["description"] == "Test workflow"
+        assert "ir" in saved
         assert saved_path == workflow_manager.get_path(workflow_name)
 
-    def test_cli_handles_duplicate_names(self, workflow_manager, sample_ir, another_ir):
+    def test_cli_handles_duplicate_names(self, workflow_manager, sample_markdown, another_markdown):
         """Test handling of duplicate workflow names through WorkflowManager."""
         # Save existing workflow
-        workflow_manager.save("duplicate", sample_ir)
+        workflow_manager.save("duplicate", sample_markdown)
 
         # Verify workflow was saved successfully
         saved_workflows = workflow_manager.list_all()
@@ -386,20 +392,20 @@ class TestCLIIntegration:
 
         # Try to save with same name - should raise error
         with pytest.raises(WorkflowExistsError, match="Workflow 'duplicate' already exists"):
-            workflow_manager.save("duplicate", another_ir)
+            workflow_manager.save("duplicate", another_markdown)
 
         # Save with different name should work
-        workflow_manager.save("duplicate-2", another_ir)
+        workflow_manager.save("duplicate-2", another_markdown)
         assert workflow_manager.exists("duplicate-2")
 
 
 class TestFormatCompatibility:
     """Test format compatibility between components."""
 
-    def test_metadata_wrapper_vs_raw_ir(self, workflow_manager, sample_ir):
+    def test_metadata_wrapper_vs_raw_ir(self, workflow_manager, sample_markdown):
         """Test that components handle metadata wrapper vs raw IR correctly."""
-        # Save workflow (creates metadata wrapper)
-        workflow_manager.save("format-test", sample_ir)
+        # Save workflow (creates frontmatter metadata)
+        workflow_manager.save("format-test", sample_markdown)
 
         # Load full metadata
         metadata = workflow_manager.load("format-test")
@@ -407,15 +413,15 @@ class TestFormatCompatibility:
 
         # Load just IR
         ir = workflow_manager.load_ir("format-test")
-        assert ir == sample_ir  # Direct IR, no wrapper
+        assert ir["nodes"][0]["id"] == "echo1"
 
         # Verify Context Builder gets full metadata format
         workflows = workflow_manager.list_all()
         assert workflows[0] == metadata  # Full metadata with wrapper
 
-    def test_workflow_executor_receives_raw_ir(self, workflow_manager, sample_ir, test_registry):
+    def test_workflow_executor_receives_raw_ir(self, workflow_manager, sample_markdown, test_registry):
         """Test that WorkflowExecutor receives raw IR, not metadata wrapper."""
-        workflow_manager.save("raw-ir-test", sample_ir)
+        workflow_manager.save("raw-ir-test", sample_markdown)
 
         with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
             # Mock importlib for the compiler
@@ -429,7 +435,7 @@ class TestFormatCompatibility:
                 prep_res = executor.prep({})
 
                 # Executor should get raw IR, not wrapper
-                assert prep_res["workflow_ir"] == sample_ir
+                assert "nodes" in prep_res["workflow_ir"]
                 assert "name" not in prep_res["workflow_ir"]  # No metadata fields
                 assert "created_at" not in prep_res["workflow_ir"]
 
@@ -451,45 +457,48 @@ class TestErrorHandling:
             with pytest.raises(ValueError, match="Failed to load workflow 'missing'"):
                 executor.prep({})
 
-    def test_corrupted_workflow_file(self, workflow_manager, sample_ir):
+    def test_corrupted_workflow_file(self, workflow_manager, sample_markdown):
         """Test handling of corrupted workflow files."""
         # Save valid workflow
-        workflow_manager.save("corrupt-test", sample_ir)
+        workflow_manager.save("corrupt-test", sample_markdown)
 
         # Corrupt the file
-        workflow_path = workflow_manager.workflows_dir / "corrupt-test.json"
+        workflow_path = workflow_manager.workflows_dir / "corrupt-test.pflow.md"
         with open(workflow_path, "w") as f:
-            f.write("{ invalid json")
+            f.write("This is not valid pflow markdown - no headings at all")
 
         # list_all should skip corrupted files with warning
         workflows = workflow_manager.list_all()
         assert len(workflows) == 0  # Corrupted file skipped
 
         # Direct load should raise error
-        with pytest.raises((json.JSONDecodeError, WorkflowValidationError)):
+        with pytest.raises((MarkdownParseError, WorkflowValidationError)):
             workflow_manager.load("corrupt-test")
 
 
 class TestAtomicOperations:
     """Test atomic save operations and consistency."""
 
-    def test_atomic_save_on_failure(self, workflow_manager, sample_ir):
+    def test_atomic_save_on_failure(self, workflow_manager, sample_markdown):
         """Test that failed saves don't leave partial files."""
-        # Mock a failure during JSON serialization
-        with patch("json.dump", side_effect=OSError("Serialization failed")), pytest.raises(WorkflowValidationError):
-            workflow_manager.save("atomic-test", sample_ir)
+        # Mock a failure during file writing
+        with (
+            patch("builtins.open", side_effect=OSError("Write failed")),
+            pytest.raises((WorkflowValidationError, OSError)),
+        ):
+            workflow_manager.save("atomic-test", sample_markdown)
 
         # Verify no file was created
         assert not workflow_manager.exists("atomic-test")
         assert len(workflow_manager.list_all()) == 0
 
-    def test_concurrent_access(self, workflow_manager, sample_ir, another_ir):
+    def test_concurrent_access(self, workflow_manager, sample_markdown, another_markdown):
         """Test that concurrent operations work correctly."""
         # This is a simple test - in production you'd want more robust concurrency testing
 
         # Save workflows
-        workflow_manager.save("concurrent-1", sample_ir)
-        workflow_manager.save("concurrent-2", another_ir)
+        workflow_manager.save("concurrent-1", sample_markdown)
+        workflow_manager.save("concurrent-2", another_markdown)
 
         # Simulate concurrent reads
         workflows1 = workflow_manager.list_all()
@@ -508,7 +517,6 @@ def test_real_workflow_execution_with_errors(tmp_path):
 
     # Create a workflow that includes error conditions
     workflow_ir = {
-        "ir_version": "0.1.0",
         "nodes": [
             {"id": "read_missing", "type": "read-file", "params": {"file_path": str(tmp_path / "nonexistent.txt")}}
         ],
@@ -517,7 +525,8 @@ def test_real_workflow_execution_with_errors(tmp_path):
 
     # Save the workflow
     workflow_manager = WorkflowManager(tmp_path / "workflows")
-    workflow_manager.save("error-workflow", workflow_ir, "Tests error handling")
+    markdown_content = ir_to_markdown(workflow_ir, title="Error Workflow", description="Tests error handling")
+    workflow_manager.save("error-workflow", markdown_content)
 
     # Try to execute - should fail with meaningful error
     registry = Registry()
@@ -550,10 +559,11 @@ def test_concurrent_workflow_operations(tmp_path):
             # Each worker tries to save, list, and load
             for i in range(3):
                 name = f"worker-{worker_id}-workflow-{i}"
-                ir = {"ir_version": "0.1.0", "nodes": [{"id": f"node_{worker_id}_{i}"}], "edges": []}
+                ir = {"nodes": [{"id": f"node-{worker_id}-{i}", "type": "test"}], "edges": []}
+                markdown_content = ir_to_markdown(ir)
 
                 # Save
-                workflow_manager.save(name, ir)
+                workflow_manager.save(name, markdown_content)
                 results["saved"].append(name)
 
                 # List
@@ -600,7 +610,6 @@ def test_nested_workflow_with_real_nodes(tmp_path):
 
     # Create inner workflow that writes a file
     inner_workflow = {
-        "ir_version": "0.1.0",
         "inputs": {"message": {"description": "Message to write", "type": "string", "required": True}},
         "outputs": {"file_path": {"description": "Path to written file", "type": "string"}},
         "nodes": [
@@ -613,11 +622,11 @@ def test_nested_workflow_with_real_nodes(tmp_path):
         "edges": [],
     }
 
-    workflow_manager.save("inner-workflow", inner_workflow)
+    markdown_content = ir_to_markdown(inner_workflow, title="Inner Workflow")
+    workflow_manager.save("inner-workflow", markdown_content)
 
     # Create outer workflow that calls inner
     outer_workflow = {
-        "ir_version": "0.1.0",
         "nodes": [
             {
                 "id": "call_inner",

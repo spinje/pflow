@@ -16,27 +16,31 @@ For most use cases, there are better options:
 
 **Git operations** - Use the `git` CLI directly via [shell node](/reference/nodes/shell). Your agent knows Git extremely well from training data and doesn't need special nodes for common operations.
 
-```json
-{
-  "id": "commit-changes",
-  "type": "shell",
-  "params": {
-    "command": "git add . && git commit -m '${commit_message}'"
-  }
-}
+````markdown
+### commit-changes
+
+Stage and commit all changes.
+
+- type: shell
+
+```shell command
+git add . && git commit -m '${commit_message}'
 ```
+````
 
 **GitHub operations** - Use the `gh` CLI via shell node for simple tasks, or the [GitHub MCP server](/guides/adding-mcp-servers#github) for complex operations that benefit from structured tools.
 
-```json
-{
-  "id": "create-pr",
-  "type": "shell",
-  "params": {
-    "command": "gh pr create --title '${title}' --body '${body}'"
-  }
-}
+````markdown
+### create-pr
+
+Create a pull request using the GitHub CLI.
+
+- type: shell
+
+```shell command
+gh pr create --title '${title}' --body '${body}'
 ```
+````
 
 ### If you still want to try the built-in nodes
 

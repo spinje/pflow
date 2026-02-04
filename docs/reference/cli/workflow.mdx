@@ -155,46 +155,30 @@ When no match is found, pflow explains why and lists available workflows.
 Save a workflow file to the global library for reuse.
 
 ```bash
-pflow workflow save <FILE> --name <NAME> --description <TEXT> [OPTIONS]
+pflow workflow save <FILE> --name <NAME> [OPTIONS]
 ```
 
 **Arguments:**
-- `FILE` - Path to workflow JSON file
+- `FILE` - Path to workflow file (`.pflow.md`)
 
 **Required options:**
 - `--name NAME` - Workflow name (lowercase, numbers, hyphens only, max 30 chars)
-- `--description TEXT` - Brief description of what the workflow does
 
 **Optional options:**
 - `--force` - Overwrite existing workflow with same name
 - `--delete-draft` - Delete source file after successful save
-- `--generate-metadata` - Generate discovery metadata using LLM
 
 **Examples:**
 
 ```bash
 # Basic save
-pflow workflow save ./workflow.json \
-  --name pr-analyzer \
-  --description "Analyzes PRs and generates reports"
-
-# Save with metadata generation (improves discovery)
-pflow workflow save ./workflow.json \
-  --name pr-analyzer \
-  --description "Analyzes PRs and generates reports" \
-  --generate-metadata
+pflow workflow save ./workflow.pflow.md --name pr-analyzer
 
 # Overwrite existing workflow
-pflow workflow save ./updated.json \
-  --name pr-analyzer \
-  --description "Updated version" \
-  --force
+pflow workflow save ./updated.pflow.md --name pr-analyzer --force
 
 # Save and delete draft file
-pflow workflow save .pflow/workflows/draft.json \
-  --name finalized-workflow \
-  --description "Ready for production" \
-  --delete-draft
+pflow workflow save ./draft.pflow.md --name finalized-workflow --delete-draft
 ```
 
 **Name format requirements:**
@@ -207,7 +191,7 @@ pflow workflow save .pflow/workflows/draft.json \
 ```
 ✓ Saved workflow: pr-analyzer
 
-Location: ~/.pflow/workflows/pr-analyzer.json
+Location: ~/.pflow/workflows/pr-analyzer.pflow.md
 
 Inputs:
   - repo (string, required)
@@ -217,49 +201,51 @@ Example usage:
   pflow pr-analyzer repo=owner/repo pr_number=123
 ```
 
-<Tip>
-  The `--generate-metadata` flag improves workflow discovery by using AI to generate keywords and capabilities that help agents find the workflow later.
-</Tip>
-
 ## Workflow file format
 
-Saved workflows are JSON files with this structure:
+Workflows are markdown files (`.pflow.md`) with a simple structure:
 
-```json
-{
-  "ir_version": "0.1.0",
-  "name": "my-workflow",
-  "description": "What this workflow does",
-  "inputs": [
-    {
-      "key": "input_name",
-      "type": "string",
-      "description": "What this input is for",
-      "required": true
-    }
-  ],
-  "outputs": [
-    {
-      "key": "result",
-      "type": "string",
-      "description": "What this output contains"
-    }
-  ],
-  "nodes": [
-    {
-      "id": "node-1",
-      "type": "read-file",
-      "params": {
-        "file_path": "${input_name}"
-      }
-    }
-  ],
-  "edges": []
-}
+```markdown
+# My Workflow
+
+Description of what this workflow does.
+
+## Inputs
+
+### input_name
+
+What this input is for.
+
+- type: string
+- required: true
+
+## Steps
+
+### read-data
+
+Read the input file.
+
+- type: read-file
+- file_path: ${input_name}
+
+### summarize
+
+Summarize the file contents using AI.
+
+- type: llm
+- prompt: Summarize this: ${read-data.content}
+
+## Outputs
+
+### result
+
+Summary of the input file.
+
+- source: ${summarize.response}
 ```
 
 <Note>
-  pflow automatically adds `ir_version` and `edges` if missing, so minimal workflow files work fine.
+  The workflow title (`# My Workflow`) is the display name. The programmatic name comes from the filename (`my-workflow.pflow.md` → `my-workflow`). Step order determines execution order — no explicit edge declarations needed.
 </Note>
 
 ## File locations

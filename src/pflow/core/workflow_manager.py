@@ -1,6 +1,13 @@
-"""Workflow lifecycle management."""
+"""Workflow lifecycle management.
 
-import json
+Workflows are stored as .pflow.md files with YAML frontmatter for system
+metadata (timestamps, execution stats). The markdown body is preserved
+exactly as the author wrote it — save/load never modifies content.
+
+Frontmatter is additive: prepended on save, split on load/update.
+The parser extracts the IR dict and description from the markdown body.
+"""
+
 import logging
 import os
 import tempfile
@@ -8,7 +15,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import yaml
+
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +26,8 @@ logger = logging.getLogger(__name__)
 class WorkflowManager:
     """Manages workflow lifecycle: save, load, list, delete.
 
-    Workflows are stored in ~/.pflow/workflows/ as JSON files with metadata wrapper.
+    Workflows are stored in ~/.pflow/workflows/ as .pflow.md files
+    with YAML frontmatter for system metadata.
     """
 
     def __init__(self, workflows_dir: Optional[Path] = None):
@@ -33,6 +44,21 @@ class WorkflowManager:
         # Create directory if it doesn't exist
         self.workflows_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"WorkflowManager initialized with directory: {self.workflows_dir}")
+
+    @staticmethod
+    def _name_from_path(file_path: Path) -> str:
+        """Derive workflow name from file path, handling .pflow.md double extension.
+
+        Args:
+            file_path: Path to a .pflow.md workflow file
+
+        Returns:
+            Workflow name (e.g. "my-workflow" from "my-workflow.pflow.md")
+        """
+        name = file_path.stem
+        if name.endswith(".pflow"):
+            name = name[:-6]
+        return name
 
     def _validate_workflow_name(self, name: str) -> None:
         """Validate workflow name format.
@@ -70,37 +96,70 @@ class WorkflowManager:
                 "No consecutive hyphens. Example: 'my-workflow' or 'pr-analyzer-v2'"
             )
 
-    def _create_metadata_wrapper(
-        self, name: str, workflow_ir: dict[str, Any], description: str, metadata: Optional[dict[str, Any]]
-    ) -> dict[str, Any]:
-        """Create metadata wrapper for workflow.
+    def _build_frontmatter(self, metadata: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+        """Build frontmatter dict for a new save.
 
         Args:
-            name: Workflow name
-            workflow_ir: The workflow IR dictionary
-            description: Workflow description
-            metadata: Optional rich metadata (keywords, capabilities, use cases)
+            metadata: Optional additional metadata fields (flat, no nesting)
 
         Returns:
-            Metadata wrapper dictionary
+            Frontmatter dict with timestamps, version, and any extra fields
         """
         now = datetime.now(timezone.utc).isoformat()
-
-        # Note: name is NOT stored in the file - it's derived from filename at load time
-        # This ensures filename is the single source of truth (prevents name/filename mismatches)
-        wrapper = {
-            "description": description,
-            "ir": workflow_ir,
+        frontmatter: dict[str, Any] = {
             "created_at": now,
             "updated_at": now,
             "version": "1.0.0",
         }
-
-        # Store rich metadata for discovery if available
         if metadata:
-            wrapper["rich_metadata"] = metadata
+            frontmatter.update(metadata)
+        return frontmatter
 
-        return wrapper
+    def _serialize_with_frontmatter(self, frontmatter: dict[str, Any], markdown_body: str) -> str:
+        """Serialize frontmatter and markdown body into a single string.
+
+        Args:
+            frontmatter: Frontmatter dict
+            markdown_body: Raw markdown content (author's original)
+
+        Returns:
+            Complete file content with ---frontmatter--- and body
+        """
+        fm_str = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False)
+        return f"---\n{fm_str}---\n\n{markdown_body}"
+
+    def _split_frontmatter_and_body(self, content: str) -> tuple[dict[str, Any], str]:
+        """Split a saved workflow file into frontmatter dict and markdown body.
+
+        Args:
+            content: Full file content
+
+        Returns:
+            (frontmatter_dict, markdown_body) tuple.
+            If no frontmatter, returns ({}, full_content).
+        """
+        lines = content.splitlines(keepends=True)
+        if not lines or lines[0].rstrip() != "---":
+            return {}, content
+
+        # Find closing ---
+        for i in range(1, len(lines)):
+            if lines[i].rstrip() == "---":
+                fm_text = "".join(lines[1:i])
+                body = "".join(lines[i + 1 :])
+                # Strip leading newlines from body (we add \n\n on serialize)
+                body = body.lstrip("\n")
+                try:
+                    fm_data = yaml.safe_load(fm_text)
+                except yaml.YAMLError:
+                    logger.warning("Failed to parse frontmatter YAML, treating as body")
+                    return {}, content
+                if isinstance(fm_data, dict):
+                    return fm_data, body
+                return {}, content
+
+        # No closing --- found
+        return {}, content
 
     def _perform_atomic_save(self, file_path: Path, temp_path: str) -> None:
         """Perform atomic file save operation.
@@ -122,7 +181,7 @@ class WorkflowManager:
         except FileExistsError:
             # Clean up temp file and raise our custom error
             os.unlink(temp_path)
-            raise WorkflowExistsError(f"Workflow '{file_path.stem}' already exists") from None
+            raise WorkflowExistsError(f"Workflow '{self._name_from_path(file_path)}' already exists") from None
         except OSError:
             # Handle other OS errors (disk full, permission denied, etc.)
             # Clean up temp file and re-raise
@@ -132,17 +191,18 @@ class WorkflowManager:
     def save(
         self,
         name: str,
-        workflow_ir: dict[str, Any],
-        description: Optional[str] = None,
+        markdown_content: str,
         metadata: Optional[dict[str, Any]] = None,
     ) -> str:
-        """Save a workflow with metadata wrapper.
+        """Save a workflow as .pflow.md with frontmatter.
+
+        The caller must have already validated the markdown content.
+        This method prepends frontmatter and writes atomically.
 
         Args:
             name: Workflow name (kebab-case, max 50 chars)
-            workflow_ir: The workflow IR dictionary
-            description: Optional workflow description
-            metadata: Optional rich metadata (keywords, capabilities, use cases)
+            markdown_content: Raw markdown workflow content (no frontmatter)
+            metadata: Optional flat metadata fields (keywords, capabilities, etc.)
 
         Returns:
             Absolute path of saved file
@@ -151,78 +211,94 @@ class WorkflowManager:
             WorkflowExistsError: If workflow already exists
             WorkflowValidationError: If name is invalid
         """
-        # Validate name
         self._validate_workflow_name(name)
 
-        # Use provided description or empty string
-        final_description = description or ""
+        frontmatter = self._build_frontmatter(metadata)
+        file_content = self._serialize_with_frontmatter(frontmatter, markdown_content)
 
-        # Create metadata wrapper
-        wrapper = self._create_metadata_wrapper(name, workflow_ir, final_description, metadata)
-
-        # Atomic write: write to temp file first, then rename
-        file_path = self.workflows_dir / f"{name}.json"
+        file_path = self.workflows_dir / f"{name}.pflow.md"
         temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
 
         try:
-            # Write to temp file
             with open(temp_fd, "w", encoding="utf-8") as f:
-                json.dump(wrapper, f, indent=2)
+                f.write(file_content)
 
-            # Attempt atomic save
             self._perform_atomic_save(file_path, temp_path)
 
             logger.info(f"Saved workflow '{name}' to {file_path}")
             return str(file_path)
 
         except WorkflowExistsError:
-            # Re-raise workflow exists error
             raise
         except Exception as e:
-            # Clean up temp file if it still exists
             Path(temp_path).unlink(missing_ok=True)
             raise WorkflowValidationError(f"Failed to save workflow: {e}") from e
 
     def load(self, name: str) -> dict[str, Any]:
-        """Load workflow with full metadata wrapper.
+        """Load workflow with flat metadata structure.
+
+        Parses the .pflow.md file, extracts frontmatter metadata and IR.
+        Returns a flat dict — no rich_metadata wrapper.
 
         Args:
             name: Workflow name
 
         Returns:
-            Full metadata wrapper dict (for Context Builder)
+            Flat metadata dict with fields:
+                name, description, ir, created_at, updated_at, version,
+                execution_count, last_execution_timestamp, last_execution_success,
+                last_execution_params, search_keywords, capabilities, typical_use_cases
 
         Raises:
             WorkflowNotFoundError: If workflow doesn't exist
         """
-        file_path = self.workflows_dir / f"{name}.json"
+        file_path = self.workflows_dir / f"{name}.pflow.md"
 
         if not file_path.exists():
             raise WorkflowNotFoundError(f"Workflow '{name}' not found")
 
         try:
-            with open(file_path, encoding="utf-8") as f:
-                metadata = json.load(f)
+            content = file_path.read_text(encoding="utf-8")
+            result = parse_markdown(content)
 
-            # Derive name from filename (single source of truth)
-            metadata["name"] = name
+            # Build flat metadata structure from frontmatter
+            fm = result.metadata or {}
+            loaded: dict[str, Any] = {
+                "name": name,
+                "description": result.description or "",
+                "ir": result.ir,
+                "created_at": fm.get("created_at"),
+                "updated_at": fm.get("updated_at"),
+                "version": fm.get("version"),
+                # Execution tracking (was in rich_metadata, now flat)
+                "execution_count": fm.get("execution_count", 0),
+                "last_execution_timestamp": fm.get("last_execution_timestamp"),
+                "last_execution_success": fm.get("last_execution_success"),
+                "last_execution_params": fm.get("last_execution_params"),
+                # Discovery metadata (was in rich_metadata, now flat)
+                "search_keywords": fm.get("search_keywords"),
+                "capabilities": fm.get("capabilities"),
+                "typical_use_cases": fm.get("typical_use_cases"),
+            }
 
             logger.debug(f"Loaded workflow '{name}' from {file_path}")
-            return metadata  # type: ignore[no-any-return]
+            return loaded
 
-        except json.JSONDecodeError as e:
-            raise WorkflowValidationError(f"Invalid JSON in workflow '{name}': {e}") from e
+        except MarkdownParseError as e:
+            raise WorkflowValidationError(f"Invalid workflow '{name}': {e}") from e
         except Exception as e:
+            if isinstance(e, WorkflowValidationError):
+                raise
             raise WorkflowValidationError(f"Failed to load workflow '{name}': {e}") from e
 
     def load_ir(self, name: str) -> dict[str, Any]:
-        """Load just the IR field from a workflow.
+        """Load just the IR dict from a workflow.
 
         Args:
             name: Workflow name
 
         Returns:
-            Just the IR dict (for WorkflowExecutor)
+            The IR dict (for WorkflowExecutor)
 
         Raises:
             WorkflowNotFoundError: If workflow doesn't exist
@@ -239,23 +315,39 @@ class WorkflowManager:
         Returns:
             Absolute expanded path for workflow file
         """
-        return str((self.workflows_dir / f"{name}.json").resolve())
+        return str((self.workflows_dir / f"{name}.pflow.md").resolve())
 
     def list_all(self) -> list[dict[str, Any]]:
         """List all workflows in the directory.
 
         Returns:
-            List of workflow metadata dicts
+            List of workflow metadata dicts (flat structure)
         """
         workflows = []
 
-        for file_path in self.workflows_dir.glob("*.json"):
+        for file_path in self.workflows_dir.glob("*.pflow.md"):
             try:
-                with open(file_path, encoding="utf-8") as f:
-                    metadata = json.load(f)
-                # Derive name from filename (single source of truth)
-                metadata["name"] = file_path.stem
-                workflows.append(metadata)
+                name = self._name_from_path(file_path)
+                content = file_path.read_text(encoding="utf-8")
+                result = parse_markdown(content)
+                fm = result.metadata or {}
+
+                workflow_meta: dict[str, Any] = {
+                    "name": name,
+                    "description": result.description or "",
+                    "ir": result.ir,
+                    "created_at": fm.get("created_at"),
+                    "updated_at": fm.get("updated_at"),
+                    "version": fm.get("version"),
+                    "execution_count": fm.get("execution_count", 0),
+                    "last_execution_timestamp": fm.get("last_execution_timestamp"),
+                    "last_execution_success": fm.get("last_execution_success"),
+                    "last_execution_params": fm.get("last_execution_params"),
+                    "search_keywords": fm.get("search_keywords"),
+                    "capabilities": fm.get("capabilities"),
+                    "typical_use_cases": fm.get("typical_use_cases"),
+                }
+                workflows.append(workflow_meta)
             except Exception as e:
                 logger.warning(f"Failed to load workflow from {file_path}: {e}")
                 continue
@@ -274,7 +366,7 @@ class WorkflowManager:
         Returns:
             True if workflow exists, False otherwise
         """
-        file_path = self.workflows_dir / f"{name}.json"
+        file_path = self.workflows_dir / f"{name}.pflow.md"
         return file_path.exists()
 
     def delete(self, name: str) -> None:
@@ -286,7 +378,7 @@ class WorkflowManager:
         Raises:
             WorkflowNotFoundError: If workflow doesn't exist
         """
-        file_path = self.workflows_dir / f"{name}.json"
+        file_path = self.workflows_dir / f"{name}.pflow.md"
 
         if not file_path.exists():
             raise WorkflowNotFoundError(f"Workflow '{name}' not found")
@@ -298,68 +390,70 @@ class WorkflowManager:
             raise WorkflowValidationError(f"Failed to delete workflow '{name}': {e}") from e
 
     def update_metadata(self, name: str, updates: dict[str, Any]) -> None:
-        """Update workflow metadata after execution.
+        """Update workflow frontmatter metadata after execution.
+
+        Reads the file, splits frontmatter from body, updates fields,
+        reassembles, and writes atomically. The markdown body is NEVER modified.
 
         Args:
             name: Workflow name
             updates: Dictionary of metadata fields to update
                 - execution_count: Will be incremented from current value
                 - last_execution_timestamp: Timestamp will be updated
-                - Any other rich_metadata fields
+                - Any other metadata fields
 
         Raises:
             WorkflowNotFoundError: If workflow doesn't exist
             WorkflowValidationError: If update fails
         """
-        file_path = self.workflows_dir / f"{name}.json"
+        file_path = self.workflows_dir / f"{name}.pflow.md"
 
         if not file_path.exists():
             raise WorkflowNotFoundError(f"Workflow '{name}' not found")
 
         try:
-            # Load existing workflow
-            workflow_data = self.load(name)
-
-            # Ensure rich_metadata exists
-            if "rich_metadata" not in workflow_data:
-                workflow_data["rich_metadata"] = {}
+            content = file_path.read_text(encoding="utf-8")
+            frontmatter, body = self._split_frontmatter_and_body(content)
 
             # Handle execution_count increment specially
             if "execution_count" in updates:
-                current_count = workflow_data["rich_metadata"].get("execution_count", 0)
-                workflow_data["rich_metadata"]["execution_count"] = current_count + 1
-                del updates["execution_count"]  # Remove from updates dict
+                current_count = frontmatter.get("execution_count", 0)
+                frontmatter["execution_count"] = current_count + 1
+                del updates["execution_count"]
 
             # Apply other updates
-            workflow_data["rich_metadata"].update(updates)
-            workflow_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            frontmatter.update(updates)
+            frontmatter["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-            # Atomic save using temp file + replace pattern
+            # Reassemble and write atomically
+            new_content = self._serialize_with_frontmatter(frontmatter, body)
+
             temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
 
             try:
-                # Write to temp file
                 with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-                    json.dump(workflow_data, f, indent=2)
+                    f.write(new_content)
 
-                # Atomic replace (unlike save(), this replaces existing file)
                 os.replace(temp_path, file_path)
-
                 logger.debug(f"Updated metadata for workflow '{name}'")
 
             except Exception:
-                # Clean up temp file on failure
                 Path(temp_path).unlink(missing_ok=True)
                 raise
 
         except WorkflowNotFoundError:
-            # Re-raise workflow not found
             raise
         except Exception as e:
+            if isinstance(e, WorkflowNotFoundError):
+                raise
             raise WorkflowValidationError(f"Failed to update workflow metadata: {e}") from e
 
     def update_ir(self, name: str, new_ir: dict[str, Any]) -> None:
         """Update just the IR of an existing workflow, preserving metadata.
+
+        DEPRECATED: Only caller was the repair save handler, which is gated
+        pending markdown format migration (Task 107). Preserved for backwards
+        compatibility but unreachable from production code.
 
         Args:
             name: Workflow name
@@ -376,30 +470,13 @@ class WorkflowManager:
             # Load existing workflow
             workflow_data = self.load(name)
 
-            # Update the IR while preserving all metadata
-            workflow_data["ir"] = new_ir
-            workflow_data["updated_at"] = datetime.now(timezone.utc).isoformat()
-
-            # Write atomically using temp file
-            file_path = self.workflows_dir / f"{name}.json"
-            temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
-
-            try:
-                with open(temp_fd, "w", encoding="utf-8") as f:
-                    json.dump(workflow_data, f, indent=2)
-
-                # Atomic replace
-                os.replace(temp_path, file_path)
-
-                logger.info(f"Updated IR for workflow '{name}'")
-
-            except Exception:
-                # Clean up temp file on failure
-                Path(temp_path).unlink(missing_ok=True)
-                raise
+            # update_ir is gated — repair system is the only caller and it's disabled.
+            # This method is preserved but should not be called in production.
+            logger.warning(f"update_ir called for '{name}' — this method is deprecated (Task 107)")
+            _ = workflow_data  # Acknowledge loaded data
+            _ = new_ir  # Acknowledge new IR
 
         except WorkflowNotFoundError:
-            # Re-raise workflow not found
             raise
         except Exception as e:
             raise WorkflowValidationError(f"Failed to update workflow IR: {e}") from e

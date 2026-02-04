@@ -98,9 +98,9 @@ def format_workflow_metadata(workflow: dict[str, Any]) -> list[str]:
             lines.append(f"**Description**: {meta.get('description', 'No description')}")
             lines.append(f"**Version**: {meta.get('version', '1.0.0')}")
 
-    # Add execution history if available
-    if "rich_metadata" in workflow:
-        history = format_execution_history(workflow["rich_metadata"], mode="compact")
+    # Add execution history if available (flat metadata, fields at top level)
+    if workflow.get("execution_count", 0) > 0:
+        history = format_execution_history(workflow, mode="compact")
         if history:
             lines.append(f"**Executed**: {history}")
 

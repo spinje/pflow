@@ -4,15 +4,23 @@ This node executes Python code in-process using exec(), providing direct access
 to input data as native Python objects. All input variables and the result
 variable must have type annotations in the code string.
 
-Example workflow usage:
-    {
-        "id": "transform",
-        "type": "code",
-        "params": {
-            "inputs": {"data": "${fetch.result}", "count": 10},
-            "code": "data: list\\ncount: int\\n\\nresult: list = data[:count]"
-        }
-    }
+Example workflow usage (.pflow.md):
+
+    ### transform
+
+    Filter data to first N items.
+
+    - type: code
+    - inputs:
+        data: ${fetch.result}
+        count: 10
+
+    ```python code
+    data: list
+    count: int
+
+    result: list = data[:count]
+    ```
 """
 
 import ast

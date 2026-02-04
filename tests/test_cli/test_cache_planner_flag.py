@@ -2,9 +2,13 @@
 
 from unittest.mock import patch
 
+import pytest
 from click.testing import CliRunner
 
 from pflow.cli.main import workflow_command
+
+# GATED: Planner cache tests skipped pending markdown format migration (Task 107).
+pytestmark = pytest.mark.skip(reason="Gated pending markdown format migration (Task 107)")
 
 
 class TestCachePlannerFlag:

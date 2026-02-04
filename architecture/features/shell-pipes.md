@@ -36,15 +36,18 @@ pflow's shell integration mirrors this intuitive behavior, ensuring familiarity 
 
 ### Basic Usage
 
-Workflows declare which input receives piped data using `"stdin": true`:
+Workflows declare which input receives piped data using `- stdin: true`:
 
-```json
-{
-  "inputs": {
-    "data": {"type": "string", "required": true, "stdin": true}
-  },
-  "nodes": [...]
-}
+```markdown
+## Inputs
+
+### data
+
+Data to process from stdin.
+
+- type: string
+- required: true
+- stdin: true
 ```
 
 ```bash
@@ -59,7 +62,7 @@ This will:
 4. Execute the workflow with the stdin content as the input value.
 
 **Key behaviors:**
-- CLI parameters override stdin: `echo "ignored" | pflow workflow.json data="used"`
+- CLI parameters override stdin: `echo "ignored" | pflow workflow.pflow.md data="used"`
 - Only one input per workflow can have `stdin: true`
 - Same workflow works via piping OR CLI arguments
 
@@ -69,10 +72,10 @@ With stdin routing, workflows can be chained like Unix tools:
 
 ```bash
 # Pipeline composition
-cat data.json | pflow -p transform.json | pflow analyze.json > report.md
+cat data.json | pflow -p transform.pflow.md | pflow analyze.pflow.md > report.md
 
 # Mix with Unix tools
-pflow -p fetch-prs.json | jq '.[] | select(.urgent)' | pflow notify.json
+pflow -p fetch-prs.pflow.md | jq '.[] | select(.urgent)' | pflow notify.pflow.md
 ```
 
 The `-p` flag outputs to stdout for pipeline composition.

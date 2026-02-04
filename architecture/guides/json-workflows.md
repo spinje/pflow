@@ -1,5 +1,7 @@
 # Working with JSON Workflows
 
+> **⚠️ Historical Document**: JSON workflows were replaced by the markdown format (`.pflow.md`) in Task 107. This guide is preserved for historical reference only. For the current workflow format, see the [format specification](../../.taskmaster/tasks/task_107/starting-context/format-specification.md) and the agent instructions (`pflow instructions usage`).
+
 While pflow excels at natural language workflow creation, you can also define workflows directly in JSON format for precise control and version management.
 
 ## Quick Start

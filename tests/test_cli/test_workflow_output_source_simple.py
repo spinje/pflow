@@ -11,6 +11,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from pflow.cli.main import main
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 class TestWorkflowOutputSource:
@@ -31,9 +32,9 @@ class TestWorkflowOutputSource:
             },
         }
 
-        # Create a temporary file since stdin-only JSON workflows are no longer supported
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        # Create a temporary file since stdin-only workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -59,9 +60,9 @@ class TestWorkflowOutputSource:
             "outputs": {"result": {"source": "${echo1.echo}", "description": "Echo result"}},
         }
 
-        # Create a temporary file since stdin-only JSON workflows are no longer supported
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        # Create a temporary file since stdin-only workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -89,9 +90,9 @@ class TestWorkflowOutputSource:
             },
         }
 
-        # Create a temporary file since stdin-only JSON workflows are no longer supported
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        # Create a temporary file since stdin-only workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -116,8 +117,8 @@ class TestWorkflowOutputSource:
             "outputs": {"result": {"source": "${test_node.echo}"}},
         }
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:
@@ -146,9 +147,9 @@ class TestWorkflowOutputSource:
             },
         }
 
-        # Create a temporary file since stdin-only JSON workflows are no longer supported
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump(workflow, f)
+        # Create a temporary file since stdin-only workflows are no longer supported
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
             workflow_file = f.name
 
         try:

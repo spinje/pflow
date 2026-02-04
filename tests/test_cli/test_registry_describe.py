@@ -399,3 +399,51 @@ class TestEdgeCases:
         if result.exit_code != 0:
             # Should show helpful error
             assert "ambiguous" in result.output.lower() or "unknown" in result.output.lower()
+
+
+class TestUsageSnippets:
+    """Test .pflow.md usage snippets appear in describe output."""
+
+    def test_shell_snippet_has_code_block(self, runner: click.testing.CliRunner) -> None:
+        """Shell node snippet includes shell command code block."""
+        result = runner.invoke(registry, ["describe", "shell"])
+        assert result.exit_code == 0
+        assert "Usage in .pflow.md" in result.output
+        assert "- type: shell" in result.output
+        assert "```shell command" in result.output
+
+    def test_llm_snippet_has_prompt_block(self, runner: click.testing.CliRunner) -> None:
+        """LLM node snippet includes markdown prompt code block."""
+        result = runner.invoke(registry, ["describe", "llm"])
+        assert result.exit_code == 0
+        assert "Usage in .pflow.md" in result.output
+        assert "- type: llm" in result.output
+        assert "```markdown prompt" in result.output
+
+    def test_http_snippet_is_inline_only(self, runner: click.testing.CliRunner) -> None:
+        """HTTP node snippet uses inline params, no code blocks."""
+        result = runner.invoke(registry, ["describe", "http"])
+        assert result.exit_code == 0
+        assert "Usage in .pflow.md" in result.output
+        assert "- type: http" in result.output
+        assert "- url:" in result.output
+
+    def test_code_snippet_has_python_block(self, runner: click.testing.CliRunner) -> None:
+        """Code node snippet includes python code block."""
+        result = runner.invoke(registry, ["describe", "code"])
+        assert result.exit_code == 0
+        assert "Usage in .pflow.md" in result.output
+        assert "```python code" in result.output
+
+    def test_generic_node_gets_snippet(self, runner: click.testing.CliRunner) -> None:
+        """Non-core nodes get a generic snippet with interface params."""
+        result = runner.invoke(registry, ["describe", "read-file"])
+        assert result.exit_code == 0
+        assert "Usage in .pflow.md" in result.output
+        assert "- type: read-file" in result.output
+
+    def test_snippet_has_step_name_heading(self, runner: click.testing.CliRunner) -> None:
+        """All snippets include ### step-name heading."""
+        result = runner.invoke(registry, ["describe", "write-file"])
+        assert result.exit_code == 0
+        assert "### step-name" in result.output

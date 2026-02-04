@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-The `src/pflow/runtime/` module is the **compilation and execution infrastructure** that transforms JSON IR into executable PocketFlow objects. It implements a sophisticated multi-layer wrapper architecture for template resolution, namespacing, and instrumentation while maintaining full compatibility with the PocketFlow framework.
+The `src/pflow/runtime/` module is the **compilation and execution infrastructure** that transforms workflow IR into executable PocketFlow objects. It implements a sophisticated multi-layer wrapper architecture for template resolution, namespacing, and instrumentation while maintaining full compatibility with the PocketFlow framework.
 
 **Core Responsibility**: Transform workflow IR → executable Flow objects with automatic template resolution, collision prevention, and comprehensive instrumentation.
 
@@ -61,7 +61,7 @@ src/pflow/runtime/
 
 ### 1. Compiler (`compiler.py`)
 
-**Purpose**: Transforms JSON IR into executable PocketFlow Flow objects.
+**Purpose**: Transforms workflow IR (dict) into executable PocketFlow Flow objects.
 
 **Key Functions**:
 - `compile_ir_to_flow()` - Main entry point (lines 929-1042) - 11 steps total
@@ -73,7 +73,7 @@ src/pflow/runtime/
 - `_validate_workflow()` - Consolidates 4 validation steps (lines 768-842)
 
 **Compilation Pipeline**:
-1. Parse IR (JSON string or dict)
+1. Parse IR (dict)
 2. Validate structure, inputs, outputs
 3. Instantiate nodes with registry lookup
 4. Apply wrapper chain (template → namespace → instrumentation)
@@ -212,7 +212,7 @@ Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
 **Purpose**: Runtime node for nested workflow execution.
 
 **Key Features**:
-- Loads workflows by name, path, or inline IR
+- Loads workflows by name, path (`.pflow.md`), or inline IR
 - Parameter mapping with template resolution
 - Storage isolation modes (mapped/isolated/scoped/shared)
 - Circular dependency detection
@@ -409,7 +409,7 @@ shared["__template_errors__"] = {}        # Template/type errors in permissive m
 
 ```python
 {
-    "workflow_ir": {...},              # JSON IR to compile (may include template_resolution_mode)
+    "workflow_ir": {...},              # Workflow IR dict to compile (may include template_resolution_mode)
     "registry": Registry(),            # Node discovery
     "initial_params": {...},          # Template context (includes __template_resolution_mode__)
     "validate": True,                 # Template validation

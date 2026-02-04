@@ -14,14 +14,13 @@ Template variables are how pflow connects data between nodes in workflows. When 
 
 The `${variable}` syntax accesses values from the shared store:
 
-```json
-{
-  "id": "summarize",
-  "type": "llm",
-  "params": {
-    "prompt": "${read.content}"
-  }
-}
+```markdown
+### summarize
+
+Summarize the content from the read node.
+
+- type: llm
+- prompt: ${read.content}
 ```
 
 Here, `${read.content}` pulls the `content` output from the `read` node.
@@ -30,10 +29,13 @@ Here, `${read.content}` pulls the `content` output from the `read` node.
 
 Template variables can traverse deeply nested structures:
 
-```json
-{
-  "prompt": "${api.response.items[0].name}"
-}
+```markdown
+### extract
+
+Extract the name of the first item from the API response.
+
+- type: llm
+- prompt: ${api.response.items[0].name}
 ```
 
 This traverses:
@@ -62,14 +64,17 @@ This traverses:
 
 This type preservation makes inline object construction intuitive:
 
-```json
-{
-  "stdin": {
-    "config": "${settings}",
-    "data": "${results}"
-  }
-}
+````markdown
+### process
+
+Process settings and results together.
+
+- type: shell
+```yaml stdin
+config: ${settings}
+data: ${results}
 ```
+````
 
 If `settings` is `{"timeout": 30}` and `results` is `{"status": "ok"}`, the resolved `stdin` is:
 
@@ -86,26 +91,26 @@ Without type preservation, both would be stringified JSON requiring manual parsi
 
 When a template accesses nested fields on a JSON string, pflow automatically parses it:
 
-```json
-{
-  "nodes": [
-    {
-      "id": "fetch",
-      "type": "shell",
-      "params": {
-        "command": "curl https://api.example.com/data"
-      }
-    },
-    {
-      "id": "extract",
-      "type": "llm",
-      "params": {
-        "prompt": "Analyze: ${fetch.stdout.results[0].name}"
-      }
-    }
-  ]
-}
+````markdown
+## Steps
+
+### fetch
+
+Fetch data from the API.
+
+- type: shell
+
+```shell command
+curl https://api.example.com/data
 ```
+
+### extract
+
+Analyze the first result name from the fetched data.
+
+- type: llm
+- prompt: Analyze: ${fetch.stdout.results[0].name}
+````
 
 Even though `fetch.stdout` is a string containing JSON, the nested access `${fetch.stdout.results[0].name}` works because pflow:
 1. Sees you're trying to access `.results`
@@ -121,23 +126,33 @@ Even though `fetch.stdout` is a string containing JSON, the nested access `${fet
 
 Template variables also reference workflow inputs declared in the workflow definition:
 
-```json
-{
-  "inputs": {
-    "api_key": {"type": "string"},
-    "endpoint": {"type": "string"}
-  },
-  "nodes": [
-    {
-      "type": "http",
-      "params": {
-        "url": "${endpoint}",
-        "headers": {"Authorization": "Bearer ${api_key}"}
-      }
-    }
-  ]
-}
+````markdown
+## Inputs
+
+### api_key
+
+API key for authenticating with the service.
+
+- type: string
+
+### endpoint
+
+URL of the API endpoint to call.
+
+- type: string
+
+## Steps
+
+### call_api
+
+Call the API endpoint with authentication.
+
+- type: http
+- url: ${endpoint}
+```yaml headers
+Authorization: Bearer ${api_key}
 ```
+````
 
 When running this workflow, inputs are provided via CLI arguments:
 
@@ -147,35 +162,35 @@ pflow my-workflow api_key="sk-..." endpoint="https://api.example.com"
 
 ### Stdin input
 
-Inputs can receive piped data by adding `"stdin": true`. See [Stdin input](/reference/cli/index#stdin-input) for details.
+Inputs can receive piped data by adding `stdin: true`. See [Stdin input](/reference/cli/index#stdin-input) for details.
 
 ## Array notation
 
 Array elements are accessed using bracket notation:
 
-```json
-{
-  "first_item": "${results[0]}",
-  "nested_array": "${data.items[2].tags[1]}"
-}
+```markdown
+### extract
+
+Extract specific items from the results.
+
+- type: llm
+- prompt: First: ${results[0]}, Tag: ${data.items[2].tags[1]}
 ```
 
 ## Batch processing
 
 In batch nodes, a special template variable (`${item}` by default) represents the current item:
 
-```json
-{
-  "id": "process",
-  "type": "llm",
-  "batch": {
-    "items": "${files}",
-    "as": "file"
-  },
-  "params": {
-    "prompt": "Summarize: ${file}"
-  }
-}
+```markdown
+### process
+
+Summarize each file.
+
+- type: llm
+- prompt: Summarize: ${file}
+- batch:
+    items: ${files}
+    as: file
 ```
 
 The `as: "file"` creates `${file}` as the item variable. See [Batch processing](/how-it-works/batch-processing) for details.
@@ -184,11 +199,17 @@ The `as: "file"` creates `${file}` as the item variable. See [Batch processing](
 
 Literal `${...}` text (not a template variable) uses double dollar signs to escape:
 
-```json
-{
-  "command": "echo 'Price: $${PRICE}'"
-}
+````markdown
+### print_price
+
+Print the literal price variable.
+
+- type: shell
+
+```shell command
+echo 'Price: $${PRICE}'
 ```
+````
 
 This produces the literal string `Price: ${PRICE}` instead of trying to resolve a variable.
 

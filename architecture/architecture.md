@@ -5,15 +5,15 @@
 
 ## Overview
 
-pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line Python framework in `src/pflow/pocketflow/__init__.py`). It enables AI agents and users to create, save, and execute workflows defined in JSON configuration files.
+pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line Python framework in `src/pflow/pocketflow/__init__.py`). It enables AI agents and users to create, save, and execute workflows defined in markdown files (`.pflow.md`).
 
 ### Primary Interfaces
 
-1. **CLI** - Execute workflows via `pflow workflow.json` or `pflow saved-name param=value`
+1. **CLI** - Execute workflows via `pflow workflow.pflow.md` or `pflow saved-name param=value`
 2. **MCP Server** - AI agents can interact via Model Context Protocol (`src/pflow/mcp_server/`)
 3. **Natural Language (Legacy)** - Built-in planner for NL to workflow conversion (being phased out)
 
-> **Important:** Users and AI agents ALWAYS interact via these interfaces using JSON workflows. Direct PocketFlow usage (creating `Node` subclasses, `Flow` objects) is reserved for pflow internal development only. See `pflow-pocketflow-integration-guide.md` for internal development patterns.
+> **Important:** Users and AI agents ALWAYS interact via these interfaces using `.pflow.md` workflows. Direct PocketFlow usage (creating `Node` subclasses, `Flow` objects) is reserved for pflow internal development only. See `pflow-pocketflow-integration-guide.md` for internal development patterns.
 
 ### Core Principle
 
@@ -21,9 +21,9 @@ pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line 
 
 ### How It Works (Workflow Authoring)
 
-1. AI agent (or legacy planner) generates a temporary workflow JSON file
-2. Runs it with `pflow ./my-workflow.json param1=value1` while iterating
-3. When satisfied, saves with `pflow workflow save ./my-workflow.json --name my-workflow --description "..."`
+1. AI agent creates a `.pflow.md` workflow file
+2. Runs it with `pflow ./my-workflow.pflow.md param1=value1` while iterating
+3. When satisfied, saves with `pflow workflow save ./my-workflow.pflow.md --name my-workflow`
 4. `pflow my-workflow` runs the saved workflow by name
 5. Workflows are sequences of nodes: `shell`, `http`, `llm`, `file`, and dynamically loaded MCP tools
 
@@ -67,16 +67,16 @@ AI agents interact with pflow through CLI commands that expose internal capabili
 
 **Execution:**
 - `pflow registry run <node> params` - Execute single node
-- `pflow workflow.json params` - Run workflow file
+- `pflow workflow.pflow.md params` - Run workflow file
 - `pflow saved-name params` - Run saved workflow
 - `pflow read-fields exec-id path` - Inspect execution data
 
 **Building:**
 - `pflow instructions create --part 1/2/3` - Get workflow creation guide
-- `pflow --validate-only workflow.json` - Validate without running
-- `pflow workflow save ./file.json --name name` - Save to library
+- `pflow --validate-only workflow.pflow.md` - Validate without running
+- `pflow workflow save ./file.pflow.md --name name` - Save to library
 
-Agents write JSON workflows directly using these primitives. For the complete agent guide, run `pflow instructions usage`.
+Agents write `.pflow.md` workflows directly using these primitives. For the complete agent guide, run `pflow instructions usage`.
 
 ### 2. Natural Language (Legacy - for Human Users)
 
@@ -85,7 +85,7 @@ The built-in planner converts natural language to workflows:
 pflow "create a summary of this file"
 ```
 
-> **Status:** Legacy. Being phased out in favor of agent-direct JSON creation. Remains available for human users who prefer natural language input.
+> **Status:** Legacy. Gated pending markdown format migration (Task 107). Being phased out in favor of agent-direct `.pflow.md` creation.
 
 ### 3. MCP Server (Experimental)
 
@@ -106,18 +106,19 @@ CLI Entry (main_wrapper.py)
     ▼
 Workflow Resolution
     │
-    ├── File path: Load JSON directly
+    ├── File path: Parse .pflow.md
     ├── Saved name: Look up in ~/.pflow/workflows/
-    └── Natural language: Legacy planner generates workflow
+    └── Natural language: Legacy planner (gated)
     │
     ▼
-Validation Pipeline (5 layers)
+Validation Pipeline (6 layers)
     │
     ├── 1. Structural: Required fields, valid node types
     ├── 2. Data Flow: Template dependencies resolved
     ├── 3. Template: ${var} syntax valid
     ├── 4. Node Type: Nodes exist in registry
-    └── 5. Output: Declared outputs available
+    ├── 5. Output: Declared outputs available
+    └── 6. Unknown Params: Warns on unrecognized node params
     │
     ▼
 Compilation (runtime/compiler.py)
@@ -141,6 +142,23 @@ Output
 ```
 
 ## Key Abstractions
+
+### Markdown Parser
+
+The markdown parser (`src/pflow/core/markdown_parser.py`, ~350 lines) converts `.pflow.md` files into the same IR dict that validation, compilation, and execution operate on.
+
+**Key types:**
+- `MarkdownParseResult` — dataclass with `ir` (dict), `title` (str), `description` (str), `metadata` (dict, from frontmatter), `source` (original markdown content for save operations)
+- `MarkdownParseError(ValueError)` — includes `line` number and `suggestion` for markdown-native error messages
+
+**Main function:** `parse_markdown(content: str) -> MarkdownParseResult`
+
+**Architecture:** Line-by-line state machine. Delegates YAML param parsing to `yaml.safe_load()` and Python code block syntax checking to `ast.parse()`. Tracks line numbers throughout for error messages that reference markdown structure (e.g., `"Node '### fetch' (line 15) missing required 'type' parameter"`).
+
+**Pipeline:**
+```
+workflow.pflow.md → parse_markdown() → dict (IR) → normalize_ir() → validate → compile → execute
+```
 
 ### Shared Store Pattern
 
@@ -170,14 +188,11 @@ ActualNode (prep → exec → post)
 
 ### Template System
 
-Templates use `${variable}` syntax:
+Templates use `${variable}` syntax. In `.pflow.md` files, templates appear inline in params and code blocks:
 
-```json
-{
-  "params": {
-    "prompt": "Summarize: ${input_data}"
-  }
-}
+```markdown
+- prompt: Summarize: ${input_data}
+- url: https://api.example.com/${endpoint}
 ```
 
 **Features:**
@@ -287,15 +302,15 @@ pflow has complete MCP support in two directions:
 
 Workflows can call external MCP tools:
 
-```json
-{
-  "type": "mcp",
-  "params": {
-    "server": "filesystem",
-    "tool": "read_file",
-    "arguments": {"path": "${file_path}"}
-  }
-}
+```markdown
+### read-config
+
+Read the configuration file from the filesystem MCP server.
+
+- type: mcp
+- server: filesystem
+- tool: read_file
+- arguments: {"path": "${file_path}"}
 ```
 
 **Supported Transports:**
@@ -310,7 +325,7 @@ AI agents can use pflow via MCP (`src/pflow/mcp_server/`):
 - `workflow_discover` - LLM-powered workflow search
 - `workflow_execute` - Execute a workflow
 - `workflow_validate` - Validate workflow structure
-- `workflow_save` - Save a workflow
+- `workflow_save` - Save a workflow (accepts raw `.pflow.md` content or file path)
 - `workflow_list` - List saved workflows
 - `workflow_describe` - Get workflow details
 - `registry_discover` - LLM-powered node search
@@ -330,7 +345,7 @@ pflow can detect and repair certain workflow errors at runtime:
 3. **LLM-assisted repair** using Claude
 4. **Resume from checkpoint** (skip completed nodes)
 
-> **Note:** This is a runtime feature for handling execution failures. AI agents building workflows should use `pflow --validate-only` for pre-execution validation and iterate on JSON directly rather than relying on auto-repair.
+> **⚠️ GATED (Task 107 Decision 26).** Repair prompts assume JSON workflow format. All code is preserved in `src/pflow/execution/repair_service.py` but unreachable from CLI and MCP. The `--auto-repair` CLI flag is disabled. Re-enabling requires rewriting repair prompts for the `.pflow.md` markdown format. AI agents building workflows should use `pflow --validate-only` for pre-execution validation and iterate on `.pflow.md` files directly.
 
 > **Implementation details:** See `src/pflow/execution/CLAUDE.md` for checkpoint structure, error categories, and repair loop implementation.
 
@@ -340,7 +355,7 @@ pflow can detect and repair certain workflow errors at runtime:
 
 ```bash
 # Run from file
-pflow workflow.json
+pflow workflow.pflow.md
 
 # Run saved workflow with parameters
 pflow my-workflow param1=value1 param2=value2
@@ -353,7 +368,7 @@ cat data.txt | pflow my-workflow
 
 ```bash
 # Save a workflow
-pflow workflow save ./workflow.json --name my-workflow
+pflow workflow save ./workflow.pflow.md --name my-workflow
 
 # List saved workflows
 pflow workflow list
@@ -375,44 +390,66 @@ pflow settings deny http
 
 ## Configuration
 
-### Workflow JSON Format
+### Workflow Markdown Format (`.pflow.md`)
 
-```json
-{
-  "name": "example-workflow",
-  "description": "What this workflow does",
-  "inputs": {
-    "input_name": {
-      "type": "string",
-      "description": "Description",
-      "required": true
-    }
-  },
-  "outputs": {
-    "output_name": {
-      "type": "string",
-      "source": "node_id.key"
-    }
-  },
-  "nodes": [
-    {
-      "id": "unique_id",
-      "type": "node_type",
-      "params": {...}
-    }
-  ]
-}
+```markdown
+# Example Workflow
+
+What this workflow does.
+
+## Inputs
+
+### input_name
+
+Description of the input.
+
+- type: string
+- required: true
+
+## Steps
+
+### unique_id
+
+Description of what this node does.
+
+- type: node_type
+- param: value
+
+## Outputs
+
+### output_name
+
+Description of the output.
+
+- type: string
+- source: ${node_id.key}
 ```
 
 ### Storage Locations
 
 ```
 ~/.pflow/
-├── workflows/          # Saved workflows
+├── workflows/          # Saved workflows (.pflow.md with YAML frontmatter)
 ├── settings.json       # User settings (allow/deny lists)
 ├── debug/              # Execution traces
 └── mcp/                # MCP server configurations
 ```
+
+Saved workflows have YAML frontmatter prepended by `pflow workflow save`. Metadata fields are flat (no nesting wrapper):
+
+```yaml
+---
+created_at: "2026-01-14T15:43:57Z"
+updated_at: "2026-01-14T22:03:06Z"
+version: "1.0.0"
+execution_count: 8
+last_execution_success: true
+last_execution_params:
+  version: "1.0.0"
+---
+```
+
+The markdown body is never modified by metadata updates — `update_metadata()` reads the file, updates only the frontmatter YAML, and writes back with the original body intact.
 
 ## Design Decisions
 
@@ -423,12 +460,14 @@ pflow settings deny http
 - Flow orchestration with `>>` operator
 - Shared store pattern for communication
 
-### Why JSON Workflows?
+### Why Markdown Workflows (`.pflow.md`)?
 
-- Machine-readable and validatable
-- AI agents can generate them
-- Version-controllable
-- Portable across systems
+- LLMs generate natural markdown from training data
+- Self-documenting: workflow IS documentation
+- Proper syntax highlighting for code blocks (shell, Python, YAML)
+- No escaping issues (prompts are multi-line code blocks, not single-line JSON strings)
+- Renders on GitHub as readable documentation
+- Compiles to same internal dict (IR) for validation and execution
 
 ### Why Namespaced Shared Store?
 
@@ -446,7 +485,7 @@ Building blocks users work with directly:
 - Defined in `src/pflow/nodes/`
 - Discoverable via `pflow registry list`
 - Have metadata describing their interface
-- Appear in workflow JSON with their `type` field
+- Appear in workflow `.pflow.md` files with their `type` field
 - Examples: `read-file`, `write-file`, `llm`, `shell`, `http`
 
 ### Runtime Components
@@ -459,16 +498,15 @@ Internal infrastructure that executes workflows:
 
 ### Example: WorkflowExecutor
 
-**What users see** (simple JSON):
-```json
-{
-  "id": "run_subflow",
-  "type": "workflow",
-  "params": {
-    "workflow_ref": "path/to/workflow.json",
-    "param_mapping": { "input": "${data}" }
-  }
-}
+**What users see** (in `.pflow.md`):
+```markdown
+### run_subflow
+
+Run a sub-workflow for processing.
+
+- type: workflow
+- workflow_ref: path/to/workflow.pflow.md
+- param_mapping: { "input": "${data}" }
 ```
 
 **What happens internally**:
@@ -491,7 +529,7 @@ Users simply specify `type: "workflow"` - they don't need to know about Workflow
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Compiler** | `runtime/compiler.py` | Transforms JSON IR → executable PocketFlow objects |
+| **Compiler** | `runtime/compiler.py` | Transforms workflow IR → executable PocketFlow objects |
 | **WorkflowExecutor** | `runtime/workflow_executor.py` | Handles nested workflow execution |
 | **Wrappers** | `runtime/*_wrapper.py` | Add instrumentation, namespacing, templates |
 | **TemplateResolver** | `runtime/template_resolver.py` | Resolves `${var}` syntax |

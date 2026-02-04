@@ -1,8 +1,8 @@
 """Validate that shipped example workflows conform to IR schema.
 
 This test suite ensures:
-1. Valid examples in examples/ pass IR schema validation
-2. Invalid examples in examples/invalid/ correctly fail validation
+1. Valid .pflow.md examples in examples/ parse and pass IR schema validation
+2. Invalid .pflow.md examples in examples/invalid/ correctly fail parsing or validation
 3. Examples remain valid as the IR schema evolves
 
 Speed optimized:
@@ -10,38 +10,17 @@ Speed optimized:
 - Lightweight schema validation only (no compilation)
 - Batch assertions with clear failure reporting
 - All files validated in <100ms
-
-Supported formats:
-- Raw IR: {"ir_version": "...", "nodes": [...]}
-- Wrapper format: {"name": "...", "ir": {"ir_version": "...", "nodes": [...]}}
 """
 
-import json
 from pathlib import Path
 
 import pytest
 
 from pflow.core import ValidationError, validate_ir
+from pflow.core.ir_schema import normalize_ir
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
-
-
-def extract_ir(data: dict) -> dict | None:
-    """Extract IR from either raw IR or wrapper format.
-
-    Returns None if the data doesn't contain valid IR structure.
-    """
-    # Wrapper format: {"name": "...", "ir": {...}}
-    if "ir" in data and isinstance(data["ir"], dict):
-        ir = data["ir"]
-        if "nodes" in ir:
-            return ir
-
-    # Raw IR format: {"ir_version": "...", "nodes": [...]}
-    if "nodes" in data and "ir_version" in data:
-        return data
-
-    return None
 
 
 class TestExampleValidation:
@@ -49,85 +28,74 @@ class TestExampleValidation:
 
     @pytest.fixture(scope="class")
     def valid_workflow_files(self) -> list[tuple[Path, dict]]:
-        """Collect valid example files (outside examples/invalid/ and legacy/)."""
+        """Collect valid .pflow.md example files (outside examples/invalid/ and legacy/)."""
         if not EXAMPLES_DIR.exists():
             pytest.skip("Examples directory not found")
 
         files = []
-        for json_file in EXAMPLES_DIR.rglob("*.json"):
-            # Skip invalid examples, legacy examples, and config files
-            if "invalid" in json_file.parts:
+        for pflow_file in EXAMPLES_DIR.rglob("*.pflow.md"):
+            # Skip invalid examples and legacy examples
+            if "invalid" in pflow_file.parts:
                 continue
-            if "legacy" in json_file.parts:
-                continue
-            if "config" in json_file.name.lower():
+            if "legacy" in pflow_file.parts:
                 continue
 
             try:
-                with open(json_file) as f:
-                    data = json.load(f)
-            except json.JSONDecodeError:
-                continue  # Skip malformed JSON (separate concern)
+                content = pflow_file.read_text()
+                result = parse_markdown(content)
+                ir = result.ir
+                normalize_ir(ir)
+            except (MarkdownParseError, ValueError):
+                continue  # Skip files that fail parsing (separate concern)
 
-            # Extract IR (handles both wrapper and raw formats)
-            ir = extract_ir(data)
-            if ir is not None:
-                files.append((json_file, ir))
+            files.append((pflow_file, ir))
 
         return files
 
     @pytest.fixture(scope="class")
-    def invalid_workflow_files(self) -> list[tuple[Path, dict]]:
-        """Collect invalid example files (in examples/invalid/)."""
+    def invalid_workflow_files(self) -> list[Path]:
+        """Collect invalid .pflow.md example files (in examples/invalid/)."""
         invalid_dir = EXAMPLES_DIR / "invalid"
         if not invalid_dir.exists():
             return []
 
-        files = []
-        for json_file in invalid_dir.glob("*.json"):
-            try:
-                with open(json_file) as f:
-                    data = json.load(f)
-            except json.JSONDecodeError:
-                continue
-
-            # For invalid examples, we validate the raw data
-            # (they're intentionally malformed IR)
-            if "nodes" in data:
-                files.append((json_file, data))
-
-        return files
+        return list(invalid_dir.glob("*.pflow.md"))
 
     def test_valid_examples_pass_schema_validation(self, valid_workflow_files: list[tuple[Path, dict]]) -> None:
         """All valid example workflows should pass IR schema validation."""
         assert valid_workflow_files, "No valid example files found"
 
         failures = []
-        for json_file, data in valid_workflow_files:
+        for pflow_file, ir_data in valid_workflow_files:
             try:
-                validate_ir(data)
+                validate_ir(ir_data)
             except ValidationError as e:
-                rel_path = json_file.relative_to(EXAMPLES_DIR)
+                rel_path = pflow_file.relative_to(EXAMPLES_DIR)
                 failures.append(f"  {rel_path}: {e}")
 
         if failures:
             pytest.fail(f"Schema validation failed for {len(failures)} file(s):\n" + "\n".join(failures))
 
-    def test_invalid_examples_fail_schema_validation(self, invalid_workflow_files: list[tuple[Path, dict]]) -> None:
-        """All invalid example workflows should fail IR schema validation."""
+    def test_invalid_examples_fail_parsing_or_validation(self, invalid_workflow_files: list[Path]) -> None:
+        """All invalid example workflows should fail during parsing or validation."""
         if not invalid_workflow_files:
             pytest.skip("No invalid example files found")
 
         unexpected_passes = []
-        for json_file, data in invalid_workflow_files:
+        for pflow_file in invalid_workflow_files:
             try:
-                validate_ir(data)
-                unexpected_passes.append(json_file.name)
-            except ValidationError:
+                content = pflow_file.read_text()
+                result = parse_markdown(content)
+                ir_data = result.ir
+                normalize_ir(ir_data)
+                validate_ir(ir_data)
+                # If we get here, the file unexpectedly passed
+                unexpected_passes.append(pflow_file.name)
+            except (MarkdownParseError, ValidationError, ValueError):
                 pass  # Expected - invalid examples should fail
 
         if unexpected_passes:
-            pytest.fail(f"These files should fail validation but passed: {unexpected_passes}")
+            pytest.fail(f"These files should fail parsing/validation but passed: {unexpected_passes}")
 
     def test_example_coverage_is_meaningful(self, valid_workflow_files: list[tuple[Path, dict]]) -> None:
         """Ensure we're testing a meaningful number of examples."""

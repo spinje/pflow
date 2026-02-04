@@ -107,7 +107,7 @@ class TestCreateInstructions:
         # Key sections from all parts
         expected_sections = [
             "Part 1: Foundation & Mental Model",
-            "Two Fundamental Concepts - Edges vs Templates",
+            "Two Fundamental Concepts - Step Order vs Templates",
             "What Workflows CANNOT Do",
             "Part 2: Node & Tool Selection Principles",
             "Part 3: The Complete Development Loop",

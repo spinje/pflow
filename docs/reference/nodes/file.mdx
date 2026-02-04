@@ -171,52 +171,48 @@ Deletes a file with required confirmation.
 
 ### Chaining file operations
 
-```json
-{
-  "nodes": [
-    {
-      "id": "read",
-      "type": "read-file",
-      "params": { "file_path": "input.txt" }
-    },
-    {
-      "id": "process",
-      "type": "llm",
-      "params": { "prompt": "Summarize: ${read.content}" }
-    },
-    {
-      "id": "write",
-      "type": "write-file",
-      "params": {
-        "file_path": "summary.txt",
-        "content": "${process.response}"
-      }
-    }
-  ]
-}
+```markdown
+### read
+
+Read the input file.
+
+- type: read-file
+- file_path: input.txt
+
+### process
+
+Summarize the file contents using an LLM.
+
+- type: llm
+- prompt: Summarize: ${read.content}
+
+### write
+
+Write the summary to a file.
+
+- type: write-file
+- file_path: summary.txt
+- content: ${process.response}
 ```
 
 ### Working with binary files
 
-```json
-{
-  "nodes": [
-    {
-      "id": "read_image",
-      "type": "read-file",
-      "params": { "file_path": "photo.png" }
-    },
-    {
-      "id": "copy_image",
-      "type": "write-file",
-      "params": {
-        "file_path": "backup/photo.png",
-        "content": "${read_image.content}",
-        "content_is_binary": "${read_image.content_is_binary}"
-      }
-    }
-  ]
-}
+```markdown
+### read_image
+
+Read a binary image file.
+
+- type: read-file
+- file_path: photo.png
+
+### copy_image
+
+Write the image to a backup location.
+
+- type: write-file
+- file_path: backup/photo.png
+- content: ${read_image.content}
+- content_is_binary: ${read_image.content_is_binary}
 ```
 
 ## Error handling

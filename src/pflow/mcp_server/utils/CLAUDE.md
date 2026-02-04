@@ -10,7 +10,7 @@ Security and convenience layer between MCP services and core pflow. Three module
 
 ## resolver.py - Workflow Resolution
 
-**Handles three input types:**
+**Handles four input types:**
 
 ```python
 resolve_workflow(workflow) -> (workflow_ir | None, error | None, source)
@@ -18,13 +18,16 @@ resolve_workflow(workflow) -> (workflow_ir | None, error | None, source)
 # 1. Dict → Use as IR directly
 workflow = {"nodes": [...]}  # → (ir, None, "direct")
 
-# 2. String → Try as library name
+# 2. String with newline → Raw markdown content → parse
+workflow = "# My Workflow\n## Steps\n..."  # → (ir, None, "content")
+
+# 3. String ending .pflow.md → File path → read and parse
+workflow = "./my-workflow.pflow.md"  # → (ir, None, "file")
+
+# 4. Single-line string → Try as library name, then file path
 workflow = "fix-issue"  # → (ir, None, "library")
 
-# 3. String → Try as file path
-workflow = "./my-workflow.json"  # → (ir, None, "file")
-
-# 4. Not found → Return suggestions
+# 5. Not found → Return suggestions
 workflow = "fx"  # → (None, "Not found: 'fx'\n\nDid you mean:\n  - fix-issue", "")
 ```
 
@@ -176,7 +179,7 @@ All utilities are pure functions with no side effects:
 # Current behavior (NO validation)
 path = Path(workflow)
 if path.exists():
-    workflow_ir = json.loads(path.read_text())  # Reads any accessible file
+    result = parse_markdown(path.read_text())  # Reads any accessible file
 
 # validate_file_path() exists but is never called
 ```

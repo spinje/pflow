@@ -1,6 +1,5 @@
 """Tests for WorkflowExecutor's workflow_name parameter functionality."""
 
-import json
 from unittest.mock import Mock, patch
 
 import pytest
@@ -8,6 +7,7 @@ import pytest
 from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.runtime.workflow_executor import WorkflowExecutor
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 class TestWorkflowNameParameter:
@@ -25,7 +25,12 @@ class TestWorkflowNameParameter:
         workflows_dir.mkdir(parents=True)
 
         manager = WorkflowManager(workflows_dir)
-        manager.save("test-workflow", simple_workflow_ir, "Test workflow for testing")
+        markdown_content = ir_to_markdown(
+            simple_workflow_ir,
+            title="Test Workflow",
+            description="Test workflow for testing",
+        )
+        manager.save("test-workflow", markdown_content)
 
         return manager
 
@@ -42,8 +47,11 @@ class TestWorkflowNameParameter:
             prep_res = node.prep(shared)
 
             # Verify workflow was loaded correctly
-            assert prep_res["workflow_ir"] == simple_workflow_ir
-            assert "test-workflow.json" in prep_res["workflow_path"]
+            loaded_ir = prep_res["workflow_ir"]
+            assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
+            assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
+            assert loaded_ir["nodes"][0]["params"] == simple_workflow_ir["nodes"][0]["params"]
+            assert "test-workflow.pflow.md" in prep_res["workflow_path"]
             assert prep_res["workflow_source"] == "name:test-workflow"
 
     def test_workflow_name_not_found(self):
@@ -58,10 +66,11 @@ class TestWorkflowNameParameter:
     def test_workflow_name_takes_precedence_over_ref(self, workflow_manager, simple_workflow_ir, tmp_path):
         """Test that workflow_name takes precedence over workflow_ref."""
         # Create a different workflow file
+        from tests.shared.markdown_utils import write_workflow_file
+
         other_workflow = {"nodes": [{"id": "other", "type": "echo", "params": {"message": "other"}}], "edges": []}
-        workflow_file = tmp_path / "other.json"
-        with open(workflow_file, "w") as f:
-            json.dump(other_workflow, f)
+        workflow_file = tmp_path / "other.pflow.md"
+        write_workflow_file(other_workflow, workflow_file)
 
         node = WorkflowExecutor()
         node.set_params({
@@ -78,7 +87,7 @@ class TestWorkflowNameParameter:
         node = WorkflowExecutor()
         node.set_params({
             "workflow_name": "test-workflow",
-            "workflow_ref": "some-file.json",
+            "workflow_ref": "some-file.pflow.md",
             "workflow_ir": simple_workflow_ir,
         })
 
@@ -186,8 +195,10 @@ class TestWorkflowNameParameter:
             shared = {}
             prep_res = node.prep(shared)
 
-            # Verify prep results
-            assert prep_res["workflow_ir"] == simple_workflow_ir
+            # Verify prep results (markdown IR adds 'purpose' field from descriptions)
+            loaded_ir = prep_res["workflow_ir"]
+            assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
+            assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
             assert prep_res["child_params"]["test_param"] == "value123"
 
             # Update prep_res to include parent_shared which is needed by exec
@@ -211,5 +222,7 @@ class TestWorkflowNameParameter:
                 # Verify compile was called with correct parameters
                 mock_compile.assert_called_once()
                 call_args = mock_compile.call_args
-                assert call_args[0][0] == simple_workflow_ir  # workflow_ir
+                # Markdown IR includes 'purpose' from required descriptions
+                compiled_ir = call_args[0][0]
+                assert compiled_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
                 assert call_args[1]["initial_params"]["test_param"] == "value123"

@@ -17,7 +17,7 @@ WHEN TO FOLLOW - Any request where you will create/build a pflow workflow:
 • "Create a workflow that does X"
 • "Help me build/make a workflow"
 • "Automate X with pflow"
-• User describes task → you produce .json workflow file
+• User describes task → you produce .pflow.md workflow file
 
 REQUIRED SEQUENCE (no exceptions, no skipping):
 1. workflow_discover first → Check if suitable workflow already exists

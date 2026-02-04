@@ -23,6 +23,6 @@ This directory contains strategic vision and aspirational architecture documents
 Read these for design philosophy context, but **always verify technical claims against current codebase** before implementing features. Key reality checks:
 
 1. **Platform nodes exist**: pflow has 30+ platform nodes (shell, file, git, etc.) - not MCP-only as some vision docs suggest
-2. **CLI syntax**: pflow uses `pflow workflow.json` and `pflow saved-name`, NOT `node >> node >> node`
+2. **CLI syntax**: pflow uses `pflow workflow.pflow.md` and `pflow saved-name`, NOT `node >> node >> node`
 3. **Planner status**: The natural language planner is functional but labeled "legacy" - agents should use CLI primitives
 4. **MCP integration**: MCP is implemented (both client and server), but as one option among several, not the sole extension mechanism

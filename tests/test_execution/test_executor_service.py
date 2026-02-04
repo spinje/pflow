@@ -1,11 +1,19 @@
 """Tests for WorkflowExecutorService, especially parameter sanitization."""
 
-import json
-
 import pytest
+import yaml
 
 from pflow.core.workflow_manager import WorkflowManager
 from pflow.execution.executor_service import WorkflowExecutorService
+from tests.shared.markdown_utils import ir_to_markdown
+
+
+def _read_frontmatter(workflow_file):
+    """Read and parse YAML frontmatter from a .pflow.md file."""
+    content = workflow_file.read_text()
+    parts = content.split("---", 2)
+    assert len(parts) >= 3, f"Expected frontmatter in {workflow_file}"
+    return yaml.safe_load(parts[1])
 
 
 @pytest.fixture
@@ -30,24 +38,28 @@ def executor_service(workflow_manager):
     )
 
 
+# Shared IR dict for tests — a minimal valid workflow
+_TEST_WORKFLOW_IR = {
+    "inputs": {},
+    "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hi"}}],
+    "edges": [],
+    "outputs": {},
+}
+
+
+def _save_test_workflow(workflow_manager, name):
+    """Save a test workflow using the new markdown API."""
+    markdown_content = ir_to_markdown(_TEST_WORKFLOW_IR)
+    workflow_manager.save(name, markdown_content)
+
+
 class TestParameterSanitization:
     """Tests for parameter sanitization in metadata storage."""
 
     def test_sensitive_params_sanitized_in_metadata(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify API keys/tokens are sanitized in last_execution_params."""
-        # Create a workflow in the manager first
         workflow_name = "test-workflow"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         # Execution params with sensitive values
         execution_params = {
@@ -66,12 +78,11 @@ class TestParameterSanitization:
             execution_params=execution_params,
         )
 
-        # Load workflow and verify sanitization
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        # Load workflow frontmatter and verify sanitization
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
 
         # Verify sensitive params are redacted
         assert last_params["api_key"] == "<REDACTED>"
@@ -86,17 +97,7 @@ class TestParameterSanitization:
     def test_nested_sensitive_params_sanitized(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify nested sensitive params are sanitized."""
         workflow_name = "nested-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         # Nested structure with sensitive values
         execution_params = {
@@ -122,11 +123,10 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
 
         # Check nested sanitization
         assert last_params["config"]["api_key"] == "<REDACTED>"
@@ -140,17 +140,7 @@ class TestParameterSanitization:
     def test_no_params_works(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify empty params don't cause errors."""
         workflow_name = "empty-params"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         # Update with empty params
         executor_service._update_workflow_metadata(
@@ -160,26 +150,15 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        assert saved_data["rich_metadata"]["last_execution_params"] == {}
+        assert frontmatter["last_execution_params"] == {}
 
     def test_all_sensitive_params_patterns(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify all 19 sensitive parameter patterns are sanitized."""
         workflow_name = "all-patterns"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         # All sensitive patterns from SENSITIVE_KEYS
         execution_params = {
@@ -213,11 +192,10 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
 
         # All sensitive params should be redacted
         for key in execution_params:
@@ -230,17 +208,7 @@ class TestParameterSanitization:
     def test_case_insensitive_detection(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify sensitive param detection is case-insensitive."""
         workflow_name = "case-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         # Various cases
         execution_params = {
@@ -262,11 +230,10 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
 
         # All variations should be redacted
         assert last_params["API_KEY"] == "<REDACTED>"
@@ -283,24 +250,15 @@ class TestParameterSanitization:
     def test_metadata_not_updated_on_failure(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify metadata is not updated when success=False."""
         workflow_name = "failure-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
-        # Get initial metadata
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            initial_data = json.load(f)
+        # Get initial frontmatter — freshly saved file has no execution fields
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        initial_frontmatter = _read_frontmatter(workflow_file)
 
-        initial_metadata = initial_data.get("rich_metadata", {})
+        # Verify no execution fields exist yet
+        assert "last_execution_params" not in initial_frontmatter
+        assert "last_execution_success" not in initial_frontmatter
 
         # Try to update with failure
         executor_service._update_workflow_metadata(
@@ -309,27 +267,17 @@ class TestParameterSanitization:
             execution_params={"param": "value"},
         )
 
-        # Verify metadata was NOT updated
-        with open(workflow_file) as f:
-            after_data = json.load(f)
-
-        after_metadata = after_data.get("rich_metadata", {})
-        assert after_metadata == initial_metadata
+        # Verify execution metadata was NOT added
+        after_frontmatter = _read_frontmatter(workflow_file)
+        assert "last_execution_params" not in after_frontmatter
+        assert "last_execution_success" not in after_frontmatter
 
     def test_execution_count_increments(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify execution_count increments with each successful run."""
         workflow_name = "count-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
+
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
 
         # First execution
         executor_service._update_workflow_metadata(
@@ -338,10 +286,8 @@ class TestParameterSanitization:
             execution_params={"run": "1"},
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            data1 = json.load(f)
-        assert data1["rich_metadata"]["execution_count"] == 1
+        frontmatter1 = _read_frontmatter(workflow_file)
+        assert frontmatter1["execution_count"] == 1
 
         # Second execution
         executor_service._update_workflow_metadata(
@@ -350,9 +296,8 @@ class TestParameterSanitization:
             execution_params={"run": "2"},
         )
 
-        with open(workflow_file) as f:
-            data2 = json.load(f)
-        assert data2["rich_metadata"]["execution_count"] == 2
+        frontmatter2 = _read_frontmatter(workflow_file)
+        assert frontmatter2["execution_count"] == 2
 
         # Third execution
         executor_service._update_workflow_metadata(
@@ -361,9 +306,8 @@ class TestParameterSanitization:
             execution_params={"run": "3"},
         )
 
-        with open(workflow_file) as f:
-            data3 = json.load(f)
-        assert data3["rich_metadata"]["execution_count"] == 3
+        frontmatter3 = _read_frontmatter(workflow_file)
+        assert frontmatter3["execution_count"] == 3
 
 
 class TestEnvParameterSanitization:
@@ -372,17 +316,7 @@ class TestEnvParameterSanitization:
     def test_env_params_always_redacted_regardless_of_name(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify params from env are always redacted, even with safe names."""
         workflow_name = "env-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         # Simulate execution with params from env
         execution_params = {
@@ -399,11 +333,10 @@ class TestEnvParameterSanitization:
         )
 
         # Load and verify ALL env params are redacted
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
         assert last_params["safe_name"] == "<REDACTED>"  # Redacted despite safe name!
         assert last_params["another_param"] == "<REDACTED>"  # Redacted despite safe name!
         assert last_params["channel"] == "<REDACTED>"  # Redacted despite safe name!
@@ -412,17 +345,7 @@ class TestEnvParameterSanitization:
     def test_non_env_params_with_safe_names_preserved(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify non-env params with safe names are NOT redacted."""
         workflow_name = "non-env-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         execution_params = {
             "region": "us-west-2",  # Safe name, not from env
@@ -437,11 +360,10 @@ class TestEnvParameterSanitization:
             execution_params=execution_params,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
         assert last_params["region"] == "us-west-2"  # NOT redacted
         assert last_params["limit"] == 100  # NOT redacted
         assert last_params["channel"] == "C09"  # NOT redacted
@@ -449,17 +371,7 @@ class TestEnvParameterSanitization:
     def test_pattern_based_sanitization_still_works(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify pattern matching still catches sensitive names."""
         workflow_name = "pattern-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         execution_params = {
             "api_key": "secret123",  # Caught by pattern
@@ -473,28 +385,17 @@ class TestEnvParameterSanitization:
             execution_params=execution_params,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
         assert last_params["api_key"] == "<REDACTED>"  # Pattern match
         assert last_params["safe_param"] == "value"  # Preserved
 
     def test_env_and_pattern_both_redact(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify both env source AND pattern matching cause redaction."""
         workflow_name = "both-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         execution_params = {
             "api_key": "secret123",  # Caught by BOTH pattern AND env
@@ -510,11 +411,10 @@ class TestEnvParameterSanitization:
             execution_params=execution_params,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
         assert last_params["api_key"] == "<REDACTED>"  # Caught by both
         assert last_params["safe_from_env"] == "<REDACTED>"  # Caught by env
         assert last_params["token"] == "<REDACTED>"  # noqa: S105  # Caught by pattern
@@ -523,17 +423,7 @@ class TestEnvParameterSanitization:
     def test_empty_env_param_names_works(self, executor_service, workflow_manager, temp_workflow_dir):
         """Verify empty env_param_names doesn't cause errors."""
         workflow_name = "empty-env-test"
-        workflow_ir = {
-            "inputs": {},
-            "nodes": [{"id": "test", "type": "shell", "command": "echo hi"}],
-            "edges": [],
-            "outputs": {},
-        }
-        workflow_manager.save(
-            workflow_ir=workflow_ir,
-            name=workflow_name,
-            description="Test workflow",
-        )
+        _save_test_workflow(workflow_manager, workflow_name)
 
         execution_params = {
             "param": "value",
@@ -546,9 +436,8 @@ class TestEnvParameterSanitization:
             execution_params=execution_params,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.json"
-        with open(workflow_file) as f:
-            saved_data = json.load(f)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
 
-        last_params = saved_data["rich_metadata"]["last_execution_params"]
+        last_params = frontmatter["last_execution_params"]
         assert last_params["param"] == "value"  # Preserved

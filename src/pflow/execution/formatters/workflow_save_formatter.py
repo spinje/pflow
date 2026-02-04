@@ -8,7 +8,7 @@ Usage:
     >>> from pflow.execution.formatters.workflow_save_formatter import format_save_success
     >>> message = format_save_success(
     ...     name="my-workflow",
-    ...     saved_path="/path/to/workflow.json",
+    ...     saved_path="/path/to/workflow.pflow.md",
     ...     workflow_ir={"inputs": {"param": {"required": True, "type": "string"}}},
     ... )
     >>> print(message)
@@ -46,7 +46,7 @@ def format_save_success(
     Example:
         >>> result = format_save_success(
         ...     name="test-workflow",
-        ...     saved_path="/path/to/workflow.json",
+        ...     saved_path="/path/to/workflow.pflow.md",
         ...     workflow_ir={
         ...         "inputs": {
         ...             "msg": {"required": True, "type": "string"},
