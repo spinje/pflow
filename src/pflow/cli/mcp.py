@@ -597,6 +597,32 @@ def info(tool: str) -> None:
         _format_parameters(tool_info["params"])
         _format_outputs(tool_info["outputs"])
 
+        # Add .pflow.md usage snippet
+        tool_name = tool_info["node_name"]
+        click.echo("\nUsage in .pflow.md:\n")
+        click.echo("    ### step-name")
+        click.echo("")
+        click.echo("    Describe what this step does and why.")
+        click.echo("")
+        click.echo(f"    - type: {tool_name}")
+        params = tool_info.get("params", [])
+        shown = 0
+        for param in params[:3]:
+            key = param.get("key", "")
+            if key:
+                # First param gets a literal, subsequent get template refs
+                ptype = param.get("type", "str").lower()
+                if shown == 0:
+                    placeholder = "value"
+                elif ptype in ("int", "integer", "number"):
+                    placeholder = "0"
+                elif ptype in ("bool", "boolean"):
+                    placeholder = "true"
+                else:
+                    placeholder = "${previous-step.response}"
+                click.echo(f"    - {key}: {placeholder}")
+                shown += 1
+
     except Exception as e:
         click.echo(f"Error: Failed to get tool info: {e}", err=True)
         sys.exit(1)

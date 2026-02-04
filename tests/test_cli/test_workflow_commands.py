@@ -110,8 +110,8 @@ class TestWorkflowListCommand:
             assert result.exit_code == 0
             assert "No workflows saved yet." in result.output
             assert "To save a workflow:" in result.output
-            assert '1. Create one: pflow "your task"' in result.output
-            assert "2. Choose to save when prompted" in result.output
+            assert "1. Create a .pflow.md workflow file" in result.output
+            assert "pflow workflow save" in result.output
 
     def test_list_workflows_with_single_keyword_filter(self) -> None:
         """Test filtering workflows with single keyword."""
@@ -642,7 +642,7 @@ class TestWorkflowCommandIntegration:
 
             assert result.exit_code == 0
             assert "No workflows saved yet" in result.output
-            assert 'pflow "your task"' in result.output
+            assert "Create a .pflow.md workflow file" in result.output
 
             # This guides them to create and save a workflow
             # (The actual workflow creation is tested elsewhere)

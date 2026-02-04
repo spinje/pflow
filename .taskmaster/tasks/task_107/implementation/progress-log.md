@@ -722,3 +722,53 @@ Files modified:
 - `tests/test_cli/test_instructions.py` (1 assertion fix)
 
 Status: Parser fix complete. Phase 5 cli-agent-instructions.md fully unblocked. Still need to check `cli-basic-usage.md`.
+
+## Entry 20: Phase 5 — cli-basic-usage.md check + agent-friendly command output
+
+### cli-basic-usage.md
+
+Checked `src/pflow/cli/resources/cli-basic-usage.md` — no JSON workflow references found. File only references workflow execution by name, `pflow instructions create`, and `registry run/describe/discover`. No changes needed. **Phase 5 complete.**
+
+### Agent-friendly command output (post-Task-107 polish)
+
+Implemented plan from `scratchpads/agent-friendly-command-output/implementation-plan.md` — add `.pflow.md` usage snippets to command outputs so agents know how to use nodes in workflows.
+
+#### Round 1: Initial implementation (5 changes)
+
+1. **`context_builder.py`**: Added `_format_usage_snippet()` with 6 hardcoded rich templates (shell, llm, code, http, claude-code, write-file) + generic fallback for MCP/others. Inserted after outputs in `_format_node_section_enhanced()`. Covers `registry describe`, `registry discover`, MCP `registry_describe`, and the planner.
+2. **`mcp.py`**: Added `.pflow.md` snippet to `pflow mcp info` output.
+3. **`node_output_formatter.py`**: Added template reference examples to `registry run --structure` output.
+4. **`workflow_list_formatter.py`**: Fixed empty case — was referencing gated planner (`pflow "your task"`), now shows `.pflow.md` file creation + save command.
+5. **`registry.py`**: Removed dead `describe` command at line 366 (overridden by `describe_nodes` at line 867).
+
+Fixed 3 test assertions for the workflow list empty case text change.
+
+#### Round 2: Review fixes (6 issues)
+
+Review identified 6 issues. All fixed:
+
+| # | Issue | Fix |
+|---|-------|-----|
+| 1 | `_CODE_BLOCK_PARAMS` dead code | Removed — `_RICH_SNIPPETS` approach is better |
+| 2 | `node_output_formatter.py` misleading `- response: ${step-name.response}` format | Removed entirely — teaches wrong pattern (left side should be consuming param, not source path). Existing "Use these paths" line is sufficient now that `registry describe` shows full snippets. |
+| 3 | LLM snippet `- model: model-name` useless to agents | Removed — agents should use smart default per cli-agent-instructions.md |
+| 4 | Generic MCP snippet: every string param gets `${previous-step.response}` | First param now gets literal `value` (typically a target like channel/path), subsequent get template refs |
+| 5 | `mcp.py` snippet placeholder inconsistency with `context_builder.py` | Updated to match — first param literal, subsequent template refs |
+| 6 | No tests for snippet generation | Added 6 tests in `TestUsageSnippets` class in `test_registry_describe.py` |
+
+### Verification
+
+- `make test`: **3608 passed, 516 skipped, 0 failed**
+- `make check`: **all pass** (ruff, ruff-format, mypy, deptry clean)
+
+Files modified:
+- `src/pflow/planning/context_builder.py` (snippet function + rich templates)
+- `src/pflow/cli/mcp.py` (mcp info snippet)
+- `src/pflow/cli/registry.py` (dead code removal)
+- `src/pflow/execution/formatters/node_output_formatter.py` (added then removed misleading reference)
+- `src/pflow/execution/formatters/workflow_list_formatter.py` (empty case fix)
+- `tests/test_cli/test_registry_describe.py` (6 new snippet tests)
+- `tests/test_cli/test_workflow_commands.py` (2 assertion fixes)
+- `tests/test_execution/formatters/test_workflow_list_formatter.py` (1 assertion fix)
+
+Status: **All Task 107 work complete.** Phase 5 done (cli-agent-instructions.md + cli-basic-usage.md). Agent-friendly command output implemented and reviewed. 3608 passed, 516 skipped, 0 failed.

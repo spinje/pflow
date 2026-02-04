@@ -363,59 +363,6 @@ def _resolve_node_name(node: str, nodes: dict) -> str:
     return node
 
 
-@registry.command(name="describe")
-@click.argument("node")
-@click.option("--json", "output_json", is_flag=True, help="Output as JSON")
-def describe(node: str, output_json: bool) -> None:
-    """Show detailed information about a specific node."""
-    reg = Registry()
-
-    try:
-        nodes = reg.load()
-
-        # Try to resolve the node name
-        resolved_node = _resolve_node_name(node, nodes)
-
-        if resolved_node not in nodes:
-            click.echo(f"Error: Node '{node}' not found", err=True)
-            # Suggest similar
-            similar = [n for n in nodes if node.lower() in n.lower()][:5]
-            _display_node_suggestions(similar)
-            sys.exit(1)
-
-        # Use the resolved name
-        node = resolved_node
-        metadata = nodes[node]
-
-        if output_json:
-            _output_json_describe(node, metadata)
-        else:
-            # Human-readable output
-            interface = metadata.get("interface", {})
-            click.echo(f"Node: {node}")
-            click.echo(f"Type: {_get_node_type(node, metadata)}")
-            click.echo(f"Description: {interface.get('description', 'No description')}")
-
-            # Show interface details
-            click.echo("\nInterface:")
-            _display_interface_section(interface.get("inputs", []), "Inputs")
-            _display_interface_section(interface.get("outputs", []), "Outputs")
-            _display_interface_section(interface.get("params", []), "Parameters")
-
-            # Example usage
-            click.echo("\nExample Usage:")
-            params = interface.get("params", [])
-            if params:
-                param_str = " ".join([f"--{p.get('key', p.get('name', ''))} <value>" for p in params[:2]])
-                click.echo(f"  pflow {node} {param_str}")
-            else:
-                click.echo(f"  pflow {node}")
-
-    except Exception as e:
-        click.echo(f"Error: Failed to describe node: {e}", err=True)
-        sys.exit(1)
-
-
 def _handle_nonexistent_path(scan_path: Path, path: Optional[str], output_json: bool) -> None:
     """Handle case when scan path doesn't exist."""
     error_msg = f"Path does not exist: {scan_path}"

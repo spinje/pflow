@@ -1222,14 +1222,136 @@ def _format_outputs_with_access(node_data: dict, lines: list[str]) -> None:
         lines.append("**Outputs**: none")
 
 
-# REMOVED: Example generation functions - not needed after review
-# These functions were added but then removed as universal examples were deemed unnecessary
-# Keeping as comments for historical context
-#
-# def _get_file_path_example(key_lower: str) -> str:
-# def _get_example_value_for_key(key: str) -> str | None:
-# def _get_config_param_value(param_key: str) -> Any:
-# def _format_usage_example(node_type: str, node_data: dict, lines: list[str]) -> None:
+# Rich usage templates for core node types. Each is a list of indented lines
+# (4-space indent) that form a valid .pflow.md node snippet.
+_RICH_SNIPPETS: dict[str, list[str]] = {
+    "shell": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: shell",
+        "    - stdin: ${previous-step.response}",
+        "",
+        "    ```shell command",
+        "    your-command-here",
+        "    ```",
+    ],
+    "llm": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: llm",
+        "",
+        "    ```markdown prompt",
+        "    Your prompt here.",
+        "",
+        "    Context: ${previous-step.stdout}",
+        "    ```",
+    ],
+    "code": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: code",
+        "    - inputs:",
+        "        data: ${previous-step.result}",
+        "",
+        "    ```python code",
+        "    data: list = []",
+        "    result: list = [item for item in data if item]",
+        "    ```",
+    ],
+    "http": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: http",
+        "    - url: https://api.example.com/endpoint",
+        "    - method: GET",
+    ],
+    "claude-code": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: claude-code",
+        "    - model: claude-sonnet-4-5",
+        "",
+        "    ```markdown prompt",
+        "    Your task description here.",
+        "    ```",
+    ],
+    "write-file": [
+        "    ### step-name",
+        "",
+        "    Describe what this step does and why.",
+        "",
+        "    - type: write-file",
+        "    - file_path: ./output.txt",
+        "    - content: ${previous-step.response}",
+    ],
+}
+
+
+def _format_usage_snippet(node_type: str, node_data: dict, lines: list[str]) -> None:
+    """Append a .pflow.md usage snippet for the node.
+
+    Uses hardcoded rich templates for 6 core node types. Falls back to a
+    generic snippet built from the first 3 interface params for everything
+    else (including MCP nodes).
+
+    Args:
+        node_type: The workflow type string (e.g. "shell", "mcp-slack-SEND")
+        node_data: Node metadata dict with params, inputs, registry_info
+        lines: List to append formatted lines to
+    """
+    lines.append("")
+    lines.append("**Usage in .pflow.md:**")
+    lines.append("")
+
+    if node_type in _RICH_SNIPPETS:
+        lines.extend(_RICH_SNIPPETS[node_type])
+    else:
+        # Generic snippet from interface params
+        snippet_lines = [
+            "    ### step-name",
+            "",
+            "    Describe what this step does and why.",
+            "",
+            f"    - type: {node_type}",
+        ]
+
+        # Collect first 3 params for the example
+        all_params = node_data.get("params", []) or []
+        inputs = node_data.get("inputs", []) or []
+        combined = list(inputs) + list(all_params)
+        shown = 0
+        for param in combined:
+            if shown >= 3:
+                break
+            if isinstance(param, dict):
+                key = param.get("key", "")
+                if not key:
+                    continue
+                # First param gets a literal placeholder, subsequent get template refs
+                ptype = param.get("type", "str").lower()
+                if shown == 0:
+                    # First param is typically a target (channel, path, etc.) — literal
+                    placeholder = "value"
+                elif ptype in ("int", "integer", "number"):
+                    placeholder = "0"
+                elif ptype in ("bool", "boolean"):
+                    placeholder = "true"
+                else:
+                    placeholder = "${previous-step.response}"
+                snippet_lines.append(f"    - {key}: {placeholder}")
+                shown += 1
+
+        lines.extend(snippet_lines)
 
 
 def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
@@ -1261,6 +1383,9 @@ def _format_node_section_enhanced(node_type: str, node_data: dict) -> str:
 
     # Format outputs with access pattern
     _format_outputs_with_access(node_data, lines)
+
+    # Add .pflow.md usage snippet
+    _format_usage_snippet(node_type, node_data, lines)
 
     lines.append("")
     return "\n".join(lines)
