@@ -24,44 +24,46 @@ This adds pflow as an MCP server to your global Cursor config (`~/.cursor/mcp.js
 
 If you prefer to set up manually, you have two options:
 
-### Option 1: MCP server
+<Tabs>
+  <Tab title="MCP server">
+    <Steps>
+      <Step title="Add pflow to your config">
+        **Global config** (all projects): `~/.cursor/mcp.json`
 
-Add pflow to your Cursor MCP config:
+        **Project config** (single project): `.cursor/mcp.json`
 
-**Global config** (all projects): `~/.cursor/mcp.json`
+        ```json
+        {
+          "mcpServers": {
+            "pflow": {
+              "command": "pflow",
+              "args": ["mcp", "serve"]
+            }
+          }
+        }
+        ```
 
-**Project config** (single project): `.cursor/mcp.json`
+        You can also add via Cursor settings: **File** → **Preferences** → **Cursor Settings** → **MCP**.
+      </Step>
+      <Step title="Verify installation">
+        Open Cursor settings (**File** → **Preferences** → **Cursor Settings** → **MCP**) and check that pflow appears in the list of configured servers.
 
-```json
-{
-  "mcpServers": {
-    "pflow": {
-      "command": "pflow",
-      "args": ["mcp", "serve"]
-    }
-  }
-}
-```
+        Or ask Cursor to list pflow workflows:
 
-You can also add via Cursor settings: **File** → **Preferences** → **Cursor Settings** → **MCP**.
+        ```
+        Use pflow to list available workflows
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="CLI access">
+    Since Cursor has terminal access, you can also use pflow via CLI. Add to your project's instructions or tell Cursor:
 
-### Option 2: CLI access
-
-Since Cursor has terminal access, you can also use pflow via CLI. Add to your project's instructions or tell Cursor:
-
-```
-Use pflow for workflow automation. Run `pflow instructions usage` to learn the commands.
-```
-
-## Verify installation
-
-Open Cursor settings (**File** → **Preferences** → **Cursor Settings** → **MCP**) and check that pflow appears in the list of configured servers.
-
-Or ask Cursor to list pflow workflows:
-
-```
-Use pflow to list available workflows
-```
+    ```
+    Use pflow for workflow automation. Run `pflow instructions usage` to learn the commands.
+    ```
+  </Tab>
+</Tabs>
 
 ## Troubleshooting
 

@@ -26,27 +26,30 @@ Claude Code will then run pflow commands directly when it needs to build or exec
 
 You can also add pflow as an MCP server for structured tool access.
 
-Run this command in Claude Code:
+<Steps>
+  <Step title="Add pflow as MCP server">
+    Run this command in Claude Code:
 
-```bash
-claude mcp add pflow -- pflow mcp serve
-```
+    ```bash
+    claude mcp add pflow -- pflow mcp serve
+    ```
 
-Or add manually to your MCP config:
+    Or add manually to your MCP config:
 
-```bash
-claude mcp add pflow --command pflow --args "mcp,serve"
-```
+    ```bash
+    claude mcp add pflow --command pflow --args "mcp,serve"
+    ```
+  </Step>
+  <Step title="Verify installation">
+    Check that pflow is configured:
 
-### Verify installation
+    ```bash
+    claude mcp list
+    ```
 
-Check that pflow is configured:
-
-```bash
-claude mcp list
-```
-
-You should see `pflow` in the list of configured servers.
+    You should see `pflow` in the list of configured servers.
+  </Step>
+</Steps>
 
 ## Which should I use?
 

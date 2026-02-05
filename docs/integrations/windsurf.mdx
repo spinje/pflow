@@ -24,32 +24,32 @@ Windsurf will then run pflow commands directly when it needs to build or execute
 
 You can also add pflow as an MCP server for structured tool access.
 
-### 1. Open your MCP config file
+<Steps>
+  <Step title="Open your MCP config file">
+    The config file is located at:
 
-The config file is located at:
+    ```
+    ~/.codeium/windsurf/mcp_config.json
+    ```
 
-```
-~/.codeium/windsurf/mcp_config.json
-```
-
-Create the file if it doesn't exist.
-
-### 2. Add pflow to your config
-
-```json
-{
-  "mcpServers": {
-    "pflow": {
-      "command": "pflow",
-      "args": ["mcp", "serve"]
+    Create the file if it doesn't exist.
+  </Step>
+  <Step title="Add pflow to your config">
+    ```json
+    {
+      "mcpServers": {
+        "pflow": {
+          "command": "pflow",
+          "args": ["mcp", "serve"]
+        }
+      }
     }
-  }
-}
-```
-
-### 3. Restart Windsurf
-
-Restart Windsurf to load the new MCP server.
+    ```
+  </Step>
+  <Step title="Restart Windsurf">
+    Restart Windsurf to load the new MCP server.
+  </Step>
+</Steps>
 
 ## Verify installation
 
