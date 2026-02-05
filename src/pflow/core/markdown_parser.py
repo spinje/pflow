@@ -575,7 +575,9 @@ def _validate_code_blocks(entity: _Entity) -> None:
                     "    ```shell command\n"
                     "    ```prompt\n"
                     "    ```python code\n"
-                    "    ```yaml batch"
+                    "    ```yaml batch\n\n"
+                    "Tip: To include ``` inside a code block, use 4+ backticks\n"
+                    "or tildes for the outer fence."
                 ),
             )
 

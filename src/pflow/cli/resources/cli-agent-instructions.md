@@ -522,8 +522,17 @@ Description of this output.
 - Execution order = document order. No explicit edges needed.
 - Every entity (`###` heading) must have a prose description.
 - Use `-` for parameters, `*` for documentation bullets.
-- Code blocks use tags: ` ```shell command `, ` ```python code `, ` ```prompt `
-- Batch config: inline `- batch:` for simple cases, ` ```yaml batch ` code block for complex inline arrays
+- Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`
+- Batch config: inline `- batch:` for simple cases, `yaml batch` code block for complex arrays
+
+**Nesting backticks:** Use 4+ backticks when content contains ```:
+
+````prompt
+Return data in this format:
+```json
+{"status": "ok"}
+```
+````
 
 Save this as `my-workflow.pflow.md` anywhere you like. The save command will add metadata later.
 
