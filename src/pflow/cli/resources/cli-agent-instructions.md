@@ -1489,6 +1489,7 @@ Add insights to each item using LLM batch processing.
 - type: llm
 - batch:
     items: ${transform-data.result}
+    max_concurrent: 50
     parallel: true
 
 ```prompt
@@ -1606,7 +1607,7 @@ Current item: `${item}` (or custom `as`). Index: `${__index__}` (0-based). Resul
 | `items` | required | Template reference OR inline array (must resolve to JSON array, not newline-separated string) |
 | `as` | `"item"` | Custom name: `"file"` → `${file}` |
 | `parallel` | `false` | Concurrent execution |
-| `max_concurrent` | `10` | 1-100; use 20-40 for LLM APIs (rate limits) |
+| `max_concurrent` | `10` | 1-100; use 30-50 for LLM APIs (rate limits) |
 | `error_handling` | `"fail_fast"` | `"continue"` = process all despite errors |
 
 **Text lines → JSON array:**
