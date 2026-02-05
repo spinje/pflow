@@ -1,0 +1,96 @@
+---
+title: "Publishing skills"
+description: "Make workflows automatically available to your AI agent"
+icon: "puzzle"
+---
+
+pflow workflows can be published as [Agent Skills](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills). Skills are loaded automatically when your AI agent starts — no need to run `pflow workflow list` or `pflow workflow discover`. Your agent just knows the skill exists and can use it.
+
+When you publish a workflow as a skill, pflow creates a symlink from the tool's skill directory (e.g., `.claude/skills/`) to your saved workflow. Your workflow stays in `~/.pflow/workflows/` as the single source of truth, and updates automatically appear in all linked skills.
+
+## Publishing a workflow
+
+<Steps>
+  <Step title="Save your workflow">
+    Make sure your workflow is saved to the library:
+    ```bash
+    pflow workflow save ./my-workflow.pflow.md --name my-workflow
+    ```
+  </Step>
+  <Step title="Publish as a skill">
+    ```bash
+    pflow skill save my-workflow
+    ```
+    This creates a symlink at `.claude/skills/my-workflow/SKILL.md` and enriches your workflow with usage instructions for your agent.
+  </Step>
+</Steps>
+
+<Note>
+  By default, skills are saved to the **project directory** (`.claude/skills/`). Use `--personal` for skills you want available across all projects.
+</Note>
+
+## Publishing to multiple tools
+
+Publish to different AI tools using flags:
+
+```bash
+# Publish to Cursor
+pflow skill save my-workflow --cursor
+
+# Publish to multiple tools at once
+pflow skill save my-workflow --cursor --copilot
+```
+
+See [supported tools](/reference/cli/skill#supported-tools) for all available targets.
+
+## Project vs personal skills
+
+**Project skills** (default) live in your project directory and are typically committed to version control. Team members who clone the repo get the same skills.
+
+**Personal skills** live in your home directory and are available across all projects:
+
+```bash
+pflow skill save my-workflow --personal
+```
+
+## Managing skills
+
+List all skills:
+
+```bash
+pflow skill list
+```
+
+Remove a skill:
+
+```bash
+pflow skill remove my-workflow
+```
+
+See [pflow skill reference](/reference/cli/skill) for all options including `--cursor`, `--copilot`, and `--personal` flags.
+
+## How enrichment works
+
+When you publish a skill, pflow adds a `## Usage` section to your workflow with instructions for your agent, including how to run it and how to check execution history:
+
+```
+pflow my-workflow param1=<value>
+pflow workflow history my-workflow
+```
+
+This enrichment is **idempotent** — running `skill save` again just updates the usage section. When you update a workflow with `pflow workflow save --force`, pflow automatically re-enriches it.
+
+## Best practices
+
+**Publish stable workflows.** Skills are meant for workflows you want to reuse. Publish once a workflow is working reliably.
+
+**Use project skills for team workflows.** Commit `.claude/skills/` to version control so your team shares the same automation.
+
+**Use personal skills sparingly.** Reserve these for truly universal workflows you want everywhere.
+
+## Related
+
+- [pflow skill reference](/reference/cli/skill) - Full command documentation
+- [Using pflow](/guides/using-pflow) - How agents use pflow
+- [Claude Code integration](/integrations/claude-code) - Tool-specific setup
+- [Cursor integration](/integrations/cursor) - Tool-specific setup

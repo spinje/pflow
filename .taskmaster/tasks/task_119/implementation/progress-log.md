@@ -307,3 +307,31 @@ Added `test_skill_symlink_readable_as_valid_skill` in TestSkillEndToEnd class:
 - 3663 tests pass, 516 skipped
 - All linting/type checks pass
 - Net change: -7 redundant tests, +1 high-value end-to-end test
+
+## Documentation Updates
+
+Added user-facing documentation for Task 119 features.
+
+### New Files Created
+- `docs/reference/cli/skill.mdx` — Full CLI reference for `pflow skill` commands
+- `docs/guides/publishing-skills.mdx` — Guide explaining why and how to publish skills
+
+### Files Modified
+- `docs/reference/cli/index.mdx` — Added `pflow skill` card and Related link
+- `docs/reference/cli/workflow.mdx` — Added `history` command documentation
+- `docs/integrations/claude-code.mdx` — Added "Publishing workflows as skills" section
+- `docs/integrations/cursor.mdx` — Added "Publishing workflows as skills" section
+- `docs/docs.json` — Added `skill` to CLI nav, `publishing-skills` to Guides nav
+
+### Documentation Approach
+- Reference page (`skill.mdx`) has full command details, options, examples
+- Guide page (`publishing-skills.mdx`) explains the value proposition and links to reference
+- Both link to Anthropic's Agent Skills docs instead of re-explaining the concept
+- Integration pages have brief mentions with links to reference
+- Used `<Steps>` component for the 2-step publishing workflow
+- Followed docs/CLAUDE.md guidelines: verified CLI behavior, sentence case, no emoji
+
+### Key Messaging
+- Skills are auto-loaded at agent startup — no need for `pflow workflow list` or `pflow workflow discover`
+- Symlinks keep `~/.pflow/workflows/` as single source of truth
+- Same workflow can be published to multiple tools
