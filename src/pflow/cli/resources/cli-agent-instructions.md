@@ -46,12 +46,12 @@ pflow workflow discover "user's exact request here"
 ```
 
 **Decision tree based on match score:**
-- **≥95% match** → Execute immediately with `pflow workflow-name`, you're done
-- **80-94% match** → Show user: "Found [name] that does this. Should I use it, modify it, or build new?"
-- **70-79% match** → Load workflow, show differences, suggest: "I can modify [name] to do what you need"
-- **<70% match** → Continue to build new workflow
+- **≥90% match** → Execute immediately with `pflow workflow-name`, you're done
+- **70-90% match** → Show user: "Found [name] that does this. Should I use it, modify it, or build new?"
+- **50-70% match** → Read the workflow, show differences, suggest: "I can modify [name] to do what you need"
+- **<50% match** → Continue to build new workflow
 
-**Why this matters**: Building takes 30-60 minutes. Using existing takes 5 seconds.
+**Why this matters**: Building takes 10 minutes. Using existing takes 10 seconds.
 
 ### Supported Service Categories
 

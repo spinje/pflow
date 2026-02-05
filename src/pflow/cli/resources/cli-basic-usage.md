@@ -18,10 +18,10 @@ pflow workflow discover "user's exact request here"
 - Users have likely solved similar problems before
 
 **Decision Tree after running the above command:**
-- **≥95% match** → Use it immediately with `pflow workflow-name`
-- **80-94% match** → Ask user if they want to use, modify, or build new
-- **70-79% match** → Suggest modifying the existing workflow
-- **<70% match** → See "No Match" rules below
+- **≥90% match** → Use it immediately with `pflow workflow-name`
+- **70-90% match** → Ask user if they want to use, modify, or build new
+- **50-70% match** → Suggest modifying the existing workflow
+- **<50% match** → See "No Match" rules below
 
 > Always make sure to make it clear what the differences are between the existing workflow and the user's request if there are any (<94% matches).
 
@@ -133,18 +133,18 @@ Is it a complex task or workflow request?
     │   ↓
     │   Run: pflow workflow discover "user's request"
     │   ↓
-    │   ├─ Match ≥95% → Run: pflow workflow-name params → DONE ✓
+    │   ├─ Match ≥90% → Run: pflow workflow-name params → DONE ✓
     │   │
-    │   ├─ Match 80-94% → Show differences → Ask user:
+    │   ├─ Match 50-90% → Show differences → Ask user:
     │   │                  "Use existing, modify, or build new?"
     │   │                  ↓
     │   │                  User decides → Execute or build
     │   │
-    │   ├─ Match 70-79% → Suggest: "Can modify existing workflow-name"
+    │   ├─ Match 50-70% → Suggest: "Can modify existing workflow-name"
     │   │                  ↓
     │   │                  User approves? → Proceed to build/modify
     │   │
-    │   └─ Match <70% → No good match found
+    │   └─ Match <50% → No good match found
     │       ↓
     │       How many nodes needed?
     │       ├─ 1-2 nodes → Ask: "Execute directly or create workflow?"
