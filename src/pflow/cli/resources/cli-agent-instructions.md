@@ -1627,6 +1627,8 @@ your-command | jq -R -s 'split("\n") | map(select(. != ""))'
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
 Results are always in input order. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs).
 
+**⚠️ Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`.
+
 **Inline array pattern** (parallel independent operations):
 Workflows are linear—this is the only way to run operations concurrently.
 ````markdown
