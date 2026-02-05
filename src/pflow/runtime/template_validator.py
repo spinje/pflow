@@ -577,70 +577,203 @@ class TemplateValidator:
         return "\n".join(lines)
 
     @staticmethod
-    def _get_node_outputs_description(node: dict[str, Any], output_key: str, registry: Registry) -> str:
+    def _get_node_outputs_description(
+        node: dict[str, Any], output_key: str, node_outputs: dict[str, Any], registry: Registry
+    ) -> str:
         """Get error message for missing node output with enhanced suggestions.
+
+        Uses the pre-computed node_outputs dict (same source of truth as validation)
+        to build accurate error messages. For batch nodes, detects whether the
+        attempted key exists in the inner node's interface and provides targeted guidance.
 
         Args:
             node: Node dictionary from workflow IR
             output_key: The output key being accessed
-            registry: Registry instance for metadata lookup
+            node_outputs: Pre-computed node outputs from validation
+            registry: Registry instance for metadata lookup (fallback only)
 
         Returns:
             Error message describing what outputs are available with suggestions
         """
         node_type = node.get("type", "unknown")
-        base_var = node.get("id")
+        node_id = node.get("id")
+        node_id_str = str(node_id) if node_id else "unknown"
 
-        try:
-            nodes_metadata = registry.get_nodes_metadata([node_type])
-            if node_type in nodes_metadata:
-                interface = nodes_metadata[node_type]["interface"]
+        # Build available paths from pre-computed node_outputs (single source of truth)
+        node_prefix = f"{node_id_str}."
+        node_entries = {k[len(node_prefix) :]: v for k, v in node_outputs.items() if k.startswith(node_prefix)}
 
-                # Extract all outputs with nested paths
-                all_paths = []
-                for output in interface["outputs"]:
-                    if isinstance(output, str):
-                        # Simple output without structure
-                        all_paths.append((output, "any"))
-                    else:
-                        # Rich output with potential structure
-                        key = output["key"]
-                        output_type = output.get("type", "any")
-                        structure = output.get("structure", {})
+        if not node_entries:
+            # Fallback to registry if node_outputs has no entries (shouldn't happen)
+            return TemplateValidator._get_node_outputs_from_registry(node, output_key, registry)
 
-                        # Add the base output key
-                        all_paths.append((key, output_type))
+        # Detect batch: check if any entry has is_batch_output flag
+        is_batch = any(entry.get("is_batch_output") for entry in node_entries.values())
 
-                        # Flatten nested structure if it exists
-                        if structure and isinstance(structure, dict):
-                            nested_paths = TemplateValidator._flatten_output_structure(
-                                base_key=key, base_type=output_type, structure=structure
-                            )
-                            # Skip the first entry (base key already added)
-                            all_paths.extend(nested_paths[1:])
+        if is_batch:
+            return TemplateValidator._create_batch_error(node_id_str, node_type, output_key, node_entries)
 
-                if all_paths:
-                    # Type-safe: base_var comes from node.get("id") which may be None
-                    node_id_str = str(base_var) if base_var else "unknown"
-                    return TemplateValidator._format_enhanced_node_error(
-                        node_id=node_id_str,
-                        node_type=node_type,
-                        attempted_key=output_key,
-                        available_paths=all_paths,
-                        base_var=node_id_str,
+        # Non-batch node: build available paths and use standard error formatter
+        all_paths = TemplateValidator._build_paths_from_entries(node_entries)
+
+        if all_paths:
+            return TemplateValidator._format_enhanced_node_error(
+                node_id=node_id_str,
+                node_type=node_type,
+                attempted_key=output_key,
+                available_paths=all_paths,
+                base_var=node_id_str,
+            )
+
+        return f"Node '{node_id_str}' (type: {node_type}) does not produce any outputs"
+
+    @staticmethod
+    def _build_paths_from_entries(node_entries: dict[str, Any]) -> list[tuple[str, str]]:
+        """Build flattened (path, type) list from node_outputs entries.
+
+        Args:
+            node_entries: Dict of output_key -> output_info for a single node
+
+        Returns:
+            List of (path, type) tuples for display
+        """
+        all_paths: list[tuple[str, str]] = []
+        for key, info in node_entries.items():
+            output_type = info.get("type", "any")
+            all_paths.append((key, output_type))
+
+            # Flatten nested structure if present
+            structure = info.get("structure", {})
+            if structure and isinstance(structure, dict):
+                nested = TemplateValidator._flatten_output_structure(
+                    base_key=key, base_type=output_type, structure=structure
+                )
+                # Skip first entry (base key already added)
+                all_paths.extend(nested[1:])
+
+            # Flatten items structure for arrays (e.g., results array)
+            items_info = info.get("items", {})
+            if items_info and isinstance(items_info, dict):
+                item_type = items_info.get("type", "any")
+                item_path = f"{key}[0]"
+                all_paths.append((item_path, item_type))
+
+                items_structure = items_info.get("structure", {})
+                if items_structure and isinstance(items_structure, dict):
+                    nested = TemplateValidator._flatten_output_structure(
+                        base_key="",
+                        base_type="",
+                        structure=items_structure,
+                        _current_path=item_path,
+                        _paths=[],
+                        _depth=0,
                     )
-                else:
-                    return f"Node '{base_var}' (type: {node_type}) does not produce any outputs"
-        except Exception as e:
-            # Registry lookup failed, skip detailed error message
-            logger.debug(f"Failed to get enhanced node metadata for validation: {e}")
+                    all_paths.extend(nested)
 
-        # Fallback if registry lookup failed
-        return f"Node '{base_var}' does not output '{output_key}'"
+        return all_paths
+
+    @staticmethod
+    def _create_batch_error(node_id: str, node_type: str, attempted_key: str, node_entries: dict[str, Any]) -> str:
+        """Create error message for batch node output access.
+
+        Two cases:
+        1. The attempted key exists in the inner node's interface (e.g., llm_usage for LLM nodes)
+           → Show targeted "exists inside results" message with corrected path
+        2. The attempted key doesn't exist at all
+           → Show standard "not found" with actual batch outputs
+
+        Args:
+            node_id: Node ID
+            node_type: Inner node type (e.g., "llm")
+            attempted_key: The output key that was attempted
+            node_entries: Dict of output_key -> output_info for this batch node
+
+        Returns:
+            Error message string
+        """
+        safe_node_id = TemplateValidator._sanitize_for_display(node_id)
+        safe_key = TemplateValidator._sanitize_for_display(attempted_key)
+
+        # Check if the attempted key exists in the inner node's output structure
+        # The results entry has items.structure containing inner outputs
+        results_entry = node_entries.get("results", {})
+        items_info = results_entry.get("items", {})
+        inner_structure = items_info.get("structure", {}) if isinstance(items_info, dict) else {}
+
+        inner_field_exists = attempted_key in inner_structure
+
+        if inner_field_exists:
+            return TemplateValidator._format_batch_inner_field_error(safe_node_id, safe_key, node_entries)
+
+        # Field doesn't exist in inner interface either — show standard batch outputs
+        all_paths = TemplateValidator._build_paths_from_entries(node_entries)
+        return TemplateValidator._format_enhanced_node_error(
+            node_id=safe_node_id,
+            node_type=f"{node_type}, batch",
+            attempted_key=attempted_key,
+            available_paths=all_paths,
+            base_var=safe_node_id,
+        )
+
+    @staticmethod
+    def _format_batch_inner_field_error(node_id: str, attempted_key: str, node_entries: dict[str, Any]) -> str:
+        """Format error for accessing an inner node field on a batch node.
+
+        This is the targeted message shown when an agent writes ${node.llm_usage}
+        but the node has batch processing — the field exists, just nested inside results.
+
+        Args:
+            node_id: Sanitized node ID
+            attempted_key: Sanitized output key that was attempted
+            node_entries: Dict of output_key -> output_info for this batch node
+
+        Returns:
+            Multi-line error message with corrected path
+        """
+        results_path = f"${{{node_id}.results}}"
+        item_path = f"${{{node_id}.results[0].{attempted_key}}}"
+        col_width = max(len(results_path), len(item_path)) + 2
+
+        lines = [
+            f"Node '{node_id}' uses batch processing.",
+            f"'{attempted_key}' is not available at the top level — batch wraps outputs in a 'results' array.",
+            "",
+            f"  {results_path:<{col_width}} → list of all results",
+            f"  {item_path:<{col_width}} → first item's {attempted_key}",
+            "",
+            f"To aggregate across items, pass {results_path} to a code node and iterate.",
+        ]
+
+        # Also show all actual batch outputs for reference
+        lines.append("")
+        lines.append(f"Available top-level outputs from '{node_id}':")
+        for key, info in node_entries.items():
+            safe_key = TemplateValidator._sanitize_for_display(key)
+            safe_type = TemplateValidator._sanitize_for_display(info.get("type", "any"))
+            lines.append(f"  ✓ ${{{node_id}.{safe_key}}} ({safe_type})")
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _get_node_outputs_from_registry(node: dict[str, Any], output_key: str, registry: Registry) -> str:
+        """Fallback when node_outputs has no entries for a node.
+
+        This is a defensive fallback that should not be reached in practice —
+        _extract_node_outputs() runs before error generation and registers
+        outputs for all nodes. Intentionally simple to avoid re-introducing
+        the registry-vs-batch divergence bug.
+        """
+        node_id = node.get("id", "unknown")
+        return f"Node '{node_id}' does not output '{output_key}'"
 
     @staticmethod
     def _create_node_reference_error(
-        base_var: str, parts: list[str], template: str, workflow_ir: dict[str, Any], registry: Registry
+        base_var: str,
+        parts: list[str],
+        template: str,
+        workflow_ir: dict[str, Any],
+        node_outputs: dict[str, Any],
+        registry: Registry,
     ) -> str:
         """Create error for node output references.
 
@@ -649,6 +782,7 @@ class TemplateValidator:
             parts: Template parts split by dot
             template: Full template string
             workflow_ir: Workflow IR
+            node_outputs: Pre-computed node outputs from validation
             registry: Registry instance
 
         Returns:
@@ -663,7 +797,7 @@ class TemplateValidator:
         # Find the node to get better error message
         node = next((n for n in workflow_ir.get("nodes", []) if n.get("id") == base_var), None)
         if node:
-            return TemplateValidator._get_node_outputs_description(node, output_key, registry)
+            return TemplateValidator._get_node_outputs_description(node, output_key, node_outputs, registry)
 
         return f"Node '{base_var}' does not output '{output_key}'"
 
@@ -765,7 +899,9 @@ class TemplateValidator:
         if enable_namespacing and "." in template:
             node_ids = TemplateValidator._get_node_ids(workflow_ir)
             if base_var in node_ids:
-                return TemplateValidator._create_node_reference_error(base_var, parts, template, workflow_ir, registry)
+                return TemplateValidator._create_node_reference_error(
+                    base_var, parts, template, workflow_ir, node_outputs, registry
+                )
 
         # Handle path templates (with dots)
         if "." in template:

@@ -600,9 +600,168 @@ class TestBatchTemplateValidation:
 
         registry = create_mock_registry()
         errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
-        # Should fail because batch node doesn't expose 'response' directly
-        assert len(errors) > 0
-        assert any("response" in e for e in errors)
+
+        # Should fail with batch-specific error message
+        assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
+        error = errors[0]
+
+        # Error should mention batch processing
+        assert "batch processing" in error.lower(), f"Error should mention batch processing: {error}"
+
+        # Error should suggest the corrected path
+        assert "process.results[0].response" in error, f"Error should suggest corrected path: {error}"
+
+        # Error should show actual batch outputs
+        assert "process.results" in error, f"Error should show batch outputs: {error}"
+
+        # Error should NOT show the invalid path with a checkmark (no contradiction)
+        assert "✓ ${process.response}" not in error, f"Error should not show invalid path with checkmark: {error}"
+
+    def test_batch_error_shows_correct_path_for_llm_usage(self):
+        """Accessing ${batch-node.llm_usage} should show corrected path with batch processing message."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "generate",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "${item}"},
+                },
+                {
+                    "id": "cost-calc",
+                    "type": "llm",
+                    "params": {"prompt": "Usage: ${generate.llm_usage}"},
+                },
+            ],
+            "edges": [{"from": "generate", "to": "cost-calc"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+
+        # Should have exactly one error
+        assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
+        error = errors[0]
+
+        # Error should mention batch processing
+        assert "batch processing" in error.lower(), f"Error should mention batch processing: {error}"
+
+        # Error should suggest the corrected path
+        assert "generate.results[0].llm_usage" in error, f"Error should suggest corrected path: {error}"
+
+        # Error should show the top-level batch reference
+        assert "generate.results" in error, f"Error should show top-level batch reference: {error}"
+
+        # Error should NOT show the invalid path with a checkmark (no contradiction)
+        assert "✓ ${generate.llm_usage}" not in error, f"Error should not show invalid path with checkmark: {error}"
+
+    def test_batch_error_for_nonexistent_field(self):
+        """Accessing ${batch-node.foobar} where foobar doesn't exist in inner LLM interface."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "${item}"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Data: ${process.foobar}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "consumer"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+
+        # Should have exactly one error
+        assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
+        error = errors[0]
+
+        # Error should say field does not exist
+        assert "does not output 'foobar'" in error, f"Error should mention field not found: {error}"
+
+        # Error should indicate this is a batch node
+        assert "batch" in error.lower(), f"Error should indicate batch node: {error}"
+
+        # Error should show actual batch outputs
+        assert "process.results" in error, f"Error should show actual batch outputs: {error}"
+
+        # Error should NOT suggest results[0].foobar (since foobar isn't a real inner output)
+        assert "results[0].foobar" not in error, f"Error should not suggest invalid nested path: {error}"
+
+    def test_batch_error_for_nested_inner_path(self):
+        """${batch-node.llm_usage.input_tokens} should still identify llm_usage as inner field."""
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "generate",
+                    "type": "llm",
+                    "batch": {"items": "${items}"},
+                    "params": {"prompt": "${item}"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Tokens: ${generate.llm_usage.input_tokens}"},
+                },
+            ],
+            "edges": [{"from": "generate", "to": "consumer"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+
+        assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
+        error = errors[0]
+
+        # Should still detect batch and identify llm_usage as the inner field
+        assert "batch processing" in error.lower(), f"Error should mention batch processing: {error}"
+        assert "${generate.results[0].llm_usage}" in error, f"Error should suggest corrected path: {error}"
+
+    def test_non_batch_error_message_uses_node_outputs(self):
+        """Regression test: non-batch error messages should still work correctly."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "analyze",
+                    "type": "llm",
+                    "params": {"prompt": "Analyze: ${input_text}"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Data: ${analyze.foobar}"},
+                },
+            ],
+            "edges": [{"from": "analyze", "to": "consumer"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+
+        # Should have errors (missing input_text and invalid foobar)
+        assert len(errors) >= 1, f"Expected at least 1 error, got {len(errors)}: {errors}"
+
+        # Find the error about foobar
+        foobar_errors = [e for e in errors if "foobar" in e]
+        assert len(foobar_errors) == 1, f"Expected exactly 1 foobar error, got {len(foobar_errors)}: {foobar_errors}"
+        error = foobar_errors[0]
+
+        # Error should say field does not exist
+        assert "does not output 'foobar'" in error, f"Error should mention field not found: {error}"
+
+        # Error should show actual LLM outputs with checkmarks
+        assert "✓ ${analyze.response}" in error, f"Error should show actual outputs with checkmarks: {error}"
+
+        # Error should NOT mention batch
+        assert "batch" not in error.lower(), f"Error should not mention batch for non-batch node: {error}"
 
     def test_non_batch_node_unchanged(self):
         """Non-batch nodes should work exactly as before."""
