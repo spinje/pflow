@@ -1915,6 +1915,7 @@ Format: `verb-noun-qualifier`
 | **Forgetting to save workflow** | Step 10 seems optional | Save is REQUIRED for name-based execution |
 | **Hardcoding service names** | Following specific examples | Use category patterns instead |
 | **Building all at once** | Want to show complete solution | Build core path first, test, then add |
+| **Missing `- prompt: ${item.prompt}` on batch LLM** | Batch items already have `prompt:` fields | Batch provides data; node still needs explicit wiring |
 
 ### Key Success Factors
 
