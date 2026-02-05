@@ -2,7 +2,7 @@
 
 ## Metadata
 - **Implementation Date**: 2026-02-05
-- **Final Test Count**: 3663 passed, 516 skipped
+- **Final Test Count**: 3666 passed, 516 skipped
 
 ## Executive Summary
 
@@ -182,6 +182,29 @@ The `skill save` command demonstrates idempotent design:
 - If skill doesn't exist → creates symlink → "Published"
 - If skill exists → just re-enriches → "Updated"
 - No `--force` needed — the operation is always safe
+
+## Documentation
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `docs/reference/cli/skill.mdx` | Full CLI reference for `pflow skill` commands |
+| `docs/guides/publishing-skills.mdx` | Guide explaining why and how to publish skills |
+
+### Modified Files
+| File | Change |
+|------|--------|
+| `docs/reference/cli/index.mdx` | Added `pflow skill` card and Related link |
+| `docs/reference/cli/workflow.mdx` | Added `history` command documentation |
+| `docs/integrations/claude-code.mdx` | Added "Publishing workflows as skills" section |
+| `docs/integrations/cursor.mdx` | Added "Publishing workflows as skills" section |
+| `docs/docs.json` | Added `skill` to CLI nav, `publishing-skills` to Guides nav |
+
+### Documentation Approach
+- Reference page has full command details; guide explains value proposition
+- Both link to [Anthropic's Agent Skills docs](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) instead of re-explaining the concept
+- Key message: skills are auto-loaded at agent startup — no need for explicit discovery commands
+- Used `<Steps>` component for the 2-step publishing workflow
 
 ## Breaking Changes
 
