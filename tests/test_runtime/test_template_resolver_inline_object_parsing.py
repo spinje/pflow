@@ -24,8 +24,15 @@ class TestInlineObjectJsonParsing:
         result = TemplateResolver.resolve_nested({"items": "${source.stdout}"}, context)
         assert result["items"] == [1, 2, {"id": 3}]
 
-    def test_parses_json_primitives(self):
-        """JSON primitives (number, boolean, null, string) are all parsed."""
+    def test_json_primitives_stay_as_strings(self):
+        """JSON primitives (number, boolean, null) are NOT auto-parsed.
+
+        This is intentional: auto-parsing only applies to containers (dict/list).
+        Preserving primitive strings as-is prevents bugs like Discord snowflake IDs
+        ("1458059302022549698") being coerced to integers.
+
+        If you need to parse primitives, do it explicitly in your workflow.
+        """
         context = {
             "num": {"stdout": "42"},
             "bool": {"stdout": "true"},
@@ -41,10 +48,11 @@ class TestInlineObjectJsonParsing:
             },
             context,
         )
-        assert result["num"] == 42
-        assert result["bool"] is True
-        assert result["null"] is None
-        assert result["str"] == "hello"
+        # Primitives stay as strings (intentional)
+        assert result["num"] == "42"
+        assert result["bool"] == "true"
+        assert result["null"] == "null"
+        assert result["str"] == '"hello"'
 
     def test_strips_whitespace_before_parsing(self):
         """Shell output with trailing newlines still parses (real shell behavior)."""

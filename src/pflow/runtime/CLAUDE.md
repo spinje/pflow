@@ -237,7 +237,7 @@ Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
 
 **Key Functions**:
 - `validate_ir_structure()` - Basic IR validation
-- `prepare_inputs()` - Input validation with defaults
+- `prepare_inputs()` - Input validation, defaults, and type coercion (converts CLI values to declared types)
 
 ### 7. Output Resolver (`output_resolver.py`)
 

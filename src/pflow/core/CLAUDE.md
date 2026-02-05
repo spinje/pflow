@@ -28,6 +28,7 @@ src/pflow/core/
 ├── llm_pricing.py           # Centralized LLM pricing and cost calculations
 ├── metrics.py               # Lightweight metrics collection for workflow execution
 ├── output_controller.py     # Central output control for interactive vs non-interactive modes
+├── param_coercion.py        # Parameter type coercion (CLI inputs → declared types)
 ├── security_utils.py        # Sensitive parameter detection and masking
 ├── settings.py              # Settings management with node filtering
 ├── shell_integration.py     # Unix pipe and stdin/stdout handling for CLI integration
