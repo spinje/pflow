@@ -16,61 +16,60 @@ pflow is currently verified to work on macOS. Windows and Linux support is comin
 
 ## Setup
 
-### 1. Open your MCP config file
+<Steps>
+  <Step title="Open your MCP config file">
+    The config file is located at:
 
-The config file is located at:
+    ```
+    ~/Library/Application Support/Claude/claude_desktop_config.json
+    ```
 
-```
-~/Library/Application Support/Claude/claude_desktop_config.json
-```
+    You can also access it through Claude Desktop: **Settings** → **Developer** → **Edit Config**.
+  </Step>
+  <Step title="Add pflow to your config">
+    Add the pflow server to your `mcpServers` object:
 
-You can also access it through Claude Desktop: **Settings** → **Developer** → **Edit Config**.
-
-### 2. Add pflow to your config
-
-Add the pflow server to your `mcpServers` object:
-
-```json
-{
-  "mcpServers": {
-    "pflow": {
-      "command": "pflow",
-      "args": ["mcp", "serve"]
+    ```json
+    {
+      "mcpServers": {
+        "pflow": {
+          "command": "pflow",
+          "args": ["mcp", "serve"]
+        }
+      }
     }
-  }
-}
-```
+    ```
 
-If you have other MCP servers configured, add pflow alongside them:
+    If you have other MCP servers configured, add pflow alongside them:
 
-```json
-{
-  "mcpServers": {
-    "existing-server": {
-      "command": "...",
-      "args": ["..."]
-    },
-    "pflow": {
-      "command": "pflow",
-      "args": ["mcp", "serve"]
+    ```json
+    {
+      "mcpServers": {
+        "existing-server": {
+          "command": "...",
+          "args": ["..."]
+        },
+        "pflow": {
+          "command": "pflow",
+          "args": ["mcp", "serve"]
+        }
+      }
     }
-  }
-}
-```
+    ```
+  </Step>
+  <Step title="Restart Claude Desktop">
+    Completely quit Claude Desktop and restart it. The app needs to restart to load the new MCP server.
+  </Step>
+  <Step title="Verify installation">
+    Start a new conversation and ask Claude to list available pflow workflows:
 
-### 3. Restart Claude Desktop
+    ```
+    Use pflow to list available workflows
+    ```
 
-Completely quit Claude Desktop and restart it. The app needs to restart to load the new MCP server.
-
-### 4. Verify installation
-
-Start a new conversation and ask Claude to list available pflow workflows:
-
-```
-Use pflow to list available workflows
-```
-
-Claude should be able to access pflow's tools and respond with workflow information.
+    Claude should be able to access pflow's tools and respond with workflow information.
+  </Step>
+</Steps>
 
 ## Troubleshooting
 

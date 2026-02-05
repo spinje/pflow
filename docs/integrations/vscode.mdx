@@ -26,29 +26,29 @@ If the button doesn't work, use the web redirect:
 
 ## Manual setup
 
-### 1. Open your MCP config file
+<Steps>
+  <Step title="Open your MCP config file">
+    **User config** (all projects): `~/.vscode/mcp.json`
 
-**User config** (all projects): `~/.vscode/mcp.json`
-
-**Workspace config** (single project): `.vscode/mcp.json`
-
-### 2. Add pflow to your config
-
-```json
-{
-  "mcpServers": {
-    "pflow": {
-      "type": "stdio",
-      "command": "pflow",
-      "args": ["mcp", "serve"]
+    **Workspace config** (single project): `.vscode/mcp.json`
+  </Step>
+  <Step title="Add pflow to your config">
+    ```json
+    {
+      "mcpServers": {
+        "pflow": {
+          "type": "stdio",
+          "command": "pflow",
+          "args": ["mcp", "serve"]
+        }
+      }
     }
-  }
-}
-```
-
-### 3. Reload VS Code
-
-Reload the window or restart VS Code to load the new MCP server.
+    ```
+  </Step>
+  <Step title="Reload VS Code">
+    Reload the window or restart VS Code to load the new MCP server.
+  </Step>
+</Steps>
 
 ## Verify installation
 
