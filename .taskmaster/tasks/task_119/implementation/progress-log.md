@@ -251,6 +251,30 @@ Eliminated repetition between `save` and `remove` commands:
 - Help text always in sync with actual behavior
 - Directory paths derived from config, not hardcoded twice
 
+## CLI Help Text Updates
+
+Updated `pflow --help` to reflect Task 119 changes and hide gated features:
+
+### Added to help
+- `skill` command in Commands section: "Publish workflows as AI agent skills"
+- Updated `workflow` description to mention `history`
+- Skill examples in Examples section
+
+### Hidden from help (gated features - still functional)
+- `--trace-planner`, `--planner-timeout`, `--cache-planner`, `--planner-model` (planner gated)
+- `--auto-repair`, `--no-update` (repair gated)
+- `--save/--no-save` (planner-related)
+- Removed Natural Language example and references
+
+### Fixed formatting
+- Examples section was broken due to Click's text wrapping
+- Changed to compact format: `command    description` on same line
+- Now renders cleanly at any terminal width
+
+### Files modified
+- `src/pflow/cli/main.py` — Help text and hidden options
+- `tests/test_cli/test_main.py` — Updated assertions for new help text
+
 ## Test Review and Consolidation
 
 Reviewed all Task 119 tests to ensure we're testing **important behavior**, not implementation details.
