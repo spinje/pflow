@@ -116,10 +116,15 @@ pflow/
 │   │   ├── mcp.py          # MCP server/tool management commands
 │   │   ├── registry.py     # Registry commands (list/search/describe/scan/run/discover)
 │   │   ├── registry_run.py # Execute a single node from registry with params
+│   │   ├── skills.py       # Skill management commands (list/describe/run/publish)
+│   │   ├── instructions.py # Generate usage instructions for agents
+│   │   ├── logging_config.py # CLI logging configuration
+│   │   ├── read_fields.py  # Field reading utilities for CLI
 │   │   ├── discovery_errors.py # Shared error handling for LLM discovery flows
 │   │   ├── rerun_display.py    # Builds safe rerun commands, masking secrets
 │   │   ├── repair_save_handlers.py # Save repaired workflows (saved/file/planner sources)
 │   │   ├── cli_output.py    # Click-based OutputInterface adapter
+│   │   ├── resources/       # CLI resources (agent instructions)
 │   │   └── commands/        # CLI command groups
 │   │       ├── settings.py  # Settings management (allow/deny, show, reset, check)
 │   │       └── workflow.py  # Manage saved workflows (list/describe)
@@ -133,9 +138,15 @@ pflow/
 │   │   ├── security_utils.py    # Sensitive parameter detection and masking
 │   │   ├── settings.py      # PflowSettings manager with allow/deny filters
 │   │   ├── shell_integration.py # Robust stdin handling (text/binary/large)
+│   │   ├── skill_service.py # Skill discovery and management service
+│   │   ├── smart_filter.py  # Smart filtering for registry/workflow search
 │   │   ├── suggestion_utils.py  # "Did you mean" suggestions for workflow/node names
 │   │   ├── user_errors.py   # User-friendly CLI error types and formatting
 │   │   ├── validation_utils.py # Parameter name validation helpers
+│   │   ├── execution_cache.py # Execution caching for workflow runs
+│   │   ├── json_utils.py    # JSON parsing and serialization utilities
+│   │   ├── param_coercion.py # Parameter type coercion utilities
+│   │   ├── workflow_status.py # Workflow status tracking
 │   │   ├── markdown_parser.py  # Markdown workflow parser (.pflow.md → IR dict)
 │   │   ├── workflow_data_flow.py # Data-flow validation and execution order
 │   │   ├── workflow_manager.py   # Saved workflow storage and metadata
@@ -176,6 +187,7 @@ pflow/
 │   │   ├── http/            # HTTP request node
 │   │   ├── llm/             # General-purpose LLM node
 │   │   ├── mcp/             # MCP tool bridge node
+│   │   ├── python/          # Python code execution node
 │   │   ├── shell/           # Shell command execution node
 │   │   └── test/            # Internal test/demo nodes
 │   ├── planning/            # Natural language planner system (may be deprecated soon)
@@ -185,6 +197,8 @@ pflow/
 │   │   └── scanner.py       # Discover nodes from modules and folders
 │   └── runtime/             # Runtime compilation, validation, and tracing
 │       ├── compiler.py          # Compile IR to PocketFlow Flow/Nodes
+│       ├── batch_node.py        # Batch processing node wrapper
+│       ├── error_context.py     # Error context utilities for debugging
 │       ├── instrumented_wrapper.py # Instrument nodes for metrics/tracing
 │       ├── namespaced_store.py  # Namespaced shared store with collision safety
 │       ├── namespaced_wrapper.py # Namespacing wrapper for nodes
@@ -192,6 +206,7 @@ pflow/
 │       ├── output_resolver.py   # Resolve output routing and keys
 │       ├── template_resolver.py # Resolve ${var} with inputs/shared store
 │       ├── template_validator.py # Validate template paths using node interfaces
+│       ├── type_checker.py      # Runtime type checking utilities
 │       ├── workflow_executor.py # Workflow execution orchestration
 │       ├── workflow_trace.py    # Structured execution trace and metrics
 │       └── workflow_validator.py # Runtime validation used by compiler/executor
