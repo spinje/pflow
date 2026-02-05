@@ -48,12 +48,14 @@ def create_requirements_mock(is_clear=True, steps=None, capabilities=None):
 def create_planning_mock(status="FEASIBLE", node_chain="node1 >> node2"):
     """Helper to create PlanningNode mock response."""
     return Mock(
-        text=lambda: f"""## Execution Plan
+        text=lambda: (
+            f"""## Execution Plan
 
 Based on requirements, creating workflow.
 
 **Status**: {status}
 **Node Chain**: {node_chain}"""
+        )
     )
 
 
@@ -811,12 +813,14 @@ Creating a simple workflow that will be validated with retries.
                 ),
                 # 5. Planning (NEW)
                 Mock(
-                    text=lambda: """## Execution Plan
+                    text=lambda: (
+                        """## Execution Plan
 
 Creating workflow to read file.
 
 **Status**: FEASIBLE
 **Node Chain**: read-file"""
+                    )
                 ),
                 # 6. Generation - only 1 needed now!
                 Mock(
