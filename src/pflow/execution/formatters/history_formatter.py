@@ -241,3 +241,67 @@ def _format_parameters(params: dict[str, Any], max_length: int = 100) -> str:
         result = result[: max_length - 3] + "..."
 
     return result
+
+
+def format_workflow_history(name: str, metadata: dict[str, Any]) -> str:
+    """Format complete execution history for workflow history command.
+
+    Displays focused execution-related data: run count, last run timestamp,
+    status, and last used inputs. Does not include workflow description
+    or interface specs — that's what 'describe' is for.
+
+    Args:
+        name: Workflow name
+        metadata: Workflow metadata dict (flat structure, execution fields at top level)
+
+    Returns:
+        Formatted history string, or "no history" message if never executed
+
+    Example:
+        >>> metadata = {
+        ...     "execution_count": 5,
+        ...     "last_execution_timestamp": "2026-02-05T02:22:06.123456",
+        ...     "last_execution_success": True,
+        ...     "last_execution_params": {"slack_channel": "C09ABC123", "version": "1.2.0"}
+        ... }
+        >>> print(format_workflow_history("release-announcements", metadata))
+        Execution History: release-announcements
+        <BLANKLINE>
+        Runs: 5
+        Last run: 2026-02-05 02:22:06
+        Status: Success
+        <BLANKLINE>
+        Last used inputs:
+          slack_channel: C09ABC123
+          version: 1.2.0
+    """
+    execution_count = metadata.get("execution_count", 0) if metadata else 0
+
+    if execution_count == 0:
+        return f"No execution history for '{name}'."
+
+    lines = [f"Execution History: {name}", ""]
+
+    # Run count
+    lines.append(f"Runs: {execution_count}")
+
+    # Last run timestamp
+    timestamp = metadata.get("last_execution_timestamp")
+    if timestamp:
+        formatted_time = format_timestamp(timestamp, mode="full")
+        lines.append(f"Last run: {formatted_time}")
+
+    # Status
+    success = metadata.get("last_execution_success", True)
+    status_text = "Success" if success else "Failed"
+    lines.append(f"Status: {status_text}")
+
+    # Last used inputs (displayed as "inputs" not "parameters")
+    last_params = metadata.get("last_execution_params", {})
+    if last_params:
+        lines.append("")
+        lines.append("Last used inputs:")
+        for key, value in last_params.items():
+            lines.append(f"  {key}: {value}")
+
+    return "\n".join(lines)

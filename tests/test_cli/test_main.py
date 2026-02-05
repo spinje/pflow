@@ -16,13 +16,14 @@ def test_main_command_help():
     assert result.exit_code == 0
     assert "pflow - Plan Once, Run Forever" in result.output
     assert "Natural language to deterministic workflows" in result.output
-    # Updated help text assertions for Task 22 changes
-    assert "pflow workflow.pflow.md" in result.output  # File workflow example
-    assert "pflow my-workflow param=value" in result.output  # Named workflow example
-    assert "Natural Language - use quotes for commands with spaces" in result.output
-    assert "From stdin - pipe from other commands" in result.output
-    assert "Run workflow from file (no flag needed!)" in result.output  # New file handling
-    assert "Workflows can be specified by name, file path, or natural language" in result.output
+    # Updated help text assertions for Task 119 changes
+    assert "pflow my-workflow input=data.txt" in result.output  # Named workflow example
+    assert "Run workflow from file" in result.output
+    assert "Pipe data to workflow" in result.output
+    assert "Workflows can be specified by name or file path" in result.output
+    # Task 119: skill command should be visible
+    assert "skill" in result.output
+    assert "Publish as AI skill" in result.output
 
 
 # REMOVED: Tests for old pre-planner "workflow collection" behavior

@@ -349,7 +349,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - ✅ Task 115: Automatic Stdin Routing for Unix-First Piping
 - ✅ Task 104: Python Code Node
 - ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
-
+- ✅ Task 119: Publish Workflows as Claude Code Skills
 
 ### Planned Features (in order of priority)
 

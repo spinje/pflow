@@ -16,6 +16,7 @@ The `pflow workflow` command group manages saved workflows in the global library
 |---------|-------------|
 | `list` | List all saved workflows |
 | `describe` | Show workflow interface details |
+| `history` | Show execution history and last used inputs |
 | `discover` | Find workflows using natural language |
 | `save` | Save a workflow file to the library |
 
@@ -105,6 +106,45 @@ Example usage:
 
 <Note>
   If the workflow is not found, pflow suggests similar workflow names.
+</Note>
+
+## pflow workflow history
+
+Show execution history and last used inputs for a workflow.
+
+```bash
+pflow workflow history <NAME>
+```
+
+**Arguments:**
+- `NAME` - Workflow name (required)
+
+**Example:**
+
+```bash
+pflow workflow history release-announcements
+```
+
+**Output:**
+
+```
+Execution History: release-announcements
+
+Runs: 10
+Last run: 2026-02-04 23:44:38
+Status: Success
+
+Last used inputs:
+  version: 0.5.0
+  changelog_path: /Users/you/project/CHANGELOG.md
+  slack_channel: releases
+  discord_channel_id: 1234
+```
+
+This is useful for finding previously used input values like channel IDs, API endpoints, or other parameters that are often reused.
+
+<Note>
+  If the workflow has never been executed, pflow shows "No execution history recorded."
 </Note>
 
 ## pflow workflow discover

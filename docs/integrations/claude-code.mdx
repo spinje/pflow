@@ -55,3 +55,21 @@ You should see `pflow` in the list of configured servers.
 **MCP server** is useful if you want Claude Code to have structured tools for workflow operations, or if you're using pflow with other MCP servers.
 
 Both approaches give Claude Code the same capabilities - discovering workflows, running them, and building new ones.
+
+## Publishing workflows as skills
+
+You can publish saved workflows as Claude Code skills, making them discoverable without explicit instructions:
+
+```bash
+pflow skill save my-workflow
+```
+
+This creates a symlink in `.claude/skills/my-workflow/SKILL.md` pointing to your workflow. Claude Code automatically discovers skills in this directory.
+
+For personal skills available across all projects:
+
+```bash
+pflow skill save my-workflow --personal
+```
+
+See [pflow skill](/reference/cli/skill) for full documentation.

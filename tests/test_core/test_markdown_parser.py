@@ -546,6 +546,79 @@ class TestYAMLParamParsing:
         assert "FOO=bar" in node["params"]["env_vars"]
         assert "BAZ=qux" in node["params"]["env_vars"]
 
+    def test_yaml_block_scalar_in_code_block(self) -> None:
+        content = _md("""\
+            # Test
+
+            Block scalars in yaml code blocks.
+
+            ## Steps
+
+            ### notify
+
+            Send a notification.
+
+            - type: mcp-slack-SEND_MESSAGE
+            - channel: general
+
+            ```yaml data
+            channel: general
+            text: |
+              Deployment complete for my-app
+
+              Changes:
+              - Fixed login bug
+              - Added search
+
+              Status: Success
+            metadata:
+              source: ci
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        data = node["params"]["data"]
+        assert data["channel"] == "general"
+        assert "Deployment complete" in data["text"]
+        assert "Fixed login bug" in data["text"]
+        assert "Status: Success" in data["text"]
+        assert data["metadata"] == {"source": "ci"}
+
+    def test_yaml_block_scalar_in_batch_code_block(self) -> None:
+        content = _md("""\
+            # Test
+
+            Block scalars in batch items.
+
+            ## Steps
+
+            ### process
+
+            Process items.
+
+            - type: llm
+            - prompt: ${item.prompt}
+
+            ```yaml batch
+            items:
+              - prompt: |
+                  Summarize this data in 2 sentences.
+                  Focus on key findings.
+
+                  Data: some-data
+              - prompt: "Extract action items"
+            parallel: true
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        batch = node["batch"]
+        assert batch["parallel"] is True
+        assert len(batch["items"]) == 2
+        assert "Summarize this data" in batch["items"][0]["prompt"]
+        assert "Focus on key findings" in batch["items"][0]["prompt"]
+        assert batch["items"][1]["prompt"] == "Extract action items"
+
 
 # ===========================================================================
 # 5. Code block parsing

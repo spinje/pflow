@@ -1,0 +1,196 @@
+---
+title: "pflow skill"
+description: "Publish workflows as AI agent skills"
+icon: "wand-magic-sparkles"
+---
+
+The `pflow skill` command group publishes saved workflows as [Agent Skills](https://docs.anthropic.com/en/docs/agents-and-tools/agent-skills) that AI coding tools can discover and use.
+
+pflow creates symlinks from tool skill directories to your saved workflows, keeping `~/.pflow/workflows/` as the single source of truth.
+
+## Supported tools
+
+| Tool | Project directory | Personal directory |
+|------|-------------------|-------------------|
+| Claude Code (default) | `.claude/skills/` | `~/.claude/skills/` |
+| Cursor | `.cursor/skills/` | `~/.cursor/skills/` |
+| Codex | `.agents/skills/` | `~/.agents/skills/` |
+| Copilot | `.github/skills/` | `~/.copilot/skills/` |
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `save` | Publish a workflow as a skill |
+| `list` | List all pflow-managed skills |
+| `remove` | Remove a skill |
+
+## pflow skill save
+
+Publish a saved workflow as a skill for AI coding tools.
+
+```bash
+pflow skill save <WORKFLOW_NAME> [OPTIONS]
+```
+
+**Arguments:**
+- `WORKFLOW_NAME` - Name of a saved workflow (required)
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--personal` | Save to personal directory instead of project |
+| `--cursor` | Save to Cursor |
+| `--codex` | Save to Codex |
+| `--copilot` | Save to Copilot |
+
+By default, saves to Claude Code. Use multiple flags to save to multiple tools at once.
+
+**Examples:**
+
+```bash
+# Publish to Claude Code (default)
+pflow skill save pr-analyzer
+
+# Publish to Cursor
+pflow skill save pr-analyzer --cursor
+
+# Publish to multiple tools
+pflow skill save pr-analyzer --cursor --copilot
+
+# Publish to personal directory (cross-project)
+pflow skill save pr-analyzer --personal
+```
+
+**Output:**
+
+```
+Published 'pr-analyzer' to Claude Code (.claude/skills/)
+  Symlink: /path/to/project/.claude/skills/pr-analyzer/SKILL.md
+  Source:  /Users/you/.pflow/workflows/pr-analyzer.pflow.md
+```
+
+Running `save` again on an existing skill updates the enrichment (idempotent):
+
+```
+Updated 'pr-analyzer' in Claude Code (.claude/skills/)
+  Symlink: /path/to/project/.claude/skills/pr-analyzer/SKILL.md
+  Source:  /Users/you/.pflow/workflows/pr-analyzer.pflow.md
+```
+
+<Accordion title="What happens during save">
+  When you run `pflow skill save`, two things happen:
+
+  1. **Workflow enrichment** - pflow adds a `## Usage` section to your workflow file with instructions for AI agents, and adds `name` and `description` fields to the frontmatter.
+
+  2. **Symlink creation** - pflow creates a `SKILL.md` symlink in the tool's skill directory pointing to your workflow file.
+
+  The enrichment is idempotent - running save multiple times just updates the `## Usage` section.
+</Accordion>
+
+## pflow skill list
+
+List all pflow-managed skills across all tools.
+
+```bash
+pflow skill list
+```
+
+**Output:**
+
+```
+pflow skills:
+
+  pr-analyzer
+    → Claude Code (project)
+    → Cursor (project)
+
+  data-processor
+    → Claude Code (personal)
+```
+
+If a skill's source workflow was deleted, the list shows it as a broken link with fix instructions:
+
+```
+pflow skills:
+
+  old-workflow
+    → Claude Code (project) [broken link]
+
+Broken link: the source workflow 'old-workflow' was deleted.
+  To restore: pflow workflow save <file> --name old-workflow --force
+  To remove:  pflow skill remove old-workflow
+```
+
+## pflow skill remove
+
+Remove a workflow's skill from tool directories.
+
+```bash
+pflow skill remove <WORKFLOW_NAME> [OPTIONS]
+```
+
+**Arguments:**
+- `WORKFLOW_NAME` - Name of the skill to remove (required)
+
+**Options:**
+
+| Option | Description |
+|--------|-------------|
+| `--personal` | Remove from personal directory instead of project |
+| `--cursor` | Remove from Cursor |
+| `--codex` | Remove from Codex |
+| `--copilot` | Remove from Copilot |
+
+By default, removes from Claude Code. Use multiple flags to remove from multiple tools.
+
+**Examples:**
+
+```bash
+# Remove from Claude Code (default)
+pflow skill remove pr-analyzer
+
+# Remove from Cursor
+pflow skill remove pr-analyzer --cursor
+
+# Remove from multiple tools
+pflow skill remove pr-analyzer --cursor --copilot
+
+# Remove from personal directory
+pflow skill remove pr-analyzer --personal
+```
+
+**Output:**
+
+```
+Removed skill 'pr-analyzer' from Claude Code (.claude/skills/)
+```
+
+<Note>
+  Removing a skill only deletes the symlink. The saved workflow in `~/.pflow/workflows/` is unchanged, including any enrichment added during `skill save`.
+</Note>
+
+## Workflow requirements
+
+Before publishing a workflow as a skill, you must save it to the global library:
+
+```bash
+# First, save the workflow
+pflow workflow save ./my-workflow.pflow.md --name my-workflow
+
+# Then publish as a skill
+pflow skill save my-workflow
+```
+
+## Project vs personal skills
+
+**Project skills** (default) are stored in the current project directory and are typically version-controlled with your project. Use these for project-specific workflows.
+
+**Personal skills** (`--personal`) are stored in your home directory and are available across all projects. Use these for general-purpose workflows you want everywhere.
+
+## Related
+
+- [Workflow commands](/reference/cli/workflow) - Save and manage workflows
+- [Claude Code integration](/integrations/claude-code) - Set up pflow with Claude Code
+- [Cursor integration](/integrations/cursor) - Set up pflow with Cursor

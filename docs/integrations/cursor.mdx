@@ -74,3 +74,21 @@ Use pflow to list available workflows
   2. Check your MCP config JSON syntax is valid
   3. Restart Cursor
 </Accordion>
+
+## Publishing workflows as skills
+
+You can publish saved workflows as Cursor skills:
+
+```bash
+pflow skill save my-workflow --cursor
+```
+
+This creates a symlink in `.cursor/skills/my-workflow/SKILL.md` pointing to your workflow.
+
+For personal skills available across all projects:
+
+```bash
+pflow skill save my-workflow --cursor --personal
+```
+
+See [pflow skill](/reference/cli/skill) for full documentation.

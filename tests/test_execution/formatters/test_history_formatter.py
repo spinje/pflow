@@ -9,6 +9,7 @@ from pflow.execution.formatters.history_formatter import (
     _format_relative_time,
     format_execution_history,
     format_timestamp,
+    format_workflow_history,
 )
 
 
@@ -322,3 +323,40 @@ class TestIntegrationWithFormatters:
         metadata = {"description": "Test workflow", "ir": {"inputs": {}, "outputs": {}}}
         result = format_workflow_interface("test-workflow", metadata)
         assert "Execution History:" not in result
+
+
+class TestFormatWorkflowHistory:
+    """Tests for format_workflow_history function (workflow history command)."""
+
+    def test_formats_history_with_inputs(self):
+        """Test formats complete history including last used inputs."""
+        metadata = {
+            "execution_count": 5,
+            "last_execution_timestamp": "2026-02-05T02:22:06.123456",
+            "last_execution_success": True,
+            "last_execution_params": {
+                "slack_channel": "C09ABC123",
+                "version": "1.2.0",
+            },
+        }
+
+        result = format_workflow_history("release-announcements", metadata)
+
+        # Core data agent needs: workflow name, run count, timestamp, status, inputs
+        assert "Execution History: release-announcements" in result
+        assert "Runs: 5" in result
+        assert "Last run: 2026-02-05 02:22:06" in result
+        assert "Status: Success" in result
+        assert "Last used inputs:" in result
+        assert "slack_channel: C09ABC123" in result
+        assert "version: 1.2.0" in result
+
+    def test_no_history_message_when_never_executed(self):
+        """Test returns clear message when workflow has never been executed."""
+        # This is the key edge case - agent needs to know there's no history
+        result = format_workflow_history("new-workflow", {"execution_count": 0})
+        assert result == "No execution history for 'new-workflow'."
+
+        # Also handles None/empty metadata gracefully
+        assert format_workflow_history("empty", {}) == "No execution history for 'empty'."
+        assert format_workflow_history("none", None) == "No execution history for 'none'."

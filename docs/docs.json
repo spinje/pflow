@@ -32,6 +32,7 @@
             "group": "Guides",
             "pages": [
               "guides/using-pflow",
+              "guides/publishing-skills",
               "guides/adding-mcp-servers",
               "guides/debugging"
             ]
@@ -58,6 +59,7 @@
             "pages": [
               "reference/cli/index",
               "reference/cli/workflow",
+              "reference/cli/skill",
               "reference/cli/registry",
               "reference/cli/mcp",
               "reference/cli/settings"

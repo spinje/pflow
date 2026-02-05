@@ -101,6 +101,18 @@ def cli_main() -> None:
         finally:
             sys.argv = original_argv
 
+    elif first_arg == "skill":
+        # Route to Skill group (Task 119)
+        from .skills import skill
+
+        original_argv = sys.argv[:]
+        try:
+            skill_index = sys.argv.index("skill")
+            sys.argv = [sys.argv[0], *sys.argv[skill_index + 1 :]]
+            skill()
+        finally:
+            sys.argv = original_argv
+
     else:
         # Run the workflow command (default behavior)
         workflow_command()

@@ -1157,6 +1157,9 @@ Templates work in any param value — inline `- key:` or code blocks:
 
 ```yaml body
 query: ${search_query}
+description: |
+  Search across all active items
+  filtered by tag and source.
 filters:
   status: active
   tags:
@@ -1168,7 +1171,7 @@ filters:
 ```
 ````
 
-**Guideline**: Inline `- key: value` for flat params and simple nesting. `yaml param_name` code block for deep nesting or batch config. Both produce identical results.
+**Guideline**: Inline `- key: value` for flat params and simple nesting. `yaml param_name` code block for deep nesting, multiline values (`|`), or batch config. Both produce identical results.
 
 **In shell commands** — pflow variables resolve before the shell runs. Use a code block for multi-line or complex commands:
 
@@ -1644,7 +1647,11 @@ Run completely different operations in parallel.
 
 ```yaml batch
 items:
-  - prompt: "Summarize in 2 sentences: ${data}"
+  - prompt: |
+      Summarize the following data in exactly 2 sentences.
+      Focus on key findings and actionable insights.
+
+      Data: ${data}
   - prompt: "Extract action items from: ${data}"
   - prompt: "Translate to Spanish: ${other-data}"
 parallel: true

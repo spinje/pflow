@@ -87,7 +87,8 @@ class TestPlanningNode:
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
             mock_model.prompt.return_value = Mock(
-                text=lambda: """
+                text=lambda: (
+                    """
                 ## Plan
                 Cannot fulfill this request with available nodes.
 
@@ -96,6 +97,7 @@ class TestPlanningNode:
                 **Missing Capabilities**: kubernetes_api, monitoring_integration
                 **Node Chain**: None
             """
+                )
             )
             mock_llm.return_value = mock_model
 
@@ -135,7 +137,8 @@ class TestPlanningNode:
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
             mock_model.prompt.return_value = Mock(
-                text=lambda: """
+                text=lambda: (
+                    """
                 ## Plan
                 Can partially fulfill the request.
 
@@ -144,6 +147,7 @@ class TestPlanningNode:
                 **Missing Capabilities**: slack_integration
                 **Node Chain**: github-list-issues >> llm >> write-file
             """
+                )
             )
             mock_llm.return_value = mock_model
 
@@ -176,7 +180,8 @@ class TestPlanningNode:
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
             mock_model.prompt.return_value = Mock(
-                text=lambda: """
+                text=lambda: (
+                    """
                 ## Plan
                 Perfect! I can create this workflow.
 
@@ -184,6 +189,7 @@ class TestPlanningNode:
                 **Status**: FEASIBLE
                 **Node Chain**: github-list-issues >> llm >> write-file
             """
+                )
             )
             mock_llm.return_value = mock_model
 
@@ -215,11 +221,13 @@ class TestPlanningNode:
         with patch("llm.get_model") as mock_llm:
             mock_model = Mock()
             mock_model.prompt.return_value = Mock(
-                text=lambda: """
+                text=lambda: (
+                    """
                 ### Feasibility Assessment
                 **Status**: FEASIBLE
                 **Node Chain**: read-file >> llm
             """
+                )
             )
             mock_llm.return_value = mock_model
 

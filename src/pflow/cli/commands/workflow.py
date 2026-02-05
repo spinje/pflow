@@ -101,6 +101,33 @@ def describe_workflow(name: str) -> None:
     click.echo(formatted)
 
 
+@workflow.command(name="history")
+@click.argument("workflow_name")
+def workflow_history(workflow_name: str) -> None:
+    """Show execution history and last used inputs.
+
+    Useful for finding previously used input values like channel IDs,
+    API endpoints, or other parameters that are often reused.
+
+    Example:
+        pflow workflow history release-announcements
+    """
+    wm = WorkflowManager()
+
+    # Check if workflow exists
+    if not wm.exists(workflow_name):
+        _handle_workflow_not_found(workflow_name, wm)
+
+    # Load workflow metadata
+    metadata = wm.load(workflow_name)
+
+    # Format using shared formatter
+    from pflow.execution.formatters.history_formatter import format_workflow_history
+
+    formatted = format_workflow_history(workflow_name, metadata)
+    click.echo(formatted)
+
+
 def _handle_discovery_error(exception: Exception) -> None:
     """Handle errors during workflow discovery with user-friendly messages.
 

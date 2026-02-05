@@ -75,7 +75,7 @@ class WorkflowManager:
         import re
 
         # Reserved names that could conflict with system functionality
-        RESERVED_NAMES = {"null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp"}
+        RESERVED_NAMES = {"null", "undefined", "none", "test", "settings", "registry", "workflow", "mcp", "skill"}
 
         if not name:
             raise WorkflowValidationError("Workflow name cannot be empty")
@@ -264,7 +264,7 @@ class WorkflowManager:
             # Build flat metadata structure from frontmatter
             fm = result.metadata or {}
             loaded: dict[str, Any] = {
-                "name": name,
+                "name": fm.get("name", name),
                 "description": result.description or "",
                 "ir": result.ir,
                 "created_at": fm.get("created_at"),
@@ -333,7 +333,7 @@ class WorkflowManager:
                 fm = result.metadata or {}
 
                 workflow_meta: dict[str, Any] = {
-                    "name": name,
+                    "name": fm.get("name", name),
                     "description": result.description or "",
                     "ir": result.ir,
                     "created_at": fm.get("created_at"),

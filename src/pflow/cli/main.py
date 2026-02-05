@@ -3803,22 +3803,29 @@ def _validate_and_join_workflow_input(workflow: tuple[str, ...]) -> str:
     is_flag=True,
     help="Disable workflow execution trace saving (enabled by default)",
 )
-@click.option("--trace-planner", is_flag=True, help="Save planner execution trace to file")
-@click.option("--planner-timeout", type=int, default=60, help="Timeout for planner execution (seconds)")
-@click.option("--save/--no-save", default=True, help="Save generated workflow (default: save)")
+# Planner options (gated - Task 107: pending markdown format prompt rewrite)
+@click.option("--trace-planner", is_flag=True, hidden=True, help="Save planner execution trace to file")
+@click.option("--planner-timeout", type=int, default=60, hidden=True, help="Timeout for planner execution (seconds)")
+@click.option("--save/--no-save", default=True, hidden=True, help="Save generated workflow (default: save)")
 @click.option(
     "--cache-planner",
     is_flag=True,
+    hidden=True,
     help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
 )
 @click.option(
     "--planner-model",
     default=None,  # Will auto-detect based on available API keys
+    hidden=True,
     help="LLM model for planning (default: auto-detect). Supports Anthropic, OpenAI, Gemini, etc.",
 )
-@click.option("--auto-repair", is_flag=True, help="Enable automatic workflow repair on failure")
+# Repair options (gated - Task 107: pending markdown format migration)
+@click.option("--auto-repair", is_flag=True, hidden=True, help="Enable automatic workflow repair on failure")
 @click.option(
-    "--no-update", is_flag=True, help="Save repairs to separate .repaired.json file instead of updating original"
+    "--no-update",
+    is_flag=True,
+    hidden=True,
+    help="Save repairs to separate .repaired.json file instead of updating original",
 )
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
@@ -3854,36 +3861,25 @@ def workflow_command(
     \b
     Commands:
       registry      Manage node registry (list, search, add custom nodes)
-      workflow      Manage saved workflows (list, describe)
+      workflow      Manage saved workflows (list, describe, history)
+      skill         Publish workflows as AI agent skills
       mcp           Manage MCP server connections
       instructions  AI agents: Start here for usage guide and workflow discovery
 
     \b
     Examples:
-      # Run saved workflow by name
-      pflow my-workflow input=data.txt
-
-      # Run workflow from file (no flag needed!)
-      pflow ./workflow.pflow.md
-      pflow ~/workflows/analysis.pflow.md
-
-      # Natural Language - use quotes for commands with spaces
-      pflow "read the file data.txt and summarize it"
-
-      # Workflow Commands - manage saved workflows
-      pflow workflow list                         # List saved workflows
-      pflow workflow describe my-workflow         # Show workflow interface
-
-      # Registry Commands - explore available nodes
-      pflow registry list                         # List all nodes
-      pflow registry search github                # Find GitHub nodes
-
-      # From stdin - pipe from other commands
-      echo "analyze this text" | pflow
+      pflow my-workflow input=data.txt      Run saved workflow
+      pflow ./workflow.pflow.md             Run workflow from file
+      cat data.txt | pflow my-workflow      Pipe data to workflow
+      pflow workflow list                   List saved workflows
+      pflow workflow describe my-workflow   Show workflow interface
+      pflow skill save my-workflow          Publish as AI skill
+      pflow skill list                      List published skills
+      pflow registry list                   List available nodes
 
     \b
     Notes:
-      - Workflows can be specified by name, file path, or natural language
+      - Workflows can be specified by name or file path
       - Use key=value syntax to pass parameters to workflows
       - AI agents: Always run 'pflow instructions usage' FIRST for agent-optimized guidance
       - Run 'pflow COMMAND --help' for more information on a command
