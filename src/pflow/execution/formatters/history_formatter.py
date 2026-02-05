@@ -1,7 +1,8 @@
 """Shared formatter for execution history display.
 
 This module provides formatting for workflow execution history across CLI and MCP interfaces.
-Formats timestamps, execution counts, and parameter history for display in discovery and describe tools.
+Formats timestamps, execution counts, duration, and parameter history for display in discovery
+and describe tools.
 
 Expects flat metadata dicts with execution fields at top level (no rich_metadata wrapper).
 
@@ -11,10 +12,12 @@ Usage:
     ...     "execution_count": 5,
     ...     "last_execution_timestamp": "2025-10-18T22:01:49.857930",
     ...     "last_execution_success": True,
+    ...     "last_execution_duration_seconds": 1.52,
+    ...     "average_execution_duration_seconds": 1.35,
     ...     "last_execution_params": {"channel": "C09", "api_key": "<REDACTED>"}
     ... }
     >>> print(format_execution_history(metadata, mode="compact"))
-    5 times | Last: 2025-10-18 22:01 | Status: ✓ Success
+    5 times | Last: 2025-10-18 22:01 | Duration: 1.52s (avg: 1.35s) | Status: ✓ Success
 """
 
 from datetime import datetime, timezone
@@ -53,12 +56,14 @@ def format_execution_history(
 
     timestamp = metadata.get("last_execution_timestamp")
     success = metadata.get("last_execution_success", True)
+    duration = metadata.get("last_execution_duration_seconds")
+    avg_duration = metadata.get("average_execution_duration_seconds")
     last_params = metadata.get("last_execution_params", {})
 
     if mode == "compact":
-        return _format_compact(execution_count, timestamp, success)
+        return _format_compact(execution_count, timestamp, success, duration, avg_duration)
     elif mode == "detailed":
-        return _format_detailed(execution_count, timestamp, success, last_params)
+        return _format_detailed(execution_count, timestamp, success, duration, avg_duration, last_params)
     else:
         raise ValueError(f"Invalid mode: {mode}. Must be 'compact' or 'detailed'")
 
@@ -67,6 +72,8 @@ def _format_compact(
     execution_count: int,
     timestamp: Optional[str],
     success: bool,
+    duration: Optional[float] = None,
+    avg_duration: Optional[float] = None,
 ) -> str:
     """Format execution history as single line.
 
@@ -74,6 +81,8 @@ def _format_compact(
         execution_count: Number of executions
         timestamp: ISO format timestamp
         success: Whether last execution succeeded
+        duration: Last execution duration in seconds
+        avg_duration: Average execution duration in seconds
 
     Returns:
         Compact single-line formatted string
@@ -89,6 +98,13 @@ def _format_compact(
         formatted_time = format_timestamp(timestamp, mode="short")
         parts.append(f"Last: {formatted_time}")
 
+    # Duration (with average if available and different from last)
+    if duration is not None:
+        if avg_duration is not None and avg_duration != duration:
+            parts.append(f"Duration: {duration}s (avg: {avg_duration}s)")
+        else:
+            parts.append(f"Duration: {duration}s")
+
     # Success status
     status_icon = "✓" if success else "✗"
     status_text = "Success" if success else "Failed"
@@ -101,6 +117,8 @@ def _format_detailed(
     execution_count: int,
     timestamp: Optional[str],
     success: bool,
+    duration: Optional[float],
+    avg_duration: Optional[float],
     last_params: dict[str, Any],
 ) -> str:
     """Format execution history with parameters.
@@ -109,6 +127,8 @@ def _format_detailed(
         execution_count: Number of executions
         timestamp: ISO format timestamp
         success: Whether last execution succeeded
+        duration: Last execution duration in seconds
+        avg_duration: Average execution duration in seconds
         last_params: Last execution parameters (already sanitized)
 
     Returns:
@@ -124,6 +144,14 @@ def _format_detailed(
     if timestamp:
         formatted_time = format_timestamp(timestamp, mode="full")
         lines.append(f"  Last: {formatted_time}")
+
+    # Duration
+    if duration is not None:
+        lines.append(f"  Duration: {duration}s")
+
+    # Average duration (only show if more than 1 run)
+    if avg_duration is not None and execution_count > 1:
+        lines.append(f"  Average: {avg_duration}s")
 
     # Success status
     status_icon = "✓" if success else "✗"
@@ -247,8 +275,8 @@ def format_workflow_history(name: str, metadata: dict[str, Any]) -> str:
     """Format complete execution history for workflow history command.
 
     Displays focused execution-related data: run count, last run timestamp,
-    status, and last used inputs. Does not include workflow description
-    or interface specs — that's what 'describe' is for.
+    duration, average duration, status, and last used inputs. Does not include
+    workflow description or interface specs — that's what 'describe' is for.
 
     Args:
         name: Workflow name
@@ -262,6 +290,8 @@ def format_workflow_history(name: str, metadata: dict[str, Any]) -> str:
         ...     "execution_count": 5,
         ...     "last_execution_timestamp": "2026-02-05T02:22:06.123456",
         ...     "last_execution_success": True,
+        ...     "last_execution_duration_seconds": 1.52,
+        ...     "average_execution_duration_seconds": 1.35,
         ...     "last_execution_params": {"slack_channel": "C09ABC123", "version": "1.2.0"}
         ... }
         >>> print(format_workflow_history("release-announcements", metadata))
@@ -269,6 +299,8 @@ def format_workflow_history(name: str, metadata: dict[str, Any]) -> str:
         <BLANKLINE>
         Runs: 5
         Last run: 2026-02-05 02:22:06
+        Duration: 1.52s
+        Average: 1.35s
         Status: Success
         <BLANKLINE>
         Last used inputs:
@@ -290,6 +322,16 @@ def format_workflow_history(name: str, metadata: dict[str, Any]) -> str:
     if timestamp:
         formatted_time = format_timestamp(timestamp, mode="full")
         lines.append(f"Last run: {formatted_time}")
+
+    # Duration
+    duration = metadata.get("last_execution_duration_seconds")
+    if duration is not None:
+        lines.append(f"Duration: {duration}s")
+
+    # Average duration (only show if more than 1 run)
+    avg_duration = metadata.get("average_execution_duration_seconds")
+    if avg_duration is not None and execution_count > 1:
+        lines.append(f"Average: {avg_duration}s")
 
     # Status
     success = metadata.get("last_execution_success", True)

@@ -76,6 +76,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=1.5,
         )
 
         # Load workflow frontmatter and verify sanitization
@@ -120,6 +121,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=2.0,
         )
 
         # Load and verify
@@ -147,6 +149,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params={},
+            duration=0.5,
         )
 
         # Load and verify
@@ -189,6 +192,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=1.0,
         )
 
         # Load and verify
@@ -227,6 +231,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=1.2,
         )
 
         # Load and verify
@@ -265,6 +270,7 @@ class TestParameterSanitization:
             success=False,  # Failure - should not update
             workflow_name=workflow_name,
             execution_params={"param": "value"},
+            duration=1.0,
         )
 
         # Verify execution metadata was NOT added
@@ -284,6 +290,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params={"run": "1"},
+            duration=1.0,
         )
 
         frontmatter1 = _read_frontmatter(workflow_file)
@@ -294,6 +301,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params={"run": "2"},
+            duration=2.0,
         )
 
         frontmatter2 = _read_frontmatter(workflow_file)
@@ -304,6 +312,7 @@ class TestParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params={"run": "3"},
+            duration=3.0,
         )
 
         frontmatter3 = _read_frontmatter(workflow_file)
@@ -330,6 +339,7 @@ class TestEnvParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=1.5,
         )
 
         # Load and verify ALL env params are redacted
@@ -358,6 +368,7 @@ class TestEnvParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=0.8,
         )
 
         workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
@@ -383,6 +394,7 @@ class TestEnvParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=0.9,
         )
 
         workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
@@ -409,6 +421,7 @@ class TestEnvParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=1.1,
         )
 
         workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
@@ -434,6 +447,7 @@ class TestEnvParameterSanitization:
             success=True,
             workflow_name=workflow_name,
             execution_params=execution_params,
+            duration=0.7,
         )
 
         workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
@@ -441,3 +455,120 @@ class TestEnvParameterSanitization:
 
         last_params = frontmatter["last_execution_params"]
         assert last_params["param"] == "value"  # Preserved
+
+
+class TestDurationTracking:
+    """Tests for execution duration tracking in metadata."""
+
+    def test_duration_stored_in_metadata(self, executor_service, workflow_manager, temp_workflow_dir):
+        """Verify execution duration is stored in frontmatter after successful execution."""
+        workflow_name = "duration-test"
+        _save_test_workflow(workflow_manager, workflow_name)
+
+        # Update metadata with a specific duration
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"param": "value"},
+            duration=1.567,  # 1.567 seconds
+        )
+
+        # Load and verify duration is stored (rounded to 2 decimal places)
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
+
+        assert "last_execution_duration_seconds" in frontmatter
+        assert frontmatter["last_execution_duration_seconds"] == 1.57  # Rounded to 2 decimals
+
+    def test_duration_not_stored_on_failure(self, executor_service, workflow_manager, temp_workflow_dir):
+        """Verify duration is not stored when execution fails."""
+        workflow_name = "duration-fail-test"
+        _save_test_workflow(workflow_manager, workflow_name)
+
+        # Try to update with failure
+        executor_service._update_workflow_metadata(
+            success=False,
+            workflow_name=workflow_name,
+            execution_params={"param": "value"},
+            duration=2.5,
+        )
+
+        # Verify duration field was NOT added
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        frontmatter = _read_frontmatter(workflow_file)
+
+        assert "last_execution_duration_seconds" not in frontmatter
+
+    def test_duration_updates_on_each_execution(self, executor_service, workflow_manager, temp_workflow_dir):
+        """Verify duration updates with each successful execution."""
+        workflow_name = "duration-update-test"
+        _save_test_workflow(workflow_manager, workflow_name)
+
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+
+        # First execution
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"run": "1"},
+            duration=1.0,
+        )
+        frontmatter1 = _read_frontmatter(workflow_file)
+        assert frontmatter1["last_execution_duration_seconds"] == 1.0
+
+        # Second execution with different duration
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"run": "2"},
+            duration=3.5,
+        )
+        frontmatter2 = _read_frontmatter(workflow_file)
+        assert frontmatter2["last_execution_duration_seconds"] == 3.5  # Updated
+
+    def test_average_duration_calculated(self, executor_service, workflow_manager, temp_workflow_dir):
+        """Verify average duration is calculated correctly over multiple executions."""
+        workflow_name = "avg-duration-test"
+        _save_test_workflow(workflow_manager, workflow_name)
+
+        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+
+        # First execution: 1.0s
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"run": "1"},
+            duration=1.0,
+        )
+        frontmatter1 = _read_frontmatter(workflow_file)
+        assert frontmatter1["average_execution_duration_seconds"] == 1.0  # First run = duration
+
+        # Second execution: 3.0s -> avg = (1.0 + 3.0) / 2 = 2.0
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"run": "2"},
+            duration=3.0,
+        )
+        frontmatter2 = _read_frontmatter(workflow_file)
+        assert frontmatter2["average_execution_duration_seconds"] == 2.0
+
+        # Third execution: 2.0s -> avg = (1.0 + 3.0 + 2.0) / 3 = 2.0
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"run": "3"},
+            duration=2.0,
+        )
+        frontmatter3 = _read_frontmatter(workflow_file)
+        assert frontmatter3["average_execution_duration_seconds"] == 2.0
+
+        # Fourth execution: 6.0s -> avg = (1.0 + 3.0 + 2.0 + 6.0) / 4 = 3.0
+        executor_service._update_workflow_metadata(
+            success=True,
+            workflow_name=workflow_name,
+            execution_params={"run": "4"},
+            duration=6.0,
+        )
+        frontmatter4 = _read_frontmatter(workflow_file)
+        assert frontmatter4["average_execution_duration_seconds"] == 3.0

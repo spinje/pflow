@@ -115,8 +115,9 @@ class WorkflowExecutorService:
             output_data = self._extract_output_data(shared_store, workflow_ir, output_key, success)
             errors = self._build_error_list(success, action_result, shared_store)
 
-            # Update metadata if successful
-            self._update_workflow_metadata(success, workflow_name, execution_params)
+            # Update metadata if successful (calculate duration for metadata)
+            execution_duration = time.time() - start_time
+            self._update_workflow_metadata(success, workflow_name, execution_params, execution_duration)
 
         except Exception as e:
             result = self._handle_execution_exception(e, shared_store)
@@ -501,6 +502,7 @@ class WorkflowExecutorService:
         success: bool,
         workflow_name: Optional[str],
         execution_params: dict[str, Any],
+        duration: float,
     ) -> None:
         """Update workflow metadata if successful.
 
@@ -508,6 +510,7 @@ class WorkflowExecutorService:
             success: Whether execution was successful
             workflow_name: Optional workflow name
             execution_params: Execution parameters (may include __env_param_names__)
+            duration: Execution duration in seconds
         """
         if success and self.workflow_manager and workflow_name:
             # Extract env param names from internal param (if present)
@@ -522,6 +525,7 @@ class WorkflowExecutorService:
                 {
                     "last_execution_timestamp": datetime.now().isoformat(),
                     "last_execution_success": True,
+                    "last_execution_duration_seconds": round(duration, 2),
                     "last_execution_params": sanitized_params,
                     "execution_count": 1,  # Will be incremented by manager
                 },

@@ -247,6 +247,7 @@ class WorkflowManager:
             Flat metadata dict with fields:
                 name, description, ir, created_at, updated_at, version,
                 execution_count, last_execution_timestamp, last_execution_success,
+                last_execution_duration_seconds, average_execution_duration_seconds,
                 last_execution_params, search_keywords, capabilities, typical_use_cases
 
         Raises:
@@ -274,6 +275,8 @@ class WorkflowManager:
                 "execution_count": fm.get("execution_count", 0),
                 "last_execution_timestamp": fm.get("last_execution_timestamp"),
                 "last_execution_success": fm.get("last_execution_success"),
+                "last_execution_duration_seconds": fm.get("last_execution_duration_seconds"),
+                "average_execution_duration_seconds": fm.get("average_execution_duration_seconds"),
                 "last_execution_params": fm.get("last_execution_params"),
                 # Discovery metadata (was in rich_metadata, now flat)
                 "search_keywords": fm.get("search_keywords"),
@@ -342,6 +345,8 @@ class WorkflowManager:
                     "execution_count": fm.get("execution_count", 0),
                     "last_execution_timestamp": fm.get("last_execution_timestamp"),
                     "last_execution_success": fm.get("last_execution_success"),
+                    "last_execution_duration_seconds": fm.get("last_execution_duration_seconds"),
+                    "average_execution_duration_seconds": fm.get("average_execution_duration_seconds"),
                     "last_execution_params": fm.get("last_execution_params"),
                     "search_keywords": fm.get("search_keywords"),
                     "capabilities": fm.get("capabilities"),
@@ -418,8 +423,22 @@ class WorkflowManager:
             # Handle execution_count increment specially
             if "execution_count" in updates:
                 current_count = frontmatter.get("execution_count", 0)
-                frontmatter["execution_count"] = current_count + 1
+                new_count = current_count + 1
+                frontmatter["execution_count"] = new_count
                 del updates["execution_count"]
+
+                # Update average duration if duration is provided
+                if "last_execution_duration_seconds" in updates:
+                    new_duration = updates["last_execution_duration_seconds"]
+                    current_avg = frontmatter.get("average_execution_duration_seconds")
+
+                    if current_avg is None or current_count == 0:
+                        # First execution, average equals the duration
+                        frontmatter["average_execution_duration_seconds"] = new_duration
+                    else:
+                        # Running average formula: new_avg = old_avg + (new_value - old_avg) / new_count
+                        new_avg = current_avg + (new_duration - current_avg) / new_count
+                        frontmatter["average_execution_duration_seconds"] = round(new_avg, 2)
 
             # Apply other updates
             frontmatter.update(updates)
