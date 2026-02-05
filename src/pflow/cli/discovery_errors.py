@@ -37,7 +37,7 @@ def handle_discovery_error(
         ...     ]
         ... )
     """
-    from pflow.core.exceptions import CriticalPlanningError, WorkflowExecutionError
+    from pflow.core.exceptions import CriticalPlanningError
 
     if isinstance(exception, CriticalPlanningError):
         # Known planning error - handle gracefully
@@ -56,14 +56,6 @@ def handle_discovery_error(
         else:
             # Other CriticalPlanningError - use existing reason
             click.echo(f"Error: {exception.reason}", err=True)
-
-    elif isinstance(exception, WorkflowExecutionError):
-        # Workflow execution error - show details and log
-        logger.error(f"Discovery failed during workflow execution: {exception}", exc_info=True)
-        click.echo(f"Error during {discovery_type} discovery: {str(exception).splitlines()[0]}", err=True)
-        click.echo("\nAlternative methods:", err=True)
-        for cmd, desc in alternative_commands:
-            click.echo(f"  {cmd:<35} # {desc}", err=True)
 
     else:
         # Unexpected error - log for debugging and suggest bug report

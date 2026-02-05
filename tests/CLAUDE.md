@@ -593,11 +593,15 @@ assert action == "retry"  # PocketFlow handles the routing
 ```
 
 ### 11. Global State in context_builder Requires Isolation
-**Problem**: 14 planning tests fail due to `_workflow_manager` global persisting between tests
+**Problem**: Planning tests fail due to `_workflow_manager` global persisting between tests
 **Solution**: Always patch when testing context builder:
 ```python
 with patch("pflow.planning.context_builder._workflow_manager", None):
-    context = build_discovery_context(registry_metadata=metadata)
+    context = build_planning_context(
+        selected_node_ids=["shell"],
+        selected_workflow_names=[],
+        registry_metadata=metadata,
+    )
 ```
 
 ### 12. Testing Implementation Details Instead of Behavior

@@ -18,7 +18,6 @@ import pytest
 
 from pflow.planning.context_builder import (
     _load_saved_workflows,
-    build_discovery_context,
     build_planning_context,
 )
 
@@ -447,38 +446,6 @@ class TestWorkflowLoadingIntegration:
     These tests validate end-to-end behavior of workflow loading in context building scenarios.
     """
 
-    def test_workflow_loading_integrates_with_discovery_context(self, tmp_path, monkeypatch):
-        """Test workflow loading works correctly with discovery context building."""
-
-        # Setup temporary home with workflows
-        fake_home = tmp_path / "fake_home"
-        monkeypatch.setattr(Path, "home", lambda: fake_home)
-
-        workflow_dir = fake_home / ".pflow" / "workflows"
-        workflow_dir.mkdir(parents=True)
-
-        # Create test workflows
-        workflow1 = {"name": "data-processor", "description": "Process data files", "ir": {"nodes": [], "edges": []}}
-        workflow2 = {
-            "name": "report-generator",
-            "description": "Generate reports from data",
-            "ir": {"nodes": [], "edges": []},
-        }
-
-        (workflow_dir / "data-processor.json").write_text(json.dumps(workflow1))
-        (workflow_dir / "report-generator.json").write_text(json.dumps(workflow2))
-
-        # Mock _load_saved_workflows to use our test data
-        with patch("pflow.planning.context_builder._load_saved_workflows", return_value=[workflow1, workflow2]):
-            # Test discovery context includes loaded workflows
-            context = build_discovery_context(registry_metadata={})
-
-        assert "## Available Workflows" in context
-        assert "data-processor (workflow)" in context
-        assert "report-generator (workflow)" in context
-        assert "Process data files" in context
-        assert "Generate reports from data" in context
-
     def test_workflow_loading_handles_mixed_valid_invalid_files(self, tmp_path, monkeypatch, caplog):
         """Test workflow loading gracefully handles mixed valid and invalid files."""
         # Setup temporary home with mixed files
@@ -526,40 +493,6 @@ class TestLLMPlanningIntegration:
 
     These tests provide the foundation for testing LLM-based planning functionality.
     """
-
-    def test_context_building_provides_llm_ready_format(self):
-        """Test that context building produces format suitable for LLM consumption."""
-
-        # Mock minimal registry for testing
-        registry_metadata = {
-            "simple-node": {
-                "module": "pflow.nodes.simple",
-                "class_name": "SimpleNode",
-                "file_path": "src/pflow/nodes/simple.py",
-                "interface": {
-                    "description": "A simple test node",
-                    "inputs": [{"key": "input_data", "type": "str", "description": "Input data"}],
-                    "outputs": [{"key": "output_data", "type": "str", "description": "Processed data"}],
-                    "params": [{"key": "param1", "type": "bool", "description": "A parameter"}],
-                    "actions": ["default"],
-                },
-            }
-        }
-
-        # Mock workflow data
-        workflow = {"name": "test-workflow", "description": "Test workflow for LLM", "ir": {"nodes": [], "edges": []}}
-
-        # Mock _load_saved_workflows to return our test workflow
-        with patch("pflow.planning.context_builder._load_saved_workflows", return_value=[workflow]):
-            # Test discovery context format
-            discovery_context = build_discovery_context(registry_metadata=registry_metadata)
-
-        # Should be well-structured markdown suitable for LLM
-        assert discovery_context.startswith("## Available Nodes")
-        assert "simple-node" in discovery_context
-        assert "A simple test node" in discovery_context
-        assert "## Available Workflows" in discovery_context
-        assert "test-workflow (workflow)" in discovery_context
 
     def test_planning_context_structure_supports_llm_workflow_generation(self):
         """Test that planning context structure supports LLM workflow generation.

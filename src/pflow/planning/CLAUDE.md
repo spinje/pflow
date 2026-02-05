@@ -65,7 +65,7 @@ planning/
 ├── nodes.py                       # All 11 planning nodes (lines 866-1309 for new ones)
 ├── ir_models.py                   # Pydantic models for workflow IR
 ├── context_blocks.py              # PlannerContextBuilder for cache accumulation
-├── context_builder.py             # Legacy context building (mostly unused)
+├── context_builder.py             # Context building (build_workflows_context, build_planning_context)
 ├── debug.py                       # Debug wrapper, tracing, cost calculation
 ├── error_handler.py               # Error classification and handling
 ├── CLAUDE.md                      # This file

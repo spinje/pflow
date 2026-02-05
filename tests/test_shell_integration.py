@@ -8,7 +8,6 @@ from pflow.core.shell_integration import (
     StdinData,
     detect_binary_content,
     detect_stdin,
-    determine_stdin_mode,
     read_stdin,
     read_stdin_enhanced,
     read_stdin_with_limit,
@@ -144,42 +143,6 @@ class TestReadStdin:
         pass  # TODO: Test with subprocess for real stdin behavior
 
 
-class TestDetermineStdinMode:
-    """Test stdin mode determination."""
-
-    def test_valid_workflow_json(self):
-        """Test that valid workflow JSON is detected."""
-        workflow = {"ir_version": "1.0", "nodes": [], "edges": []}
-        content = json.dumps(workflow)
-        assert determine_stdin_mode(content) == "workflow"
-
-    def test_json_without_ir_version(self):
-        """Test that JSON without ir_version is treated as data."""
-        data = {"name": "test", "value": 123}
-        content = json.dumps(data)
-        assert determine_stdin_mode(content) == "data"
-
-    def test_invalid_json(self):
-        """Test that invalid JSON is treated as data."""
-        content = "This is not JSON"
-        assert determine_stdin_mode(content) == "data"
-
-    def test_json_array(self):
-        """Test that JSON arrays are treated as data."""
-        content = json.dumps([1, 2, 3])
-        assert determine_stdin_mode(content) == "data"
-
-    def test_empty_string(self):
-        """Test that empty string is treated as data."""
-        assert determine_stdin_mode("") == "data"
-
-    def test_workflow_with_extra_fields(self):
-        """Test that workflow with extra fields is still detected."""
-        workflow = {"ir_version": "1.0", "nodes": [], "edges": [], "metadata": {"author": "test"}}
-        content = json.dumps(workflow)
-        assert determine_stdin_mode(content) == "workflow"
-
-
 class TestIntegration:
     """Integration tests for the complete flow.
 
@@ -188,8 +151,8 @@ class TestIntegration:
     test_dual_mode_stdin.py using subprocess.
     """
 
-    def test_full_workflow_detection_flow(self):
-        """Test complete flow for workflow detection."""
+    def test_read_json_from_stdin(self):
+        """Test reading JSON content from stdin."""
         workflow = {"ir_version": "1.0", "nodes": []}
         workflow_str = json.dumps(workflow)
 
@@ -197,16 +160,12 @@ class TestIntegration:
             patch("sys.stdin", io.StringIO(workflow_str)),
             patch("pflow.core.shell_integration.stdin_has_data", return_value=True),
         ):
-            # Read stdin
             content = read_stdin()
             assert content is not None
+            assert content == workflow_str
 
-            # Determine mode
-            mode = determine_stdin_mode(content)
-            assert mode == "workflow"
-
-    def test_full_data_flow(self):
-        """Test complete flow for data input."""
+    def test_read_text_from_stdin(self):
+        """Test reading text content from stdin."""
         data = "Some user data"
 
         with (
@@ -216,11 +175,6 @@ class TestIntegration:
             # Read stdin
             content = read_stdin()
             assert content is not None
-
-            # Determine mode
-            mode = determine_stdin_mode(content)
-            assert mode == "data"
-
             # Note: stdin is now routed to workflow inputs via stdin: true
             # in the workflow IR, not via populate_shared_store
             assert content == data

@@ -134,10 +134,8 @@ workflow (nargs=-1)    # Catch-all for natural language or file path
 
 **Purpose**: Implements OutputInterface for Click-based terminal output.
 
-**Key Components**:
-- `Colors` class - Terminal color constants
-- `styled_text()` - Conditional color styling
-- `CliOutput` class - OutputInterface implementation
+**Key Component**:
+- `CliOutput` class - OutputInterface implementation wrapping OutputController
 
 **Integration with OutputController**:
 - Delegates interactive detection

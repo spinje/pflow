@@ -47,10 +47,18 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
         os.environ["HOME"] = str(test_home)
 
         # Import after setting HOME to use test settings
-        from pflow.planning.context_builder import build_discovery_context
+        from pflow.planning.context_builder import build_planning_context
+        from pflow.registry import Registry
 
-        # Build the context that would be sent to LLM
-        context = build_discovery_context()
+        # Load filtered registry and build context
+        registry = Registry()
+        metadata = registry.load()
+        # Build context with all filtered nodes (simulates what LLM would see)
+        context = build_planning_context(
+            selected_node_ids=list(metadata.keys()),
+            selected_workflow_names=[],
+            registry_metadata=metadata,
+        )
 
         # Verify denied nodes are not present
         # Check for node definitions (these should NOT appear)

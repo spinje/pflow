@@ -19,7 +19,6 @@ Key Design Decision:
 """
 
 import contextlib
-import json
 import os
 import stat
 import sys
@@ -207,31 +206,6 @@ def read_stdin_enhanced() -> StdinData | None:
         # Log error and return None
         # In production, would use proper logging
         return None
-
-
-def determine_stdin_mode(content: str) -> str:
-    """Determine if stdin contains workflow JSON or data.
-
-    Args:
-        content: The stdin content to analyze
-
-    Returns:
-        'workflow' if content is valid JSON with 'ir_version' key, 'data' otherwise
-    """
-    try:
-        # Try to parse as JSON
-        parsed = json.loads(content)
-
-        # Check if it's a dict with ir_version key
-        if isinstance(parsed, dict) and "ir_version" in parsed:
-            return "workflow"
-
-    except (json.JSONDecodeError, TypeError):
-        # Not valid JSON or not the right type
-        pass
-
-    # Default to data mode
-    return "data"
 
 
 def detect_binary_content(sample: bytes) -> bool:

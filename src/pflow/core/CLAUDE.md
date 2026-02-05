@@ -50,27 +50,28 @@ Defines the exception hierarchy used throughout pflow:
 
 **Exception Classes**:
 - **`PflowError`**: Base exception for all pflow-specific errors (base class for all others)
-- **`WorkflowExecutionError`**: Tracks execution failures with workflow path chain
-  - **⚠️ DEAD CODE**: Defined but never raised anywhere in codebase
-  - Designed to show execution hierarchy (e.g., "main.pflow.md → sub-workflow.pflow.md → failing-node")
-- **`CircularWorkflowReferenceError`**: Detects and reports circular workflow references
-  - **⚠️ DEAD CODE**: Defined but never raised (should replace ValueError in WorkflowExecutor)
-- **`WorkflowExistsError`**: ✅ ACTIVELY USED in WorkflowManager.save() (line 112)
-- **`WorkflowNotFoundError`**: ✅ ACTIVELY USED in WorkflowManager (lines 188, 274, 299, 355)
-- **`WorkflowValidationError`**: ✅ ACTIVELY USED in WorkflowManager (multiple locations)
-- **`CriticalPlanningError`**: ✅ ACTIVELY USED in 5 planning nodes
-  - WorkflowDiscoveryNode, RequirementsAnalysisNode, PlanningNode, ParameterDiscoveryNode, WorkflowGeneratorNode
-- **`RuntimeValidationError`**:
-  - **⚠️ DEAD CODE**: Complex structured error class never raised by any nodes
+- **`WorkflowExistsError`**: Raised when saving a workflow that already exists
+- **`WorkflowNotFoundError`**: Raised when loading a workflow that doesn't exist
+- **`WorkflowValidationError`**: Raised when workflow validation fails
+- **`CriticalPlanningError`**: Raised when a planning node fails critically (used by 5 planning nodes)
 
 **Usage Pattern**:
 ```python
-raise WorkflowExecutionError(
-    "Node execution failed",
-    workflow_path="workflows/data-pipeline.pflow.md",
-    original_error=original_exception
-)
+from pflow.core.exceptions import WorkflowNotFoundError
+
+try:
+    workflow = manager.load("missing-workflow")
+except WorkflowNotFoundError:
+    print("Workflow not found")
 ```
+
+**Error Handling Philosophy**:
+The codebase uses a pragmatic error dict pattern rather than a complex exception hierarchy:
+- Validation phase returns error strings (never raises)
+- Runtime phase catches exceptions and converts to error dicts
+- CLI formats errors based on output mode (text/JSON)
+
+See `.taskmaster/tasks/task_59/research/error-handling-patterns.md` for patterns to use when implementing nested workflows.
 
 ### 2. ir_schema.py - Workflow Definition and Validation
 
@@ -150,8 +151,6 @@ Enables pflow to work seamlessly in Unix pipelines:
 - **`stdin_has_data()`**: FIFO-only pipe detection - returns True only for real shell pipes
   - Uses `stat.S_ISFIFO()` to detect real pipes (avoids hanging on sockets/char devices)
   - Claude Code stdin is a character device, not FIFO - returns False (prevents hang)
-- **`determine_stdin_mode()`**: Identifies stdin content type
-  - **⚠️ UNUSED**: Function exists but never called in CLI
 - **`read_stdin_enhanced()`**: Reads stdin with binary/size handling
 
 **Stdin Routing** (Task 115):
@@ -431,10 +430,9 @@ Provides structured, actionable error messages for CLI users:
   3. HOW to fix it (suggestions)
 
 **Specialized Errors**:
-- **`MCPError`**: ✅ ACTIVELY USED in MCP nodes for tool availability issues
-- **`NodeNotFoundError`**: **⚠️ UNUSED** - Should be used in registry CLI and compiler
-- **`MissingParametersError`**: **⚠️ UNUSED** - Should be used in planning parameter validation
-- **`TemplateVariableError`**: **⚠️ UNUSED** - Should be used in template validator
+- **`MCPError`**: Used in MCP nodes for tool availability issues
+- **`PlannerError`**: Used in planning system for planning failures
+- **`CompilationError`**: Used in compiler for workflow compilation issues
 
 ### 13. validation_utils.py - Parameter Validation Utilities
 
@@ -505,11 +503,7 @@ Aggregates and exposes the module's functionality:
 - `security_utils` - Used by MCP errors and CLI display
 
 **Exported from exceptions.py**:
-- `PflowError`
-- `WorkflowExecutionError`
-- `CircularWorkflowReferenceError`
-- `CriticalPlanningError`
-- `RuntimeValidationError`
+- `PflowError` (base class for all pflow errors)
 
 **Exported from ir_schema.py**:
 - `FLOW_IR_SCHEMA`
@@ -526,7 +520,6 @@ Aggregates and exposes the module's functionality:
 - `StdinData`
 - `detect_stdin`
 - `detect_binary_content`
-- `determine_stdin_mode`
 - `read_stdin`
 - `read_stdin_enhanced`
 - `read_stdin_with_limit`
@@ -610,9 +603,9 @@ if detect_stdin():
         # Handle large file
 ```
 
-### Structured Error Handling
+### Error Handling
 ```python
-from pflow.core import WorkflowExecutionError, WorkflowNotFoundError
+from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
 
 try:
     workflow_ir = workflow_manager.load_ir("missing-workflow")
@@ -620,14 +613,12 @@ except WorkflowNotFoundError as e:
     print(f"Workflow not found: {e}")
 
 try:
-    # Execute workflow
-except Exception as e:
-    raise WorkflowExecutionError(
-        "Failed to execute node",
-        workflow_path=str(current_workflow_path),
-        original_error=e
-    )
+    workflow_manager.save("existing-name", content)
+except WorkflowExistsError as e:
+    print(f"Already exists: {e}")
 ```
+
+**Note**: Runtime errors use error dicts, not exceptions. See `.taskmaster/tasks/task_59/research/error-handling-patterns.md` for the error dict pattern.
 
 ## Extending the Schema
 
@@ -762,10 +753,10 @@ The core module is used throughout pflow:
 ### 🐛 Active Bugs
 1. **Broken LLM Aliases**: Two aliases point to non-existent pricing entries
 
-### ⚠️ Dead Code
-1. **Unused Exceptions**: WorkflowExecutionError, CircularWorkflowReferenceError, RuntimeValidationError defined but never raised
-2. **Unused Error Classes**: NodeNotFoundError, MissingParametersError, TemplateVariableError defined but never used
-3. **Unused Function**: `determine_stdin_mode()` exists but never called
+### ⚠️ Gated Code
+1. **Repair System**: `update_ir()` in workflow_manager.py is preserved but unreachable (gated by Task 107)
+
+**Note**: Dead exception classes and unused functions were removed in Feb 2026 cleanup. Error handling patterns for nested workflows (Task 59) are documented in `.taskmaster/tasks/task_59/research/error-handling-patterns.md`.
 
 ## Key Lessons from Task 24
 
