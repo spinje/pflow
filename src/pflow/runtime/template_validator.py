@@ -764,6 +764,10 @@ class TemplateValidator:
         the registry-vs-batch divergence bug.
         """
         node_id = node.get("id", "unknown")
+        logger.warning(
+            f"node_outputs fallback reached for node '{node_id}' — this is unexpected",
+            extra={"node_id": node_id, "output_key": output_key},
+        )
         return f"Node '{node_id}' does not output '{output_key}'"
 
     @staticmethod
