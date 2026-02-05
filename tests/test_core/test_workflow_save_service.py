@@ -493,6 +493,53 @@ class TestSaveWorkflowWithOptions:
             with pytest.raises(WorkflowValidationError, match="Failed to delete"):
                 save_workflow_with_options("existing", markdown_content, force=True)
 
+    def test_re_enriches_skill_after_save(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
+        """SKILL RE-ENRICHMENT: Calls re_enrich_if_skill after successful save.
+
+        Bug prevented: Workflow published as skill loses enrichment after save --force.
+        Task 119: The re-enrichment hook restores name/description frontmatter and ## Usage section.
+        """
+        markdown_content = ir_to_markdown(sample_ir)
+
+        with (
+            patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class,
+            patch("pflow.core.skill_service.re_enrich_if_skill") as mock_re_enrich,
+        ):
+            mock_wm = Mock()
+            mock_wm.exists.return_value = False
+            mock_wm.save.return_value = str(tmp_path / "my-workflow.pflow.md")
+            mock_wm_class.return_value = mock_wm
+
+            save_workflow_with_options("my-workflow", markdown_content, force=False)
+
+            # Verify re-enrich was called with workflow name
+            mock_re_enrich.assert_called_once_with("my-workflow")
+
+    def test_re_enrich_failure_does_not_fail_save(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
+        """SKILL RE-ENRICHMENT ERROR: Re-enrichment failure doesn't block save.
+
+        Bug prevented: Skill enrichment failure causes entire save to fail.
+        Critical: Enrichment is best-effort, save must succeed regardless.
+        """
+        markdown_content = ir_to_markdown(sample_ir)
+
+        with (
+            patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class,
+            patch("pflow.core.skill_service.re_enrich_if_skill") as mock_re_enrich,
+        ):
+            mock_wm = Mock()
+            mock_wm.exists.return_value = False
+            mock_wm.save.return_value = str(tmp_path / "my-workflow.pflow.md")
+            mock_wm_class.return_value = mock_wm
+
+            # Make re-enrichment fail
+            mock_re_enrich.side_effect = Exception("Enrichment failed")
+
+            # Save should still succeed
+            path = save_workflow_with_options("my-workflow", markdown_content, force=False)
+
+            assert path == Path(str(tmp_path / "my-workflow.pflow.md"))
+
 
 class TestGenerateWorkflowMetadata:
     """Test generate_workflow_metadata() - LLM-based metadata generation.

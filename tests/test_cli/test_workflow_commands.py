@@ -646,3 +646,63 @@ class TestWorkflowCommandIntegration:
 
             # This guides them to create and save a workflow
             # (The actual workflow creation is tested elsewhere)
+
+
+class TestWorkflowHistoryCommand:
+    """Tests for the 'pflow workflow history' command."""
+
+    def test_history_shows_execution_data_and_inputs(self) -> None:
+        """Test history command returns execution data agents need to suggest inputs."""
+        mock_metadata = {
+            "name": "release-announcements",
+            "description": "Generate release announcements",
+            "execution_count": 5,
+            "last_execution_timestamp": "2026-02-05T02:22:06.123456",
+            "last_execution_success": True,
+            "last_execution_params": {
+                "slack_channel": "C09ABC123",
+                "version": "1.2.0",
+            },
+            "ir": {},
+        }
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.exists.return_value = True
+            mock_wm.load.return_value = mock_metadata
+
+            result = invoke_cli(["workflow", "history", "release-announcements"])
+
+            assert result.exit_code == 0
+            # Agent needs: name, run count, last timestamp, status, last inputs
+            assert "release-announcements" in result.output
+            assert "Runs: 5" in result.output
+            assert "2026-02-05" in result.output
+            assert "Success" in result.output
+            assert "slack_channel: C09ABC123" in result.output
+
+    def test_history_no_execution_returns_clear_message(self) -> None:
+        """Test returns actionable message when workflow never executed."""
+        mock_metadata = {"execution_count": 0, "ir": {}}
+
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.exists.return_value = True
+            mock_wm.load.return_value = mock_metadata
+
+            result = invoke_cli(["workflow", "history", "new-workflow"])
+
+            assert result.exit_code == 0
+            assert "No execution history" in result.output
+
+    def test_history_workflow_not_found_errors(self) -> None:
+        """Test errors clearly when workflow doesn't exist."""
+        with patch("pflow.cli.commands.workflow.WorkflowManager") as MockWM:
+            mock_wm = MockWM.return_value
+            mock_wm.exists.return_value = False
+            mock_wm.list_all.return_value = []
+
+            result = invoke_cli(["workflow", "history", "nonexistent"])
+
+            assert result.exit_code == 1
+            assert "not found" in result.stderr

@@ -570,3 +570,75 @@ class TestWorkflowManager:
 
         # exists() should work with filename
         assert workflow_manager.exists("actual-filename")
+
+    def test_frontmatter_name_overrides_filename_in_load(self, workflow_manager, temp_workflows_dir, sample_ir):
+        """Test that frontmatter 'name' field overrides filename-derived name.
+
+        This supports Claude Code skills where SKILL.md symlink points to a workflow
+        and we need the actual workflow name (from frontmatter), not 'SKILL'.
+        """
+        # Save a workflow normally
+        markdown_content = ir_to_markdown(sample_ir, title="My Workflow", description="Test workflow")
+        workflow_manager.save("my-workflow", markdown_content)
+
+        # Now manually add 'name' to frontmatter (simulating skill enrichment)
+        workflow_path = temp_workflows_dir / "my-workflow.pflow.md"
+        content = workflow_path.read_text(encoding="utf-8")
+
+        # Parse and update frontmatter
+        lines = content.splitlines(keepends=True)
+        assert lines[0].rstrip() == "---"
+
+        # Find closing ---
+        for i in range(1, len(lines)):
+            if lines[i].rstrip() == "---":
+                fm_text = "".join(lines[1:i])
+                fm_data = yaml.safe_load(fm_text)
+                fm_data["name"] = "override-name"
+                new_fm = yaml.dump(fm_data, default_flow_style=False, sort_keys=False)
+                body = "".join(lines[i + 1 :])
+                new_content = f"---\n{new_fm}---{body}"
+                workflow_path.write_text(new_content, encoding="utf-8")
+                break
+
+        # Load should return frontmatter name
+        loaded = workflow_manager.load("my-workflow")
+        assert loaded["name"] == "override-name"  # Frontmatter overrides filename
+
+    def test_frontmatter_name_overrides_filename_in_list_all(self, workflow_manager, temp_workflows_dir, sample_ir):
+        """Test that frontmatter 'name' field overrides filename in list_all()."""
+        # Save a workflow
+        markdown_content = ir_to_markdown(sample_ir, title="My Workflow", description="Test workflow")
+        workflow_manager.save("listed-workflow", markdown_content)
+
+        # Add 'name' to frontmatter
+        workflow_path = temp_workflows_dir / "listed-workflow.pflow.md"
+        content = workflow_path.read_text(encoding="utf-8")
+
+        lines = content.splitlines(keepends=True)
+        for i in range(1, len(lines)):
+            if lines[i].rstrip() == "---":
+                fm_text = "".join(lines[1:i])
+                fm_data = yaml.safe_load(fm_text)
+                fm_data["name"] = "display-name"
+                new_fm = yaml.dump(fm_data, default_flow_style=False, sort_keys=False)
+                body = "".join(lines[i + 1 :])
+                new_content = f"---\n{new_fm}---{body}"
+                workflow_path.write_text(new_content, encoding="utf-8")
+                break
+
+        # list_all should show frontmatter name
+        workflows = workflow_manager.list_all()
+        names = [w["name"] for w in workflows]
+        assert "display-name" in names
+        assert "listed-workflow" not in names  # Filename is NOT used
+
+    def test_load_falls_back_to_filename_when_no_frontmatter_name(self, workflow_manager, sample_ir):
+        """Test that load() falls back to filename-derived name when no frontmatter 'name'."""
+        # Save normally (no frontmatter 'name' field added)
+        markdown_content = ir_to_markdown(sample_ir, title="Normal Workflow", description="Test")
+        workflow_manager.save("normal-workflow", markdown_content)
+
+        # Load should return filename-derived name (the default behavior)
+        loaded = workflow_manager.load("normal-workflow")
+        assert loaded["name"] == "normal-workflow"  # Fallback to filename

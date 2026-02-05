@@ -26,6 +26,7 @@ RESERVED_WORKFLOW_NAMES = {
     "registry",
     "workflow",
     "mcp",
+    "skill",
 }
 
 
@@ -294,9 +295,18 @@ def save_workflow_with_options(
     try:
         saved_path = manager.save(name, markdown_content, metadata)
         logger.info(f"Saved workflow '{name}' to {saved_path}")
-        return Path(saved_path)
     except Exception as e:
         raise WorkflowValidationError(f"Failed to save workflow '{name}': {e}") from e
+
+    # Re-enrich if this workflow is published as a Claude Code skill (Task 119)
+    try:
+        from pflow.core.skill_service import re_enrich_if_skill
+
+        re_enrich_if_skill(name)
+    except Exception:
+        logger.warning(f"Failed to re-enrich skill for '{name}'", exc_info=True)
+
+    return Path(saved_path)
 
 
 def generate_workflow_metadata(
