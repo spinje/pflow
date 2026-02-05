@@ -290,12 +290,15 @@ class TestSafetyAndErrors:
         """Infinite/slow code doesn't hang the workflow."""
         shared: dict = {}
         # Sleep BEFORE result assignment so if timeout fails the result is also missing.
-        # Use 10s sleep vs 0.5s timeout (20x margin) for CI reliability.
-        # The zombie sleep thread self-terminates after 10s.
+        # Use 1s sleep vs 0.05s timeout (20x margin) for CI reliability.
+        # The zombie sleep thread self-terminates after 1s.
+        #
+        # PERF: Keep timeout small (<0.1s). With pytest-xdist, a single 0.5s test
+        # caused total suite time to jump from 7s to 14s due to worker scheduling.
         action = run_code_node(
             shared,
-            code="import time\ntime.sleep(10)\nresult: int = 0",
-            timeout=0.5,
+            code="import time\ntime.sleep(1)\nresult: int = 0",
+            timeout=0.05,
             inputs={},
         )
         assert action == "error"

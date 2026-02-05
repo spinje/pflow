@@ -592,7 +592,7 @@ assert action == "retry"  # PocketFlow handles the routing
 # OR: {"module": "pflow.nodes.test_node", "class_name": "ExampleNode"}  # Real project nodes
 ```
 
-### 11. Global State in context_builder Requires Isolation
+### 11b. Global State in context_builder Requires Isolation
 **Problem**: Planning tests fail due to `_workflow_manager` global persisting between tests
 **Solution**: Always patch when testing context builder:
 ```python
@@ -617,6 +617,20 @@ formatted = format_suggestions(workflows, max_suggestions=3)
 assert "workflow-3" not in formatted
 assert "... and 2 more" in formatted
 ```
+
+### 13. Slow Tests Destroy Parallel Performance (pytest-xdist)
+**Problem**: A single slow test (e.g., 0.5s timeout) causes total suite time to double
+**Solution**: Keep individual test duration under 0.1s. With pytest-xdist, slow tests create worker scheduling bottlenecks that cascade far beyond their actual duration.
+```python
+# ❌ WRONG: 0.5s timeout blocks a worker, suite goes from 7s to 14s
+action = run_code_node(shared, code="time.sleep(10)", timeout=0.5)
+
+# ✅ RIGHT: 0.05s timeout, still 20x margin, minimal parallel impact
+action = run_code_node(shared, code="time.sleep(1)", timeout=0.05)
+```
+**Why this happens**: pytest-xdist distributes tests across workers. When one worker is blocked on a slow test, it finishes late while other workers idle. A 0.5s test caused 6.5s of total overhead due to uneven distribution.
+
+**Rule of thumb**: If a test needs real wall-clock waiting (timeouts, sleeps), keep it under 0.1s or mark it `@pytest.mark.slow` for exclusion from fast runs.
 
 ## Test Maintenance
 
