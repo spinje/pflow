@@ -1335,6 +1335,8 @@ Available template paths (from actual output (4 of 31 shown)): # Smart filtering
 
 **Never assume. Always discover.**
 
+**MCP "JSON string" parameters**: When MCP tools describe parameters as "JSON string" (like `body_schema`, `query_params`), still use object syntax. pflow auto-serializes with proper escaping. Manual `'{"key": "${val}"}'` breaks on newlines/quotes in template values.
+
 ### Systematic Debugging Process
 
 #### Phase 1: Identify Error Type
