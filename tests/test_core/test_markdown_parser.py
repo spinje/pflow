@@ -828,6 +828,34 @@ class TestCodeBlockParsing:
         with pytest.raises(MarkdownParseError, match="Code block has no tag"):
             parse_markdown(content)
 
+    def test_bare_code_block_nested_backticks_detected(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### my-llm
+
+            Uses an LLM.
+
+            - type: llm
+
+            ```prompt
+            - Exact format:
+            ```
+            [project] [version] tagged.
+            ```
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as exc_info:
+            parse_markdown(content)
+        error_msg = str(exc_info.value)
+        assert "Code block has no tag" in error_msg
+        assert "nested" in error_msg.lower()
+        assert "prompt" in error_msg
+
     def test_duplicate_code_block_error(self) -> None:
         content = _md("""\
             # Test

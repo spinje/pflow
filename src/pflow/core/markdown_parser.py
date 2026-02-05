@@ -566,7 +566,23 @@ def _validate_code_blocks(entity: _Entity) -> None:
     for block in entity.code_blocks:
         # Bare code block check
         if not block.tag:
-            # Try to suggest based on context
+            # Check for nested backticks pattern: tagged block followed by bare block
+            preceding_tagged = [b for b in entity.code_blocks if b.tag and b.start_line < block.start_line]
+            if preceding_tagged:
+                last = preceding_tagged[-1]
+                raise MarkdownParseError(
+                    f"Code block has no tag (likely caused by nested ``` "
+                    f"in the `{last.tag}` block at line {last.start_line}).",
+                    line=block.start_line,
+                    suggestion=(
+                        f"An inner ``` closes the outer block early, making this line\n"
+                        "look like a new code block.\n\n"
+                        f"Fix: Use 4+ backticks for the outer fence:\n"
+                        f"    ````{last.tag}\n"
+                        "    content with ``` inside\n"
+                        "    ````"
+                    ),
+                )
             raise MarkdownParseError(
                 "Code block has no tag.",
                 line=block.start_line,
