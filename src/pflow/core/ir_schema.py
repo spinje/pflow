@@ -259,8 +259,23 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                     "required": {"type": "boolean", "default": True, "description": "Whether input is required"},
                     "type": {
                         "type": "string",
-                        "enum": ["string", "number", "boolean", "object", "array"],
-                        "description": "Data type hint",
+                        "enum": [
+                            # JSON Schema canonical types
+                            "string",
+                            "number",
+                            "boolean",
+                            "object",
+                            "array",
+                            # Python type aliases
+                            "str",
+                            "int",
+                            "integer",
+                            "float",
+                            "bool",
+                            "dict",
+                            "list",
+                        ],
+                        "description": "Data type hint (accepts JSON Schema or Python type names)",
                     },
                     "default": {"description": "Default value if not provided"},
                     "stdin": {
@@ -282,8 +297,23 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                     "description": {"type": "string", "description": "Human-readable description"},
                     "type": {
                         "type": "string",
-                        "enum": ["string", "number", "boolean", "object", "array"],
-                        "description": "Data type hint",
+                        "enum": [
+                            # JSON Schema canonical types
+                            "string",
+                            "number",
+                            "boolean",
+                            "object",
+                            "array",
+                            # Python type aliases
+                            "str",
+                            "int",
+                            "integer",
+                            "float",
+                            "bool",
+                            "dict",
+                            "list",
+                        ],
+                        "description": "Data type hint (accepts JSON Schema or Python type names)",
                     },
                     "source": {
                         "type": "string",
@@ -393,8 +423,8 @@ def _get_output_suggestion(error: JsonSchemaValidationError, path_str: str) -> s
 
     # Case 3: Invalid type enum value
     if error.validator == "enum" and "type" in path_str:
-        valid_types = ["string", "number", "boolean", "object", "array"]
-        return f"Type must be one of: {', '.join(valid_types)}"
+        valid_types = "string, number, boolean, object, array (or Python aliases: str, int, float, bool, dict, list)"
+        return f"Type must be one of: {valid_types}"
 
     return ""
 

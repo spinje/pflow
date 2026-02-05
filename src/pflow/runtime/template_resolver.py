@@ -220,7 +220,10 @@ class TemplateResolver:
 
         success, parsed = try_parse_json(value)
         if success and isinstance(parsed, (dict, list)):
-            # Only use parsed result if it's a container we can traverse
+            # Only use parsed result if it's a container (dict/list) we can traverse.
+            # Primitives (int, float, bool) are NOT parsed to preserve numeric strings
+            # like Discord snowflake IDs ("1458059302022549698" should stay as string,
+            # not become int 1458059302022549698). See bug fix for numeric string coercion.
             logger.debug(
                 f"Auto-parsed JSON string for path traversal: {type(parsed).__name__}",
             )
@@ -618,13 +621,17 @@ class TemplateResolver:
                 # This enables: {"data": "${shell.stdout}"} where stdout is JSON
                 # Escape hatch: complex templates like "prefix ${var}" stay as strings
                 #
+                # IMPORTANT: Only use parsed result if it's dict/list (containers).
+                # json.loads("1458059302022549698") returns int, but we want to preserve
+                # numeric strings as strings (e.g., Discord snowflake IDs).
+                #
                 # Tech debt note (see Task 105): Same JSON string may be parsed multiple
                 # times if used in multiple templates. Acceptable for MVP since parsing
                 # is <1ms vs node execution 100-1000ms. Consider caching if profiling
                 # shows this as a bottleneck.
                 if isinstance(resolved, str) and TemplateResolver.is_simple_template(value):
                     success, parsed = try_parse_json(resolved)
-                    if success:
+                    if success and isinstance(parsed, (dict, list)):
                         logger.debug(
                             f"Auto-parsed JSON from template '{value}': {type(parsed).__name__}",
                         )

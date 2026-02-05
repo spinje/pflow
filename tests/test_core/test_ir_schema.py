@@ -365,6 +365,41 @@ class TestErrorMessages:
         assert "array" in exc_info.value.suggestion
 
 
+class TestInputTypeAliases:
+    """Test that input type field accepts both JSON Schema and Python type names."""
+
+    def test_json_schema_types_accepted(self):
+        """JSON Schema canonical types should be accepted."""
+        for type_name in ["string", "number", "boolean", "object", "array"]:
+            ir = {
+                "ir_version": "0.1.0",
+                "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+                "inputs": {"param": {"type": type_name, "required": True}},
+            }
+            validate_ir(ir)  # Should not raise
+
+    def test_python_type_aliases_accepted(self):
+        """Python type aliases should be accepted for user convenience."""
+        for type_name in ["str", "int", "integer", "float", "bool", "dict", "list"]:
+            ir = {
+                "ir_version": "0.1.0",
+                "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+                "inputs": {"param": {"type": type_name, "required": True}},
+            }
+            validate_ir(ir)  # Should not raise
+
+    def test_invalid_type_rejected(self):
+        """Invalid type names should be rejected with helpful error."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
+            "inputs": {"param": {"type": "invalid_type", "required": True}},
+        }
+        with pytest.raises(ValidationError) as exc_info:
+            validate_ir(ir)
+        assert "inputs.param.type" in exc_info.value.path
+
+
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 

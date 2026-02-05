@@ -13,9 +13,124 @@ import logging
 import os
 from typing import Any
 
+from pflow.core.param_coercion import coerce_input_to_declared_type
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_missing_input(
+    input_name: str,
+    input_spec: dict[str, Any],
+    settings_env: dict[str, str],
+) -> tuple[Any | None, str | None, bool]:
+    """Resolve value for a missing input from fallback sources.
+
+    Checks in order: os.environ → settings_env → workflow default → None.
+
+    Args:
+        input_name: Name of the input parameter
+        input_spec: Input specification with type, required, default, etc.
+        settings_env: Environment variables from settings.json
+
+    Returns:
+        tuple: (resolved_value, source, is_from_settings_env) where:
+            - resolved_value: The value to use, or None if required and missing
+            - source: Description of where value came from, or None if missing required
+            - is_from_settings_env: True if value came from settings_env
+    """
+    # Check shell environment variables first (transient session values)
+    if input_name in os.environ:
+        logger.debug(
+            f"Using shell environment variable for input '{input_name}'",
+            extra={"phase": "input_validation", "input": input_name},
+        )
+        return os.environ[input_name], "os.environ", False
+
+    # Check settings.env (persistent configuration)
+    if input_name in settings_env:
+        logger.debug(
+            f"Using value from settings.env for input '{input_name}'",
+            extra={"phase": "input_validation", "input": input_name},
+        )
+        return settings_env[input_name], "settings_env", True
+
+    # No environment fallback - check if required or has default
+    is_required = input_spec.get("required", True)
+    if is_required:
+        return None, None, False  # Signal: missing required input
+
+    # Optional input - use default or None
+    if "default" in input_spec:
+        default_value = input_spec.get("default")
+        logger.debug(
+            f"Applying default value for optional input '{input_name}'",
+            extra={"phase": "input_validation", "input": input_name, "default": default_value},
+        )
+        return default_value, "default", False
+
+    # Optional without default → None
+    logger.debug(
+        f"Optional input '{input_name}' not provided, using None as default",
+        extra={"phase": "input_validation", "input": input_name},
+    )
+    return None, "implicit_none", False
+
+
+def _coerce_provided_input(
+    input_name: str,
+    input_spec: dict[str, Any],
+    provided_value: Any,
+) -> tuple[Any, bool]:
+    """Coerce a provided input value to its declared type if needed.
+
+    Args:
+        input_name: Name of the input parameter
+        input_spec: Input specification containing type declaration
+        provided_value: The value provided by the user
+
+    Returns:
+        tuple: (coerced_value, was_coerced) where:
+            - coerced_value: The value after coercion (or original if no coercion)
+            - was_coerced: True if the value was actually coerced to a different type
+    """
+    declared_type = input_spec.get("type")
+    if not declared_type:
+        logger.debug(
+            f"Input '{input_name}' provided (no type declared)",
+            extra={"phase": "input_validation", "input": input_name},
+        )
+        return provided_value, False
+
+    # Don't coerce None values - they represent "no value" and should be preserved
+    # (e.g., optional inputs without defaults resolve to None)
+    if provided_value is None:
+        logger.debug(
+            f"Input '{input_name}' is None (preserving)",
+            extra={"phase": "input_validation", "input": input_name},
+        )
+        return None, False
+
+    coerced_value = coerce_input_to_declared_type(provided_value, declared_type, input_name=input_name)
+
+    # Explicit coercion check - don't rely on identity which is fragile
+    # (e.g., string normalization could create new objects even when type matches)
+    was_coerced = coerced_value is not provided_value
+    if was_coerced:
+        logger.debug(
+            f"Input '{input_name}' coerced from {type(provided_value).__name__} to {type(coerced_value).__name__}",
+            extra={
+                "phase": "input_validation",
+                "input": input_name,
+                "declared_type": declared_type,
+            },
+        )
+    else:
+        logger.debug(
+            f"Input '{input_name}' provided (type matches)",
+            extra={"phase": "input_validation", "input": input_name},
+        )
+    return coerced_value, was_coerced
 
 
 def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
@@ -139,32 +254,11 @@ def prepare_inputs(
             ))
             continue
 
-        # Check if input is required
-        is_required = input_spec.get("required", True)  # Default to required if not specified
-
         # Check if input is provided
         if input_name not in provided_params:
-            # Check shell environment variables first (transient session values)
-            if input_name in os.environ:
-                defaults[input_name] = os.environ[input_name]
-                logger.debug(
-                    f"Using shell environment variable for input '{input_name}'",
-                    extra={"phase": "input_validation", "input": input_name},
-                )
-                continue  # Skip settings.env, workflow default, and error handling
-
-            # Check settings.env (persistent configuration)
-            if input_name in settings_env:
-                defaults[input_name] = settings_env[input_name]
-                env_param_names.add(input_name)  # Track that this came from env
-                logger.debug(
-                    f"Using value from settings.env for input '{input_name}'",
-                    extra={"phase": "input_validation", "input": input_name},
-                )
-                continue  # Skip workflow default and error handling
-
-            if is_required:
-                # Required input is missing
+            resolved_value, source, is_from_settings = _resolve_missing_input(input_name, input_spec, settings_env)
+            if source is None:
+                # Missing required input
                 description = input_spec.get("description", "No description provided")
                 errors.append((
                     f"Workflow requires input '{input_name}': {description}",
@@ -172,30 +266,18 @@ def prepare_inputs(
                     "",  # No suggestion needed - agent knows how to pass parameters
                 ))
             else:
-                # Optional input is missing, prepare default
-                if "default" in input_spec:
-                    # Has explicit default (including None/null)
-                    default_value = input_spec.get("default")
-                    logger.debug(
-                        f"Applying default value for optional input '{input_name}'",
-                        extra={"phase": "input_validation", "input": input_name, "default": default_value},
-                    )
-                    defaults[input_name] = default_value
-                else:
-                    # Optional inputs without explicit default resolve to None.
-                    # Rationale: "required: false" means "can be omitted", and omitted
-                    # values should still be available in context (as None) so templates
-                    # like ${optional_param} can resolve rather than fail validation.
-                    # Note: Nested access like ${optional_param.field} will still fail
-                    # at runtime since you can't traverse into None - this is intentional.
-                    logger.debug(
-                        f"Optional input '{input_name}' not provided, using None as default",
-                        extra={"phase": "input_validation", "input": input_name},
-                    )
-                    defaults[input_name] = None
+                # Apply coercion to env/settings/defaults values too
+                # (e.g., env var "42" should become int 42 if declared type is "integer")
+                coerced_value, _ = _coerce_provided_input(input_name, input_spec, resolved_value)
+                defaults[input_name] = coerced_value
+                if is_from_settings:
+                    env_param_names.add(input_name)
         else:
-            # Input is provided
-            logger.debug(f"Input '{input_name}' provided", extra={"phase": "input_validation", "input": input_name})
+            # Input is provided - coerce to declared type if needed
+            provided_value = provided_params[input_name]
+            coerced_value, was_coerced = _coerce_provided_input(input_name, input_spec, provided_value)
+            if was_coerced:
+                defaults[input_name] = coerced_value
 
     logger.debug(
         "Input validation complete", extra={"phase": "input_validation", "final_params": list(provided_params.keys())}
