@@ -1335,7 +1335,7 @@ Available template paths (from actual output (4 of 31 shown)): # Smart filtering
 
 **Never assume. Always discover.**
 
-**MCP "JSON string" parameters**: When MCP tools describe parameters as "JSON string" (like `body_schema`, `query_params`), still use object syntax. pflow auto-serializes with proper escaping. Manual `'{"key": "${val}"}'` breaks on newlines/quotes in template values.
+**MCP "JSON string" parameters**: When registry output shows a parameter as "JSON string" (like `body_schema`, `query_params`), still use object syntax. pflow auto-serializes with proper escaping. Manual `'{"key": "${val}"}'` breaks on newlines/quotes in template values.
 
 ### Systematic Debugging Process
 
@@ -1895,7 +1895,7 @@ Format: `verb-noun-qualifier`
 
 | Mistake | Why It Happens | Prevention |
 |---------|----------------|------------|
-| **Manual JSON string construction** | Trying to build `"{\"key\": \"${val}\"}"` | Use object syntax: `{"key": "${val}"}` - auto-serializes with proper escaping |
+| **Manual JSON string construction** | Trying to build `'{\"key\": \"${val}\"}'` | Use object syntax: `{"key": "${val}"}` - auto-serializes with proper escaping |
 | **Using Slack as default example** | Document bias from old examples | Rotate between service categories |
 | **Using LLM for JSON extraction** | Seems "safer" or more flexible | Templates extract paths, code node transforms |
 | **Over-testing nodes** | Uncertainty about structure | Test ONLY when accessing specific paths |
