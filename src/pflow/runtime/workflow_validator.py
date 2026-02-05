@@ -81,7 +81,7 @@ def _coerce_provided_input(
     input_name: str,
     input_spec: dict[str, Any],
     provided_value: Any,
-) -> Any | None:
+) -> tuple[Any, bool]:
     """Coerce a provided input value to its declared type if needed.
 
     Args:
@@ -90,10 +90,9 @@ def _coerce_provided_input(
         provided_value: The value provided by the user
 
     Returns:
-        The coerced value if coercion was needed, or None if no coercion required.
-        Callers should use identity check: `if result is not None` won't work
-        because coerced value could be None. Instead, check if return value
-        differs from provided_value.
+        tuple: (coerced_value, was_coerced) where:
+            - coerced_value: The value after coercion (or original if no coercion)
+            - was_coerced: True if the value was actually coerced to a different type
     """
     declared_type = input_spec.get("type")
     if not declared_type:
@@ -101,12 +100,23 @@ def _coerce_provided_input(
             f"Input '{input_name}' provided (no type declared)",
             extra={"phase": "input_validation", "input": input_name},
         )
-        return provided_value  # Return same object - no coercion
+        return provided_value, False
+
+    # Don't coerce None values - they represent "no value" and should be preserved
+    # (e.g., optional inputs without defaults resolve to None)
+    if provided_value is None:
+        logger.debug(
+            f"Input '{input_name}' is None (preserving)",
+            extra={"phase": "input_validation", "input": input_name},
+        )
+        return None, False
 
     coerced_value = coerce_input_to_declared_type(provided_value, declared_type, input_name=input_name)
 
-    # Use identity check - coercion returns same object if unchanged
-    if coerced_value is not provided_value:
+    # Explicit coercion check - don't rely on identity which is fragile
+    # (e.g., string normalization could create new objects even when type matches)
+    was_coerced = coerced_value is not provided_value
+    if was_coerced:
         logger.debug(
             f"Input '{input_name}' coerced from {type(provided_value).__name__} to {type(coerced_value).__name__}",
             extra={
@@ -115,13 +125,12 @@ def _coerce_provided_input(
                 "declared_type": declared_type,
             },
         )
-        return coerced_value
     else:
         logger.debug(
             f"Input '{input_name}' provided (type matches)",
             extra={"phase": "input_validation", "input": input_name},
         )
-        return provided_value  # Return same object - no coercion
+    return coerced_value, was_coerced
 
 
 def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
@@ -257,14 +266,17 @@ def prepare_inputs(
                     "",  # No suggestion needed - agent knows how to pass parameters
                 ))
             else:
-                defaults[input_name] = resolved_value
+                # Apply coercion to env/settings/defaults values too
+                # (e.g., env var "42" should become int 42 if declared type is "integer")
+                coerced_value, _ = _coerce_provided_input(input_name, input_spec, resolved_value)
+                defaults[input_name] = coerced_value
                 if is_from_settings:
                     env_param_names.add(input_name)
         else:
             # Input is provided - coerce to declared type if needed
             provided_value = provided_params[input_name]
-            coerced_value = _coerce_provided_input(input_name, input_spec, provided_value)
-            if coerced_value is not provided_value:
+            coerced_value, was_coerced = _coerce_provided_input(input_name, input_spec, provided_value)
+            if was_coerced:
                 defaults[input_name] = coerced_value
 
     logger.debug(

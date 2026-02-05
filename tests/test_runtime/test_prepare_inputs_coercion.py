@@ -233,3 +233,77 @@ class TestPrepareInputsIntegrationWithDefaults:
         assert errors == []
         # Coerced user value, not default
         assert defaults["limit"] == 50
+
+
+class TestPrepareInputsEnvSettingsCoercion:
+    """Test that env and settings values are also coerced to declared types."""
+
+    def test_settings_env_string_coerced_to_integer(self):
+        """Settings env value should be coerced to declared type."""
+        workflow_ir = {
+            "inputs": {
+                "limit": {"type": "integer", "required": True},
+            }
+        }
+        provided_params = {}  # Not provided via CLI
+        settings_env = {"limit": "42"}  # String from settings
+
+        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params, settings_env=settings_env)
+
+        assert errors == []
+        assert defaults["limit"] == 42  # Coerced to int
+        assert isinstance(defaults["limit"], int)
+        assert "limit" in env_params  # Tracked as env param
+
+    def test_settings_env_string_coerced_to_boolean(self):
+        """Settings env boolean string should be coerced."""
+        workflow_ir = {
+            "inputs": {
+                "enabled": {"type": "boolean", "required": True},
+            }
+        }
+        provided_params = {}
+        settings_env = {"enabled": "true"}
+
+        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params, settings_env=settings_env)
+
+        assert errors == []
+        assert defaults["enabled"] is True
+        assert isinstance(defaults["enabled"], bool)
+
+    def test_workflow_default_coerced_to_declared_type(self):
+        """Workflow default values should be coerced to declared type."""
+        workflow_ir = {
+            "inputs": {
+                "count": {
+                    "type": "integer",
+                    "required": False,
+                    "default": "100",  # String default in workflow
+                },
+            }
+        }
+        provided_params = {}
+
+        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+
+        assert errors == []
+        assert defaults["count"] == 100  # Coerced to int
+        assert isinstance(defaults["count"], int)
+
+    def test_none_default_not_coerced(self):
+        """None values should not be coerced (preserved as None)."""
+        workflow_ir = {
+            "inputs": {
+                "optional": {
+                    "type": "string",
+                    "required": False,
+                    # No default - resolves to None
+                },
+            }
+        }
+        provided_params = {}
+
+        errors, defaults, env_params = prepare_inputs(workflow_ir, provided_params)
+
+        assert errors == []
+        assert defaults["optional"] is None  # Not "None" string

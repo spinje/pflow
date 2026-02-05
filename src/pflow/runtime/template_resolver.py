@@ -220,7 +220,10 @@ class TemplateResolver:
 
         success, parsed = try_parse_json(value)
         if success and isinstance(parsed, (dict, list)):
-            # Only use parsed result if it's a container we can traverse
+            # Only use parsed result if it's a container (dict/list) we can traverse.
+            # Primitives (int, float, bool) are NOT parsed to preserve numeric strings
+            # like Discord snowflake IDs ("1458059302022549698" should stay as string,
+            # not become int 1458059302022549698). See bug fix for numeric string coercion.
             logger.debug(
                 f"Auto-parsed JSON string for path traversal: {type(parsed).__name__}",
             )

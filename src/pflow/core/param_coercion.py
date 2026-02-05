@@ -26,9 +26,14 @@ _TYPE_ALIASES = {
 
 
 def _normalize_type(type_name: str) -> str:
-    """Normalize type name to canonical form."""
-    lower = type_name.lower()
-    return _TYPE_ALIASES.get(lower, lower)
+    """Normalize type name to canonical form.
+
+    Known type aliases are normalized to their canonical form.
+    Unknown types preserve their original case to support future
+    custom/user-defined types.
+    """
+    normalized = _TYPE_ALIASES.get(type_name.lower())
+    return normalized if normalized else type_name  # Preserve case for unknowns
 
 
 def coerce_to_declared_type(
@@ -91,15 +96,22 @@ def coerce_to_declared_type(
 
 
 def _coerce_to_string(value: Any, log_context: dict[str, Any]) -> Any:
-    """Coerce non-string values to string."""
-    if not isinstance(value, str):
-        coerced = str(value)
-        logger.debug(
-            f"Coerced {type(value).__name__} to string for input",
-            extra={"original_type": type(value).__name__, **log_context},
-        )
-        return coerced
-    return value
+    """Coerce non-string values to string.
+
+    For dict/list, uses json.dumps() to produce valid JSON strings.
+    This is consistent with coerce_to_declared_type() and ensures
+    nodes expecting JSON strings receive proper JSON, not Python repr.
+    """
+    if isinstance(value, str):
+        return value
+    # Use JSON serialization for containers to produce valid JSON strings
+    # (e.g., {"a": 1} instead of {'a': 1})
+    coerced = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+    logger.debug(
+        f"Coerced {type(value).__name__} to string for input",
+        extra={"original_type": type(value).__name__, **log_context},
+    )
+    return coerced
 
 
 def _coerce_to_integer(value: Any, log_context: dict[str, Any]) -> Any:
@@ -236,7 +248,15 @@ def coerce_input_to_declared_type(
         input_name: Optional input name for logging context
 
     Returns:
-        Coerced value if conversion needed and successful, otherwise original value
+        Coerced value if conversion needed and successful, otherwise original value.
+
+    Note:
+        This function uses **lenient coercion** - if conversion fails (e.g., "maybe"
+        cannot be converted to boolean), the original value is returned unchanged
+        with a warning logged. This allows downstream validation (e.g., code node
+        type checking) to catch the error with full context, rather than failing
+        early with a generic coercion error. This design choice trades immediate
+        error detection for better error messages at the point of use.
 
     Coercion rules:
         - string: Convert int/float/bool to str

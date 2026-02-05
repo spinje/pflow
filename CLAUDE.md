@@ -407,6 +407,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 86: MCP Server Discovery Automation
 
 **Later:**
+- Task 120: Strict Input Type Validation
 - Task 45: Evaluate n8n integration
 - Task 51: Refactor CLI main.py
 - Task 62: Route stdin to Workflow Inputs
