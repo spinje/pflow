@@ -40,11 +40,12 @@ For these requests:
 - Return found=true if a workflow performs that business function
 - Use confidence 0.60-0.85 to indicate "functional match with minimal specifics"
 
-### Step 2: Examine Workflow Flows
-The **Flow** field shows the exact execution sequence. This is your PRIMARY evidence.
-- Does the flow start with the right data source? (e.g., `github-list-issues` vs `read-file`)
-- Does it perform the required operations? (e.g., `llm` for analysis, `write-file` for saving)
-- Does it produce the expected output? (e.g., `github-create-pr` for pull requests)
+### Step 2: Examine Inputs and Flows
+The **Inputs** field shows what data the workflow accepts (name, type, required/optional).
+The **Flow** field shows the execution sequence using descriptive step names. Together these are your PRIMARY evidence.
+- Do the inputs match what the user wants to provide? (e.g., `repo_path` for git operations, `target_url` for web scraping)
+- Does the flow perform the required operations? (e.g., `classify-commits` for analysis, `write-changelog` for saving)
+- Does the flow produce the expected output? (e.g., `post-to-slack` for messaging, `save-markdown` for file output)
 
 ### Step 3: Verify Alignment
 Check if the workflow truly matches:

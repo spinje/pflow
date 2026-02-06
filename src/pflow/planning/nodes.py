@@ -252,6 +252,48 @@ class WorkflowDiscoveryNode(Node):
             "cache_planner": cache_planner,
         }
 
+    @staticmethod
+    def _adapt_prompt_to_context(prompt_template: str, discovery_context: str) -> str:
+        """Remove prompt references to metadata fields absent from discovery context.
+
+        When no workflows have capabilities or use_cases metadata, the prompt
+        should not instruct the LLM to verify using those fields — doing so
+        confuses the model and lowers match confidence.
+
+        Args:
+            prompt_template: The raw discovery prompt template
+            discovery_context: The formatted workflow context string
+
+        Returns:
+            Prompt template with irrelevant metadata references removed
+        """
+        has_capabilities = "**Can:**" in discovery_context
+        has_use_cases = "**For:**" in discovery_context
+
+        if has_capabilities and has_use_cases:
+            return prompt_template
+
+        # Build the replacement for Step 3 bullet list
+        old_bullets = (
+            "- **Capabilities** confirm what the workflow can do\n"
+            "- **For** (use cases) shows when to use it\n"
+            "- **Description** provides overall context"
+        )
+
+        new_bullets_parts = []
+        if has_capabilities:
+            new_bullets_parts.append("- **Capabilities** confirm what the workflow can do")
+        if has_use_cases:
+            new_bullets_parts.append("- **For** (use cases) shows when to use it")
+        new_bullets_parts.append("- **Description** provides overall context")
+
+        new_bullets = "\n".join(new_bullets_parts)
+
+        if old_bullets in prompt_template:
+            prompt_template = prompt_template.replace(old_bullets, new_bullets)
+
+        return prompt_template
+
     def _build_cache_blocks(
         self, discovery_context: str, user_input: str, cache_planner: bool
     ) -> tuple[list[dict], str]:
@@ -271,6 +313,7 @@ class WorkflowDiscoveryNode(Node):
             from pflow.planning.prompts.loader import format_prompt, load_prompt
 
             prompt_template = load_prompt("discovery")
+            prompt_template = self._adapt_prompt_to_context(prompt_template, discovery_context)
             formatted_prompt = format_prompt(
                 prompt_template, {"discovery_context": discovery_context, "user_input": user_input}
             )
@@ -281,6 +324,7 @@ class WorkflowDiscoveryNode(Node):
         from pflow.planning.prompts.loader import load_prompt
 
         prompt_template = load_prompt("discovery")
+        prompt_template = self._adapt_prompt_to_context(prompt_template, discovery_context)
         cache_blocks = []
 
         if "## Context" in prompt_template:
