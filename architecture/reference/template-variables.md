@@ -1520,55 +1520,17 @@ The `stdin` parameter passes data through a pipe, completely bypassing shell par
 
 ### Auto-Parsing JSON Strings
 
-Introduced in Task 85 to handle common node output patterns.
+pflow automatically parses JSON strings to dicts/lists at several points during template resolution and type coercion. For the complete inventory of all auto-parse points, design principles, and how they interact, see [Data Type Coercion](../core-concepts/data-type-coercion.md).
 
-**Scenario**: Node outputs JSON as a string, but next node needs dict/list.
+**Quick reference** — the escape hatch when you want to keep a JSON string as a string:
 
-```python
-# Node output
-shared["shell"] = {
-    "stdout": '{"items": [1, 2, 3], "count": 3}'
-}
-
-# Workflow parameter
-params = {
-    "data": "${shell.stdout}"  # Type: str
-}
+```
+"message": "Data: ${shell.stdout}"
+           ^^^^^^
+           Complex template (prefix + variable) → stays as string
 ```
 
-**Without auto-parsing**:
-```python
-params["data"] = '{"items": [1, 2, 3], "count": 3}'  # str
-# Node expecting dict fails!
-```
-
-**With auto-parsing** (automatic):
-```python
-# Runtime behavior:
-# 1. Resolves template → JSON string
-# 2. Detects JSON format (starts with '{' or '[')
-# 3. Checks parameter expects dict/list
-# 4. Auto-parses if size ≤ 10MB
-#
-# Result:
-params["data"] = {"items": [1, 2, 3], "count": 3}  # dict!
-```
-
-**Escape hatch** (when you want string):
-
-```json
-{
-  "message": "Data: ${shell.stdout}"
-  //         ^^^^^^
-  //         Complex template → stays as string
-}
-```
-
-**Safety limits**:
-- Max size: 10MB
-- Only valid JSON
-- Only when parameter expects dict/list
-- Only for simple templates (entire param is `${var}`)
+Simple templates (`${var}` as the entire value) may be auto-parsed to containers. Complex templates (any surrounding text) always stay as strings.
 
 ### Tri-State Workflow Status
 

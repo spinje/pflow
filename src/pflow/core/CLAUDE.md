@@ -15,6 +15,7 @@ The `core` module is responsible for:
 - **Settings Management**: Node filtering and configuration with environment overrides
 - **User Experience**: User-friendly error formatting with actionable suggestions
 - **Public API**: Exposing core functionality through a clean interface
+- **JSON Parsing**: Shared JSON parsing infrastructure (`json_utils.py`) used by the template resolver, node wrapper, and batch node. For how these fit together, see `architecture/core-concepts/data-type-coercion.md`.
 
 ## Module Structure
 
@@ -23,6 +24,7 @@ src/pflow/core/
 ├── __init__.py              # Public API exports - aggregates functionality from all modules
 ├── exceptions.py            # Custom exception hierarchy for structured error handling
 ├── ir_schema.py             # IR schema definition and validation for workflow IR
+├── json_utils.py            # Shared JSON parsing utilities (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model configuration
 ├── markdown_parser.py       # Markdown workflow parser (.pflow.md → IR dict)
 ├── llm_pricing.py           # Centralized LLM pricing and cost calculations

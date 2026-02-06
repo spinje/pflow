@@ -187,6 +187,8 @@ file_path = shared.get("file_path") or self.params.get("file_path")  # Wrong - s
 
 ## Creating New Nodes
 
+> **Node Output Types**: Nodes should store their natural output type (strings from shell/LLM, dicts from parsed APIs). Do NOT implement JSON auto-parsing in nodes — the template system handles type coercion automatically. See `architecture/core-concepts/data-type-coercion.md`.
+
 1. Copy the retry pattern above
 2. Inherit from `Node` (not `BaseNode`)
 3. NO try/except in exec()

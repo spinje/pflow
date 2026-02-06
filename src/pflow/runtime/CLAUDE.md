@@ -172,6 +172,8 @@ shared["__cache_hits__"] = []  # Nodes that hit cache (for JSON output)
 2. Shared store (runtime data)
 3. Workflow inputs
 
+> **JSON Auto-Parsing & Type Coercion**: The template system includes automatic JSON parsing at several points (traversal, resolve_nested, target-side coercion). For the complete inventory and design rationale, see `architecture/core-concepts/data-type-coercion.md`.
+
 #### 3.2 TemplateValidator (`template_validator.py`) (Enhanced in Task 71)
 
 **Purpose**: Pre-execution validation of template variables with rich error suggestions.

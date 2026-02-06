@@ -22,7 +22,8 @@ architecture/
 │   ├── json-workflows.md      # Writing JSON workflows
 │   └── mcp-guide.md           # MCP integration guide
 ├── core-concepts/             # Fundamental patterns
-│   └── shared-store.md        # Data communication (only remaining core concept)
+│   ├── shared-store.md        # Data communication between nodes
+│   └── data-type-coercion.md  # JSON auto-parsing and type coercion across the system
 ├── features/                  # Feature specifications
 │   ├── shell-pipes.md         # Unix pipe support
 │   ├── simple-nodes.md        # Node design principles
@@ -209,10 +210,24 @@ Each entry includes:
 
 **Status**: ✅ MVP (proxy optional)
 
-> **Note**: The Core Concepts directory now contains only `shared-store.md`. Previously included documents have been moved:
+> **Note**: Previously included documents have been moved:
 > - **schemas.md** → moved to `reference/ir-schema.md` (it's a spec, not a concept)
 > - **registry.md** → merged into `architecture.md#node-naming`
 > - **runtime.md** → moved to `.taskmaster/feature-dump/` (mostly unimplemented future features)
+
+#### [data-type-coercion.md](./core-concepts/data-type-coercion.md)
+**Purpose**: How pflow handles JSON parsing and type conversion as data flows between nodes.
+
+**Key Contents**:
+- Design philosophy (producers store raw, consumers declare types)
+- Complete inventory of all 6 auto-parse/coercion points with assessments
+- How they interact (data flow diagram)
+- Shared infrastructure (`json_utils.py`)
+- Known limitations and tech debt
+
+**When to Use**: Debugging type/JSON issues, understanding why a value was parsed or not, adding new coercion points, working on LLM node output handling
+
+**Status**: ✅ Current
 
 ---
 
@@ -490,6 +505,7 @@ For deeper implementation details (WHAT and HOW), these CLAUDE.md files provide 
 | **Writing new nodes** | `pflow-pocketflow-integration-guide.md` → `features/simple-nodes.md` → `reference/enhanced-interface-format.md` |
 | **Building workflows** | Run `pflow instructions usage` for the authoritative agent guide |
 | **CLI development** | `pflow --help` → `features/shell-pipes.md` → `reference/template-variables.md` |
+| **JSON/type debugging** | `core-concepts/data-type-coercion.md` (all auto-parse points and design rationale) |
 
 ### Quick Reference
 
@@ -497,6 +513,7 @@ For deeper implementation details (WHAT and HOW), these CLAUDE.md files provide 
 - **How pflow works**: `architecture.md` (shared store pattern, wrapper chain, execution pipeline)
 - **Extending pflow internals**: `pflow-pocketflow-integration-guide.md` (node authoring, compiler architecture)
 - **Data flow between nodes**: `core-concepts/shared-store.md` + `reference/ir-schema.md`
+- **JSON/type coercion**: `core-concepts/data-type-coercion.md` (auto-parse inventory, design principles)
 - **Project status**: Root `CLAUDE.md` (implemented features, planned work)
 - **Historical context**: `historical/` folder (design rationale, may be outdated)
 
