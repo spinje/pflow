@@ -395,14 +395,61 @@ pflow settings cache show
 3. ✅ Cache invalidation correctly detects node changes
 4. ✅ Side effects not duplicated (cache hit = no re-execution)
 5. ✅ Saved workflows unaffected (no caching)
-6. ✅ `make test` and `make check` pass
-7. ✅ Performance targets met
+6. ✅ `pflow run-step` extracts and executes a single node from a workflow file
+7. ✅ `make test` and `make check` pass
+8. ✅ Performance targets met
+
+## Run-Step: Single Node Execution from Workflow Files
+
+Run a single step from a workflow file in isolation, without executing the full pipeline.
+
+### Why This Is In Scope
+
+The iteration cache and run-step are complementary halves of the development loop:
+- **Cache** handles: "re-run the workflow efficiently" (upstream nodes served from cache)
+- **Run-step** handles: "test this one node right now" (no workflow run at all)
+
+Cases where caching alone isn't enough:
+1. **First iteration on a new node** — no cache exists yet, but you want to test just the node you're writing
+2. **Testing with different inputs** — try a node with varied data without re-running the full workflow each time
+3. **Developing a node before wiring it in** — write the code, test it standalone, then connect to data flow
+4. **Rapid inner-loop iteration** — even cache lookup has overhead; direct execution is faster for tight edit-test cycles
+
+Both features share infrastructure (workflow parsing, node extraction, config hashing), so building them together is cheaper than separate tasks.
+
+> See `starting-context/run-step-insight.md` for the full analysis from the generate-changelog workflow rewrite.
+
+### Proposed UX
+
+```bash
+# Run a single step, providing its inputs manually
+pflow run-step workflow.pflow.md get-commits-enriched tag=v0.7.0
+```
+
+### How It Works
+
+1. Parse the `.pflow.md` file
+2. Find the step by name
+3. Extract its type, params, code block, batch config, etc.
+4. Map CLI args to the node's input variables (e.g., `tag=v0.7.0` satisfies the `tag` input, regardless of its template source `${resolve-tag.result}`)
+5. Execute the node in isolation using the existing `registry_run` execution path
+6. Display output using the standard registry-run format (template paths, structure)
+
+### Input Resolution
+
+The node's `inputs` dict has template references like `{tag: ${resolve-tag.result}}`. Run-step maps CLI args by **input variable name** (the key), not the template source (the value). So `tag=v0.7.0` satisfies:
+
+```yaml
+- inputs:
+    tag: ${resolve-tag.result}   # <-- "tag" matched, template ignored
+```
+
+For non-code nodes (shell, http, etc.), template variables in params are replaced by matching CLI arg names.
 
 ## Future Enhancements (Out of Scope)
 
 - **Concurrent execution support** - File locking for parallel runs
 - **Cache sharing** - Share caches across similar workflows
 - **Selective re-run** - `pflow workflow.json --rerun=node_3`
-- **Run single node in isolation** - `pflow workflow.json --run-node=node_3` with optional mocked inputs (`--input upstream.stdout="mock data"`). This would enable testing a specific node with custom data without running the full workflow. Task 106's automatic caching covers 90% of iteration use cases, but explicit node isolation would help when: (1) testing with different mock data, (2) avoiding cache lookup overhead during rapid iteration, (3) debugging a specific node's behavior in isolation. Consider this as a complementary feature if Task 106's caching proves insufficient for certain debugging workflows.
 - **Cache export** - Package cache for reproducibility
 - **Remote cache** - Cloud-based cache for team workflows

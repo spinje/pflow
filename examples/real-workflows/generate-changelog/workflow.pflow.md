@@ -48,20 +48,23 @@ Get latest git tag as baseline for changelog range.
 - type: shell
 
 ```shell command
-tag=$(git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'); printf '{"latest_tag": {"name": "%s"}}' "$tag"
+git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'
 ```
 
 ### resolve-tag
 
-Use provided tag or default to latest. Strips trailing newline for clean
-template interpolation in downstream nodes.
+Use provided tag or default to latest.
 
-- type: shell
+- type: code
+- inputs:
+    since_tag: ${since_tag}
+    latest_tag: ${get-latest-tag.stdout}
 
-```shell command
-provided='${since_tag}'
-latest='${get-latest-tag.stdout.latest_tag.name}'
-if [ -n "$provided" ]; then echo "$provided"; else echo "$latest"; fi | tr -d '\n'
+```python code
+since_tag: str
+latest_tag: str
+
+result: str = since_tag.strip() if since_tag.strip() else latest_tag.strip()
 ```
 
 ### get-docs-diff
@@ -69,17 +72,45 @@ if [ -n "$provided" ]; then echo "$provided"; else echo "$latest"; fi | tr -d '\
 Get documentation changes since tag, grouped by file with commit refs.
 Excludes changelog.mdx itself to avoid circular references.
 
-- type: shell
+- type: code
+- inputs:
+    tag: ${resolve-tag.result}
 
-```shell command
-tag='${resolve-tag.stdout}'
-for file in $(git diff "$tag"..HEAD --name-only -- docs/ 2>/dev/null | command grep -v changelog.mdx); do
-  echo "## $file"
-  echo "Commits: $(git log "$tag"..HEAD --oneline -- "$file" | paste -sd ', ' -)"
-  echo "Changes:"
-  git diff "$tag"..HEAD -- "$file" | command grep '^[+-]' | command grep -v -E '^\+\+\+|^---' | head -50
-  echo ""
-done
+```python code
+tag: str
+
+import subprocess
+
+diff_output = subprocess.run(
+    ['git', 'diff', f'{tag}..HEAD', '--name-only', '--', 'docs/'],
+    capture_output=True, text=True
+).stdout
+files = [
+    f for f in diff_output.strip().split('\n')
+    if f and 'changelog.mdx' not in f
+]
+
+sections = []
+for file in files:
+    commits = subprocess.run(
+        ['git', 'log', f'{tag}..HEAD', '--oneline', '--', file],
+        capture_output=True, text=True
+    ).stdout.strip().replace('\n', ', ')
+
+    diff = subprocess.run(
+        ['git', 'diff', f'{tag}..HEAD', '--', file],
+        capture_output=True, text=True
+    ).stdout
+    change_lines = [
+        line for line in diff.split('\n')
+        if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))
+    ][:50]
+
+    sections.append(
+        f'## {file}\nCommits: {commits}\nChanges:\n' + '\n'.join(change_lines)
+    )
+
+result: str = '\n\n'.join(sections)
 ```
 
 ### get-recent-updates
@@ -87,10 +118,25 @@ done
 Get last 2 Update blocks from Mintlify changelog as style reference for
 the LLM generating the Mintlify format output.
 
-- type: shell
+- type: code
+- inputs:
+    mintlify_file: ${mintlify_file}
 
-```shell command
-awk '/<Update/,/<\/Update>/{print; if(/<\/Update>/){count++; if(count==2) exit}}' docs/changelog.mdx 2>/dev/null || echo ''
+```python code
+mintlify_file: str
+
+import re
+from pathlib import Path
+
+path = Path(mintlify_file)
+if not path.exists():
+    updates_text = ''
+else:
+    content = path.read_text()
+    updates = re.findall(r'<Update.*?</Update>', content, re.DOTALL)
+    updates_text = '\n\n'.join(updates[:2])
+
+result: str = updates_text
 ```
 
 ### get-commits-enriched
@@ -98,57 +144,97 @@ awk '/<Update/,/<\/Update>/{print; if(/<\/Update>/){count++; if(count==2) exit}}
 Fetch commits since tag with PR metadata, file paths, and task numbers.
 Joins commit messages with GitHub PR data for rich classification context.
 
-- type: shell
+- type: code
+- inputs:
+    tag: ${resolve-tag.result}
+- timeout: 60
 
-```shell command
-tag='${resolve-tag.stdout}'
-repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner')
+```python code
+tag: str
 
-# Get commits with proper JSON escaping
-commits=$(git log --first-parent "$tag"..HEAD --format='%H|%s' | while IFS='|' read -r hash msg; do jq -n --arg hash "$hash" --arg msg "$msg" '{hash: $hash, commit_message: $msg}'; done | jq -s '.')
+import subprocess, json, re
 
-# Get file changes per commit
-file_changes=$(git log --first-parent "$tag"..HEAD --format='HASH:%H' --name-only | \
-  awk '/^HASH:/{hash=substr($0,6); next} NF{files[hash]=files[hash] $0 ","} END{for(h in files) print h "|" files[h]}' | \
-  jq -Rs 'split("\n") | map(select(length>0) | split("|") | {key: .[0], value: (.[1] // "" | split(",") | map(select(length>0)) | join(", "))}) | from_entries')
+repo = subprocess.run(
+    ['gh', 'repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'],
+    capture_output=True, text=True, check=True
+).stdout.strip()
 
-# Get PRs
-prs=$(gh pr list --state merged --limit 200 --json number,title,body 2>/dev/null || echo '[]')
+log_out = subprocess.run(
+    ['git', 'log', '--first-parent', f'{tag}..HEAD', '--format=%H|%s'],
+    capture_output=True, text=True
+).stdout
+commits = []
+for line in log_out.strip().split('\n'):
+    if not line:
+        continue
+    hash_val, msg = line.split('|', 1)
+    commits.append({'hash': hash_val, 'commit_message': msg})
 
-# Combine all data
-echo "$commits" | jq --argjson prs "$prs" --argjson files "$file_changes" --arg repo "$repo" '
-  map(. + {
-    pr_number: null, pr_title: "", pr_body: "", pr_link: "", is_merge: false,
-    files_changed: ($files[.hash] // ""),
-    task_number: null
-  } |
-  # Extract task number from commit message or PR body
-  (if .commit_message | test("[Tt]ask[- ]?[0-9]+") then
-    (.commit_message | capture("[Tt]ask[- ]?(?<num>[0-9]+)").num | tonumber)
-  else null end) as $task_from_commit |
-  . + {task_number: $task_from_commit} |
-  # Enrich with PR data
-  if .commit_message | test("^Merge pull request #[0-9]+") then
-    (.commit_message | capture("#(?<num>[0-9]+)").num | tonumber) as $prnum |
-    ($prs | map(select(.number == $prnum)) | first // {}) as $pr |
-    (if ($pr.body // "") | test("[Tt]ask[- _]?[0-9]+") then
-      (($pr.body // "") | capture("[Tt]ask[- _]?(?<num>[0-9]+)").num | tonumber)
-    else .task_number end) as $task_from_pr |
-    . + {
-      pr_number: $prnum,
-      pr_title: ($pr.title // ""),
-      pr_body: ($pr.body // ""),
-      pr_link: "https://github.com/\($repo)/pull/\($prnum)",
-      is_merge: true,
-      task_number: ($task_from_pr // .task_number)
-    }
-  elif .commit_message | test("\\(#[0-9]+\\)") then
-    (.commit_message | capture("\\(#(?<num>[0-9]+)\\)").num | tonumber) as $prnum |
-    . + {pr_number: $prnum, pr_link: "https://github.com/\($repo)/pull/\($prnum)"}
-  else . end
-  # Add pr_summary (truncated for classification)
-  | . + {pr_summary: (if .pr_body and (.pr_body | length) > 0 then (.pr_body | split("\n## ") | map(select(startswith("Summary"))) | first // "") | split("\n\n")[0:2] | join("\n\n") | .[0:800] else "" end)}
-  )'
+file_log = subprocess.run(
+    ['git', 'log', '--first-parent', f'{tag}..HEAD', '--format=HASH:%H', '--name-only'],
+    capture_output=True, text=True
+).stdout
+file_changes: dict = {}
+current_hash = None
+for line in file_log.strip().split('\n'):
+    if line.startswith('HASH:'):
+        current_hash = line[5:]
+    elif line.strip() and current_hash:
+        file_changes.setdefault(current_hash, []).append(line.strip())
+
+pr_out = subprocess.run(
+    ['gh', 'pr', 'list', '--state', 'merged', '--limit', '200',
+     '--json', 'number,title,body'],
+    capture_output=True, text=True
+).stdout
+prs = json.loads(pr_out) if pr_out.strip() else []
+pr_by_num = {pr['number']: pr for pr in prs}
+
+for c in commits:
+    h, msg = c['hash'], c['commit_message']
+    c['files_changed'] = ', '.join(file_changes.get(h, []))
+    c['pr_number'] = None
+    c['pr_title'] = ''
+    c['pr_body'] = ''
+    c['pr_link'] = ''
+    c['pr_summary'] = ''
+    c['is_merge'] = False
+    c['task_number'] = None
+
+    task_m = re.search(r'[Tt]ask[- ]?(\d+)', msg)
+    if task_m:
+        c['task_number'] = int(task_m.group(1))
+
+    merge_m = re.match(r'^Merge pull request #(\d+)', msg)
+    squash_m = re.search(r'\(#(\d+)\)', msg)
+
+    if merge_m:
+        pr_num = int(merge_m.group(1))
+        pr = pr_by_num.get(pr_num, {})
+        body = pr.get('body', '') or ''
+        c.update({
+            'pr_number': pr_num,
+            'pr_title': pr.get('title', ''),
+            'pr_body': body,
+            'pr_link': f'https://github.com/{repo}/pull/{pr_num}',
+            'is_merge': True,
+        })
+        body_task = re.search(r'[Tt]ask[- _]?(\d+)', body)
+        if body_task:
+            c['task_number'] = int(body_task.group(1))
+    elif squash_m:
+        pr_num = int(squash_m.group(1))
+        c['pr_number'] = pr_num
+        c['pr_link'] = f'https://github.com/{repo}/pull/{pr_num}'
+
+    body = c['pr_body']
+    if body:
+        sections = body.split('\n## ')
+        summaries = [s for s in sections if s.startswith('Summary')]
+        if summaries:
+            c['pr_summary'] = '\n\n'.join(summaries[0].split('\n\n')[:2])[:800]
+
+result: list = commits
 ```
 
 ### get-task-reviews
@@ -156,26 +242,29 @@ echo "$commits" | jq --argjson prs "$prs" --argjson files "$file_changes" --arg 
 Read task-review.md files for referenced tasks to provide implementation
 context for accurate changelog entry refinement.
 
-- type: shell
-- stdin: ${get-commits-enriched.stdout}
+- type: code
+- inputs:
+    commits: ${get-commits-enriched.result}
 
-```shell command
-# Extract unique task numbers
-task_nums=$(jq -r '[.[].task_number | select(. != null)] | unique | .[]')
+```python code
+commits: list
 
-echo '{'
-first=true
-for num in $task_nums; do
-  review_file=".taskmaster/tasks/task_$num/task-review.md"
-  if [ -f "$review_file" ]; then
-    content=$(cat "$review_file")
-    if [ -n "$content" ]; then
-      if [ "$first" = true ]; then first=false; else echo ','; fi
-      printf '"%s": %s' "$num" "$(printf '%s' "$content" | jq -Rs .)"
-    fi
-  fi
-done
-echo '}'
+from pathlib import Path
+
+task_nums = sorted({
+    c['task_number'] for c in commits
+    if c.get('task_number') is not None
+})
+
+reviews = {}
+for num in task_nums:
+    path = Path(f'.taskmaster/tasks/task_{num}/task-review.md')
+    if path.exists():
+        content = path.read_text().strip()
+        if content:
+            reviews[str(num)] = content
+
+result: dict = reviews
 ```
 
 ### analyze-commits
@@ -186,9 +275,9 @@ PR data, and file paths.
 - type: llm
 
 ```yaml batch
-items: ${get-commits-enriched.stdout}
+items: ${get-commits-enriched.result}
 parallel: true
-max_concurrent: 90
+max_concurrent: 40
 error_handling: continue
 ```
 
@@ -256,79 +345,113 @@ Output ONLY the changelog line or SKIP line. Nothing else.
 
 Separate user-facing entries from skipped internal changes.
 
-- type: shell
-- stdin: ${analyze-commits.results}
+- type: code
+- inputs:
+    results: ${analyze-commits.results}
 
-```shell command
-jq '
-  # Add index to each item, filter nulls
-  [to_entries[] | select(.value.response != null) | {index: .key, response: .value.response}] |
+```python code
+results: list
 
-  # Separate included and skipped
-  [.[] | select(.response | type == "string") | select(.response | startswith("SKIP") | not) | select(.response != "")] as $included |
-  [.[] | select(.response | type == "string") | select(.response | startswith("SKIP")) | .response | sub("^SKIP: "; "")] as $skipped |
+included = []
+skipped = []
+for i, entry in enumerate(results):
+    response = entry.get('response')
+    if not response or not isinstance(response, str):
+        continue
+    if response.startswith('SKIP'):
+        raw = response.split(':', 1)[1].strip() if ':' in response else response
+        skipped.append(raw)
+    elif response.strip():
+        included.append({'index': i, 'response': response})
 
-  {
-    included: $included,
-    skipped: $skipped
-  }
-'
+result: dict = {'included': included, 'skipped': skipped}
 ```
 
 ### prepare-context
 
 Join draft entries with original commit context for the refinement step.
 
-- type: shell
+- type: code
+- inputs:
+    included: ${filter-and-format.result.included}
+    commits: ${get-commits-enriched.result}
 
-```yaml stdin
-filter: ${filter-and-format.stdout}
-commits: ${get-commits-enriched.stdout}
+```python code
+included: list
+commits: list
+
+entries = []
+for entry in included:
+    idx = entry['index']
+    commit = commits[idx] if idx < len(commits) else {}
+    files = commit.get('files_changed', '')
+    file_list = [f.strip() for f in files.split(',') if f.strip()] if files else []
+    if len(file_list) > 5:
+        files_display = ', '.join(file_list[:5]) + f' ... and {len(file_list) - 5} more files'
+    else:
+        files_display = ', '.join(file_list)
+
+    entries.append({
+        'draft': entry['response'],
+        'index': entry['index'],
+        'context': {
+            'commit_message': commit.get('commit_message', ''),
+            'task_number': commit.get('task_number'),
+            'files_changed': files_display,
+            'pr_title': commit.get('pr_title', ''),
+            'pr_body': commit.get('pr_body', ''),
+            'pr_link': commit.get('pr_link', ''),
+            'pr_number': commit.get('pr_number'),
+        }
+    })
+
+result: list = entries
 ```
 
-```shell command
-jq '. as $root | .filter.included | map({draft: .response, index: .index, context: ($root.commits[.index] | {commit_message, task_number, files_changed: ((.files_changed // "") | split(", ") | if length > 5 then (.[0:5] | join(", ")) + " ... and \(length - 5) more files" else . | join(", ") end), pr_title, pr_body, pr_link, pr_number})})'
-```
+### compute-version
 
-### compute-bump-type
+Determine semver bump type, calculate next version, and get formatted dates.
+Combines bump analysis, version arithmetic, and date formatting in one step.
 
-Determine semver bump type based on entry categories.
-Removed/Changed = major, Added features = minor, else patch.
+- type: code
+- inputs:
+    entries: ${prepare-context.result}
+    current_tag: ${resolve-tag.result}
 
-- type: shell
-- stdin: ${prepare-context.stdout}
+```python code
+entries: list
+current_tag: str
 
-```shell command
-jq -r 'map(.draft) | (map(select(startswith("Added"))) | length) as $features | (map(select(startswith("Fixed"))) | length) as $fixes | (map(select(startswith("Improved"))) | length) as $improvements | (map(select(startswith("Removed") or startswith("Changed"))) | length) as $breaking | if $breaking > 0 then "major" elif $features > 0 then "minor" else "patch" end'
-```
+from datetime import datetime
 
-### compute-next-version
+drafts = [e['draft'] for e in entries]
+has_breaking = any(d.startswith(('Removed', 'Changed')) for d in drafts)
+has_features = any(d.startswith('Added') for d in drafts)
 
-Calculate next version number by applying the bump to the current tag.
+if has_breaking:
+    bump_type = 'major'
+elif has_features:
+    bump_type = 'minor'
+else:
+    bump_type = 'patch'
 
-- type: shell
+version = current_tag.lstrip('v')
+major, minor, patch_num = (int(x) for x in version.split('.'))
 
-```shell command
-current=$(echo '${resolve-tag.stdout}' | sed 's/^v//')
-bump=$(echo '${compute-bump-type.stdout}' | tr -d '\n')
-major=$(echo $current | cut -d. -f1)
-minor=$(echo $current | cut -d. -f2)
-patch=$(echo $current | cut -d. -f3)
-case $bump in
-  major) printf 'v%d.0.0' $((major + 1)) ;;
-  minor) printf 'v%d.%d.0' $major $((minor + 1)) ;;
-  patch) printf 'v%d.%d.%d' $major $minor $((patch + 1)) ;;
-esac
-```
+if bump_type == 'major':
+    next_version = f'v{major + 1}.0.0'
+elif bump_type == 'minor':
+    next_version = f'v{major}.{minor + 1}.0'
+else:
+    next_version = f'v{major}.{minor}.{patch_num + 1}'
 
-### get-dates
-
-Get current date in both ISO and human-readable formats for changelog headers.
-
-- type: shell
-
-```shell command
-printf '{"iso": "%s", "month_year": "%s"}' "$(date +%Y-%m-%d)" "$(date +"%B %Y")"
+now = datetime.now()
+result: dict = {
+    'bump_type': bump_type,
+    'next_version': next_version,
+    'date_iso': now.strftime('%Y-%m-%d'),
+    'date_month_year': now.strftime('%B %Y'),
+}
 ```
 
 ### format-both
@@ -341,9 +464,9 @@ for CHANGELOG.md and Mintlify Update component for docs/changelog.mdx.
 ```yaml batch
 items:
   - format: markdown
-    prompt: "Refine and format these changelog entries as a markdown section for CHANGELOG.md.\n\n## Input\nVersion: ${compute-next-version.stdout}\nDate: ${get-dates.stdout.iso}\n\n## Draft Entries with Context\nEach entry has a `draft` field and a `context.pr_link` field with the full GitHub URL.\n${prepare-context.stdout}\n\n## Task Reviews (for accuracy)\n${get-task-reviews.stdout}\n\n## Documentation Changes (for parameter accuracy)\n${get-docs-diff.stdout}\n\n## Refinement Tasks\n1. Merge duplicates \u2192 combine PR links\n2. Standardize verbs: Allow\u2192Added, Enable\u2192Added, Update\u2192Changed/Improved\n3. Sort by: Removed > Changed > Added > Fixed > Improved\n4. Use docs diff for accurate parameter names\n5. Use task reviews for accurate feature descriptions\n\n## Output Format\n## v1.0.0 (2026-01-04)\n\n- Removed X [#10](https://github.com/owner/repo/pull/10)\n- Changed Y [#11](https://github.com/owner/repo/pull/11)\n- Added Z [#12](https://github.com/owner/repo/pull/12), [#13](https://github.com/owner/repo/pull/13)\n- Fixed W [#14](https://github.com/owner/repo/pull/14)\n\n## Rules\n- Use version and date exactly as provided\n- Each entry as bullet with `- `\n- CRITICAL: Use the FULL pr_link URL from context, not just the PR number\n- Format: [#N](full_url) where full_url is from context.pr_link\n- Combine PR links when merging duplicates\n- Start with ## - no code fences\n- Output ONLY the markdown section"
+    prompt: "Refine and format these changelog entries as a markdown section for CHANGELOG.md.\n\n## Input\nVersion: ${compute-version.result.next_version}\nDate: ${compute-version.result.date_iso}\n\n## Draft Entries with Context\nEach entry has a `draft` field and a `context.pr_link` field with the full GitHub URL.\n${prepare-context.result}\n\n## Task Reviews (for accuracy)\n${get-task-reviews.result}\n\n## Documentation Changes (for parameter accuracy)\n${get-docs-diff.result}\n\n## Refinement Tasks\n1. Merge duplicates \u2192 combine PR links\n2. Standardize verbs: Allow\u2192Added, Enable\u2192Added, Update\u2192Changed/Improved\n3. Sort by: Removed > Changed > Added > Fixed > Improved\n4. Use docs diff for accurate parameter names\n5. Use task reviews for accurate feature descriptions\n\n## Output Format\n## v1.0.0 (2026-01-04)\n\n- Removed X [#10](https://github.com/owner/repo/pull/10)\n- Changed Y [#11](https://github.com/owner/repo/pull/11)\n- Added Z [#12](https://github.com/owner/repo/pull/12), [#13](https://github.com/owner/repo/pull/13)\n- Fixed W [#14](https://github.com/owner/repo/pull/14)\n\n## Rules\n- Use version and date exactly as provided\n- Each entry as bullet with `- `\n- CRITICAL: Use the FULL pr_link URL from context, not just the PR number\n- Format: [#N](full_url) where full_url is from context.pr_link\n- Combine PR links when merging duplicates\n- Start with ## - no code fences\n- Output ONLY the markdown section"
   - format: mintlify
-    prompt: "Generate a Mintlify changelog <Update> component.\n\n## Input\nVersion: ${compute-next-version.stdout}\nMonth/Year: ${get-dates.stdout.month_year}\nBump Type: ${compute-bump-type.stdout}\n\n## Draft Entries\n${prepare-context.stdout}\n\n## Task Reviews\n${get-task-reviews.stdout}\n\n## Documentation Changes\n${get-docs-diff.stdout}\n\n## Required Format\nYou MUST output exactly this structure (with your content):\n\n<Update label=\"MONTH YEAR\" description=\"VERSION\" tags={[\"New releases\", \"Bug fixes\"]}>\n  ## Theme Title\n\n  Brief description.\n\n  **Highlights**\n  - Feature one\n  - Feature two\n\n  ## Another Theme\n\n  Description.\n\n  **Highlights**\n  - Feature three\n</Update>\n\n## Tasks\n1. Group entries into 2-4 themes\n2. Merge duplicates\n3. Standardize verbs (Allow\u2192Added, Enable\u2192Added)\n4. No PR links (user-facing changelog)\n5. Add <Accordion title=\"Breaking changes\"> if bump type is major\n\n## CRITICAL\n- Output ONLY the <Update>...</Update> component\n- First character must be <\n- Last characters must be </Update>\n- NO JSON, NO code fences, NO explanations"
+    prompt: "Generate a Mintlify changelog <Update> component.\n\n## Input\nVersion: ${compute-version.result.next_version}\nMonth/Year: ${compute-version.result.date_month_year}\nBump Type: ${compute-version.result.bump_type}\n\n## Draft Entries\n${prepare-context.result}\n\n## Task Reviews\n${get-task-reviews.result}\n\n## Documentation Changes\n${get-docs-diff.result}\n\n## Style Reference (match this format)\n${get-recent-updates.result}\n\n## Required Format\nYou MUST output exactly this structure (with your content):\n\n<Update label=\"MONTH YEAR\" description=\"VERSION\" tags={[\"New releases\", \"Bug fixes\"]}>\n  ## Theme Title\n\n  Brief description.\n\n  **Highlights**\n  - Feature one\n  - Feature two\n\n  ## Another Theme\n\n  Description.\n\n  **Highlights**\n  - Feature three\n</Update>\n\n## Tasks\n1. Group entries into 2-4 themes\n2. Merge duplicates\n3. Standardize verbs (Allow\u2192Added, Enable\u2192Added)\n4. No PR links (user-facing changelog)\n5. Add <Accordion title=\"Breaking changes\"> if bump type is major\n\n## CRITICAL\n- Output ONLY the <Update>...</Update> component\n- First character must be <\n- Last characters must be </Update>\n- NO JSON, NO code fences, NO explanations"
 parallel: true
 ```
 
@@ -356,89 +479,113 @@ ${item.prompt}
 Save full context to version-named file for AI agents and verification.
 Includes changelog, skipped entries, task reviews, and documentation changes.
 
-- type: shell
+- type: code
+- inputs:
+    changelog: ${format-both.results[0].response}
+    skipped: ${filter-and-format.result.skipped}
+    task_reviews: ${get-task-reviews.result}
+    docs_diff: ${get-docs-diff.result}
+    draft_entries: ${prepare-context.result}
+    next_version: ${compute-version.result.next_version}
+    date_iso: ${compute-version.result.date_iso}
+    releases_dir: ${releases_dir}
 
-```yaml stdin
-changelog: ${format-both.results[0].response}
-skipped: ${filter-and-format.stdout.skipped}
-task_reviews: ${get-task-reviews.stdout}
-docs_diff: ${get-docs-diff.stdout}
-draft_entries: ${prepare-context.stdout}
-```
+````python code
+changelog: str
+skipped: list
+task_reviews: dict
+docs_diff: str
+draft_entries: list
+next_version: str
+date_iso: str
+releases_dir: str
 
-```shell command
-version='${compute-next-version.stdout}'
-date='${get-dates.stdout.iso}'
-releases_dir='${releases_dir}'
+import json
+from pathlib import Path
 
-mkdir -p "$releases_dir"
-outfile="$releases_dir/$version-context.md"
+Path(releases_dir).mkdir(parents=True, exist_ok=True)
+outfile = Path(releases_dir) / f'{next_version}-context.md'
 
-# Capture stdin to temp file (handles large data)
-tmpfile=$(mktemp)
-cat > "$tmpfile"
+skipped_lines = '\n'.join(f'- {s}' for s in skipped)
+review_sections = '\n'.join(
+    f'### Task {k}\n\n{v}\n' for k, v in task_reviews.items()
+)
+json_fence = '`' * 3
 
-# Build file section by section
-printf '%s\n' "# $version Release Context" > "$outfile"
-printf '\n%s\n' "Generated: $date" >> "$outfile"
-printf '%s\n' "This file contains implementation context for AI agents and release verification." >> "$outfile"
-printf '\n%s\n\n' "---" >> "$outfile"
+parts = [
+    f'# {next_version} Release Context',
+    '',
+    f'Generated: {date_iso}',
+    'This file contains implementation context for AI agents and release verification.',
+    '',
+    '---',
+    '',
+    '## Changelog',
+    '',
+    changelog,
+    '',
+    '---',
+    '',
+    '## Skipped Changes (Verification)',
+    '',
+    'Review these to ensure nothing was incorrectly classified as internal:',
+    '',
+    skipped_lines,
+    '',
+    '---',
+    '',
+    '## Task Implementation Reviews',
+    '',
+    review_sections,
+    '---',
+    '',
+    '## Documentation Changes',
+    '',
+    docs_diff,
+    '',
+    '---',
+    '',
+    '## Draft Entries with Context',
+    '',
+    json_fence + 'json',
+    json.dumps(draft_entries, indent=2),
+    json_fence,
+]
 
-# Changelog section
-printf '%s\n\n' "## Changelog" >> "$outfile"
-jq -r '.changelog' "$tmpfile" >> "$outfile"
-printf '\n%s\n\n' "---" >> "$outfile"
-
-# Skipped changes section
-printf '%s\n\n' "## Skipped Changes (Verification)" >> "$outfile"
-printf '%s\n\n' "Review these to ensure nothing was incorrectly classified as internal:" >> "$outfile"
-jq -r '.skipped[]? // empty | "- " + .' "$tmpfile" >> "$outfile"
-printf '\n%s\n\n' "---" >> "$outfile"
-
-# Task reviews section
-printf '%s\n\n' "## Task Implementation Reviews" >> "$outfile"
-jq -r '.task_reviews | to_entries[]? // empty | "### Task " + .key + "\n\n" + .value + "\n"' "$tmpfile" >> "$outfile"
-printf '%s\n\n' "---" >> "$outfile"
-
-# Documentation changes section
-printf '%s\n\n' "## Documentation Changes" >> "$outfile"
-jq -r '.docs_diff // ""' "$tmpfile" >> "$outfile"
-printf '\n%s\n\n' "---" >> "$outfile"
-
-# Draft entries section
-printf '%s\n\n' "## Draft Entries with Context" >> "$outfile"
-printf '%s\n' '```json' >> "$outfile"
-jq '.draft_entries' "$tmpfile" >> "$outfile"
-printf '%s\n' '```' >> "$outfile"
-
-rm -f "$tmpfile"
-echo "Saved context to $outfile"
-```
+outfile.write_text('\n'.join(parts))
+result: str = f'Saved context to {outfile}'
+````
 
 ### update-changelog-file
 
 Prepend new changelog section to existing CHANGELOG.md file.
 Inserts after the H1 header if present, otherwise prepends to file.
 
-- type: shell
-- stdin: ${format-both.results[0].response}
+- type: code
+- inputs:
+    new_section: ${format-both.results[0].response}
+    changelog_file: ${changelog_file}
 
-```shell command
-changelog_file='${changelog_file}'
-new_section=$(cat)
+```python code
+new_section: str
+changelog_file: str
 
-if [ -f "$changelog_file" ]; then
-  if head -1 "$changelog_file" | grep -q '^# '; then
-    { head -1 "$changelog_file"; echo ""; printf '%s\n' "$new_section"; tail -n +2 "$changelog_file"; } > /tmp/changelog_new
-  else
-    { printf '%s\n' "$new_section"; cat "$changelog_file"; } > /tmp/changelog_new
-  fi
-  mv /tmp/changelog_new "$changelog_file"
-else
-  { echo "# Changelog"; echo ""; printf '%s\n' "$new_section"; } > "$changelog_file"
-fi
+from pathlib import Path
 
-echo "Updated $changelog_file"
+path = Path(changelog_file)
+if path.exists():
+    existing = path.read_text()
+    lines = existing.split('\n', 1)
+    if lines[0].startswith('# '):
+        rest = lines[1] if len(lines) > 1 else ''
+        content = lines[0] + '\n\n' + new_section + '\n' + rest
+    else:
+        content = new_section + '\n' + existing
+else:
+    content = '# Changelog\n\n' + new_section + '\n'
+
+path.write_text(content)
+result: str = f'Updated {changelog_file}'
 ```
 
 ### update-mintlify-file
@@ -446,78 +593,95 @@ echo "Updated $changelog_file"
 Prepend Update component to Mintlify changelog.mdx file.
 Inserts after the YAML frontmatter if present.
 
-- type: shell
-- stdin: ${format-both.results[1].response}
+- type: code
+- inputs:
+    new_section: ${format-both.results[1].response}
+    mintlify_file: ${mintlify_file}
 
-```shell command
-mintlify_file='${mintlify_file}'
-new_section=$(cat)
+```python code
+new_section: str
+mintlify_file: str
 
-# Skip if no mintlify file specified
-if [ -z "$mintlify_file" ]; then
-  echo "Skipped mintlify (no file specified)"
-  exit 0
-fi
+from pathlib import Path
 
-if [ -f "$mintlify_file" ]; then
-  # Find the line after the frontmatter (after second ---)
-  frontmatter_end=$(awk '/^---$/{c++; if(c==2){print NR; exit}}' "$mintlify_file")
-  if [ -n "$frontmatter_end" ]; then
-    { head -n "$frontmatter_end" "$mintlify_file"; echo ""; printf '%s\n' "$new_section"; tail -n +$((frontmatter_end + 1)) "$mintlify_file"; } > /tmp/mintlify_new
-  else
-    { printf '%s\n' "$new_section"; echo ""; cat "$mintlify_file"; } > /tmp/mintlify_new
-  fi
-  mv /tmp/mintlify_new "$mintlify_file"
-else
-  # Create new file with frontmatter
-  { echo '---'; echo 'title: "Changelog"'; echo 'description: "Product updates and announcements"'; echo 'icon: "clock"'; echo 'rss: true'; echo '---'; echo ""; printf '%s\n' "$new_section"; } > "$mintlify_file"
-fi
+if not mintlify_file:
+    msg = 'Skipped mintlify (no file specified)'
+else:
+    path = Path(mintlify_file)
+    if path.exists():
+        existing = path.read_text()
+        lines = existing.split('\n')
+        fence_count = 0
+        insert_after = -1
+        for i, line in enumerate(lines):
+            if line.strip() == '---':
+                fence_count += 1
+                if fence_count == 2:
+                    insert_after = i
+                    break
 
-echo "Updated $mintlify_file"
+        if insert_after >= 0:
+            before = '\n'.join(lines[:insert_after + 1])
+            after = '\n'.join(lines[insert_after + 1:])
+            content = before + '\n\n' + new_section + '\n' + after
+        else:
+            content = new_section + '\n\n' + existing
+    else:
+        content = (
+            '---\ntitle: "Changelog"\ndescription: "Product updates and announcements"\n'
+            'icon: "clock"\nrss: true\n---\n\n' + new_section + '\n'
+        )
+
+    path.write_text(content)
+    msg = f'Updated {mintlify_file}'
+
+result: str = msg
 ```
 
 ### create-summary
 
 Create release summary for CLI output showing entry counts and files updated.
 
-- type: shell
+- type: code
+- inputs:
+    entries: ${prepare-context.result}
+    skipped: ${filter-and-format.result.skipped}
+    task_reviews: ${get-task-reviews.result}
+    next_version: ${compute-version.result.next_version}
+    bump_type: ${compute-version.result.bump_type}
+    date_iso: ${compute-version.result.date_iso}
+    changelog_file: ${changelog_file}
+    mintlify_file: ${mintlify_file}
+    releases_dir: ${releases_dir}
 
-```yaml stdin
-entries: ${prepare-context.stdout}
-skipped: ${filter-and-format.stdout.skipped}
-task_reviews: ${get-task-reviews.stdout}
-```
+```python code
+entries: list
+skipped: list
+task_reviews: dict
+next_version: str
+bump_type: str
+date_iso: str
+changelog_file: str
+mintlify_file: str
+releases_dir: str
 
-```shell command
-version=$(printf '%s' '${compute-next-version.stdout}' | tr -d '\n')
-bump=$(printf '%s' '${compute-bump-type.stdout}' | tr -d '\n')
-date=$(printf '%s' '${get-dates.stdout.iso}' | tr -d '\n')
-changelog='${changelog_file}'
-mintlify='${mintlify_file}'
-releases_dir='${releases_dir}'
+lines = [
+    '## Release Summary\n',
+    f'Version: {next_version} ({bump_type})',
+    f'Date: {date_iso}\n',
+    changelog_file,
+    f'  {len(entries)} user-facing entries\n',
+]
 
-# Capture stdin to temp file
-tmpfile=$(mktemp)
-cat > "$tmpfile"
+if mintlify_file:
+    lines.append(mintlify_file)
+    lines.append('  Mintlify format (same entries)\n')
 
-# Count items
-user_facing=$(jq '.entries | length' "$tmpfile")
-skipped=$(jq '.skipped | length' "$tmpfile")
-task_count=$(jq '.task_reviews | keys | length' "$tmpfile")
-rm -f "$tmpfile"
+lines.append(f'{releases_dir}/{next_version}-context.md')
+lines.append(f'  {len(skipped)} skipped changes (for verification)')
+lines.append(f'  {len(task_reviews)} task reviews')
 
-printf '## Release Summary\n\n'
-printf 'Version: %s (%s)\n' "$version" "$bump"
-printf 'Date: %s\n\n' "$date"
-printf '%s\n' "$changelog"
-printf '  %d user-facing entries\n\n' "$user_facing"
-if [ -n "$mintlify" ]; then
-  printf '%s\n' "$mintlify"
-  printf '  Mintlify format (same entries)\n\n'
-fi
-printf '%s/%s-context.md\n' "$releases_dir" "$version"
-printf '  %d skipped changes (for verification)\n' "$skipped"
-printf '  %d task reviews\n' "$task_count"
+result: str = '\n'.join(lines)
 ```
 
 ## Outputs
@@ -526,13 +690,13 @@ printf '  %d task reviews\n' "$task_count"
 
 Release summary showing entry counts and file locations.
 
-- source: ${create-summary.stdout}
+- source: ${create-summary.result}
 
 ### suggested_version
 
 Suggested next version based on semantic versioning analysis of changes.
 
-- source: ${compute-next-version.stdout}
+- source: ${compute-version.result.next_version}
 
 ### markdown_section
 
@@ -550,4 +714,4 @@ Mintlify Update component for docs/changelog.mdx.
 
 Path to release context file containing full verification data.
 
-- source: ${save-release-context.stdout}
+- source: ${save-release-context.result}
