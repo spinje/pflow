@@ -37,7 +37,7 @@ See [LLM model settings](/reference/cli/settings#llm-model-settings) for the ful
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `response` | any | Model's response (auto-parsed JSON or string) |
+| `response` | str | Model's text response |
 | `llm_usage` | dict | Token usage metrics |
 | `error` | str | Error message (only present on failure) |
 
@@ -144,22 +144,6 @@ Summarize content using a local model.
 
 See the [llm plugin directory](https://llm.datasette.io/en/stable/plugins/directory.html) for more providers including Mistral, Bedrock, and other local model options.
 
-## Automatic JSON parsing
-
-The node automatically detects and parses JSON responses:
-
-````markdown
-### analyze
-
-List colors as structured data.
-
-- type: llm
-- prompt: List 3 colors as JSON array
-- model: gpt-4o-mini
-````
-
-If the response is valid JSON (including markdown-wrapped JSON), `response` will be the parsed object/array. Otherwise, it's the raw string.
-
 ## Image support
 
 For vision-capable models, pass image URLs or local file paths:
@@ -220,7 +204,7 @@ Extract named entities from the document.
 - prompt: ${document.content}
 ````
 
-The response will be automatically parsed if it's valid JSON.
+Access JSON fields from the response using dot notation in downstream templates: `${extract.response.people}`. The template system auto-parses JSON on demand when you use dot notation.
 
 ### Image analysis
 

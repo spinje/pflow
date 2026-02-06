@@ -1,9 +1,8 @@
 """General-purpose LLM node for text processing."""
 
-import json
 import sys
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 
 # Add pocketflow to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -23,7 +22,7 @@ class LLMNode(Node):
     - Params: prompt: str  # Text prompt to send to model
     - Params: system: str  # System prompt (optional)
     - Params: images: list[str]  # Image URLs or file paths (optional)
-    - Writes: shared["response"]: any  # Model's response (auto-parsed JSON or string)
+    - Writes: shared["response"]: str  # Model's text response
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
         - input_tokens: int  # Number of input tokens consumed
@@ -44,38 +43,44 @@ class LLMNode(Node):
         super().__init__(max_retries=max_retries, wait=wait)
 
     @staticmethod
-    def parse_json_response(response: str) -> Union[Any, str]:
-        """Parse JSON from LLM response if possible.
+    def _strip_code_block(response: str) -> str:
+        """Strip markdown code block fences from LLM responses.
 
-        Handles:
-        - Plain JSON strings
-        - JSON wrapped in markdown code blocks
-        - Regular text (returns as-is)
+        LLMs commonly wrap their output in code fences (```json ... ```) as a
+        transport artifact. This method strips those fences when the entire
+        response is a single code block, returning the inner content as a string.
+
+        Only strips when the response both starts AND ends with code fences
+        (after whitespace). Responses with trailing text after the closing
+        fence are returned unchanged — we never silently discard content.
+
+        No JSON parsing is performed — the return value is always a string.
+        Downstream consumers use the template system (dot notation, type
+        coercion) to parse JSON on demand.
 
         Args:
             response: The raw LLM response string
 
         Returns:
-            Parsed JSON object/array if valid JSON, otherwise original string
+            The response with outer code block fences stripped, still as a string
         """
-        if not isinstance(response, str):
-            return response
-
         trimmed = response.strip()
 
-        # Extract from markdown code blocks if present
-        if "```" in trimmed:
-            start = trimmed.find("```json") + 7 if "```json" in trimmed else trimmed.find("```") + 3
-            end = trimmed.find("```", start)
-            if end > start:
-                trimmed = trimmed[start:end].strip()
-
-        # Try to parse as JSON
-        try:
-            return json.loads(trimmed)
-        except (json.JSONDecodeError, ValueError):
-            # Not valid JSON, return original string
+        if not trimmed.startswith("```") or not trimmed.endswith("```"):
             return response
+
+        # Find the end of the opening fence line
+        first_newline = trimmed.find("\n")
+        if first_newline == -1:
+            return response
+
+        # Find the closing fence (last occurrence)
+        closing = trimmed.rfind("```")
+        if closing <= first_newline:
+            return response
+
+        # Extract content between fences
+        return trimmed[first_newline + 1 : closing].strip()
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Extract and prepare inputs from parameters."""
@@ -174,11 +179,8 @@ class LLMNode(Node):
 
         raw_response = exec_res["response"]
 
-        # Parse JSON if possible
-        parsed_response = self.parse_json_response(raw_response)
-
-        # Store the parsed response
-        shared["response"] = parsed_response
+        # Strip code block fences (LLM transport artifact), keep as string
+        shared["response"] = self._strip_code_block(raw_response)
 
         # Store usage metrics matching spec structure exactly
         usage_obj = exec_res.get("usage")

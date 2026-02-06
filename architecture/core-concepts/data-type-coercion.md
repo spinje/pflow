@@ -131,17 +131,17 @@ Every location in pflow where automatic JSON parsing or type coercion occurs:
 
 **Impact**: Read-only. Parses JSON strings for pretty-printing. Never affects the shared store or downstream nodes. Every CLI tool does this.
 
-### Point 6: LLM Node parse_json_response (REMOVED)
+### Point 6: LLM Node JSON Auto-Parsing (REMOVED)
 
-**Location**: `src/pflow/nodes/llm/llm.py:47-78` (to be removed)
+**Location**: `src/pflow/nodes/llm/llm.py` — `_strip_code_block()` (replaces removed `parse_json_response`)
 
-**When it fired**: Every LLM response, eagerly, on every call.
-
-**Intent signal**: None. The method speculatively extracted content from markdown code blocks and attempted `json.loads()`. No consumer type declaration, no user intent signal.
+**What was removed**: The `parse_json_response` method that speculatively extracted content from markdown code blocks and attempted `json.loads()` on every LLM response. No consumer type declaration, no user intent signal.
 
 **Why it was removed**: Violated principle #1 (producer should store raw value) and #2 (no intent signal). Caused a data-loss bug where prose responses containing JSON code blocks had the prose silently discarded. See `scratchpads/json-parse-bug/bug-report.md`.
 
-**What replaces it**: Nothing — the template system (Points 1-4) already handles all legitimate use cases. Task 66 (planned) will add explicit structured output for workflows that need guaranteed JSON.
+**What remains**: `_strip_code_block()` strips markdown code block fences when the entire response is a single code block (a common LLM transport artifact). This is producer-side cleanup — it removes wrapping syntax, not parse content. Prose with embedded code blocks passes through untouched. The return value is always a string.
+
+**What replaces JSON parsing**: The template system (Points 1-4) already handles all legitimate use cases. Task 66 (planned) will add explicit structured output for workflows that need guaranteed JSON.
 
 ---
 
@@ -217,7 +217,7 @@ Convenience wrapper for when you don't need to distinguish success from failure.
 
 2. **No caching of parsed JSON**. The same string may be parsed multiple times if referenced in multiple templates. Acceptable for MVP (parsing is <1ms vs node execution 100-1000ms). Consider caching if profiling shows this as a bottleneck.
 
-3. **LLM node fix pending**. `parse_json_response` needs to be removed and replaced with raw string storage. See `scratchpads/json-parse-bug/bug-report.md` for the full bug analysis.
+3. **LLM node fix complete**. `parse_json_response` was removed and replaced with `_strip_code_block()` (code fence stripping only, no JSON parsing). See `scratchpads/json-parse-bug/bug-report.md` for the original bug analysis.
 
 4. **Task 66 (Structured Output)** will add explicit schema-driven JSON parsing for LLM nodes. This is the proper solution for "I want guaranteed JSON from an LLM" — declaring a schema, not hoping the heuristic works.
 

@@ -512,3 +512,178 @@ class TestLLMNode:
             assert action == "default"
             assert shared["response"] == "Success after retry"
             assert mock_model.prompt.call_count == 3
+
+
+class TestStripCodeBlock:
+    """Tests for LLMNode._strip_code_block — code fence stripping without JSON parsing."""
+
+    def test_strips_json_code_block(self):
+        """Strips ```json ... ``` and returns inner content as string."""
+        response = '```json\n{"key": "value"}\n```'
+        result = LLMNode._strip_code_block(response)
+        assert result == '{"key": "value"}'
+        assert isinstance(result, str)
+
+    def test_strips_plain_code_block(self):
+        """Strips ``` ... ``` (no language tag) and returns inner content as string."""
+        response = '```\n{"key": "value"}\n```'
+        result = LLMNode._strip_code_block(response)
+        assert result == '{"key": "value"}'
+        assert isinstance(result, str)
+
+    def test_strips_with_leading_trailing_whitespace(self):
+        """Strips code block even with leading/trailing whitespace on outer response."""
+        response = '  \n```json\n{"key": "value"}\n```\n  '
+        result = LLMNode._strip_code_block(response)
+        assert result == '{"key": "value"}'
+
+    def test_does_not_strip_prose_with_embedded_code_blocks(self):
+        """Prose containing code blocks is preserved as-is (the bug fix)."""
+        response = 'Summary:\n```json\n{"key": "value"}\n```\nMore text'
+        result = LLMNode._strip_code_block(response)
+        assert result == response
+
+    def test_does_not_strip_plain_text(self):
+        """Plain text passes through unchanged."""
+        response = "Hello world"
+        result = LLMNode._strip_code_block(response)
+        assert result == "Hello world"
+
+    def test_does_not_strip_raw_json(self):
+        """Raw JSON without code blocks passes through unchanged."""
+        response = '{"key": "value"}'
+        result = LLMNode._strip_code_block(response)
+        assert result == '{"key": "value"}'
+
+    def test_always_returns_str(self):
+        """Return type is always str, never dict or list."""
+        cases = [
+            '```json\n{"key": "value"}\n```',
+            "```json\n[1, 2, 3]\n```",
+            "```\ntrue\n```",
+            "plain text",
+            '{"already": "json"}',
+        ]
+        for response in cases:
+            result = LLMNode._strip_code_block(response)
+            assert isinstance(result, str), f"Expected str for input: {response!r}"
+
+    def test_handles_empty_string(self):
+        """Empty string returns empty string."""
+        assert LLMNode._strip_code_block("") == ""
+
+    def test_handles_only_backticks(self):
+        """Malformed fence (no closing) returns original."""
+        response = "```json\nno closing"
+        result = LLMNode._strip_code_block(response)
+        assert result == response
+
+    def test_multiline_content_in_code_block(self):
+        """Multi-line content inside code block is preserved."""
+        response = '```json\n{\n  "a": 1,\n  "b": 2\n}\n```'
+        result = LLMNode._strip_code_block(response)
+        assert result == '{\n  "a": 1,\n  "b": 2\n}'
+
+    def test_code_block_with_trailing_text_preserved(self):
+        """When response starts with code block but has trailing text, nothing is stripped.
+
+        We never silently discard content. If the LLM adds text after the
+        closing fence, the response is returned unchanged (with fences intact).
+        This is more conservative — downstream dot-notation access may fail,
+        but the user gets the full response and a clear error rather than
+        silent data loss.
+        """
+        response = '```json\n{"key": "value"}\n```\nNote: uses v2 format'
+        result = LLMNode._strip_code_block(response)
+        assert result == response
+
+
+class TestPostStoresStringResponse:
+    """Tests that post() always stores a string in shared['response']."""
+
+    def test_prose_response_is_str(self):
+        """LLM returns prose → shared['response'] is str."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = "This is a prose response about JSON."
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Test"})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], str)
+            assert shared["response"] == "This is a prose response about JSON."
+
+    def test_code_block_json_response_is_str(self):
+        """LLM returns code-block-wrapped JSON → shared['response'] is str (clean JSON text)."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '```json\n{"items": [1, 2, 3]}\n```'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Test"})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], str)
+            assert shared["response"] == '{"items": [1, 2, 3]}'
+
+    def test_raw_json_response_stays_as_str(self):
+        """LLM returns raw JSON (no code blocks) → shared['response'] is str, NOT parsed.
+
+        This is the key behavioral change from the old parse_json_response.
+        The old method would json.loads() this into a dict. The new behavior
+        keeps it as a string — downstream consumers parse via template dot
+        notation (${node.response.field}).
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"items": [1, 2, 3], "count": 3}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Test"})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], str)
+            assert shared["response"] == '{"items": [1, 2, 3], "count": 3}'
+
+    def test_prose_with_embedded_json_preserved(self):
+        """LLM returns prose with embedded JSON → full prose preserved (bug fix)."""
+        prose = 'Here is the analysis:\n```json\n{"key": "value"}\n```\nEnd of report.'
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = prose
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Test"})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], str)
+            assert shared["response"] == prose
