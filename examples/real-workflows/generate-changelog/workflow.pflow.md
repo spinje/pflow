@@ -1,15 +1,48 @@
 # Generate Changelog
 
-Generate a changelog from git history with PR enrichment, LLM classification,
-task review cross-referencing, and dual-format output (markdown + Mintlify).
-Computes semantic version bumps and saves a full release context file for
-AI agents and verification.
+Automatically produce a versioned changelog from your git history. Run it
+before a release to get three outputs: a CHANGELOG.md entry with PR links,
+a Mintlify changelog component for your docs site, and a release context
+file for pre-release verification.
+
+The workflow analyzes commits since your last tag, uses an LLM to separate
+user-facing changes from internal work, computes a semantic version bump,
+and formats the results in both formats simultaneously.
+
+**Requirements**: Git repository with at least one tag, GitHub CLI (`gh`)
+authenticated, and an LLM configured via `llm`.
+
+**Usage**
+
+```bash
+# Generate changelog since latest tag
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md
+
+# Specify starting tag
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=v0.5.0
+
+# Skip Mintlify output
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md mintlify_file=""
+
+# Custom output paths
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
+  changelog_file=RELEASE_NOTES.md releases_dir=release-notes
+```
+
+**Limitations**
+
+* LLM may occasionally misclassify changes — review the context file
+* Cost scales with commit count (~$0.003 per commit for classification)
+* Task reviews require `.taskmaster/tasks/task_N/task-review.md` structure
+* Docs diff requires a `docs/` directory in the repository
 
 ## Inputs
 
 ### since_tag
 
-Tag to start from. Defaults to the latest git tag if not specified.
+Starting tag for the changelog range. When left empty, the workflow
+automatically uses the most recent git tag. Set this to generate a
+changelog for a specific range, e.g. `since_tag=v0.5.0`.
 
 - type: string
 - required: false
@@ -33,7 +66,9 @@ Path to Mintlify changelog file. Pass empty string to skip Mintlify output.
 
 ### releases_dir
 
-Directory for release context files containing full verification data.
+Directory for release context files. Each run creates a
+`{version}-context.md` containing the changelog, skipped changes,
+task reviews, docs diff, and raw draft entries for pre-release auditing.
 
 - type: string
 - required: false
@@ -43,7 +78,8 @@ Directory for release context files containing full verification data.
 
 ### get-latest-tag
 
-Get latest git tag as baseline for changelog range.
+Detect the most recent git tag to use as the changelog baseline.
+Falls back to `v0.0.0` if no tags exist.
 
 - type: shell
 
@@ -53,7 +89,9 @@ git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'
 
 ### resolve-tag
 
-Use provided tag or default to latest.
+Pick the starting tag for the changelog range: either the user-provided
+`since_tag` or the auto-detected latest tag. Downstream nodes reference
+this single resolved value.
 
 - type: code
 - inputs:
@@ -69,8 +107,10 @@ result: str = since_tag.strip() if since_tag.strip() else latest_tag.strip()
 
 ### get-docs-diff
 
-Get documentation changes since tag, grouped by file with commit refs.
-Excludes changelog.mdx itself to avoid circular references.
+Extract documentation file changes since the tag, grouped by file with
+commit refs. The format LLM uses this to write accurate parameter names
+and feature descriptions instead of guessing from commit messages alone.
+Excludes changelog.mdx to avoid circular references.
 
 - type: code
 - inputs:
@@ -115,8 +155,9 @@ result: str = '\n\n'.join(sections)
 
 ### get-recent-updates
 
-Get last 2 Update blocks from Mintlify changelog as style reference for
-the LLM generating the Mintlify format output.
+Load the last 2 entries from the existing Mintlify changelog as a style
+reference. The format LLM matches this tone and structure when generating
+the new entry.
 
 - type: code
 - inputs:
@@ -141,8 +182,11 @@ result: str = updates_text
 
 ### get-commits-enriched
 
-Fetch commits since tag with PR metadata, file paths, and task numbers.
-Joins commit messages with GitHub PR data for rich classification context.
+Build a rich context object for each commit in the tag range. Includes
+PR titles and bodies (for understanding what changed), file paths (so
+the classifier can identify internal-only changes like `.taskmaster/` or
+`tests/`), and task numbers (to load implementation reviews). Uses
+`--first-parent` to avoid duplicates from PR branch commits.
 
 - type: code
 - inputs:
@@ -227,6 +271,14 @@ for c in commits:
         c['pr_number'] = pr_num
         c['pr_link'] = f'https://github.com/{repo}/pull/{pr_num}'
 
+    # Fallback: extract task number from task-review.md in file paths
+    if c['task_number'] is None:
+        for f in file_changes.get(h, []):
+            review_m = re.search(r'\.taskmaster/tasks/task_(\d+)/task-review\.md', f)
+            if review_m:
+                c['task_number'] = int(review_m.group(1))
+                break
+
     body = c['pr_body']
     if body:
         sections = body.split('\n## ')
@@ -239,8 +291,10 @@ result: list = commits
 
 ### get-task-reviews
 
-Read task-review.md files for referenced tasks to provide implementation
-context for accurate changelog entry refinement.
+Load `task-review.md` files for any tasks referenced in commits or PRs.
+These reviews contain implementation details, key decisions, and files
+modified — giving the format LLM accurate context that goes beyond what
+a commit message conveys.
 
 - type: code
 - inputs:
@@ -269,15 +323,17 @@ result: dict = reviews
 
 ### analyze-commits
 
-Classify each commit as user-facing or internal based on commit message,
-PR data, and file paths.
+Classify each commit as user-facing or internal. Runs in parallel across
+all commits. Each call receives the commit message, PR data, and file
+paths, and outputs either a draft changelog entry or SKIP with the
+original message preserved for the verification file.
 
 - type: llm
 
 ```yaml batch
 items: ${get-commits-enriched.result}
 parallel: true
-max_concurrent: 40
+max_concurrent: 70
 error_handling: continue
 ```
 
@@ -343,7 +399,10 @@ Output ONLY the changelog line or SKIP line. Nothing else.
 
 ### filter-and-format
 
-Separate user-facing entries from skipped internal changes.
+Split the classification results into two lists: included entries
+(user-facing drafts) and skipped entries (internal changes). The
+included list carries the original array index so prepare-context can
+rejoin each draft with its source commit.
 
 - type: code
 - inputs:
@@ -369,7 +428,10 @@ result: dict = {'included': included, 'skipped': skipped}
 
 ### prepare-context
 
-Join draft entries with original commit context for the refinement step.
+Pair each draft changelog entry with its original commit context (PR
+link, title, body, files, task number). The format LLM needs this to
+merge duplicates, add correct PR links, and refine descriptions using
+the full PR body rather than the one-line draft.
 
 - type: code
 - inputs:
@@ -410,8 +472,10 @@ result: list = entries
 
 ### compute-version
 
-Determine semver bump type, calculate next version, and get formatted dates.
-Combines bump analysis, version arithmetic, and date formatting in one step.
+Determine the next version number. Entries starting with Removed/Changed
+trigger a major bump, Added triggers minor, anything else is patch.
+Also captures today's date in both ISO and human-readable formats for
+the changelog headers.
 
 - type: code
 - inputs:
@@ -456,17 +520,112 @@ result: dict = {
 
 ### format-both
 
-Refine and format changelog in two parallel formats: standard markdown
-for CHANGELOG.md and Mintlify Update component for docs/changelog.mdx.
+Produce both output formats in parallel. Each receives the full context
+(draft entries, task reviews, docs diff) and independently deduplicates,
+sorts by verb (Removed > Changed > Added > Fixed > Improved), and
+standardizes terminology. The markdown format includes PR links; the
+Mintlify format groups entries into themes without links.
 
 - type: llm
 
 ```yaml batch
 items:
   - format: markdown
-    prompt: "Refine and format these changelog entries as a markdown section for CHANGELOG.md.\n\n## Input\nVersion: ${compute-version.result.next_version}\nDate: ${compute-version.result.date_iso}\n\n## Draft Entries with Context\nEach entry has a `draft` field and a `context.pr_link` field with the full GitHub URL.\n${prepare-context.result}\n\n## Task Reviews (for accuracy)\n${get-task-reviews.result}\n\n## Documentation Changes (for parameter accuracy)\n${get-docs-diff.result}\n\n## Refinement Tasks\n1. Merge duplicates \u2192 combine PR links\n2. Standardize verbs: Allow\u2192Added, Enable\u2192Added, Update\u2192Changed/Improved\n3. Sort by: Removed > Changed > Added > Fixed > Improved\n4. Use docs diff for accurate parameter names\n5. Use task reviews for accurate feature descriptions\n\n## Output Format\n## v1.0.0 (2026-01-04)\n\n- Removed X [#10](https://github.com/owner/repo/pull/10)\n- Changed Y [#11](https://github.com/owner/repo/pull/11)\n- Added Z [#12](https://github.com/owner/repo/pull/12), [#13](https://github.com/owner/repo/pull/13)\n- Fixed W [#14](https://github.com/owner/repo/pull/14)\n\n## Rules\n- Use version and date exactly as provided\n- Each entry as bullet with `- `\n- CRITICAL: Use the FULL pr_link URL from context, not just the PR number\n- Format: [#N](full_url) where full_url is from context.pr_link\n- Combine PR links when merging duplicates\n- Start with ## - no code fences\n- Output ONLY the markdown section"
+    prompt: |
+      Refine and format these changelog entries as a markdown section
+      for CHANGELOG.md.
+
+      ## Input
+      Version: ${compute-version.result.next_version}
+      Date: ${compute-version.result.date_iso}
+
+      ## Draft Entries with Context
+      Each entry has a `draft` field and a `context.pr_link` field with
+      the full GitHub URL.
+      ${prepare-context.result}
+
+      ## Task Reviews (for accuracy)
+      ${get-task-reviews.result}
+
+      ## Documentation Changes (for parameter accuracy)
+      ${get-docs-diff.result}
+
+      ## Refinement Tasks
+      1. Merge duplicates → combine PR links
+      2. Standardize verbs: Allow→Added, Enable→Added, Update→Changed/Improved
+      3. Sort by: Removed > Changed > Added > Fixed > Improved
+      4. Use docs diff for accurate parameter names
+      5. Use task reviews for accurate feature descriptions
+
+      ## Output Format
+      ## v1.0.0 (2026-01-04)
+
+      - Removed X [#10](https://github.com/owner/repo/pull/10)
+      - Changed Y [#11](https://github.com/owner/repo/pull/11)
+      - Added Z [#12](https://github.com/owner/repo/pull/12), [#13](https://github.com/owner/repo/pull/13)
+      - Fixed W [#14](https://github.com/owner/repo/pull/14)
+
+      ## Rules
+      - Use version and date exactly as provided
+      - Each entry as bullet with `- `
+      - CRITICAL: Use the FULL pr_link URL from context, not just the PR number
+      - Format: [#N](full_url) where full_url is from context.pr_link
+      - Combine PR links when merging duplicates
+      - Start with ## - no code fences
+      - Output ONLY the markdown section
   - format: mintlify
-    prompt: "Generate a Mintlify changelog <Update> component.\n\n## Input\nVersion: ${compute-version.result.next_version}\nMonth/Year: ${compute-version.result.date_month_year}\nBump Type: ${compute-version.result.bump_type}\n\n## Draft Entries\n${prepare-context.result}\n\n## Task Reviews\n${get-task-reviews.result}\n\n## Documentation Changes\n${get-docs-diff.result}\n\n## Style Reference (match this format)\n${get-recent-updates.result}\n\n## Required Format\nYou MUST output exactly this structure (with your content):\n\n<Update label=\"MONTH YEAR\" description=\"VERSION\" tags={[\"New releases\", \"Bug fixes\"]}>\n  ## Theme Title\n\n  Brief description.\n\n  **Highlights**\n  - Feature one\n  - Feature two\n\n  ## Another Theme\n\n  Description.\n\n  **Highlights**\n  - Feature three\n</Update>\n\n## Tasks\n1. Group entries into 2-4 themes\n2. Merge duplicates\n3. Standardize verbs (Allow\u2192Added, Enable\u2192Added)\n4. No PR links (user-facing changelog)\n5. Add <Accordion title=\"Breaking changes\"> if bump type is major\n\n## CRITICAL\n- Output ONLY the <Update>...</Update> component\n- First character must be <\n- Last characters must be </Update>\n- NO JSON, NO code fences, NO explanations"
+    prompt: |
+      Generate a Mintlify changelog <Update> component.
+
+      ## Input
+      Version: ${compute-version.result.next_version}
+      Month/Year: ${compute-version.result.date_month_year}
+      Bump Type: ${compute-version.result.bump_type}
+
+      ## Draft Entries
+      ${prepare-context.result}
+
+      ## Task Reviews
+      ${get-task-reviews.result}
+
+      ## Documentation Changes
+      ${get-docs-diff.result}
+
+      ## Style Reference (match this format)
+      ${get-recent-updates.result}
+
+      ## Required Format
+      You MUST output exactly this structure (with your content):
+
+      <Update label="MONTH YEAR" description="VERSION" tags={["New releases", "Bug fixes"]}>
+        ## Theme Title
+
+        Brief description.
+
+        **Highlights**
+        - Feature one
+        - Feature two
+
+        ## Another Theme
+
+        Description.
+
+        **Highlights**
+        - Feature three
+      </Update>
+
+      ## Tasks
+      1. Group entries into 2-4 themes
+      2. Merge duplicates
+      3. Standardize verbs (Allow→Added, Enable→Added)
+      4. No PR links (user-facing changelog)
+      5. Add <Accordion title="Breaking changes"> if bump type is major
+
+      ## CRITICAL
+      - Output ONLY the <Update>...</Update> component
+      - First character must be <
+      - Last characters must be </Update>
+      - NO JSON, NO code fences, NO explanations
 parallel: true
 ```
 
@@ -476,8 +635,10 @@ ${item.prompt}
 
 ### save-release-context
 
-Save full context to version-named file for AI agents and verification.
-Includes changelog, skipped entries, task reviews, and documentation changes.
+Write a release context file for pre-release verification. Contains five
+sections: the rendered changelog, skipped changes to audit for
+misclassification, task implementation reviews, documentation diffs, and
+the raw draft entries with full commit context.
 
 - type: code
 - inputs:
@@ -553,13 +714,17 @@ parts = [
 ]
 
 outfile.write_text('\n'.join(parts))
-result: str = f'Saved context to {outfile}'
+result: str = str(outfile)
 ````
 
 ### update-changelog-file
 
-Prepend new changelog section to existing CHANGELOG.md file.
-Inserts after the H1 header if present, otherwise prepends to file.
+Prepend the new changelog section to the existing file. Inserts after
+the H1 header if present, preserving all previous entries below.
+
+> Writes a flat list sorted by verb (Removed, Changed, Added, Fixed,
+> Improved), each entry with PR links. Duplicates merged and
+> terminology standardized by the format-both LLM.
 
 - type: code
 - inputs:
@@ -585,13 +750,17 @@ else:
     content = '# Changelog\n\n' + new_section + '\n'
 
 path.write_text(content)
-result: str = f'Updated {changelog_file}'
+result: str = changelog_file
 ```
 
 ### update-mintlify-file
 
-Prepend Update component to Mintlify changelog.mdx file.
-Inserts after the YAML frontmatter if present.
+Prepend the new Update component to the Mintlify changelog. Inserts
+after the YAML frontmatter, preserving all previous entries below.
+
+> Writes a Mintlify `<Update>` component with entries grouped into 2-4
+> themes, no PR links. Includes `<Accordion>` for breaking changes on
+> major bumps.
 
 - type: code
 - inputs:
@@ -633,14 +802,15 @@ else:
         )
 
     path.write_text(content)
-    msg = f'Updated {mintlify_file}'
+    msg = mintlify_file
 
 result: str = msg
 ```
 
 ### create-summary
 
-Create release summary for CLI output showing entry counts and files updated.
+Build the CLI output summary showing the version, bump type, and
+created files with descriptions.
 
 - type: code
 - inputs:
@@ -650,9 +820,9 @@ Create release summary for CLI output showing entry counts and files updated.
     next_version: ${compute-version.result.next_version}
     bump_type: ${compute-version.result.bump_type}
     date_iso: ${compute-version.result.date_iso}
-    changelog_file: ${changelog_file}
-    mintlify_file: ${mintlify_file}
-    releases_dir: ${releases_dir}
+    changelog_path: ${update-changelog-file.result}
+    mintlify_path: ${update-mintlify-file.result}
+    context_path: ${save-release-context.result}
 
 ```python code
 entries: list
@@ -661,25 +831,25 @@ task_reviews: dict
 next_version: str
 bump_type: str
 date_iso: str
-changelog_file: str
-mintlify_file: str
-releases_dir: str
+changelog_path: str
+mintlify_path: str
+context_path: str
 
 lines = [
     '## Release Summary\n',
     f'Version: {next_version} ({bump_type})',
     f'Date: {date_iso}\n',
-    changelog_file,
-    f'  {len(entries)} user-facing entries\n',
+    'Created files:',
+    f'  {changelog_path}',
+    f'    {len(entries)} entries with PR links (sorted: Removed > Changed > Added > Fixed > Improved)',
 ]
 
-if mintlify_file:
-    lines.append(mintlify_file)
-    lines.append('  Mintlify format (same entries)\n')
+if mintlify_path:
+    lines.append(f'  {mintlify_path}')
+    lines.append('    Same entries as Mintlify <Update> component, grouped by theme')
 
-lines.append(f'{releases_dir}/{next_version}-context.md')
-lines.append(f'  {len(skipped)} skipped changes (for verification)')
-lines.append(f'  {len(task_reviews)} task reviews')
+lines.append(f'  {context_path}')
+lines.append(f'    {len(skipped)} skipped changes + {len(task_reviews)} task reviews — review before committing')
 
 result: str = '\n'.join(lines)
 ```
@@ -688,30 +858,32 @@ result: str = '\n'.join(lines)
 
 ### summary
 
-Release summary showing entry counts and file locations.
+Release summary displayed after execution. Shows version, bump type,
+and created files with descriptions.
 
 - source: ${create-summary.result}
 
 ### suggested_version
 
-Suggested next version based on semantic versioning analysis of changes.
+Next version from semantic versioning rules: any Removed or Changed
+entry triggers major, any Added triggers minor, otherwise patch.
 
 - source: ${compute-version.result.next_version}
 
-### markdown_section
+### changelog_file
 
-Markdown changelog section ready for inclusion in CHANGELOG.md.
+Path to the updated changelog file.
 
-- source: ${format-both.results[0].response}
+- source: ${update-changelog-file.result}
 
-### mintlify_section
+### mintlify_file
 
-Mintlify Update component for docs/changelog.mdx.
+Path to the updated Mintlify changelog file. Empty string if skipped.
 
-- source: ${format-both.results[1].response}
+- source: ${update-mintlify-file.result}
 
 ### context_file
 
-Path to release context file containing full verification data.
+Path to the release context file for pre-release verification.
 
 - source: ${save-release-context.result}
