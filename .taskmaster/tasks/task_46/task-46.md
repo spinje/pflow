@@ -1,7 +1,7 @@
 # Task 46: Workflow Export to Zero-Dependency Code
 
 ## Description
-Implement the ability to export pflow workflows to standalone, zero-dependency code in target languages (starting with Python). This feature transforms pflow from a runtime dependency into a pure development-time tool, allowing users to generate human-readable code that runs without pflow installed.
+Implement the ability to export pflow workflows to standalone, zero-dependency Python code. This feature transforms pflow from a runtime dependency into a pure development-time tool, allowing users to generate human-readable code that runs without pflow installed. Generated code uses plain Python variables for data flow — no PocketFlow classes, no shared dict, no framework abstractions.
 
 ## Status
 not started
@@ -20,12 +20,12 @@ The Workflow Export feature will compile pflow workflows (represented as IR JSON
 
 ### Core Functionality
 The exporter will:
-- Parse the workflow IR (JSON) to understand nodes, edges, and data flow
-- Generate equivalent code in the target language (Python first, then TypeScript, Bash)
-- Transform the shared store pattern into appropriate variable passing
-- Convert template variables (${var}) into language-specific string formatting
-- Map each node type to its code generation template
-- Handle error propagation and action-based routing
+- Parse the workflow IR (from `.pflow.md` markdown format) to understand nodes, edges, and data flow
+- Generate plain Python code using variables for data flow (no shared dict, no framework)
+- Convert template variables (`${var}`) into f-string interpolation or variable references
+- Map each node type to its plain Python equivalent
+- Handle error propagation with try/except (not action-based routing)
+- Generate parallel execution with `concurrent.futures` for batch steps
 
 ### Key Design Decisions (MVP Approach)
 - Start with Python export only (covers 80% of use cases)
@@ -36,28 +36,54 @@ The exporter will:
 - Include comments indicating which pflow node generated each section
 
 ### Technical Implementation
-The three-phase node lifecycle (prep→exec→post) will map to:
-- `prep` → Variable extraction and validation code
-- `exec` → Core business logic (API calls, file operations, etc.)
-- `post` → Result handling and flow control decisions
+
+> **Design decision (Feb 2026)**: Generate plain Python with variables — NOT PocketFlow code.
+> PocketFlow's shared dict pattern was explored and rejected because pflow's node implementations
+> don't use `shared` directly (they go through the wrapper chain: TemplateAwareNodeWrapper,
+> NamespacedNodeWrapper). Generating PocketFlow code would require bundling most of pflow's
+> runtime, defeating the zero-dependency goal. Plain Python variables are the wiring mechanism.
+> See: `.taskmaster/tasks/task_46/starting-context/braindump-miniflow-killed-plain-python-wins.md`
+
+Generated code uses plain Python variables for data flow between steps. No shared dict,
+no PocketFlow classes, no framework abstractions.
 
 Example transformation:
 ```python
-# From IR node:
-{"id": "fetch", "type": "shell", "params": {"command": "git log --oneline"}}
+# From pflow workflow (.pflow.md):
+# ### fetch
+# - type: shell
+# - command: git log --oneline
+#
+# ### summarize
+# - type: llm
+# - prompt: Summarize these commits: ${fetch.stdout}
 
 # To Python code:
-def fetch_commits():
-    """Node: fetch - Get recent commits"""
-    result = subprocess.run(["git", "log", "--oneline"],
-                          capture_output=True, text=True)
-    if result.returncode == 0:
-        shared["commits"] = result.stdout
-        return "success"
-    else:
-        shared["error"] = result.stderr
-        return "error"
+import subprocess
+
+# fetch: Get recent commits
+fetch_result = subprocess.run(["git", "log", "--oneline"],
+                              capture_output=True, text=True, check=True)
+
+# summarize: Summarize commits
+summary = llm_call(
+    prompt=f"Summarize these commits:\n{fetch_result.stdout}",
+    model="claude-sonnet-4-20250514"
+)
 ```
+
+### Architecture: Nodes as Functions
+
+The recommended implementation path is to extract pflow's node logic into pure functions
+that the generator can either inline (for zero-dependency output) or import (if pflow is installed):
+
+1. **Extract**: Separate core logic from PocketFlow Node class structure into standalone functions
+2. **Wrap**: pflow's runtime wraps those functions in Node classes + wrappers (existing behavior preserved)
+3. **Generate**: Task 46 export produces code that calls these functions directly
+4. **Inline**: For zero-dependency mode, inline the function bodies into the generated file
+
+This refactoring also enables `from pflow.nodes import http, llm, shell` as a side effect
+for users who want to use pflow's nodes in custom Python scripts.
 
 ### Node Type Mappings
 - `shell` → subprocess.run()
