@@ -5,9 +5,10 @@ before a release to get three outputs: a CHANGELOG.md entry with PR links,
 a Mintlify changelog component for your docs site, and a release context
 file for pre-release verification.
 
-The workflow analyzes commits since your last tag, uses an LLM to separate
-user-facing changes from internal work, computes a semantic version bump,
-and formats the results in both formats simultaneously.
+The workflow analyzes commits between two git refs, uses an LLM to separate
+user-facing changes from internal work, determines the version (computed
+from entries or extracted from a target tag), and formats the results in
+both formats simultaneously.
 
 **Requirements**: Git repository with at least one tag, GitHub CLI (`gh`)
 authenticated, and an LLM configured via `llm`.
@@ -23,6 +24,10 @@ pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=v0.
 
 # Skip Mintlify output
 pflow examples/real-workflows/generate-changelog/workflow.pflow.md mintlify_file=""
+
+# Historical changelog for a specific tag range
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
+  since_tag=v0.5.0 to_ref=v0.6.0
 
 # Custom output paths
 pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
@@ -47,6 +52,17 @@ changelog for a specific range, e.g. `since_tag=v0.5.0`.
 - type: string
 - required: false
 - default: ""
+
+### to_ref
+
+Git ref for the end of the changelog range (tag, branch, or commit).
+Defaults to HEAD for normal releases. Set to a tag like `v0.7.0` to
+generate a historical changelog. When set to a tag, the version and
+date are extracted from the tag instead of being computed.
+
+- type: string
+- required: false
+- default: HEAD
 
 ### changelog_file
 
@@ -105,96 +121,23 @@ latest_tag: str
 result: str = since_tag.strip() if since_tag.strip() else latest_tag.strip()
 ```
 
-### get-docs-diff
+### gather-commit-data
 
-Extract documentation file changes since the tag, grouped by file with
-commit refs. The format LLM uses this to write accurate parameter names
-and feature descriptions instead of guessing from commit messages alone.
-Excludes changelog.mdx to avoid circular references.
-
-- type: code
-- inputs:
-    tag: ${resolve-tag.result}
-
-```python code
-tag: str
-
-import subprocess
-
-diff_output = subprocess.run(
-    ['git', 'diff', f'{tag}..HEAD', '--name-only', '--', 'docs/'],
-    capture_output=True, text=True
-).stdout
-files = [
-    f for f in diff_output.strip().split('\n')
-    if f and 'changelog.mdx' not in f
-]
-
-sections = []
-for file in files:
-    commits = subprocess.run(
-        ['git', 'log', f'{tag}..HEAD', '--oneline', '--', file],
-        capture_output=True, text=True
-    ).stdout.strip().replace('\n', ', ')
-
-    diff = subprocess.run(
-        ['git', 'diff', f'{tag}..HEAD', '--', file],
-        capture_output=True, text=True
-    ).stdout
-    change_lines = [
-        line for line in diff.split('\n')
-        if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))
-    ][:50]
-
-    sections.append(
-        f'## {file}\nCommits: {commits}\nChanges:\n' + '\n'.join(change_lines)
-    )
-
-result: str = '\n\n'.join(sections)
-```
-
-### get-recent-updates
-
-Load the last 2 entries from the existing Mintlify changelog as a style
-reference. The format LLM matches this tone and structure when generating
-the new entry.
-
-- type: code
-- inputs:
-    mintlify_file: ${mintlify_file}
-
-```python code
-mintlify_file: str
-
-import re
-from pathlib import Path
-
-path = Path(mintlify_file)
-if not path.exists():
-    updates_text = ''
-else:
-    content = path.read_text()
-    updates = re.findall(r'<Update.*?</Update>', content, re.DOTALL)
-    updates_text = '\n\n'.join(updates[:2])
-
-result: str = updates_text
-```
-
-### get-commits-enriched
-
-Build a rich context object for each commit in the tag range. Includes
-PR titles and bodies (for understanding what changed), file paths (so
-the classifier can identify internal-only changes like `.taskmaster/` or
-`tests/`), and task numbers (to load implementation reviews). Uses
-`--first-parent` to avoid duplicates from PR branch commits.
+Build a rich context object for each commit in the tag range. Captures
+the full commit message (`%B`), PR titles and bodies, file paths (so
+the classifier can identify internal-only changes like `.taskmaster/`
+or `tests/`), and task numbers. Uses `--first-parent` to avoid
+duplicates from PR branch commits.
 
 - type: code
 - inputs:
     tag: ${resolve-tag.result}
+    to_ref: ${to_ref}
 - timeout: 60
 
 ```python code
 tag: str
+to_ref: str
 
 import subprocess, json, re
 
@@ -204,18 +147,19 @@ repo = subprocess.run(
 ).stdout.strip()
 
 log_out = subprocess.run(
-    ['git', 'log', '--first-parent', f'{tag}..HEAD', '--format=%H|%s'],
+    ['git', 'log', '--first-parent', f'{tag}..{to_ref}', '--format=%H|%B%x00'],
     capture_output=True, text=True
 ).stdout
 commits = []
-for line in log_out.strip().split('\n'):
-    if not line:
+for record in log_out.split('\0'):
+    record = record.strip()
+    if not record or '|' not in record:
         continue
-    hash_val, msg = line.split('|', 1)
-    commits.append({'hash': hash_val, 'commit_message': msg})
+    hash_val, msg = record.split('|', 1)
+    commits.append({'hash': hash_val.strip(), 'commit_message': msg.strip()})
 
 file_log = subprocess.run(
-    ['git', 'log', '--first-parent', f'{tag}..HEAD', '--format=HASH:%H', '--name-only'],
+    ['git', 'log', '--first-parent', f'{tag}..{to_ref}', '--format=HASH:%H', '--name-only'],
     capture_output=True, text=True
 ).stdout
 file_changes: dict = {}
@@ -291,47 +235,58 @@ result: list = commits
 
 ### get-task-reviews
 
-Load `task-review.md` files for any tasks referenced in commits or PRs.
-These reviews contain implementation details, key decisions, and files
-modified — giving the format LLM accurate context that goes beyond what
-a commit message conveys.
+Load `task-review.md` files that were added or modified within the tag
+range. Only reviews committed in this range belong to this release —
+a commit mentioning a task number doesn't mean the review existed yet.
+Reads content from the git tree at `to_ref` for correctness in
+historical runs.
 
 - type: code
 - inputs:
-    commits: ${get-commits-enriched.result}
+    tag: ${resolve-tag.result}
+    to_ref: ${to_ref}
 
 ```python code
-commits: list
+tag: str
+to_ref: str
 
-from pathlib import Path
+import subprocess, re
 
-task_nums = sorted({
-    c['task_number'] for c in commits
-    if c.get('task_number') is not None
-})
+diff_output = subprocess.run(
+    ['git', 'diff', '--name-only', f'{tag}..{to_ref}', '--',
+     '.taskmaster/tasks/'],
+    capture_output=True, text=True
+).stdout
 
-reviews = {}
-for num in task_nums:
-    path = Path(f'.taskmaster/tasks/task_{num}/task-review.md')
-    if path.exists():
-        content = path.read_text().strip()
-        if content:
-            reviews[str(num)] = content
+reviews: dict = {}
+for line in diff_output.strip().split('\n'):
+    if not line or 'task-review.md' not in line:
+        continue
+    m = re.search(r'task_(\d+)/task-review\.md', line)
+    if not m:
+        continue
+    num = m.group(1)
+    content = subprocess.run(
+        ['git', 'show', f'{to_ref}:{line}'],
+        capture_output=True, text=True
+    ).stdout.strip()
+    if content:
+        reviews[num] = content
 
 result: dict = reviews
 ```
 
-### analyze-commits
+### classify-commits
 
 Classify each commit as user-facing or internal. Runs in parallel across
-all commits. Each call receives the commit message, PR data, and file
-paths, and outputs either a draft changelog entry or SKIP with the
-original message preserved for the verification file.
+all commits. Each call receives the full commit message, PR data, and
+file paths, and outputs either a draft changelog entry or `SKIP` with
+the original message preserved for the verification file.
 
 - type: llm
 
 ```yaml batch
-items: ${get-commits-enriched.result}
+items: ${gather-commit-data.result}
 parallel: true
 max_concurrent: 70
 error_handling: continue
@@ -397,16 +352,16 @@ If SKIP: Output "SKIP: " followed by the ORIGINAL commit message (not a summary)
 Output ONLY the changelog line or SKIP line. Nothing else.
 ````
 
-### filter-and-format
+### split-classifications
 
 Split the classification results into two lists: included entries
 (user-facing drafts) and skipped entries (internal changes). The
-included list carries the original array index so prepare-context can
+included list carries the original array index so enrich-drafts can
 rejoin each draft with its source commit.
 
 - type: code
 - inputs:
-    results: ${analyze-commits.results}
+    results: ${classify-commits.results}
 
 ```python code
 results: list
@@ -426,7 +381,7 @@ for i, entry in enumerate(results):
 result: dict = {'included': included, 'skipped': skipped}
 ```
 
-### prepare-context
+### enrich-drafts
 
 Pair each draft changelog entry with its original commit context (PR
 link, title, body, files, task number). The format LLM needs this to
@@ -435,8 +390,8 @@ the full PR body rather than the one-line draft.
 
 - type: code
 - inputs:
-    included: ${filter-and-format.result.included}
-    commits: ${get-commits-enriched.result}
+    included: ${split-classifications.result.included}
+    commits: ${gather-commit-data.result}
 
 ```python code
 included: list
@@ -457,11 +412,13 @@ for entry in included:
         'draft': entry['response'],
         'index': entry['index'],
         'context': {
+            'hash': commit.get('hash', '')[:7],
             'commit_message': commit.get('commit_message', ''),
             'task_number': commit.get('task_number'),
             'files_changed': files_display,
             'pr_title': commit.get('pr_title', ''),
             'pr_body': commit.get('pr_body', ''),
+            'pr_summary': commit.get('pr_summary', ''),
             'pr_link': commit.get('pr_link', ''),
             'pr_number': commit.get('pr_number'),
         }
@@ -472,20 +429,23 @@ result: list = entries
 
 ### compute-version
 
-Determine the next version number. Entries starting with Removed/Changed
-trigger a major bump, Added triggers minor, anything else is patch.
-Also captures today's date in both ISO and human-readable formats for
-the changelog headers.
+Determine the next version number and release date. When `to_ref` is a
+tag, the version and date are extracted from it directly. Otherwise,
+entries starting with Removed/Changed trigger a major bump, Added
+triggers minor, anything else is patch, and the date is today.
 
 - type: code
 - inputs:
-    entries: ${prepare-context.result}
+    entries: ${enrich-drafts.result}
     current_tag: ${resolve-tag.result}
+    to_ref: ${to_ref}
 
 ```python code
 entries: list
 current_tag: str
+to_ref: str
 
+import subprocess
 from datetime import datetime
 
 drafts = [e['draft'] for e in entries]
@@ -499,32 +459,283 @@ elif has_features:
 else:
     bump_type = 'patch'
 
-version = current_tag.lstrip('v')
-major, minor, patch_num = (int(x) for x in version.split('.'))
-
-if bump_type == 'major':
-    next_version = f'v{major + 1}.0.0'
-elif bump_type == 'minor':
-    next_version = f'v{major}.{minor + 1}.0'
+if to_ref != 'HEAD':
+    # Historical mode: version and date from the target tag
+    next_version = to_ref if to_ref.startswith('v') else f'v{to_ref}'
+    tag_date_str = subprocess.run(
+        ['git', 'log', '-1', '--format=%ai', to_ref],
+        capture_output=True, text=True
+    ).stdout.strip()
+    tag_date = datetime.strptime(tag_date_str[:10], '%Y-%m-%d')
+    date_iso = tag_date.strftime('%Y-%m-%d')
+    date_month_year = tag_date.strftime('%B %Y')
 else:
-    next_version = f'v{major}.{minor}.{patch_num + 1}'
+    # Normal mode: compute version from entries
+    version = current_tag.lstrip('v')
+    major, minor, patch_num = (int(x) for x in version.split('.'))
 
-now = datetime.now()
+    if bump_type == 'major':
+        next_version = f'v{major + 1}.0.0'
+    elif bump_type == 'minor':
+        next_version = f'v{major}.{minor + 1}.0'
+    else:
+        next_version = f'v{major}.{minor}.{patch_num + 1}'
+
+    now = datetime.now()
+    date_iso = now.strftime('%Y-%m-%d')
+    date_month_year = now.strftime('%B %Y')
+
 result: dict = {
     'bump_type': bump_type,
     'next_version': next_version,
-    'date_iso': now.strftime('%Y-%m-%d'),
-    'date_month_year': now.strftime('%B %Y'),
+    'date_iso': date_iso,
+    'date_month_year': date_month_year,
 }
 ```
 
-### format-both
+### format-draft-entries
 
-Produce both output formats in parallel. Each receives the full context
-(draft entries, task reviews, docs diff) and independently deduplicates,
-sorts by verb (Removed > Changed > Added > Fixed > Improved), and
-standardizes terminology. The markdown format includes PR links; the
-Mintlify format groups entries into themes without links.
+Format each draft changelog entry as structured markdown with its full
+commit context and matched task review. Both the format LLM and the
+release context file consume this output, giving the LLM clean readable
+input instead of serialized Python data structures.
+
+- type: code
+- inputs:
+    entries: ${enrich-drafts.result}
+    task_reviews: ${get-task-reviews.result}
+
+```python code
+entries: list
+task_reviews: dict
+
+used_reviews: set = set()
+total = len(entries)
+sections = []
+for i, e in enumerate(entries, 1):
+    ctx = e['context']
+    lines = [f'### [{i}/{total}] {e["draft"]}', '']
+    if ctx.get('hash'):
+        lines.append(f'*Commit: `{ctx["hash"]}` {ctx["commit_message"]}*')
+    elif ctx.get('commit_message'):
+        lines.append(f'*Commit: {ctx["commit_message"]}*')
+    task_num = ctx.get('task_number')
+    has_review = task_num and str(task_num) in task_reviews
+    if task_num and has_review:
+        lines.append(f'Task: [{task_num}](.taskmaster/tasks/task_{task_num}/task-review.md)')
+    elif task_num:
+        lines.append(f'Task: {task_num}')
+    if ctx.get('pr_number'):
+        pr_line = f'PR: #{ctx["pr_number"]}'
+        if ctx.get('pr_title'):
+            pr_line += f' — {ctx["pr_title"]}'
+        if ctx.get('pr_link'):
+            pr_line += f' ({ctx["pr_link"]})'
+        lines.append(pr_line)
+    lines.append(f'Files: {ctx["files_changed"]}')
+    if ctx.get('pr_body'):
+        lines.append(f'\n**PR Description**\n\n{ctx["pr_body"]}')
+    if has_review:
+        review = task_reviews[str(task_num)]
+        lines.append(f'\n**Task {task_num} Review**\n\n{review}')
+        used_reviews.add(str(task_num))
+    sections.append('\n'.join(lines))
+
+entries_md = '\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n'.join(sections)
+
+unmatched = '\n'.join(
+    f'### Task {k}\n\n{v}\n' for k, v in task_reviews.items()
+    if k not in used_reviews
+)
+
+result: dict = {'entries': entries_md, 'unmatched_reviews': unmatched}
+```
+
+### get-docs-diff
+
+Extract documentation file changes since the tag, grouped by file with
+commit refs. Outputs a list of chunks for parallel summarization — files
+are grouped greedily until a chunk exceeds 300 diff lines, then a new
+chunk starts. Files are never split across chunks. Excludes
+`changelog.mdx` to avoid circular references.
+
+- type: code
+- inputs:
+    tag: ${resolve-tag.result}
+    to_ref: ${to_ref}
+
+```python code
+tag: str
+to_ref: str
+
+import subprocess
+
+diff_output = subprocess.run(
+    ['git', 'diff', f'{tag}..{to_ref}', '--name-only', '--', 'docs/'],
+    capture_output=True, text=True
+).stdout
+files = [
+    f for f in diff_output.strip().split('\n')
+    if f and 'changelog.mdx' not in f
+]
+
+file_sections: list = []
+for file in files:
+    commits = subprocess.run(
+        ['git', 'log', f'{tag}..{to_ref}', '--oneline', '--', file],
+        capture_output=True, text=True
+    ).stdout.strip().replace('\n', ', ')
+
+    diff = subprocess.run(
+        ['git', 'diff', f'{tag}..{to_ref}', '--', file],
+        capture_output=True, text=True
+    ).stdout
+    change_lines = [
+        line for line in diff.split('\n')
+        if line.startswith(('+', '-')) and not line.startswith(('+++', '---'))
+    ]
+
+    section = f'## {file}\nCommits: {commits}\nChanges:\n' + '\n'.join(change_lines)
+    file_sections.append({'text': section, 'lines': len(change_lines)})
+
+max_lines: int = 300
+chunks: list = []
+current_chunk: list = []
+current_lines: int = 0
+
+for fs in file_sections:
+    if current_chunk and current_lines + fs['lines'] > max_lines:
+        chunks.append('\n\n'.join(s['text'] for s in current_chunk))
+        current_chunk = []
+        current_lines = 0
+    current_chunk.append(fs)
+    current_lines += fs['lines']
+
+if current_chunk:
+    chunks.append('\n\n'.join(s['text'] for s in current_chunk))
+
+result: list = chunks
+```
+
+### summarize-docs-diff
+
+Summarize raw documentation diffs into human-readable bullet points per
+file. Processes diff chunks in parallel — each chunk contains one or
+more files grouped by the `get-docs-diff` chunking logic. The release
+context file and format LLMs consume the joined output.
+
+- type: llm
+
+```yaml batch
+items: ${get-docs-diff.result}
+parallel: true
+```
+
+````prompt
+Summarize documentation changes for a release context file.
+
+## What you're given
+
+A batch of raw git diffs of documentation files changed between two
+release tags. You may receive one file or several, depending on diff
+size. Each file section has the filename, commit refs, and raw diff
+lines (lines starting with `+` were added, `-` were removed).
+
+## Raw diffs
+
+${item}
+
+## What to produce
+
+For each file, output an H3 heading with the file path, a commits line,
+and 1-5 bullet points describing what changed conceptually.
+
+## Output format
+
+### path/to/file.mdx
+
+*Commits: abc1234, def5678*
+
+- Changed X to Y
+- Added section about Z
+- Removed deprecated W
+
+### another/file.mdx
+
+*Commits: ghi9012*
+
+- Updated table with new model recommendations
+- Added usage example for batch processing:
+  ```bash
+  pflow my-workflow.pflow.md batch_size=10
+  ```
+
+## Rules
+- Focus on WHAT changed conceptually, not line-by-line diffs
+- Group related added+removed lines into single "Changed X to Y" bullets
+- Skip trivial whitespace or formatting-only changes
+- Keep bullet points concise (one line each)
+- Use commit short hashes only (first 7 chars), not full messages
+- If a file has only trivial changes, write "Minor formatting changes"
+- If code examples were added or changed, include the actual code snippet
+  in a fenced code block so reviewers can see the exact change without
+  opening the file
+- Output ONLY the markdown sections as plain text, no JSON wrapping,
+  no outer code fences, no preamble or explanation
+````
+
+### join-docs-summary
+
+Concatenate the per-chunk documentation summaries into a single string.
+Downstream nodes (`render-changelogs` and `save-release-context`) receive the
+same joined output they did before the batch split.
+
+- type: code
+- inputs:
+    results: ${summarize-docs-diff.results}
+
+```python code
+results: list
+
+parts = [r.get('response', '') for r in results if r.get('response')]
+result: str = '\n\n'.join(parts)
+```
+
+### get-style-reference
+
+Load the last 2 entries from the existing Mintlify changelog as a style
+reference. The format LLM matches this tone and structure when generating
+the new entry.
+
+- type: code
+- inputs:
+    mintlify_file: ${mintlify_file}
+
+```python code
+mintlify_file: str
+
+import re
+from pathlib import Path
+
+path = Path(mintlify_file) if mintlify_file else None
+if not path or not path.is_file():
+    updates_text = ''
+else:
+    content = path.read_text()
+    updates = re.findall(r'<Update.*?</Update>', content, re.DOTALL)
+    updates_text = '\n\n'.join(updates[:2])
+
+result: str = updates_text
+```
+
+### render-changelogs
+
+Produce both output formats in parallel. Each receives pre-formatted
+draft entries (with embedded task reviews) and LLM-summarized docs
+changes, then independently deduplicates, sorts by verb
+(`Removed` > `Changed` > `Added` > `Fixed` > `Improved`), and
+standardizes terminology. The markdown format includes PR and task
+links; the Mintlify format groups entries into themes without links.
 
 - type: llm
 
@@ -540,15 +751,13 @@ items:
       Date: ${compute-version.result.date_iso}
 
       ## Draft Entries with Context
-      Each entry has a `draft` field and a `context.pr_link` field with
-      the full GitHub URL.
-      ${prepare-context.result}
-
-      ## Task Reviews (for accuracy)
-      ${get-task-reviews.result}
+      Each entry is a markdown section with the draft line, commit info,
+      PR details with full URL, files changed, and matched task reviews.
+      Use PR links exactly as shown.
+      ${format-draft-entries.result.entries}
 
       ## Documentation Changes (for parameter accuracy)
-      ${get-docs-diff.result}
+      ${join-docs-summary.result}
 
       ## Refinement Tasks
       1. Merge duplicates → combine PR links
@@ -560,16 +769,27 @@ items:
       ## Output Format
       ## v1.0.0 (2026-01-04)
 
-      - Removed X [#10](https://github.com/owner/repo/pull/10)
+      - Removed X [#10](https://github.com/owner/repo/pull/10) ([Task 42](.taskmaster/tasks/task_42/task-review.md))
       - Changed Y [#11](https://github.com/owner/repo/pull/11)
       - Added Z [#12](https://github.com/owner/repo/pull/12), [#13](https://github.com/owner/repo/pull/13)
-      - Fixed W [#14](https://github.com/owner/repo/pull/14)
+      - Added W ([Task 104](.taskmaster/tasks/task_104/task-review.md))
+      - Fixed V
+      - Improved U [#14](https://github.com/owner/repo/pull/14)
 
       ## Rules
+      - This is a user-facing changelog — describe what changed for users,
+        not how it was implemented. Skip internal details unless they
+        directly affect usage.
+      - Be specific — name the actual thing that changed, not a vague
+        summary. Never invent details. If an entry is too vague to
+        understand what actually changed, drop it.
       - Use version and date exactly as provided
       - Each entry as bullet with `- `
       - CRITICAL: Use the FULL pr_link URL from context, not just the PR number
       - Format: [#N](full_url) where full_url is from context.pr_link
+      - If entry has a task link (e.g. Task: [N](...)), include it after PR links
+      - If entry has a task WITHOUT a link (e.g. Task: N), do NOT add a task link
+      - Entries may have: PR + Task link, PR only, Task link only, or neither — all are valid
       - Combine PR links when merging duplicates
       - Start with ## - no code fences
       - Output ONLY the markdown section
@@ -583,16 +803,14 @@ items:
       Bump Type: ${compute-version.result.bump_type}
 
       ## Draft Entries
-      ${prepare-context.result}
-
-      ## Task Reviews
-      ${get-task-reviews.result}
+      Each entry includes commit context and matched task reviews.
+      ${format-draft-entries.result.entries}
 
       ## Documentation Changes
-      ${get-docs-diff.result}
+      ${join-docs-summary.result}
 
       ## Style Reference (match this format)
-      ${get-recent-updates.result}
+      ${get-style-reference.result}
 
       ## Required Format
       You MUST output exactly this structure (with your content):
@@ -613,6 +831,18 @@ items:
         **Highlights**
         - Feature three
       </Update>
+
+      ## Tone
+      - User-facing changelog — describe what changed for users, not
+        how it was implemented. Skip internal details unless valuable.
+      - Calm, understated, no hype. Just say what shipped and why it
+        matters. If a tired engineer would roll their eyes, rewrite it.
+      - Be specific — "added timeout parameter to shell node" beats
+        "improved shell node reliability." Name the actual thing.
+      - Shipping notes, not a press release. Plain language over
+        marketing speak.
+      - Never invent details. If a draft entry is too vague to
+        understand what actually changed, drop it from the output.
 
       ## Tasks
       1. Group entries into 2-4 themes
@@ -635,43 +865,39 @@ ${item.prompt}
 
 ### save-release-context
 
-Write a release context file for pre-release verification. Contains five
-sections: the rendered changelog, skipped changes to audit for
-misclassification, task implementation reviews, documentation diffs, and
-the raw draft entries with full commit context.
+Write a release context file for pre-release verification. Contains the
+rendered changelog, skipped commits for misclassification review,
+documentation change summaries, and pre-formatted draft entries with
+commit/PR context and matched task reviews.
 
 - type: code
 - inputs:
-    changelog: ${format-both.results[0].response}
-    skipped: ${filter-and-format.result.skipped}
-    task_reviews: ${get-task-reviews.result}
-    docs_diff: ${get-docs-diff.result}
-    draft_entries: ${prepare-context.result}
+    changelog: ${render-changelogs.results[0].response}
+    skipped: ${split-classifications.result.skipped}
+    docs_summary: ${join-docs-summary.result}
+    formatted_entries: ${format-draft-entries.result.entries}
+    unmatched_reviews: ${format-draft-entries.result.unmatched_reviews}
     next_version: ${compute-version.result.next_version}
     date_iso: ${compute-version.result.date_iso}
     releases_dir: ${releases_dir}
 
-````python code
+```python code
 changelog: str
 skipped: list
-task_reviews: dict
-docs_diff: str
-draft_entries: list
+docs_summary: str
+formatted_entries: str
+unmatched_reviews: str
 next_version: str
 date_iso: str
 releases_dir: str
 
-import json
 from pathlib import Path
 
+docs_summary = docs_summary.strip() if docs_summary else ''
 Path(releases_dir).mkdir(parents=True, exist_ok=True)
 outfile = Path(releases_dir) / f'{next_version}-context.md'
 
 skipped_lines = '\n'.join(f'- {s}' for s in skipped)
-review_sections = '\n'.join(
-    f'### Task {k}\n\n{v}\n' for k, v in task_reviews.items()
-)
-json_fence = '`' * 3
 
 parts = [
     f'# {next_version} Release Context',
@@ -695,40 +921,44 @@ parts = [
     '',
     '---',
     '',
-    '## Task Implementation Reviews',
-    '',
-    review_sections,
-    '---',
-    '',
     '## Documentation Changes',
     '',
-    docs_diff,
+    docs_summary,
     '',
     '---',
     '',
     '## Draft Entries with Context',
     '',
-    json_fence + 'json',
-    json.dumps(draft_entries, indent=2),
-    json_fence,
+    formatted_entries,
 ]
+
+if unmatched_reviews:
+    parts.extend([
+        '',
+        '---',
+        '',
+        '## Additional Task Reviews',
+        '',
+        unmatched_reviews,
+    ])
 
 outfile.write_text('\n'.join(parts))
 result: str = str(outfile)
-````
+```
 
 ### update-changelog-file
 
 Prepend the new changelog section to the existing file. Inserts after
 the H1 header if present, preserving all previous entries below.
 
-> Writes a flat list sorted by verb (Removed, Changed, Added, Fixed,
-> Improved), each entry with PR links. Duplicates merged and
-> terminology standardized by the format-both LLM.
+> Flat list sorted by verb (`Removed`, `Changed`, `Added`, `Fixed`,
+> `Improved`), each entry with PR links and task review links where
+> available. Duplicates merged and terminology standardized by the
+> format LLM.
 
 - type: code
 - inputs:
-    new_section: ${format-both.results[0].response}
+    new_section: ${render-changelogs.results[0].response}
     changelog_file: ${changelog_file}
 
 ```python code
@@ -764,7 +994,7 @@ after the YAML frontmatter, preserving all previous entries below.
 
 - type: code
 - inputs:
-    new_section: ${format-both.results[1].response}
+    new_section: ${render-changelogs.results[1].response}
     mintlify_file: ${mintlify_file}
 
 ```python code
@@ -814,8 +1044,8 @@ created files with descriptions.
 
 - type: code
 - inputs:
-    entries: ${prepare-context.result}
-    skipped: ${filter-and-format.result.skipped}
+    entries: ${enrich-drafts.result}
+    skipped: ${split-classifications.result.skipped}
     task_reviews: ${get-task-reviews.result}
     next_version: ${compute-version.result.next_version}
     bump_type: ${compute-version.result.bump_type}
