@@ -406,6 +406,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 77: Improve Agent Instructions
 - Task 81: Find/Install Remote MCP Servers
 - Task 86: MCP Server Discovery Automation
+- Task 123: OAuth Authentication for MCP HTTP Servers
 
 **Later:**
 - Task 120: Strict Input Type Validation
