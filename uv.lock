@@ -978,8 +978,8 @@ wheels = [
 ]
 
 [[package]]
-name = "pflow"
-version = "0.0.1"
+name = "pflow-cli"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

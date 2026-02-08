@@ -22,7 +22,7 @@ def test_version_flag():
     result = runner.invoke(main, ["--version"])
 
     assert result.exit_code == 0
-    assert result.output.strip() == "pflow version 0.0.1"
+    assert result.output.strip().startswith("pflow version ")
 
 
 def test_workflow_arguments():

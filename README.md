@@ -15,94 +15,154 @@
   </tr>
 </table>
 
----
+# pflow
 
-## What is pflow?
+pflow helps your agent build workflows it can reuse. It composes pre-built nodes — LLM calls, shell commands, HTTP requests, MCP tools — into a `.pflow.md` file. Save it, and it becomes a command that runs the same process every time.
 
-pflow is a workflow compiler for AI agents. Instead of reasoning through multi-step tasks every time, your agent builds a workflow once. After that, the workflow runs instantly—no AI, no token cost, deterministic results.
+Saved workflows can be published as Skills with `pflow skill save`, making them available across Claude Code, Cursor, and other platforms.
 
-Workflows combine MCP servers, HTTP APIs, shell commands, and LLM calls. Your agent (Claude Code, Cursor, Windsurf or any other locally installed agent) discovers existing workflows or creates new ones as needed.
+<!-- Demo GIF: run workflow → save → pflow skill save → run by name -->
 
-**Status:** Pre-release. Actively developed. See [Roadmap](https://docs.pflow.run/roadmap) for direction.
+## What a workflow looks like
 
----
-
-## Why pflow?
-
-Every time your AI agent uses MCP tools, it loads tool schemas into context. GitHub's MCP server alone consumes 46,000 tokens. Add Slack and Jira? You're at 64,000 tokens before your agent even starts thinking.
-
-Run a 3-tool workflow 10 times daily at Claude Sonnet pricing? **~$800/year** just in context costs—plus reasoning overhead, plus the risk of different results each time.
-
-pflow compiles that reasoning once. Your agent figures out the tools and steps, saves the workflow, and every execution after runs instantly: **zero tokens, zero cost, deterministic results**.
-
----
-
-## Example
+I use pflow for my own releases. This workflow analyzes git commits since the last tag, classifies each one with an LLM (70 concurrent calls), and generates a CHANGELOG.md entry, a Mintlify docs update, and a release context file. It runs in about a minute.
 
 ```bash
-# First time: Your agent builds the workflow (30 seconds, one-time cost)
-You: "Check my GitHub PRs, find blockers, post summary to Slack"
-Agent: No existing workflow found. Building...
-       ✓ Created and saved as 'pr-blockers-to-slack'
-
-# Every time after: Instant execution (2 seconds, $0)
-You: "Check PR blockers and post to slack"
-Agent: Found 'pr-blockers-to-slack'. Running...
-       ✓ Found 2 blockers, posted to #engineering
+pflow generate-changelog since_tag=v0.5.0
 ```
 
-Or run it directly, no agent needed:
+The whole thing is a `.pflow.md` file — markdown that renders as documentation on GitHub and executes as a CLI command. Here are a few steps from the [full workflow](examples/real-workflows/generate-changelog/workflow.pflow.md):
+
+````markdown
+### get-latest-tag
+
+Detect the most recent git tag to use as the changelog baseline.
+
+- type: shell
+
+```shell command
+git describe --tags --abbrev=0 2>/dev/null || echo 'v0.0.0'
+```
+
+### resolve-tag
+
+Pick the starting tag: either user-provided or auto-detected.
+
+- type: code
+- inputs:
+    since_tag: ${since_tag}
+    latest_tag: ${get-latest-tag.stdout}
+
+```python code
+since_tag: str
+latest_tag: str
+
+result: str = since_tag.strip() if since_tag.strip() else latest_tag.strip()
+```
+
+### analyze-commits
+
+Classify each commit as user-facing or internal. Runs in parallel.
+
+- type: llm
+
+```yaml batch
+items: ${get-commits-enriched.result}
+parallel: true
+max_concurrent: 70
+```
+
+### notify-slack
+
+Post the release summary to Slack.
+
+- type: mcp-composio-slack-SLACK_SEND_MESSAGE
+- channel: ${slack_channel}
+- markdown_text: ${create-summary.result}
+````
+
+Data flows between steps through template variables — `${get-latest-tag.stdout}` feeds one step's output into the next.
+
+Four node types in one workflow: a shell command, inline Python, 70 parallel LLM calls, and a Slack message via MCP in three lines.
+
+Once saved, this runs the same way every time — same steps, same order, same data flow between them. Without pflow, your agent figures out the orchestration from scratch. It usually works, but you can't verify it ran every step without watching, and it might decide differently next time.
+
+More examples: [release announcements](examples/real-workflows/release-announcements/), [vision scraper](examples/real-workflows/vision-scraper/)
+
+## How your agent uses pflow
+
+pflow has 8 node types: the basics (`shell`, `http`, file operations), `llm` calls, `mcp` tools, and a `claude-code` node for delegating to another agent.
+
+Before anything runs, validation catches errors — wrong template references, missing inputs, type mismatches. Your agent handles the whole lifecycle:
 
 ```bash
-pflow pr-blockers-to-slack channel=#team-updates
+# Check if a workflow already exists
+pflow workflow discover "generate changelog from git history"
+
+# Nothing fits — get a step-by-step creation guide
+pflow instructions create
+
+# Find building blocks for the workflow
+pflow registry discover "analyze git commits, classify with llm, post to slack"
+
+# Build, run, iterate (validation runs automatically)
+pflow workflow.pflow.md since_tag=v0.5.0
+
+# Save to your library
+pflow workflow save ./workflow.pflow.md --name generate-changelog
+
+# Publish frequently-used workflows as Skills
+pflow skill save generate-changelog
 ```
 
----
+Workflows can call other workflows — the changelog you build today becomes a building block for a release workflow tomorrow.
 
-## Quick start
+## Built for agents
 
-### Prerequisites
+When something goes wrong, pflow tells the agent what to do:
 
-- Python 3.10+
-- [uv](https://docs.astral.sh/uv/) (recommended) or [pipx](https://pipx.pypa.io/)
-- An Anthropic API key
+```
+✗ Static validation failed:
+  • Node 'fetch-data' (type: http) does not output 'email'
 
-### 1. Install pflow
+Available outputs from 'fetch-data':
+  ✓ ${fetch-data.response} (dict|str)
+  ✓ ${fetch-data.status_code} (int)
+  ✓ ${fetch-data.response_headers} (dict)
+  ✓ ${fetch-data.response_time} (float)
+  ✓ ${fetch-data.error} (str)
+
+Tip: Try using ${fetch-data.response} instead
+```
+
+The agent sees what went wrong, sees every available output with its type, and gets a suggested fix. No stack traces, no guessing. ([source](src/pflow/runtime/template_validator.py))
+
+pflow is CLI-first because agents in Claude Code, Cursor, and similar tools always have bash. No MCP configuration needed — just run commands. (MCP server mode is available too if you need it.)
+
+## Honest scope
+
+pflow is for workflows where you know the steps — tasks your agent figured out once and you want to capture. If you're exploring or need your agent to adapt on the fly, let it. pflow captures the path after you've found it.
+
+## Getting started
+
+> macOS and Linux only for now. Windows is untested.
 
 ```bash
-# Using uv (recommended)
-uv tool install git+https://github.com/spinje/pflow.git
+# Recommended
+uv tool install pflow-cli
 
-# Or using pipx
-pipx install git+https://github.com/spinje/pflow.git
+# Or with pipx
+pipx install pflow-cli
 
-# Verify
-pflow --version
+# Or with pip
+pip install pflow-cli
 ```
 
-### 2. Set up your API key
+Tell your agent to run `pflow instructions usage` — it gets everything it needs to discover, run, and build workflows.
 
-```bash
-pflow settings set-env ANTHROPIC_API_KEY "your-api-key"
-```
+To build a new workflow, the agent can run `pflow instructions create` for a step-by-step guide.
 
-pflow uses Anthropic for intelligent discovery features. Your AI agent uses its own LLM to create workflows.
-
-### 3. Connect your AI agent
-
-**Option A: CLI access** (Claude Code, Cursor, Windsurf)
-
-If your agent has terminal access, tell it to run:
-
-```bash
-pflow instructions usage
-```
-
-This teaches the agent how to discover workflows, run them, and build new ones.
-
-**Option B: MCP server**
-
-Add to your AI tool's MCP configuration:
+Or configure pflow as an MCP server for environments without terminal access:
 
 ```json
 {
@@ -115,95 +175,19 @@ Add to your AI tool's MCP configuration:
 }
 ```
 
-📖 **[Setup guides for Claude Desktop, Cursor, VS Code, Windsurf →](https://docs.pflow.run/integrations)**
+Full documentation at [docs.pflow.run](https://docs.pflow.run).
 
-### What happens next
+## I want your feedback
 
-Once connected, your agent will:
+I've been building pflow since mid-2025. The thesis I'm testing: agents are more effective when they can compose known building blocks into reusable workflows, rather than writing code from scratch each time.
 
-1. **Discover** — Check for existing workflows that match your request
-2. **Reuse** — Run saved workflows instantly (no AI reasoning needed)
-3. **Create** — Build new workflows when nothing exists, then save for reuse
+I might be wrong. Try it and tell me:
 
-Example interaction:
+- Is the `.pflow.md` format helpful, or would you rather just write Python?
+- Does composing nodes save time versus letting your agent code it?
+- What's the first workflow you'd build?
 
-```
-You: "Check my open PRs and summarize them"
-
-Agent: Found workflow 'summarize-prs'. Running...
-       ✓ 3 open PRs summarized (2.1s)
-```
-
----
-
-## How it works
-
-```mermaid
-flowchart LR
-    A[Your request] --> B{Workflow exists?}
-    B -->|Yes| C[Run instantly<br/>0 tokens]
-    B -->|No| D[Build workflow<br/>one-time cost]
-    D --> E[Save]
-    E --> C
-    C --> F[Done]
-```
-
-**First run:** Agent reasons through the task, builds a workflow, saves it.
-
-**Every run after:** Workflow executes instantly. No AI, no tokens, same result.
-
-Workflows are JSON files. Version them in git, share with your team, run in CI/CD.
-
----
-
-## Features
-
-- **Intelligent discovery** — find workflows and nodes by describing what you need
-- **MCP native** — any MCP server becomes workflow nodes
-- **Deterministic** — same inputs, same outputs, every time
-- **Template variables** — connect outputs to inputs across nodes
-- **Works with any agent** — Claude Code, Cursor, Windsurf, or any MCP client
-- **Local-first** — runs on your machine with your credentials
-- **Validation** — catch errors before execution
-- **Execution traces** — detailed logs for debugging
-
----
-
-## Documentation
-
-Guides, CLI reference, and node documentation:
-
-📖 **[docs.pflow.run](https://docs.pflow.run)**
-
----
-
-## Roadmap
-
-See where pflow is heading:
-
-📍 **[Roadmap](https://docs.pflow.run/roadmap)**
-
----
-
-## Community
-
-- 💬 [Discussions](https://github.com/spinje/pflow/discussions) — questions, ideas, feedback
-- 🐛 [Issues](https://github.com/spinje/pflow/issues) — bug reports
-
----
-
-## Contributing
-
-```bash
-git clone https://github.com/spinje/pflow.git
-cd pflow
-make install
-make test
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
+Open a [discussion](https://github.com/spinje/pflow/discussions) or file an [issue](https://github.com/spinje/pflow/issues).
 
 ## License
 

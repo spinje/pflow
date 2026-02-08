@@ -3886,7 +3886,13 @@ def workflow_command(
     """
     # Handle version flag
     if version:
-        click.echo("pflow version 0.0.1")
+        from importlib.metadata import version as pkg_version
+
+        try:
+            ver = pkg_version("pflow-cli")
+        except Exception:
+            ver = "0.8.0"
+        click.echo(f"pflow version {ver}")
         ctx.exit(0)
 
     # Setup signal handlers

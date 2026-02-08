@@ -1,13 +1,14 @@
 [project]
-name = "pflow"
-version = "0.0.1"
-description = "cli"
+name = "pflow-cli"
+version = "0.8.0"
+description = "Reusable CLI workflows from shell, LLM, HTTP, and MCP nodes"
 authors = [{ name = "Andreas Falcone", email = "pflow-cli@gmail.com" }]
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
-keywords = ['python']
+keywords = ["workflow", "cli", "automation", "llm", "mcp", "ai-agent", "agent-skill"]
 requires-python = ">=3.10,<4.0"
 classifiers = [
+    "Environment :: Console",
     "Intended Audience :: Developers",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -16,6 +17,9 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: Software Development :: Build Tools",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
@@ -41,10 +45,9 @@ dependencies = [
 pflow = "pflow.cli:cli_main"
 
 [project.urls]
-Homepage = "https://spinje.github.io/pflow/"
+Homepage = "https://pflow.run"
 Repository = "https://github.com/spinje/pflow"
-Documentation = "https://spinje.github.io/pflow/"
-# Skip for MVP: puremagic, python-ulid (nice-to-haves)
+Documentation = "https://docs.pflow.run"
 
 [dependency-groups]
 dev = [
@@ -64,6 +67,29 @@ dev = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    ".claude/",
+    ".cursor/",
+    ".github/",
+    ".taskmaster/",
+    "architecture/",
+    "assets/",
+    "docs/",
+    "examples/",
+    "releases/",
+    "scratchpads/",
+    "scripts/",
+    "tests/",
+    ".pre-commit-config.yaml",
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "Makefile",
+    "SECURITY.md",
+    "tox.ini",
+    "uv.lock",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pflow"]
