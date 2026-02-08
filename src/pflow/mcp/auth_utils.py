@@ -227,29 +227,31 @@ def build_auth_headers(config: dict[str, Any]) -> dict[str, str]:
 
     Supports bearer token, API key, and basic auth.
 
+    Note: Env var expansion (${VAR}) should be done by the caller before
+    passing config to this function. This function builds headers from
+    already-resolved values.
+
     Args:
-        config: Server configuration dictionary
+        config: Server configuration dictionary (env vars already expanded)
 
     Returns:
         Dictionary of HTTP headers including authentication
     """
     headers = {}
 
-    # Add custom headers if provided (expand env vars)
+    # Add custom headers if provided (already expanded by caller)
     if "headers" in config:
-        expanded_headers = expand_env_vars_nested(config["headers"])
-        if isinstance(expanded_headers, dict):
-            headers.update(expanded_headers)
+        raw_headers = config["headers"]
+        if isinstance(raw_headers, dict):
+            headers.update(raw_headers)
 
-    # Handle authentication
+    # Handle authentication (already expanded by caller)
     auth = config.get("auth", {})
     if not auth:
         return headers
 
-    # Expand environment variables in auth config
-    auth = expand_env_vars_nested(auth)
     if not isinstance(auth, dict):
-        logger.warning("Auth config is not a dictionary after expansion")
+        logger.warning("Auth config is not a dictionary")
         return headers
 
     auth_type = auth.get("type")

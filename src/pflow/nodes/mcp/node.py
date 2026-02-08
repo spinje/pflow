@@ -127,8 +127,13 @@ class MCPNode(Node):
 
                 raise MCPError(technical_details=f"Debug: server={server}, tool={tool}") from None
 
-        # Load server configuration
+        # Load server configuration and expand env vars (checks os.environ and settings.json)
         config = self._load_server_config(server)
+        config = expand_env_vars_nested(
+            config,
+            include_settings=True,
+            raise_on_missing=True,
+        )
 
         # Extract user parameters (exclude special __ parameters)
         # IMPORTANT: MCPNode is universal and server-agnostic!
@@ -221,8 +226,10 @@ class MCPNode(Node):
         config = prep_res["config"]
         verbose = prep_res.get("verbose", False)
 
-        # Expand environment variables in config
-        env = self._expand_env_vars(config.get("env", {}))
+        # Get env vars (already expanded in prep)
+        env = config.get("env", {})
+        if not isinstance(env, dict):
+            env = {}
 
         # Prepare server parameters
         params = StdioServerParameters(command=config["command"], args=config.get("args", []), env=env if env else None)
@@ -577,24 +584,6 @@ class MCPNode(Node):
             )
 
         return dict(servers[server_name])
-
-    def _expand_env_vars(self, env_dict: dict) -> dict:
-        """Expand environment variables in configuration.
-
-        Supports ${VAR} syntax for environment variable expansion.
-        Now handles nested dictionaries and lists recursively.
-
-        Args:
-            env_dict: Dictionary with potential ${VAR} references
-
-        Returns:
-            Dictionary with expanded environment variables
-        """
-        from typing import cast
-
-        result = expand_env_vars_nested(env_dict)
-        # Type cast: we know the result is a dict since we pass in a dict
-        return cast(dict, result)
 
     def _safe_parse_json(self, text: str) -> Any:
         """Attempt to parse JSON or Python literal, return original string on failure.

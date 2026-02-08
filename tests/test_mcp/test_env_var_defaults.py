@@ -391,7 +391,7 @@ class TestEnvVarIntegration:
 
     def test_full_auth_flow_with_defaults(self):
         """Test complete authentication flow using defaults."""
-        from pflow.mcp.auth_utils import build_auth_headers
+        from pflow.mcp.auth_utils import build_auth_headers, expand_env_vars_nested
 
         config = {
             "headers": {"User-Agent": "${USER_AGENT:-pflow/1.0}", "Accept": "application/json"},
@@ -399,6 +399,7 @@ class TestEnvVarIntegration:
         }
 
         with patch.dict(os.environ, {}, clear=True):
+            config = expand_env_vars_nested(config)
             headers = build_auth_headers(config)
             assert headers["User-Agent"] == "pflow/1.0"
             assert headers["Accept"] == "application/json"

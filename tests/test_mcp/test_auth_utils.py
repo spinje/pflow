@@ -190,6 +190,7 @@ class TestBuildAuthHeaders:
         os.environ["TEST_BEARER"] = "secret_bearer_token"
         try:
             config = {"auth": {"type": "bearer", "token": "${TEST_BEARER}"}}
+            config = expand_env_vars_nested(config)
             headers = build_auth_headers(config)
             assert headers["Authorization"] == "Bearer secret_bearer_token"
         finally:
@@ -329,19 +330,14 @@ class TestBuildAuthHeaders:
             assert "Authorization" not in headers
             mock_logger.warning.assert_called()
 
-    def test_auth_not_dict_after_expansion(self):
-        """Test handling when auth is not a dict after env var expansion."""
-        # This could happen if someone misconfigures their env vars
-        with patch("pflow.mcp.auth_utils.expand_env_vars_nested") as mock_expand:
-            # Return a string instead of dict for auth expansion
-            mock_expand.return_value = "not_a_dict"
+    def test_auth_not_dict(self):
+        """Test handling when auth value is not a dict."""
+        config = {"auth": "not_a_dict"}
 
-            config = {"auth": {"type": "bearer"}}
-
-            with patch("pflow.mcp.auth_utils.logger") as mock_logger:
-                headers = build_auth_headers(config)
-                assert headers == {}
-                mock_logger.warning.assert_called_with("Auth config is not a dictionary after expansion")
+        with patch("pflow.mcp.auth_utils.logger") as mock_logger:
+            headers = build_auth_headers(config)
+            assert headers == {}
+            mock_logger.warning.assert_called_with("Auth config is not a dictionary")
 
 
 # Simple test runner for manual testing

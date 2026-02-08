@@ -43,7 +43,7 @@ class TestMCPRealIntegration:
                 transport="stdio",
                 command="npx",
                 args=["-y", "@modelcontextprotocol/server-github"],
-                env={"GITHUB_TOKEN": "${GITHUB_TOKEN}"},
+                env={"GITHUB_TOKEN": "${GITHUB_TOKEN:-test_token}"},
             )
 
             # Step 2: Create registry entry (real structure)
@@ -270,15 +270,13 @@ class TestMCPRealIntegration:
             os.environ["TEST_API_KEY"] = "runtime-secret-456"
 
             try:
-                # Track what environment is used at runtime
-                used_env = None
+                # Track what prep_res is passed to _exec_async at runtime
+                captured_prep_res = None
 
                 async def capture_env_exec(self, prep_res):
-                    nonlocal used_env
-                    # In real execution, MCPNode._exec_async would call _expand_env_vars
-                    # We'll simulate that here
-                    node = MCPNode()
-                    used_env = node._expand_env_vars(prep_res["config"].get("env", {}))
+                    nonlocal captured_prep_res
+                    # prep() already expanded env vars in config
+                    captured_prep_res = prep_res
                     return {"result": "ok"}
 
                 # Mock server config loading
@@ -296,9 +294,10 @@ class TestMCPRealIntegration:
                     flow = compile_ir_to_flow(workflow_ir, registry)
                     flow.run({})
 
-                # Verify runtime expansion happened
-                assert used_env is not None
-                assert used_env["API_KEY"] == "runtime-secret-456"
+                # Verify runtime expansion happened in prep()
+                assert captured_prep_res is not None
+                env_in_config = captured_prep_res["config"].get("env", {})
+                assert env_in_config["API_KEY"] == "runtime-secret-456"
 
             finally:
                 del os.environ["TEST_API_KEY"]

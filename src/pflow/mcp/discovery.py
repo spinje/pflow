@@ -91,6 +91,13 @@ class MCPDiscovery:
         Returns:
             List of tool definitions
         """
+        # Expand env vars in entire config (checks os.environ and settings.json)
+        server_config = expand_env_vars_nested(
+            server_config,
+            include_settings=True,
+            raise_on_missing=True,
+        )
+
         # Standard format: use "type" field, default to stdio if not present
         transport_type = server_config.get("type", "stdio")
 
@@ -114,10 +121,10 @@ class MCPDiscovery:
         Returns:
             List of tool definitions
         """
-        # Expand environment variables
-        env_raw = self._expand_env_vars(server_config.get("env", {}))
-        # Type assertion - we know env will be a dict after expansion
-        env = env_raw if isinstance(env_raw, dict) else {}
+        # Get env vars (already expanded by _discover_async)
+        env = server_config.get("env", {})
+        if not isinstance(env, dict):
+            env = {}
 
         # Prepare server parameters
         params = StdioServerParameters(
@@ -277,20 +284,6 @@ class MCPDiscovery:
                 all_tools[server_name] = []  # Empty list for failed servers
 
         return all_tools
-
-    def _expand_env_vars(self, data: dict | list | str | Any) -> dict | list | str | Any:
-        """Expand environment variables in configuration recursively.
-
-        Supports ${VAR} syntax for environment variable expansion.
-        Now handles nested dictionaries and lists.
-
-        Args:
-            data: Any data structure potentially containing ${VAR} references
-
-        Returns:
-            Data with expanded environment variables
-        """
-        return expand_env_vars_nested(data)
 
     def convert_to_pflow_params(self, json_schema: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert JSON Schema to pflow parameter format.

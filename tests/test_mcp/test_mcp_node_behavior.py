@@ -235,34 +235,6 @@ class TestMCPNodeErrorHandling:
         assert "Required parameter 'repository' is missing" in result["error"]
         assert "ExceptionGroup" not in result["error"]
 
-    def test_environment_variable_expansion(self):
-        """Environment variables should expand at runtime, not config time.
-
-        Real Bug: Storing expanded values in config breaks when env vars change.
-        """
-        import os
-
-        node = MCPNode()
-
-        # Set test env var
-        os.environ["TEST_TOKEN"] = "secret123"  # noqa: S105 - Test data, not a real secret
-
-        try:
-            env_dict = {"AUTH": "${TEST_TOKEN}"}
-            expanded = node._expand_env_vars(env_dict)
-
-            assert expanded["AUTH"] == "secret123"
-
-            # Change env var
-            os.environ["TEST_TOKEN"] = "newsecret456"  # noqa: S105 - Test data, not a real secret
-
-            # Should expand to new value
-            expanded = node._expand_env_vars(env_dict)
-            assert expanded["AUTH"] == "newsecret456"
-
-        finally:
-            del os.environ["TEST_TOKEN"]
-
     def test_server_specific_logic_forbidden(self):
         """MCPNode must remain universal - no server-specific code.
 

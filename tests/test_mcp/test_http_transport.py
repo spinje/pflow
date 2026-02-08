@@ -2,7 +2,6 @@
 
 import asyncio
 import base64
-import os
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -223,28 +222,6 @@ class TestHTTPTransportExecution:
         assert headers["User-Agent"] == "pflow/1.0"
         assert headers["Accept"] == "application/json"
         assert headers["Authorization"] == "Bearer test-token"
-
-    def test_expand_env_vars_nested(self):
-        """Test environment variable expansion in nested structures."""
-        node = MCPNode()
-
-        # Set test environment variable
-        os.environ["TEST_TOKEN"] = "secret-token"  # noqa: S105
-        os.environ["TEST_KEY"] = "secret-key"
-
-        try:
-            # Test nested dictionary
-            data = {"auth": {"type": "bearer", "token": "${TEST_TOKEN}"}, "headers": {"API-Key": "${TEST_KEY}"}}
-
-            expanded = node._expand_env_vars(data)
-
-            assert expanded["auth"]["token"] == "secret-token"  # noqa: S105
-            assert expanded["headers"]["API-Key"] == "secret-key"
-
-        finally:
-            # Clean up
-            del os.environ["TEST_TOKEN"]
-            del os.environ["TEST_KEY"]
 
     def test_exec_async_http_routing(self):
         """Test that HTTP transport routes to correct method."""
