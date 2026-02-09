@@ -240,11 +240,10 @@ result, dramatically better readability and editability.
 - Tags v0.5.0 and v0.6.0 are local only — push to origin if keeping
 - v0.7.0 tag at `8ef6128` (PR #80, markdown format) — good boundary
 - Run v0.7.0→v0.8.0 on launch day for PyPI release
-- `create-summary` node still says "task reviews" count but the
-  context file no longer has a separate reviews section
-- Minor LLM hallucination in mintlify output: embellishes the *why*
-  (e.g., "future IDE tooling support" for type annotations). Acceptable
-  but worth monitoring across runs.
+- ~~`create-summary` stale task reviews count~~ — reworded (Session 8)
+- Update `render-changelogs` model to `claude-opus-4-6` when
+  `llm-anthropic` plugin adds support (currently uses
+  `gemini-3-pro-preview`)
 
 ---
 
@@ -771,3 +770,83 @@ quality justified the cost.
   `<CodeGroup>`, `<Accordion>`, inline code blocks
 - CHANGELOG.md has 7 entries with correct PR links and task review links
 - No fabricated features or capabilities in output
+
+---
+
+## Session 8: v0.7.0 review and prompt hardening (2026-02-09)
+
+### Goal
+
+Cross-reference the generated v0.7.0 Mintlify entry against the
+release context file. Fix inaccuracies. Harden prompts to prevent
+recurrence.
+
+### Issues Found
+
+All discoverable from the context file alone — no git history needed.
+
+1. **Hallucinated motivation**: "Required type annotations enable
+   future IDE tooling support." Task 104 review says annotations are
+   for AST-based type validation. The LLM invented the "why."
+   Fixed to: "catch type mismatches before execution."
+
+2. **Misplaced feature**: `disallowed_tools` (Claude Code node, PR #78)
+   was grouped under "Native Python execution" (code node section).
+   Moved to "Unix piping and validation" highlights.
+
+3. **Non-standard tag**: `"Major changes"` not in the docs/CLAUDE.md
+   tag conventions. Changed to `"Breaking changes"`.
+
+4. **Dropped entry**: Nested template fix (entry [7/7]) was missing
+   from the Mintlify output. Added to highlights.
+
+### Changes Made
+
+**1. Fixed docs/changelog.mdx (4 edits)**
+
+- Tag: `"Major changes"` → `"Breaking changes"`
+- Highlight: `"enable future IDE tooling support"` →
+  `"catch type mismatches before execution"`
+- Removed `disallowed_tools` from section 2 highlights
+- Added `disallowed_tools` and nested template fix to section 3
+  highlights
+
+**2. Hardened mintlify prompt in render-changelogs (3 additions)**
+
+- **Tags**: Added allowed tag set (`"New releases"`, `"Improvements"`,
+  `"Bug fixes"`, `"Breaking changes"`) after the Required Structure
+  block. Prevents the LLM from inventing tags.
+- **No-hallucination**: Added "Describe WHAT each feature does. Do not
+  speculate about WHY it was built or what it 'enables' in the future."
+  Targets the specific failure mode (real feature + fabricated
+  motivation).
+- **Coverage + grouping**: Added two task rules: (8) every draft entry
+  must appear in at least one highlight, (9) highlights must only
+  appear under section headings they relate to. Prevents dropped
+  entries and misplaced features.
+
+**3. Deleted local-only test tags**
+
+Removed `v0.5.0` and `v0.6.0` tags (local only, created for testing
+historical runs with invented seed entries). Only `v0.7.0` remains
+(local + remote).
+
+**4. Removed open item**
+
+"Minor LLM hallucination" open item removed — addressed by prompt
+hardening.
+
+### Key Insight
+
+The no-hallucination rules from Session 7 caught *invented features*
+but not *invented motivations*. The LLM correctly identified that type
+annotations exist (real feature) but fabricated WHY they exist ("future
+IDE tooling"). This is a subtler failure mode — the claim is plausible
+and involves a real feature, so it passes a casual review. The fix
+targets the specific pattern: "describe what it does, not why it was
+built."
+
+### Verification
+
+- Manual cross-reference of all Mintlify claims against context file
+- No end-to-end run needed (prompt changes only)

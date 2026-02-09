@@ -5,7 +5,7 @@ icon: "clock"
 rss: true
 ---
 
-<Update label="February 2026" description="v0.7.0" tags={["New releases", "Major changes"]}>
+<Update label="February 2026" description="v0.7.0" tags={["New releases", "Breaking changes"]}>
   ## Workflows are documentation
 
   Workflows have moved from JSON to a custom Markdown format (`.pflow.md`). The
@@ -61,9 +61,8 @@ rss: true
 
   **Highlights**
   - Zero-overhead data passing for heavy transformations.
-  - Required type annotations enable future IDE tooling support.
+  - Required type annotations catch type mismatches before execution.
   - `stdout`/`stderr` capture for debugging, with configurable timeouts.
-  - Built-in `disallowed_tools` on Claude Code nodes to prevent recursive agent calls.
 
   ## Unix piping and validation
 
@@ -89,6 +88,8 @@ rss: true
   - FIFO detection prevents hangs when no input is piped.
   - Unified validation logic ensures `--validate-only` matches runtime behavior.
   - Improved error messages for unknown node types (no more stack traces).
+  - `disallowed_tools` parameter on Claude Code nodes to block specific tools in agentic workflows.
+  - Fixed nested template validation for `${item.field}` inside array brackets.
 
   <Accordion title="Breaking changes">
     ### Workflow format

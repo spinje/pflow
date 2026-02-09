@@ -829,6 +829,9 @@ items:
         **Highlights** bullet list.
       </Update>
 
+      Tags must be from this set: "New releases", "Improvements",
+      "Bug fixes", "Breaking changes". Pick 1-3 that apply.
+
       ## Mintlify Components — USE THESE
       Study the examples above and use these components where appropriate:
       - `<Accordion title="Breaking changes">` — REQUIRED when any entry
@@ -859,6 +862,8 @@ items:
         commit context, PR descriptions, and task reviews above.
       - NEVER invent features, capabilities, CLI flags, migration paths,
         or behaviors not described in the input.
+      - Describe WHAT each feature does. Do not speculate about WHY it
+        was built or what it "enables" in the future.
       - If a draft entry is too vague to understand what changed, DROP IT.
         Do not fill in the gaps with plausible-sounding details.
       - Do not claim things like "the CLI provides guidance on X" or
@@ -873,6 +878,10 @@ items:
          removals, renames, or behavior changes — not just for major bumps
       6. Add one inline code example per major feature section
       7. Use at least one `<Tip>` or `<Note>` per release
+      8. Every draft entry must appear in at least one highlight — do
+         not drop entries silently
+      9. A highlight must only appear under a section heading it actually
+         relates to — do not group unrelated features to fill a theme
 
       ## CRITICAL
       - Output ONLY the <Update>...</Update> component
@@ -1137,7 +1146,7 @@ if mintlify_path:
     lines.append('    Same entries as Mintlify <Update> component, grouped by theme')
 
 lines.append(f'  {context_path}')
-lines.append(f'    {len(skipped)} skipped changes + {len(task_reviews)} task reviews — review before committing')
+lines.append(f'    {len(skipped)} skipped changes, {len(task_reviews)} task reviews embedded in entries — review before committing')
 
 if slack_channel:
     lines.append(f'  #{slack_channel}')
