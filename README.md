@@ -3,19 +3,15 @@
     <td><img src="assets/logo.png" alt="pflow" width="120"></td>
     <td>
       <h1>pflow</h1>
-      <p><strong>Compile AI agent reasoning into reusable workflows. Plan once, run forever.</strong></p>
       <p>
         <a href="LICENSE"><img src="https://img.shields.io/badge/License-FSL--1.1--ALv2-blue.svg" alt="License"></a>
         <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+"></a>
         <a href="https://github.com/spinje/pflow/actions/workflows/main.yml"><img src="https://github.com/spinje/pflow/actions/workflows/main.yml/badge.svg" alt="CI"></a>
         <a href="https://docs.pflow.run"><img src="https://img.shields.io/badge/docs-docs.pflow.run-blue" alt="Docs"></a>
-        <a href="https://pflow.run"><img src="https://img.shields.io/badge/website-pflow.run-orange" alt="Website"></a>
       </p>
     </td>
   </tr>
 </table>
-
-# pflow
 
 pflow helps your agent build workflows it can reuse. It composes pre-built nodes — LLM calls, shell commands, HTTP requests, MCP tools — into a `.pflow.md` file. Save it, and it becomes a command that runs the same process every time.
 
@@ -85,13 +81,13 @@ Data flows between steps through template variables — `${get-latest-tag.stdout
 
 Four node types in one workflow: a shell command, inline Python, 70 parallel LLM calls, and a Slack message via MCP in three lines.
 
-Once saved, this runs the same way every time — same steps, same order, same data flow between them. Without pflow, your agent figures out the orchestration from scratch. It usually works, but you can't verify it ran every step without watching, and it might decide differently next time.
+More examples: [release announcements](examples/real-workflows/release-announcements/), [webpage to markdown](examples/real-workflows/webpage-to-markdown/)
 
-More examples: [release announcements](examples/real-workflows/release-announcements/), [vision scraper](examples/real-workflows/vision-scraper/)
+Once saved, this runs the same way every time — same steps, same order, same data flow between them.
 
 ## How your agent uses pflow
 
-pflow has 8 node types: the basics (`shell`, `http`, file operations), `llm` calls, `mcp` tools, and a `claude-code` node for delegating to another agent.
+pflow has 8 node types: `shell`, `code` (Python), `http`, file operations, `llm` calls, `mcp` tools, and a `claude-code` node for delegating to another agent.
 
 Before anything runs, validation catches errors — wrong template references, missing inputs, type mismatches. Your agent handles the whole lifecycle:
 
@@ -117,6 +113,18 @@ pflow skill save generate-changelog
 
 Workflows can call other workflows — the changelog you build today becomes a building block for a release workflow tomorrow.
 
+```bash
+# JSON output works with standard tools
+pflow --output-format json generate-changelog \
+  | jq -r '.result.version' | xargs git tag
+
+# Chain workflows together
+pflow -p generate-changelog | pflow -p release-announcements
+
+# Schedule workflows like any command
+0 9 * * MON pflow generate-changelog
+```
+
 ## Built for agents
 
 When something goes wrong, pflow tells the agent what to do:
@@ -137,6 +145,8 @@ Tip: Try using ${fetch-data.response} instead
 
 The agent sees what went wrong, sees every available output with its type, and gets a suggested fix. No stack traces, no guessing. ([source](src/pflow/runtime/template_validator.py))
 
+I develop pflow by having agents build workflows and identifying where they get stuck. These error messages are a direct result.
+
 pflow is CLI-first because agents in Claude Code, Cursor, and similar tools always have bash. No MCP configuration needed — just run commands. (MCP server mode is available too if you need it.)
 
 ## Honest scope
@@ -145,7 +155,7 @@ pflow is for workflows where you know the steps — tasks your agent figured out
 
 ## Getting started
 
-> macOS and Linux only for now. Windows is untested.
+Requires Python 3.10+, macOS or Linux (Windows is untested). See the [quickstart](https://docs.pflow.run/quickstart) for API key setup and detailed configuration.
 
 ```bash
 # Recommended
@@ -156,11 +166,12 @@ pipx install pflow-cli
 
 # Or with pip
 pip install pflow-cli
+
+# Verify
+pflow --version
 ```
 
 Tell your agent to run `pflow instructions usage` — it gets everything it needs to discover, run, and build workflows.
-
-To build a new workflow, the agent can run `pflow instructions create` for a step-by-step guide.
 
 Or configure pflow as an MCP server for environments without terminal access:
 
@@ -183,20 +194,14 @@ I've been building pflow since mid-2025. The thesis I'm testing: agents are more
 
 I might be wrong. Try it and tell me:
 
-- Is the `.pflow.md` format helpful, or would you rather just write Python?
-- Does composing nodes save time versus letting your agent code it?
+- Is the `.pflow.md` format helpful, or would you rather just read/write Python?
+- After trying it — would you rather just let your agent handle the whole task from scratch each time? Write scripts? Use some other framework?
 - What's the first workflow you'd build?
 
 Open a [discussion](https://github.com/spinje/pflow/discussions) or file an [issue](https://github.com/spinje/pflow/issues).
 
+Or get started → [Get started](https://docs.pflow.run/quickstart)
+
 ## License
 
-[Functional Source License (FSL-1.1-ALv2)](LICENSE)
-
-- ✅ **Free for all use** except offering pflow as a competing managed service
-- ✅ **Modify, distribute, use commercially**
-- ✅ **Becomes fully open source** (Apache-2.0) after 2 years
-
----
-
-**[Get started →](https://docs.pflow.run/quickstart)** · **[View documentation →](https://docs.pflow.run)** · **[Star on GitHub](https://github.com/spinje/pflow)**
+[Functional Source License (FSL-1.1-ALv2)](LICENSE) — free for all use except offering pflow as a competing cloud hosted service. Becomes Apache-2.0 after 2 years.
