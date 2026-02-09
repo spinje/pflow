@@ -8,7 +8,7 @@ icon: "list"
   **For the curious.** Your AI agent configures batch processing when needed. This explains what happens when you ask to process many items (files, API results, etc.) and what to expect during execution.
 </Info>
 
-Batch processing is how pflow runs a single node multiple times - once for each item in an array - with isolated contexts and automatic error handling. Think of it like a for-loop in your workflow.
+Batch processing runs a single node multiple times — once for each item in an array. Think for-loop, but declarative: your agent adds a batch config to any node, and pflow handles the looping, concurrency, and error collection.
 
 ## When batch processing happens
 
@@ -237,7 +237,7 @@ Batch nodes write a special output structure to the shared store:
 }
 ```
 
-Each result contains `item` (the original input) plus the inner node's outputs, making results self-contained for downstream processing. When passing `${node.results}` to an LLM, it sees both inputs and outputs together.
+Each result pairs `item` (the original input) with the inner node's outputs — so downstream nodes always know which output came from which input. When passing `${node.results}` to an LLM, it sees both inputs and outputs together.
 
 Subsequent nodes can access results:
 

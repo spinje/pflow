@@ -80,6 +80,10 @@ pflow workflow history my-workflow
 
 This enrichment is **idempotent** — running `skill save` again just updates the usage section. When you update a workflow with `pflow workflow save --force`, pflow automatically re-enriches it.
 
+<Tip>
+  Skills shouldn't be static installs. When your needs change, your agent modifies the workflow and re-publishes — the skill updates automatically because it's a symlink to the source. Over time, your skills evolve with your usage rather than going stale.
+</Tip>
+
 ## Best practices
 
 **Publish stable workflows.** Skills are meant for workflows you want to reuse. Publish once a workflow is working reliably.

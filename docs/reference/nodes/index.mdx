@@ -47,6 +47,8 @@ Every node follows the same pattern:
 3. **Write outputs** to the shared store
 4. **Return an action** that determines the next node
 
+Because every node declares its inputs and outputs, pflow can validate the whole workflow before anything runs — catching bad template references, missing fields, and type mismatches at build time.
+
 ### Parameters vs shared store
 
 Nodes receive data through parameters. Parameters can be static values or template variables that pull from the shared store:
@@ -62,7 +64,7 @@ Nodes write their outputs to the shared store, making them available for templat
 
 ### Automatic JSON parsing
 
-When a node outputs a JSON string and the next node expects an object, pflow automatically parses it. This means shell commands that output JSON work seamlessly with other nodes - no extra conversion steps needed.
+When a node outputs a JSON string and the next node expects an object, pflow automatically parses it. This means shell commands that output JSON work directly with other nodes — no extra conversion steps needed.
 
 ### Output keys
 

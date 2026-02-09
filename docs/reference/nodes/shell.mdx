@@ -8,7 +8,7 @@ icon: "terminal"
   **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
 </Note>
 
-The shell node executes commands with full Unix power - pipes, redirects, and all standard shell features. It includes security protections against dangerous patterns.
+The shell node runs commands with pipes, redirects, and standard shell features. It blocks dangerous patterns (fork bombs, recursive deletes) before execution, but otherwise commands run with full system access.
 
 ## Parameters
 
@@ -35,7 +35,7 @@ The shell node executes commands with full Unix power - pipes, redirects, and al
 ## Using stdin for data
 
 <Warning>
-  **Always use `stdin` for data, not command interpolation.** This prevents shell escaping issues and handles any data type safely.
+  **Always use `stdin` for data, not command interpolation.** Shell escaping breaks on special characters in JSON, and `stdin` handles any data type safely.
 </Warning>
 
 **Correct** - data via stdin:
@@ -78,7 +78,7 @@ echo '${api.response}' | jq
 ## Validation and error handling
 
 <Info>
-  **Your agent handles this.** pflow validates shell commands at workflow creation time. If you see errors about structured data in commands, the error message will explain how to fix it - typically by moving data to the `stdin` parameter.
+  **Your agent handles this.** pflow validates commands when the workflow is created, not at runtime. If structured data ends up in a command string, the error message tells your agent exactly what to move to `stdin` and why.
 </Info>
 
 The shell node validates that dicts and lists aren't embedded directly in command strings (which would break shell parsing). Data should go through `stdin` instead:

@@ -520,7 +520,7 @@ pflow settings registry output-mode full
 ```
 
 <Warning>
-  Use `structure` mode when working with sensitive data or when you want fast output without LLM overhead. Avoid `full` mode with AI agents - it shows all values without truncation and can consume excessive tokens.
+  Use `structure` mode when working with sensitive data — it shows types and paths without actual values, so your agent can build workflows without ever seeing the data itself. Avoid `full` mode with AI agents — it shows all values without truncation and can consume excessive tokens.
 </Warning>
 
 See [registry run output modes](/reference/cli/registry#output-modes) for detailed examples of each mode.

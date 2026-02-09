@@ -5,15 +5,14 @@ description: "Your agent plans once, pflow handles the rest"
 icon: "heart-handshake"
 ---
 
-pflow is a workflow compiler for AI agents. Your agent reasons through a task once, pflow compiles it into a workflow, and that workflow runs instantly forever after - no re-planning, no repeated costs.
+pflow is a workflow compiler for AI agents. Your agent reasons through a task once, pflow compiles it into a workflow, and that workflow runs instantly forever after — no re-planning, no repeated costs. Like shell scripts, but for AI operations.
 
 ## The problem
 
-AI agents are powerful but inefficient for repetitive tasks:
+AI agents re-reason through every task from scratch, even ones they've solved before:
 
-- **Re-reasoning**: Every time you ask an agent to do the same task, it reasons through it from scratch
-- **Cost**: Each reasoning pass costs tokens - the same tokens, for the same logic, every time
-- **Inconsistency**: Agents might take different paths or skip steps on different runs
+- **Inconsistency**: Agents take different paths or skip steps between runs — there's no way to verify without watching
+- **Cost**: Each reasoning pass costs tokens — the same tokens, for the same logic, every time
 - **Context bloat**: Loading tool schemas (especially MCP servers) consumes tokens before any work begins
 
 ## How pflow helps
@@ -21,20 +20,22 @@ AI agents are powerful but inefficient for repetitive tasks:
 pflow separates planning from execution:
 
 1. **Your agent plans once** - figures out what nodes to use and how to connect them
-2. **pflow compiles the workflow** - saves it as a reusable pipeline
+2. **pflow compiles the workflow** - saves it as a reusable `.pflow.md` file
 3. **Execution is instant** - run the same workflow with different inputs, zero reasoning cost
 
-Nodes are individual tools (call an LLM or API, read a file, or any MCP tool). Workflows chain them together. Over time, your library grows - complex tasks become instant commands.
+Nodes are individual tools (call an LLM or API, read a file, or any MCP tool). Workflows chain them together. Save a workflow and your agent can discover it later, reuse it with different inputs, or chain it into a larger workflow.
 
 ## Workflows are documentation
 
 A pflow workflow is a `.pflow.md` file — a standard markdown document that happens to be executable. Headings describe inputs and steps. Prose explains intent. Code blocks contain the actual commands, prompts, and configuration.
 
-Open one on GitHub and it reads like documentation. Run it with pflow and it executes as a pipeline. Same file, both purposes. No separate documentation to maintain, no opaque config to decipher — the workflow explains itself.
+The format is markdown because that's what agents naturally produce — headings, YAML, code blocks. No framework to learn, no class hierarchy, no imports.
+
+Open one on GitHub and it reads like documentation. Run it with pflow and it runs as a workflow. Same file, both purposes. No separate documentation to maintain, no opaque config to decipher — the workflow explains itself.
 
 ## Two ways to run workflows
 
-**Agent-driven**: Your AI agent discovers, creates, and runs workflows through pflow. This is the primary flow - your agent handles automation tasks using workflows it has built.
+**Agent-driven**: Your AI agent discovers, creates, and runs workflows through pflow. This is how most people use pflow — your agent handles automation using workflows it has built.
 
 **Direct CLI**: Saved workflows are CLI commands. Run them directly in scripts, CI/CD pipelines, or cron jobs - no agent needed.
 

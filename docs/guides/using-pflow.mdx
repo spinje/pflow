@@ -8,7 +8,7 @@ Once pflow is installed and connected to your AI tool, you don't need to learn a
 
 ## You don't need to learn the schema
 
-pflow workflows are markdown files (`.pflow.md`) — readable documents that double as executable pipelines. Your agent writes them, but you can open any workflow to see exactly what it does and why. Just like any `.md` file, it renders everywhere — GitHub, your editor, any markdown viewer. Your agent:
+pflow workflows are markdown files (`.pflow.md`) — readable documents that double as executable workflows. Your agent writes them, but you can open any workflow to see exactly what it does and why. Just like any `.md` file, it renders everywhere — GitHub, your editor, any markdown viewer. Your agent:
 
 - Reads pflow's instructions automatically
 - Knows which nodes are available
@@ -24,7 +24,7 @@ When pflow needs something from you, your agent will tell you exactly what to do
 
 **Need an API key?**
 
-> Your agent: "pflow needs an API key for intelligent discovery. Run this command: `pflow settings set-env OPENAI_API_KEY 'your-key'`"
+> Your agent: "pflow needs an API key for discovery. Run this command: `pflow settings set-env OPENAI_API_KEY 'your-key'`"
 
 **Need to connect to an API?**
 
@@ -129,4 +129,4 @@ See [Stdin input](/reference/cli/index#stdin-input) for how workflows receive pi
 | Installing new MCP servers | Your agent or you  |
 | Running saved workflows | Your agent or you directly |
 
-pflow is designed to stay out of your way. Your agent handles the complexity - you just describe what you want done. Think of pflow as the infrastructure that makes this scalable - turning automation into reusable building blocks that are discoverable, composable, and ready for your agent to use again and again.
+You describe what you want done. Your agent does the thinking. pflow handles repeated execution — same steps, same order, same data flow, every time. The workflows your agent builds become your personal library, ready to reuse or chain into larger workflows.
