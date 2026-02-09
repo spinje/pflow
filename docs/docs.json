@@ -73,6 +73,7 @@
               "reference/nodes/llm",
               "reference/nodes/http",
               "reference/nodes/shell",
+              "reference/nodes/code",
               "reference/nodes/claude-code",
               "reference/nodes/mcp"
             ]

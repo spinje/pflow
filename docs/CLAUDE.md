@@ -357,6 +357,7 @@ Use `<Update>` for changelog entries. This creates the timeline layout automatic
 - `llm` - general LLM node
 - `http` - HTTP requests
 - `shell` - shell commands
+- `code` - Python data transformation
 - `claude-code` - agentic development
 - `mcp` - MCP bridge
 

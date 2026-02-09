@@ -5,166 +5,410 @@ icon: "clock"
 rss: true
 ---
 
-<Update label="JANUARY 2026" description="v0.5.0" tags={["New releases", "Bug fixes"]}>
-  ## Batch Processing
+<Update label="February 2026" description="v0.7.0" tags={["New releases", "Major changes"]}>
+  ## Workflows are documentation
 
-  Workflows now support processing arrays of data through a single node using isolated execution contexts. This enables powerful fan-out patterns for mass data transformation and analysis.
+  Workflows have moved from JSON to a custom Markdown format (`.pflow.md`). The
+  file *is* the documentation — H1 headers become titles, prose becomes descriptions,
+  and code blocks define execution logic. Comments and formatting are preserved
+  when saving, so your notes survive round-trips through the CLI.
+
+  ```markdown
+  # Daily Report
+  ## Steps
+  ### fetch-data
+  - type: http
+  - url: https://api.github.com/repos/owner/repo/issues
+
+  ### summarize
+  - type: llm
+  - prompt: Summarize these issues: ${fetch-data.response}
+  ```
+
+  <Note>
+    The internal parser produces the exact same IR structure as before, so
+    execution logic is unchanged. The migration is purely about authoring
+    experience and LLM readability.
+  </Note>
 
   **Highlights**
-  - Added sequential and parallel batch execution modes with configurable concurrency limits.
-  - Added real-time progress indicators in the CLI showing item completion status.
-  - Added automatic LLM usage and cost tracking for all sub-executions within a batch.
-  - Added self-contained batch results by including the original input item in the output schema.
-  - Improved batch validation to support dotted references and nested structures.
+  - New `.pflow.md` extension with YAML frontmatter for metadata.
+  - Line-by-line error reporting with context, replacing JSON syntax errors.
+  - "Save" operations update the file in place, preserving your comments.
+  - `pflow workflow save` extracts the description directly from the document prose.
 
-  ## Intelligent Data Flow
+  ## Native Python execution
 
-  Significant improvements to the template engine make it easier to pipe data between different tools without manual parsing or string manipulation.
+  The new `code` node runs Python in-process, passing native objects (lists,
+  dicts) between steps without serialization overhead. Unlike the shell node,
+  it doesn't need `jq` to parse inputs — `inputs` are injected directly as local
+  variables.
+
+  ````markdown
+  ### transform-data
+  - type: code
+  - inputs:
+      data: ${fetch.response}
+      limit: 10
+
+  ```python code
+  data: list
+  limit: int
+
+  result: list = data[:limit]
+  ```
+  ````
 
   **Highlights**
-  - Added automatic JSON parsing during nested template access, allowing variables like `${node.stdout.field}` to work even when the source is a JSON string.
-  - Added type preservation for simple templates in inline objects to prevent double-serialization bugs.
-  - Added automatic coercion of complex types (dicts/lists) to JSON strings when mapped to string-only parameters.
-  - Added normalized type string validation across the registry and workflow nodes to prevent matching failures.
-  - Improved workflow input resolution to handle optional variables without default values.
+  - Zero-overhead data passing for heavy transformations.
+  - Required type annotations enable future IDE tooling support.
+  - `stdout`/`stderr` capture for debugging, with configurable timeouts.
+  - Built-in `disallowed_tools` on Claude Code nodes to prevent recursive agent calls.
 
-  ## Shell & Node Reliability
+  ## Unix piping and validation
 
-  Enhancements to the shell execution environment and core node integrations provide better visibility into failures and more predictable behavior.
+  You can now chain workflows using standard Unix pipes. Mark an input with
+  `stdin: true`, and pflow will route piped data to that specific parameter.
+  Validation has also been unified: the checks that run during `--validate-only`
+  now run before every execution, catching errors like invalid JSON string
+  templates before any steps run.
+
+  ```bash
+  # Chain workflows with the -p (pipe) flag
+  pflow -p fetch-logs | pflow -p parse-logs | pflow analyze-errors
+  ```
+
+  <Tip>
+    The validator now detects the "JSON string with template" anti-pattern
+    (e.g., `"body": "{\"val\": \"${var}\"}"`) and suggests the correct object
+    syntax to prevent runtime JSON errors.
+  </Tip>
 
   **Highlights**
-  - Migrated the Claude Code node to the Claude Agent SDK with new sandbox configuration support.
-  - Added visibility for shell `stderr` output when exit codes are successful to help debug silent pipeline failures.
-  - Added automatic stripping of trailing newlines from shell `stdout` by default.
-  - Added a "smart handling" check for shell pipelines to correctly catch errors in commands like `grep` or `sed`.
-  - Added support for branch and tag references in the Git Log node.
-  - Fixed a critical bug where `SIGPIPE` signals could prematurely terminate workflows when subprocesses ignored input.
+  - `stdin: true` input property for explicit pipe routing.
+  - FIFO detection prevents hangs when no input is piped.
+  - Unified validation logic ensures `--validate-only` matches runtime behavior.
+  - Improved error messages for unknown node types (no more stack traces).
 
   <Accordion title="Breaking changes">
-    ### Parameter-Only Pattern
-    The "shared store fallback" pattern has been removed from all nodes. Nodes now read exclusively from `self.params`. All data wiring must be done explicitly using `${variable}` templates in the workflow configuration. This prevents naming collisions between node IDs and parameter names.
+    ### Workflow format
+    JSON workflow files (`.json`) are no longer supported. Existing workflows
+    must be converted to the `.pflow.md` format. The CLI will reject JSON files
+    with a migration error.
 
-    ### Claude Code Node
-    - Parameter `task` renamed to `prompt`
-    - Parameter `working_directory` renamed to `cwd`
-    - Parameter `context` removed (include context directly in the prompt)
+    ### Stdin handling
+    The `${stdin}` shared store variable has been removed. You must now explicitly
+    mark an input parameter to receive piped data.
 
-    ### Workflow Metadata
-    - The `name` field is no longer stored inside workflow JSON files. Names are now derived directly from the filename to ensure the filesystem remains the single source of truth.
+    <CodeGroup>
+      ```yaml Before
+      ### process
+      - type: shell
+      - stdin: ${stdin}
+      ```
+
+      ```yaml After
+      ### input_name
+      - type: string
+      - stdin: true  # Routes pipe here
+      ```
+    </CodeGroup>
+
+    ### CLI changes
+    - `pflow workflow save` no longer accepts `--description`. It extracts the
+      description from the Markdown content (text after the H1 header).
+    - Metadata is now stored in YAML frontmatter rather than a `rich_metadata` wrapper.
   </Accordion>
 </Update>
 
-<Update label="December 2024" description="v0.7.0" tags={["New releases", "Improvements"]}>
+<Update label="January 2026" description="v0.5.0" tags={["New releases", "Improvements"]}>
   ## Batch processing
 
-  Process arrays of items through a single node with built-in error handling and optional parallel execution.
+  Need to classify 50 commits with an LLM, or fetch 200 URLs? Add a `batch`
+  config to any node and pflow handles the fan-out. Works with every node
+  type — LLM, shell, HTTP, MCP, all of them.
 
-  **Features**
-  - Sequential or parallel execution modes
-  - Configurable concurrency limits (`max_concurrent`)
-  - Per-item retry with configurable wait time
-  - Error handling: fail-fast (stop on first error) or continue (process all items)
-  - Results preserve input order even in parallel mode
+  ```yaml
+  ### classify-items
 
-  <Accordion title="Example">
-    ```json
-    {
-      "id": "summarize_files",
-      "type": "llm",
-      "batch": {
-        "items": "${list_files.files}",
-        "as": "file",
-        "parallel": true,
-        "max_concurrent": 5
-      },
-      "params": {
-        "prompt": "Summarize: ${file.content}"
-      }
-    }
-    ```
+  Classify each item in parallel. 30 concurrent LLM calls.
+
+  - type: llm
+  - batch:
+      items: ${fetch-data.result}
+      parallel: true
+      max_concurrent: 30
+  ```
+
+  <Tip>
+    Results stay in input order even in parallel mode, and each result
+    includes the original item — so downstream nodes can always correlate
+    outputs back to inputs without extra bookkeeping.
+  </Tip>
+
+  **Highlights**
+  - Sequential and parallel execution with configurable concurrency (`max_concurrent`).
+  - `error_handling: continue` keeps going when individual items fail — you get partial results instead of nothing.
+  - Progress indicators in the CLI so you can see where a 200-item batch is at.
+  - Access results with `${node.results}`, individual items with `${node.results[0].response}`.
+
+  ## Smarter templates
+
+  Template variables like `${node.stdout.items[0].name}` now parse JSON
+  automatically. If a shell command outputs a JSON string, you can access
+  nested fields directly — no more `jq` extraction steps between every shell
+  node and the thing that consumes it.
+
+  **Highlights**
+  - `${node.stdout.field}` resolves through JSON strings without an intermediate node.
+  - Inline object templates preserve types correctly — no more double-serialization when passing dicts.
+  - Dicts and lists auto-coerce to JSON strings when mapped to string-typed parameters.
+  - Optional inputs without defaults resolve correctly instead of erroring.
+
+  <Accordion title="Before and after">
+    Previously you needed an extraction step between a shell command and
+    anything that wanted its output as structured data:
+
+    <CodeGroup>
+      ```yaml Before (v0.4.0)
+      ### get-data
+      - type: shell
+      # curl outputs JSON string
+
+      ### extract-json
+      - type: shell
+      # jq extracts the field you need
+
+      ### use-data
+      - type: llm
+      # finally gets the value
+      ```
+
+      ```yaml After (v0.5.0)
+      ### get-data
+      - type: shell
+      # curl outputs JSON string
+
+      ### use-data
+      - type: llm
+      # access nested fields directly:
+      # ${get-data.stdout.items[0].name}
+      ```
+    </CodeGroup>
   </Accordion>
 
-  ## Unified LLM model support
+  ## Shell node fixes
 
-  Configure which models pflow uses for discovery, filtering, and workflow execution.
+  Shell nodes now surface `stderr` even when the exit code is zero. Tools
+  like `curl` and `ffmpeg` write diagnostics to stderr on success, and those
+  warnings were getting lost.
 
-  **Model configuration**
-  - New `pflow settings llm` commands for model management
-  - Single `default_model` setting applies to all pflow features
-  - Feature-specific overrides for discovery and filtering
-  - Works with any llm-supported provider (OpenAI, Anthropic, Google, local models)
-
-  **Bug fixes**
-  - User model choice now respected in workflows (was silently overridden)
-  - Invalid model names properly error instead of silent failures
-  - Consistent behavior between `registry run` and workflow execution
-
-  <Accordion title="Quick setup">
-    ```bash
-    # Set an API key (pflow auto-detects the model)
-    pflow settings set-env OPENAI_API_KEY "sk-..."
-
-    # Or override the auto-detected model
-    pflow settings llm set-default gpt-5.2
-    ```
-  </Accordion>
+  **Highlights**
+  - `stderr` visible on successful commands, not just failures.
+  - Trailing newlines stripped from `stdout` by default (disable with `strip_newline: false`).
+  - Pipeline-aware error detection for `grep | sed` chains where only the last exit code was visible.
+  - Fixed `SIGPIPE` crashes when a subprocess closed its input early.
 
   <Accordion title="Breaking changes">
-    Discovery and filtering commands no longer require an Anthropic API key - any llm-supported provider works.
+    ### Explicit data wiring
 
-    LLM nodes in workflows now use the same resolution as discovery:
-    1. Workflow params (`"model": "gpt-5.2"`)
-    2. `pflow settings llm set-default`
-    3. `llm models default` (llm CLI)
-    4. Auto-detect from API keys
-    5. Error with setup instructions
+    Nodes can no longer silently read from the shared store by key name. All
+    data must be wired through `${variable}` templates. This prevents a class
+    of bugs where a node ID collided with a parameter name and got the wrong
+    value.
+
+    <CodeGroup>
+      ```yaml Before
+      ### transform
+      # Could silently read "data" from shared store
+      - type: code
+      ```
+
+      ```yaml After
+      ### transform
+      # Must declare all inputs explicitly
+      - type: code
+      - inputs:
+          data: ${fetch-data.response}
+      ```
+    </CodeGroup>
+
+    ### Claude Code node
+
+    - `task` → `prompt`
+    - `working_directory` → `cwd`
+    - `context` removed — include it directly in the prompt
   </Accordion>
 </Update>
 
-<Update label="December 2024" description="v0.6.0" tags={["New releases"]}>
-  ## Initial release
+<Update label="December 2025" description="v0.4.0" tags={["Improvements", "Bug fixes"]}>
+  ## Validation that helps you fix things
 
-  pflow v0.6.0 — compile agent reasoning into reusable workflows.
+  When something goes wrong, pflow now tells the agent exactly what to do
+  instead of printing a stack trace. Wrong template path? It shows every
+  available output with its type and suggests the correct one.
 
-  **Workflow engine**
-  - Natural language → compiled workflows
-  - Save workflows for instant reuse
-  - Type-aware templates with auto-parsing and nested access
-  - Stdin/stdout pipe integration
-  - Validation with suggestions and actionable error messages
-  - Execution traces for debugging
+  ```
+  ✗ Node 'format-report' references unknown output 'fetch-data.email'
 
-  **Built-in nodes**
-  - File operations (read, write, copy, move, delete)
-  - LLM calls (any model via `llm` library)
-  - HTTP requests (all methods, auth, binary support)
-  - Shell commands (with dangerous pattern blocking)
-  - Claude Code for agentic tasks
-  - MCP bridge — connect any MCP server (stdio and HTTP transports)
+  Available outputs from 'fetch-data':
+    ✓ ${fetch-data.response} (dict)
+    ✓ ${fetch-data.status_code} (int)
+    ✓ ${fetch-data.response_headers} (dict)
 
-  **Agent integration**
-  - MCP server with 11 tools for workflow building
-  - Intelligent discovery of nodes and workflows
-  - Run individual nodes without workflows (`registry run`)
-  - Structure-only mode — AI sees schema types, not data
-  - Instructions system for agent guidance
-  - Works with all MCP-compatible and local agents
+  Tip: Did you mean ${fetch-data.response}?
+  ```
 
-  <Accordion title="Quick start">
+  <Note>
+    Validation runs automatically before every execution — no separate step
+    needed. The `--validate-only` flag lets agents check a workflow without
+    running it.
+  </Note>
+
+  **Highlights**
+  - Template references checked against actual node outputs before execution starts.
+  - "Did you mean?" suggestions for misspelled node names and output paths.
+  - Type mismatch warnings when connecting incompatible outputs to inputs.
+  - `--validate-only` flag for CI pipelines and agent pre-checks.
+
+  ## Agent tooling
+
+  The CLI now has discovery commands so agents can find the right building
+  blocks without knowing what's available ahead of time. `registry discover`
+  takes a natural language description and returns matching nodes.
+
+  **Highlights**
+  - `pflow registry discover "fetch API data and send to Slack"` returns matching nodes ranked by relevance.
+  - `pflow registry run node-type param=value` tests individual nodes outside of a workflow — output is pre-filtered for agents, showing structure without data.
+  - `pflow instructions usage` gives agents a complete guide to pflow's commands and patterns.
+  - Allow/deny filtering via `pflow settings` to control which nodes are available.
+
+  <Accordion title="Example: agent discovery flow">
     ```bash
-    uv tool install git+https://github.com/spinje/pflow.git
-    pflow settings set-env OPENAI_API_KEY "sk-..."
+    # Agent gets a task from the user
+    # Step 1: Check if a workflow already exists
+    pflow workflow discover "analyze git commits and post to slack"
+
+    # Step 2: No match — find building blocks
+    pflow registry discover "git log, LLM classification, slack message"
+
+    # Step 3: Check a node's output structure
+    pflow registry run mcp-composio-slack-SLACK_SEND_MESSAGE \
+      channel="test" markdown_text="hello"
+
+    # Step 4: Build the workflow using discovered nodes
     ```
-    See [Quickstart](/quickstart) for full setup.
   </Accordion>
 
-  <Accordion title="Limitations">
-    - Currently supports macOS only
-    - Shell commands run with user privileges (not sandboxed)
-    - No conditional branching yet
+  ## MCP server improvements
+
+  Connecting external tools got more reliable. Server configs now expand
+  environment variables everywhere (URLs, headers, auth fields), and sync
+  only runs when something actually changed.
+
+  **Highlights**
+  - Environment variables expanded in all MCP config fields, not just API keys.
+  - Smart sync skips re-scanning when server configs haven't changed (~500ms saved on warm starts).
+  - HTTP transport support for remote MCP servers alongside stdio.
+  - Better error messages when MCP servers fail to start or authenticate.
+</Update>
+
+<Update label="November 2025" description="v0.3.0" tags={["New releases"]}>
+  ## Workflow engine
+
+  Write a `.pflow.md` file, run it from the terminal. Steps execute top to
+  bottom, data flows between them through template variables. Save it with
+  `pflow workflow save` and it becomes a command you can run from anywhere.
+
+  ````markdown
+  ### fetch-users
+
+  Get active users from the API.
+
+  - type: http
+  - url: https://api.example.com/users?status=active
+
+  ### filter-active
+
+  Keep only users who logged in this month.
+
+  - type: code
+  - inputs:
+      users: ${fetch-users.response.data}
+
+  ```python code
+  users: list
+
+  result: list = [u for u in users if u['last_login_days'] < 30]
+  ```
+
+  ### summarize
+
+  Summarize the filtered users for the weekly report.
+
+  - type: llm
+
+  ```prompt
+  Summarize these ${filter-active.result} active users for a weekly report.
+  ```
+  ````
+
+  **Highlights**
+  - Run from file path (`pflow workflow.pflow.md`) or by name (`pflow my-workflow`).
+  - Templates reach into nested objects and arrays — `${node.result.data.users[0].email}`.
+  - Execution traces saved to `~/.pflow/debug/` with per-node inputs, outputs, and timing.
+  - Pipe workflows together: `pflow -p workflow-a | pflow -p workflow-b`.
+
+  ## Built-in nodes
+
+  Eight node types that cover the common building blocks. MCP bridges to
+  anything else — GitHub, Slack, databases, whatever has an MCP server.
+
+  **Highlights**
+  - `shell` — run commands with dangerous-pattern blocking and timeouts.
+  - `code` — inline Python with native object passing (no serialization overhead).
+  - `llm` — any model via Simon Willison's [llm](https://llm.datasette.io/) library, with token tracking.
+  - `http` — all methods, auth, request bodies, automatic JSON parsing.
+  - `file` — read, write, copy, move, delete.
+  - `mcp` — bridge to any MCP server over stdio or HTTP transport.
+  - `claude-code` — delegate agentic subtasks to Claude Code.
+  - `git` / `github` — common operations without shell scripting.
+
+  ## MCP server
+
+  pflow itself runs as an MCP server, so agents in Claude Desktop, Cursor,
+  or any MCP-compatible environment can build and run workflows
+  programmatically.
+
+  **Highlights**
+  - 11 tools covering workflow execution, node discovery, and registry inspection.
+  - Structure-only output mode — agents see schema types without actual data, keeping context windows small.
+  - Works alongside CLI usage. Same workflows, same registry, different interface.
+
+  <Accordion title="Quick start">
+    <Steps>
+      <Step title="Install pflow">
+        ```bash
+        uv tool install pflow-cli
+        ```
+      </Step>
+      <Step title="Set up an LLM provider">
+        ```bash
+        pflow settings set-env ANTHROPIC_API_KEY "sk-ant-..."
+        ```
+      </Step>
+      <Step title="Run your first workflow">
+        ```bash
+        pflow workflow.pflow.md
+        ```
+        Or tell your agent to run `pflow instructions usage` — it gets
+        everything it needs to discover, build, and run workflows.
+      </Step>
+    </Steps>
   </Accordion>
 
   <Accordion title="What's next">
-    See the [Roadmap](/roadmap) — conditional branching, task parallelism, and benchmarking coming soon.
+    Batch processing for fan-out patterns, smarter template resolution, and
+    shell node reliability improvements. See the [Roadmap](/roadmap).
   </Accordion>
 </Update>

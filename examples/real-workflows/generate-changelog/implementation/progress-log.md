@@ -65,10 +65,22 @@ separator) to capture the full commit message including body. For merge
 commits this adds one line (the PR title). For direct commits it adds
 the full body with context the classifier needs. Changed in Session 5.
 
-**The `get-style-reference` node (was `get-recent-updates`):**
-Was orphaned in the original workflow (output unused). Now wired into
-the `render-changelogs` mintlify prompt as a "Style Reference" section
-and uses the `${mintlify_file}` input instead of a hardcoded path.
+**`get-style-reference` reads 4 entries, labeled:**
+Reads up to 4 `<Update>` entries from changelog.mdx, formatted as
+`Example 1:\n<Update>...</Update>` etc. Fed to the mintlify prompt
+under "## Examples (match this tone, structure, and component usage)".
+The seed entries (v0.3.0–v0.5.0) establish tone and Mintlify component
+patterns, but the prompt must also explicitly instruct component usage
+— examples alone don't transfer structural patterns.
+
+**`notify-slack` via MCP (added Session 7):**
+Uses `mcp-composio-slack-SLACK_SEND_MESSAGE` with `markdown_text`.
+`format-slack-message` builds the message from version info + rendered
+changelog. No skip-if-empty — `slack_channel` defaults to `releases`.
+
+**`render-changelogs` uses `gemini-3-pro-preview` (changed Session 7):**
+Set via `- model: gemini-3-pro-preview`. Only affects the two format
+LLM calls. Produces richer, longer entries than the default model.
 
 **Timeout on `gather-commit-data`:**
 Set to 60s (default is 30s) because `gh` API calls can be slow.
@@ -222,15 +234,17 @@ result, dramatically better readability and editability.
 - ~~Test run to verify YAML `|` multiline prompts~~ — verified (Session 3 run)
 - ~~v0.5.0 tag cleanup~~ — tag removed
 - ~~Group release context by entry~~ — done (Session 3)
+- ~~Generated files cleaned~~ — done (Session 7)
+- ~~Run v0.6.0→v0.7.0~~ — done (Session 7, v0.7.0 entry generated)
 - Consider saving as named workflow (`pflow workflow save`)
 - Tags v0.5.0 and v0.6.0 are local only — push to origin if keeping
-- v0.7.0 tag exists at `792fdea` (pushed to origin) — may need
-  adjustment before a real release
-- Generated files (CHANGELOG.md, docs/changelog.mdx, releases/) are
-  uncommitted and contain multiple test runs stacked on each other
-- Run v0.6.0→v0.7.0 and v0.7.0→HEAD to complete the backfill
+- v0.7.0 tag at `8ef6128` (PR #80, markdown format) — good boundary
+- Run v0.7.0→v0.8.0 on launch day for PyPI release
 - `create-summary` node still says "task reviews" count but the
   context file no longer has a separate reviews section
+- Minor LLM hallucination in mintlify output: embellishes the *why*
+  (e.g., "future IDE tooling support" for type annotations). Acceptable
+  but worth monitoring across runs.
 
 ---
 
@@ -633,3 +647,127 @@ All template references (`${old-name.*}`) and prose references updated.
 - Execution output now reads as a clear narrative:
   gather → classify → split → enrich → compute → format →
   get-docs-diff → summarize → join → style-ref → render → save
+
+---
+
+## Session 7: Slack notification + Mintlify style engineering (2026-02-09)
+
+### Goal
+
+1. Add Slack notification as the final workflow step.
+2. Bootstrap `docs/changelog.mdx` with high-quality seed entries that
+   control the tone and Mintlify component usage of all future LLM
+   generations.
+3. Generate the v0.6.0→v0.7.0 historical release.
+
+### Changes Made
+
+**1. Added Slack notification (2 new nodes)**
+
+Added `format-slack-message` (code) and `notify-slack` (MCP) between
+`update-mintlify-file` and `create-summary`. New `slack_channel` input
+defaults to `releases`.
+
+`format-slack-message` combines a release header with the rendered
+changelog:
+```
+# pflow v0.7.0
+*minor bump · 2026-02-04 · 7 entries*
+---
+## v0.7.0 (2026-02-04)
+- Entry one [#80](...)
+...
+```
+
+`notify-slack` uses `mcp-composio-slack-SLACK_SEND_MESSAGE` with the
+`markdown_text` field. `create-summary` updated to include Slack line
+in output. Workflow is now 20 nodes.
+
+**2. Set `render-changelogs` model to `gemini-3-pro-preview`**
+
+Added `- model: gemini-3-pro-preview` to the render-changelogs node.
+Only affects the two format LLM calls (markdown + mintlify). Classifier
+and docs summarizer still use the default model.
+
+**3. Updated `get-style-reference` to read 4 entries with labels**
+
+Changed from `updates[:2]` to `updates[:4]` and formatted as
+`Example 1:\n<Update>...</Update>` etc. Gives the format LLM more
+examples to learn from. Updated the mintlify prompt section header
+from "Style Reference" to "Examples".
+
+**4. Rewrote mintlify prompt with explicit component guidance**
+
+The original prompt showed examples and hoped the LLM would copy the
+patterns. It didn't — tone transferred but component usage didn't.
+
+Added explicit sections:
+- **Mintlify Components — USE THESE**: Lists when to use `<Accordion>`,
+  `<Tip>`, `<Note>`, `<CodeGroup>`, inline code blocks, with specific
+  guidance (e.g., "one `<Tip>` per release, max").
+- **STRICT: No Hallucination**: Explicit rules against inventing
+  features, CLI flags, migration paths, or capabilities not in the
+  input context. Triggered by the LLM generating "the CLI provides
+  guidance on migration" which was false.
+- **Tone**: Rewritten to match the README writing guide — "write like a
+  developer explaining what shipped to another developer."
+
+**5. Created 3 bootstrap seed entries in changelog.mdx**
+
+Replaced all test data with three hand-crafted entries (v0.3.0, v0.4.0,
+v0.5.0) that establish the style reference for all future generations.
+Content is invented but structurally representative.
+
+Each entry showcases different Mintlify components:
+- v0.5.0: `<Tip>`, `<CodeGroup>` (before/after), `<Accordion>` for
+  breaking changes, inline code block
+- v0.4.0: `<Note>`, `<Accordion>` for example flow, inline terminal
+  output showing error messages
+- v0.3.0: `<Steps>` inside quick start accordion, `<Accordion>` for
+  "What's next" teaser, inline workflow example
+
+Voice calibrated to README writing guide: casual-but-specific,
+"whiteboard explanation" energy, explains the "so what" not just the
+"what."
+
+**6. Generated v0.6.0→v0.7.0 historical release**
+
+Cleaned stacked test data from CHANGELOG.md and changelog.mdx. Ran
+the workflow 3 times with different prompt versions:
+
+| Run | Tone | Components | Hallucination | Cost |
+|-----|------|------------|---------------|------|
+| 1 (formal seeds) | Corporate | None | "CLI provides migration guidance" | $0.25 |
+| 2 (casual seeds) | Good | None — LLM ignored seed components | Minor | $0.24 |
+| 3 (explicit prompt) | Good | All present (Tip, Note, CodeGroup, Accordion) | Minor embellishment only | $0.26 |
+
+Run 3 is the keeper. Key lesson: showing examples is not enough — the
+LLM needs explicit instructions about which components to use and when.
+
+### Key Insights
+
+**Style reference is necessary but not sufficient.** The seed entries
+establish tone (casual, specific, explains the so what) but the LLM
+won't pick up structural patterns (Mintlify components) unless the
+prompt explicitly instructs their use. The combination of examples +
+explicit rules produces the best output.
+
+**No-hallucination rules work.** Adding "NEVER invent features,
+CLI flags, migration paths" eliminated fabricated claims like "the CLI
+provides guidance on migration." Remaining hallucination is limited to
+embellishing the *why* behind real features (e.g., "enable future IDE
+tooling" for type annotations), which is acceptable.
+
+**Gemini 3 Pro produces longer, richer entries** than the default model.
+The render-changelogs step took 55s (vs ~30s with default) but output
+quality justified the cost.
+
+### Verification
+
+- 5 end-to-end runs during development
+- v0.6.0→v0.7.0 (final): all 20 nodes passed, $0.26
+- Slack notification confirmed working in #releases channel
+- Mintlify entry uses all target components: `<Tip>`, `<Note>`,
+  `<CodeGroup>`, `<Accordion>`, inline code blocks
+- CHANGELOG.md has 7 entries with correct PR links and task review links
+- No fabricated features or capabilities in output

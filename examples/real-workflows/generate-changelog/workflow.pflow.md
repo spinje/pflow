@@ -90,6 +90,15 @@ task reviews, docs diff, and raw draft entries for pre-release auditing.
 - required: false
 - default: releases
 
+### slack_channel
+
+Slack channel for release notification. Posts a summary and the rendered
+changelog entries after all files are written.
+
+- type: string
+- required: false
+- default: releases
+
 ## Steps
 
 ### get-latest-tag
@@ -288,7 +297,7 @@ the original message preserved for the verification file.
 ```yaml batch
 items: ${gather-commit-data.result}
 parallel: true
-max_concurrent: 70
+max_concurrent: 90
 error_handling: continue
 ```
 
@@ -703,9 +712,9 @@ result: str = '\n\n'.join(parts)
 
 ### get-style-reference
 
-Load the last 2 entries from the existing Mintlify changelog as a style
-reference. The format LLM matches this tone and structure when generating
-the new entry.
+Load up to 4 entries from the existing Mintlify changelog as style
+examples. The format LLM matches this tone, structure, and component
+usage when generating the new entry.
 
 - type: code
 - inputs:
@@ -719,13 +728,14 @@ from pathlib import Path
 
 path = Path(mintlify_file) if mintlify_file else None
 if not path or not path.is_file():
-    updates_text = ''
+    examples_text = ''
 else:
     content = path.read_text()
     updates = re.findall(r'<Update.*?</Update>', content, re.DOTALL)
-    updates_text = '\n\n'.join(updates[:2])
+    labeled = [f'Example {i}:\n{u}' for i, u in enumerate(updates[:4], 1)]
+    examples_text = '\n\n'.join(labeled)
 
-result: str = updates_text
+result: str = examples_text
 ```
 
 ### render-changelogs
@@ -738,6 +748,7 @@ standardizes terminology. The markdown format includes PR and task
 links; the Mintlify format groups entries into themes without links.
 
 - type: llm
+- model: gemini-3-pro-preview
 
 ```yaml batch
 items:
@@ -809,53 +820,65 @@ items:
       ## Documentation Changes
       ${join-docs-summary.result}
 
-      ## Style Reference (match this format)
+      ## Examples (match this tone, structure, and component usage)
       ${get-style-reference.result}
 
-      ## Required Format
-      You MUST output exactly this structure (with your content):
-
-      <Update label="MONTH YEAR" description="VERSION" tags={["New releases", "Bug fixes"]}>
-        ## Theme Title
-
-        Brief description.
-
-        **Highlights**
-        - Feature one
-        - Feature two
-
-        ## Another Theme
-
-        Description.
-
-        **Highlights**
-        - Feature three
+      ## Required Structure
+      <Update label="MONTH YEAR" description="VERSION" tags={[...]}>
+        2-4 themed ## sections, each with a 1-2 sentence intro and
+        **Highlights** bullet list.
       </Update>
 
+      ## Mintlify Components — USE THESE
+      Study the examples above and use these components where appropriate:
+      - `<Accordion title="Breaking changes">` — REQUIRED when any entry
+        involves a removal, rename, or behavior change. List what changed
+        and why, with before/after when helpful.
+      - `<Accordion title="Example">` — for code examples that would break
+        the flow if inline. Keep the main body scannable.
+      - `<Tip>` — one per release, max. Use for the single most important
+        insight a user should know. Not a summary, a specific detail.
+      - `<Note>` — for important behavior details that aren't obvious from
+        the highlights (e.g., "runs automatically, no separate step").
+      - `<CodeGroup>` — for before/after comparisons inside accordions.
+      - Inline code blocks — show a 3-5 line usage example directly in the
+        body for each major feature. Don't just describe it, show it.
+
       ## Tone
-      - User-facing changelog — describe what changed for users, not
-        how it was implemented. Skip internal details unless valuable.
-      - Calm, understated, no hype. Just say what shipped and why it
-        matters. If a tired engineer would roll their eyes, rewrite it.
+      - Write like a developer explaining what shipped to another developer.
+        Not a company announcing a product.
+      - Calm, understated, no hype. If a tired engineer would roll their
+        eyes, rewrite it.
       - Be specific — "added timeout parameter to shell node" beats
         "improved shell node reliability." Name the actual thing.
-      - Shipping notes, not a press release. Plain language over
-        marketing speak.
-      - Never invent details. If a draft entry is too vague to
-        understand what actually changed, drop it from the output.
+      - Explain the "so what" — not just what changed, but what you can
+        do now that you couldn't before.
+
+      ## STRICT: No Hallucination
+      - ONLY use information explicitly present in the draft entries,
+        commit context, PR descriptions, and task reviews above.
+      - NEVER invent features, capabilities, CLI flags, migration paths,
+        or behaviors not described in the input.
+      - If a draft entry is too vague to understand what changed, DROP IT.
+        Do not fill in the gaps with plausible-sounding details.
+      - Do not claim things like "the CLI provides guidance on X" or
+        "includes automatic migration" unless the input explicitly says so.
 
       ## Tasks
       1. Group entries into 2-4 themes
       2. Merge duplicates
       3. Standardize verbs (Allow→Added, Enable→Added)
       4. No PR links (user-facing changelog)
-      5. Add <Accordion title="Breaking changes"> if bump type is major
+      5. Add <Accordion title="Breaking changes"> when entries involve
+         removals, renames, or behavior changes — not just for major bumps
+      6. Add one inline code example per major feature section
+      7. Use at least one `<Tip>` or `<Note>` per release
 
       ## CRITICAL
       - Output ONLY the <Update>...</Update> component
       - First character must be <
       - Last characters must be </Update>
-      - NO JSON, NO code fences, NO explanations
+      - NO JSON, NO outer code fences, NO explanations
 parallel: true
 ```
 
@@ -1037,6 +1060,39 @@ else:
 result: str = msg
 ```
 
+### format-slack-message
+
+Build the Slack notification combining a release header with the rendered
+changelog entries.
+
+- type: code
+- inputs:
+    next_version: ${compute-version.result.next_version}
+    bump_type: ${compute-version.result.bump_type}
+    date_iso: ${compute-version.result.date_iso}
+    changelog: ${render-changelogs.results[0].response}
+    entries: ${enrich-drafts.result}
+
+```python code
+next_version: str
+bump_type: str
+date_iso: str
+changelog: str
+entries: list
+
+header = f"# pflow {next_version}\n\n*{bump_type} bump · {date_iso} · {len(entries)} entries*\n\n---"
+result: str = f"{header}\n\n{changelog}"
+```
+
+### notify-slack
+
+Post the changelog to Slack. Uses Composio's markdown formatting for
+clean rendering in the channel.
+
+- type: mcp-composio-slack-SLACK_SEND_MESSAGE
+- channel: ${slack_channel}
+- markdown_text: ${format-slack-message.result}
+
 ### create-summary
 
 Build the CLI output summary showing the version, bump type, and
@@ -1053,6 +1109,7 @@ created files with descriptions.
     changelog_path: ${update-changelog-file.result}
     mintlify_path: ${update-mintlify-file.result}
     context_path: ${save-release-context.result}
+    slack_channel: ${slack_channel}
 
 ```python code
 entries: list
@@ -1064,6 +1121,7 @@ date_iso: str
 changelog_path: str
 mintlify_path: str
 context_path: str
+slack_channel: str
 
 lines = [
     '## Release Summary\n',
@@ -1080,6 +1138,10 @@ if mintlify_path:
 
 lines.append(f'  {context_path}')
 lines.append(f'    {len(skipped)} skipped changes + {len(task_reviews)} task reviews — review before committing')
+
+if slack_channel:
+    lines.append(f'  #{slack_channel}')
+    lines.append('    Changelog posted to Slack')
 
 result: str = '\n'.join(lines)
 ```
