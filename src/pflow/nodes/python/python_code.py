@@ -405,8 +405,11 @@ class PythonCodeNode(Node):
                 msg += f"\n{location}"
             msg += (
                 f"\n\nSuggestions:\n"
-                f"  - Install with: uv pip install {module}\n"
-                f'  - Add to requires field: "requires": ["{module}"]'
+                f"  - Install with: pipx inject pflow-cli {module}\n"
+                f"  - Or with uv (list existing extras first — uv replaces, not adds):\n"
+                f"    uv tool list --show-with\n"
+                f"    uv tool install --with {module} --with <existing-extras> pflow-cli\n"
+                f'  - Document dependency: "requires": ["{module}"]'
             )
             return msg
 

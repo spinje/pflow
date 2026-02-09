@@ -8,7 +8,7 @@ icon: "code"
   **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
 </Note>
 
-The code node runs Python code in-process with direct access to input data as native Python objects. It's the primary tool for data transformation — filtering, reshaping, merging, and computing values — without the cost or latency of an LLM call.
+The code node runs Python in-process with direct access to input data as native objects. Use it when the logic is deterministic — filtering, reshaping, merging, computing values. If you can write a Python expression for it, there's no reason to burn tokens on an LLM call.
 
 ## Parameters
 
@@ -30,7 +30,7 @@ The code node runs Python code in-process with direct access to input data as na
 
 ## Type annotations
 
-All input variables and the `result` variable must have type annotations in the code. This is enforced — code without annotations is rejected before execution.
+Every input variable and the `result` variable must have a type annotation. pflow uses these to validate inputs before your code runs — so a wrong type gets caught immediately with a fix suggestion, not as a cryptic Python error mid-workflow.
 
 ```python
 data: list            # required for every input
@@ -38,27 +38,31 @@ limit: int            # required for every input
 result: dict = {}     # required on result too
 ```
 
-### Supported types
+<Tip>
+  Use `object` as the type when you don't know or care what the input type is — it skips validation entirely.
+</Tip>
 
-| Annotation | Python type | Notes |
-|------------|-------------|-------|
-| `int` | `int` | |
-| `float` | `int`, `float` | Integers are accepted where float is declared |
-| `str` | `str` | |
-| `bool` | `bool` | |
-| `list` | `list` | Generic params like `list[dict]` check outer type only |
-| `dict` | `dict` | Generic params like `dict[str, Any]` check outer type only |
-| `set` | `set` | |
-| `tuple` | `tuple` | |
-| `bytes` | `bytes` | |
-| `object` | — | Skips type validation entirely |
+<Accordion title="Supported types">
+  | Annotation | Python type | Notes |
+  |------------|-------------|-------|
+  | `int` | `int` | |
+  | `float` | `int`, `float` | Integers are accepted where float is declared |
+  | `str` | `str` | |
+  | `bool` | `bool` | |
+  | `list` | `list` | Generic params like `list[dict]` check outer type only |
+  | `dict` | `dict` | Generic params like `dict[str, Any]` check outer type only |
+  | `set` | `set` | |
+  | `tuple` | `tuple` | |
+  | `bytes` | `bytes` | |
+  | `object` | — | Skips type validation entirely |
 
-Use `object` when you don't know the input type or want to skip validation.
+  Only the outer type is checked — `list[dict]` validates that the value is a `list`, but doesn't check whether the elements are dicts.
+</Accordion>
 
 ## Template placement
 
 <Warning>
-  **Templates go in `inputs`, never in the code block.** The code block is literal Python. Putting `${var}` inside it causes a parse error.
+  **Templates go in `inputs`, never in the code block.** The code block is literal Python — `${var}` isn't valid Python syntax, so putting templates there causes a parse error.
 </Warning>
 
 ````markdown
@@ -77,11 +81,11 @@ result: list = [u for u in data if u['active']]
 ```
 ````
 
-The `inputs` dict is where template variables like `${fetch.response}` are resolved. By the time your code runs, `data` is a native Python object — no parsing needed.
+Templates in the `inputs` dict get resolved before your code runs. By the time Python sees `data`, it's already a native object — no parsing needed.
 
 ## Inputs are native objects
 
-Upstream JSON is auto-parsed before your code runs. If the source node produced a JSON string, declare `dict` or `list`, not `str`. You get real Python objects.
+Upstream JSON is auto-parsed before your code runs. If the source node produced a JSON string, declare `dict` or `list`, not `str` — you get real Python objects, not strings.
 
 | Upstream output | Declare as | You get |
 |-----------------|------------|---------|
@@ -171,9 +175,35 @@ result: str = output.strip()
 ```
 ````
 
-### Standard library imports
+### Imports
 
-Standard library imports work without restrictions:
+Standard library imports work without restrictions — `json`, `re`, `subprocess`, `pathlib`, `datetime`.
+
+Third-party packages work too, but they need to be installed in pflow's environment.
+
+<Accordion title="Installing third-party packages">
+  pflow runs in an isolated environment, so `pip install pandas` won't work. How you add packages depends on how you installed pflow:
+
+  **pipx** (simpler — additive, doesn't touch existing packages):
+  ```bash
+  pipx inject pflow-cli pandas
+  ```
+
+  **uv tool** (replaces the full environment — list existing extras first):
+  ```bash
+  # Check what's already installed so you don't lose it
+  uv tool list --show-with
+
+  # Include ALL extras — both new and existing
+  uv tool install --with pandas --with llm-openrouter pflow-cli
+  ```
+
+  <Warning>
+    `uv tool install` is not additive — it recreates pflow's environment from scratch. If you previously installed with `--with llm-openrouter` and now run `--with pandas` alone, you'll lose `llm-openrouter`. Always run `uv tool list --show-with` first and include all existing `--with` flags.
+  </Warning>
+
+  A simpler way to manage code node dependencies is coming in a future release.
+</Accordion>
 
 ````markdown
 ### parse-dates
@@ -198,16 +228,24 @@ result: list = [d.isoformat() for d in parsed]
 ## Security
 
 <Warning>
-  Code runs directly in the pflow process via `exec()` without sandboxing. It has full access to the filesystem, network, and standard library. Sandboxed execution is planned for a future release.
+  Code runs directly in the pflow process via `exec()` without sandboxing. It has full access to your filesystem, network, and standard library — same as running a Python script yourself. Sandboxed execution is planned for a future release.
 </Warning>
 
 <Tip>
-  **You're in control.** Your agent asks before running workflows, and you can inspect the workflow to see exactly what code will execute. To disable this node entirely, run `pflow settings deny code`.
+  **You're in control.** Your agent asks before running workflows, and you can open any `.pflow.md` file to see exactly what code will run. To disable this node entirely: `pflow settings deny code`.
 </Tip>
 
 ## Error handling
 
-The code node provides actionable error messages with line numbers and suggestions:
+Errors include line numbers, the actual source line, and a suggestion for how to fix it. For example, a type mismatch looks like:
+
+```
+Input 'data' expects list but received dict
+
+Suggestions:
+  - Change the type annotation to: data: dict
+  - Or convert the input value to list
+```
 
 | Error | Cause | What you see |
 |-------|-------|--------------|
@@ -219,4 +257,4 @@ The code node provides actionable error messages with line numbers and suggestio
 | `SyntaxError` | Invalid Python | Line number from Python parser |
 | Runtime error | Any other exception | Exception type, line number, source line |
 
-The node does not retry — code execution is deterministic, so retrying the same code produces the same result.
+The node doesn't retry — code execution is deterministic, so retrying the same code produces the same result.
