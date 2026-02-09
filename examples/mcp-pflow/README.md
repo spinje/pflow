@@ -108,7 +108,7 @@ Use `example-claude-desktop-config.json` as a template and update the path:
 cp examples/mcp-pflow/example-claude-desktop-config.json \
    ~/Library/Application\ Support/Claude/claude_desktop_config.json
 
-# 2. Edit and replace /Users/andfal/projects/pflow with YOUR path
+# 2. Edit and replace /path/to/pflow with YOUR project path
 # Find your project path:
 pwd  # Run this in the pflow directory
 ```

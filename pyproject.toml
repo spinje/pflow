@@ -2,7 +2,7 @@
 name = "pflow-cli"
 version = "0.8.0"
 description = "Reusable CLI workflows from shell, LLM, HTTP, and MCP nodes"
-authors = [{ name = "Andreas Falcone", email = "pflow-cli@gmail.com" }]
+authors = [{ name = "Andreas Falcone", email = "andreas@pflow.run" }]
 readme = { file = "README.md", content-type = "text/markdown" }
 license = { file = "LICENSE" }
 keywords = ["workflow", "cli", "automation", "llm", "mcp", "ai-agent", "agent-skill"]
