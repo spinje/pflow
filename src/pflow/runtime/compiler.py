@@ -601,6 +601,12 @@ def _create_single_node(
     node_type = node_data["type"]
     params = node_data.get("params", {})
 
+    # Thread source-line metadata from the markdown parser into params so
+    # nodes can reference the .pflow.md file line in error messages.
+    source_lines = node_data.get("_source_lines")
+    if source_lines:
+        params = {**params, **{f"_{k}_source_line": v for k, v in source_lines.items()}}
+
     # Inject default model for LLM nodes if not specified
     if node_type == "llm" and "model" not in params:
         default_model = get_default_workflow_model()

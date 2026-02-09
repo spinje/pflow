@@ -1995,3 +1995,74 @@ echo step {i}
         """)
         result = parse_markdown(content)
         assert '{"result": "${gen.stdout}"}' in result.ir["outputs"]["data"]["source"]
+
+
+# ===========================================================================
+# 16. Source line tracking for runtime error references
+# ===========================================================================
+
+
+class TestSourceLineTracking:
+    """Verify the parser records _source_lines for non-YAML code blocks.
+
+    When a code block like ```python code is parsed, the parser stores
+    the 1-based line number where the code content starts (the line
+    after the opening fence) in node["_source_lines"]["code"]. The
+    runtime uses this to map code errors back to the workflow file.
+
+    Off-by-one errors are the exact bug these tests catch: the fence
+    line vs the content start line vs 0-based vs 1-based indexing.
+    """
+
+    def test_code_block_source_line_points_to_content_start(self):
+        """_source_lines["code"] equals fence_line + 1 (content starts after fence).
+
+        The markdown below has the opening fence ```python code on line 15.
+        Content starts on line 16, so _source_lines["code"] should be 16.
+        """
+        # Line numbers annotated:
+        # 1:  # Test Workflow
+        # 2:  (blank)
+        # 3:  A test workflow.
+        # 4:  (blank)
+        # 5:  ## Steps
+        # 6:  (blank)
+        # 7:  ### my-node
+        # 8:  (blank)
+        # 9:  Does something.
+        # 10: (blank)
+        # 11: - type: code
+        # 12: - inputs:
+        # 13:     x: ${x}
+        # 14: (blank)
+        # 15: ```python code
+        # 16: x: int
+        # 17: result: int = x + 1
+        # 18: ```
+        workflow_md = (
+            "# Test Workflow\n"
+            "\n"
+            "A test workflow.\n"
+            "\n"
+            "## Steps\n"
+            "\n"
+            "### my-node\n"
+            "\n"
+            "Does something.\n"
+            "\n"
+            "- type: code\n"
+            "- inputs:\n"
+            "    x: ${x}\n"
+            "\n"
+            "```python code\n"
+            "x: int\n"
+            "result: int = x + 1\n"
+            "```\n"
+        )
+        result = parse_markdown(workflow_md)
+        node = result.ir["nodes"][0]
+
+        assert "_source_lines" in node, "Parser should store _source_lines for code blocks"
+        assert "code" in node["_source_lines"], "_source_lines should have 'code' entry"
+        # Fence on line 15, content starts on line 16
+        assert node["_source_lines"]["code"] == 16

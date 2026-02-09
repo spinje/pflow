@@ -88,11 +88,15 @@ def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
     return _TYPE_MAP.get(base)
 
 
-def _extract_error_location(exc: Exception, code: str) -> str:
+def _extract_error_location(exc: Exception, code: str, code_source_line: int = 0) -> str:
     """Extract a human-readable error location from an exception's traceback.
 
     Filters traceback to frames from user code (filename='<code>') and
     returns the line number with the source text for context.
+
+    When *code_source_line* is set (the 1-based line in the .pflow.md file
+    where the code block content starts), the workflow-file line is included
+    so the user can jump straight to the right place.
 
     Returns empty string if no location info is available (e.g. TimeoutError
     has no traceback from user code).
@@ -115,9 +119,16 @@ def _extract_error_location(exc: Exception, code: str) -> str:
     lines = code.splitlines()
     source_line = lines[lineno - 1].strip() if lineno <= len(lines) else ""
 
+    # Build labeled Location + Source lines
+    if code_source_line:
+        workflow_line = code_source_line + lineno - 1
+        location = f"  Location: line {workflow_line} (line {lineno} in code block)"
+    else:
+        location = f"  Location: line {lineno} in code block"
+
     if source_line:
-        return f"  at line {lineno}: {source_line}"
-    return f"  at line {lineno}"
+        return f"{location}\n  Source: {source_line}"
+    return location
 
 
 class PythonCodeNode(Node):
@@ -184,6 +195,7 @@ class PythonCodeNode(Node):
             "timeout": timeout,
             "requires": requires,
             "annotations": annotations,
+            "code_source_line": self.params.get("_code_source_line", 0),
         }
 
     # ------------------------------------------------------------------
@@ -375,7 +387,8 @@ class PythonCodeNode(Node):
         actionable suggestions for each error type so AI agents can self-correct.
         """
         code = prep_res.get("code", "")
-        location = _extract_error_location(exc, code)
+        code_source_line = prep_res.get("code_source_line", 0)
+        location = _extract_error_location(exc, code, code_source_line)
 
         if isinstance(exc, (TimeoutError, FuturesTimeoutError)):
             timeout = prep_res["timeout"]

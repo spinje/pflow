@@ -6,7 +6,7 @@ internal implementation structure (prep/exec/post).
 
 import pytest
 
-from pflow.nodes.python.python_code import PythonCodeNode
+from pflow.nodes.python.python_code import PythonCodeNode, _extract_error_location
 
 
 def run_code_node(shared: dict, **params) -> str:
@@ -348,8 +348,8 @@ class TestSafetyAndErrors:
         )
         assert action == "error"
         assert "ZeroDivisionError" in shared["error"]
-        assert "at line 3" in shared["error"]
-        assert "x / y" in shared["error"]
+        assert "Location: line 3 in code block" in shared["error"]
+        assert "Source: result: int = x / y" in shared["error"]
         assert "Suggestions:" in shared["error"]
 
     def test_success_returns_default_action(self):
@@ -458,3 +458,56 @@ class TestWorkflowIntegration:
         # Code node output is namespaced under "transform"
         assert shared["transform"]["result"] == [1, 2, 3, 4, 5]
         assert shared["transform"]["stdout"] == ""
+
+
+# ======================================================================
+# Workflow line reference in error messages (source line tracking)
+# ======================================================================
+
+
+class TestErrorLocationWorkflowLine:
+    """Verify _extract_error_location appends workflow file line references.
+
+    When a code node errors at runtime and _code_source_line is set, the
+    error location string should include both the line within the code
+    block AND the corresponding line in the .pflow.md file. This lets
+    users jump straight to the right place in their workflow file.
+
+    Formula: workflow_line = code_source_line + lineno - 1
+    (code_source_line is 1-based line where code content starts in
+    the .pflow.md file; lineno is 1-based line within the code block).
+    """
+
+    def test_extract_error_location_includes_workflow_line_when_source_set(self):
+        """With code_source_line > 0, the location string includes (workflow line N).
+
+        Error on line 3 of code that starts at workflow line 50
+        should produce workflow line 52 (50 + 3 - 1).
+        """
+        code = "x = 1\ny = 2\nraise ValueError('boom')"
+        compiled = compile(code, "<code>", "exec")
+        try:
+            exec(compiled)  # noqa: S102
+            pytest.fail("Expected ValueError was not raised")
+        except ValueError as exc:
+            location = _extract_error_location(exc, code, code_source_line=50)
+
+        assert "Location: line 52 (line 3 in code block)" in location
+        assert "Source: raise ValueError" in location
+
+    def test_extract_error_location_omits_workflow_line_when_source_zero(self):
+        """With code_source_line=0 (the default), no workflow line reference.
+
+        This preserves backward compatibility for code nodes not loaded
+        from .pflow.md files (e.g., passed directly via IR dict).
+        """
+        code = "x = 1\ny = 2\nraise ValueError('boom')"
+        compiled = compile(code, "<code>", "exec")
+        try:
+            exec(compiled)  # noqa: S102
+            pytest.fail("Expected ValueError was not raised")
+        except ValueError as exc:
+            location = _extract_error_location(exc, code, code_source_line=0)
+
+        assert "Location: line 3 in code block" in location
+        assert "Source: raise ValueError" in location

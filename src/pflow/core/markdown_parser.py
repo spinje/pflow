@@ -693,6 +693,10 @@ def _route_code_blocks_to_node(entity: _Entity, node: dict[str, Any], params: di
                 params[block.param_name] = yaml.safe_load(block.content)
             else:
                 params[block.param_name] = block.content
+                # Carry source line so runtime errors can reference the .pflow.md file.
+                # Content starts on the line after the opening fence.
+                source_lines = node.setdefault("_source_lines", {})
+                source_lines[block.param_name] = block.start_line + 1
 
 
 def _build_node_dict(entity: _Entity) -> dict[str, Any]:

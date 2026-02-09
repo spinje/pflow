@@ -207,6 +207,11 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "additionalProperties": True,
                     },
                     "batch": BATCH_CONFIG_SCHEMA,
+                    "_source_lines": {
+                        "type": "object",
+                        "description": "Markdown source line offsets for code block params (injected by parser)",
+                        "additionalProperties": {"type": "integer"},
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,
