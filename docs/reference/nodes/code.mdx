@@ -1,0 +1,222 @@
+---
+title: "Code"
+description: "Execute Python for data transformation"
+icon: "code"
+---
+
+<Note>
+  **Agent commands.** Your AI agent uses this node in workflows. You don't configure it directly.
+</Note>
+
+The code node runs Python code in-process with direct access to input data as native Python objects. It's the primary tool for data transformation — filtering, reshaping, merging, and computing values — without the cost or latency of an LLM call.
+
+## Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `code` | str | Yes | - | Python code with type-annotated inputs and a `result` variable |
+| `inputs` | dict | No | `{}` | Variable name to value mapping (template variables go here) |
+| `timeout` | int | No | `30` | Maximum execution time in seconds |
+| `requires` | list | No | `[]` | Package dependencies (documentation-only, not enforced) |
+
+## Output
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `result` | any | Value of the `result` variable after execution |
+| `stdout` | str | Captured `print()` output |
+| `stderr` | str | Captured stderr output |
+| `error` | str | Error message (only on failure) |
+
+## Type annotations
+
+All input variables and the `result` variable must have type annotations in the code. This is enforced — code without annotations is rejected before execution.
+
+```python
+data: list            # required for every input
+limit: int            # required for every input
+result: dict = {}     # required on result too
+```
+
+### Supported types
+
+| Annotation | Python type | Notes |
+|------------|-------------|-------|
+| `int` | `int` | |
+| `float` | `int`, `float` | Integers are accepted where float is declared |
+| `str` | `str` | |
+| `bool` | `bool` | |
+| `list` | `list` | Generic params like `list[dict]` check outer type only |
+| `dict` | `dict` | Generic params like `dict[str, Any]` check outer type only |
+| `set` | `set` | |
+| `tuple` | `tuple` | |
+| `bytes` | `bytes` | |
+| `object` | — | Skips type validation entirely |
+
+Use `object` when you don't know the input type or want to skip validation.
+
+## Template placement
+
+<Warning>
+  **Templates go in `inputs`, never in the code block.** The code block is literal Python. Putting `${var}` inside it causes a parse error.
+</Warning>
+
+````markdown
+### transform
+
+Filter active users from the API response.
+
+- type: code
+- inputs:
+    data: ${fetch.response}
+
+```python code
+data: list
+
+result: list = [u for u in data if u['active']]
+```
+````
+
+The `inputs` dict is where template variables like `${fetch.response}` are resolved. By the time your code runs, `data` is a native Python object — no parsing needed.
+
+## Inputs are native objects
+
+Upstream JSON is auto-parsed before your code runs. If the source node produced a JSON string, declare `dict` or `list`, not `str`. You get real Python objects.
+
+| Upstream output | Declare as | You get |
+|-----------------|------------|---------|
+| JSON string `'{"a": 1}'` | `dict` | `{"a": 1}` |
+| JSON array `'[1, 2, 3]'` | `list` | `[1, 2, 3]` |
+| Plain text | `str` | The text string |
+| Number | `int` or `float` | The number |
+
+## Examples
+
+### Simple transformation
+
+````markdown
+### filter-active
+
+Filter users to only active accounts.
+
+- type: code
+- inputs:
+    users: ${fetch-users.response.data}
+
+```python code
+users: list
+
+result: list = [u for u in users if u['status'] == 'active']
+```
+````
+
+### Multiple inputs
+
+````markdown
+### merge-sources
+
+Combine data from two upstream nodes.
+
+- type: code
+- inputs:
+    api_data: ${fetch-api.response}
+    db_records: ${query-db.result}
+
+```python code
+api_data: list
+db_records: list
+
+merged = api_data + db_records
+result: dict = {
+    'items': merged,
+    'count': len(merged),
+}
+```
+````
+
+Access fields downstream: `${merge-sources.result.items}`, `${merge-sources.result.count}`.
+
+### No inputs
+
+````markdown
+### generate-range
+
+Generate a sequence with no external inputs.
+
+- type: code
+
+```python code
+result: list = list(range(1, 11))
+```
+````
+
+### Using subprocess
+
+````markdown
+### get-git-log
+
+Fetch recent git history.
+
+- type: code
+- timeout: 60
+
+```python code
+import subprocess
+
+output = subprocess.run(
+    ['git', 'log', '--oneline', '-10'],
+    capture_output=True, text=True, check=True
+).stdout
+result: str = output.strip()
+```
+````
+
+### Standard library imports
+
+Standard library imports work without restrictions:
+
+````markdown
+### parse-dates
+
+Parse and sort date strings.
+
+- type: code
+- inputs:
+    raw_dates: ${fetch.response.dates}
+
+```python code
+from datetime import datetime
+
+raw_dates: list
+
+parsed = [datetime.fromisoformat(d) for d in raw_dates]
+parsed.sort()
+result: list = [d.isoformat() for d in parsed]
+```
+````
+
+## Security
+
+<Warning>
+  Code runs directly in the pflow process via `exec()` without sandboxing. It has full access to the filesystem, network, and standard library. Sandboxed execution is planned for a future release.
+</Warning>
+
+<Tip>
+  **You're in control.** Your agent asks before running workflows, and you can inspect the workflow to see exactly what code will execute. To disable this node entirely, run `pflow settings deny code`.
+</Tip>
+
+## Error handling
+
+The code node provides actionable error messages with line numbers and suggestions:
+
+| Error | Cause | What you see |
+|-------|-------|--------------|
+| Missing annotation | Input or result has no type annotation | Which variable needs an annotation |
+| Type mismatch | Input value doesn't match declared type | Expected vs actual type, with fix suggestion |
+| `NameError` | Undefined variable | Variable name, suggestion to add to inputs |
+| `ImportError` | Module not installed | Module name, install command |
+| Timeout | Code exceeded time limit | Current timeout, suggestion to increase |
+| `SyntaxError` | Invalid Python | Line number from Python parser |
+| Runtime error | Any other exception | Exception type, line number, source line |
+
+The node does not retry — code execution is deterministic, so retrying the same code produces the same result.

@@ -27,6 +27,9 @@ pflow includes these built-in nodes:
   <Card title="Shell" icon="terminal" href="/reference/nodes/shell">
     Execute shell commands
   </Card>
+  <Card title="Code" icon="code" href="/reference/nodes/code">
+    Execute Python for data transformation
+  </Card>
   <Card title="Claude Code" icon="square-asterisk" href="/reference/nodes/claude-code">
     AI-assisted development tasks
   </Card>
@@ -68,6 +71,7 @@ Each node writes specific keys to the shared store. For example:
 - `read-file` writes `content`, `file_path`, `content_is_binary`
 - `llm` writes `response`, `llm_usage`
 - `http` writes `response`, `status_code`, `response_headers`
+- `code` writes `result`, `stdout`, `stderr`
 
 Check each node's documentation for its complete interface.
 
@@ -114,6 +118,7 @@ See [MCP tools](/reference/nodes/mcp) for details on how this works.
 | **LLM** | llm | AI model calls via any provider |
 | **HTTP** | http | Web API requests |
 | **Shell** | shell | System command execution |
+| **Code** | code | Python data transformation |
 | **Claude** | claude-code | AI-assisted development |
 | **MCP** | mcp-{server}-{tool} | External tool integration |
 
