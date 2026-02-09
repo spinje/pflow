@@ -17,13 +17,16 @@ If you cannot verify something, ask the user or mark it as "needs verification" 
 
 ## Overview
 
-This is the Mintlify documentation for pflow. These docs are for **humans** who:
-1. Set up pflow for their AI tools (Claude Code, Cursor, etc.)
-2. Configure and manage pflow (MCP servers, settings, workflows)
+This is the Mintlify documentation for pflow. Users don't use pflow directly — their AI agents do. Users install pflow, configure it, and then their agent handles the rest: discovering nodes, building workflows, running them.
 
-**Primary use case**: Users install pflow so their AI agents can use it. The agent runs pflow commands or uses pflow's MCP server. Users rarely run pflow directly for tasks - their agents do.
+These docs serve two purposes:
 
-**Important**: AI agents get instructions via `pflow instructions` command or MCP resources, not these docs.
+1. **Setup and configuration** — Quickstart, integrations, settings, MCP server management. Things the user actually needs to do themselves.
+2. **Understanding what your agent builds** — Node reference, CLI reference, "How it works" pages. Users open a `.pflow.md` file their agent created and want to understand what a code node or shell node does. They're reading their agent's work, not learning to write workflows themselves.
+
+This distinction matters for how you write each type of page. Setup pages are procedural — do this, then this. Reference pages explain what things do and how they work, so users can read and understand the workflows their agent creates.
+
+**Important**: AI agents get their own instructions via `pflow instructions` command or MCP resources, not these docs.
 
 ---
 
@@ -64,20 +67,26 @@ See `.taskmaster/tasks/task_93/starting-context/mintlify-docs-spec.md` for compl
 
 ## Content Philosophy
 
-**Document what users need to USE pflow effectively.**
+**Before writing anything, answer: will the user directly touch this?** The answer changes everything about what you write and how you write it.
 
-> **Critical perspective**: Just because you have implementation details in your context doesn't mean they're relevant to pflow users. Put yourself in their shoes before writing - most users just want their AI agent to accomplish tasks, not understand how pflow works internally.
+| User's relationship | Examples | How to write it |
+|---------------------|----------|-----------------|
+| **User does this themselves** | Install, API keys, MCP config, settings | Procedural. Steps, commands, what success looks like. |
+| **User reads what their agent built** | Node reference, template syntax, workflow format | Explanatory. What it does, how it behaves, why it's designed that way. |
+| **User might do this directly** | Running saved workflows, CLI commands | Both. Explain what it does, then show how to use it. |
+
+Most of the reference docs fall in the second category. The user isn't learning to write code nodes — their agent does that. They're opening a `.pflow.md` file and wanting to understand what they're looking at. Write for that reader.
 
 | Include | Exclude |
 |---------|---------|
-| CLI commands and options | Planner internals |
-| Core node interfaces | IR schema details |
-| Configuration and env vars | Template resolution algorithm |
+| What nodes do and how they behave | Planner internals |
+| CLI commands and configuration | IR schema details |
+| How data flows between nodes | Template resolution algorithm |
 | Debugging and troubleshooting | Contributor guides |
 
 **For implementation details**: Link to `architecture/` docs in pflow repo if not present in `how-it-works/`, don't duplicate.
 
-**For technical deep-dives**: Use the "How it works" tab. Keep Reference and Guides focused on practical usage - save detailed explanations of internals, design decisions, and "why it works this way" for the "How it works" section. Use accordions in Reference/Guides only for truly helpful context, not to dump technical details.
+**For technical deep-dives**: Use the "How it works" tab. Reference and Guides stay focused on what things do and when you'd use them. Save detailed explanations of internals, design decisions, and "why it works this way" for the "How it works" section.
 
 ---
 
@@ -98,11 +107,61 @@ Use consistent terms throughout all documentation.
 
 ## Writing Standards
 
-### Voice and tone
-- Second-person voice ("you can run..." not "users can run...")
-- Active voice, direct language
-- No promotional language - technical docs, not marketing
-- No editorializing ("it's important to note", "in conclusion")
+### Voice
+
+Write like a developer explaining what they built to another developer — at a whiteboard, not a podium. Include the reasoning, not just the conclusion. The docs should feel like they come from the same person who wrote the README — just in reference format instead of narrative.
+
+**The goal:** Someone reads the page and thinks "okay, I get what this does." Not "wow, impressive marketing."
+
+**The register:** Second-person, direct, technical. Confident because you've tested it, not because you're performing confidence. When you state a rule, explain why it exists — a rule with reasoning sticks, a rule without reasoning gets ignored.
+
+- "Use `object` when you don't know the type — it skips validation entirely" — not "You could consider using `object` if the type is uncertain"
+- "Templates go in `inputs`, never in the code block — because the code block is literal Python, and `${var}` isn't valid Python syntax" — not "It is important to note that template variables should be placed in the inputs parameter"
+- "Upstream JSON is auto-parsed before your code runs" — not "The system automatically handles JSON deserialization of upstream data"
+
+**What to avoid:**
+- Evaluation without mechanism ("this is important", "this is crucial") — explain how it works or when it fails instead
+- Corporate passive voice ("type error detection is performed") — say who does what ("pflow catches type errors")
+- Synonym loops — saying the same thing in different words across consecutive sentences
+- Hedging when you should recommend ("you might want to consider" when you mean "use this")
+
+**Banned words and phrases** — never use these:
+- powerful, seamless, magic, revolutionary, game-changer, transformative, unlock, empower
+- it's worth noting, interestingly, as you may know, let's dive in, at the end of the day, in conclusion
+- delve, harness, leverage, utilize, illuminate, facilitate, bolster, streamline, navigate
+- workflow orchestration, cognitive automation, composable (as marketing jargon)
+- crucial, vital, essential (as standalone evaluations — fine if followed by mechanism)
+
+### Substance
+
+**Mechanism over evaluation.** Don't say something is "important" or "primary." Explain how it works, when it fails, or why it's designed that way. Evaluation tells readers what to feel. Mechanism helps them understand.
+
+- Evaluates: "Type annotations are an important feature of the code node"
+- Explains: "Type annotations let pflow catch wrong input types before your code runs — you see the error immediately, not after a 60-second workflow"
+
+**Specificity over plausibility.** Include real error messages, real numbers, concrete examples. Generic details sound plausible. Specific details sound like someone actually used the tool.
+
+- Vague: "You'll see an error if the type is wrong"
+- Specific: "You'll see: `Input 'data' expects list but received dict`"
+
+**Take positions.** Recommend, don't present menus. If there's a best practice, say it. Readers want guidance. Save the options for when there genuinely isn't a clear winner.
+
+**Technical audience rules.** These docs are for developers. Jargon is fine if they know it — don't define "JSON", "API", or "stdin." Move faster. Show code. Higher density per paragraph. Skip analogies and hand-holding.
+
+### Quality tests
+
+Before any sentence, run these:
+
+1. **Tired engineer test:** Would a tired engineer roll their eyes? Delete it.
+2. **7am test:** Could someone half-asleep understand this? If not, rewrite it.
+3. **Mechanism test:** Does this explain how something works, or just evaluate it as "important"? If the latter, add the mechanism or cut the evaluation.
+4. **Only-about-pflow test:** Could this sentence appear on any product's docs? Too generic. Make it specific to pflow.
+
+### Sentence rhythm
+
+Let sentences be the length they need to be. Don't write short punchy fragments for drama (that's its own cliche). Don't write corporate-long compound sentences either. Words like "because", "but", and "so" are fine — they're how people actually explain things.
+
+Reference sections (parameter tables, output tables) stay clean and scannable. Intro paragraphs, tips, and section transitions are where the voice lives.
 
 ### Formatting
 - Sentence case for all headings ("Getting started" not "Getting Started")
@@ -111,10 +170,10 @@ Use consistent terms throughout all documentation.
 - Relative paths for internal links
 
 ### Structure
-- Prerequisites at start of procedural content
-- Lead with context - explain what something IS before showing usage
-- Break complex instructions into numbered steps
+- Lead with what something does and when you'd use it — not a formal definition
 - Put most commonly needed information first
+- Break complex instructions into numbered steps
+- Prerequisites at start of procedural content
 
 ### Frontmatter (required on every page)
 ```yaml
@@ -131,36 +190,56 @@ For changelog pages, also add `rss: true` to enable RSS feed generation.
 
 ## Page Structure Pattern
 
-Use this pattern for reference pages (nodes, CLI commands):
+### Node reference pages
+
+Every node page follows this skeleton. The middle section varies — that's where each node's unique concepts live.
 
 ```markdown
 ---
-title: "Page title"
-description: "One-line description"
+title: "Node name"
+description: "What it does in one line"
+icon: "icon-name"
 ---
 
-Brief intro - what this does and when to use it.
+<Note>
+  **Agent commands.** Your AI agent uses this node in workflows.
+  You don't configure it directly.
+</Note>
 
-## Basic usage
-
-Simple example that works.
+Intro paragraph — what this node does, when you'd reach for it
+instead of alternatives. Mechanism, not evaluation.
 
 ## Parameters
 
-Table of all params with types and defaults.
+| Parameter | Type | Required | Default | Description |
+
+## Output
+
+| Key | Type | Description |
+
+## [Key concepts — 1-3 sections specific to this node]
+
+What makes THIS node different. For shell: stdin handling,
+security. For code: type annotations, template placement.
+For LLM: model support, plugins.
+
+Explain how things work, not just rules. Show correct patterns
+with code examples.
 
 ## Examples
 
-### Common use case
-...
+Real .pflow.md workflow snippets. Start simple, build up.
+Each example should demonstrate a distinct pattern.
 
-### With options
-...
+## Security (if the node runs user code or has system access)
 
-## Related
+## Error handling
 
-- Links to related nodes/guides
+Common errors with causes and what the user actually sees.
+Include real error messages when possible.
 ```
+
+**Reference examples:** `code.mdx` (standard node), `shell.mdx` (node with security and validation details)
 
 ---
 
@@ -223,7 +302,7 @@ This helps users understand they don't need to memorize technical details - thei
 <Steps>
   <Step title="Install pflow">
     ```bash
-    uv tool install git+https://github.com/spinje/pflow.git
+    uv tool install pflow-cli
     ```
   </Step>
   <Step title="Verify installation">
@@ -261,10 +340,10 @@ This helps users understand they don't need to memorize technical details - thei
 ```mdx
 <CodeGroup>
   ```bash uv (recommended)
-  uv tool install git+https://github.com/spinje/pflow.git
+  uv tool install pflow-cli
   ```
   ```bash pipx
-  pipx install git+https://github.com/spinje/pflow.git
+  pipx install pflow-cli
   ```
 </CodeGroup>
 ```
