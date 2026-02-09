@@ -4,7 +4,7 @@ description: "Understanding pflow's self-healing error system"
 icon: "bug"
 ---
 
-When workflows fail, pflow helps your agent fix them. The system is designed for self-correction - your agent receives structured error data, not just error messages, and knows how to use it.
+When workflows fail, pflow gives your agent what it needs to fix them: structured error data with available fields, types, and fix suggestions — not just error messages. Since your agent builds and fixes workflows, error messages are the primary interface — they say what's wrong, what's available instead, and how to fix it.
 
 Your role in debugging is minimal. Most of the time, you don't need to do anything.
 
@@ -17,7 +17,7 @@ When a workflow fails, your agent receives detailed information about what went 
 - **Suggestions** - "Did you mean?" recommendations
 - **Execution state** - Which nodes succeeded before the failure
 
-Your agent uses this to self-correct. When it needs to build or fix workflows, it reads pflow's comprehensive instructions which include a full debugging guide - how to interpret errors, inspect trace files, and resolve common issues.
+Your agent uses this to self-correct. When building or fixing workflows, it reads pflow's built-in instructions — how to interpret errors, inspect trace files, and resolve common issues.
 
 You don't need to teach your agent how to debug. The guidance is built in.
 
@@ -37,6 +37,8 @@ When a workflow fails, errors include the data needed for self-correction:
 ```
 
 Your agent sees that `msg` doesn't exist, but `result.messages` does. It fixes the template and retries. No human intervention needed.
+
+These errors are specific because the error space is finite — pflow knows every node type and every declared output. When agents compose known building blocks instead of writing arbitrary code, errors say "node X doesn't output Y, did you mean Z?" instead of handing you a stack trace.
 
 ## Trace files
 
@@ -109,4 +111,4 @@ rm ~/.pflow/debug/workflow-trace-*.json
 | MCP server not connected | You (agent guides you) |
 | Disk space from traces | You (manual cleanup) |
 
-pflow is designed to be self-healing. Your agent has the tools and knowledge to debug most issues. You only step in for setup tasks that require human access.
+pflow is built for self-correction. Your agent has the tools and knowledge to debug most issues — you only step in for setup tasks that require human access.

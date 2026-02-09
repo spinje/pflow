@@ -4,7 +4,7 @@ description: "Install pflow and set it up for your AI agent"
 icon: "rocket"
 ---
 
-pflow is designed to be used by AI agents (Claude Code, Cursor, Windsurf) rather than directly by humans. You install it, configure it, and your AI agent uses it to build and run workflows.
+Your AI agent (Claude Code, Cursor, Windsurf) uses pflow to build and run workflows. You install it, configure an API key, and your agent handles the rest.
 
 <Info>
 **Prerequisites:** Python 3.10+ and [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/)
@@ -15,12 +15,12 @@ pflow is designed to be used by AI agents (Claude Code, Cursor, Windsurf) rather
     <Tabs>
       <Tab title="uv (recommended)">
         ```bash
-        uv tool install git+https://github.com/spinje/pflow.git
+        uv tool install pflow-cli
         ```
       </Tab>
       <Tab title="pipx">
         ```bash
-        pipx install git+https://github.com/spinje/pflow.git
+        pipx install pflow-cli
         ```
       </Tab>
     </Tabs>
@@ -32,7 +32,7 @@ pflow is designed to be used by AI agents (Claude Code, Cursor, Windsurf) rather
     ```
   </Step>
   <Step title="Set up your API key">
-    pflow uses an LLM for **intelligent discovery** - finding the right workflows and nodes without your agent needing to load everything into context. You can use any provider supported by [Simon Willison's llm](https://llm.datasette.io/).
+    pflow uses an LLM for **discovery** — finding the right workflows and nodes without your agent needing to load everything into context. You can use any provider supported by [Simon Willison's llm](https://llm.datasette.io/).
 
     ```bash
     # OpenAI
@@ -74,12 +74,12 @@ pflow is designed to be used by AI agents (Claude Code, Cursor, Windsurf) rather
     </Accordion>
 
     <Accordion title="When is it required?">
-      LLM configuration is **strongly recommended** if you're using MCP servers. MCP servers expose many tools, and intelligent discovery is how pflow avoids loading all those tool schemas into your agent's context. Without it, you lose the main benefit.
+      Set up an LLM if you're using MCP servers. MCP tool descriptions can consume a third of your agent's context before any work starts — discovery is how pflow avoids that.
 
       For basic usage without MCP servers or testing pflow, the configuration is optional.
 
       <Tip>
-      The cost of pflow's discovery features is minimal compared to running your agent directly. By finding only what's needed, intelligent discovery significantly reduces your agent's token usage, speeds up responses, and improves output quality.
+      Discovery costs a fraction of what your agent spends per task. By loading only what's relevant, it cuts token usage, speeds up responses, and keeps context focused.
       </Tip>
     </Accordion>
   </Step>

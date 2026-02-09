@@ -18,7 +18,7 @@ The `pflow registry` command group manages the node registry - a catalog of all 
 | `describe` | Show detailed node information |
 | `discover` | Find nodes using natural language |
 | `scan` | Add custom nodes from a directory |
-| `run` | Execute a single node for testing |
+| `run` | Run a single node for testing |
 
 ## pflow registry list
 
@@ -214,19 +214,19 @@ Add 2 nodes to registry? [y/N]: y
 ```
 
 <Warning>
-  Custom nodes execute with your user privileges. Only add nodes from sources you trust.
+  Custom nodes run with your user privileges. Only add nodes from sources you trust.
 </Warning>
 
 ## pflow registry run
 
-Execute a single node independently for testing.
+Run a single node independently for testing.
 
 ```bash
 pflow registry run <NODE> [PARAMS...] [OPTIONS]
 ```
 
 **Arguments:**
-- `NODE` - Node name/ID to execute (required)
+- `NODE` - Node name/ID to run (required)
 - `PARAMS` - Parameter key=value pairs
 
 **Options:**
@@ -350,7 +350,7 @@ pflow registry run read-file file_path=/tmp/test.txt --output-format json
 </Tip>
 
 <Note>
-  Agents always use structure mode for template path discovery. The `--output-format json` flag is for debugging and scripting when you need raw output values.
+  Agents use structure mode for template path discovery — they see types and paths, not your actual data. Data only flows at runtime, when the agent isn't involved. The `--output-format json` flag is for debugging and scripting when you need raw output values.
 </Note>
 
 ### Retrieving full values

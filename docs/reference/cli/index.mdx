@@ -7,7 +7,7 @@ icon: "terminal"
 pflow provides a CLI for running workflows, managing MCP servers, and configuring settings.
 
 <Note>
-  **Who runs these commands?** Most pflow commands are run by your AI agent, not by you directly. You handle setup (installation, API keys, MCP servers), then your agent uses pflow to build and execute workflows. This reference documents all commands so you understand what your agent is doing. See [Using pflow](/guides/using-pflow) for what to expect day-to-day.
+  **Who runs these commands?** Most pflow commands are run by your AI agent, not by you directly. You handle setup (installation, API keys, MCP servers), then your agent uses pflow to build and run workflows. This reference documents all commands so you understand what your agent is doing. See [Using pflow](/guides/using-pflow) for what to expect day-to-day.
 </Note>
 
 ## Command structure
@@ -44,7 +44,7 @@ pflow [command] [options] [arguments]
 
 ## Main command
 
-The default `pflow` command runs workflows. Your agent runs this to execute saved workflows or workflow files it has created.
+The default `pflow` command runs workflows. Your agent uses this to run saved workflows or workflow files it has created.
 
 ### Run a saved workflow
 
@@ -60,7 +60,7 @@ pflow ~/workflows/analysis.pflow.md param=value
 ```
 
 <Accordion title="Natural language mode (experimental)">
-  pflow can generate workflows from natural language, but this feature is experimental. For production use, we recommend letting your AI agent build workflows directly.
+  pflow can generate workflows from natural language, but this feature is experimental. For production use, let your AI agent build workflows directly.
 
   ```bash
   pflow "read data.txt and summarize the content"
@@ -79,7 +79,7 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `--output-format text\|json` | Output format (default: text) |
 | `-p, --print` | Force non-interactive output |
 | `--no-trace` | Disable workflow trace saving |
-| `--validate-only` | Validate workflow without executing |
+| `--validate-only` | Validate workflow without running |
 | `--help` | Show help message |
 
 <Accordion title="Planner options (experimental)">
@@ -259,14 +259,14 @@ pflow -p my-workflow > output.txt
 
 ## Validation mode
 
-Validate a workflow without executing it:
+Validate a workflow without running it:
 
 ```bash
 pflow --validate-only workflow.pflow.md
 pflow --validate-only my-saved-workflow
 ```
 
-Agents use this to check workflows before running them. Exit code 0 means valid.
+Agents use this to check workflows before running them — pflow catches template errors, type mismatches, and missing inputs during validation, so problems surface immediately instead of after step 5 fails. Exit code 0 means valid.
 
 ## Traces
 

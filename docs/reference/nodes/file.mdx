@@ -8,7 +8,7 @@ icon: "file"
   **Agent commands.** Your AI agent uses these nodes in workflows. You don't configure them directly.
 </Note>
 
-The file nodes handle local filesystem operations. They support both text and binary files, with automatic encoding detection and safe atomic writes.
+The file nodes read, write, copy, move, and delete files on disk. They handle both text and binary data with automatic encoding detection. For processing file contents — transforming data, extracting information — pipe the output to a code or LLM node.
 
 ## read-file
 

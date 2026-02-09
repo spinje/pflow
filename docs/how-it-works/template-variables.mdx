@@ -8,7 +8,7 @@ icon: "braces"
   **For the curious.** Your AI agent handles template variables automatically. This explains how data flows between nodes and what's happening when you see `${variable}` syntax in workflows or traces.
 </Info>
 
-Template variables are how pflow connects data between nodes in workflows. When you see `${variable}` syntax, it's pulling data from previous nodes, workflow inputs, or nested structures.
+Template variables let nodes pass data to each other without writing glue code. When you see `${variable}` syntax in a workflow, it's pulling data from previous nodes, workflow inputs, or nested structures.
 
 ## Basic syntax
 
@@ -119,7 +119,7 @@ Even though `fetch.stdout` is a string containing JSON, the nested access `${fet
 4. Returns the value at `results[0].name`
 
 <Tip>
-  This means shell commands that output JSON work seamlessly with template variables - no manual `json.loads()` needed.
+  This means shell commands that output JSON work directly with template variables — no manual `json.loads()` needed.
 </Tip>
 
 ## Workflow inputs
@@ -220,6 +220,8 @@ pflow validates template variables at workflow creation time:
 - **Unknown variables** → Error: "Unresolved variable: `${typo}`"
 - **Type mismatches** → Warning: "Expected string, got dict"
 - **Invalid syntax** → Error: "Invalid template: `${foo.}`"
+
+This works because node types declare their outputs — pflow knows at creation time what fields exist and what types they have. With arbitrary code, you'd discover these mismatches at runtime.
 
 <Accordion title="Compile-time vs runtime validation">
   Most validation happens when the workflow is created (compile-time). Some validations happen during execution (runtime):
