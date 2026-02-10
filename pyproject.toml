@@ -110,6 +110,7 @@ module = "pflow.pocketflow.*"
 ignore_errors = true
 
 [tool.pytest.ini_options]
+pythonpath = ["."]
 testpaths = ["tests"]
 markers = [
     "serial: marks tests that must run sequentially (deselect with '-m \"not serial\"')",

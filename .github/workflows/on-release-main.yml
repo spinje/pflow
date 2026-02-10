@@ -36,7 +36,7 @@ jobs:
         uses: ./.github/actions/setup-python-env
 
       - name: Run tests
-        run: uv run pytest --timeout=30 -x -q
+        run: uv run pytest -x -q
 
   publish:
     runs-on: ubuntu-latest
