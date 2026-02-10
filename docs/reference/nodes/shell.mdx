@@ -99,7 +99,7 @@ jq -r '.data.name'
 <Accordion title="Technical details">
   When a workflow is created, pflow checks if command templates contain dict or list variables. If found, you'll see an error like:
 
-  ```
+  ````
   Shell node 'process': cannot use ${api.response} (type: object) in command parameter.
 
   PROBLEM: Object data embedded in shell commands breaks shell parsing. Dict/list
@@ -110,7 +110,7 @@ jq -r '.data.name'
     ```shell command
     jq '.field'
     ```
-  ```
+  ````
 
   This validation happens at workflow creation time (compile-time), not during execution, so you get immediate feedback.
 

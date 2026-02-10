@@ -1,5 +1,23 @@
 {
   "$schema": "https://mintlify.com/docs.json",
+  "_disabled_anchors": [
+    {
+      "anchor": "Website",
+      "href": "https://pflow.run",
+      "icon": "app-window"
+    },
+    {
+      "anchor": "Blog",
+      "href": "https://pflow.run/blog",
+      "icon": "newspaper"
+    }
+  ],
+  "_disabled_navbar_links": [
+    {
+      "label": "Blog",
+      "href": "https://pflow.run/blog"
+    }
+  ],
   "name": "pflow",
   "theme": "mint",
   "icons": {
@@ -110,26 +128,11 @@
       }
     ],
     "global": {
-      "anchors": [
-        {
-          "anchor": "Website",
-          "href": "https://pflow.run",
-          "icon": "app-window"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://pflow.run/blog",
-          "icon": "newspaper"
-        }
-      ]
+      "anchors": []
     }
   },
   "navbar": {
     "links": [
-      {
-        "label": "Blog",
-        "href": "https://pflow.run/blog"
-      },
       {
         "label": "GitHub",
         "href": "https://github.com/spinje/pflow"
