@@ -17,7 +17,7 @@ pflow helps your agent build workflows it can reuse. It composes pre-built nodes
 
 Saved workflows can be published as Skills with `pflow skill save`, making them available across Claude Code, Cursor, and other platforms.
 
-<!-- Demo GIF: run workflow → save → pflow skill save → run by name -->
+![pflow demo](assets/demo.gif)
 
 ## What a workflow looks like
 

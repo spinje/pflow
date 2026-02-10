@@ -184,3 +184,7 @@ node_modules/
 
 # User data directory (workflows, settings, traces)
 .pflow/
+
+# Demo recordings
+assets/demo.cast
+assets/README.md
