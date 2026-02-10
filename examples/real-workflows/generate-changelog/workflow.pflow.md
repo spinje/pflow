@@ -239,6 +239,9 @@ for c in commits:
         if summaries:
             c['pr_summary'] = '\n\n'.join(summaries[0].split('\n\n')[:2])[:800]
 
+if not commits:
+    raise ValueError(f'No commits found between {tag} and {to_ref} — check that both refs exist')
+
 result: list = commits
 ```
 
@@ -1138,19 +1141,19 @@ lines = [
     f'Date: {date_iso}\n',
     'Created files:',
     f'  {changelog_path}',
-    f'    {len(entries)} entries with PR links (sorted: Removed > Changed > Added > Fixed > Improved)',
+    f'    {len(entries)} entries with PR links',
 ]
 
 if mintlify_path:
     lines.append(f'  {mintlify_path}')
-    lines.append('    Same entries as Mintlify <Update> component, grouped by theme')
 
 lines.append(f'  {context_path}')
-lines.append(f'    {len(skipped)} skipped changes, {len(task_reviews)} task reviews embedded in entries — review before committing')
+lines.append(f'    {len(skipped)} skipped changes, {len(task_reviews)} — review before committing')
 
 if slack_channel:
-    lines.append(f'  #{slack_channel}')
-    lines.append('    Changelog posted to Slack')
+    lines.append('')
+    lines.append(f'Changelog posted to Slack channel #{slack_channel}')
+    lines.append('')
 
 result: str = '\n'.join(lines)
 ```
@@ -1159,15 +1162,13 @@ result: str = '\n'.join(lines)
 
 ### summary
 
-Release summary displayed after execution. Shows version, bump type,
-and created files with descriptions.
+Release summary displayed after execution. Shows version, bump type, and created files.
 
 - source: ${create-summary.result}
 
 ### suggested_version
 
-Next version from semantic versioning rules: any Removed or Changed
-entry triggers major, any Added triggers minor, otherwise patch.
+Next version from semantic versioning rules: any Removed or Changed entry triggers major, any Added triggers minor, otherwise patch.
 
 - source: ${compute-version.result.next_version}
 
