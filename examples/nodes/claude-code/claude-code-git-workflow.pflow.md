@@ -90,5 +90,8 @@ Save the generated PR description to a template file.
 
 Display a cost report for the workflow execution.
 
-- type: echo
-- message: "\nWorkflow Cost Report:\n- Analysis: $${analyze_changes._claude_metadata.total_cost_usd} (${analyze_changes._claude_metadata.duration_ms}ms)\n- PR Generation: $${generate_pr._claude_metadata.total_cost_usd} (${generate_pr._claude_metadata.duration_ms}ms)\n- Total Cost: ~$${analyze_changes._claude_metadata.total_cost_usd + generate_pr._claude_metadata.total_cost_usd}\n- Total Turns Used: ${analyze_changes._claude_metadata.num_turns + generate_pr._claude_metadata.num_turns}"
+- type: shell
+
+```text command
+echo "Workflow Cost Report:\n- Analysis: $${analyze_changes._claude_metadata.total_cost_usd} (${analyze_changes._claude_metadata.duration_ms}ms)\n- PR Generation: $${generate_pr._claude_metadata.total_cost_usd} (${generate_pr._claude_metadata.duration_ms}ms)"
+```

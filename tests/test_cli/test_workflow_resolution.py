@@ -265,7 +265,6 @@ class TestWorkflowResolutionCLI:
             assert result.exit_code == 1
             assert "Workflow 'unknown-workflow' not found" in result.output
             assert "Use 'pflow workflow list' to see available workflows" in result.output
-            assert "Or use quotes for natural language" in result.output
 
     def test_pass_parameters_to_named_workflow(self):
         """Test passing parameters to a named workflow - simplified test."""

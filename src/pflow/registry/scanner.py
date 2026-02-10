@@ -129,14 +129,25 @@ def extract_metadata(cls: type, module_path: str, file_path: Path, extractor: Op
 
 
 def _calculate_module_path(py_file: Path, directory: Path) -> str:
-    """Calculate the module path for a Python file."""
-    if "pflow" in str(py_file):
-        # For pflow modules, calculate from src/
-        src_path = py_file.parent
-        while src_path.name != "src" and src_path.parent != src_path:
-            src_path = src_path.parent
-        if src_path.name == "src":
-            return "pflow." + path_to_module(py_file, src_path / "pflow")
+    """Calculate the module path for a Python file.
+
+    For pflow package files, finds the 'pflow' package root in the path
+    and computes a fully-qualified dotted module path from there.
+    Works whether running from source (src/pflow/...) or installed
+    (site-packages/pflow/...).
+
+    For non-pflow files (user nodes), falls back to computing relative
+    to the given directory.
+    """
+    # For pflow package files, find the pflow package root in the path
+    parts = py_file.parts
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i] == "pflow":
+            # Build dotted module path from "pflow" onwards
+            module_parts = list(parts[i:])
+            module_parts[-1] = module_parts[-1][:-3]  # strip .py
+            return ".".join(module_parts)
+    # Fallback for non-pflow files (user nodes)
     return path_to_module(py_file, directory)
 
 

@@ -57,7 +57,30 @@ Save the review report as a markdown file.
 
 - type: write-file
 - path: ${input.file_path}.review.md
-- content: "# Code Review Report\n\n**File:** ${input.file_path}\n**Date:** $(date)\n\n## Overall Assessment\n- **Quality:** ${review.result.overall_quality}\n- **Security Score:** ${review.result.security_score}/10\n- **Critical Issues:** ${review.result.has_critical_issues}\n\n## Issues Found\n${review.result.issues}\n\n## Recommended Improvements\n${review.result.improvements}\n\n## Refactored Code\n```python\n${review.result.refactored_code}\n```\n\n---\n*Review cost: $${review._claude_metadata.total_cost_usd}*"
+
+```text content
+# Code Review Report
+
+**File:** ${input.file_path}
+**Date:** $(date)
+
+## Overall Assessment
+- **Quality:** ${review.result.overall_quality}
+- **Security Score:** ${review.result.security_score}/10
+- **Critical Issues:** ${review.result.has_critical_issues}
+
+## Issues Found
+${review.result.issues}
+
+## Recommended Improvements
+${review.result.improvements}
+
+## Refactored Code
+${review.result.refactored_code}
+
+---
+*Review cost: $${review._claude_metadata.total_cost_usd}*
+```
 
 ### save_improved
 

@@ -78,23 +78,35 @@ class TestCLIBehaviorWithInvalidInput:
     """Integration tests for CLI behavior with invalid planner input."""
 
     def test_unquoted_multi_word_shows_error(self):
-        """Multiple unquoted words should show helpful error."""
+        """Multiple unquoted words should show helpful error with usage guidance.
+
+        FIX HISTORY:
+        - Error message changed from "must be quoted" with quote suggestion
+          to a usage-focused message showing workflow file and saved workflow examples.
+          Natural language planner references were removed from CLI messages.
+        """
         runner = CliRunner()
         result = runner.invoke(workflow_command, ["lets", "do", "this"])
 
         assert result.exit_code == 1
         assert "Invalid input" in result.output
-        assert "must be quoted" in result.output
-        assert 'pflow "lets do this"' in result.output
+        assert "Usage:" in result.output
+        assert "pflow workflow.pflow.md" in result.output
+        assert "pflow my-workflow param=value" in result.output
 
     def test_mixed_quoted_unquoted_shows_error(self):
-        """Mixed quoted/unquoted should show helpful error."""
+        """Mixed quoted/unquoted should show helpful error with usage guidance.
+
+        FIX HISTORY:
+        - Error message changed from "must be quoted" to usage-focused guidance.
+          Natural language planner references were removed from CLI messages.
+        """
         runner = CliRunner()
         result = runner.invoke(workflow_command, ["jkahsd", "do something"])
 
         assert result.exit_code == 1
         assert "Invalid input" in result.output
-        assert "must be quoted" in result.output
+        assert "Usage:" in result.output
 
     def test_single_unquoted_word_not_workflow_shows_error(self):
         """Single unquoted word that's not a workflow should error."""

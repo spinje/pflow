@@ -3530,7 +3530,6 @@ def _handle_workflow_not_found(ctx: click.Context, workflow_name: str, source: s
             click.echo(f"  - {name}", err=True)
     else:
         click.echo("\nUse 'pflow workflow list' to see available workflows.", err=True)
-        click.echo('Or use quotes for natural language: pflow "your request"', err=True)
 
     ctx.exit(1)
 
@@ -3730,10 +3729,10 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
         click.echo("❌ No workflow specified.", err=True)
         click.echo("", err=True)
         click.echo("Usage:", err=True)
-        click.echo('  pflow "natural language prompt"    # Use quotes for planning', err=True)
-        click.echo("  pflow workflow.pflow.md                 # Run workflow from file", err=True)
+        click.echo("  pflow workflow.pflow.md             # Run workflow from file", err=True)
         click.echo("  pflow my-workflow                   # Run saved workflow", err=True)
         click.echo("  pflow workflow list                 # List saved workflows", err=True)
+        click.echo("  pflow instructions usage            # Instructions for AI agents", err=True)
         ctx.exit(1)
 
     if len(workflow) == 1:
@@ -3741,19 +3740,15 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
         click.echo(f"❌ '{word}' is not a known workflow or command.", err=True)
         click.echo("", err=True)
         click.echo("Did you mean:", err=True)
-        click.echo(f'  pflow "{word} <rest of prompt>"    # Use quotes for natural language', err=True)
         click.echo("  pflow workflow list                 # List saved workflows", err=True)
+        click.echo("  pflow workflow.pflow.md             # Run workflow from file", err=True)
         ctx.exit(1)
 
-    joined = " ".join(workflow)
     click.echo(f"❌ Invalid input: {workflow[0]} {workflow[1]} ...", err=True)
     click.echo("", err=True)
-    click.echo("Natural language prompts must be quoted:", err=True)
-    click.echo(f'  pflow "{joined}"', err=True)
-    click.echo("", err=True)
-    click.echo("Or use a workflow:", err=True)
-    click.echo("  pflow workflow.pflow.md", err=True)
-    click.echo("  pflow my-workflow param=value", err=True)
+    click.echo("Usage:", err=True)
+    click.echo("  pflow workflow.pflow.md             # Run workflow from file", err=True)
+    click.echo("  pflow my-workflow param=value        # Run saved workflow", err=True)
     ctx.exit(1)
 
 
@@ -3847,9 +3842,7 @@ def workflow_command(
     validate_only: bool,
     workflow: tuple[str, ...],
 ) -> None:
-    """pflow - Plan Once, Run Forever
-
-    Natural language to deterministic workflows.
+    """Reusable CLI workflows from shell, LLM, HTTP, code, and MCP nodes.
 
     \b
     Usage:

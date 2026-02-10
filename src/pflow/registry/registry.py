@@ -27,6 +27,7 @@ class Registry:
 
         # Add caching
         self._cached_nodes: Optional[dict[str, dict[str, Any]]] = None
+        self._registry_version: Optional[str] = None
 
         # Lazy load settings manager to avoid circular import
         self._settings_manager: Optional[Any] = None
@@ -103,6 +104,7 @@ class Registry:
 
             # Handle new format with metadata
             if isinstance(data, dict) and "nodes" in data:
+                self._registry_version = data.get("version")
                 return data["nodes"]  # type: ignore[no-any-return]
 
             # Handle old format (direct node dict)
@@ -327,20 +329,39 @@ class Registry:
         logger.info(f"Saved {len(nodes)} nodes to registry with metadata")
 
     def _core_nodes_outdated(self, nodes: dict[str, dict[str, Any]]) -> bool:
-        """Check if core nodes need refresh due to version change.
+        """Check if core nodes need refresh due to version change."""
+        if not self._registry_version:
+            return False
 
-        For MVP, always return False (no version checking).
-        """
-        # TODO: In future, check if pflow version differs from registry version
+        import pflow
+
+        current_version = getattr(pflow, "__version__", "0.0.1")
+        if self._registry_version != current_version:
+            logger.info(
+                f"Registry version {self._registry_version} differs from "
+                f"pflow version {current_version}, refreshing core nodes"
+            )
+            return True
         return False
 
     def _refresh_core_nodes(self, nodes: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Refresh core nodes while preserving user nodes.
+        """Refresh core nodes while preserving user and MCP nodes."""
+        # Preserve non-core nodes
+        preserved = {name: data for name, data in nodes.items() if data.get("type") in ("user", "mcp")}
 
-        For MVP, just returns nodes unchanged.
-        """
-        # TODO: In future, re-scan core nodes and merge with user nodes
-        return nodes
+        # Re-discover core nodes
+        self._auto_discover_core_nodes()
+
+        # Reload the freshly written core nodes
+        refreshed = self._load_from_file()
+
+        # Merge preserved nodes back in
+        refreshed.update(preserved)
+
+        # Save the merged result
+        self._save_with_metadata(refreshed)
+
+        return refreshed
 
     def search(self, query: str) -> list[tuple[str, dict[str, Any], int]]:
         """Search with multi-keyword support (AND logic).

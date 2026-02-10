@@ -11,8 +11,7 @@ def test_cli_help_command():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "pflow - Plan Once, Run Forever" in result.output
-    assert "Natural language to deterministic workflows" in result.output
+    assert "Reusable CLI workflows from shell, LLM, HTTP, code, and MCP nodes" in result.output
     assert "--version" in result.output
 
 

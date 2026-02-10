@@ -14,8 +14,7 @@ def test_main_command_help():
     result = runner.invoke(main, ["--help"])
 
     assert result.exit_code == 0
-    assert "pflow - Plan Once, Run Forever" in result.output
-    assert "Natural language to deterministic workflows" in result.output
+    assert "Reusable CLI workflows from shell, LLM, HTTP, code, and MCP nodes" in result.output
     # Updated help text assertions for Task 119 changes
     assert "pflow my-workflow input=data.txt" in result.output  # Named workflow example
     assert "Run workflow from file" in result.output

@@ -67,5 +67,8 @@ confidence:
 
 Format the debug analysis into a readable report.
 
-- type: echo
-- message: "DEBUG ANALYSIS REPORT\n========================\n\n**Error Type:** ${analyze_error.result.error_type}\n**Confidence:** ${analyze_error.result.confidence}/10\n\n## Root Cause\n${analyze_error.result.root_cause}\n\n## Immediate Fix\n${analyze_error.result.immediate_fix}\n\n## Code Fix\n```\n${analyze_error.result.code_snippet}\n```\n\n## Long-term Solution\n${analyze_error.result.long_term_solution}\n\n## Prevention Tips\n${analyze_error.result.prevention_tips}\n\n---\nAnalysis cost: $${analyze_error._claude_metadata.total_cost_usd}"
+- type: shell
+
+```text command
+echo "DEBUG ANALYSIS REPORT\n========================\n\n**Error Type:** ${analyze_error.result.error_type}\n**Confidence:** ${analyze_error.result.confidence}/10\n\n## Root Cause\n${analyze_error.result.root_cause}\n\n## Immediate Fix\n${analyze_error.result.immediate_fix}\n\n## Code Fix\n${analyze_error.result.code_snippet}\n\n## Long-term Solution\n${analyze_error.result.long_term_solution}\n\n## Prevention Tips\n${analyze_error.result.prevention_tips}\n\n---\nAnalysis cost: $${analyze_error._claude_metadata.total_cost_usd}"
+```

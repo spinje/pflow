@@ -25,5 +25,8 @@ Save the generated code to a file.
 
 Report generation results and cost.
 
-- type: echo
-- message: "Code generated and saved to fibonacci.py\n\nExecution cost: $${generate._claude_metadata.total_cost_usd}\nDuration: ${generate._claude_metadata.duration_ms}ms\nTokens used: ${generate._claude_metadata.usage.input_tokens} input, ${generate._claude_metadata.usage.output_tokens} output"
+- type: shell
+
+```text command
+echo "Code generated and saved to fibonacci.py\n\nExecution cost: $${generate._claude_metadata.total_cost_usd}\nDuration: ${generate._claude_metadata.duration_ms}ms\nTokens used: ${generate._claude_metadata.usage.input_tokens} input, ${generate._claude_metadata.usage.output_tokens} output"
+```

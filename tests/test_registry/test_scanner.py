@@ -17,6 +17,7 @@ from unittest.mock import MagicMock
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from pflow.registry.scanner import (
+    _calculate_module_path,
     extract_metadata,
     scan_for_nodes,
     temporary_syspath,
@@ -473,3 +474,56 @@ class Node2(BaseNode):
             assert "Node1" in class_names
             assert "Node2" in class_names
             assert len(results) == 2
+
+
+class TestCalculateModulePath:
+    """Test _calculate_module_path for source, installed, and non-pflow paths.
+
+    FIX HISTORY:
+    - 2025-02-10: Added to verify fix for installed-package module path
+      calculation. The old implementation searched upward for a 'src' directory,
+      which broke when pflow was pip-installed (site-packages has no 'src').
+      The new implementation scans path parts in reverse for the 'pflow'
+      package root, working for both source trees and site-packages.
+    """
+
+    def test_source_path_produces_full_module(self):
+        """A file under src/pflow/ should produce a dotted pflow.* module path."""
+        py_file = Path("/Users/x/projects/pflow/src/pflow/nodes/shell/shell.py")
+        directory = Path("/Users/x/projects/pflow/src/pflow/nodes/shell")
+
+        result = _calculate_module_path(py_file, directory)
+
+        assert result == "pflow.nodes.shell.shell"
+
+    def test_site_packages_path_produces_full_module(self):
+        """A file under site-packages/pflow/ should also produce a dotted pflow.* module path.
+
+        This is the key scenario the fix addresses: installed packages have no
+        'src' parent, so the old implementation fell through to the fallback
+        and produced an incorrect relative module path.
+        """
+        py_file = Path("/Users/x/.local/lib/python3.13/site-packages/pflow/nodes/shell/shell.py")
+        directory = Path("/Users/x/.local/lib/python3.13/site-packages/pflow/nodes/shell")
+
+        result = _calculate_module_path(py_file, directory)
+
+        assert result == "pflow.nodes.shell.shell"
+
+    def test_non_pflow_path_uses_fallback(self):
+        """A file outside any pflow package should fall back to path_to_module."""
+        py_file = Path("/home/user/custom_nodes/my_node.py")
+        directory = Path("/home/user/custom_nodes")
+
+        result = _calculate_module_path(py_file, directory)
+
+        assert result == "my_node"
+
+    def test_nested_pflow_node_path(self):
+        """A nested pflow node file should produce the correct dotted module path."""
+        py_file = Path("/some/path/pflow/nodes/file/read_file.py")
+        directory = Path("/some/path/pflow/nodes/file")
+
+        result = _calculate_module_path(py_file, directory)
+
+        assert result == "pflow.nodes.file.read_file"

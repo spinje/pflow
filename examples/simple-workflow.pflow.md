@@ -1,12 +1,12 @@
 # Simple Workflow
 
-A minimal workflow that echoes a greeting message.
+A minimal workflow that shows system info.
 
 ## Steps
 
-### greeting
+### system-info
 
-Display a hello message from pflow.
+Display basic system information.
 
-- type: echo
-- message: Hello from pflow!
+- type: shell
+- command: echo "Hello from pflow! Running on $(uname -s) $(uname -m)"

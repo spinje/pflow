@@ -15,12 +15,21 @@ def test_registry_load_respects_settings(tmp_path):
     This test verifies that the registry correctly filters nodes
     based on settings when load() is called. This is the core
     mechanism that protects users from accessing denied nodes.
+
+    FIX HISTORY:
+    - Registry version must match current pflow version to prevent
+      _core_nodes_outdated() from triggering a refresh that replaces
+      the test's fake nodes with real core nodes.
     """
+    import pflow
     from pflow.registry import Registry
+
+    # Use the current pflow version to prevent version-based refresh
+    current_version = getattr(pflow, "__version__", "0.0.1")
 
     # Create a test registry file with various node types
     registry_data = {
-        "version": "0.1.0",
+        "version": current_version,
         "nodes": {
             "echo": {"module": "pflow.nodes.test.echo", "class_name": "EchoNode", "type": "core"},
             "test-node": {"module": "pflow.nodes.test_node", "class_name": "TestNode", "type": "core"},

@@ -10,6 +10,7 @@ REFACTOR HISTORY:
 
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -470,3 +471,119 @@ class TestRegistryRealWorldScenarios:
             assert len(final) == 1
             assert "node-2" in final
             assert "node-1" not in final
+
+
+class TestRegistryVersionRefresh:
+    """Test version-based registry refresh behavior.
+
+    When pflow is upgraded, the registry version (stored during _save_with_metadata)
+    may differ from the running pflow version. In that case, core nodes are rescanned
+    while user and MCP nodes are preserved.
+
+    FIX HISTORY:
+    - 2025-02-10: Added to verify version-mismatch detection and selective
+      refresh of core nodes while preserving user/MCP nodes.
+    """
+
+    def test_outdated_returns_false_when_versions_match(self):
+        """Registry whose version matches the current pflow version is not outdated."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            # Save a registry with current pflow version via _save_with_metadata
+            test_nodes = {
+                "test-node": {
+                    "module": "test.module",
+                    "class_name": "TestNode",
+                    "type": "core",
+                },
+            }
+            registry._save_with_metadata(test_nodes)
+
+            # Load from file to populate _registry_version
+            registry2 = Registry(registry_path)
+            nodes = registry2._load_from_file()
+
+            # Version should match -- _core_nodes_outdated should return False
+            assert registry2._core_nodes_outdated(nodes) is False
+
+    def test_outdated_returns_true_when_versions_differ(self):
+        """Registry with a stale version should be detected as outdated.
+
+        We save a registry with _save_with_metadata (which stamps the current
+        version), load it, then patch pflow.__version__ to a newer value so
+        the comparison sees a mismatch.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            # Save with current version
+            test_nodes = {
+                "test-node": {
+                    "module": "test.module",
+                    "class_name": "TestNode",
+                    "type": "core",
+                },
+            }
+            registry._save_with_metadata(test_nodes)
+
+            # Load to populate _registry_version
+            registry2 = Registry(registry_path)
+            nodes = registry2._load_from_file()
+            assert registry2._registry_version is not None
+
+            # Patch pflow.__version__ to a different value.
+            # pflow doesn't define __version__ directly (it uses importlib.metadata),
+            # so we need create=True to temporarily add the attribute.
+            with patch("pflow.__version__", "99.99.99", create=True):
+                assert registry2._core_nodes_outdated(nodes) is True
+
+    def test_refresh_preserves_user_nodes(self):
+        """When core nodes are refreshed, user and MCP nodes must survive.
+
+        We write a registry containing both core nodes and user/MCP nodes,
+        then call _refresh_core_nodes. The returned dict must still contain
+        the user and MCP entries.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            # Build a mixed registry with core + user + mcp nodes
+            mixed_nodes = {
+                "shell": {
+                    "module": "pflow.nodes.shell.shell",
+                    "class_name": "ShellNode",
+                    "type": "core",
+                },
+                "my-custom-node": {
+                    "module": "my_project.nodes.custom",
+                    "class_name": "CustomNode",
+                    "type": "user",
+                },
+                "mcp-tool": {
+                    "module": "pflow.nodes.mcp.mcp",
+                    "class_name": "McpNode",
+                    "type": "mcp",
+                },
+            }
+            registry._save_with_metadata(mixed_nodes)
+
+            # Reload so _registry_version is set
+            registry2 = Registry(registry_path)
+            nodes = registry2._load_from_file()
+
+            # Refresh core nodes
+            refreshed = registry2._refresh_core_nodes(nodes)
+
+            # User and MCP nodes must be preserved
+            assert "my-custom-node" in refreshed
+            assert refreshed["my-custom-node"]["type"] == "user"
+            assert "mcp-tool" in refreshed
+            assert refreshed["mcp-tool"]["type"] == "mcp"
+
+            # Core nodes should be present (from real auto-discovery)
+            core_nodes = {name: data for name, data in refreshed.items() if data.get("type") == "core"}
+            assert len(core_nodes) > 0, "Refresh should have discovered core nodes"
