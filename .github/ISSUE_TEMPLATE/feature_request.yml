@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest something you'd use
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that's hard or impossible right now?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would the solution look like?
+      description: How would you want this to work? CLI examples, workflow snippets, or a rough description are all fine.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've considered
+      description: Workarounds you've tried, other tools that handle this, or reasons this might not be worth doing.

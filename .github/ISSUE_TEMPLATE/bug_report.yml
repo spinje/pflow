@@ -1,0 +1,52 @@
+name: Bug report
+description: Something isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect vs what actually happened?
+      placeholder: "I ran `pflow my-workflow.pflow.md` and got..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to trigger the bug. Include the workflow file if relevant.
+      placeholder: |
+        1. Create a workflow with...
+        2. Run `pflow ...`
+        3. See error...
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error output
+      description: Paste the full error message or traceback.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: pflow version
+      description: Run `pflow --version` to get this.
+      placeholder: "0.8.0"
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.12"
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "macOS 15, Ubuntu 24.04, etc."
