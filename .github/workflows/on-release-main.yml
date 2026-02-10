@@ -11,17 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Export tag
+      - name: Export tag without v prefix
         id: vars
-        run: echo tag=${GITHUB_REF#refs/*/} >> $GITHUB_OUTPUT
-        if: ${{ github.event_name == 'release' }}
+        run: echo "tag=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Update project version
         run: |
           sed -i "s/^version = \".*\"/version = \"$RELEASE_VERSION\"/" pyproject.toml
         env:
           RELEASE_VERSION: ${{ steps.vars.outputs.tag }}
-        if: ${{ github.event_name == 'release' }}
 
       - name: Upload updated pyproject.toml
         uses: actions/upload-artifact@v4
@@ -29,9 +27,20 @@ jobs:
           name: pyproject-toml
           path: pyproject.toml
 
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+
+      - name: Run tests
+        run: uv run pytest --timeout=30 -x -q
+
   publish:
     runs-on: ubuntu-latest
-    needs: [set-version]
+    needs: [set-version, test]
     permissions:
       id-token: write
     steps:
