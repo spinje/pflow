@@ -5,6 +5,75 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="February 2026" description="v0.8.0" tags={["New releases", "Improvements", "Bug fixes"]}>
+  First public release on PyPI. pflow is a CLI workflow engine — AI agents
+  write `.pflow.md` files that chain shell commands, LLM calls, HTTP requests,
+  and Python code through a shared data store. Workflows run the same way
+  every time, without burning tokens on repeated tool calls.
+
+  ```bash
+  uv tool install pflow-cli
+  ```
+
+  ## Agent skills
+
+  You can now publish workflows as native skills for AI agents. The `pflow skill`
+  command symlinks your saved workflows to the configuration directories for
+  Claude Code, Cursor, GitHub Copilot, and Codex.
+
+  ```bash
+  # Publish a workflow to multiple tools at once
+  pflow skill save pr-analyzer --cursor --copilot
+  ```
+
+  <Tip>
+    Published skills are symlinks, not copies. When you edit the original workflow,
+    the agent's skill updates instantly without needing to re-publish.
+  </Tip>
+
+  **Highlights**
+  - `pflow skill save` enriches workflows with usage sections and metadata for the agent.
+  - Support for multiple targets: `--cursor`, `--copilot`, `--codex`, and `--personal`.
+  - `pflow workflow history` shows execution stats and last-used inputs.
+  - Improved discovery matching by including input names and node IDs in the context.
+
+  ## Data integrity
+
+  LLM nodes no longer discard prose when extracting JSON. Previously, if a response
+  contained a JSON block, the node threw away the surrounding text. Now, the full
+  response is stored as a string, and JSON parsing happens on-demand via the
+  template system.
+
+  **Highlights**
+  - LLM nodes preserve prose explanations alongside code blocks.
+  - JSON fields are still accessible via dot notation: `${node.response.field}`.
+  - Numeric strings (like Discord IDs) declared as `type: string` are no longer coerced to integers.
+  - Batch node error messages now correctly list available outputs for inner items.
+  - Workflow frontmatter tracks average execution duration for performance monitoring.
+
+  ## Developer experience
+
+  Runtime errors in Code nodes now point to the exact line number in your
+  `.pflow.md` file, rather than the temporary Python script. We also improved
+  environment variable handling in MCP configurations to support dynamic URLs.
+
+  **Highlights**
+  - Code node errors show `Location` and `Source` fields with correct line mapping.
+  - MCP server configs now expand environment variables in URLs and `settings.json`.
+  - Markdown parser specifically detects and explains nested backtick errors.
+
+  <Accordion title="Package name">
+    The PyPI package is `pflow-cli`, not `pflow` (that name was already taken).
+    This is the first PyPI release — if you installed from git before, switch to:
+
+    ```bash
+    uv tool install pflow-cli
+    # or
+    pipx install pflow-cli
+    ```
+  </Accordion>
+</Update>
+
 <Update label="February 2026" description="v0.7.0" tags={["New releases", "Breaking changes"]}>
   ## Workflows are documentation
 
