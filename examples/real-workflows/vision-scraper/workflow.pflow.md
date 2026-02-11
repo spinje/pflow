@@ -1,4 +1,4 @@
-# Webpage to Markdown
+# Vision Scraper
 
 Convert a webpage to clean markdown with AI-powered image analysis.
 Uses Jina Reader for initial conversion and Gemini vision for image descriptions.

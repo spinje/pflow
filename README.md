@@ -81,7 +81,7 @@ Data flows between steps through template variables — `${get-latest-tag.stdout
 
 Four node types in one workflow: a shell command, inline Python, 70 parallel LLM calls, and a Slack message via MCP in three lines.
 
-More examples: [release announcements](examples/real-workflows/release-announcements/), [webpage to markdown](examples/real-workflows/webpage-to-markdown/)
+More examples: [release announcements](examples/real-workflows/release-announcements/), [vision scraper](examples/real-workflows/vision-scraper/)
 
 Once saved, this runs the same way every time — same steps, same order, same data flow between them.
 

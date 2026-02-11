@@ -2,7 +2,7 @@
 
 Production-ready workflows demonstrating pflow capabilities.
 
-## Webpage to AI-Readable Markdown
+## Vision Scraper
 
 Converts any webpage into clean markdown with image content extracted via vision AI. Unlike basic scrapers that lose visual information, this workflow makes diagrams, charts, and screenshots fully accessible to AI agents.
 
@@ -13,7 +13,7 @@ Converts any webpage into clean markdown with image content extracted via vision
 ### Quick Start
 
 ```bash
-pflow examples/real-workflows/webpage-to-markdown/workflow.json \
+pflow examples/real-workflows/vision-scraper/workflow.pflow.md \
   target_url="https://www.anthropic.com/engineering/building-effective-agents"
 ```
 
@@ -76,7 +76,7 @@ Context Usage Comparison:
 
 **Skip image analysis** (faster, free):
 ```bash
-pflow examples/real-workflows/webpage-to-markdown/workflow.json \
+pflow examples/real-workflows/vision-scraper/workflow.pflow.md \
   target_url="https://example.com/article" \
   describe_images=false
 ```
@@ -96,9 +96,9 @@ pflow examples/real-workflows/webpage-to-markdown/workflow.json \
 ### Files
 
 ```
-webpage-to-markdown/
-├── workflow.json    # The 7-node workflow
-└── prompt.md        # Prompt to reproduce this workflow
+vision-scraper/
+├── workflow.pflow.md  # The 7-node workflow
+└── prompt.md          # Prompt to reproduce this workflow
 ```
 
 Example outputs (in parent folder):

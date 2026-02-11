@@ -25,23 +25,23 @@ pflow separates planning from execution:
 
 Nodes are individual tools (call an LLM or API, read a file, or any MCP tool). Workflows chain them together. Save a workflow and your agent can discover it later, reuse it with different inputs, or chain it into a larger workflow.
 
-## Workflows are documentation
+## Built for agents
 
-A pflow workflow is a `.pflow.md` file — a standard markdown document that happens to be executable. Headings describe inputs and steps. Prose explains intent. Code blocks contain the actual commands, prompts, and configuration.
+The workflow format is markdown — headings, YAML, and code blocks. Agents already think in this structure, so they can write and iterate on workflows using patterns they already know.
 
-The format is markdown because that's what agents naturally produce — headings, YAML, code blocks. No framework to learn, no class hierarchy, no imports.
+A side effect: open a `.pflow.md` file on GitHub and it reads like documentation. Render it in your IDE and it's self-explanatory. The same file that executes as a workflow also serves as its own docs.
 
-Open one on GitHub and it reads like documentation. Run it with pflow and it runs as a workflow. Same file, both purposes. No separate documentation to maintain, no opaque config to decipher — the workflow explains itself.
-
-## Two ways to run workflows
-
-**Agent-driven**: Your AI agent discovers, creates, and runs workflows through pflow. This is how most people use pflow — your agent handles automation using workflows it has built.
-
-**Direct CLI**: Saved workflows are CLI commands. Run them directly in scripts, CI/CD pipelines, or cron jobs - no agent needed.
+## From idea to command
 
 ```bash
-# Agent builds this once, then anyone can run it
-pflow analyze-logs input=./logs/api.log format=json
+# Your agent builds and iterates on a .pflow.md workflow file
+claude "Can you help me make a release workflow? Let's use pflow"
+
+# You or your agent save it for easy reuse
+pflow workflow save ./workflow.pflow.md --name generate-changelog
+
+# Anyone can run it
+pflow generate-changelog since_tag=v0.7.0
 ```
 
 ## Get started
