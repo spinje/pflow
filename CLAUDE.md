@@ -365,16 +365,15 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - ✅ Task 104: Python Code Node
 - ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
 - ✅ Task 119: Publish Workflows as Claude Code Skills
+- ✅ Task 49: Publish to PyPI (v0.8.0)
 
 ### Planned Features (in order of priority)
-
-**v0.8.0 - PyPI release:**
-- Task 49: Publish to PyPI
 
 **v0.9.0 - Workflow Expressiveness:**
 - Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
 - Task 108: Smart Trace Debug Output
+- Task 125: Human-in-the-Loop Approval Gates
 
 **v0.9.1 - Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
