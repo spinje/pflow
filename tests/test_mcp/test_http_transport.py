@@ -2,6 +2,8 @@
 
 import asyncio
 import base64
+import builtins
+import sys
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -11,6 +13,11 @@ from pflow.nodes.mcp.node import MCPNode
 
 # Skip all tests in this module if httpx is not available
 httpx = pytest.importorskip("httpx")
+
+# ExceptionGroup is a builtin in Python 3.11+. The project targets 3.10+ but
+# ruff's target-version is py39, so it flags bare ExceptionGroup as undefined.
+# Assign via builtins to satisfy the linter while remaining runtime-correct.
+_ExceptionGroup = getattr(builtins, "ExceptionGroup", None)
 
 
 class TestHTTPConfiguration:
@@ -314,6 +321,89 @@ class TestHTTPTransportExecution:
         exc = httpx.HTTPStatusError("Rate limited", request=None, response=response_mock)
         result = node.exec_fallback(prep_res, exc)
         assert "Rate limited" in result["error"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup requires Python 3.11+")
+class TestExceptionGroupUnwrapping:
+    """Test ExceptionGroup unwrapping in exec_fallback.
+
+    The MCP SDK uses anyio task groups internally. When httpx raises
+    (e.g., HTTPStatusError for a 401), Python wraps it in an ExceptionGroup.
+    The old code checked "httpx" in str(type(exc).__module__) which fails on
+    ExceptionGroup (module is builtins). The fix unwraps ExceptionGroups to
+    find the inner httpx exception and route it to _handle_http_error().
+    """
+
+    def _make_http_status_error(self, status_code: int, message: str) -> "httpx.HTTPStatusError":
+        """Create an httpx.HTTPStatusError with the given status code."""
+        response_mock = Mock()
+        response_mock.status_code = status_code
+        response_mock.text = ""
+        return httpx.HTTPStatusError(message, request=Mock(), response=response_mock)
+
+    def _make_prep_res(self) -> dict:
+        """Create a minimal prep_res for exec_fallback."""
+        return {
+            "server": "test-server",
+            "tool": "test-tool",
+            "config": {"type": "http", "url": "https://api.example.com/mcp"},
+        }
+
+    def test_exec_fallback_unwraps_http_401_from_exception_group(self):
+        """ExceptionGroup wrapping a 401 HTTPStatusError should produce 'Authentication failed'.
+
+        FIX HISTORY: Before this fix, users saw 'unhandled errors in a TaskGroup'
+        instead of a clear authentication error message.
+        """
+        node = MCPNode()
+        inner_exc = self._make_http_status_error(401, "Client error '401 Unauthorized'")
+        exc_group = _ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner_exc])
+
+        result = node.exec_fallback(self._make_prep_res(), exc_group)
+
+        assert "Authentication failed" in result["error"]
+        assert "unhandled errors" not in result["error"]
+
+    def test_exec_fallback_unwraps_connect_error_from_exception_group(self):
+        """ExceptionGroup wrapping a ConnectError should produce 'Could not connect'."""
+        node = MCPNode()
+        inner_exc = httpx.ConnectError("Connection refused")
+        exc_group = _ExceptionGroup("unhandled errors in a TaskGroup (1 sub-exception)", [inner_exc])
+
+        result = node.exec_fallback(self._make_prep_res(), exc_group)
+
+        assert "Could not connect" in result["error"]
+
+    def test_exec_fallback_unwraps_nested_exception_group(self):
+        """Nested ExceptionGroups should still find the inner httpx error.
+
+        The MCP SDK may produce nested ExceptionGroups in complex async scenarios.
+        The _unwrap_exception_group method recurses through nested groups.
+        """
+        node = MCPNode()
+        inner_exc = self._make_http_status_error(401, "Client error '401 Unauthorized'")
+        inner_group = _ExceptionGroup("inner group", [inner_exc])
+        outer_group = _ExceptionGroup("outer group", [inner_group])
+
+        result = node.exec_fallback(self._make_prep_res(), outer_group)
+
+        assert "Authentication failed" in result["error"]
+        assert "outer group" not in result["error"]
+
+    def test_extract_error_regex_fallback_for_http_401(self):
+        """_extract_error_from_exception_group regex should catch 401 in string form.
+
+        This is the safety net for when ExceptionGroup unwrapping fails to find
+        a real httpx object (e.g., if the exception is serialized or from a
+        different library).
+        """
+        node = MCPNode()
+        exc_str = "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)\nClient error '401 Unauthorized'"
+
+        result = node._extract_error_from_exception_group(exc_str)
+
+        assert "Authentication failed" in result
+        assert "credentials" in result.lower()
 
 
 class TestHTTPDiscovery:

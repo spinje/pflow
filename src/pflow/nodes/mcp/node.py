@@ -371,7 +371,7 @@ class MCPNode(Node):
                 "tool": prep_res["tool"],
                 "timeout": exec_res.get("timeout", False),
             }
-            logger.error(f"MCP tool failed: {exec_res['error']}", extra=shared["error_details"])
+            logger.debug(exec_res["error"], extra=shared["error_details"])
             # WORKAROUND: Return "default" instead of "error" because the planner
             # doesn't generate error handling edges in workflows. This prevents
             # "Flow ends: 'error' not found" crashes. The error is still stored
@@ -499,6 +499,26 @@ class MCPNode(Node):
         if match:
             return match.group(1)
 
+        # Check for httpx HTTP status errors (e.g., "Client error '401 Unauthorized'")
+        # This is a safety net for when ExceptionGroup unwrapping fails
+        http_match = re.search(r"Client error '(\d{3})\s+([^']*)'", exc_str)
+        if http_match:
+            status = int(http_match.group(1))
+            status_messages = {
+                401: "Authentication failed. Check your API credentials.",
+                403: "Access forbidden. Check your permissions.",
+                404: "Session expired or endpoint not found.",
+                429: "Rate limited. Too many requests. Please wait and try again.",
+            }
+            if status in status_messages:
+                return status_messages[status]
+            return f"HTTP error {status}: {http_match.group(2)}"
+
+        http_server_match = re.search(r"Server error '(\d{3})\s+([^']*)'", exc_str)
+        if http_server_match:
+            status = int(http_server_match.group(1))
+            return f"Server error (HTTP {status}). The server encountered an error."
+
         # Look for common error patterns in JSON-like responses
         patterns = [
             r'error": "([^"]+)"',  # JSON error field
@@ -511,6 +531,32 @@ class MCPNode(Node):
 
         # Return original string if no pattern matches
         return exc_str
+
+    def _unwrap_exception_group(self, exc: Exception) -> Optional[Exception]:
+        """Unwrap an ExceptionGroup to find the actual inner exception.
+
+        The MCP SDK uses anyio task groups internally. When an exception (e.g.,
+        httpx.HTTPStatusError for a 401) occurs inside a task group, Python wraps
+        it in an ExceptionGroup. This method extracts the real exception so it can
+        be routed to the correct handler (e.g., _handle_http_error).
+
+        Args:
+            exc: An ExceptionGroup or BaseExceptionGroup
+
+        Returns:
+            The first inner exception if found, None otherwise
+        """
+        exceptions: Optional[tuple[Exception, ...]] = getattr(exc, "exceptions", None)
+        if exceptions is not None:
+            for inner in exceptions:
+                # Recurse in case of nested ExceptionGroups
+                if hasattr(inner, "exceptions"):
+                    result = self._unwrap_exception_group(inner)
+                    if result is not None:
+                        return result
+                else:
+                    return inner
+        return None
 
     def exec_fallback(self, prep_res: dict, exc: Exception) -> dict:
         """Handle execution failures gracefully after all retries exhausted.
@@ -528,22 +574,31 @@ class MCPNode(Node):
         if "httpx" in str(type(exc).__module__):
             actual_error = self._handle_http_error(exc, prep_res)
         elif "ExceptionGroup" in str(type(exc)) or "unhandled errors in a TaskGroup" in exc_str:
-            actual_error = self._extract_error_from_exception_group(exc_str)
+            # ExceptionGroup wraps the real exception (e.g., httpx errors from
+            # anyio task groups in the MCP SDK). Unwrap and route to the correct handler.
+            inner = self._unwrap_exception_group(exc)
+            if inner is not None and "httpx" in str(type(inner).__module__):
+                actual_error = self._handle_http_error(inner, prep_res)
+            elif inner is not None and isinstance(inner, asyncio.TimeoutError):
+                actual_error = f"MCP tool timed out after {self._timeout} seconds"
+            else:
+                actual_error = self._extract_error_from_exception_group(exc_str)
         elif isinstance(exc, asyncio.TimeoutError):
             actual_error = f"MCP tool timed out after {self._timeout} seconds"
         else:
             actual_error = str(exc)
 
         error_msg = f"MCP tool failed: {actual_error}"
-        logger.error(
+        # Log at debug level — the error is stored in shared["error"] and displayed by
+        # the CLI/display layer. Logging at ERROR here would duplicate the message.
+        logger.debug(
             error_msg,
             extra={
                 "server": prep_res.get("server"),
                 "tool": prep_res.get("tool"),
                 "exception_type": type(exc).__name__,
-                "full_exception": exc_str[:500],  # Log first 500 chars for debugging
+                "full_exception": exc_str[:500],  # Full exception for debugging
             },
-            exc_info=True,  # This will log the full traceback
         )
 
         return {"error": error_msg, "exception_type": type(exc).__name__}

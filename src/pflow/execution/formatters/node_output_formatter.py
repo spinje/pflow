@@ -107,9 +107,12 @@ def format_node_output(
         >>> "✓ Node executed successfully" in result
         True
     """
-    # Handle errors
-    if action == "error":
-        error_msg = shared_store.get("error", "Unknown error")
+    # Handle errors — check both the action string AND presence of error in outputs.
+    # MCPNode.post() returns "default" even on errors (workaround for missing error edges
+    # in workflows), so we also detect errors via the "error" key in outputs/shared_store.
+    has_error = action == "error" or "error" in outputs or "error" in shared_store
+    if has_error:
+        error_msg = shared_store.get("error") or outputs.get("error") or "Unknown error"
         if format_type == "json":
             return format_json_error(node_type, error_msg, execution_time_ms)
         else:

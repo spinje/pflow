@@ -5,10 +5,12 @@ Focus: async-to-sync bridge, result extraction, error handling.
 """
 
 import asyncio
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pflow.core.user_errors import MCPError
 from pflow.nodes.mcp.node import MCPNode
 
 
@@ -275,6 +277,112 @@ class TestMCPNodeErrorHandling:
             # All params should pass through unchanged
             assert prep_res["arguments"]["title"] == "Bug"
             assert prep_res["arguments"]["path"] == "some/path"
+
+    def test_prep_raises_mcp_error_when_no_mcp_tools_registered(self):
+        """When __mcp_server__/__mcp_tool__ are missing and no MCP tools exist in registry,
+        prep() should raise MCPError telling the user to sync MCP servers.
+
+        Real Bug: Users get a confusing generic error instead of actionable guidance
+        about missing MCP tools.
+        """
+        node = MCPNode()
+        node.set_params({"some_param": "value"})  # No __mcp_server__ or __mcp_tool__
+
+        mock_registry = MagicMock()
+        mock_registry.list_nodes.return_value = ["shell", "read-file", "write-file"]
+
+        with patch("pflow.registry.Registry", return_value=mock_registry):
+            with pytest.raises(MCPError) as exc_info:
+                node.prep({})
+
+            assert "MCP tools not available" in exc_info.value.title
+
+    def test_prep_raises_mcp_error_when_tools_exist_but_params_missing(self):
+        """When __mcp_server__ is missing but MCP tools exist in registry,
+        prep() should raise MCPError listing available MCP tools.
+
+        Real Bug: Users don't know which MCP tools are available when
+        their workflow has a misconfigured MCP node.
+        """
+        node = MCPNode()
+        node.set_params({"some_param": "value"})  # No __mcp_server__ or __mcp_tool__
+
+        mock_registry = MagicMock()
+        mock_registry.list_nodes.return_value = [
+            "shell",
+            "mcp-github-create-issue",
+            "mcp-github-list-repos",
+        ]
+
+        with patch("pflow.registry.Registry", return_value=mock_registry):
+            with pytest.raises(MCPError) as exc_info:
+                node.prep({})
+
+            assert "MCP tool configuration error" in exc_info.value.title
+            assert "mcp-github-create-issue" in exc_info.value.explanation
+
+    def test_load_server_config_server_not_found(self, tmp_path):
+        """When config file exists but requested server is not in it,
+        _load_server_config should raise KeyError listing available servers.
+
+        Real Bug: Users get a bare KeyError with no guidance about what
+        servers are configured or how to add the missing one.
+        """
+        config_file = tmp_path / "mcp-servers.json"
+        config_data = {
+            "mcpServers": {
+                "github": {"command": "npx", "args": ["@modelcontextprotocol/server-github"]},
+            }
+        }
+        config_file.write_text(json.dumps(config_data))
+
+        node = MCPNode()
+
+        with patch("pflow.nodes.mcp.node.Path.expanduser", return_value=config_file):
+            with pytest.raises(KeyError) as exc_info:
+                node._load_server_config("nonexistent")
+
+            error_msg = str(exc_info.value)
+            assert "not found" in error_msg
+            assert "github" in error_msg
+            assert "pflow mcp add nonexistent" in error_msg
+
+    def test_prep_rejects_non_integer_timeout(self):
+        """When timeout param is a non-numeric string, prep() should raise ValueError.
+
+        Real Bug: Passing garbage timeout values silently defaults or crashes
+        deep in asyncio instead of failing early with a clear message.
+        """
+        node = MCPNode()
+        node.set_params({
+            "__mcp_server__": "test",
+            "__mcp_tool__": "test_tool",
+            "timeout": "fast",
+        })
+
+        with patch.object(node, "_load_server_config") as mock_config:
+            mock_config.return_value = {"command": "test"}
+
+            with pytest.raises(ValueError, match="Invalid 'timeout' parameter"):
+                node.prep({})
+
+    def test_prep_rejects_negative_timeout(self):
+        """When timeout param is negative, prep() should raise ValueError.
+
+        Real Bug: Negative timeouts cause undefined behavior in asyncio.timeout().
+        """
+        node = MCPNode()
+        node.set_params({
+            "__mcp_server__": "test",
+            "__mcp_tool__": "test_tool",
+            "timeout": -5,
+        })
+
+        with patch.object(node, "_load_server_config") as mock_config:
+            mock_config.return_value = {"command": "test"}
+
+            with pytest.raises(ValueError, match="Invalid 'timeout' parameter"):
+                node.prep({})
 
 
 class TestMCPResultPreParsedData:
