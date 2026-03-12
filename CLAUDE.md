@@ -382,7 +382,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
-- Task 99: Expose Nodes as MCP Tools
+- Task 99: Expose pflow Tools to Claude Code Node
 - Task 111: Batch Limit for Iteration
 - Task 118: Code and Shell Linting
 - Task 121: Workflow Testability
@@ -395,6 +395,7 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 
 **v1.0.0 - Security & Sandboxing:**
 - Task 66: Structured Output for LLM Node
+- Task 126: Structured Output for Claude Code Node
 - Task 87: Sandboxed Execution Runtime
 - Task 91: Export as MCP Server Packages
 - Task 97: OAuth for Remote MCP Servers
