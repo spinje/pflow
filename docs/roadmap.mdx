@@ -6,79 +6,62 @@ icon: "map"
 
 ## <Icon icon="circuit-board" size={24} color="#f97316" /> Current status
 
-Where pflow is today:
+Where pflow is today (v0.8.1):
 
 - **Core workflow engine** built on PocketFlow
-- **Node system** — file, llm, http, shell, claude-code, and MCP bridge
+- **Markdown workflows** — `.pflow.md` files that agents read and write naturally
+- **Node system** — file, llm, http, shell, code (Python), claude-code, and MCP bridge
 - **AI agent integration** via CLI and MCP server
 - **Discovery** — find nodes and workflows by describing what you need
-- **Template variables** — connect node outputs to inputs
-- **Workflow validation** with actionable error messages
+- **Template variables** — `${var}` syntax connecting node outputs to inputs
+- **Workflow validation** with error messages designed for agents, not humans
+- **Batch processing** — process arrays through nodes, sequential or parallel
+- **Unix-first piping** — stdin/stdout, works with any Unix tool
+- **Skills publishing** — save workflows as Claude Code skills, cross-platform
 - **Execution traces** for debugging
 - **Settings management** — API keys, node filtering
-- **Unified model support** — use any llm-supported provider for discovery and workflows
-- **Batch processing** — process arrays of items through a single node (sequential or parallel)
+- **Unified model support** — any provider via Simon Willison's llm library
+- **Published on PyPI** — `uv tool install pflow-cli`
 
 ## <Icon icon="hammer" size={24} color="#f97316" /> Now
 
-**Getting pflow into users' hands**
+**Workflow expressiveness**
 
-Current focus is preparing for public release:
+Right now workflows run top-to-bottom, every step in order. That's fine for simple pipelines but it breaks down fast — you can't skip a notification step when there's nothing to notify about, you can't reuse a workflow you already saved inside a bigger one, and you definitely can't let a workflow send a Slack message or create a PR without someone approving it first.
 
-- Completing user documentation
-- Publishing to PyPI for easy installation
-- Ensuring a smooth first-run experience
+- **Conditional branching** — if/else logic so workflows can take different paths based on data
+- **Nested workflows** — saved workflows become nodes inside other workflows. The changelog workflow you built last week becomes one step in your release workflow.
+- **Human-in-the-loop approval gates** — pause execution for human review before continuing. Without this, workflows that take real-world actions aren't trustworthy enough to actually use.
+- **Smart trace debugging** — when a workflow fails, the system knows what each node was *trying* to do because node types are finite. "HTTP node expected 200, got 403" or "template referenced a field that doesn't exist" — not a raw JSON trace the agent has to parse.
 
 ## <Icon icon="lightbulb" size={24} color="#f97316" /> Next
 
-**Model discovery**
+**Iteration speed and output quality**
 
-- Show available models to agents based on configured API keys
-- Help agents select appropriate models for different tasks
+Building workflows means iteration — run it, see what breaks, fix it, run again. Two things make that loop slower than it needs to be.
 
-**Proving the value**
-
-- Benchmark pflow's efficiency using MCPMark evaluation
-- Quantify token savings and latency improvements
+- **Iteration caching** — when an agent fixes step 7 and re-runs, steps 1-6 shouldn't re-execute. Node configs get hashed, outputs cached, cache invalidated when upstream changes. This only works because workflows are made of discrete nodes — you can't hash and cache parts of a script.
+- **Structured output** — LLM and Claude Code nodes return typed JSON instead of free-form text. Downstream nodes stop guessing about the shape of what they received.
+- **Sandbox runtime** — isolated execution for shell and code nodes. Needed before running anything an agent generated that you haven't reviewed.
 
 ## <Icon icon="layers" size={24} color="#f97316" /> Later
 
-**More expressive workflows**
-
-Expanding what workflows can express:
-
-- Conditional branching — if/else logic in workflows
-- Task parallelism — run independent nodes concurrently (fan-out/fan-in)
-- Nested workflow support
-
-**Better output control**
-
-- Structured output from LLM nodes (JSON schemas)
-- Export workflows to standalone Python code
-- Execution preview before running
-
-**Safer execution**
-
-- Sandbox runtime for shell commands
-- Granular permission boundaries
-
-**Workflows as products**
-
-- Export workflows as self-hosted MCP server packages
-- Share automation as installable tools
+- **Code export** — export a workflow to standalone Python, zero pflow dependency. Build and iterate with structure, ship plain code.
+- **Workflow testing** — mock nodes, assert outputs, `pflow test`. Right now modifying a saved workflow and re-publishing it is a trust exercise.
+- **Task parallelism** — fan-out/fan-in for independent nodes. Different from batch processing, which runs the same node on multiple items.
+- **Execution preview** — show what will run, in what order, with what data flow, before anything executes.
 
 ## <Icon icon="orbit" size={24} color="#f97316" /> Vision
 
-Long-term ideas on the radar:
+pflow is infrastructure, not a destination. It provides building blocks and a runtime — agents do the assembly. The better the building blocks get, the more capable the agents become.
 
-- Discover and install MCP servers automatically
-- Community registry for workflows and MCP servers
-- Cloud execution for team use cases
-- Workflows exposed as remote HTTP services
+The longer-term direction:
 
-These are exploratory — they'll take shape based on feedback and real-world usage.
+- **Workflows as distributable packages** — export as standalone MCP servers that work without pflow installed
+- **Dynamic MCP discovery** — search and install MCP servers on demand instead of manual configuration
+- **Progressive disclosure** — the agent instruction file is ~1900 lines today. Most of that should live in the nodes themselves and load only when needed.
 
-pflow improves through a direct feedback loop: agents build workflows, we identify where they struggle, we fix it. Because the surface area is finite — node types, template syntax, error messages — each fix compounds.
+pflow improves through a direct loop: agents build workflows, I find where they struggle, I fix it. Because the surface area is finite — node types, template syntax, error messages — each fix is targeted and compounds. A year from now pflow will be meaningfully better at helping agents build workflows, not because of some grand vision but because each friction point gets filed down one at a time.
 
 ## Get involved
 
