@@ -349,13 +349,7 @@ Deploy test-writer-fixer subagent to review all created tests and ensure they:
 
 > Use as many Phases and sub tasks as you need to make the plan as detailed and comprehensive as possible.
 
-### When to Revise Your Plan
-
-Your plan is a living document. Update it when:
-- Context gathering reveals new requirements
-- Implementation hits unexpected obstacles
-- Dependencies change
-- Better approaches become apparent
+### How to Revise Your Plan
 
 Document plan changes in your progress log with rationale.
 
@@ -364,6 +358,14 @@ Document plan changes in your progress log with rationale.
 ### 0. Create Progress Log (FIRST!)
 
 Create and continuously update: `.taskmaster/tasks/task_{{task_id}}/implementation/progress-log.md`
+
+Your progress log is a living document. Always update it when:
+- Context gathering reveals new requirements
+- Implementation hits unexpected obstacles
+- Dependencies change
+- Better approaches become apparent
+- Insights are gained
+- Decisions are made
 
 ```markdown
 # Task {{task_id}} Implementation Progress Log
