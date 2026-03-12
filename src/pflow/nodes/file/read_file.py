@@ -17,10 +17,9 @@ logger = logging.getLogger(__name__)
 
 class ReadFileNode(Node):
     """
-    Read content from a file and add line numbers for display.
+    Read content from a file.
 
-    This node reads a text file and formats it with 1-indexed line numbers,
-    following the Tutorial-Cursor pattern for file display.
+    This node reads a text or binary file and returns its raw content.
 
     Interface:
     - Params: file_path: str  # Path to the file to read
@@ -59,10 +58,10 @@ class ReadFileNode(Node):
 
     def exec(self, prep_res: tuple[str, str]) -> str | bytes:
         """
-        Read file content and add line numbers for text files, or read as binary.
+        Read file content as text or binary.
 
         Returns:
-            File content with line numbers (text) or raw bytes (binary)
+            Raw file content (text) or raw bytes (binary)
 
         Raises:
             FileNotFoundError: If file doesn't exist
@@ -142,9 +141,7 @@ class ReadFileNode(Node):
                 with open(file_path, encoding=encoding) as f:
                     lines = f.readlines()
 
-                # Add 1-indexed line numbers
-                numbered_lines = [f"{i + 1}: {line}" for i, line in enumerate(lines)]
-                text_content = "".join(numbered_lines)
+                text_content = "".join(lines)
                 self._is_binary = False
 
                 logger.info(

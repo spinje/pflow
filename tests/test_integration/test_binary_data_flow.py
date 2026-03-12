@@ -167,10 +167,10 @@ class TestBinaryDataRoundtrip:
         assert shared["write"]["written"], "Write-file failed (written is falsy)"
         assert shared["read"]["content_is_binary"] is False, "Text file incorrectly detected as binary"
 
-        # Verify content has line numbers (read-file feature)
+        # Verify raw content is returned
         content = shared["read"]["content"]
-        assert "1: Hello, World!" in content, "Line numbers missing from text file"
-        assert "2: This is a test." in content, "Second line missing"
+        assert "Hello, World!" in content, "Text content missing from read-file output"
+        assert "This is a test." in content, "Second line missing"
 
     def test_http_text_response_not_base64_encoded(self, tmp_path):
         """Verify HTTP text responses are NOT base64 encoded.

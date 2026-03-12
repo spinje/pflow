@@ -57,12 +57,8 @@ def test_hello_workflow_execution(tmp_path):
         # Verify output file
         assert Path("output.txt").exists()
         content = Path("output.txt").read_text()
-        # IMPORTANT: ReadFileNode adds line numbers to content as part of its design
-        # This is intentional behavior from the Tutorial-Cursor pattern to support
-        # line-by-line processing in future nodes. The format is "N: content" where
-        # N is the line number starting from 1.
-        assert "1: Hello" in content
-        assert "2: World" in content
+        assert "Hello" in content
+        assert "World" in content
 
 
 def test_registry_auto_discovery(tmp_path):
@@ -301,9 +297,8 @@ def test_data_flows_between_nodes(tmp_path):
         # Verify the data was correctly passed and written
         assert Path("output.txt").exists()
         content = Path("output.txt").read_text()
-        # ReadFileNode adds line numbers to content
-        assert "1: Test content" in content
-        assert "2: Second line" in content
+        assert "Test content" in content
+        assert "Second line" in content
 
 
 def test_permission_error_read(tmp_path):

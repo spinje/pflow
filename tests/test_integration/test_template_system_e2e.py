@@ -53,8 +53,7 @@ def test_template_system_with_file_nodes():
         assert os.path.exists(initial_params["output_file"])
         with open(initial_params["output_file"]) as f:
             content = f.read()
-        # Read-file adds line numbers by default
-        assert content == "1: Hello from template test!"
+        assert content == "Hello from template test!"
 
 
 def test_template_with_path_traversal():

@@ -34,10 +34,10 @@ class TestIntegration:
             exec_res = read_node.exec(prep_res)
             read_node.post(shared, prep_res, exec_res)
 
-            # Content now has line numbers
-            assert shared["content"] == "1: Source content\n2: With multiple lines"
+            # Content is raw file content
+            assert shared["content"] == "Source content\nWith multiple lines"
 
-            # Write to new file (note: it will include line numbers)
+            # Write to new file
             dest_path = os.path.join(tmpdir, "dest.txt")
             write_node = WriteFileNode()
             write_node.set_params({"file_path": dest_path, "content": shared["content"]})
@@ -46,9 +46,9 @@ class TestIntegration:
             exec_res = write_node.exec(prep_res)
             write_node.post(shared, prep_res, exec_res)
 
-            # Verify destination has line-numbered content
+            # Verify destination has raw content
             with open(dest_path) as f:
-                assert f.read() == "1: Source content\n2: With multiple lines"
+                assert f.read() == "Source content\nWith multiple lines"
 
     def test_error_propagation(self):
         """Test that errors are properly propagated."""
@@ -110,7 +110,7 @@ class TestFileNodeIntegration:
                 action = node.post(shared, prep_res, exec_res)
 
                 assert action == "default"
-                assert "1: Test content" in shared["content"]
+                assert "Test content" in shared["content"]
             finally:
                 os.chdir(old_cwd)
         finally:

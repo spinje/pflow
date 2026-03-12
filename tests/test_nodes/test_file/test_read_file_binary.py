@@ -165,8 +165,8 @@ class TestReadFileBinarySupport:
             assert "content_is_binary" in shared
             assert shared["content_is_binary"] is False, "Text files must not be flagged as binary"
 
-            # Content should have line numbers (text behavior)
-            assert shared["content"] == "1: Text content"
+            # Content should be raw text
+            assert shared["content"] == "Text content"
 
         finally:
             os.unlink(temp_path)
@@ -199,13 +199,11 @@ class TestReadFileBinarySupport:
         finally:
             os.unlink(temp_path)
 
-    def test_text_files_still_get_line_numbers(self):
-        """Text files still get line numbers after binary support added.
+    def test_text_files_return_raw_content(self):
+        """Text files return raw content after binary support added.
 
-        BUG IT CATCHES: Binary support breaks text file reading, line numbers
-        missing or text files incorrectly treated as binary.
-
-        This is a regression test ensuring backward compatibility.
+        BUG IT CATCHES: Binary support breaks text file reading, or text files
+        incorrectly treated as binary.
         """
         text_content = "Line one\nLine two\nLine three"
         with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
@@ -219,9 +217,7 @@ class TestReadFileBinarySupport:
 
             node.run(shared)
 
-            # Must have line numbers (text behavior preserved)
-            expected = "1: Line one\n2: Line two\n3: Line three"
-            assert shared["content"] == expected, "Text files must keep line numbers"
+            assert shared["content"] == text_content
             assert shared["content_is_binary"] is False
 
         finally:

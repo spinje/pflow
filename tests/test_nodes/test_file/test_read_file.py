@@ -30,7 +30,7 @@ class TestReadFileNode:
             # Verify results
             assert action == "default"
             assert "content" in shared
-            assert shared["content"] == "1: Line 1\n2: Line 2\n3: Line 3"
+            assert shared["content"] == "Line 1\nLine 2\nLine 3"
             assert "error" not in shared
         finally:
             os.unlink(temp_path)
@@ -72,7 +72,7 @@ class TestReadFileNode:
             action = node.post(shared, prep_res, exec_res)
 
             assert action == "default"
-            assert shared["content"] == "1: UTF-16 content"
+            assert shared["content"] == "UTF-16 content"
         finally:
             os.unlink(temp_path)
 
@@ -146,7 +146,7 @@ class TestReadFileNode:
             action = node.post(shared, prep_res, exec_res)
 
             assert action == "default"
-            assert shared["content"] == "1: Test content"
+            assert shared["content"] == "Test content"
         finally:
             os.unlink(temp_path)
 
@@ -157,24 +157,3 @@ class TestReadFileNode:
 
         with pytest.raises(ValueError, match="Missing required 'file_path' parameter"):
             node.prep(shared)
-
-    def test_line_numbers_multiline(self):
-        """Test line number formatting with multiple lines."""
-        content = "First line\nSecond line\n\nFourth line"
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write(content)
-            temp_path = f.name
-
-        try:
-            node = ReadFileNode()
-            node.set_params({"file_path": temp_path})
-            shared = {}
-
-            prep_res = node.prep(shared)
-            exec_res = node.exec(prep_res)
-            node.post(shared, prep_res, exec_res)
-
-            expected = "1: First line\n2: Second line\n3: \n4: Fourth line"
-            assert shared["content"] == expected
-        finally:
-            os.unlink(temp_path)
