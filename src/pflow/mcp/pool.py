@@ -17,7 +17,8 @@ import logging
 import os
 import sys
 import threading
-from contextlib import AsyncExitStack
+from collections.abc import AsyncIterator
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any, Optional
 
 from mcp import ClientSession, StdioServerParameters
@@ -65,6 +66,7 @@ class MCPConnectionPool:
     """
 
     def __init__(self) -> None:
+        self._lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._sessions: dict[str, ClientSession] = {}
@@ -138,14 +140,20 @@ class MCPConnectionPool:
         """Start the background event loop thread on first use."""
         if self._loop is not None:
             return
-        self._shutting_down = False  # reset in case of restart after shutdown
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._loop.run_forever,
-            name="mcp-pool",
-            daemon=True,
-        )
-        self._thread.start()
+        with self._lock:
+            if self._loop is not None:
+                return
+            self._shutting_down = False  # reset in case of restart after shutdown
+            loop = asyncio.new_event_loop()
+            self._thread = threading.Thread(
+                target=loop.run_forever,
+                name="mcp-pool",
+                daemon=True,
+            )
+            self._thread.start()
+            # Set _loop last so the fast-path check above only passes
+            # after the thread is actually running.
+            self._loop = loop
 
     # -- Async internals (run on background loop) --
 
@@ -298,20 +306,10 @@ class MCPConnectionPool:
             await self._evict_session(server_name)
 
 
-class _DevNull:
-    """Async context manager wrapper for os.devnull file."""
-
-    def __init__(self) -> None:
-        self._file: Any = None
-
-    async def __aenter__(self) -> Any:
-        self._file = open(os.devnull, "w")  # noqa: SIM115
-        return self._file
-
-    async def __aexit__(self, *args: Any) -> None:
-        if self._file is not None:
-            self._file.close()
-
-
-def _open_devnull() -> _DevNull:
-    return _DevNull()
+@asynccontextmanager
+async def _open_devnull() -> AsyncIterator[Any]:
+    f = open(os.devnull, "w")  # noqa: SIM115
+    try:
+        yield f
+    finally:
+        f.close()

@@ -204,6 +204,34 @@ async with timeout_context(timeout):
 | `src/pflow/mcp/__init__.py` | Modified | 2 changed |
 | `tests/test_mcp/test_connection_pool.py` | **Created** | ~320 |
 
+## [2026-03-13] — PR Review Fixes
+
+PR #94 reviewed by claude[bot]. Two warnings addressed:
+
+### Warning 1 — Thread safety of `_ensure_started()` (applied)
+
+TOCTOU race: two threads could both see `self._loop is None` and create duplicate event loops/threads. While PocketFlow is sequential today, this is a latent bug for Task 39 (parallelism).
+
+**Fix:** Added `self._lock = threading.Lock()` in `__init__` with double-check locking in `_ensure_started()`. Also set `self._loop` last (after thread starts) so the fast-path check only passes when the thread is actually running.
+
+### Warning 2 — `_DevNull` class simplification (applied)
+
+Replaced 15-line `_DevNull` class + `_open_devnull()` factory with 6-line `@asynccontextmanager`. Functionally identical, more idiomatic.
+
+### Skipped suggestions
+
+- INFO log for session creation → left as DEBUG (pool should be invisible to users)
+- `_shutting_down` guard in `call_tool()` → impossible scenario in current architecture (`shutdown()` runs in `finally` after `flow.run()` returns)
+
+### Manual verification
+
+Ran the bug reproduction workflow (`test-mcp-lifecycle.pflow.md`): navigate to example.com → screenshot. Screenshot shows "Example Domain" content (not blank page). Screenshot step took 196ms (reused session) vs navigate's 1641ms (includes server startup).
+
+### Verification
+
+- 26 tests pass
+- `make check`: all clean
+
 ## Key Insights
 
 1. **Python's `TimeoutError` inheriting from `OSError` is a footgun.** On Python 3.11+, `isinstance(TimeoutError(), OSError)` is `True`. Any code that catches `OSError` for "I/O failed" semantics will accidentally catch timeouts too. Always check `TimeoutError` first.
