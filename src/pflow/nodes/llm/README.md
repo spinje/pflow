@@ -130,11 +130,52 @@ Common models:
 ## Parameters
 
 - `prompt`: Text prompt to send to the model (required)
-- `model`: Model to use (default: `gpt-4o-mini`)
-- `temperature`: Sampling temperature 0.0-2.0 (default: 0.7)
+- `model`: Model to use (default: `gemini-3-flash-preview`)
+- `temperature`: Sampling temperature 0.0-2.0 (default: 1.0)
 - `system`: System prompt for behavior guidance (optional)
 - `max_tokens`: Maximum response tokens (optional)
 - `images`: Image URLs or file paths (optional, can be repeated for multiple images)
+- `output_schema`: JSON Schema dict for structured output (optional) — see below
+
+## Structured Output
+
+Use `output_schema` to get guaranteed JSON responses matching a JSON Schema. The schema is passed to the model's constrained decoding API (supported by Anthropic, Google, OpenAI).
+
+### In a workflow (.pflow.md):
+
+````markdown
+### extract
+
+Extract named entities from the document.
+
+- type: llm
+- prompt: Extract all people and places from: ${read.content}
+- temperature: 0
+
+```yaml output_schema
+type: object
+properties:
+  people:
+    type: array
+    items:
+      type: string
+  places:
+    type: array
+    items:
+      type: string
+required:
+  - people
+  - places
+```
+````
+
+When `output_schema` is set:
+- The response is guaranteed valid JSON matching the schema
+- `shared["response"]` is a `dict` (not a string)
+- Downstream templates access fields directly: `${extract.response.people}`
+- Code block stripping is skipped (the API returns clean JSON)
+
+Without `output_schema`, behavior is unchanged — `shared["response"]` is always a string.
 
 ## Token Usage Tracking
 
