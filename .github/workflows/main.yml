@@ -49,3 +49,16 @@ jobs:
 
       - name: Check typing
         run: uv run mypy
+
+  # Summary job for branch protection — matrix jobs report as
+  # "tests-and-type-check (3.10)" etc., so the bare name never resolves.
+  # Point the required status check at this job instead.
+  tests-and-type-check-done:
+    if: always()
+    needs: tests-and-type-check
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ needs.tests-and-type-check.result }}" != "success" ]]; then
+            exit 1
+          fi
