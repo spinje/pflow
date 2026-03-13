@@ -1,346 +1,46 @@
-# CLAUDE.md - Runtime Module Documentation
+# Runtime Module
 
-## Executive Summary
-
-The `src/pflow/runtime/` module is the **compilation and execution infrastructure** that transforms workflow IR into executable PocketFlow objects. It implements a sophisticated multi-layer wrapper architecture for template resolution, namespacing, and instrumentation while maintaining full compatibility with the PocketFlow framework.
-
-**Core Responsibility**: Transform workflow IR → executable Flow objects with automatic template resolution, collision prevention, and comprehensive instrumentation.
-
-## Module Architecture
-
-```
-┌─────────────────────────────────────────────┐
-│         Planning System (generates IR)       │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│           compile_ir_to_flow()               │
-│         (main entry point)                   │
-└──────────────────┬──────────────────────────┘
-                   │
-    ┌──────────────┼──────────────┬───────────┐
-    ▼              ▼              ▼           ▼
-┌────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐
-│Validate│ │Instantiate│ │  Wire   │ │ Wrap   │
-│  IR    │ │  Nodes   │ │  Nodes  │ │ Nodes  │
-└────────┘ └──────────┘ └──────────┘ └────────┘
-    │              │              │           │
-    └──────────────┴──────────────┴───────────┘
-                   │
-                   ▼
-           Executable Flow Object
-```
+Compilation and execution infrastructure. Transforms workflow IR into executable PocketFlow Flow objects via a multi-layer wrapper architecture for template resolution, namespacing, and instrumentation.
 
 ## File Structure
 
 ```
 src/pflow/runtime/
-├── __init__.py                  # Module exports (3 public functions)
-├── batch_node.py               # Batch processing wrapper (sequential/parallel)
-├── compiler.py                  # Main IR→Flow compiler (1042 lines)
-├── error_context.py            # Upstream error context extraction utilities
-├── instrumented_wrapper.py      # Metrics, tracing, caching (1168 lines)
-├── node_wrapper.py             # Template resolution wrapper (680 lines)
-├── namespaced_wrapper.py       # Collision prevention wrapper (95 lines)
-├── namespaced_store.py         # Namespaced store proxy (156 lines)
-├── template_resolver.py        # Template variable resolution (385 lines)
-├── template_validator.py       # Template validation logic (522 lines)
-├── workflow_executor.py        # Nested workflow executor node (328 lines)
-├── workflow_trace.py           # Trace collection system (517 lines)
-├── workflow_validator.py       # Workflow validation utilities (159 lines)
-└── output_resolver.py          # Output declaration resolver (73 lines)
+├── __init__.py              # Exports: compile_ir_to_flow(), import_node_class(), CompilationError
+├── compiler.py              # Main IR→Flow compiler (~1042 lines)
+├── batch_node.py            # Batch processing wrapper (sequential/parallel)
+├── instrumented_wrapper.py  # Metrics, tracing, caching, API error detection (~1168 lines)
+├── node_wrapper.py          # Template resolution wrapper (~680 lines)
+├── namespaced_wrapper.py    # Collision prevention wrapper (~95 lines)
+├── namespaced_store.py      # Namespaced store proxy (~156 lines)
+├── template_resolver.py     # Template variable resolution engine
+├── template_validator.py    # Pre-execution template validation with rich errors
+├── workflow_executor.py     # Nested workflow executor node
+├── workflow_trace.py        # Trace collection with thread-safe LLM interception
+├── workflow_validator.py    # IR validation and input preparation
+├── output_resolver.py       # Output declaration resolver
+├── error_context.py         # Upstream error context extraction
+└── type_checker.py          # Runtime type checking utilities
 ```
 
-## Public API (via `__init__.py`)
+## Compilation Pipeline
 
-- `compile_ir_to_flow()` - Main compiler function
-- `import_node_class()` - Dynamic node class import
-- `CompilationError` - Compilation failure exception
+`compile_ir_to_flow()` is the main entry point (called by `executor_service.py`):
 
-## Core Components
-
-### 1. Compiler (`compiler.py`)
-
-**Purpose**: Transforms workflow IR (dict) into executable PocketFlow Flow objects.
-
-**Key Functions**:
-- `compile_ir_to_flow()` - Main entry point (lines 929-1042) - 11 steps total
-- `import_node_class()` - Registry-based node import (lines 103-237)
-- `_instantiate_nodes()` - Node creation with wrapping (lines 587-645)
-- `_wire_nodes()` - Edge-based flow construction (lines 647-712)
-- `_inject_special_parameters()` - MCP/workflow parameter injection (lines 426-501)
-- `_parse_mcp_node_type()` - Server name parsing with dash support (lines 357-423)
-- `_validate_workflow()` - Consolidates 4 validation steps (lines 768-842)
-
-**Compilation Pipeline**:
-1. Parse IR (dict)
+1. Parse IR dict
 2. Validate structure, inputs, outputs
 3. Instantiate nodes with registry lookup
-4. Apply wrapper chain (template → namespace → instrumentation)
+4. Apply wrapper chain (template → namespace → batch → instrumentation)
 5. Wire nodes using edges
 6. Create Flow object with start node
 
-**Error Handling**:
-```python
-class CompilationError(Exception):
-    phase: str          # Where error occurred
-    node_id: str       # Node being compiled
-    node_type: str     # Type of node
-    details: dict      # Additional context
-    suggestion: str    # Helpful fix suggestion
-```
+**CompilationError** fields: `phase`, `node_id`, `node_type`, `details`, `suggestion` — provides structured context for debugging.
 
-### 2. Wrapper Architecture
+## Wrapper Architecture
 
-#### 2.1 InstrumentedNodeWrapper (`instrumented_wrapper.py`)
-
-**Purpose**: Outermost wrapper providing metrics, tracing, caching, and API error detection.
-
-**Key Features**:
-- **Checkpoint System** (lines 518-603): MD5-based configuration caching
-- **API Warning Detection** (lines 737-1129): Intelligent error categorization
-- **LLM Usage Capture** (lines 100-191): Token tracking and cost attribution
-- **Progress Callbacks** (lines 271-321): Real-time execution feedback
-- **Trace Recording** (lines 373-409): Detailed debugging information
-- **Cache Hit Tracking** (Task 71 - lines 542-601): Records which nodes used cache
-
-**Checkpoint Structure**:
-```python
-shared["__execution__"] = {
-    "completed_nodes": [],     # Successfully executed
-    "node_actions": {},       # Actions returned
-    "node_hashes": {},       # MD5 config hashes
-    "failed_node": None      # Where failure occurred
-}
-
-# Cache tracking (Task 71)
-shared["__cache_hits__"] = []  # Nodes that hit cache (for JSON output)
-```
-
-#### 2.2 NamespacedNodeWrapper (`namespaced_wrapper.py`)
-
-**Purpose**: Middle wrapper providing automatic collision prevention.
-
-**Key Features**:
-- Redirects writes to `shared[node_id][key]`
-- Reads check both namespace and root level
-- Special keys (`__*__`) bypass namespacing for framework coordination
-- Transparent to nodes (they don't know about namespacing)
-
-#### 2.3 TemplateAwareNodeWrapper (`node_wrapper.py`)
-
-**Purpose**: Innermost wrapper resolving template variables at runtime.
-
-**Key Features**:
-- Separates template vs static parameters
-- Resolves `${variable}` syntax during execution
-- Preserves type for simple templates
-- Recursive validation detects unresolved templates in strings/lists/dicts
-- Partial resolution detection via set intersection (Task 85)
-- Type validation prevents dict/list → str mismatches (uses registry metadata, shows fix suggestions)
-- Strict mode (default): Template/type errors fatal (triggers repair)
-- Permissive mode: Warnings only, stores errors in `__template_errors__`
-
-#### 2.4 PflowBatchNode (`batch_node.py`)
-
-**Purpose**: Batch processing wrapper that executes inner nodes over multiple items.
-
-**Key Features**:
-- Sequential and parallel execution modes
-- Isolated item context (shallow copy of shared store per item)
-- Deep copies node chain for parallel mode (thread safety)
-- Per-item retry logic with configurable wait
-- `fail_fast` or `continue` error handling modes
-
-**Critical Behavior - LLM Cost Tracking**: Batch initializes `__llm_calls__` list in `prep()` and captures `llm_usage` from each item's isolated context via `_capture_item_llm_usage()`. This is called in `_exec_single` (sequential) OR `_exec_single_with_node` (parallel) - never both. Captures from both root (`item_shared["llm_usage"]`) and namespaced (`item_shared[node_id]["llm_usage"]`) locations. Without this, LLM costs would be lost when the item context is discarded.
-
-### 3. Template System
-
-#### 3.1 TemplateResolver (`template_resolver.py`)
-
-**Purpose**: Core template resolution engine.
-
-**Key Features**:
-- **Path Support**: `${data.user.name}`, `${items[0].title}`
-- **Type Preservation**: `${var}` preserves original type (including in nested structures)
-- **Nested Resolution**: Handles templates in dicts/lists with proper type preservation
-- **Fallback**: Unresolved templates remain for debugging
-- **Key Methods**: `resolve_template()`, `resolve_nested()`, `is_simple_template()`
-
-**Resolution Priority**:
-1. `initial_params` (from planner)
-2. Shared store (runtime data)
-3. Workflow inputs
-
-> **JSON Auto-Parsing & Type Coercion**: The template system includes automatic JSON parsing at several points (traversal, resolve_nested, target-side coercion). For the complete inventory and design rationale, see `architecture/core-concepts/data-type-coercion.md`.
-
-#### 3.2 TemplateValidator (`template_validator.py`) (Enhanced in Task 71)
-
-**Purpose**: Pre-execution validation of template variables with rich error suggestions.
-
-**Key Features**:
-- Validates all templates have sources
-- Uses registry metadata for node outputs
-- Detects unused declared inputs
-- **Enhanced error messages** (Task 71 - lines 162-413):
-  - `_flatten_output_structure()`: Recursively flattens nested outputs showing array access patterns
-  - `_find_similar_paths()`: Substring matching for typo suggestions
-  - `_format_enhanced_node_error()`: Multi-section errors with complete structure
-  - Shows all available paths (limit 20) with types
-  - "Did you mean X?" suggestions for typos
-  - Actionable "Common fix: Change X to Y" guidance
-
-**Error Format Example** (Task 71):
-```
-Node 'fetch-messages' (mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY)
-does not have output 'msg'
-
-Available outputs from this node:
-  - result: dict
-  - result.messages: array
-  - result.messages[0]: dict
-  - result.messages[0].text: string
-  - result.messages[0].user: string
-  ...
-
-Did you mean one of these?
-  - result.messages (array) - Contains message data
-
-Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
-```
-
-### 4. WorkflowExecutor (`workflow_executor.py`)
-
-**Purpose**: Runtime node for nested workflow execution.
-
-**Key Features**:
-- Loads workflows by name, path (`.pflow.md`), or inline IR
-- Parameter mapping with template resolution
-- Storage isolation modes (mapped/isolated/scoped/shared)
-- Circular dependency detection
-- Registry propagation to sub-workflows
-
-### 5. WorkflowTraceCollector (`workflow_trace.py`) (VERIFIED)
-
-**Purpose**: Detailed execution trace collection with thread-safe LLM interception.
-
-**Key Features**:
-- **Thread-safe LLM interception**: Reference counting + thread-local collectors
-- **Configurable limits**: 5 environment variables (`PFLOW_TRACE_*_MAX`)
-- **Trace location**: `~/.pflow/debug/workflow-trace-*.json`
-- **Format version**: `"1.2.0"` (updated for tri-state status support)
-- **Multi-source prompt capture**: Interceptor → `__llm_calls__` → shared store
-- **Repair tracking**: Attempt numbers, errors, workflow diffs
-- **Mutation analysis**: Added/removed/modified keys tracking
-
-### 6. Validation Utilities (`workflow_validator.py`)
-
-**Purpose**: IR structure validation and input preparation.
-
-**Key Functions**:
-- `validate_ir_structure()` - Basic IR validation
-- `prepare_inputs()` - Input validation, defaults, and type coercion (converts CLI values to declared types)
-
-### 7. Output Resolver (`output_resolver.py`)
-
-**Purpose**: Resolve workflow output declarations.
-
-**Key Function**:
-- `populate_declared_outputs()` - Map namespaced outputs to root level
-
-### 8. Error Context (`error_context.py`)
-
-**Purpose**: Extract diagnostic context from upstream nodes when errors occur.
-
-When a downstream node fails due to unexpected upstream output, this module helps surface the root cause by extracting stderr from shell nodes referenced in template variables.
-
-**Key Functions**:
-- `extract_node_ids_from_template(template)` - Parse `${node.field}` to get node IDs
-- `get_upstream_stderr(template, shared)` - Get formatted stderr from referenced nodes (works for any node type with stderr)
-
-**Usage Pattern**:
-```python
-from pflow.runtime.error_context import get_upstream_stderr
-
-# In error handling code
-base_error = "Template resolved to empty string"
-upstream_context = get_upstream_stderr("${shell-node.stdout}", shared)
-if upstream_context:
-    base_error += upstream_context
-raise ValueError(base_error)
-```
-
-**Output Example**:
-```
-Batch items must be an array, got str. Template '${extract.stdout}' resolved to: ''
-
-  ⚠️  Upstream node 'extract' stderr:
-     grep: invalid option -- P
-     usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] ...
-```
-
-**Integration Points**:
-- `batch_node.py` - Enriches batch item resolution errors
-- `node_wrapper.py` - Enriches unresolved template errors
-
-## Critical Integration Points
-
-### 1. Registry Integration
-
-**Node Discovery**:
-```python
-# import_node_class() uses registry for all node lookups
-nodes = registry.load()
-node_metadata = nodes[node_type]
-module_path = node_metadata["module"]
-class_name = node_metadata["class_name"]
-```
-
-**Special Handling**:
-- **Core nodes**: Standard Python imports
-- **User nodes**: Direct file imports
-- **MCP nodes**: Virtual nodes with server/tool injection
-- **Workflow nodes**: Registry injected as parameter
-
-### 2. Execution Module Integration
-
-**Entry Point**: `executor_service.py` calls `compile_ir_to_flow()`
-
-**Parameters Passed**:
-- `workflow_ir` - The workflow to compile
-- `registry` - Fresh instance per execution
-- `initial_params` - Template resolution context
-- `validate` - Template validation flag
-- `metrics_collector` - Cost tracking
-- `trace_collector` - Debugging traces
-
-### 3. Planning System Integration
-
-**Data Flow**:
-```
-Planner extracts parameters → initial_params
-    ↓
-Planner generates IR → workflow_ir
-    ↓
-compile_ir_to_flow(ir, params) → Flow object
-    ↓
-Template resolution at runtime using params
-```
-
-**Cache Chunks**: Planner context flows to repair via `__planner_cache_chunks__`
-
-### 4. Core Module Integration
-
-- **WorkflowManager**: Used by WorkflowExecutor for saved workflows
-- **ValidationError**: From ir_schema.py for structured errors
-- **validation_utils**: Shell-safe parameter validation
-
-## Wrapper Chain Details (VERIFIED)
-
-### Application Order
+### Application Order (CRITICAL)
 
 ```python
-# Lines 543-571, 671-689 in compiler.py
 node = node_class()                              # 1. Base node
 node = TemplateAwareNodeWrapper(node, ...)       # 2. Template resolution (conditional)
 node = NamespacedNodeWrapper(node, ...)          # 3. Namespacing (if enabled)
@@ -348,10 +48,11 @@ node = PflowBatchNode(node, ...)                 # 4. Batch processing (if batch
 node = InstrumentedNodeWrapper(node, ...)        # 5. Instrumentation (ALWAYS applied)
 ```
 
-**Important**:
+**Order constraints**:
 - Template wrapper only applied if params contain `${...}` templates
 - Batch wrapper only applied if node has `batch` config in IR
-- Batch wrapper MUST be outside namespace (injects item alias at root level)
+- **Batch wrapper MUST be outside namespace** — injects item alias at root level
+- Instrumentation is ALWAYS outermost
 
 ### _run() Interception Chain
 
@@ -384,219 +85,214 @@ InstrumentedNodeWrapper.set_params()
           └─> ActualNode.set_params(static_only)
 ```
 
-## Key Data Structures (VERIFIED)
+### InstrumentedNodeWrapper (`instrumented_wrapper.py`)
 
-### Special Reserved Keys (Updated in Task 71)
+Outermost wrapper. Provides:
+- **Checkpoint system**: MD5-based configuration caching (skip re-execution on resume)
+- **API warning detection**: 3-tier priority system with 73 validation + 20 resource patterns
+- **LLM usage capture**: Token tracking and cost attribution
+- **Progress callbacks**: Real-time execution feedback via OutputInterface
+- **Cache hit tracking**: Records which nodes used cache in `shared["__cache_hits__"]`
+
+### NamespacedNodeWrapper (`namespaced_wrapper.py`)
+
+Automatic collision prevention:
+- Redirects writes to `shared[node_id][key]`
+- **Reads check both namespace and root level** (so nodes can read upstream data)
+- Special keys (`__*__`) bypass namespacing for framework coordination
+- Transparent to nodes — they don't know about namespacing
+
+### TemplateAwareNodeWrapper (`node_wrapper.py`)
+
+Template resolution at runtime:
+- Separates template vs static parameters at `set_params()` time
+- Resolves `${variable}` syntax during `_run()`
+- Type validation prevents dict/list → str mismatches (uses registry metadata, shows fix suggestions)
+- Partial resolution detection via set intersection (Task 85)
+- **Strict mode** (default): Template/type errors are fatal ValueError → triggers repair
+- **Permissive mode**: Warnings only, stores errors in `shared["__template_errors__"]`
+
+### PflowBatchNode (`batch_node.py`)
+
+Batch processing wrapper:
+- Sequential and parallel execution modes
+- Isolated item context (shallow copy of shared store per item)
+- Deep copies node chain for parallel mode (thread safety)
+- Per-item retry logic with configurable wait
+- `fail_fast` or `continue` error handling modes
+
+**Critical — LLM cost tracking**: Batch initializes `__llm_calls__` in `prep()` and captures `llm_usage` from each item's isolated context via `_capture_item_llm_usage()`. Captures from both root (`item_shared["llm_usage"]`) and namespaced (`item_shared[node_id]["llm_usage"]`) locations. Without this, LLM costs are lost when item context is discarded.
+
+## Template System
+
+### TemplateResolver (`template_resolver.py`)
+
+**Regex**: `r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"`
+
+**Path support**: `${data.user.name}`, `${items[0].title}`, `${data[5].users[2]}`
+
+**Type behavior**:
+- **Simple templates** (`${var}`): Preserve original type (int, bool, None, dict, list)
+- **Complex templates** (`"Hello ${name}"`): Always return strings
+- **Inline objects** (`{"key": "${dict_var}"}`): Preserve inner types (no double-serialization)
+- **Type conversion**: None→"", False→"False", True→"True", 0→"0", []→"[]", {}→"{}", dicts/lists→JSON serialized
+- **Unresolved templates**: Remain as-is for debugging visibility
+- **Template errors**: Fatal ValueError triggers repair in strict mode
+
+**Resolution priority**:
+1. `initial_params` (from planner/CLI)
+2. Shared store (runtime data from upstream nodes)
+3. Workflow inputs
+
+> For JSON auto-parsing and type coercion details, see `architecture/core-concepts/data-type-coercion.md`.
+
+### TemplateValidator (`template_validator.py`)
+
+Pre-execution validation with rich error suggestions:
+- Validates all templates have sources using registry metadata for node outputs
+- Detects unused declared inputs
+- Flattens nested output structures showing array access patterns
+- "Did you mean X?" suggestions for typos (substring matching)
+- Shows all available paths (limit 20) with types
+
+**Error format example**:
+```
+Node 'fetch-messages' (mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY)
+does not have output 'msg'
+
+Available outputs from this node:
+  - result: dict
+  - result.messages: array
+  - result.messages[0].text: string
+
+Did you mean one of these?
+  - result.messages (array)
+
+Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
+```
+
+## Other Components
+
+### WorkflowExecutor (`workflow_executor.py`)
+
+Runtime node for nested workflow execution:
+- Loads workflows by name, path (`.pflow.md`), or inline IR
+- Parameter mapping with template resolution
+- **Storage isolation modes**: mapped/isolated/scoped/shared
+- Circular dependency detection via execution stack
+- Registry propagation to sub-workflows
+
+### WorkflowTraceCollector (`workflow_trace.py`)
+
+- **Thread-safe LLM interception**: Reference counting + thread-local collectors
+- **Configurable limits**: 5 env vars (`PFLOW_TRACE_*_MAX`)
+- **Multi-source prompt capture**: Interceptor → `__llm_calls__` → shared store
+- Repair tracking with attempt numbers, errors, workflow diffs
+- Mutation analysis: added/removed/modified keys
+
+### Validation Utilities (`workflow_validator.py`)
+
+- `validate_ir_structure()` — basic IR validation
+- `prepare_inputs()` — input validation, defaults, and **type coercion** (converts CLI string values to declared types)
+
+### Output Resolver (`output_resolver.py`)
+
+`populate_declared_outputs()` — maps namespaced outputs to root level based on workflow output declarations.
+
+### Error Context (`error_context.py`)
+
+Extracts diagnostic context from upstream nodes when downstream fails. Surfaces stderr from shell nodes referenced in template variables.
+
+```
+Batch items must be an array, got str. Template '${extract.stdout}' resolved to: ''
+
+  ⚠️  Upstream node 'extract' stderr:
+     grep: invalid option -- P
+     usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] ...
+```
+
+Used by `batch_node.py` (batch item resolution errors) and `node_wrapper.py` (unresolved template errors).
+
+## Reserved Shared Store Keys (Canonical Reference)
 
 ```python
-# Execution tracking
+# Execution tracking (managed by InstrumentedNodeWrapper)
 shared["__execution__"] = {
     "completed_nodes": [],     # Successfully executed nodes
-    "node_actions": {},       # Actions returned by each node
-    "node_hashes": {},       # MD5 config hashes for cache validation
-    "failed_node": None      # Node that caused workflow failure
+    "node_actions": {},        # Actions returned by each node
+    "node_hashes": {},         # MD5 config hashes for cache validation
+    "failed_node": None        # Node that caused workflow failure
 }
 
-# Other system keys
-shared["__llm_calls__"] = []              # LLM usage tracking
-shared["__progress_callback__"] = func    # Progress updates
-shared["__non_repairable_error__"] = bool # Skip repair flag
-shared["__warnings__"] = {}               # Node warnings (triggers DEGRADED status)
-shared["__modified_nodes__"] = []         # Repair tracking
-shared["__cache_hits__"] = []             # Cache hit tracking (Task 71)
-shared["__template_errors__"] = {}        # Template/type errors in permissive mode (Task 85, Issue #100)
+# System keys
+shared["__llm_calls__"] = []              # LLM usage tracking (initialize as empty list!)
+shared["__progress_callback__"] = func    # Progress updates from OutputInterface
+shared["__non_repairable_error__"] = bool # Skip repair flag (API errors)
+shared["__warnings__"] = {}               # Node warnings → triggers DEGRADED status
+shared["__modified_nodes__"] = []         # Nodes changed during repair
+shared["__cache_hits__"] = []             # Nodes that used cached results
+shared["__template_errors__"] = {}        # Template/type errors in permissive mode
 ```
 
-### Compilation Context
-
-```python
-{
-    "workflow_ir": {...},              # Workflow IR dict to compile (may include template_resolution_mode)
-    "registry": Registry(),            # Node discovery
-    "initial_params": {...},          # Template context (includes __template_resolution_mode__)
-    "validate": True,                 # Template validation
-    "metrics_collector": ...,         # Cost tracking
-    "trace_collector": ...           # Debug traces
-}
-```
-
-### Node Metadata (from Registry)
+## Node Metadata Shape (from Registry)
 
 ```python
 {
     "module": "pflow.nodes.file.read_file",
     "class_name": "ReadFileNode",
     "type": "core",              # core/user/mcp
-    "file_path": "/path/to/node.py",  # for user nodes
-    "interface": {...}           # Input/output metadata
-}
-```
-
-### Template Resolution Context
-
-```python
-{
-    **initial_params,    # From planner (priority)
-    **shared_store,      # Runtime data
-    **workflow_inputs    # Declared inputs
+    "file_path": "/path/to/node.py",  # for user nodes only
+    "interface": {...}           # Input/output metadata from docstrings
 }
 ```
 
 ## Critical Behaviors
 
-### 1. Cache Invalidation
+### Cache Invalidation
 
-**When Cache Used**:
-- Node in `completed_nodes`
-- Configuration hash matches
-- No error action returned
+Cache used when: node in `completed_nodes` AND config hash matches AND no error action returned. Invalidated on parameter change (hash mismatch).
 
-**When Cache Invalid**:
-- Parameters changed (hash mismatch)
-- Configuration drift detected
-
-### 2. Error Categorization (VERIFIED)
-
-**API Warning Detection**: 3-tier priority system with 73 validation + 20 resource patterns
+### Error Categorization
 
 **Repairable** (repair attempted):
-- `validation_error` - Parameter format issues (73 patterns checked)
-- `template_error` - Unresolved variables (triggers ValueError)
+- `validation_error` — parameter format issues (73 patterns checked)
+- `template_error` — unresolved variables (triggers ValueError)
 
-**Non-Repairable** (workflow stops):
-- `resource_error` - Not found, forbidden (20 patterns)
+**Non-repairable** (workflow stops, sets `__non_repairable_error__`):
+- `resource_error` — not found, forbidden (20 patterns)
 - API warnings: Slack `"ok": false`, Discord errors, GraphQL `"errors": []`
 - HTTP status codes: 401, 403, 404, 429
 
-### 3. MCP Node Handling (VERIFIED)
+### MCP Node Handling
 
 - Node type format: `mcp-<server>-<tool>`
-- Server names can contain dashes (uses greedy longest match algorithm)
-- Parameters injected: `__mcp_server__`, `__mcp_tool__` (lines 488-489)
-- Validation only when registry has real nodes (lines 271-299)
-- Virtual path marker: `"virtual://mcp"` distinguishes from real files
+- **Server names can contain dashes** — uses greedy longest match algorithm to parse
+- Parameters injected: `__mcp_server__`, `__mcp_tool__`
+- Virtual path marker: `"virtual://mcp"` distinguishes from real file-based nodes
+- Validation skipped when registry has no real nodes for this type
 - Error suggestions: 3-tier system (no tools → similar tools → available servers)
 
-### 4. Template Resolution (VERIFIED)
+## Registry Integration
 
-- **Regex Pattern**: `r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"`
-- **Array Support**: `${items[0].name}`, `${data[5].users[2]}`
-- **Simple templates** (`${var}`): Preserve original type (int, bool, None, dict, list)
-- **Complex templates** (`"Hello ${name}"`): Always return strings
-- **Inline objects**: `{"key": "${dict_var}"}` preserves inner types (no double-serialization)
-- **Helper methods**: `is_simple_template()`, `extract_simple_template_var()` for pattern detection
-- **Type Conversion**: None→"", False→"False", True→"True", 0→"0", []→"[]", {}→"{}", dicts/lists→JSON serialized (double quotes, valid JSON)
-- **Unresolved templates**: Remain for debugging visibility
-- **Template errors**: Fatal ValueError triggers repair
+`import_node_class()` handles 4 node types differently:
+- **Core nodes**: Standard Python `importlib.import_module()`
+- **User nodes**: Direct file import via `spec_from_file_location`
+- **MCP nodes**: Virtual nodes with server/tool injection via special params
+- **Workflow nodes**: Registry injected as parameter for nested execution
 
-## Performance Characteristics
+## Testing
 
-### Compilation
-- **Node Import**: Dynamic import overhead per unique node type
-- **Wrapper Creation**: 3 wrapper objects per node
-- **Validation**: O(n) with workflow size
+**Key mock points**: `Registry.load()`, `importlib.import_module()`, `importlib.util.spec_from_file_location()`, `WorkflowManager`, `MCPServerManager.list_servers()`.
 
-### Runtime
-- **Cache Lookup**: O(1) per node
-- **MD5 Hashing**: ~1ms per node config
-- **Template Resolution**: Depends on template complexity
+**Node type testing**: Core nodes use real test nodes from `src/pflow/nodes/test_node*.py`. MCP nodes mock with `"virtual://mcp"` file path. Enable test nodes with `PFLOW_INCLUDE_TEST_NODES=true`.
 
-### Memory
-- **Wrapper Chain**: 3 additional objects per node
-- **Checkpoint Data**: O(n) with completed nodes
-- **Trace Data**: Can be large (configurable limits)
+**Critical test scenarios**: Template resolution with array indices, cache invalidation via hash mismatch, API warning detection patterns, circular workflow detection, MCP server names with dashes (greedy match), wrapper chain attribute delegation (`inner_node` vs `_inner_node`), thread-safe LLM interception.
 
-## Common Usage Patterns
+## Gotchas
 
-### 1. Standard Compilation
-
-```python
-flow = compile_ir_to_flow(
-    workflow_ir,
-    registry=Registry(),
-    initial_params={"repo": "pflow"},
-    validate=True
-)
-result = flow.run(shared_store)
-```
-
-### 2. With Instrumentation
-
-```python
-flow = compile_ir_to_flow(
-    workflow_ir,
-    registry=Registry(),
-    initial_params=params,
-    metrics_collector=metrics,
-    trace_collector=trace
-)
-```
-
-### 3. Nested Workflow Execution
-
-```python
-# WorkflowExecutor handles this internally
-params = {
-    "workflow_name": "fix-issue",
-    "param_mapping": {"issue": "${issue_number}"},
-    "output_mapping": {"result": "fix_result"}
-}
-```
-
-## Testing Considerations (VERIFIED)
-
-### Key Mock Points
-- `Registry.load()` - Node metadata (test nodes filtered by default)
-- `importlib.import_module()` - Node imports (core vs user vs MCP)
-- `importlib.util.spec_from_file_location()` - User node file imports
-- `WorkflowManager` - Saved workflow loading
-- `MCPServerManager.list_servers()` - MCP server discovery
-
-### Node Type Testing
-- **Core nodes**: Use real test nodes from `src/pflow/nodes/test_node*.py`
-- **User nodes**: Mock file imports with `spec_from_file_location`
-- **MCP nodes**: Mock with `"virtual://mcp"` file path
-- **Test node filtering**: Enable with `PFLOW_INCLUDE_TEST_NODES=true`
-
-### Critical Test Scenarios
-1. Template resolution with array indices `${items[0].name}`
-2. Cache invalidation via MD5 hash mismatch
-3. API warning detection (73 validation + 20 resource patterns)
-4. Circular workflow detection with execution stack
-5. MCP server names with dashes (greedy longest match)
-6. Wrapper chain attribute delegation (`inner_node` vs `_inner_node`)
-7. Thread-safe LLM interception with reference counting
-
-## AI Agent Guidance
-
-### When Working in This Module
-
-1. **Respect the Wrapper Chain**: Order matters - instrumentation must be outermost.
-
-2. **Template Variables**: Always use `${variable}` syntax with curly braces.
-
-3. **Error Categories**: Proper categorization determines repair strategy.
-
-4. **Cache Integrity**: Never modify `__execution__` structure format.
-
-5. **Registry Usage**: Always pass fresh Registry instance to compile_ir_to_flow().
-
-6. **Special Parameters**: Don't use `__` prefixed parameter names (reserved).
-
-### Common Pitfalls to Avoid
-
-1. **Don't Skip Validation**: Set `validate=False` only for testing
-2. **Don't Modify Cached Nodes**: Cache assumes immutability
-3. **Don't Break Wrapper Chain**: Each wrapper expects specific inner behavior
-4. **Don't Use Reserved Keys**: `__execution__`, `__llm_calls__`, etc.
-5. **Don't Assume Node Types**: Always check registry for availability
-
-### Integration Points to Remember
-
-- **Execution**: Via compile_ir_to_flow() in executor_service
-- **Planning**: initial_params from planner extraction
-- **Registry**: Node discovery and metadata
-- **Core**: ValidationError and utilities
-- **Tracing**: Optional collectors for debugging
-
-This module is the heart of pflow's compilation system, transforming static workflow definitions into dynamic, self-healing execution objects through sophisticated wrapping and validation.
+- **Wrapper chain order matters** — instrumentation must be outermost, batch must be outside namespace
+- **Fresh Registry instance** — always pass a new one to `compile_ir_to_flow()` per execution
+- **`__` prefixed params are reserved** — never use for user parameters
+- **Don't modify `__execution__` structure** — checkpoint integrity is critical for resume
+- **Cache assumes immutability** — don't modify cached node state
+- **`validate=False` only for testing** — skipping validation breaks repair
