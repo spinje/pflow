@@ -1,204 +1,62 @@
-# CLAUDE.md - Formatters Module
+# Formatters Module
 
-**Single-source-of-truth formatters** ensuring CLI and MCP return identical output. Created in Task 72, eliminated ~800 lines of duplicate code.
+Single-source-of-truth formatters ensuring CLI and MCP return identical output. **Golden Rule: return (str/dict), never print.**
 
-**Golden Rule**: Formatters RETURN (str/dict), never print. Consumers handle display.
+## Formatter Index
 
----
+| Formatter | Purpose | Returns |
+|-----------|---------|---------|
+| `success_formatter` | Successful execution + metrics | dict |
+| `error_formatter` | Failed execution + sanitized errors | dict |
+| `validation_formatter` | Validation success/failure | str |
+| `node_output_formatter` | Node execution (text/json/structure) | str or dict |
+| `workflow_save_formatter` | Save success + execution hints | str |
+| `workflow_describe_formatter` | Workflow interface display | str |
+| `workflow_list_formatter` | Saved workflow listings | str |
+| `discovery_formatter` | LLM workflow discovery results | str |
+| `registry_list_formatter` | All nodes grouped by package | str |
+| `registry_search_formatter` | Node search results | str |
+| `registry_run_formatter` | Registry run errors + suggestions | str |
+| `history_formatter` | Execution history (compact/detailed) | str or None |
+| `field_output_formatter` | Field retrieval results (read-fields) | str or dict |
 
-## The 10 Formatters
+## Rules (all enforced by tests)
 
-| Formatter | Purpose | Return Type |
-|-----------|---------|-------------|
-| `success_formatter.py` | Successful execution + metrics | dict |
-| `error_formatter.py` | Failed execution + sanitized errors | dict |
-| `validation_formatter.py` | Validation success/failure | str |
-| `node_output_formatter.py` | Node execution (text/json/structure) | str or dict |
-| `workflow_save_formatter.py` | Save success + execution hints | str |
-| `workflow_describe_formatter.py` | Workflow interface display | str |
-| `workflow_list_formatter.py` | Saved workflow listings | str |
-| `discovery_formatter.py` | LLM workflow discovery results | str |
-| `registry_list_formatter.py` | All nodes grouped by package | str |
-| `registry_search_formatter.py` | Node search results | str |
+1. **Return, never print** — no `click.echo()` or `print()`. Breaks MCP.
+2. **Honor type contracts** — return type must match signature. MCP crashes on violations.
+3. **Sanitize security data** — `error_formatter` sanitizes by default (`sanitize=True`). Never disable for external output.
+4. **Handle None for optional params** — MCP passes `None` where CLI passes data. Always guard: `metadata.get("x") if metadata else default`.
 
----
+## Non-Obvious Behaviors
 
-## Critical Rules
+**node_output_formatter** has two layers of mode selection:
+- `format_type`: `text` (human), `json` (structured dict), `structure` (template paths like `${node.field}`)
+- `output_mode` (structure format only): `smart` (values + LLM filtering via `smart_filter_fields_cached`), `structure` (paths only), `full` (all values, no truncation)
+- MCPNode error detection: checks BOTH `action == "error"` AND `"error"` key in outputs/shared_store — because `MCPNode.post()` returns "default" action even on errors (workaround for missing error edges in workflows)
+- JSON string auto-parsing: `flatten_runtime_value()` tries to parse strings as JSON via `core.json_utils.try_parse_json`. If a string looks like JSON, it's recursively flattened as structure. This is critical for MCP nodes that return JSON strings as output values.
+- Deduplication: `get_value_hash()` detects when MCP nodes return identical data under different keys (e.g., both `result` and `server_TOOL_result`). Shows a warning and skips duplicates.
 
-### 1. Return, Never Print
+**error_formatter** uses lazy import of `mcp_server.utils.errors.sanitize_parameters` to avoid circular deps. Sanitizes `raw_response` and `response_headers` fields.
 
-```python
-# ✅ CORRECT
-def format_something(...) -> str:
-    return "\n".join(lines)
+**history_formatter** expects FLAT metadata dicts with execution fields at top level (`execution_count`, `last_execution_timestamp`, etc.) — NOT wrapped in `rich_metadata`. Silently returns `None` if fields aren't found, which can be hard to debug.
 
-# ❌ WRONG - Breaks MCP
-def format_something(...):
-    click.echo("Result")  # NO!
-```
-
-### 2. Honor Type Contracts
-
-```python
-# ✅ CORRECT - Signature matches return
-def format_text_output(...) -> str:
-    return "text"
-
-# ❌ WRONG - Type violation crashes consumers
-def format_text_output(...) -> str:
-    return {"key": "value"}  # Dict when str expected!
-```
-
-**Why**: MCP expects exact types. Violations cause crashes.
-
-### 3. Sanitize Security Data
-
-```python
-# error_formatter.py ALWAYS sanitizes by default
-def format_execution_errors(..., sanitize: bool = True):
-    if sanitize:
-        # Removes API keys, tokens, passwords from error responses
-```
-
-**Never disable sanitization** for external output. Test security with `pytest tests/test_execution/formatters/test_error_formatter.py -k sanitize`
-
-### 4. Handle Optional Parameters
-
-```python
-# ✅ CORRECT - None-safe
-def format_save_success(..., metadata=None):
-    keywords = metadata.get("keywords", []) if metadata else []
-
-# ❌ WRONG - Crashes on None
-def format_save_success(..., metadata=None):
-    keywords = metadata.get("keywords", [])  # KeyError!
-```
-
-**Why**: MCP passes `None`, CLI may pass data. Must handle both.
-
----
+**success_formatter** auto-detects output when no declared outputs: tries keys `result`, `output`, `response`, `text`, `data` in order, then falls back to last key in shared store.
 
 ## Dependencies
 
-**`execution_state.py`** - Builds per-node execution steps
-- Used by: `success_formatter`, `error_formatter`
-- Returns: `[{"node_id": "x", "status": "completed", "duration_ms": 150, "cached": False}]`
+| Formatter | Depends On | Why |
+|-----------|-----------|-----|
+| `success_formatter`, `error_formatter` | `execution_state.build_execution_steps()` | Per-node step details |
+| `success_formatter`, `error_formatter` | `MetricsCollector` | LLM usage/cost metrics |
+| `node_output_formatter` | `Registry` | Metadata for template path extraction |
+| `node_output_formatter` | `TemplateResolver`, `TemplateValidator` | Path resolution and flattening |
+| `node_output_formatter` | `smart_filter_fields_cached` (core) | LLM-based field filtering in smart mode |
+| `error_formatter` | `sanitize_parameters` (mcp_server.utils) | Security sanitization (lazy import) |
 
-**`Registry`** - Node metadata for template path extraction
-- Used by: `node_output_formatter` (structure mode)
-- Critical for showing `${node.field}` paths agents use
+## Hard-Won: Update BOTH Call Sites
 
-**`MetricsCollector`** - LLM usage metrics
-- Used by: `success_formatter`, `error_formatter`
-- Returns: `{"duration_ms": 1234, "total_cost_usd": 0.05}`
+When adding parameters to a formatter, update BOTH consumers or CLI/MCP parity breaks:
+1. CLI call site (`cli/main.py`)
+2. MCP call site (`mcp_server/services/execution_service.py`)
 
-**`sanitize_parameters()`** from `mcp_server.utils.errors`
-- Used by: `error_formatter`
-- Removes sensitive data (API keys, tokens)
-
----
-
-## Usage Patterns
-
-```python
-# Execution success
-from pflow.execution.formatters.success_formatter import format_execution_success
-result = format_execution_success(shared_storage, workflow_ir, metrics_collector)
-
-# Execution errors (ALWAYS sanitize=True for external output)
-from pflow.execution.formatters.error_formatter import format_execution_errors
-formatted = format_execution_errors(result, shared_storage, ir_data, metrics_collector, sanitize=True)
-
-# Node output - structure mode (shows ${node.field} template paths for agents)
-from pflow.execution.formatters.node_output_formatter import format_node_output
-result = format_node_output(node_type, action, outputs, shared_store, execution_time_ms, registry, format_type="structure")
-```
-
----
-
-**node_output_formatter format modes**: `text` (human-readable), `json` (structured dict), `structure` (template paths like `${node.field}` - critical for agents to discover workflow variables)
-
----
-
-## Common Pitfalls
-
-### 1. Breaking Type Contracts
-```python
-# ❌ Returns dict when str expected
-def format_text(...) -> str:
-    return {"key": "value"}
-```
-
-### 2. Assuming Non-None Parameters
-```python
-# ❌ Crashes on None
-keywords = metadata.get("keywords")
-```
-
-### 3. Forgetting Sanitization
-```python
-# ❌ Exposes API keys
-return {"error": raw_response}
-```
-
-### 4. Not Testing Both Consumers
-Must verify: CLI text output AND MCP JSON response both work.
-
----
-
-## Modification Guidelines
-
-**Adding formatter**: Choose return type (`str`/`dict`) → Handle optional params (`if param else default`) → Write tests (type contracts, None-safety, security) → Update CLI and MCP
-
-**Extending formatter**: Add fields, don't remove. Always test: `pytest tests/test_execution/formatters/ tests/test_cli/ tests/test_mcp_server/ -v`
-
----
-
-## Integration Checklist
-
-When modifying formatters:
-- [ ] Return type matches signature
-- [ ] No `print()` or `click.echo()` calls
-- [ ] Handles `None` for optional params
-- [ ] Sanitizes sensitive data
-- [ ] CLI and MCP get identical output
-- [ ] Tests added/updated
-- [ ] Docstring examples accurate
-
-### ⚠️ When Adding Formatter Parameters
-
-**Adding parameters?** Update BOTH call sites or parity breaks:
-1. Formatter signature (add parameter with default)
-2. CLI call site (`cli/main.py` ~line 476)
-3. MCP call site (`mcp_server/services/execution_service.py` ~line 143)
-4. Test both: `pytest tests/test_cli/ tests/test_mcp_server/`
-
-**Task 85 example:** Added `status`/`warnings` to `format_execution_success()`, forgot MCP → CLI showed warnings, MCP didn't.
-
----
-
-## Quick Diagnostics
-
-**Formatter not working?**
-1. Check return type: `print(type(result))`
-2. Test with None: `formatter(..., metadata=None)`
-3. Run tests: `pytest tests/test_execution/formatters/ -v`
-
-**Output wrong?**
-1. Verify `format_type` parameter (text/json/structure)
-2. Check data sources populated (shared_storage, workflow_ir)
-3. Compare with test examples
-
-**Tests failing?**
-1. Type contract: Return type matches signature?
-2. Parity: CLI and MCP same output?
-3. None-safety: Optional params handled?
-
----
-
-## Related Files
-
-- `execution_state.py` - Per-node execution state builder
-- `tests/test_execution/formatters/` - 75+ test cases
-- `src/pflow/cli/CLAUDE.md` - CLI usage patterns
-- `src/pflow/mcp_server/` - MCP integration
+**Task 85 bug**: Added `status`/`warnings` to `format_execution_success()`, forgot MCP call site. CLI showed warnings, MCP didn't.

@@ -12,12 +12,12 @@ src/pflow/core/
 ├── exceptions.py            # Exception hierarchy
 ├── ir_schema.py             # IR schema definition and validation
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
-├── llm_config.py            # Default LLM model detection
+├── llm_config.py            # LLM model resolution, env injection, provider detection
 ├── markdown_parser.py       # .pflow.md → IR dict parser
 ├── llm_pricing.py           # LLM pricing and cost calculations
 ├── metrics.py               # Execution metrics collection
 ├── output_controller.py     # Interactive vs non-interactive output
-├── param_coercion.py        # CLI input → declared type coercion
+├── param_coercion.py        # Type coercion: MCP (dict→JSON str) and CLI (str→declared type)
 ├── security_utils.py        # Sensitive parameter detection and masking
 ├── settings.py              # Settings with node filtering and env management
 ├── shell_integration.py     # Unix pipe and stdin handling
@@ -29,9 +29,9 @@ src/pflow/core/
 ├── workflow_save_service.py # Shared save operations (CLI + MCP)
 ├── workflow_status.py       # SUCCESS/DEGRADED/FAILED tri-state enum
 ├── workflow_validator.py    # Unified validation orchestrator
-├── smart_filter.py          # Smart filtering for registry/workflow search
-├── skill_service.py         # Skill discovery and management
-├── execution_cache.py       # Execution caching for workflow runs
+├── smart_filter.py          # LLM-powered field reduction for structure-only mode
+├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
+├── execution_cache.py       # Two-phase execution cache for registry run
 └── CLAUDE.md
 ```
 
@@ -124,11 +124,20 @@ Fixes GitHub issues automatically.
 
 Unified validation orchestrator. **Key history**: Replaces scattered validation that existed in multiple places. Previously, tests had data flow validation that production lacked — workflows could pass validation but fail at runtime.
 
-Validates: structural (IR schema) → data flow (execution order, dependencies) → templates (variable resolution) → node types (registry).
+**7-step validation pipeline**:
+1. Structural (IR schema) — always runs
+2. Stdin inputs — only one `stdin: true` allowed per workflow
+3. Data flow (execution order, dependencies) — always runs
+4. Templates (variable resolution) — if params provided
+5. Node types (registry verification) — unless `skip_node_types=True`
+6. Output sources — validates `${node.key}` refs in outputs, with fuzzy "did you mean?" suggestions
+7. Unknown param warnings — flags params not in node interface metadata (warnings, not errors)
 
 ### workflow_data_flow.py
 
 Uses Kahn's algorithm for topological sort. Catches: forward references, circular dependencies, references to non-existent nodes, undefined input parameters.
+
+**Bash syntax detection**: Template refs like `${#array[@]}`, `${var:-default}`, `${var%%pattern}` are detected as bash syntax and **skipped** during validation. Without this, shell commands with bash parameter expansion would trigger false "undefined input" errors.
 
 **This validation was previously only in tests, not production** — critical addition that ensures workflows execute correctly at runtime.
 
@@ -139,6 +148,18 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 **Pricing rules** (Anthropic's model): Cache creation = 2x input rate. Cache reads = 0.1x input rate. Thinking tokens = output rate.
 
 **🐛 Broken aliases**: `"claude-3.5-haiku"` and `"claude-4-opus"` point to non-existent pricing entries.
+
+### llm_config.py
+
+**Two different resolution chains** — easy to call the wrong one:
+- `get_model_for_feature("discovery"|"filtering")`: feature setting → `default_model` → auto-detect (Anthropic → Gemini → OpenAI) → hardcoded fallback. **Never returns None.**
+- `get_default_workflow_model()`: `default_model` → llm CLI default (`llm models default`) → auto-detect → **None** (caller must handle).
+
+**`inject_settings_env_vars()`**: Called early in CLI/MCP startup. Injects `settings.json` env vars into `os.environ` so `llm` library finds API keys. User's actual environment takes priority (won't override existing vars). Idempotent.
+
+**Test guard**: All LLM detection skipped when `PYTEST_CURRENT_TEST` is set (prevents subprocess hangs from `llm keys get`).
+
+**Module-level caching**: `get_default_llm_model()` caches result after first detection. Call `clear_model_cache()` in tests.
 
 ### metrics.py
 
@@ -164,8 +185,10 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 {
   "version": "1.0.0",
   "registry": {
-    "nodes": { "allow": ["*"], "deny": ["test*", "debug*"] }
+    "nodes": { "allow": ["*"], "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"] }
   },
+  "runtime": { "template_resolution_mode": "strict" },
+  "llm": { "default_model": null, "discovery_model": null, "filtering_model": null },
   "env": {
     "OPENAI_API_KEY": "sk-proj-...",
     "ANTHROPIC_API_KEY": "sk-ant-..."
@@ -173,13 +196,17 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 }
 ```
 
+**`runtime`**: `template_resolution_mode` overridable via `PFLOW_TEMPLATE_RESOLUTION_MODE` env var.
+
+**`llm`**: `default_model` is shared fallback for all features. `discovery_model` and `filtering_model` override it for specific features. See `llm_config.py` for resolution chains.
+
 **Env management**: `set_env`/`get_env`/`unset_env`/`list_env(mask_values=True)`. Plain text storage (industry standard for CLI tools — no keyring/encryption).
 
 **Security**: Atomic save (tempfile + `os.replace()`), chmod 600 on save, permission validation warns on insecure files with secrets.
 
 **Input precedence**: CLI params → settings.env → workflow defaults → error.
 
-**Node filtering**: Allow/deny patterns with fnmatch. Filtering happens at Registry **load time**, not storage time. Test nodes hidden by default, exposed via `PFLOW_INCLUDE_TEST_NODES` env var.
+**Node filtering**: Allow/deny patterns with fnmatch. Filtering happens at Registry **load time**, not storage time. Test nodes hidden by default, exposed via `PFLOW_INCLUDE_TEST_NODES` env var. **`include_test_nodes` is never persisted** — the env toggle is ephemeral by design. MCP nodes generate multiple match candidates: `mcp-{server}-{tool}` → also tries `{tool}` (hyphenated) and `{server}.{tool}`.
 
 ### user_errors.py
 
@@ -197,9 +224,37 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 
 ### workflow_save_service.py
 
-**Reserved workflow names**: `null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`.
+**Reserved workflow names**: `null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`, `skill`.
 
-**⚠️ `generate_workflow_metadata()` is GATED** — disabled pending markdown format migration (Task 107).
+**`generate_workflow_metadata()`**: Functional but dependency-gated — requires planning module (`from pflow.planning.nodes import MetadataGenerationNode`). Works when planning is available, silently returns None otherwise.
+
+### skill_service.py
+
+Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. **Symlink-based**: `{tool}/skills/{name}/SKILL.md` → `~/.pflow/workflows/{name}.pflow.md`.
+
+**`enrich_workflow()`**: Injects `## Usage` section (with example command) and adds `name`/`description` to frontmatter. **⚠️ Bug**: Claude Code currently requires `description` in frontmatter for skill discovery (workaround in code).
+
+**`re_enrich_if_skill()`**: Auto-called by `save_workflow_with_options()` after `--force` saves. Restores enrichment lost when the file was replaced. Scans all tool targets for symlinks pointing to the workflow.
+
+### smart_filter.py
+
+LLM-powered field reduction for `registry run` structure-only mode. Triggers when field count > 30 (`SMART_FILTER_THRESHOLD`). Reduces 200+ fields to 8-15 business-relevant ones.
+
+**Caching**: LRU cache (100 entries, process lifetime). Fields sorted by path before caching for order independence. Cache hit = 0ms/$0, miss = 2.5-3.5s/~$0.003.
+
+**Model selection**: Uses `get_model_for_feature("filtering")`. Reduces thinking for Gemini models (`thinking_level=minimal` for gemini-3, `thinking_budget=0` for gemini-2.5).
+
+### execution_cache.py
+
+Two-phase execution pattern for AI agents: (1) execute node → return structure-only + `execution_id`, (2) read specific fields → retrieve from `~/.pflow/cache/registry-run/`. TTL: 24h stored but **not enforced** in MVP.
+
+**Binary encoding convention**: `{"__type": "base64", "data": "..."}` — used project-wide for binary data in JSON. Sensitive params auto-masked before caching.
+
+### param_coercion.py
+
+**Two functions for different contexts** — easy to confuse:
+- `coerce_to_declared_type(value, expected_type)`: For MCP tools. Converts dict/list → JSON string when declared type is `"str"`.
+- `coerce_input_to_declared_type(value, declared_type)`: For CLI inputs. Dispatch table handles all type pairs (str↔int, str↔bool, str↔JSON). **Lenient**: warns on failure instead of erroring — lets downstream validation catch it with full context.
 
 ### security_utils.py
 
@@ -215,6 +270,10 @@ These modules are NOT in `__init__.py`:
 - `workflow_save_service` — used by CLI and MCP server
 - `suggestion_utils` — used by CLI, runtime, formatters, MCP
 - `security_utils` — used by MCP errors and CLI display
+- `llm_config` — used by CLI startup, compiler, smart_filter, planning
+- `skill_service` — used by CLI skills commands, workflow_save_service
+- `smart_filter` — used by CLI registry run (structure-only mode)
+- `execution_cache` — used by CLI registry run
 
 ## Integration Map
 
@@ -234,7 +293,9 @@ These modules are NOT in `__init__.py`:
 
 **🐛 Broken**: Two LLM pricing aliases point to non-existent entries.
 
-**⚠️ Gated**: `generate_workflow_metadata()` in workflow_save_service, `update_ir()` in workflow_manager — both gated pending Task 107.
+**⚠️ Dead code**: `update_ir()` in workflow_manager — preserved but unreachable (repair system disabled).
+
+**⚠️ Bug**: Claude Code requires `description` in frontmatter for skill discovery (workaround in `skill_service.py`).
 
 ## Key Lessons
 

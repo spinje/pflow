@@ -10,10 +10,12 @@ Entry Point (main_wrapper.cli_main)
 Routing Decision (pre-parses sys.argv, first non-option arg)
     ├─→ workflow_command (default — file path, saved name, or natural language)
     ├─→ mcp (MCP server management)
-    ├─→ registry (node discovery)
+    ├─→ registry (node registry and execution)
     ├─→ workflow (saved workflow management)
+    ├─→ skill (publish workflows as AI agent skills)
     ├─→ settings (configuration)
-    └─→ instructions (agent guidance)
+    ├─→ instructions (agent guidance)
+    └─→ read-fields (retrieve fields from cached executions)
 ```
 
 **Why the wrapper exists**: Click can't handle both `@click.argument("workflow", nargs=-1)` and subcommands in the same group. `main_wrapper.py` detects known subcommands BEFORE Click processes arguments.
@@ -24,25 +26,39 @@ Routing Decision (pre-parses sys.argv, first non-option arg)
 src/pflow/cli/
 ├── __init__.py              # Exports cli_main
 ├── main_wrapper.py          # Entry point router (pre-parses sys.argv)
-├── main.py                  # Core workflow execution (~3400 lines)
+├── main.py                  # Core workflow execution (~3900 lines)
 ├── cli_output.py            # OutputInterface implementation for Click
 ├── repair_save_handlers.py  # ⚠️ GATED (Task 107) — repair save logic
 ├── rerun_display.py         # Rerun command display with secret masking
 ├── discovery_errors.py      # Shared error handling for LLM discovery
-├── read_fields.py           # Field reading utilities
+├── read_fields.py           # CLI command: retrieve fields from cached registry run results
 ├── logging_config.py        # CLI logging configuration
 ├── mcp.py                   # MCP server management commands
 ├── registry.py              # Node registry commands
-├── registry_run.py          # Single node execution (pflow registry execute)
-├── skills.py                # Skill management commands
+├── registry_run.py          # Single node execution (pflow registry run)
+├── skills.py                # Skill publishing commands (save/list/remove)
 ├── instructions.py          # Agent instruction generation
-├── resources/               # CLI resources (agent instructions)
+├── resources/               # CLI resources (agent instruction markdown files)
 └── commands/
-    ├── settings.py          # Settings management
+    ├── settings.py          # Settings management (nodes, env, LLM models, registry)
     └── workflow.py          # Saved workflow commands
 ```
 
 ## Core CLI (main.py)
+
+### Startup Sequence
+
+```
+workflow_command()
+    ↓ _setup_signals()
+    ↓ _inject_settings_env_vars()  ← injects API keys from pflow settings into os.environ
+    ↓ _initialize_context()
+    ↓ _auto_discover_mcp_servers() ← smart sync (skips if config unchanged)
+    ↓ _read_stdin_data()
+    ↓ _try_execute_named_workflow() or planner (GATED)
+```
+
+The env injection step is critical — it makes API keys stored via `pflow settings set-env` available to the `llm` library and other tools that read `os.environ`. Skipped in test environment.
 
 ### Command Flags
 
@@ -53,16 +69,22 @@ src/pflow/cli/
 --output-format        # "text" (default) or "json" — json forces non-interactive
 --print, -p            # Force non-interactive, clean output for piping
 --no-trace             # Disable automatic workflow trace saving
---trace-planner        # Save planner trace (also saved automatically on failure)
---planner-timeout      # Timeout in seconds (default: 60)
---planner-model        # LLM model for planning (default: auto-detect)
---save/--no-save       # Save generated workflow (default: save) — planner only
---cache-planner        # Use cached planner results
 --validate-only        # Validate without executing (exit 0/1), auto-normalizes IR
---auto-repair          # ⚠️ GATED (Task 107)
---no-update            # ⚠️ GATED (Task 107)
 workflow (nargs=-1)    # Catch-all: file path, saved name, or natural language
 ```
+
+Hidden planner flags (GATED — Task 107): `--trace-planner`, `--planner-timeout`, `--planner-model`, `--save/--no-save`, `--cache-planner`, `--auto-repair`, `--no-update`. These won't appear in `--help`.
+
+### Workflow Name Detection
+
+`is_likely_workflow_name()` determines whether input goes to file/saved resolution vs planner. Heuristics:
+- Contains spaces → never a workflow name (natural language)
+- Has file extension (`.pflow.md`, `.json`, `.md`) or path separators → file path
+- Followed by `key=value` args → workflow name with params
+- Contains hyphens (kebab-case) → likely workflow name
+- Single word without params → not treated as workflow name (prevents false positives)
+
+Also: `pflow run my-workflow` silently strips the `run` prefix (`_preprocess_run_prefix`).
 
 ### Workflow Resolution Priority
 
@@ -70,20 +92,12 @@ workflow (nargs=-1)    # Catch-all: file path, saved name, or natural language
 2. Try loading from WorkflowManager (saved name)
 3. Natural language → planner (**GATED** — Task 107)
 
-### Execution Flow
-
-```
-Load .pflow.md → parse_markdown() → Validation → Execution → Display
-```
-
-Output resolution priority: declared outputs → common patterns → last node output → auto-detection from shared store.
-
 ### Output Streams
 
 - Progress/warnings → **stderr** (`err=True`)
 - Results → **stdout** (safe for piping)
 
-This split is critical: piping `pflow workflow.pflow.md | jq` works because progress noise goes to stderr.
+This split is critical: piping `pflow workflow.pflow.md | jq` works because progress noise goes to stderr. `BrokenPipeError` handled via `os._exit(0)` for clean pipe termination.
 
 ### Interactive Mode Impact
 
@@ -123,7 +137,7 @@ JSON errors include structured execution state: per-node status (completed/faile
 
 - `workflow_source`: `"file"`, `"saved"`, or `None` — **gates whether metadata updates happen**
 - `workflow_name`: derived from filename (file) or save name (saved), used for traces/display
-- Full list of keys readable in `main.py` workflow_command function.
+- Full list of keys readable in `main.py` `_initialize_context` function.
 
 ## Component Details
 
@@ -139,47 +153,98 @@ Subcommands: `add`, `list`, `sync`, `remove`, `tools`, `info`, `serve`.
 
 ### Registry Commands (registry.py)
 
-Subcommands: `list`, `describe`, `search`, `scan`, `discover` (LLM-powered), `execute`.
+Subcommands: `list` (with optional filter pattern), `describe`, `scan`, `discover` (LLM-powered), `run`.
 
-**MCP tool normalization** (3-tier matching for `describe`/`execute`):
+Note: there is no separate `search` subcommand — `pflow registry list <pattern>` handles search with relevance-sorted results.
+
+**MCP tool normalization** (3-tier matching for `describe`/`run`):
 1. Exact match: `mcp-slack-composio-SLACK_SEND_MESSAGE`
 2. Hyphen/underscore conversion: `SLACK-SEND-MESSAGE` → `SLACK_SEND_MESSAGE`
 3. Short form: `SLACK_SEND_MESSAGE` → searches for unique tool with this suffix
 
 Ambiguity detected → shows all matching full IDs with guidance.
 
+**Cross-module dependency**: `describe` uses `build_planning_context()` from `pflow.planning.context_builder` to produce detailed node output.
+
+### Execution Caching Pipeline (registry_run.py + read_fields.py)
+
+```
+pflow registry run <node> params...
+    ↓ executes node
+    ↓ ExecutionCache.store(execution_id, outputs)
+    ↓ displays results with execution_id
+
+pflow read-fields <execution_id> <field_paths>...
+    ↓ ExecutionCache.retrieve(execution_id)
+    ↓ TemplateResolver.resolve_value(field_path, outputs)
+    ↓ displays specific field values
+```
+
+This two-command pipeline allows agents to run a node once, then extract specific fields without re-execution. Output display mode controlled by `settings.registry.output_mode` ("smart"/"structure"/"full").
+
 ### Workflow Commands (commands/workflow.py)
 
-Subcommands: `list`, `describe`, `show`, `delete`, `discover` (LLM-powered), `save`.
+Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (LLM-powered), `save`.
 
 **Workflow save**:
 - Name validation: lowercase, numbers, hyphens only, max 30 chars (shell/URL/git-safe)
 - Description extracted from markdown H1 prose (`--description` flag removed)
-- `--delete-draft` safety check: only works in `.pflow/workflows/` directory
+- `--delete-draft` safety check: only works in `.pflow/workflows/`, resolves symlinks, refuses to delete symlinked files
 - `--generate-metadata` **GATED** (Task 107)
+
+**Workflow history** (`pflow workflow history <name>`): Shows execution history and last used inputs — useful for finding previously used parameter values.
 
 **Discovery commands use planning nodes directly** — `WorkflowDiscoveryNode`, `ComponentBrowsingNode`. No logic extraction needed. Nodes are self-contained with clear inputs/outputs.
 
 **Discovery context requirements**: `ComponentBrowsingNode` requires `workflow_manager`, `current_date`, and `cache_planner` in the shared store. `WorkflowDiscoveryNode` requires `user_input` and `workflow_manager`.
 
+### Skill Commands (skills.py)
+
+Subcommands: `save`, `list`, `remove`.
+
+Skills are **symlinks** from tool-specific directories to saved workflows in `~/.pflow/workflows/`. The saved workflow is the single source of truth.
+
+**Multi-tool targets**: Claude Code (default), Cursor (`--cursor`), Codex (`--codex`), Copilot (`--copilot`). Can combine multiple flags.
+
+**Scope**: `--personal` for personal skills (`~/` dirs) vs project scope (project-relative dirs, default).
+
+**Enrichment**: `save` adds a `## Usage` section to the workflow file (idempotent — replaces existing).
+
+**Broken link detection**: `list` detects and reports broken symlinks with fix/remove guidance.
+
 ### Instructions Commands (instructions.py)
 
-- `pflow instructions usage` — basic usage guide (~100 lines)
-- `pflow instructions create` — comprehensive workflow creation guide (~1600 lines)
+- `pflow instructions usage` — basic usage guide (~166 lines)
+- `pflow instructions create` — comprehensive workflow creation guide (~1650 lines)
+  - `--part 1` Foundation & Mental Model (~550 lines)
+  - `--part 2` Building Workflows (~550 lines)
+  - `--part 3` Testing & Reference (~550 lines)
+  - Without `--part`: shows full content
 
 AI agents should run `pflow instructions usage` when first connecting to pflow.
 
 ### Settings Commands (commands/settings.py)
 
-Subcommands: `init`, `show`, `allow`, `deny`, `remove`, `check`, `reset`.
-
+**Node filtering**: `init`, `show`, `allow`, `deny`, `remove`, `check`, `reset`.
 Node filtering priority: Test policy → Deny → Allow → Default. See `core/CLAUDE.md` for details.
+
+**Environment variables**: `set-env`, `unset-env`, `list-env`.
+Stores API keys in `~/.pflow/settings.json`. Injected into `os.environ` at CLI startup (`_inject_settings_env_vars`), making them available to the `llm` library.
+
+**LLM model settings** (`settings llm` subgroup): `show`, `set-default`, `set-discovery`, `set-filtering`, `unset`.
+
+LLM model resolution chain (genuinely hard to discover):
+- `default`: workflow params → `default_model` setting → `llm` CLI default → error
+- `discovery`: `discovery_model` → `default_model` → auto-detect → fallback (`anthropic/claude-sonnet-4-5`)
+- `filtering`: `filtering_model` → `default_model` → auto-detect → fallback
+
+**Registry settings** (`settings registry` subgroup): `output-mode` (smart/structure/full).
 
 ### Repair Save Handlers (repair_save_handlers.py)
 
 **⚠️ GATED** (Task 107): All entry points return early with warning. Code preserved for re-enabling.
 
-Three save strategies (when re-enabled): saved workflows (update via WorkflowManager), file workflows (overwrite with .backup), planner workflows (save as repaired file).
+Three save strategies (when re-enabled): saved workflows (update via WorkflowManager), file workflows (overwrite original, no backup), planner workflows (save as timestamped repaired file).
 
 ### CLI Output (cli_output.py)
 
@@ -191,7 +256,7 @@ CLI uses formatters from `execution/formatters/` for output consistency with MCP
 - `main.py`: `success_formatter`, `error_formatter`, `validation_formatter`
 - `registry.py`: `registry_list_formatter`, `registry_search_formatter`
 - `registry_run.py`: `node_output_formatter`, `registry_run_formatter`
-- `commands/workflow.py`: `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`
+- `commands/workflow.py`: `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`, `history_formatter`
 
 ## Validate-Only Mode
 
@@ -236,14 +301,21 @@ pflow github-analyzer repo=spinje/pflow
 pflow mcp add ./github.mcp.json
 pflow mcp serve                        # Run as MCP server (stdio)
 pflow registry list
-pflow registry execute shell command="echo hi"
+pflow registry run shell command="echo hi"
+pflow registry run read-file file_path=/tmp/test.txt
+pflow read-fields exec-123-abc result[0].title  # Read cached fields
 pflow workflow describe my-workflow
-pflow instructions usage               # Agent guide
+pflow workflow history my-workflow      # Show execution history
+pflow skill save my-workflow            # Publish as AI skill
+pflow skill list                        # List published skills
+pflow settings set-env ANTHROPIC_API_KEY sk-... # Store API key
+pflow settings llm show                 # Show LLM model config
+pflow instructions usage                # Agent guide
 ```
 
 ## Known Issues
 
-1. **No MCP server process cleanup** — servers may remain running after CLI exit
+1. **MCP connection cleanup** — handled by `MCPConnectionPool.shutdown()` in `executor_service.py` finally block; `pflow registry run` still creates ephemeral connections
 2. **Click testing limitation** — `CliRunner` always returns `False` for `isatty()`, preventing interactive mode testing in unit tests
 3. **Registry format inconsistency** — two save methods create format confusion, pattern matching checks multiple fields
 
@@ -255,6 +327,7 @@ pflow instructions usage               # Agent guide
 - **Don't assume TTY** — always check interactive mode before showing progress or prompts
 - **Anthropic monkey patch** — required for discovery commands, installed per-command (bypasses main CLI setup). Check for `PYTEST_CURRENT_TEST` to skip during testing.
 - **Direct node reuse** — discovery commands use planning nodes (`WorkflowDiscoveryNode`, `ComponentBrowsingNode`) directly. Don't extract their logic into separate functions.
+- **`describe` depends on planning** — `registry describe` imports `build_planning_context` from `pflow.planning.context_builder`. Not a pure registry operation.
 
 ## Testing
 

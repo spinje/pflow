@@ -1,1112 +1,305 @@
-# CLAUDE.md - Test Navigation and Guidelines
+# Test Navigation and Guidelines
 
-This file provides comprehensive guidance for working with tests in the pflow project. It serves as a reference for both human developers and AI assistants when adding, modifying, or debugging tests.
-
-## Test Structure Overview
-
-The test suite follows a hierarchical structure that mirrors the source code organization:
+## Test Structure
 
 ```
 tests/
 ├── shared/                # Shared test utilities and mocks
-│   ├── __init__.py       # Package marker
 │   ├── llm_mock.py       # LLM-level mock (prevents API calls)
-│   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for writing .pflow.md test files
+│   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for .pflow.md test files
 │   ├── planner_block.py  # Planner blocker for CLI tests
-│   └── README.md         # Documentation for shared utilities
-├── test_cli/              # CLI command tests
-├── test_core/             # Core functionality (IR, schemas)
+│   ├── registry_utils.py # ensure_test_registry() helper
+│   └── README.md         # Docs for shared utilities
+├── test_pocketflow/       # PocketFlow framework tests (sync/async, batch, flow composition)
+├── test_cli/              # CLI command tests (CliRunner-based)
+├── test_core/             # IR schema, shell integration, settings, workflow manager
 ├── test_docs/             # Documentation validation
-├── test_integration/      # End-to-end integration tests
+├── test_execution/        # Execution/repair service tests
+│   └── formatters/        # Formatter tests (CLI/MCP parity, security)
+├── test_integration/      # End-to-end workflow tests
+├── test_mcp/              # MCP client-side integration tests (connection pool, http transport)
+├── test_mcp_server/       # pflow-as-MCP-server tests
 ├── test_nodes/            # Node implementation tests
-│   └── test_file/         # File node specific tests
-├── test_planning/         # Workflow planning tests
+│   ├── test_file/         # File node tests (read/write/copy/move/delete)
+│   ├── test_shell/        # Shell node tests (execution, binary, SIGPIPE, security)
+│   ├── test_git/          # Git node tests (status/commit/push/checkout/log/tag)
+│   ├── test_claude/       # Claude Code node tests
+│   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
+├── test_planning/         # Workflow planning tests (see test_planning/CLAUDE.md)
 ├── test_registry/         # Registry and scanner tests
-└── test_runtime/          # Runtime, compiler, flow tests
+└── test_runtime/          # Compiler, flow construction, dynamic imports
 ```
 
-Note on real CLI subprocess tests
-- Use shared fixtures from tests/conftest.py to avoid duplication and CI drift:
-  - uv_exe: finds uv or skips
-  - prepared_subprocess_env: creates isolated HOME, sets PFLOW_INCLUDE_TEST_NODES=true, and initializes the registry via `pflow registry list --json`
-- Example:
+**Mapping convention**: `src/pflow/X/Y/module.py` → `tests/test_X/test_Y/test_module.py`
+
+## Writing Workflow Test Files
+
+**Always use `tests/shared/markdown_utils.py`** to create `.pflow.md` test files (used by 30+ test files):
 ```python
-def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
-    env = prepared_subprocess_env
-    completed = subprocess.run([uv_exe, "run", "pflow", "--help"], capture_output=True, text=True, env=env)  # noqa: S603
-    assert completed.returncode == 0
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
+
+# Write IR dict as .pflow.md file
+write_workflow_file(ir_dict, tmp_path / "test.pflow.md")
+
+# Or get markdown string directly
+md_content = ir_to_markdown(ir_dict, title="Test Workflow", description="...")
 ```
 
-### Mapping Convention
-- Source: `src/pflow/X/Y/module.py`
-- Tests: `tests/test_X/test_Y/test_module.py`
+**Gotchas with `ir_to_markdown`**:
+- **Does not emit `edges`, `start_node`, or `ir_version`** — only emits `inputs`, nodes (as "Steps"), and `outputs`. The `.pflow.md` format infers execution order from step order.
+- **`purpose` is read from top-level node dict**, not from `params`. If you put `purpose` inside `params`, you get a duplicate.
+- Leading whitespace in param values (e.g., `" <<<"`) can be lost during markdown round-trip parsing.
 
-## Running Tests
+## Autouse Fixtures (tests/conftest.py)
 
-### Run All Tests
-```bash
-make test                          # Using Makefile (recommended)
-uv run pytest                      # Direct pytest
-uv run pytest -v                   # Verbose output
-uv run pytest -vv                  # Very verbose (shows full diffs)
-```
+These run automatically for every test — you do NOT need to set them up:
+- **`mock_llm_calls`**: Patches `llm.get_model` with mock. **Skips** tests in `/llm/` directories (they use real APIs).
+- **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. **Pre-populates registry with all core nodes.**
+- **`enable_test_nodes`**: Session-scoped, sets `PFLOW_INCLUDE_TEST_NODES=true`
 
-### Run Specific Test Categories
-```bash
-# Run only file node tests
-uv run pytest tests/test_nodes/test_file/
+**Surprise**: `isolate_pflow_config` gives every test a registry with all core nodes already loaded. If you need an **empty** registry, create one with an explicit temp path.
 
-# Run only CLI tests
-uv run pytest tests/test_cli/
-
-# Run only integration tests
-uv run pytest tests/test_integration/
-```
-
-### Run Specific Test Files
-```bash
-# Run a single test file
-uv run pytest tests/test_nodes/test_file/test_read_file.py
-
-# Run with specific test method
-uv run pytest tests/test_nodes/test_file/test_read_file.py::TestReadFileNode::test_successful_read
-```
-
-### Useful Test Flags
-```bash
-# Show local variables in tracebacks
-uv run pytest -l
-
-# Stop on first failure
-uv run pytest -x
-
-# Run last failed tests
-uv run pytest --lf
-
-# Run tests matching expression
-uv run pytest -k "test_read"
-
-# Show test coverage
-uv run pytest --cov=src/pflow
-
-# Generate coverage report
-uv run pytest --cov=src/pflow --cov-report=html
-```
-
-## Test Categories and Purposes
-
-### 1. CLI Tests (`test_cli/`)
-- **test_cli.py**: Basic CLI functionality and commands
-- **test_main.py**: Main entry point, argument parsing, stdin/file input handling
-
-**Key Patterns**:
+**Tip**: `isolate_pflow_config` yields a dict with keys `pflow_dir`, `registry_path`, `settings_path`, `mcp_servers_path`, `workflows_path`. Capture it to inspect or manipulate isolated paths:
 ```python
-from click.testing import CliRunner
-runner = CliRunner()
-result = runner.invoke(cli, ['command', 'args'])
-assert result.exit_code == 0
+def test_something(isolate_pflow_config):
+    paths = isolate_pflow_config
+    assert paths["registry_path"].exists()
 ```
 
-### 2. Core Tests (`test_core/`)
-- **test_ir_schema.py**: IR schema validation
-- **test_ir_examples.py**: Real-world IR examples and edge cases
+**Performance**: Registry scan happens ONCE per session (~0.2s), not per test. First test in isolation pays this cost.
 
-**Key Focus**: Schema compliance, validation errors, edge cases
+### LLM Mock Resolution Chain
 
-### 3. Node Tests (`test_nodes/`)
-Currently contains file nodes, structured for future node types:
-- **test_file/**: All file manipulation node tests
-  - Individual node tests (read, write, copy, move, delete)
-  - Integration tests between nodes
-  - Retry behavior tests
+When a test calls an LLM, the mock resolves in this order:
+1. Exact model+schema match (e.g., `"anthropic/claude-sonnet-4-5"` + `WorkflowDecision`)
+2. Wildcard `"*"` + schema match
+3. Built-in schema defaults (has defaults for `WorkflowDecision`, `ComponentSelection`, `ParameterDiscovery`, `ParameterExtraction`, `FlowIR`, `WorkflowMetadata`, `FilteredFields`)
+4. Final fallback: `{"response": "mock response"}`
 
-**Test Structure for Nodes**:
-1. Successful operation tests
-2. Error handling tests
-3. Edge cases (empty files, encoding issues)
-4. Parameter validation
-5. Integration with shared store
+If your custom mock isn't being used, check that model name AND schema type both match.
 
-### 4. Registry Tests (`test_registry/`)
-- **test_registry.py**: Node registration and lookup
-- **test_scanner.py**: Node discovery and metadata extraction
+**Mock behavior notes**:
+- `response.text()` is a **callable** (not a property) — returns JSON string
+- `call_history` entries **truncate prompts to 500 chars** — don't assert on long prompt content
+- `reset()` clears custom responses and call_history but preserves built-in schema defaults
 
-**Key Areas**: Dynamic imports, metadata validation, error handling
+## Conftest Hierarchy
 
-### 5. Runtime Tests (`test_runtime/`)
-- **test_compiler_basic.py**: Basic compilation functionality
-- **test_compiler_integration.py**: Complex compilation scenarios
-- **test_dynamic_imports.py**: Dynamic node loading
-- **test_flow_construction.py**: Flow building and execution
+| File | What it provides |
+|------|-----------------|
+| `tests/conftest.py` | Root: auto-applied LLM mock, isolated config, test nodes |
+| `tests/shared/llm_mock.py` | LLM-level mock (configurable responses) |
+| `tests/shared/planner_block.py` | Blocks planner import for CLI fallback testing |
+| `tests/test_cli/conftest.py` | CLI-specific: uses planner blocker |
+| `tests/test_integration/conftest.py` | Integration: uses planner blocker |
+| `tests/test_planning/conftest.py` | Autouse `skip_planning_tests` — **skips ALL planning tests** (gated, Task 107) |
+| `tests/test_planning/llm/prompts/conftest.py` | Session-scoped autouse: redirects LLM to `PFLOW_TEST_MODEL`, tracks tokens to `PFLOW_TOKEN_TRACKER_FILE` |
 
-**Focus**: IR to Flow compilation, error messages, performance
-
-### 6. Integration Tests (`test_integration/`)
-- **test_e2e_workflow.py**: Complete end-to-end workflows
-
-**Purpose**: Validate full system behavior from CLI to execution
-
-## Critical Testing Rules
-
-### Retry Testing
-**ALWAYS use `wait=0`** when testing retries to ensure fast execution:
+**Planning test skip override**: New files added to `test_planning/` are silently skipped. To make tests run, override the fixture:
 ```python
-node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
-# If not in constructor: node.wait = 0
+@pytest.fixture(autouse=True)
+def skip_planning_tests():
+    pass  # Override parent conftest's skip
 ```
 
-### Workflow Planning Tests
-**Critical insight**: Prompt specificity determines whether pflow creates new workflows or reuses existing ones.
-
-#### Testing Workflow Generation (Path B - Create New)
-Use **specific, detailed prompts** when testing workflow generation:
+To configure LLM mock responses:
 ```python
-# ✅ CORRECT - Specific prompt triggers generation
-"Create an issue triage report by fetching the last 30 open bug issues
-from github project-x repository, categorize them by priority,
-then write the report to reports/bug-triage.md"
-
-# ❌ WRONG - Too vague, would trigger reuse instead
-"Create an issue triage report"
+def test_something(mock_llm_responses):
+    mock_llm_responses.set_response("anthropic/claude-sonnet-4-5", WorkflowDecision, {"found": True, "workflow_name": "test"})
 ```
 
-#### Testing Workflow Reuse (Path A - Find Existing)
-Use **vague, minimal prompts** when testing workflow discovery:
-```python
-# ✅ CORRECT - Vague prompt triggers reuse
-"generate a changelog"
-
-# ❌ WRONG - Too specific, would trigger generation
-"generate a changelog from last 20 closed github issues and write to CHANGELOG.md"
-```
-
-**Why this matters**: Users provide detailed instructions when creating new workflows but use brief commands when running existing ones.
-
-#### Use North Star Examples
-Always reference `architecture/vision/north-star-examples.md` for realistic test scenarios:
-- **Primary (Complex)**: Generate changelog - Full GitHub → LLM → Git pipeline 🌟
-- **Secondary (Medium)**: Issue triage report - Simpler analysis workflow
-- **Tertiary (Simple)**: Summarize single issue - Minimal but useful
-
-These examples represent real developer workflows that provide actual value, not toy examples.
-
-## Writing New Tests
-
-### ⚠️ Performance Note: First Test Pays Setup Cost
-
-**When running tests in isolation:**
-- The FIRST test in a session pays ~0.2s for registry setup (session-scoped)
-- Subsequent tests have minimal overhead
-- This is only noticeable when running single tests during development
-
-**For subprocess tests specifically:**
-1. **`prepared_subprocess_env`** - Use this for tests needing the full registry
-2. **Minimal setup** - For simple tests, create your own minimal registry:
-   ```python
-   # tests/test_core/conftest.py - Override heavy fixtures for core tests
-   @pytest.fixture(autouse=True)
-   def isolate_pflow_config(tmp_path, monkeypatch):
-       """Lightweight version - no registry scanning."""
-       monkeypatch.setenv("HOME", str(tmp_path))
-   ```
-
-### Subprocess Tests - Use Sparingly
-
-**Rule: ONE subprocess test per bug/feature is usually enough**
-
-Instead of multiple subprocess tests, use:
-- 1 subprocess test to prove the integration works
-- Multiple unit tests for edge cases (1000x faster)
-
-**For subprocess tests, consider minimal setup instead of shared fixtures:**
-```python
-# FAST: Minimal inline setup (~0.3s)
-env = os.environ.copy()
-env["HOME"] = str(tmp_path)
-(tmp_path / ".pflow").mkdir()
-# Only register the nodes you actually need
-registry = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
-(tmp_path / ".pflow/registry.json").write_text(json.dumps(registry))
-
-# SLOW: Full shared fixture (~0.6s)
-def test_something(prepared_subprocess_env):  # Triggers full registry scan
-```
-
-### Where to Place New Tests - Decision Tree
-
-```
-Is it testing a CLI command?
-├─ YES → tests/test_cli/
-│
-├─ NO → Is it testing a node implementation?
-   ├─ YES → Is it a file operation node?
-   │   ├─ YES → tests/test_nodes/test_file/
-   │   └─ NO → tests/test_nodes/test_<node_type>/
-   │
-   └─ NO → Is it testing core functionality (IR, schemas)?
-      ├─ YES → tests/test_core/
-      │
-      └─ NO → Is it testing the registry or scanner?
-         ├─ YES → tests/test_registry/
-         │
-         └─ NO → Is it testing runtime/compiler?
-            ├─ YES → tests/test_runtime/
-            │
-            └─ NO → Is it an end-to-end workflow test?
-               ├─ YES → tests/test_integration/
-               └─ NO → tests/test_docs/ (or create new category)
-```
-
-### 1. Test File Naming
-- Test files must start with `test_`
-- Match source file names: `read_file.py` → `test_read_file.py`
-- Use descriptive names for integration tests
-
-### 2. Using Shared Test Utilities
-If your tests need to:
-- **Prevent LLM API calls**: Already handled by global mock in `tests/conftest.py`
-- **Block planner for CLI tests**: Use the planner blocker from `tests/shared/planner_block.py`
-- **Add new shared utilities**: Place them in `tests/shared/` and document in the README there
-
-Example for CLI/integration tests that need planner blocked:
+To block planner in new test directories:
 ```python
 # tests/test_new_feature/conftest.py
 from tests.shared.planner_block import create_planner_block_fixture
-
-# Block planner to test fallback behavior
 block_planner = create_planner_block_fixture()
 ```
 
-### 3. Test Class Structure
-```python
-class TestNodeName:
-    """Test NodeName functionality."""
+## Pytest Markers
 
-    def test_successful_operation(self):
-        """Test successful case with clear description."""
-        # Arrange
-        node = NodeName()
-        shared = {"required": "data"}
+Registered in `pyproject.toml`:
+- **`serial`**: Tests that must run sequentially (deselect with `-m "not serial"`)
+- **`integration`**: Tests that spawn subprocesses
 
-        # Act
-        result = node.run(shared)
+Other markers used across the suite:
+- `@pytest.mark.skipif(not os.getenv("RUN_LLM_TESTS"), ...)` — gates real LLM API tests
+- `@pytest.mark.skipif(sys.platform == "win32", ...)` — Unix-only pipe/SIGPIPE tests
+- `@pytest.mark.skipif(sys.version_info < (3, 11), ...)` — ExceptionGroup requires 3.11+
 
-        # Assert
-        assert result == "expected"
-        assert "output" in shared
-```
+## Make Test Commands
 
-### 4. Common Test Patterns
+| Command | Workers | What it excludes |
+|---------|---------|-----------------|
+| `make test` | `-n 4` | `test_planning/llm`, `test_llm_integration.py` |
+| `make test-debug` | sequential | Same exclusions |
+| `make test-llm` | sequential | Only runs LLM-specific tests |
+| `make test-all` | `-n 4` | Nothing — runs everything |
+| `make test-with-skipped` | sequential | Nothing — shows skip reasons |
 
-#### Testing Node Lifecycle
-```python
-# Full lifecycle test
-prep_res = node.prep(shared)
-exec_res = node.exec(prep_res)
-action = node.post(shared, prep_res, exec_res)
+All commands include `--doctest-modules` (doctests in `src/pflow/` run alongside tests).
 
-# Using run() for complete execution
-action = node.run(shared)
-```
+## Subprocess Test Fixtures
 
-#### Testing Error Conditions
-```python
-# Method 1: Test specific exception in exec
-with pytest.raises(SpecificError):
-    node.exec(prep_res)
-
-# Method 2: Test full lifecycle error handling
-action = node.run(shared)
-assert action == "error"
-assert "error" in shared
-assert "expected message" in shared["error"]
-```
-
-#### Using Temporary Files
-```python
-# For single file
-with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-    f.write("content")
-    temp_path = f.name
-try:
-    # test code
-finally:
-    os.unlink(temp_path)
-
-# For directories
-with tempfile.TemporaryDirectory() as tmpdir:
-    file_path = os.path.join(tmpdir, "test.txt")
-    # test code - cleanup is automatic
-```
-
-### 5. Fixtures and Utilities
-
-#### Common Fixtures (in conftest.py files)
-- `tests/conftest.py`: Root-level fixtures with auto-applied LLM mock
-- `tests/shared/llm_mock.py`: LLM-level mock (prevents API calls)
-- `tests/shared/planner_block.py`: Planner blocker for CLI fallback testing
-- `tests/test_cli/conftest.py`: CLI-specific fixtures (uses planner blocker)
-- `tests/test_integration/conftest.py`: Integration test fixtures (uses planner blocker)
-- `tests/test_nodes/conftest.py`: Node-specific fixtures (currently empty)
-- `tests/test_nodes/test_file/conftest.py`: File node fixtures (currently empty)
-
-#### Shared Test Utilities (tests/shared/)
-
-The `tests/shared/` directory contains reusable test utilities to avoid code duplication:
-
-**LLM Mock (`tests/shared/llm_mock.py`)**:
-- Prevents actual LLM API calls during tests
-- Automatically applied globally via `tests/conftest.py`
-- Mocks at the LLM API level (`llm.get_model`)
-- Configurable responses for different test scenarios
-
-**Planner Blocker (`tests/shared/planner_block.py`)**:
-- Blocks planner import to trigger CLI fallback behavior
-- Used by CLI and integration tests via their conftest.py files
-- Triggers fallback behavior that shows "Collected workflow from..." messages
-
-Example usage for configuring LLM responses:
-```python
-def test_something(mock_llm_responses):
-    mock_llm_responses.set_response(
-        "anthropic/claude-sonnet-4-5",
-        WorkflowDecision,
-        {"found": True, "workflow_name": "test"}
-    )
-```
-
-**Why Shared Utilities?**
-- Avoids code duplication between test suites
-- Ensures consistent mocking behavior across all tests
-- Makes it easy to update mock behavior in one place
-- Allows tests to run without making expensive LLM API calls
-
-#### Note on Autouse Fixtures
-
-**The project has autouse fixtures in `tests/conftest.py`:**
-- `mock_llm_calls` - Mocks LLM API calls (lightweight)
-- `isolate_pflow_config` - Creates isolated config (uses session-cached registry)
-- `enable_test_nodes` - Session-scoped, sets environment variable
-
-**Performance:** The registry scan happens ONCE per test session (~0.2s total), not per test.
-Only matters when running single tests in isolation during development.
-
-### Current Fixture Locations
-The project currently defines fixtures inline within test files. Future refactoring could move common fixtures to the appropriate conftest.py files:
+Use shared fixtures from `tests/conftest.py` for real CLI subprocess tests:
+- **`uv_exe`**: Finds `uv` or skips the test
+- **`prepared_subprocess_env`**: Creates isolated HOME, sets `PFLOW_INCLUDE_TEST_NODES=true`, writes pre-populated registry JSON
 
 ```python
-# Example: tests/test_nodes/test_file/conftest.py (future)
-import pytest
-import tempfile
-import os
-
-@pytest.fixture
-def temp_file():
-    """Create a temporary file with content."""
-    with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-        f.write("Test content")
-        temp_path = f.name
-    yield temp_path
-    os.unlink(temp_path)
-
-@pytest.fixture
-def temp_dir():
-    """Create a temporary directory."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield tmpdir
-
-@pytest.fixture
-def file_nodes_shared():
-    """Common shared store setup for file nodes."""
-    return {
-        "encoding": "utf-8",
-        "overwrite": False,
-    }
+def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
+    env = prepared_subprocess_env
+    completed = subprocess.run([uv_exe, "run", "pflow", "--help"], capture_output=True, text=True, env=env)
+    assert completed.returncode == 0
 ```
 
-#### Creating Test Fixtures
+**Rule: ONE subprocess test per bug/feature is usually enough.** Use unit tests for edge cases (1000x faster).
+
+For timeout-sensitive tests (e.g., hang detection), you can use minimal inline setup to avoid fixture overhead:
 ```python
-@pytest.fixture
-def sample_file(tmp_path):
-    """Create a sample file for testing."""
-    file_path = tmp_path / "sample.txt"
-    file_path.write_text("Sample content")
-    return str(file_path)
-
-@pytest.fixture
-def mock_registry():
-    """Create a mock registry with test nodes."""
-    from pflow.registry import Registry
-    registry = Registry()
-    # Add mock nodes
-    return registry
+# Special case (~0.3s): Minimal inline setup — only when fixture overhead matters
+env = os.environ.copy()
+env["HOME"] = str(tmp_path)
+(tmp_path / ".pflow").mkdir()
+registry = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode"}}}
+(tmp_path / ".pflow/registry.json").write_text(json.dumps(registry))
 ```
 
-### 5. Test Organization Best Practices
+## `PYTEST_CURRENT_TEST` in Production Code
 
-1. **Group related tests in classes**
-   ```python
-   class TestReadFileNode:
-       def test_successful_read(self): ...
-       def test_missing_file(self): ...
-       def test_encoding_error(self): ...
-   ```
+pytest sets `PYTEST_CURRENT_TEST` automatically. **Four production files check it** to skip dangerous operations during tests:
+- `src/pflow/core/llm_config.py` — Skips LLM key detection
+- `src/pflow/cli/main.py` — Guards CLI behavior
+- `src/pflow/mcp_server/main.py` — Skips Anthropic model install
+- `src/pflow/cli/logging_config.py` — Adjusts logging config
 
-2. **Use descriptive test names**
-   - Good: `test_copy_fails_when_destination_exists_without_overwrite`
-   - Bad: `test_copy_fail`
+If you modify these files, be aware they behave differently under test.
 
-3. **Test both success and failure paths**
-   - Happy path (normal operation)
-   - Error conditions
-   - Edge cases
-   - Parameter validation
+**Debug env var**: Set `DEBUG_TEST_PATHS=1` to see which temp paths `isolate_pflow_config` uses per test.
 
-4. **Keep tests focused**
-   - One logical assertion per test
-   - Use multiple tests rather than complex single tests
+## Environment Variable Isolation
 
-## Debugging Tests
+For subprocess tests, use `monkeypatch.setenv("HOME", str(tmp_path))`.
+For in-process tests, use `monkeypatch.setattr(Path, "home", lambda: tmp_path)`.
+These are NOT interchangeable — the code under test may use either `os.environ["HOME"]` or `Path.home()`.
 
-### 0. Debugging Slow Tests
+## Retry Testing
 
-```bash
-# Find out WHY your test is slow
-pytest path/to/slow_test.py -v --durations=10 --setup-show
-
-# Note: First test in session shows ~0.2s setup (registry caching)
-# This is normal and only happens once per session
-```
-
-**If your test is genuinely slow:**
-1. Replace subprocess tests with unit tests where possible (100x faster)
-2. Use minimal inline setup for subprocess tests instead of full registry
-3. Consider if you're testing the same thing multiple times
-
-### 1. Verbose Output
-```bash
-# See print statements and full diffs
-uv run pytest -vv -s tests/test_file.py
-
-# -v: verbose
-# -vv: very verbose
-# -s: no capture (shows print statements)
-```
-
-### 2. Debugging Failed Tests
-```bash
-# Drop into debugger on failure
-uv run pytest --pdb
-
-# Use breakpoint() in test code
-def test_something():
-    result = function()
-    breakpoint()  # Drops into pdb
-    assert result == expected
-```
-
-### 3. Test Isolation Issues
-- Each test should be independent
-- Use fixtures for setup/teardown
-- Don't rely on test execution order
-- Clean up resources (files, connections)
-
-## Coverage Guidelines
-
-### Running Coverage
-```bash
-# Simple coverage report
-uv run pytest --cov=src/pflow
-
-# Detailed HTML report
-uv run pytest --cov=src/pflow --cov-report=html
-# Open htmlcov/index.html
-
-# Show missing lines
-uv run pytest --cov=src/pflow --cov-report=term-missing
-```
-
-### Coverage Standards
-- Aim for >80% coverage on new code
-- Focus on critical paths and error handling
-- Don't test for the sake of coverage
-- Some code (like CLI output) may be harder to test
-
-## Common Pitfalls and Solutions
-
-### 1. Testing Framework Behavior Instead of Your Code
-**Problem**: Creating PocketFlow flows with loops to test retry logic
-**Solution**: Test node outputs and action strings, not flow execution
+**ALWAYS use `wait=0`** when testing retries:
 ```python
-# ❌ WRONG: Testing PocketFlow's loop execution
+node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
+```
+
+## Workflow Planning Test Prompts
+
+Prompt specificity determines whether pflow creates new workflows or reuses existing ones:
+
+**Testing generation (Path B)** — use specific, detailed prompts:
+```python
+# ✅ Specific → triggers generation
+"Create an issue triage report by fetching the last 30 open bug issues from github project-x, categorize by priority, write to reports/bug-triage.md"
+
+# ❌ Vague → triggers reuse instead
+"Create an issue triage report"
+```
+
+**Testing reuse (Path A)** — use vague, minimal prompts:
+```python
+# ✅ Vague → triggers reuse
+"generate a changelog"
+```
+
+## Pitfalls and Gotchas
+
+### 1. Testing Framework Instead of Your Code
+```python
+# ❌ Don't create PocketFlow flows with loops to test retry
 flow = Flow(start=generator)
-validator - "retry" >> generator  # Don't create actual loops!
+validator - "retry" >> generator
 
-# ✅ RIGHT: Test that nodes return correct action strings
+# ✅ Test that nodes return correct action strings
 action = validator.run(shared)
-assert action == "retry"  # PocketFlow handles the routing
+assert action == "retry"  # PocketFlow handles routing
 ```
 
 ### 2. Import Errors
-**Problem**: `ModuleNotFoundError: No module named 'src'`
-**Solution**: Run tests from project root, ensure PYTHONPATH is correct
+`ModuleNotFoundError: No module named 'src'` → Run from project root, check PYTHONPATH.
 
 ### 3. File System Tests
-**Problem**: Tests fail due to file permissions or existing files
-**Solution**: Always use temporary directories, clean up in finally blocks
+Always use temporary directories. Clean up in `finally` blocks. Prefer `tmp_path` over `tempfile.NamedTemporaryFile(delete=False)`.
 
 ### 4. Shared State Between Tests
-**Problem**: Tests pass individually but fail when run together
-**Solution**: Ensure proper test isolation, don't modify global state
+Tests pass alone but fail together → Ensure proper isolation, don't modify global state.
 
 ### 5. Platform-Specific Issues
-**Problem**: Tests fail on different OS (Windows vs Unix)
-**Solution**: Use `os.path.join()`, handle line endings, use `pathlib`
+Use `os.path.join()`, handle line endings, use `pathlib`.
 
-### 6. Async Test Issues
-**Problem**: Async tests not running or hanging
-**Solution**: Use `pytest-asyncio`, mark async tests with `@pytest.mark.asyncio`
+### 6. Test Node Type Confusion
+`CompilationError: Node type 'basic-node' not found` → Use actually registered nodes: `echo`, `shell`, `read-file`. Aliases like `basic-node`, `transform-node` are NOT registered. For mocked tests, define any names in your mock registry.
 
-### 7. Test Node Type Confusion
-**Problem**: `CompilationError: Node type 'basic-node' not found in registry`
-**Solution**: For real registry tests, use actually registered nodes like `echo`, `shell`, `read-file`. For mocked tests, you can define any node names in your mock registry (e.g., `test-node`, `test-node-retry`). Common aliases like `basic-node`, `transform-node` are not registered.
+### 7. Test Node Interface Inconsistency
+`KeyError: 'test_output'` → The `echo` node (only test node in registry) uses `message`/`echo` keys. `ExampleNode` in mocked tests uses `test_input`/`test_output`. Check node interfaces before use.
 
-### 8. Test Node Interface Inconsistency
-**Problem**: `KeyError: 'test_output'` when using wrong test node
-**Solution**: The `echo` node (the only test node in the real registry) uses `message`/`echo` keys. For mocked tests using `ExampleNode`, it uses `test_input`/`test_output`. Check node interfaces before use.
+### 8. Node Interface Uses `key`, Not `name`
+When building mock node interfaces, parameters use `{"key": "param_name", ...}`, NOT `{"name": "param_name", ...}`.
 
-### 9. Click Interactive Testing Limitation
-**Problem**: Can't test interactive prompts (workflow save dialog) with CliRunner
-**Solution**: CliRunner always returns False for `isatty()`. Test components separately - execution and save functionality independently.
+### 9. `purpose` Field Minimum Length
+FlowIR schema requires `purpose` to be at least 10 characters. When building IR dicts for tests, don't use short strings like `"test"`.
 
-### 10. Mock Pollution Between Test Files
-**Problem**: Mocks from one test file persist and break other tests (e.g., performance tests mocking `_process_nodes`)
-**Solution**: Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
+### 10. Click Interactive Testing Limitation
+`CliRunner` always returns `False` for `isatty()`. Can't test interactive prompts (workflow save dialog). Test execution and save functionality independently.
 
-### 11. Test Registry Must Point to Real Modules
-**Problem**: `CompilationError: Node type 'basic-node' not found` when registry has fake modules like `"test.module"`
-**Solution**: Registry entries must point to importable modules. Use actual test file paths:
+### 11. Mock Pollution Between Test Files
+Mocks from one file persist and break others → Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
+
+### 12. Test Registry Must Point to Real Modules
 ```python
-# DON'T: {"module": "test.module", "class_name": "ExampleNode"}  # Module doesn't exist
-# DO: {"module": "tests.test_runtime.test_compiler_integration", "class_name": "ExampleNode"}
-# OR: {"module": "pflow.nodes.test_node", "class_name": "ExampleNode"}  # Real project nodes
+# ❌ {"module": "test.module", "class_name": "ExampleNode"}  # Module doesn't exist
+# ✅ {"module": "tests.test_runtime.test_compiler_integration", "class_name": "ExampleNode"}
+# ✅ {"module": "pflow.nodes.test_node", "class_name": "ExampleNode"}
 ```
 
-### 11b. Global State in context_builder Requires Isolation
-**Problem**: Planning tests fail due to `_workflow_manager` global persisting between tests
-**Solution**: Always patch when testing context builder:
+### 13. Global State in context_builder
+`_workflow_manager` global persists between tests. Always patch:
 ```python
 with patch("pflow.planning.context_builder._workflow_manager", None):
-    context = build_planning_context(
-        selected_node_ids=["shell"],
-        selected_workflow_names=[],
-        registry_metadata=metadata,
-    )
+    context = build_planning_context(...)
 ```
 
-### 12. Testing Implementation Details Instead of Behavior
-**Problem**: Tests break when changing defaults or internal values that don't affect behavior
-**Solution**: Use explicit parameters to test behavior, not implicit defaults
+### 14. Testing Implementation Instead of Behavior
 ```python
-# ❌ WRONG: Relies on default max_suggestions=5
-formatted = format_suggestions(workflows)  # Breaks if default changes
+# ❌ Relies on default max_suggestions=5
+formatted = format_suggestions(workflows)
 assert "workflow-6" not in formatted
 
-# ✅ RIGHT: Test the limiting behavior explicitly
+# ✅ Test the limiting behavior explicitly
 formatted = format_suggestions(workflows, max_suggestions=3)
 assert "workflow-3" not in formatted
-assert "... and 2 more" in formatted
 ```
 
-### 13. Slow Tests Destroy Parallel Performance (pytest-xdist)
-**Problem**: A single slow test (e.g., 0.5s timeout) causes total suite time to double
-**Solution**: Keep individual test duration under 0.1s. With pytest-xdist, slow tests create worker scheduling bottlenecks that cascade far beyond their actual duration.
+### 15. Slow Tests Destroy Parallel Performance
+A single 0.5s test caused 6.5s of total overhead with pytest-xdist due to worker scheduling.
 ```python
-# ❌ WRONG: 0.5s timeout blocks a worker, suite goes from 7s to 14s
+# ❌ 0.5s timeout blocks a worker
 action = run_code_node(shared, code="time.sleep(10)", timeout=0.5)
 
-# ✅ RIGHT: 0.05s timeout, still 20x margin, minimal parallel impact
+# ✅ 0.05s timeout, minimal parallel impact
 action = run_code_node(shared, code="time.sleep(1)", timeout=0.05)
 ```
-**Why this happens**: pytest-xdist distributes tests across workers. When one worker is blocked on a slow test, it finishes late while other workers idle. A 0.5s test caused 6.5s of total overhead due to uneven distribution.
+**Rule**: Keep real wall-clock waiting under 0.1s.
 
-**Rule of thumb**: If a test needs real wall-clock waiting (timeouts, sleeps), keep it under 0.1s or mark it `@pytest.mark.slow` for exclusion from fast runs.
-
-## Test Maintenance
-
-### When to Update Tests
-1. **Adding new features**: Write tests first (TDD) or immediately after
-2. **Fixing bugs**: Add test that reproduces bug before fixing
-3. **Refactoring**: Ensure tests still pass, update if behavior changes
-4. **Deprecating features**: Update or remove relevant tests
-
-### Test Review Checklist
-- [ ] Tests follow naming conventions
-- [ ] Both success and error cases covered
-- [ ] Resources properly cleaned up
-- [ ] No hardcoded paths or values
-- [ ] Tests are deterministic (not flaky)
-- [ ] Clear test descriptions
-- [ ] Appropriate use of fixtures
-- [ ] No unnecessary complexity
-
-## Integration with CI/CD
-
-### GitHub Actions
-Tests run automatically on:
-- Pull requests
-- Pushes to main branch
-- Release tags
-
-### Local CI Simulation
-```bash
-# Run same checks as CI
-make check  # Includes linting, type checking
-make test   # Run all tests
-```
-
-## Quick Reference
-
-### Most Common Commands
-```bash
-# Run all tests
-make test
-
-# Run specific directory
-uv run pytest tests/test_nodes/test_file/
-
-# Run with coverage
-uv run pytest --cov=src/pflow
-
-# Run last failed
-uv run pytest --lf
-
-# Run tests matching pattern
-uv run pytest -k "read_file"
-
-# Debug test failures
-uv run pytest --pdb -x
-```
-
-### Test File Structure Template
+### 16. `caplog` Requires Explicit Level + Logger Name
+Tests using `caplog` pass in isolation but fail in the full suite because earlier tests modify logger configuration:
 ```python
-"""Test module_name functionality."""
+# ❌ Fails in full suite — logger level was changed by a prior test
+def test_warns(caplog):
+    do_something()
+    assert "warning message" in caplog.text
 
-import pytest
-from src.pflow.module import ClassName
-
-
-class TestClassName:
-    """Test ClassName behavior."""
-
-    def test_successful_case(self):
-        """Test successful operation."""
-        # Arrange
-        obj = ClassName()
-
-        # Act
-        result = obj.method()
-
-        # Assert
-        assert result == expected
-
-    def test_error_case(self):
-        """Test error handling."""
-        obj = ClassName()
-
-        with pytest.raises(ExpectedError):
-            obj.method_that_fails()
+# ✅ Explicitly set level and logger name
+def test_warns(caplog):
+    caplog.set_level("WARNING", logger="pflow.runtime.compiler")
+    do_something()
+    assert "warning message" in caplog.text
 ```
 
-## Performance Testing
-
-For performance-sensitive code:
-
-```python
-def test_performance(benchmark):
-    """Test operation performance."""
-    result = benchmark(function_to_test, arg1, arg2)
-    assert result == expected
-```
-
-Run with: `uv run pytest --benchmark-only`
-
-## Test Data Management
-
-### Small Test Data
-- Inline in test files for readability
-- Use fixtures for reusable data
-
-### Large Test Data
-- Store in `tests/data/` directory
-- Load using fixtures
-- Document data format and purpose
-
-## Adding Tests for New Node Types
-
-When adding a new node type to pflow, follow this structured approach:
-
-### 1. Create Test Directory Structure
-```bash
-# For a new node type (e.g., llm nodes)
-mkdir -p tests/test_nodes/test_llm
-touch tests/test_nodes/test_llm/__init__.py
-touch tests/test_nodes/test_llm/conftest.py
-```
-
-### 2. Standard Test Template for New Nodes
-
-```python
-# tests/test_nodes/test_llm/test_chat_node.py
-"""Test ChatNode functionality."""
-
-import pytest
-from src.pflow.nodes.llm import ChatNode
-
-
-class TestChatNode:
-    """Test ChatNode behavior."""
-
-    def test_successful_completion(self):
-        """Test successful LLM response."""
-        node = ChatNode()
-        shared = {
-            "prompt": "Hello",
-            "model": "test-model"
-        }
-
-        # Mock the LLM response if needed
-        with mock.patch('llm_library.complete') as mock_llm:
-            mock_llm.return_value = "Hello! How can I help?"
-
-            action = node.run(shared)
-
-            assert action == "default"
-            assert "response" in shared
-            assert shared["response"] == "Hello! How can I help?"
-
-    def test_missing_prompt(self):
-        """Test error when prompt is missing."""
-        node = ChatNode()
-        shared = {"model": "test-model"}
-
-        with pytest.raises(ValueError, match="Missing required 'prompt'"):
-            node.prep(shared)
-
-    def test_api_error_handling(self):
-        """Test handling of API errors."""
-        node = ChatNode()
-        shared = {"prompt": "Hello", "model": "test-model"}
-
-        with mock.patch('llm_library.complete') as mock_llm:
-            mock_llm.side_effect = APIError("Rate limit exceeded")
-
-            action = node.run(shared)
-
-            assert action == "error"
-            assert "error" in shared
-            assert "Rate limit" in shared["error"]
-```
-
-### 3. Node-Specific Test Patterns
-
-#### For I/O Nodes (files, network, etc.)
-- Test successful operations
-- Test missing resources
-- Test permission errors
-- Test resource cleanup
-
-#### For Transform Nodes (data processing)
-- Test valid transformations
-- Test edge cases (empty input, null values)
-- Test malformed data handling
-- Test performance with large data
-
-#### For API/Service Nodes
-- Mock external services
-- Test timeout handling
-- Test retry logic
-- Test authentication errors
-
-#### For LLM/AI Nodes
-- Mock model responses
-- Test prompt injection protection
-- Test token limit handling
-- Test model fallback logic
-
-### 4. Integration Test Template
-
-```python
-# tests/test_integration/test_llm_workflow.py
-def test_llm_with_file_workflow():
-    """Test workflow combining file reading and LLM processing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        # Create input file
-        input_file = os.path.join(tmpdir, "prompt.txt")
-        with open(input_file, "w") as f:
-            f.write("Summarize this text...")
-
-        # Create workflow
-        shared = {}
-
-        # Read file
-        read_node = ReadFileNode()
-        shared["file_path"] = input_file
-        read_node.run(shared)
-
-        # Process with LLM
-        llm_node = ChatNode()
-        shared["prompt"] = shared["content"]
-        with mock.patch('llm_library.complete') as mock_llm:
-            mock_llm.return_value = "Summary: ..."
-            llm_node.run(shared)
-
-        # Write result
-        write_node = WriteFileNode()
-        shared["content"] = shared["response"]
-        shared["file_path"] = os.path.join(tmpdir, "summary.txt")
-        write_node.run(shared)
-
-        # Verify
-        assert os.path.exists(shared["file_path"])
-```
-
-## Future Considerations
-
-### Planned Test Expansions
-1. **LLM Node Tests** (`test_nodes/test_llm/`)
-   - Mock LLM responses
-   - Test prompt handling
-   - Error scenarios
-   - Token counting
-   - Model fallback
-
-2. **Transform Node Tests** (`test_nodes/test_transform/`)
-   - JSON manipulation
-   - Text processing
-   - Data validation
-   - Format conversion
-
-3. **MCP Integration Tests**
-   - Server communication
-   - Protocol compliance
-   - Error recovery
-   - Connection pooling
-
-4. **Performance Benchmarks**
-   - Compilation speed
-   - Memory usage
-   - Large workflow handling
-   - Concurrent execution
-
-### Test Infrastructure Improvements
-- Parallel test execution with pytest-xdist
-- Test result caching
-- Mutation testing with mutmut
-- Property-based testing with hypothesis
-- Snapshot testing for complex outputs
-- Test performance monitoring
-
-## Getting Help
-
-1. **Run test with maximum verbosity**: `uv run pytest -vv`
-2. **Check test output**: Look for actual vs expected values
-3. **Review similar tests**: Find patterns in existing tests
-4. **Use debugger**: Add `breakpoint()` or use `--pdb`
-5. **Check CI logs**: Compare local vs CI environment
-
-Remember: Good tests are as important as good code. They document behavior, prevent regressions, and enable confident refactoring.
-
-## Project-Specific Test Patterns
-
-### 1. Node Testing Pattern (PocketFlow nodes)
-All nodes in pflow follow the PocketFlow pattern with prep/exec/post lifecycle:
-
-```python
-# Standard node test pattern
-def test_node_operation(self):
-    # 1. Create node instance
-    node = SomeNode()
-
-    # 2. Set up shared store
-    shared = {"input_key": "input_value"}
-
-    # 3. Test full lifecycle
-    prep_res = node.prep(shared)
-    exec_res = node.exec(prep_res)
-    action = node.post(shared, prep_res, exec_res)
-
-    # 4. Verify results
-    assert action == "default"  # or "error", "retry", etc.
-    assert "output_key" in shared
-```
-
-### 2. Error Testing Pattern
-Two approaches for testing errors in nodes:
-
-```python
-# Approach 1: Test specific method
-def test_error_in_exec(self):
-    node = SomeNode()
-    shared = {"bad": "input"}
-    prep_res = node.prep(shared)
-
-    with pytest.raises(SpecificError):
-        node.exec(prep_res)
-
-# Approach 2: Test full lifecycle with error handling
-def test_error_handling(self):
-    node = SomeNode()
-    shared = {"bad": "input"}
-
-    action = node.run(shared)  # run() handles exceptions
-    assert action == "error"
-    assert "error" in shared
-    assert "Expected error message" in shared["error"]
-```
-
-### 3. File Node Specific Patterns
-
-```python
-# Pattern for testing file operations
-def test_file_operation(self):
-    with tempfile.TemporaryDirectory() as tmpdir:
-        file_path = os.path.join(tmpdir, "test.txt")
-
-        # Create test file if needed
-        with open(file_path, "w") as f:
-            f.write("test content")
-
-        # Test the node
-        node = FileNode()
-        shared = {"file_path": file_path, ...}
-        action = node.run(shared)
-
-        # Verify file state
-        assert os.path.exists(file_path)  # or not, depending on operation
-```
-
-### 4. Registry and Import Testing
-
-```python
-# Pattern for testing dynamic imports
-def test_import_node(self):
-    from pflow.runtime.compiler import import_node_class
-    from pflow.registry import Registry
-
-    registry = Registry()
-    node_class = import_node_class("node-type", registry)
-
-    assert issubclass(node_class, BaseNode)
-    assert hasattr(node_class, 'metadata')
-```
-
-### 5. CLI Testing Pattern
-
-```python
-# Pattern for CLI tests
-def test_cli_command(self):
-    from click.testing import CliRunner
-    from pflow.cli import cli
-
-    runner = CliRunner()
-    result = runner.invoke(cli, ['command', '--option', 'value'])
-
-    assert result.exit_code == 0
-    assert "expected output" in result.output
-```
-
-## Test Execution Cheatsheet
-
-### Quick Commands (Copy & Paste)
-
-```bash
-# === RUNNING TESTS ===
-make test                                    # Run all tests
-uv run pytest -x                            # Stop on first failure
-uv run pytest --lf                          # Run last failed
-uv run pytest -k "test_name"                # Run matching tests
-uv run pytest path/to/test.py::TestClass    # Run specific class
-uv run pytest --pdb                         # Debug on failure
-
-# === COVERAGE ===
-uv run pytest --cov=src/pflow                        # Basic coverage
-uv run pytest --cov=src/pflow --cov-report=html      # HTML report
-uv run pytest --cov=src/pflow --cov-report=term-missing  # Show missing
-
-# === SPECIFIC TEST SUITES ===
-uv run pytest tests/test_cli/               # CLI tests only
-uv run pytest tests/test_nodes/test_file/   # File node tests only
-uv run pytest tests/test_integration/       # Integration tests only
-
-# === DEBUGGING ===
-uv run pytest -vv -s                        # Verbose with print statements
-uv run pytest --tb=short                    # Shorter tracebacks
-uv run pytest --tb=long                     # Longer tracebacks
-```
-
-## Current Test Statistics
-
-As of the last reorganization:
-- **Total test files**: 29
-- **Total test functions**: ~350
-- **Test categories**: 7 main categories
-- **Largest test suite**: File nodes (46 tests across 7 files)
-- **Test execution time**: ~4.5 seconds (all tests)
-
-## Node Test Coverage by Type
-
-Current node implementations with tests:
-1. **File Nodes** (Complete coverage)
-   - ReadFileNode: 8 tests
-   - WriteFileNode: 9 tests
-   - CopyFileNode: 5 tests
-   - MoveFileNode: 4 tests
-   - DeleteFileNode: 5 tests
-   - Integration: 5 tests
-   - Retry behavior: 10 tests
-
-2. **Future Node Types** (Planned)
-   - LLM nodes: TBD
-   - Transform nodes: TBD
-   - API nodes: TBD
-
-## Test Quality Indicators
-
-Look for these quality markers in tests:
-- ✅ Clear test names that describe behavior
-- ✅ Proper resource cleanup (files, connections)
-- ✅ Both positive and negative test cases
-- ✅ Edge case handling
-- ✅ Deterministic (not flaky)
-- ✅ Fast execution (< 100ms per test)
-- ✅ Meaningful assertions
-- ✅ Good error messages on failure
-
-## Troubleshooting Test Failures
-
-### Common Issues and Solutions
-
-1. **Import errors**: Ensure running from project root
-2. **File not found**: Check working directory, use absolute paths
-3. **Permission errors**: Use temp directories, check file ownership
-4. **Encoding errors**: Specify encoding explicitly
-5. **Platform differences**: Use `os.path.join()`, handle line endings
-6. **Timing issues**: Avoid sleep(), use proper synchronization
-7. **Test pollution**: Ensure cleanup, don't share state
-
-### Emergency Test Fixes
-
-```bash
-# Clean everything and start fresh
-git clean -fdx tests/__pycache__
-rm -rf .pytest_cache
-uv sync
-make test
-
-# Run single test in isolation
-uv run pytest -vv -s -x path/to/specific_test.py::test_function
-
-# Maximum debugging info
-uv run pytest -vv -s --tb=long --capture=no
-```
+### 17. `claude_agent_sdk` Mocked via `sys.modules` (Session-Wide)
+`test_nodes/test_claude/test_claude_code.py` injects mock `claude_agent_sdk` into `sys.modules` **at module level** (not in a fixture). This happens at import time, persists for the entire pytest session, and has no cleanup. If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.

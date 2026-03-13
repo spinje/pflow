@@ -22,14 +22,14 @@ src/pflow/execution/
     ├── success_formatter.py
     ├── node_output_formatter.py
     ├── validation_formatter.py
-    └── ... (10 formatters total)
+    └── ... (13 formatters total, see formatters/CLAUDE.md)
 ```
 
 **Internal functions** (require direct import): `execute_workflow()`, `repair_workflow()`, `repair_workflow_with_validation()`, `compute_workflow_diff()`.
 
 ## OutputInterface Protocol
 
-Methods: `show_progress()`, `show_result()`, `show_error()`, `show_success()`, `create_node_callback()`, `is_interactive()`.
+Methods: `show_progress()`, `show_result()`, `show_error()`, `show_success()`, `show_warning()`, `create_node_callback()`, `is_interactive()`.
 
 Implementations: `CliOutput` (cli/cli_output.py), `NullOutput` (null_output.py for MCP server).
 
@@ -38,17 +38,17 @@ Implementations: `CliOutput` (cli/cli_output.py), `NullOutput` (null_output.py f
 ```python
 @dataclass
 class ExecutionResult:
-    success: bool
-    shared_after: dict[str, Any]      # Final shared store state
-    errors: list[dict[str, Any]]      # Structured error data (see error structure below)
-    action_result: Optional[str]       # Flow action (e.g., "error")
-    node_count: int                    # Number of nodes executed
-    duration: float                    # Total execution time
-    output_data: Optional[str]         # Extracted output
-    metrics_summary: Optional[dict]    # LLM usage metrics
-    repaired_workflow_ir: Optional[dict]  # Repaired workflow if applicable
-    status: str                       # Tri-state: "success"/"degraded"/"failed"
-    warnings: dict[str, str]           # Node warnings for degraded status
+    success: bool                                          # Keep for backward compat
+    status: WorkflowStatus = WorkflowStatus.SUCCESS        # Tri-state: SUCCESS/DEGRADED/FAILED
+    shared_after: dict[str, Any] = field(default_factory=dict)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)  # api_warning, template_resolution
+    action_result: Optional[str] = None                    # Flow action (e.g., "error")
+    node_count: int = 0
+    duration: float = 0.0
+    output_data: Optional[str] = None                      # Extracted output
+    metrics_summary: Optional[dict[str, Any]] = None       # LLM usage metrics
+    repaired_workflow_ir: Optional[dict] = None             # Repaired workflow if applicable
 ```
 
 ## Error Structure for Repair (Canonical Reference)
@@ -68,6 +68,10 @@ class ExecutionResult:
     "response_time": 1.234,           # HTTP node
     "mcp_error_details": {...},       # MCP node
     "mcp_error": {...},               # MCP node: result.error object
+    "shell_command": "...",           # Shell node: command that failed
+    "shell_exit_code": 1,            # Shell node: exit code
+    "shell_stdout": "...",           # Shell node: stdout
+    "shell_stderr": "...",           # Shell node: stderr
     "available_fields": [...]         # Template errors: available keys (max 20)
 
     # After repair attempt
@@ -76,7 +80,7 @@ class ExecutionResult:
 }
 ```
 
-Rich error context extracted once in `_format_errors_for_result()` (executor_service.py), available in CLI display, JSON output, repair service, and trace files.
+Rich error context extracted once in `_build_error_list()` (executor_service.py), available in CLI display, JSON output, repair service, and trace files.
 
 ## Execution Flows
 
@@ -86,7 +90,9 @@ Rich error context extracted once in `_format_errors_for_result()` (executor_ser
 2. Direct execution
 3. Fail fast on first error — return ExecutionResult
 
-### With Repair Enabled (--auto-repair, currently GATED — Task 107)
+### With Repair Enabled (currently GATED at CLI/MCP layer — Task 107)
+
+> **Gating location**: `execute_workflow()` defaults to `enable_repair=True`, but CLI forces it to `False` (cli/main.py ~line 3045, `--auto-repair` flag is hidden) and MCP server also passes `False`. The function itself is not gated.
 
 1. **Validation phase**: Validate, repair if needed (up to 3 attempts)
 2. **Execution phase**: Execute with checkpoint tracking
@@ -99,30 +105,49 @@ Rich error context extracted once in `_format_errors_for_result()` (executor_ser
 
 ## Repair Service (`repair_service.py`)
 
-- Uses `anthropic/claude-sonnet-4-0` model
+- Model: auto-detected via `get_default_llm_model()`, falls back to `anthropic/claude-sonnet-4-5`. Configurable via `repair_model` param.
 - Leverages planner cache chunks (`__planner_cache_chunks__`) for context continuity
 - Validates repairs before returning
 - **Flow-centric philosophy**: "The error occurred at one node, but the fix might be in a different node"
+- **Depends on planning module**: Imports `FlowIR` from `pflow.planning.ir_models` for structured output schema
 
-**Error categories**: `api_validation`, `template_error`, `execution_failure`, `static_validation`.
+**Dual model handling** (different code paths):
+- **Anthropic models**: Structured output via FlowIR Pydantic schema, temperature=0.0, thinking_budget=0, cache_blocks
+- **Non-Anthropic models** (Gemini, OpenAI): Text mode, JSON extracted from response via regex/parsing
+- **GPT-5 special case**: Forces temperature=1.0, disables streaming (organization verification issues)
+
+**Error categories**: `api_validation`, `template_error`, `execution_failure`, `static_validation`, `edge_format`, `invalid_node_type`.
 
 **Repair vs warning** (determined by runtime error categorization — see `runtime/CLAUDE.md`):
 - Validation/template errors → always repair
 - API business errors → warning only (non-repairable)
 - Resource errors → warning only
 
+**Validation errors capped at 3** per repair attempt to keep LLM context focused.
+
 ## Workflow Diff (`workflow_diff.py`)
 
 `compute_workflow_diff()` compares two workflow IRs, returns `node_id → list of changes`. Detects: parameter additions, command modifications, prompt updates, node additions/removals, type changes. Used for `[repaired]` visual indicator.
 
+## Output Extraction Priority
+
+`executor_service._extract_default_output()` tries 3 strategies in order:
+1. **Declared outputs** from workflow IR (`outputs` field)
+2. **Common keys** in shared store: `result`, `output`, `response`, `data`
+3. **Last node's namespace** — looks for `result`, `output`, `response` in `shared[last_node_id]`
+
+If "why isn't my output showing?" — check this chain.
+
 ## Shared Formatters
 
-**Pattern**: Formatters return strings or dicts, **never print**. Consumers (CLI, MCP) handle display.
+**Pattern**: Formatters return strings or dicts, **never print**. Consumers (CLI, MCP) handle display. See `formatters/CLAUDE.md` for details.
 
 Key formatters:
 - `format_execution_errors()` — error formatting with sanitization
 - `format_execution_success()` — success results with metrics
-- `build_execution_steps()` (in `execution_state.py`) — per-node state including shell metadata: `has_stderr`, `stderr`, `smart_handled`, `smart_handled_reason`
+- `build_execution_steps()` (in `execution_state.py`) — per-node state including:
+  - Shell metadata: `has_stderr`, `stderr`, `smart_handled`, `smart_handled_reason`
+  - **Batch metadata**: `is_batch`, `batch_total`, `batch_success`, `batch_errors`, `batch_error_details` (capped at 5), `batch_errors_truncated` — added when node output contains `batch_metadata` key
 
 **Progress indicators**: ✓ success (green), ❌ error (red), ⚠️ warning (stderr on exit 0), ↻ cached (blue/dimmed), [repaired] modified (cyan). Shell smart handling: [no matches] (grep/rg), [not found] (which/type).
 
@@ -133,6 +158,8 @@ Key formatters:
 **MCP Server**: `mcp_server/services/execution_service.py` calls `execute_workflow()` with NullOutput. Uses shared formatters for CLI/MCP parity.
 
 **Runtime**: `executor_service.py` calls `compile_ir_to_flow()`. See `runtime/CLAUDE.md` for wrapper chain, reserved keys, and error categorization details.
+
+**MCP Connection Pool**: `executor_service._initialize_shared_store()` creates `MCPConnectionPool()` and stores it in `shared["__mcp_pool__"]`. Shutdown happens in the `finally` block of `execute_workflow()`. MCP nodes look up this pool from shared store to reuse server connections across workflow steps.
 
 ## Testing
 
@@ -148,3 +175,5 @@ Key formatters:
 - **Don't cache errors**: Never cache nodes that return "error" action.
 - **Don't modify checkpoint during resume**: `__execution__` is read-only during resume.
 - **Track modified nodes**: Always record nodes changed during repair for `[repaired]` UI feedback.
+- **Exception re-raise**: `executor_service` re-raises `CompilationError` and `RuntimeError` (not caught). Other exceptions are caught and wrapped in error dicts. Callers must handle these two.
+- **MCPNode error detection**: `MCPNode.post()` returns "default" action even on errors (workaround for missing error edges). Formatters also check for `"error"` key in outputs/shared_store.

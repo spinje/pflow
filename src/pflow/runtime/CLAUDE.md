@@ -25,7 +25,7 @@ src/pflow/runtime/
 
 ## Compilation Pipeline
 
-`compile_ir_to_flow()` is the main entry point (called by `executor_service.py`):
+`compile_ir_to_flow()` is the main entry point (called by `execution/executor_service.py` and internally by `workflow_executor.py` for nested workflows):
 
 1. Parse IR dict
 2. Validate structure, inputs, outputs
@@ -35,6 +35,12 @@ src/pflow/runtime/
 6. Create Flow object with start node
 
 **CompilationError** fields: `phase`, `node_id`, `node_type`, `details`, `suggestion` — provides structured context for debugging.
+
+**Non-obvious compiler behaviors**:
+- **LLM default model injection**: LLM nodes without `model` param get auto-injected default from `get_default_workflow_model()`. Fails with helpful message if no model configured anywhere.
+- **Source line threading**: `_source_lines` from markdown parser are threaded into params as `_<key>_source_line` — enables nodes to reference `.pflow.md` line numbers in errors.
+- **Flow.run monkey-patching**: When workflow declares outputs, compiler wraps `flow.run` to call `populate_declared_outputs()` after successful execution. Output resolution failures are silently swallowed (best-effort).
+- **Template resolution mode**: Can come from IR `template_resolution_mode` field OR global settings fallback. Stored in `initial_params["__template_resolution_mode__"]`.
 
 ## Wrapper Architecture
 
@@ -89,7 +95,7 @@ InstrumentedNodeWrapper.set_params()
 
 Outermost wrapper. Provides:
 - **Checkpoint system**: MD5-based configuration caching (skip re-execution on resume)
-- **API warning detection**: 3-tier priority system with 73 validation + 20 resource patterns
+- **API warning detection**: 3-tier priority system with 73 validation + 20 resource patterns. **Unwraps MCP nested responses** (JSON string `result`, `data` field, HTTP `response`+`status_code`) before checking. **When error matches both validation and resource patterns, defaults to repairable** (validation wins).
 - **LLM usage capture**: Token tracking and cost attribution
 - **Progress callbacks**: Real-time execution feedback via OutputInterface
 - **Cache hit tracking**: Records which nodes used cache in `shared["__cache_hits__"]`
@@ -107,19 +113,25 @@ Automatic collision prevention:
 Template resolution at runtime:
 - Separates template vs static parameters at `set_params()` time
 - Resolves `${variable}` syntax during `_run()`
-- Type validation prevents dict/list → str mismatches (uses registry metadata, shows fix suggestions)
+- **Bidirectional type coercion**: (1) str→dict/list auto-parse when expected type is structured, (2) dict/list→str auto-serialize via `coerce_to_declared_type` when expected type is str. Both use registry interface metadata. This enables shell→MCP and MCP→shell patterns.
 - Partial resolution detection via set intersection (Task 85)
 - **Strict mode** (default): Template/type errors are fatal ValueError → triggers repair
 - **Permissive mode**: Warnings only, stores errors in `shared["__template_errors__"]`
+- **Params temporarily mutated**: `inner_node.params` is swapped to resolved params during `_run()`, restored in `finally` block. Critical for understanding parallel batch execution.
 
 ### PflowBatchNode (`batch_node.py`)
 
-Batch processing wrapper:
+Batch processing wrapper. **Inherits from `Node`, not PocketFlow's `BatchNode`** — avoids `self.cur_retry` race condition in parallel mode by using local retry variables instead.
+
 - Sequential and parallel execution modes
 - Isolated item context (shallow copy of shared store per item)
-- Deep copies node chain for parallel mode (thread safety)
+- Deep copies node chain for parallel mode (thread safety). **Collectors (metrics/trace) are NOT deep-copied** — shared across all batch copies.
 - Per-item retry logic with configurable wait
-- `fail_fast` or `continue` error handling modes
+- `fail_fast` or `continue` error handling modes. **fail_fast is best-effort for parallel**: already-running LLM/HTTP calls can't be interrupted.
+- **`items` can be an inline array** (not just a template reference) — resolved via `resolve_nested()`
+- **Auto-JSON parsing**: If items template resolves to a string, tries `json.loads()`. Enables shell→batch patterns.
+- **`__index__`**: 0-based index injected into each item's shared store — nodes can know which item they're processing
+- **`item` is a reserved field** in batch results: inner node output `item` key is silently overwritten with original batch input (warning logged). Potential data loss.
 
 **Critical — LLM cost tracking**: Batch initializes `__llm_calls__` in `prep()` and captures `llm_usage` from each item's isolated context via `_capture_item_llm_usage()`. Captures from both root (`item_shared["llm_usage"]`) and namespaced (`item_shared[node_id]["llm_usage"]`) locations. Without this, LLM costs are lost when item context is discarded.
 
@@ -130,6 +142,12 @@ Batch processing wrapper:
 **Regex**: `r"(?<!\$)\$\{([a-zA-Z_][\w-]*(?:(?:\[[\d]+\])?(?:\.[a-zA-Z_][\w-]*(?:\[[\d]+\])?)*)?)\}"`
 
 **Path support**: `${data.user.name}`, `${items[0].title}`, `${data[5].users[2]}`
+
+**Escape syntax**: `$${var}` (double dollar) prevents template resolution via regex negative lookbehind. **However**, the escape is half-implemented: it prevents resolution but does NOT strip the extra `$` — output will contain the literal string `$${var}`, not `${var}`. There is currently no way to produce a literal `${...}` in output. Also note: `has_templates("$${var}")` returns `True` (naive `${` substring check) even though `extract_variables("$${var}")` returns empty set — this inconsistency is harmless but can confuse debugging.
+
+**Nested index templates**: `${results[${item.index}].response}` — inner `${...}` is resolved first (e.g., to `${results[0].response}`). Only **one level** of nesting is supported. Enables dynamic array indexing in batch processing where the index comes from `${__index__}` or `${item.field}`.
+
+**JSON auto-parsing**: When traversing paths like `${node.stdout.field}`, if `stdout` is a JSON string, it's auto-parsed for traversal. **Critical**: only dict/list results from `json.loads()` are used — numeric strings like Discord snowflake IDs (`"1458059302022549698"`) are deliberately preserved as strings, not parsed to int.
 
 **Type behavior**:
 - **Simple templates** (`${var}`): Preserve original type (int, bool, None, dict, list)
@@ -154,6 +172,7 @@ Pre-execution validation with rich error suggestions:
 - Flattens nested output structures showing array access patterns
 - "Did you mean X?" suggestions for typos (substring matching)
 - Shows all available paths (limit 20) with types
+- **Shell command validation**: Blocks dict/list templates in shell `command` params (would break shell parsing). Fix options: access specific fields, use stdin, or use the **single-quote escape hatch**: `'${var}'` signals user accepts runtime JSON coercion to string.
 
 **Error format example**:
 ```
@@ -178,9 +197,10 @@ Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
 Runtime node for nested workflow execution:
 - Loads workflows by name, path (`.pflow.md`), or inline IR
 - Parameter mapping with template resolution
-- **Storage isolation modes**: mapped/isolated/scoped/shared
+- **Storage isolation modes**: mapped/isolated/scoped/shared ("shared" is dangerous — direct reference to parent storage)
 - Circular dependency detection via execution stack
 - Registry propagation to sub-workflows
+- **Relative paths resolve from parent workflow directory**, not CWD
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
@@ -192,8 +212,12 @@ Runtime node for nested workflow execution:
 
 ### Validation Utilities (`workflow_validator.py`)
 
+**Warning**: Two `workflow_validator.py` files exist — `runtime/workflow_validator.py` (compiler-time, used here) and `core/workflow_validator.py` (pre-execution unified pipeline, 7+ external consumers). Don't confuse them.
+
 - `validate_ir_structure()` — basic IR validation
 - `prepare_inputs()` — input validation, defaults, and **type coercion** (converts CLI string values to declared types)
+- **Only one `stdin: true` input allowed** — validated at compile time
+- **Input resolution precedence** (5-tier): CLI args → `os.environ` → `settings.env` → workflow `default` → error if required
 
 ### Output Resolver (`output_resolver.py`)
 
@@ -232,6 +256,14 @@ shared["__warnings__"] = {}               # Node warnings → triggers DEGRADED 
 shared["__modified_nodes__"] = []         # Nodes changed during repair
 shared["__cache_hits__"] = []             # Nodes that used cached results
 shared["__template_errors__"] = {}        # Template/type errors in permissive mode
+shared["__mcp_pool__"] = MCPConnectionPool  # MCP server connection pool (see mcp/pool.py)
+shared["__is_planner__"] = bool            # Cost attribution flag for planner nodes
+shared["__index__"] = int                  # 0-based batch item index (injected by PflowBatchNode)
+
+# Nested workflow keys (different prefix — _pflow_ not __)
+shared["_pflow_depth"] = int               # Current nesting depth
+shared["_pflow_stack"] = list[str]         # Execution stack for circular detection
+shared["_pflow_workflow_file"] = str       # Current workflow file path
 ```
 
 ## Node Metadata Shape (from Registry)
@@ -263,6 +295,8 @@ Cache used when: node in `completed_nodes` AND config hash matches AND no error 
 - API warnings: Slack `"ok": false`, Discord errors, GraphQL `"errors": []`
 - HTTP status codes: 401, 403, 404, 429
 
+**Ambiguity rule**: When an error matches BOTH validation and resource patterns, it's treated as **repairable** (validation wins). Default for unknown errors is also repairable — loop detection is the safety net.
+
 ### MCP Node Handling
 
 - Node type format: `mcp-<server>-<tool>`
@@ -287,6 +321,15 @@ Cache used when: node in `completed_nodes` AND config hash matches AND no error 
 **Node type testing**: Core nodes use real test nodes from `src/pflow/nodes/test_node*.py`. MCP nodes mock with `"virtual://mcp"` file path. Enable test nodes with `PFLOW_INCLUDE_TEST_NODES=true`.
 
 **Critical test scenarios**: Template resolution with array indices, cache invalidation via hash mismatch, API warning detection patterns, circular workflow detection, MCP server names with dashes (greedy match), wrapper chain attribute delegation (`inner_node` vs `_inner_node`), thread-safe LLM interception.
+
+## Cross-Module Dependencies
+
+Key runtime modules used outside `runtime/`:
+- **`TemplateResolver`** (`template_resolver.py`): Used by `cli/read_fields.py`, `execution/formatters/`, `mcp_server/services/`, `planning/nodes.py` — not runtime-internal only.
+- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `node_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `runtime/workflow_validator.py`.
+- **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `node_wrapper.py`, `batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
+- **`__is_planner__`**: Set by `planning/debug.py`, read by `instrumented_wrapper.py` → routes to `core/metrics.py` for planner vs workflow cost separation.
+- **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `instrumented_wrapper.py` and `batch_node.py` for progress callback indentation depth.
 
 ## Gotchas
 

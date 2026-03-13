@@ -68,13 +68,8 @@ pflow is built on **PocketFlow** (~200-line Python library in `src/pflow/pocketf
 ### Development Commands
 
 ```bash
-# Setup
 make install                    # Install dependencies and pre-commit hooks
-
-# Testing
 make test                      # Run all tests with pytest
-
-# Code Quality
 make check                     # Run all quality checks (lint, type check, etc.)
 ```
 
@@ -94,266 +89,97 @@ make check                     # Run all quality checks (lint, type check, etc.)
 
 ### Project Structure
 
+> Every directory below has its own CLAUDE.md with file-level details.
+
 ```
 pflow/
-├── README.md               # Project overview and user guide
-├── Makefile                # Development automation
-├── pyproject.toml          # Project configuration and dependencies
-├── uv.lock                 # Dependency lockfile for uv
-├── docs/                   # User-facing documentation (mintlify)
-├── architecture/           # Architecture and design specifications
-├── examples/               # Example workflows and usage patterns
-├── scripts/                # Development and debugging scripts
-├── src/pflow/              # Main pflow implementation
-│   ├── pocketflow/         # Embedded PocketFlow framework (~200 lines)
-│   │   ├── __init__.py     # Core PocketFlow classes (Node, Flow, Shared Store)
-│   │   ├── LICENSE         # PocketFlow MIT License
-│   │   ├── PFLOW_MODIFICATIONS.md
-│   │   └── docs/           # PocketFlow documentation
-│   ├── cli/                # CLI entrypoints and subcommands
-│   │   ├── main.py         # Primary CLI (run workflows, I/O handling, validation)
-│   │   ├── main_wrapper.py # Routes first arg to mcp/registry/workflow/settings groups
-│   │   ├── mcp.py          # MCP server/tool management commands
-│   │   ├── registry.py     # Registry commands (list/search/describe/scan/run/discover)
-│   │   ├── registry_run.py # Execute a single node from registry with params
-│   │   ├── skills.py       # Skill management commands (list/describe/run/publish)
-│   │   ├── instructions.py # Generate usage instructions for agents
-│   │   ├── logging_config.py # CLI logging configuration
-│   │   ├── read_fields.py  # Field reading utilities for CLI
-│   │   ├── discovery_errors.py # Shared error handling for LLM discovery flows
-│   │   ├── rerun_display.py    # Builds safe rerun commands, masking secrets
-│   │   ├── repair_save_handlers.py # Save repaired workflows (saved/file/planner sources)
-│   │   ├── cli_output.py    # Click-based OutputInterface adapter
-│   │   ├── resources/       # CLI resources (agent instructions)
-│   │   └── commands/        # CLI command groups
-│   │       ├── settings.py  # Settings management (allow/deny, show, reset, check)
-│   │       └── workflow.py  # Manage saved workflows (list/describe)
-│   ├── core/                # Core schemas, settings, validation, and utilities
-│   │   ├── exceptions.py    # Exception types (planner/runtime/validation)
-│   │   ├── ir_schema.py     # Workflow IR schema and validation helpers
-│   │   ├── llm_config.py    # Default LLM detection via llm CLI and env
-│   │   ├── llm_pricing.py   # Centralized pricing and LLM cost calculations
-│   │   ├── metrics.py       # MetricsCollector for durations, tokens, costs
-│   │   ├── output_controller.py # Interactive vs non-interactive output routing
-│   │   ├── security_utils.py    # Sensitive parameter detection and masking
-│   │   ├── settings.py      # PflowSettings manager with allow/deny filters
-│   │   ├── shell_integration.py # Robust stdin handling (text/binary/large)
-│   │   ├── skill_service.py # Skill discovery and management service
-│   │   ├── smart_filter.py  # Smart filtering for registry/workflow search
-│   │   ├── suggestion_utils.py  # "Did you mean" suggestions for workflow/node names
-│   │   ├── user_errors.py   # User-friendly CLI error types and formatting
-│   │   ├── validation_utils.py # Parameter name validation helpers
-│   │   ├── execution_cache.py # Execution caching for workflow runs
-│   │   ├── json_utils.py    # JSON parsing and serialization utilities
-│   │   ├── param_coercion.py # Parameter type coercion utilities
-│   │   ├── workflow_status.py # Workflow status tracking
-│   │   ├── markdown_parser.py  # Markdown workflow parser (.pflow.md → IR dict)
-│   │   ├── workflow_data_flow.py # Data-flow validation and execution order
-│   │   ├── workflow_manager.py   # Saved workflow storage and metadata
-│   │   ├── workflow_save_service.py # Shared workflow save functions (CLI/MCP)
-│   │   └── workflow_validator.py # Unified workflow validation pipeline
-│   ├── execution/           # Execution UX and reusable services
-│   │   ├── display_manager.py   # UX display coordination via OutputInterface
-│   │   ├── execution_state.py   # Per-node execution state building
-│   │   ├── executor_service.py  # Reusable workflow execution service (IR -> run)
-│   │   ├── null_output.py       # No-op OutputInterface implementation
-│   │   ├── output_interface.py  # Output interface/protocol for display backends
-│   │   ├── repair_service.py    # Validation-driven auto-repair flow (may be deprecated soon)
-│   │   ├── workflow_diff.py     # Compute diffs between original and repaired IR
-│   │   ├── workflow_execution.py # Orchestrates validate/repair/execute cycle
-│   │   └── formatters/      # Shared formatters for CLI/MCP parity (return, never print)
-│   ├── mcp/                 # Model Context Protocol integration for MCP nodes in workflows
-│   │   ├── auth_utils.py    # Auth/config helpers for MCP servers
-│   │   ├── discovery.py     # Server discovery and config utilities
-│   │   ├── manager.py       # Manage MCP server configurations
-│   │   ├── registrar.py     # Register/sync MCP tools into pflow registry
-│   │   ├── types.py         # Typed structures for MCP configs and tools
-│   │   └── utils.py         # Parsing and utility helpers (server/tool IDs)
-│   ├── mcp_server/          # MCP server exposing pflow as programmatic tools for AI agents
-│   │   ├── main.py          # Server startup, Anthropic model install, signal handling
-│   │   ├── server.py        # FastMCP instance and tool registration
-│   │   ├── resources/       # MCP resources (prompts, instructions)
-│   │   ├── tools/           # MCP tool implementations (async layer)
-│   │   ├── services/        # Business logic layer (sync, stateless)
-│   │   └── utils/           # MCP-specific utilities
-│   │       ├── errors.py            # Error sanitization for LLM safety
-│   │       ├── resolver.py          # Workflow resolution (dict/name/path)
-│   │       └── validation.py        # Path/parameter security validation
+├── README.md                # Project overview and user guide
+├── Makefile                 # Development automation
+├── pyproject.toml           # Project configuration and dependencies
+├── uv.lock                  # Dependency lockfile
+├── docs/                    # User-facing documentation (mintlify)
+├── architecture/            # Architecture and design specs
+├── examples/                # Example workflows and usage patterns
+├── scripts/                 # Development and debugging scripts
+├── src/pflow/
+│   ├── pocketflow/          # Embedded PocketFlow framework (~200 lines)
+│   ├── cli/                 # CLI entrypoints and subcommands
+│   ├── core/                # Schemas, settings, validation, utilities
+│   ├── execution/           # Execution UX, repair, formatters
+│   ├── runtime/             # Compilation, wrappers, tracing
 │   ├── nodes/               # Platform node implementations
-│   │   ├── claude/          # Claude Code integration nodes
-│   │   ├── file/            # Local filesystem operations (read/write/copy/move/delete)
-│   │   ├── git/             # Git operations (status/commit/push/checkout/log/tag)
-│   │   ├── github/          # GitHub API nodes (issues/PRs/listing)
-│   │   ├── http/            # HTTP request node
-│   │   ├── llm/             # General-purpose LLM node
-│   │   ├── mcp/             # MCP tool bridge node
-│   │   ├── python/          # Python code execution node
-│   │   ├── shell/           # Shell command execution node
-│   │   └── test/            # Internal test/demo nodes
-│   ├── planning/            # Natural language planner system (may be deprecated soon)
-│   ├── registry/            # Node registry and scanning
-│   │   ├── metadata_extractor.py # Docstring/interface metadata extraction
-│   │   ├── registry.py      # Central registry load/save/filter/search
-│   │   └── scanner.py       # Discover nodes from modules and folders
-│   └── runtime/             # Runtime compilation, validation, and tracing
-│       ├── compiler.py          # Compile IR to PocketFlow Flow/Nodes
-│       ├── batch_node.py        # Batch processing node wrapper
-│       ├── error_context.py     # Error context utilities for debugging
-│       ├── instrumented_wrapper.py # Instrument nodes for metrics/tracing
-│       ├── namespaced_store.py  # Namespaced shared store with collision safety
-│       ├── namespaced_wrapper.py # Namespacing wrapper for nodes
-│       ├── node_wrapper.py      # General node wrapper utilities
-│       ├── output_resolver.py   # Resolve output routing and keys
-│       ├── template_resolver.py # Resolve ${var} with inputs/shared store
-│       ├── template_validator.py # Validate template paths using node interfaces
-│       ├── type_checker.py      # Runtime type checking utilities
-│       ├── workflow_executor.py # Workflow execution orchestration
-│       ├── workflow_trace.py    # Structured execution trace and metrics
-│       └── workflow_validator.py # Runtime validation used by compiler/executor
-├── tests/                   # Test suite organized by area
-│   ├── shared/              # Shared test utilities and fixtures
-│   │   ├── README.md        # Usage docs for shared testing utilities
-│   │   ├── llm_mock.py      # LLM-level mock preventing real API calls
-│   │   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for tests
-│   │   ├── planner_block.py # Fixture to block planner import for fallback tests
-│   │   └── registry_utils.py # Ensure a test registry from core nodes
+│   │   └── (shell, http, llm, file, git, github, mcp, python, claude, test)
+│   ├── planning/            # Natural language planner (GATED — Task 107)
+│   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
+│   ├── mcp_server/          # pflow-as-MCP-server for AI agents
+│   └── registry/            # Node registry and scanning
+├── tests/                   # Test suite
+│   ├── shared/              # Shared utilities (llm_mock, markdown_utils, registry_utils)
 │   ├── test_cli/            # CLI tests
-│   ├── test_core/           # Core modules tests
-│   ├── test_docs/           # Docs/link validation tests
-│   ├── test_execution/      # Execution/repair service tests
-│   │   └── formatters/      # Formatter tests (CLI/MCP parity, security)
+│   ├── test_core/           # Core module tests
+│   ├── test_docs/           # Docs/link validation
+│   ├── test_execution/      # Execution/repair tests (includes formatters/)
 │   ├── test_integration/    # End-to-end workflow tests
-│   ├── test_mcp/            # MCP integration tests (client-side MCP node/server integration)
-│   ├── test_mcp_server/     # MCP server tests (pflow-as-MCP-server)
+│   ├── test_mcp/            # MCP client integration tests
+│   ├── test_mcp_server/     # MCP server tests
 │   ├── test_nodes/          # Node implementation tests
-│   ├── test_planning/       # Planner tests (behavior, prompts, integration)
+│   ├── test_planning/       # Planner tests
 │   ├── test_registry/       # Registry/scanner tests
 │   └── test_runtime/        # Runtime/compiler/executor tests
-├── .taskmaster/             # Task management and planning
-│   └──  tasks/              # Task implementation files for all tasks
-│       └── task_<task-number>/         # Task <task-number> implementation files
-│           ├── task-review.md # Task review
-│           ├── task-<task-number>.md # Task specification
-│           └── implementation/
-│               └── progress-log.md # Progress tracking during development
-│               └── implementation-plan.md # Implementation plan
-└── CLAUDE.md                # This guide for agents working in the repo
+└── .taskmaster/             # Task management and planning
+    └── tasks/task_N/        # Per-task specs, reviews, and progress logs
 ```
 
 ### Claude's Operating Guidelines
 
-**Show Before You Code**: For any task that changes user-visible output:
-1. Show concrete before/after examples of the expected output when the task is complete
-2. Ask for confirmation before implementing
-3. This takes 30 seconds but saves hours of rework
-
-Example:
-```
-Current output:
-...
-
-Planned output:
-...
-
-Is this what you're expecting?
-```
+**Show Before You Code**: For any task that changes user-visible output, show concrete before/after examples and ask for confirmation before implementing. This takes 30 seconds but saves hours of rework.
 
 **Reasoning-First Approach**: Every code generation task must:
-1. Be part of MVP (unless explicitly requested by the user)
-2. Include rationale of *why* the task is needed
-3. Specify *how* it fits into current architecture
-4. Use consistent patterns (shared store, simple IO, single responsibility)
-5. Avoid introducing abstractions not yet justified
-6. Write comprehensive tests and documentation following the test-as-you-go strategy:
-   - Create tests AS YOU CODE, not as separate tasks/subtasks
-   - Every new function/component needs appropriate test cases (focus on quality over quantity)
+1. Include rationale of *why* the task is needed and *how* it fits current architecture
+2. Use consistent patterns (shared store, simple IO, single responsibility)
+3. Avoid introducing abstractions not yet justified
+4. Write tests AS YOU CODE (test-as-you-go):
+   - Every new function/component needs test cases (quality over quantity)
    - Test public APIs, critical paths, error handling, and integration points
    - A task without tests is an INCOMPLETE task
-   - Tests and implementation should be committed together
 
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?
-- **MVP vs. Future**: Does this belong in v0.1?
-- **Dependencies**: What dependencies does this task have?
-- **Why Now**: Why implement this step?
-- **Documentation**: What documentation and existing code do I need to read to understand the problem space fully?
-- **Is the task too big?**: If the task is too big, break it down into phases
-- **Test Strategy**: What tests will validate this functionality?
+- **Dependencies**: What does this task depend on?
+- **Documentation**: What docs and existing code do I need to read first?
+- **Is the task too big?**: If so, break it down into phases
+- **Test Strategy**: What tests will validate this?
 
-**Development Standards and process**:
-- Start small, build minimal components that can be expanded into reusable components
-- Each task includes its own test strategy. This ensures functionality is validated immediately and helps catch regressions when implementing future tasks.
-- Run `make test` (pytest) and `make check` (linting, type checking, etc.) before finalizing any implementation to ensure code quality
+**Development Standards**:
+- Start small, build minimal components that can be expanded
+- Run `make test` and `make check` before finalizing any implementation
 - Document decisions and tradeoffs
-- Create `CLAUDE.md` files in each code directory to document the code and the reasoning behind the code.
-- Create temporary scratch pads *for thinking deeply about the task* in the `scratchpads/<conversation-subject>/` directory. Always create them in a subdirectory relevant to the current conversation.
+- Create `CLAUDE.md` files in each code directory to document code and reasoning
+- Create scratch pads in `scratchpads/<conversation-subject>/` for deep thinking
 
 **Utilizing subagents**:
-- Always use `pflow-codebase-searcher` when gathering information, context, do research and verifying assumptions if the check is not a trivial check. This is important, it is the only way to avoid running out of context window when working on complex tasks.
-- Always use the `test-writer-fixer` subagent to write or fix broken tests. Remember to give it small tasks, never more than fixes for one file at a time. Provide the subagent with a comprehensive context and instructions and ask it to make a plan first, before it starts implementing.
-- Consider using the `code-implementer` subagent when implementing new features or fixing bugs. This agent should only be used for tasks that require no special knowledge of the codebase and specific implementation details, and only for tasks that are small and isolated.
+- Use `pflow-codebase-searcher` for gathering information, research, and verifying assumptions (avoids exhausting context window)
+- Use `test-writer-fixer` for writing/fixing tests (small tasks, one file at a time, comprehensive context)
+- Use `code-implementer` for small, isolated features/fixes that need no deep codebase knowledge
+- Deploy subagents in **parallel** (one function call block), never sequentially
 
-> Important: When utilizing subagents, you should always deploy them in parallel, never sequentially. This means using ONE function call block to deploy all neeeded subagents simultaneously.
-
-### Documentation Navigation
-
-**For detailed implementation guidance and documentation navigation**, see `architecture/CLAUDE.md`. This file provides:
-- Implementation order with pocketflow prerequisites
-- Feature-to-pattern mapping
-- Critical warnings for AI implementation
-- Navigation patterns for finding information
-
-### Documentation Resources
+### Documentation
 
 > Always read relevant docs before coding!
 
-- **pflow docs**: `architecture/CLAUDE.md` (navigation and inventory)
-- **PocketFlow docs**: `src/pflow/pocketflow/CLAUDE.md` (framework docs)
-- **PocketFlow tests**: `tests/pocketflow/` (framework test suite)
+- **Architecture & navigation**: `architecture/CLAUDE.md` — documentation index, reading paths, implementation CLAUDE.md table
+- **PocketFlow framework**: `src/pflow/pocketflow/CLAUDE.md`
+- **Agent usage guide**: Run `pflow instructions usage`
 
-> Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation, examples and searching for code. If you need specific information, ask a subagent or multiple subagents to do the research for you, tailor the prompt to the task at hand and provide as much context as possible.
+Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation and searching for code.
 
 ### Project Status
 
-MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
+MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` for version history.
 
-### Implemented Capabilities
+**What's implemented**: shell/http/llm/file/git/github/mcp/python/claude-code nodes, template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
 
-**CLI & Execution:**
-✅ Run workflows by name or file, shell pipe integration, named workflow save/load, batch processing, registry CLI (list/search/describe), workflow input/output declarations
-→ Tasks 8, 10, 21, 22, 24, 96
-
-**Nodes:**
-✅ shell, http, llm (via llm library), file (read/write/copy/move/delete), git, github, mcp, claude-code
-→ Tasks 11, 12, 26, 41, 42, 54, 95
-
-**Templates & Data Flow:**
-✅ ${var} syntax, schema-aware type checking, auto JSON parsing, shared store with namespacing
-→ Tasks 9, 18, 84, 85, 103, 105
-
-**Workflow Validation:**
-✅ Unified validation pipeline, pre-execution risk assessment for shell commands
-→ Tasks 40, 63
-
-**MCP Integration:**
-✅ MCP server support, http transport, pflow-as-MCP-server for agents
-→ Tasks 43, 47, 67, 72
-
-**Planner (gated — Task 107):**
-✅ Natural language → workflow, runtime validation feedback, debugging/tracing (currently gated pending markdown format prompt rewrite)
-→ Tasks 17, 27, 52, 56
-
-**Settings & Security:**
-✅ Node filtering, API key management, binary data support, security audit complete
-→ Tasks 50, 63, 80, 82, 83
-
-**Observability:**
-✅ Metrics/tracing system, rerun command display, interactive/non-interactive output, user-friendly error messages
-→ Tasks 32, 37, 53, 55
-
-**Agent Support:**
-✅ CLI commands for agents, registry execute for node testing, LLM-powered discovery
-→ Tasks 71, 76, 89
+**Planner**: Natural language → workflow generation exists but is **GATED** (Task 107) pending markdown format prompt rewrite.
 
 **Recently Completed:**
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
@@ -427,13 +253,9 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 - Task 114: Lightweight Custom Nodes
 - Task 116: Windows Compatibility
 
-> We are currently building the MVP and have NO USERS using the system. This means that we NEVER have to worry about backwards compatibility or breaking changes. However, we should never break existing functionality or rewrite breaking tests without carefully considering the implications.
-
-### Project status tools
-
 > **Task commands:**
 > ```bash
-> ./scripts/tasks              # View summary
+> ./scripts/tasks              # View summary and roadmap
 > ./scripts/tasks 104          # View specific task (or multiple: 104 103 110)
 > ./scripts/tasks --search X   # Find tasks
 > ```
@@ -441,19 +263,18 @@ MVP feature-complete (65 tasks). Next milestone: v0.8.0 (PyPI release).
 > **Task files:** `.taskmaster/tasks/task_N/`
 > **Version history:** `.taskmaster/versions.md`
 
+> We have NO USERS yet. No backwards compatibility concerns, but never break existing functionality or rewrite tests without carefully considering implications.
+
 ## User Decisions and Recommendations
 
 You are only able to provide information and recommendations—you cannot make decisions for the user.
 
 **When you encounter a decision point:**
 
-1. **Explain why a decision is needed.** What's the context? What's at stake? Frame it so it can be understood in isolation.
-
-2. **Present at least 2 options with tradeoffs.** For each option: what's good about it, what's bad about it, and how reversible is it?
-
+1. **Explain why a decision is needed.** What's the context? What's at stake?
+2. **Present at least 2 options with tradeoffs.** For each: what's good, what's bad, how reversible?
 3. **Make a clear recommendation.** State which option you'd suggest and why.
-
-4. **Gauge importance (1-5).** For low-stakes decisions (1-2) where you're confident, you may proceed. For anything higher, STOP—do not proceed to implementation until the user has decided and you clearly understand the decision and its implications.
+4. **Gauge importance (1-5).** For low-stakes (1-2) where you're confident, proceed. For anything higher, STOP and wait for the user's decision.
 
 If anything is unclear or ambiguous in the documentation, the user makes the call.
 
@@ -480,7 +301,6 @@ Enforced by `mypy` and `ruff`:
 ```
 - Use lowercase built-in types (Python 3.9+)
    ✅ items: list[str]         # CORRECT
-   ✅ cache: dict[str, Any]     # CORRECT
    ❌ items: List[str]          # WRONG - old style
    ❌ from typing import Dict   # WRONG - deprecated
 
@@ -504,41 +324,32 @@ Enforced by `mypy` and `ruff`:
    ✅ subprocess.run(["ls", "-la"], check=True)  # CORRECT
    ❌ os.system("ls -la")                        # WRONG - security risk
 
-Why this matters: These guidelines aren't about passing linters—they're about you filtering your training data (As an LLM). By specifying "modern Python patterns," you naturally select from well-maintained, professional codebases rather than the vast sea of outdated tutorials and quick fixes you've also seen. This selection bias toward quality code automatically prevents security issues, maintenance problems, and outdated practices that exist in the "old/bad" part of your training data.
+Why this matters: These guidelines aren't about passing linters—they're about you filtering your training data (as an LLM). By specifying "modern Python patterns," you naturally select from well-maintained, professional codebases rather than the vast sea of outdated tutorials and quick fixes. This selection bias toward quality code automatically prevents security issues, maintenance problems, and outdated practices.
 
-*You should not think about how to pass tests and linters. You should actively and proactively think about selecting from the RIGHT part of your training distribution. The code and architectural patterns you know in your gut are a good fit for this project.*
+*You should actively and proactively think about selecting from the RIGHT part of your training distribution. The code and architectural patterns you know in your gut are a good fit for this project.*
 
-#### Code Quality and archtectural excellence
+#### Code Quality
 
-More importantly focus on architectural quality and code quality:
+- Write code optimized for change: small focused functions with single responsibilities, clear names that explain intent not implementation, and comprehensive tests that document expected behavior
+- Structure code as isolated, testable components that can be understood and changed independently — the only meaningful measure of code quality is how safely and easily it can be modified
+- Prefer boring and obvious: write code a tired developer can understand at 3am. Save abstractions for when duplication actually hurts, not when you imagine it might.
 
-- Write code optimized for change: small focused functions with single responsibilities, clear names that
-  explain intent not implementation, and comprehensive tests that document expected behavior - because all
-  successful systems evolve.
-- Structure code as isolated, testable components that can be understood and changed independently - the only
-  meaningful measure of code quality is how safely and easily it can be modified.
-- Prefer boring and obvious: The best solution is rarely the clever one. Write code that a tired developer can understand at 3am. Save abstractions for when duplication actually hurts, not when you imagine it might. "Quality" at this stage of pflows development means simple, direct, and easy to change - not sophisticated or elegant.
-
-*Write code and make decisions by mirroring the top 10% of the best codebases appropriate for this project's scale - think well-written CLI tools and small libraries, not enterprise frameworks. Prefer boring, obvious code over clever abstractions. Ignore the rest. And save the fancy patterns for when they're actually needed.*
+*Mirror the top 10% of well-written CLI tools and small libraries, not enterprise frameworks. Prefer boring, obvious code over clever abstractions. Save fancy patterns for when they're actually needed.*
 
 ### Project-specific Memories
 
-- **CLI Development Principle**: NEVER either `git add`, `git commit` or `git push` code unless explicitly instructed by the user
-- **Expectation Setting**: I think it is important that the agent (you) show what the expected output will be BEFORE you start implementing. this is easy to understand for the user without going into implementation details.
+- **NEVER** `git add`, `git commit` or `git push` code unless explicitly instructed by the user
+- Show expected output BEFORE implementing — easy to understand without implementation details
 
-## Running pflow (for debugging, testing and development)
+## Running pflow
 
 ```bash
-# Run a workflow from a file (useful for testing and for AI agents iterating on workflows)
+# Run a workflow file
 uv run pflow workflow.pflow.md
-```
 
-```bash
-# Workflow traces are saved automatically to ~/.pflow/debug/workflow-trace-[name-]YYYYMMDD-HHMMSS.json
+# Traces saved to ~/.pflow/debug/workflow-trace-[name-]YYYYMMDD-HHMMSS.json
 uv run pflow my-workflow
-```
 
-```bash
-# When you need full context for understanding how an AI agents should use pflow (only read this if you really need to)
+# Full agent usage context (only read if needed)
 uv run pflow instructions usage
 ```
