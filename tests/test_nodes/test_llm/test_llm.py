@@ -1,5 +1,6 @@
 """Tests for the LLM node covering all 22 criteria from the specification."""
 
+import json
 from typing import ClassVar
 from unittest.mock import Mock, patch
 
@@ -925,3 +926,26 @@ class TestStructuredOutput:
             action = node.run(shared)
 
             assert action == "default"
+
+    def test_malformed_json_with_schema_raises(self):
+        """If structured output returns invalid JSON, exception propagates.
+
+        json.loads() is in post(), not exec(), so PocketFlow does NOT retry —
+        the exception crashes the node. This is correct: constrained decoding
+        should prevent this; if it happens, something is fundamentally broken.
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = "not valid json"
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0)
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            with pytest.raises(json.JSONDecodeError):
+                node.run(shared)

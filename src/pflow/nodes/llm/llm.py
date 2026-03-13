@@ -187,9 +187,10 @@ class LLMNode(Node):
 
         raw_response = exec_res["response"]
 
-        if exec_res.get("has_schema"):
-            # Structured output: API guarantees valid JSON matching the schema.
-            # Parse to dict for direct downstream access via ${node.response.field}.
+        if exec_res["has_schema"]:
+            # Structured output: parse JSON to dict for direct downstream
+            # access via ${node.response.field}. Constrained decoding should
+            # guarantee valid JSON; if not, the exception propagates up.
             shared["response"] = json.loads(raw_response)
         else:
             # Unstructured output: strip code block fences (LLM transport artifact), keep as string
