@@ -128,6 +128,14 @@ class WorkflowExecutorService:
             output_data = result["output_data"]
 
         finally:
+            # Shut down MCP connection pool (kills all server subprocesses)
+            mcp_pool = shared_store.get("__mcp_pool__") if shared_store else None
+            if mcp_pool is not None:
+                try:
+                    mcp_pool.shutdown()
+                except Exception:
+                    logger.debug("MCP pool shutdown error", exc_info=True)
+
             if metrics_collector:
                 metrics_collector.record_workflow_end()
 
@@ -181,6 +189,11 @@ class WorkflowExecutorService:
         # Add progress callback
         if self.output and self.output.create_node_callback():
             shared_store["__progress_callback__"] = self.output.create_node_callback()
+
+        # Create MCP connection pool for session reuse across workflow steps
+        from pflow.mcp.pool import MCPConnectionPool
+
+        shared_store["__mcp_pool__"] = MCPConnectionPool()
 
         return shared_store
 

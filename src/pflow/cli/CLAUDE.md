@@ -149,7 +149,7 @@ Subcommands: `add`, `list`, `sync`, `remove`, `tools`, `info`, `serve`.
 
 **Universal MCPNode pattern**: Single `MCPNode` class handles ALL MCP tools. Virtual registry entries point to same node class. Server/tool injected via `__mcp_server__` and `__mcp_tool__` params.
 
-**🐛 No MCP server process cleanup on exit** — servers may remain running after CLI exits.
+**MCP connection pooling**: Server sessions are kept alive across workflow steps via `MCPConnectionPool` (shared store key `__mcp_pool__`). Pool is created by `executor_service.py` and shut down in its `finally` block.
 
 ### Registry Commands (registry.py)
 

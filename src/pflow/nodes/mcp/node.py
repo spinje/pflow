@@ -31,10 +31,17 @@ class MCPNode(Node):
     - `__mcp_server__`: Name of the MCP server (e.g., "github")
     - `__mcp_tool__`: Name of the tool to execute (e.g., "create-issue")
 
+    ## Connection Pooling
+
+    When executed as part of a workflow, MCPNode uses an ``MCPConnectionPool``
+    (injected into shared store as ``__mcp_pool__``) to keep server sessions
+    alive between steps. This enables stateful MCP servers (Playwright, databases)
+    to maintain state across multiple workflow nodes.
+
     ## Async-to-Sync Wrapper
 
-    The MCP SDK is async-only, but pflow nodes are synchronous. This node uses
-    `asyncio.run()` to bridge this gap, creating a new event loop for each execution.
+    When no pool is available (e.g. ``pflow registry run``), the node falls back
+    to ``asyncio.run()`` which creates a new event loop for each execution.
 
     ## Example
 
@@ -67,7 +74,7 @@ class MCPNode(Node):
         # 2. Resource conflicts and race conditions
         # 3. "unhandled errors in a TaskGroup" exceptions
         # Note: max_retries=1 means 1 total attempt (no retries)
-        # TODO: Future improvement would be to cache and reuse server connections
+        # Connection reuse is handled by MCPConnectionPool (see pool.py)
         super().__init__(max_retries=1, wait=0)
         self._server_config: Optional[dict[str, Any]] = None
         self._timeout: int = 30  # Default timeout in seconds
@@ -165,7 +172,17 @@ class MCPNode(Node):
         verbose = shared.get("__verbose__", False)
         logger.debug(f"MCP Node prep: verbose={verbose}, __verbose__ in shared={shared.get('__verbose__')}")
 
-        return {"server": server, "tool": tool, "config": config, "arguments": tool_args, "verbose": verbose}
+        # Get connection pool from shared store (injected by executor_service)
+        pool = shared.get("__mcp_pool__")
+
+        return {
+            "server": server,
+            "tool": tool,
+            "config": config,
+            "arguments": tool_args,
+            "verbose": verbose,
+            "pool": pool,
+        }
 
     def exec(self, prep_res: dict) -> dict:
         """Execute MCP tool using async-to-sync wrapper.
@@ -182,8 +199,20 @@ class MCPNode(Node):
         )
 
         # NO try/except here - let exceptions bubble up for PocketFlow retry mechanism!
-        # Run async code in sync context using asyncio.run()
-        # This creates a new event loop for each execution
+        pool = prep_res.get("pool")
+        if pool is not None:
+            # Use connection pool — keeps server alive between workflow steps
+            raw_result = pool.call_tool(
+                server_name=prep_res["server"],
+                tool=prep_res["tool"],
+                arguments=prep_res["arguments"],
+                config=prep_res["config"],
+                verbose=prep_res["verbose"],
+                timeout=self._timeout,
+            )
+            return {"result": self._extract_result(raw_result)}
+
+        # Fallback: standalone execution (pflow registry run, no pool)
         result = asyncio.run(self._exec_async(prep_res), debug=False)
         return result
 
