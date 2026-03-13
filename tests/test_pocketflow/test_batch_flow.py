@@ -34,7 +34,7 @@ class TestBatchFlow(unittest.TestCase):
 
         class SimpleTestBatchFlow(BatchFlow):
             def prep(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {"a": 1, "b": 2, "c": 3}}
 
@@ -49,7 +49,7 @@ class TestBatchFlow(unittest.TestCase):
 
         class EmptyTestBatchFlow(BatchFlow):
             def prep(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {}}
 
@@ -63,7 +63,7 @@ class TestBatchFlow(unittest.TestCase):
 
         class SingleItemBatchFlow(BatchFlow):
             def prep(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {"single": 5}}
 
@@ -78,7 +78,7 @@ class TestBatchFlow(unittest.TestCase):
 
         class ErrorTestBatchFlow(BatchFlow):
             def prep(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {"normal_key": 1, "error_key": 2, "another_key": 3}}
 
@@ -106,7 +106,7 @@ class TestBatchFlow(unittest.TestCase):
 
         class NestedBatchFlow(BatchFlow):
             def prep(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         # Create inner flow
         inner_node = InnerNode()
@@ -137,7 +137,7 @@ class TestBatchFlow(unittest.TestCase):
 
         class CustomParamBatchFlow(BatchFlow):
             def prep(self, shared_storage):
-                return [{"key": k, "multiplier": i + 1} for i, k in enumerate(shared_storage["input_data"].keys())]
+                return [{"key": k, "multiplier": i + 1} for i, k in enumerate(shared_storage["input_data"])]
 
         shared_storage = {"input_data": {"a": 1, "b": 2, "c": 3}}
 

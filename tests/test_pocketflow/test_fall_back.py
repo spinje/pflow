@@ -61,7 +61,7 @@ class TestExecFallback(unittest.TestCase):
         """Test that exec_fallback is not called when execution succeeds"""
         shared_storage = {}
         node = FallbackNode(should_fail=False)
-        result = node.run(shared_storage)
+        node.run(shared_storage)
 
         self.assertEqual(len(shared_storage["results"]), 1)
         self.assertEqual(shared_storage["results"][0]["attempts"], 1)
@@ -71,7 +71,7 @@ class TestExecFallback(unittest.TestCase):
         """Test that exec_fallback is called after all retries are exhausted"""
         shared_storage = {}
         node = FallbackNode(should_fail=True, max_retries=2)
-        result = node.run(shared_storage)
+        node.run(shared_storage)
 
         self.assertEqual(len(shared_storage["results"]), 1)
         self.assertEqual(shared_storage["results"][0]["attempts"], 2)

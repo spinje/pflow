@@ -40,7 +40,7 @@ class TestAsyncBatchFlow(unittest.TestCase):
 
         class SimpleTestAsyncBatchFlow(AsyncBatchFlow):
             async def prep_async(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {"a": 1, "b": 2, "c": 3}}
 
@@ -59,7 +59,7 @@ class TestAsyncBatchFlow(unittest.TestCase):
 
         class EmptyTestAsyncBatchFlow(AsyncBatchFlow):
             async def prep_async(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {}}
 
@@ -73,7 +73,7 @@ class TestAsyncBatchFlow(unittest.TestCase):
 
         class ErrorTestAsyncBatchFlow(AsyncBatchFlow):
             async def prep_async(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         shared_storage = {"input_data": {"normal_key": 1, "error_key": 2, "another_key": 3}}
 
@@ -105,7 +105,7 @@ class TestAsyncBatchFlow(unittest.TestCase):
 
         class NestedAsyncBatchFlow(AsyncBatchFlow):
             async def prep_async(self, shared_storage):
-                return [{"key": k} for k in shared_storage["input_data"].keys()]
+                return [{"key": k} for k in shared_storage["input_data"]]
 
         # Create inner flow
         inner_node = AsyncInnerNode()
@@ -138,7 +138,7 @@ class TestAsyncBatchFlow(unittest.TestCase):
 
         class CustomParamAsyncBatchFlow(AsyncBatchFlow):
             async def prep_async(self, shared_storage):
-                return [{"key": k, "multiplier": i + 1} for i, k in enumerate(shared_storage["input_data"].keys())]
+                return [{"key": k, "multiplier": i + 1} for i, k in enumerate(shared_storage["input_data"])]
 
         shared_storage = {"input_data": {"a": 1, "b": 2, "c": 3}}
 
