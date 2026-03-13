@@ -192,6 +192,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 107: Markdown Workflow Format (.pflow.md replaces JSON)
 - ✅ Task 119: Publish Workflows as Claude Code Skills
 - ✅ Task 49: Publish to PyPI (v0.8.0)
+- ✅ Task 127: MCP Server Connection Pooling
 
 ### Planned Features (in order of priority)
 
