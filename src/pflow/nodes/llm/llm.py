@@ -1,5 +1,6 @@
 """General-purpose LLM node for text processing."""
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -22,7 +23,8 @@ class LLMNode(Node):
     - Params: prompt: str  # Text prompt to send to model
     - Params: system: str  # System prompt (optional)
     - Params: images: list[str]  # Image URLs or file paths (optional)
-    - Writes: shared["response"]: str  # Model's text response
+    - Params: output_schema: dict  # JSON Schema for structured output (optional)
+    - Writes: shared["response"]: str|dict  # Text (str), or parsed JSON (dict) when output_schema is set
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
         - input_tokens: int  # Number of input tokens consumed
@@ -134,6 +136,7 @@ class LLMNode(Node):
             "system": system,
             "max_tokens": self.params.get("max_tokens"),
             "attachments": attachments,
+            "output_schema": self.params.get("output_schema"),
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -153,6 +156,10 @@ class LLMNode(Node):
         if prep_res["attachments"]:
             kwargs["attachments"] = prep_res["attachments"]
 
+        # Add output schema for structured output
+        if prep_res["output_schema"] is not None:
+            kwargs["schema"] = prep_res["output_schema"]
+
         # Let exceptions bubble up for retry mechanism
         response = model.prompt(prep_res["prompt"], **kwargs)
 
@@ -166,6 +173,7 @@ class LLMNode(Node):
             "response": text,
             "usage": usage_obj,  # Pass raw object or None
             "model": prep_res["model"],
+            "has_schema": prep_res["output_schema"] is not None,
         }
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
@@ -179,8 +187,13 @@ class LLMNode(Node):
 
         raw_response = exec_res["response"]
 
-        # Strip code block fences (LLM transport artifact), keep as string
-        shared["response"] = self._strip_code_block(raw_response)
+        if exec_res.get("has_schema"):
+            # Structured output: API guarantees valid JSON matching the schema.
+            # Parse to dict for direct downstream access via ${node.response.field}.
+            shared["response"] = json.loads(raw_response)
+        else:
+            # Unstructured output: strip code block fences (LLM transport artifact), keep as string
+            shared["response"] = self._strip_code_block(raw_response)
 
         # Store usage metrics matching spec structure exactly
         usage_obj = exec_res.get("usage")
