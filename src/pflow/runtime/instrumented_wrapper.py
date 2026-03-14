@@ -10,7 +10,10 @@ from typing import Any, Optional, cast
 
 from pflow.core.exceptions import MaxNodeVisitsError
 
-MAX_NODE_VISITS = int(os.environ.get("PFLOW_MAX_NODE_VISITS", "100"))
+try:
+    MAX_NODE_VISITS = int(os.environ.get("PFLOW_MAX_NODE_VISITS", "100"))
+except ValueError:
+    MAX_NODE_VISITS = 100
 
 logger = logging.getLogger(__name__)
 
