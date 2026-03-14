@@ -1072,12 +1072,30 @@ else:
 result: str = msg
 ```
 
+### check-slack
+
+Route to Slack notification or skip directly to summary based on
+whether a Slack channel is configured.
+
+- type: code
+- inputs:
+    slack_channel: ${slack_channel}
+
+```python code
+slack_channel: str
+if slack_channel.strip():
+    next: str = "format-slack-message"
+else:
+    next: str = "create-summary"
+```
+
 ### format-slack-message
 
 Build the Slack notification combining a release header with the rendered
 changelog entries.
 
 - type: code
+- next: notify-slack
 - inputs:
     next_version: ${compute-version.result.next_version}
     bump_type: ${compute-version.result.bump_type}
@@ -1102,6 +1120,7 @@ Post the changelog to Slack. Uses Composio's markdown formatting for
 clean rendering in the channel.
 
 - type: mcp-composio-slack-SLACK_SEND_MESSAGE
+- next: create-summary
 - channel: ${slack_channel}
 - markdown_text: ${format-slack-message.result}
 
@@ -1111,6 +1130,7 @@ Build the CLI output summary showing the version, bump type, and
 created files with descriptions.
 
 - type: code
+- next: end
 - inputs:
     entries: ${enrich-drafts.result}
     skipped: ${split-classifications.result.skipped}
