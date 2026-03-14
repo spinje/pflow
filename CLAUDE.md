@@ -194,18 +194,18 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 49: Publish to PyPI (v0.8.0)
 - ✅ Task 127: MCP Server Connection Pooling
 - ✅ Task 38: Conditional Branching in Workflows
+- ✅ Task 59: Nested Workflows
 
 ### Planned Features (in order of priority)
 
-**v0.9.0 - Workflow Expressiveness:**
-- Task 59: Nested Workflows
-- Task 108: Smart Trace Debug Output
+**v0.10.0**
 - Task 125: Human-in-the-Loop Approval Gates
+- Task 108: Smart Trace Debug Output
 
-**v0.9.1 - Bug Fixes:**
+**v0.10.1 - Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
 
-**v0.10.0 - Extended Features:**
+**v0.11.0**
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
@@ -214,7 +214,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 118: Code and Shell Linting
 - Task 121: Workflow Testability
 
-**v0.11.0 - Performance:**
+**v0.12.0 - Performance:**
 - Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
