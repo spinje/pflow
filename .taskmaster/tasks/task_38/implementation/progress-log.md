@@ -243,3 +243,21 @@ Verified with three cases:
 - The distinction between "within a flow.run() revisit" (loop) and "across flow.run() revisit" (resume) is the critical boundary for cache correctness
 - Topological sort must include forward named/error edges to correctly order branch targets. The naive "exclude all non-default" approach breaks validation for any branch target that references upstream data.
 - Integration tests must exercise the validation pipeline (not just `validate=False`) to catch ordering regressions
+
+---
+
+## Phase 7: Branch Target Fall-Through Validation (Post-Merge)
+
+After merging the PR, identified that branch targets without `- next:` silently fall through via document-order edges. The bug is input-dependent (only manifests when certain branches are chosen) — a trap for AI agents.
+
+Three parse-time validations added to `markdown_parser.py`:
+
+1. **Dynamic `next` without declaration** — `_extract_next_targets_from_code()` now returns `(literals, has_dynamic)`. If `has_dynamic` and no `- next:` on node → error.
+2. **Branch target without `- next:`** — any node targeted by edge with action ∉ {None, "default"} must have `- next:`. Includes `- on-error:` targets.
+3. **Non-router falling into branch target** — doc-order edge from X to Y where Y is a branch target of Z and X ≠ Z → error.
+
+Split into 4 functions for C901 compliance: `_validate_dynamic_next_declarations()`, `_build_branch_target_routers()`, `_validate_branch_targets_have_next()`, `_validate_no_fallthrough_into_branch_targets()`, orchestrated by `_validate_branch_target_routing()`.
+
+Updated 7 existing parser tests (added `- next: end` to branch targets that now require it), added 15 new parser tests + 2 integration tests. Updated `error-handling.pflow.md` and all 3 agent instruction files.
+
+**3857 tests pass**, `make check` clean.

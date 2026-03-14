@@ -1748,9 +1748,11 @@ curl -f https://api.example.com/data
 Process the result.
 
 - type: code
+- inputs: { data: "${call-api.stdout}" }
+- next: end
 
 ```python code
-data: str = shared["call-api"]["stdout"]
+data: str
 result: dict = {"processed": True}
 ```
 
@@ -1766,16 +1768,17 @@ echo "API call failed" >&2
 ```
 ````
 
-**Data-driven routing** — a `code` node sets `next` to pick the path:
+**Data-driven routing (literal)** — a `code` node sets `next` to pick the path. When all targets are string literals, pflow detects them automatically:
 ````markdown
 ### classify
 
 Route based on input size.
 
 - type: code
+- inputs: { items: "${fetch.result}" }
 
 ```python code
-items: list = shared["fetch"]["result"]
+items: list
 result: int = len(items)
 if len(items) > 100:
     next: str = "bulk-process"
@@ -1806,13 +1809,57 @@ echo "Large batch: ${classify.result} items"
 ```
 ````
 
+**Data-driven routing (dynamic)** — when the target comes from a variable, declare all possible targets with `- next:`:
+````markdown
+### route
+
+Pick path based on category.
+
+- type: code
+- inputs: { category: "${analyze.result}" }
+- next: path-a, path-b
+
+```python code
+category: str
+result: str = category
+next: str = category
+```
+
+### path-a
+
+Handle category A.
+
+- type: shell
+- next: end
+
+```shell command
+echo "A: ${route.result}"
+```
+
+### path-b
+
+Handle category B.
+
+- type: shell
+- next: end
+
+```shell command
+echo "B: ${route.result}"
+```
+````
+
 **Routing rules:**
 - `- next: node-id` — override default successor (any node)
 - `- next: end` — terminate flow (no successor)
 - `- on-error: node-id` — route on failure (any node)
 - `next: str = "node-id"` — dynamic routing (code nodes only)
 - No `next` set in code → continues to next node in document order
-- Branch targets use `- next: end` or `- next: done` to prevent fall-through into nodes below them
+
+**Required: Branch targets MUST have explicit `- next:`**
+- Every node reached via `- on-error:` or named routing action MUST declare `- next: end` or `- next: <node-id>`
+- Without this, branches fall through to the next node in document order (silent bug)
+- If code uses dynamic routing (`next = variable`), the code node MUST declare `- next: target-a, target-b` listing all possible targets
+- Literal routing (`next: str = "target"`) does NOT need `- next:` on the code node — pflow detects targets automatically
 
 **When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
 

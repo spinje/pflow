@@ -75,6 +75,8 @@ Returns `MarkdownParseResult(ir, title, description, metadata, source)`.
 
 **Routing syntax**: `- next: node-id` (static routing), `- next: end` (terminal), `- on-error: node-id` (error routing). These are extracted from params into routing metadata during `_build_node_dict()` and used by `_build_edges()` to generate edges with action fields. Python code blocks are AST-scanned for `next: str = "literal"` assignments to generate additional routing edges.
 
+**Branch target validation**: After edge generation, the parser validates that all branch targets (nodes reached via named action edges or `- on-error:` edges) have explicit `- next:` directives. Also validates that non-router nodes don't fall through into branch targets via document order, and that dynamic `next` assignments in code have corresponding `- next:` declarations. Raises `MarkdownParseError` with actionable fix suggestions.
+
 **Validates at parse time**: missing descriptions, bare code blocks, duplicate params, unclosed fences, YAML syntax errors, invalid node IDs, missing `## Steps`.
 
 **Integration points**: CLI (`main.py`), WorkflowManager (`load`/`load_ir`), MCP resolver, runtime executor (nested workflows), workflow save service.

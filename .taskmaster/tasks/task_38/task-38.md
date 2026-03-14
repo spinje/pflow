@@ -187,6 +187,9 @@ Final step
   - `- on-error: node-id` → edge with action `"error"`
   - AST-detected `next = "node-id"` → edge with action = the literal string (node ID)
 - Validate all targets reference existing node IDs (suggest corrections for close matches)
+- Validate branch targets have explicit `- next:` (prevents silent fall-through)
+- Validate non-router nodes don't fall through into branch targets via document order
+- Validate dynamic `next = variable` assignments have `- next:` declarations on the code node
 
 ### 2. Python Code Node (`src/pflow/nodes/python/python_code.py`)
 
@@ -230,7 +233,7 @@ Final step
 ## Out of Scope
 
 - **Parallel execution** (Task 39) — branching is conditional (ONE path), not parallel (ALL paths)
-- **Dynamic routing targets** — `next = some_variable` requires `- next:` declaration as fallback; AST only parses string literals
+- **Dynamic routing targets** — `next = some_variable` requires `- next:` declaration (enforced at parse time); AST only parses string literals
 - **Repair system integration** — repair is gated/disabled; `on-error` is the primary error mechanism
 - **Complex expression evaluation** — no `- if:` conditions; use python code nodes for any decision logic
 
@@ -241,7 +244,7 @@ Final step
 | Code `next =` vs markdown `- next:` | Code wins at runtime | Markdown is the default; code overrides dynamically |
 | `result` when `next` is set | Optional | Routing-only nodes don't produce output data |
 | `next` shadows Python builtin | Acceptable | Routing code blocks are isolated, `next()` never needed there |
-| Branch target exclusion from linear chain | Explicit `- next: end` | Auto-detection has unsolvable edge cases; explicit is predictable |
+| Branch target exclusion from linear chain | Explicit `- next: end`, enforced at parse time | Branch targets without `- next:` cause silent fall-through; parser validates all three failure modes |
 | Loop protection | Max 100 visits per node | Prevents infinite loops; can be made configurable later |
 | Validation timing | Parse time for literals | All node IDs known at parse time; typo suggestions possible |
 
@@ -257,7 +260,7 @@ Final step
 
 ## Status
 
-planning — design complete, implementation not started
+complete — implemented and merged
 
 ## Dependencies
 

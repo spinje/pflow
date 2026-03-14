@@ -390,12 +390,15 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
 
     # Collect AST-detected routing targets from python code blocks
     ast_routing_targets: dict[str, list[str]] = {}
+    ast_has_dynamic: set[str] = set()
     for entity in step_entities:
         for block in entity.code_blocks:
             if block.param_name == "code":
-                code_targets = _extract_next_targets_from_code(block.content)
+                code_targets, has_dynamic = _extract_next_targets_from_code(block.content)
                 if code_targets:
                     ast_routing_targets[entity.id] = code_targets
+                if has_dynamic:
+                    ast_has_dynamic.add(entity.id)
 
     # Build edges with routing
     ir["edges"] = _build_edges(nodes, routing_metadata, ast_routing_targets)
@@ -403,6 +406,9 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     # Validate routing targets
     node_id_set = {n["id"] for n in nodes}
     _validate_routing_targets(ir["edges"], node_id_set)
+
+    # Validate branch target routing (prevents silent fall-through)
+    _validate_branch_target_routing(ir["edges"], routing_metadata, ast_has_dynamic)
 
     # Build outputs
     output_entities = [e for e in entities if e.section_type == _SectionType.OUTPUTS]
@@ -725,35 +731,40 @@ def _parse_next_targets(value: str) -> list[str]:
     return [str(value).strip()]
 
 
-def _extract_next_targets_from_code(code: str) -> list[str]:
+def _extract_next_targets_from_code(code: str) -> tuple[list[str], bool]:
     """Extract literal 'next' assignment targets from Python code via AST.
 
     Finds ``next: str = "node-id"`` (AnnAssign) and ``next = "node-id"`` (Assign).
-    Only extracts string literals. Dynamic values are ignored.
+    Only extracts string literals. Dynamic values are tracked separately.
+
+    Returns:
+        Tuple of (literal_targets, has_dynamic). has_dynamic is True when any
+        assignment to ``next`` uses a non-literal value (e.g. ``next = variable``).
     """
     try:
         tree = ast.parse(code)
     except SyntaxError:
-        return []
+        return [], False
 
     targets: list[str] = []
+    has_dynamic = False
     for node in ast.walk(tree):
+        # Annotated assignment: next: str = "literal" or next: str = variable
         if (
             isinstance(node, ast.AnnAssign)
             and isinstance(node.target, ast.Name)
             and node.target.id == "next"
             and node.value is not None
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
         ) or (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
             and node.targets[0].id == "next"
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
         ):
-            targets.append(node.value.value)
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                targets.append(node.value.value)
+            else:
+                has_dynamic = True
 
     seen: set[str] = set()
     unique: list[str] = []
@@ -762,7 +773,7 @@ def _extract_next_targets_from_code(code: str) -> list[str]:
         if t not in seen and t != "end":
             seen.add(t)
             unique.append(t)
-    return unique
+    return unique, has_dynamic
 
 
 def _build_edges(
@@ -834,6 +845,131 @@ def _validate_routing_targets(
             else:
                 suggestion = f"Available nodes: {', '.join(sorted(node_ids))}"
             raise MarkdownParseError(f"Node '{source}' references unknown target '{target}'. {suggestion}")
+
+
+def _validate_dynamic_next_declarations(
+    routing_metadata: dict[str, dict[str, Any]],
+    ast_has_dynamic: set[str],
+) -> None:
+    """Check that code nodes with dynamic ``next`` have ``- next:`` declarations."""
+    for node_id in sorted(ast_has_dynamic):
+        routing = routing_metadata.get(node_id, {})
+        if "next" not in routing:
+            raise MarkdownParseError(
+                f"Node '{node_id}' uses dynamic routing (next = <expression>) but has no "
+                f"'- next:' declaration. Routing targets must be declared so pflow can "
+                f"create the edges that PocketFlow needs to follow at runtime.\n\n"
+                f"Fix: Add '- next:' listing all possible routing targets:\n\n"
+                f"    ### {node_id}\n"
+                f"    - type: code\n"
+                f"    - next: target-a, target-b\n\n"
+                f"Without '- next:', the flow will silently stop when code sets next at runtime."
+            )
+
+
+def _build_branch_target_routers(
+    edges: list[dict[str, Any]],
+) -> dict[str, set[str]]:
+    """Build mapping of branch target node IDs to their router source node IDs.
+
+    A "branch target" is any node reached via an edge with action not in {None, "default"}.
+    """
+    branch_target_routers: dict[str, set[str]] = {}
+    for edge in edges:
+        action = edge.get("action")
+        if action is not None and action != "default":
+            target = edge["to"]
+            source = edge["from"]
+            if target not in branch_target_routers:
+                branch_target_routers[target] = set()
+            branch_target_routers[target].add(source)
+    return branch_target_routers
+
+
+def _validate_branch_targets_have_next(
+    edges: list[dict[str, Any]],
+    routing_metadata: dict[str, dict[str, Any]],
+    branch_target_routers: dict[str, set[str]],
+) -> None:
+    """Check that branch targets have explicit ``- next:`` directives."""
+    doc_order_targets: dict[str, str] = {}
+    for edge in edges:
+        if "action" not in edge:
+            doc_order_targets[edge["from"]] = edge["to"]
+
+    for target_id in sorted(branch_target_routers):
+        routers = branch_target_routers[target_id]
+        routing = routing_metadata.get(target_id, {})
+        if "next" not in routing:
+            router_list = ", ".join(f"'{r}'" for r in sorted(routers))
+            doc_successor = doc_order_targets.get(target_id)
+            if doc_successor:
+                raise MarkdownParseError(
+                    f"Node '{target_id}' is a routing target of {router_list} but has no "
+                    f"'- next:' directive. Without explicit routing, it will fall through "
+                    f"to '{doc_successor}' via document order.\n\n"
+                    f"Fix: Add '- next: end' to terminate the branch, or "
+                    f"'- next: <node-id>' to continue to a specific node:\n\n"
+                    f"    ### {target_id}\n"
+                    f"    - next: end"
+                )
+            else:
+                raise MarkdownParseError(
+                    f"Node '{target_id}' is a routing target of {router_list} but has no "
+                    f"'- next:' directive. Branch targets must have explicit routing.\n\n"
+                    f"Fix: Add '- next: end' to make termination explicit:\n\n"
+                    f"    ### {target_id}\n"
+                    f"    - next: end"
+                )
+
+
+def _validate_no_fallthrough_into_branch_targets(
+    edges: list[dict[str, Any]],
+    branch_target_routers: dict[str, set[str]],
+) -> None:
+    """Check that non-router nodes don't fall through into branch targets."""
+    for edge in edges:
+        if "action" not in edge:  # Document-order edge
+            target = edge["to"]
+            source = edge["from"]
+            if target in branch_target_routers:
+                routers = branch_target_routers[target]
+                if source not in routers:
+                    router_list = ", ".join(f"'{r}'" for r in sorted(routers))
+                    raise MarkdownParseError(
+                        f"Node '{source}' flows into '{target}' via document order, but "
+                        f"'{target}' is a routing target of {router_list}. Main flow nodes "
+                        f"should not fall through into branch targets.\n\n"
+                        f"Fix: Add '- next: end' to terminate the flow before the branch "
+                        f"section:\n\n"
+                        f"    ### {source}\n"
+                        f"    - next: end"
+                    )
+
+
+def _validate_branch_target_routing(
+    edges: list[dict[str, Any]],
+    routing_metadata: dict[str, dict[str, Any]],
+    ast_has_dynamic: set[str],
+) -> None:
+    """Validate that branch targets have explicit routing to prevent fall-through.
+
+    Three checks:
+    1. Dynamic ``next`` in code without ``- next:`` declaration on the node.
+    2. Branch targets (nodes reached via named action edges) without ``- next:``.
+    3. Non-router nodes that fall through into branch targets via document order.
+
+    Raises:
+        MarkdownParseError: On the first violation found.
+    """
+    _validate_dynamic_next_declarations(routing_metadata, ast_has_dynamic)
+
+    branch_target_routers = _build_branch_target_routers(edges)
+    if not branch_target_routers:
+        return  # No branch targets — nothing to validate
+
+    _validate_branch_targets_have_next(edges, routing_metadata, branch_target_routers)
+    _validate_no_fallthrough_into_branch_targets(edges, branch_target_routers)
 
 
 def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:

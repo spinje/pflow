@@ -231,6 +231,45 @@ When modifying branching:
 3. Run `tests/test_nodes/test_python/test_python_code.py::TestNextVariableRouting` — catches node issues
 4. Run `uv run pflow --no-trace examples/core/conditional-branching.pflow.md` — catches real execution issues
 
+## Phase 2: Branch Target Validation (Post-Merge)
+
+After merging the initial PR, identified three silent failure modes where branch targets execute when they shouldn't due to document-order fall-through. Added parse-time validation to catch all three.
+
+### Problem
+
+Branch targets participate in the normal linear chain. Without explicit `- next:`, they fall through to sibling branches or unrelated nodes. The bug is silent, input-dependent, and an easy mistake for AI agents.
+
+### Three Validations Added
+
+1. **Dynamic `next` without `- next:` declaration** — code with `next = variable` (non-literal) must have `- next:` in markdown to create edges. Without it, PocketFlow silently stops.
+2. **Branch target without `- next:`** — any node reached via a named action edge (action ∉ {None, "default"}) must have explicit `- next:`. Includes error handler targets.
+3. **Non-router falling into branch target** — if node X has a document-order edge to node Y, and Y is a branch target of some router Z where X ≠ Z, error. Catches "Pattern B" layouts where branch targets sit at the bottom.
+
+### Definition: Branch Target
+
+Target of any edge with action ∉ {None, "default"}. Includes named routing actions and `- on-error:` targets. Excludes single-target `- next: node-id` redirects (action = "default").
+
+### Implementation
+
+- `_extract_next_targets_from_code()` now returns `tuple[list[str], bool]` — the bool tracks dynamic assignments
+- New orchestrator `_validate_branch_target_routing()` with 4 helper functions (split for C901 compliance)
+- All error messages include: what's wrong, why it matters, concrete fix example with `###` heading
+- 7 existing parser tests updated (added `- next: end` to branch targets)
+- 15 new parser tests + 2 new integration tests
+- `error-handling.pflow.md` updated (`save-result` needs `- next: end` to prevent falling into error handler section)
+- Agent instructions updated in all 3 files
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `src/pflow/core/markdown_parser.py` | `_extract_next_targets_from_code()` returns tuple; 4 new validation functions |
+| `tests/test_core/test_markdown_parser.py` | 7 updated + 15 new tests in `TestConditionalBranching` |
+| `tests/test_integration/test_conditional_branching.py` | 1 updated + 2 new pipeline tests |
+| `examples/core/error-handling.pflow.md` | `- next: end` on `save-result` |
+| Agent instructions (3 files) | Branch target rules section |
+| `src/pflow/core/CLAUDE.md` | Branch target validation docs |
+
 ---
 
 *Generated from implementation context of Task 38*

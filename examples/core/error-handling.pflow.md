@@ -30,6 +30,7 @@ Save the processed result to the output directory.
 
 - type: write-file
 - file_path: output/result.txt
+- next: end
 
 ### log-error
 

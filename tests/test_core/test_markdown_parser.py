@@ -2239,6 +2239,7 @@ class TestConditionalBranching:
             Fast path.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo a
@@ -2249,6 +2250,7 @@ class TestConditionalBranching:
             Slow path.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo b
@@ -2289,6 +2291,7 @@ class TestConditionalBranching:
             Second step.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo b
@@ -2299,6 +2302,7 @@ class TestConditionalBranching:
             Error handler.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo error
@@ -2339,6 +2343,7 @@ class TestConditionalBranching:
             Second step.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo b
@@ -2349,6 +2354,7 @@ class TestConditionalBranching:
             Error handler.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo error
@@ -2389,6 +2395,7 @@ class TestConditionalBranching:
             Fast processing.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo fast
@@ -2430,6 +2437,7 @@ class TestConditionalBranching:
             Fast processing.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo fast
@@ -2440,6 +2448,7 @@ class TestConditionalBranching:
             Slow processing.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo slow
@@ -2454,7 +2463,7 @@ class TestConditionalBranching:
         assert "slow-path" in actions
 
     def test_ast_ignores_non_literal_next(self) -> None:
-        """Dynamic 'next = some_variable' produces no extra edge."""
+        """Dynamic 'next = some_variable' produces no extra edge (but requires - next:)."""
         content = _md("""\
             # Test
 
@@ -2467,6 +2476,7 @@ class TestConditionalBranching:
             Classify the input.
 
             - type: code
+            - next: output
 
             ```python code
             data: str
@@ -2488,10 +2498,10 @@ class TestConditionalBranching:
         result = parse_markdown(content)
         edges = result.ir["edges"]
 
-        # Only document-order edge from classify to output
+        # Only the declared - next: edge from classify to output (action=default)
         classify_edges = [e for e in edges if e["from"] == "classify"]
         assert len(classify_edges) == 1
-        assert classify_edges[0] == {"from": "classify", "to": "output"}
+        assert classify_edges[0] == {"from": "classify", "to": "output", "action": "default"}
 
     def test_invalid_target_raises_with_suggestion(self) -> None:
         """'- next: nonexistent' raises MarkdownParseError with a suggestion."""
@@ -2621,6 +2631,7 @@ class TestConditionalBranching:
             Second step.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo b
@@ -2631,6 +2642,7 @@ class TestConditionalBranching:
             Error handler.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo error
@@ -2719,6 +2731,7 @@ class TestConditionalBranching:
             Default next step.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo slow
@@ -2729,6 +2742,7 @@ class TestConditionalBranching:
             Fast processing.
 
             - type: shell
+            - next: end
 
             ```shell command
             echo fast
@@ -2742,3 +2756,542 @@ class TestConditionalBranching:
         assert {"from": "classify", "to": "slow-path"} in classify_edges
         # AST-detected edge to fast-path with action
         assert {"from": "classify", "to": "fast-path", "action": "fast-path"} in classify_edges
+
+    # --- Validation 1: Dynamic next without - next: declaration ---
+
+    def test_dynamic_next_without_declaration_raises(self) -> None:
+        """Code with dynamic 'next = variable' and no '- next:' raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route dynamically.
+
+            - type: code
+
+            ```python code
+            data: str
+            target = "a" if data == "x" else "b"
+            next = target
+            result: int = 0
+            ```
+
+            ### step-b
+
+            Next step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"dynamic routing.*no.*'- next:'"):
+            parse_markdown(content)
+
+    def test_dynamic_next_with_declaration_passes(self) -> None:
+        """Code with dynamic 'next = variable' and '- next:' declaration passes."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route dynamically.
+
+            - type: code
+            - next: path-a, path-b
+
+            ```python code
+            data: str
+            target = "a" if data == "x" else "b"
+            next = target
+            result: int = 0
+            ```
+
+            ### path-a
+
+            Path A.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo a
+            ```
+
+            ### path-b
+
+            Path B.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo b
+            ```
+        """)
+        # Should not raise
+        result = parse_markdown(content)
+        assert result.ir is not None
+
+    def test_annotated_dynamic_next_without_declaration_raises(self) -> None:
+        """Code with 'next: str = variable' (annotated dynamic) and no '- next:' raises."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route dynamically.
+
+            - type: code
+
+            ```python code
+            data: str
+            next: str = data.split("-")[0]
+            result: int = 0
+            ```
+
+            ### step-b
+
+            Next step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"dynamic routing.*no.*'- next:'"):
+            parse_markdown(content)
+
+    def test_literal_next_no_declaration_needed(self) -> None:
+        """Code with only literal 'next: str = \"target\"' needs no '- next:' declaration."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to target.
+
+            - type: code
+
+            ```python code
+            next: str = "target"
+            result: int = 0
+            ```
+
+            ### fallback
+
+            Default fallback.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fallback
+            ```
+
+            ### target
+
+            Target node.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo target
+            ```
+        """)
+        # Should not raise — AST creates the edge for the literal
+        result = parse_markdown(content)
+        assert result.ir is not None
+
+    def test_annotation_without_assignment_not_flagged(self) -> None:
+        """Bare 'next: str' annotation (no assignment) does not trigger dynamic detection."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            A step with a bare next annotation.
+
+            - type: code
+
+            ```python code
+            next: str
+            result: int = 0
+            ```
+
+            ### step-b
+
+            Next step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        # Should not raise — bare annotation has no routing intent
+        result = parse_markdown(content)
+        assert result.ir is not None
+
+    # --- Validation 2: Branch target without explicit - next: ---
+
+    def test_branch_target_without_next_raises(self) -> None:
+        """Branch target of a named routing action without '- next:' raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to branch.
+
+            - type: code
+
+            ```python code
+            next: str = "branch"
+            result: int = 0
+            ```
+
+            ### fallback
+
+            Default next.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fallback
+            ```
+
+            ### branch
+
+            Branch target without - next:.
+
+            - type: shell
+
+            ```shell command
+            echo branch
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"'branch'.*routing target.*no.*'- next:'"):
+            parse_markdown(content)
+
+    def test_error_target_without_next_raises(self) -> None:
+        """Error handler target without '- next:' raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            Risky step.
+
+            - type: shell
+            - on-error: handler
+            - next: end
+
+            ```shell command
+            echo a
+            ```
+
+            ### handler
+
+            Error handler without - next:.
+
+            - type: shell
+
+            ```shell command
+            echo error
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"'handler'.*routing target.*no.*'- next:'"):
+            parse_markdown(content)
+
+    def test_branch_target_with_next_end_passes(self) -> None:
+        """Branch target with '- next: end' passes validation."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to branch.
+
+            - type: code
+
+            ```python code
+            next: str = "branch"
+            result: int = 0
+            ```
+
+            ### fallback
+
+            Default next.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo fallback
+            ```
+
+            ### branch
+
+            Branch target with explicit termination.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo branch
+            ```
+        """)
+        result = parse_markdown(content)
+        assert result.ir is not None
+
+    def test_branch_target_with_next_node_passes(self) -> None:
+        """Branch target with '- next: convergence-node' passes validation."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to branch.
+
+            - type: code
+
+            ```python code
+            next: str = "branch"
+            result: int = 0
+            ```
+
+            ### fallback
+
+            Default next.
+
+            - type: shell
+            - next: done
+
+            ```shell command
+            echo fallback
+            ```
+
+            ### branch
+
+            Branch target routing to convergence.
+
+            - type: shell
+            - next: done
+
+            ```shell command
+            echo branch
+            ```
+
+            ### done
+
+            Convergence point.
+
+            - type: shell
+
+            ```shell command
+            echo done
+            ```
+        """)
+        result = parse_markdown(content)
+        assert result.ir is not None
+
+    def test_single_target_redirect_not_flagged(self) -> None:
+        """Target of '- next: node-id' (single, action=default) is NOT a branch target."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            Redirect to step-c.
+
+            - type: shell
+            - next: step-c
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Skipped step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+
+            ### step-c
+
+            Target of redirect (no - next: needed).
+
+            - type: shell
+
+            ```shell command
+            echo c
+            ```
+        """)
+        # Should not raise — step-c is target of action="default", not a branch target
+        result = parse_markdown(content)
+        assert result.ir is not None
+
+    def test_last_node_branch_target_still_requires_next(self) -> None:
+        """Branch target as last node still requires '- next:' for consistency."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to handler on error.
+
+            - type: shell
+            - on-error: handler
+            - next: end
+
+            ```shell command
+            echo route
+            ```
+
+            ### handler
+
+            Error handler as last node, no - next:.
+
+            - type: shell
+
+            ```shell command
+            echo error
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"'handler'.*routing target.*no.*'- next:'"):
+            parse_markdown(content)
+
+    # --- Validation 3: Non-router node falling into branch target ---
+
+    def test_non_router_falling_into_branch_target_raises(self) -> None:
+        """Main flow node with doc-order edge into a branch target raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to handler on error.
+
+            - type: shell
+            - on-error: handler
+
+            ```shell command
+            echo route
+            ```
+
+            ### main-flow
+
+            Continues main flow, falls through to handler.
+
+            - type: shell
+
+            ```shell command
+            echo main
+            ```
+
+            ### handler
+
+            Error handler.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo error
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"'main-flow'.*flows into.*'handler'"):
+            parse_markdown(content)
+
+    def test_router_doc_order_to_own_branch_target_ok(self) -> None:
+        """Router's document-order edge to its own branch target is NOT an error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to handler on error; default goes to handler too.
+
+            - type: shell
+            - on-error: handler
+
+            ```shell command
+            echo route
+            ```
+
+            ### handler
+
+            Error handler (also doc-order successor of router).
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo error
+            ```
+        """)
+        # Should not raise — router IS the source of the error edge to handler
+        result = parse_markdown(content)
+        assert result.ir is not None

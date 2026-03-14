@@ -430,6 +430,7 @@ class TestFullPipeline:
 
             - type: echo
             - message: error-handled
+            - next: end
         """)
 
         shared = parse_compile_and_run(markdown)
@@ -595,3 +596,96 @@ class TestFullPipeline:
         assert not _node_ran(shared, "standard-path")
         # Template ${router.result} resolved to "premium" inside the branch target
         assert shared["premium-path"]["stdout"].strip() == "Premium: premium"
+
+    def test_pipeline_error_handler_with_convergence(self) -> None:
+        """Error handler with '- next: done' converges back to main flow."""
+        markdown = _md("""\
+            # Error Convergence
+
+            Error handler converges to a shared final step.
+
+            ## Steps
+
+            ### risky
+
+            A step that will fail.
+
+            - type: code
+            - on-error: handler
+
+            ```python code
+            result: int = 1 // 0
+            ```
+
+            ### handler
+
+            Handle errors, then continue to done.
+
+            - type: echo
+            - message: handled
+            - next: done
+
+            ### done
+
+            Final step (convergence point).
+
+            - type: echo
+            - message: complete
+        """)
+
+        shared = parse_compile_and_run(markdown)
+
+        assert _node_ran(shared, "handler")
+        assert _node_ran(shared, "done")
+        assert shared["done"]["echo"] == "complete"
+
+    def test_pipeline_branch_targets_at_bottom(self) -> None:
+        """Pattern B layout: main flow on top, branch targets at bottom."""
+        markdown = _md("""\
+            # Bottom Branch Layout
+
+            Main flow first, branch targets at the bottom.
+
+            ## Steps
+
+            ### fetch
+
+            Fetch data.
+
+            - type: echo
+            - message: fetched
+
+            ### process
+
+            Process data, route if needed.
+
+            - type: code
+
+            ```python code
+            result: str = "processed"
+            next: str = "special-handler"
+            ```
+
+            ### finish
+
+            End of main flow.
+
+            - type: echo
+            - message: finished
+            - next: end
+
+            ### special-handler
+
+            Special processing branch.
+
+            - type: echo
+            - message: special
+            - next: end
+        """)
+
+        shared = parse_compile_and_run(markdown)
+
+        assert _node_ran(shared, "process")
+        assert _node_ran(shared, "special-handler")
+        assert not _node_ran(shared, "finish")
+        assert shared["special-handler"]["echo"] == "special"
