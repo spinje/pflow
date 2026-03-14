@@ -5,6 +5,114 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="March 2026" description="v0.9.0" tags={["New releases", "Improvements", "Bug fixes", "Breaking changes"]}>
+  ## Conditional branching and loops
+
+  Workflows now support conditional routing. You can branch based on errors, make data-driven routing decisions in Python code nodes, and create retry loops directly in your `.pflow.md` files.
+
+  `````markdown
+  ### router
+  - type: code
+  - on-error: error-handler
+
+  ```python code
+  data: dict
+  if data["category"] == "premium":
+      next: str = "premium-handler"
+  else:
+      next: str = "standard-handler"
+  ```
+  `````
+
+  <Note>
+    To prevent infinite loops, an automatic loop guard tracks node visits and raises a `MaxNodeVisitsError` if a single node is executed 100 times (configurable via `PFLOW_MAX_NODE_VISITS`).
+  </Note>
+
+  **Highlights**
+  - Added `- next:`, `- on-error:`, and `- next: end` syntax for static and error routing.
+  - Python code nodes support a `next` variable for dynamic, data-driven routing.
+  - Caching is now automatically invalidated when a node is revisited in a loop, ensuring exit conditions are correctly re-evaluated.
+  - `flow.run()` is now always wrapped to ensure visit counts reset correctly between executions.
+  - Topological sorting now uses position-based edge filtering to allow valid data dependencies while preventing cycle errors on backward loop edges.
+
+  ## Guaranteed structured JSON
+
+  The LLM node now accepts an `output_schema` parameter for guaranteed structured JSON responses. It uses the constrained decoding APIs of model providers (Anthropic, Gemini, OpenAI) instead of prompting for JSON and hoping the model complies.
+
+  `````markdown
+  ### extract-entities
+  - type: llm
+  - prompt: Extract entities from ${read.content}
+
+  ```yaml output_schema
+  type: object
+  properties:
+    people:
+      type: array
+      items:
+        type: string
+  required:
+    - people
+  ```
+  `````
+
+  <Tip>
+    When `output_schema` is provided, the node parses the response directly into a dictionary. Downstream nodes can access fields immediately via `${extract-entities.response.people}` without an intermediate extraction step.
+  </Tip>
+
+  **Highlights**
+  - `yaml output_schema` code blocks pass JSON Schema dicts directly to the `llm` library.
+  - The API response is parsed and stored as a `dict`, avoiding downstream string parsing.
+  - Code block stripping is safely skipped when a schema is set, since the API returns clean JSON.
+
+  ## Stateful MCP servers and error reporting
+
+  MCP servers are no longer restarted for every node in a workflow. A background event loop now acts as a connection pool, keeping server sessions alive across workflow steps. This fixes silent failures where stateful servers (like Playwright browsers or database clients) lost all state between step executions.
+
+  **Highlights**
+  - Persistent connection pool keeps both `stdio` and `http` MCP sessions alive across nodes.
+  - Automatic crash recovery evicts and retries sessions once if a transport error (like a broken pipe) occurs.
+  - MCP error reporting now un-wraps internal `ExceptionGroup` task failures to show the actual HTTP error (e.g., "Authentication failed" instead of a raw 40-line traceback).
+  - Fixed a logging bug that prepended "MCP tool failed:" twice.
+  - Node output formatter correctly detects `error` keys so MCP failures show as "failed" instead of "succeeded".
+
+  <Accordion title="Breaking changes">
+    ### Explicit branch target routing
+    Nodes reached via explicit routing (branch targets) used to silently fall through to the next node in document order. This silent, input-dependent bug has been fixed via parse-time validation. Any node targeted by an action edge must now explicitly declare its next step.
+
+    <CodeGroup>
+      ```yaml Before (v0.8.0)
+      ### router
+      - type: code
+      - on-error: error-handler
+
+      ### error-handler
+      - type: shell
+      # Silently fell through to the next node below it
+      ```
+
+      ```yaml After (v0.9.0)
+      ### router
+      - type: code
+      - on-error: error-handler
+
+      ### error-handler
+      - type: shell
+      - next: end # Explicit routing now required
+      ```
+    </CodeGroup>
+
+    ### Dynamic routing validation
+    If a Python code node assigns a variable to `next` (e.g., `next = target_var` instead of a literal `"node-id"`), you must explicitly declare `- next:` in the markdown step parameters so the parser can build the execution graph.
+
+    ### ReadFile outputs raw content
+    The `ReadFile` node previously prepended line numbers (`N: `) unconditionally to every line it read. This corrupted file content for downstream LLM prompts, templates, and configurations. It has been completely removed; the node now returns raw, unmodified file content.
+
+    ### Python code node results
+    The `result` output variable is now optional in Python code nodes as long as `next` is declared.
+  </Accordion>
+</Update>
+
 <Update label="February 2026" description="v0.8.0" tags={["New releases", "Improvements", "Bug fixes"]}>
   First public release on PyPI. pflow is a CLI workflow engine — AI agents
   write `.pflow.md` files that chain shell commands, LLM calls, HTTP requests,
