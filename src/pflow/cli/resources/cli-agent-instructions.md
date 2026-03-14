@@ -522,7 +522,7 @@ Description of this output.
 - Execution order = document order. No explicit edges needed.
 - Every entity (`###` heading) must have a prose description.
 - Use `-` for parameters, `*` for documentation bullets.
-- Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`
+- Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`, `yaml output_schema`
 - Batch config: inline `- batch:` for simple cases, `yaml batch` code block for complex arrays
 
 **Nesting backticks:** Use 4+ backticks when content contains ```:
@@ -768,6 +768,23 @@ Analyze data with specific criteria.
 - temperature: 0.7
 - model: gpt-4
 
+```yaml output_schema
+type: object
+properties:
+  findings:
+    type: array
+    items:
+      type: string
+  risk_level:
+    type: string
+  recommendation:
+    type: string
+required:
+  - findings
+  - risk_level
+  - recommendation
+```
+
 ```prompt
 Analyze this data according to these criteria:
 
@@ -778,11 +795,6 @@ Criteria:
 1. Identify patterns
 2. Find anomalies
 3. Suggest improvements
-
-Format your response as:
-* Patterns: ...
-* Anomalies: ...
-* Improvements: ...
 ```
 
 ### update-service
@@ -1079,7 +1091,7 @@ Works with or without template variables. Handles nested objects and arrays.
 **Before adding processing steps:**
 
 1. **Can the source produce cleaner output?**
-   - LLM: Add "Return ONLY valid JSON, no other text" to prompt
+   - LLM: Use `output_schema` (JSON Schema in a `yaml output_schema` code block) — guarantees valid JSON via constrained decoding, response stored as dict
    - HTTP: Check if API has a `format=json` parameter
    - **If yes → Fix at source instead of adding nodes**
 

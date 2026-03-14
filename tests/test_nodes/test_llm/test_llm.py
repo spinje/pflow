@@ -1,5 +1,7 @@
 """Tests for the LLM node covering all 22 criteria from the specification."""
 
+import json
+from typing import ClassVar
 from unittest.mock import Mock, patch
 
 import pytest
@@ -687,3 +689,263 @@ class TestPostStoresStringResponse:
 
             assert isinstance(shared["response"], str)
             assert shared["response"] == prose
+
+
+class TestStructuredOutput:
+    """Tests for output_schema parameter — structured output via llm library's schema= kwarg.
+
+    When output_schema is set, the llm library enforces constrained decoding
+    and the response is parsed from JSON to a dict in post(). Without it,
+    behavior is unchanged (response is always a string).
+    """
+
+    SIMPLE_SCHEMA: ClassVar[dict] = {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "age": {"type": "integer"},
+        },
+        "required": ["name", "age"],
+    }
+
+    def test_output_schema_passed_to_model_prompt(self):
+        """output_schema in params → schema=<dict> in model.prompt() kwargs."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"name": "Alice", "age": 30}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Extract info", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            node.run(shared)
+
+            call_kwargs = mock_model.prompt.call_args[1]
+            assert "schema" in call_kwargs
+            assert call_kwargs["schema"] == self.SIMPLE_SCHEMA
+
+    def test_output_schema_not_in_kwargs_when_absent(self):
+        """No output_schema in params → schema NOT in model.prompt() kwargs."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = "Plain text"
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Test"})
+            shared: dict = {}
+
+            node.run(shared)
+
+            call_kwargs = mock_model.prompt.call_args[1]
+            assert "schema" not in call_kwargs
+
+    def test_structured_response_is_dict(self):
+        """output_schema set → shared['response'] is a parsed dict."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"name": "Alice", "age": 30}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], dict)
+            assert shared["response"] == {"name": "Alice", "age": 30}
+
+    def test_structured_output_skips_strip_code_block(self):
+        """output_schema set → _strip_code_block is NOT called."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"name": "Bob"}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            with patch.object(LLMNode, "_strip_code_block") as mock_strip:
+                node.run(shared)
+                mock_strip.assert_not_called()
+
+    def test_nested_json_response(self):
+        """Deeply nested JSON is parsed correctly."""
+        nested_schema = {
+            "type": "object",
+            "properties": {
+                "user": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "scores": {"type": "array", "items": {"type": "integer"}},
+                    },
+                },
+            },
+        }
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"user": {"name": "Bob", "scores": [1, 2, 3]}}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Extract", "output_schema": nested_schema})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert shared["response"]["user"]["name"] == "Bob"
+            assert shared["response"]["user"]["scores"] == [1, 2, 3]
+
+    def test_array_response(self):
+        """Schema with type=array → shared['response'] is a list."""
+        array_schema = {
+            "type": "array",
+            "items": {"type": "object", "properties": {"id": {"type": "integer"}}},
+        }
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '[{"id": 1}, {"id": 2}]'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "List items", "output_schema": array_schema})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], list)
+            assert shared["response"] == [{"id": 1}, {"id": 2}]
+
+    def test_usage_metrics_preserved_with_schema(self):
+        """output_schema does not affect llm_usage storage."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"name": "Alice"}'
+
+            mock_usage = Mock()
+            mock_usage.input = 100
+            mock_usage.output = 50
+            mock_usage.details = {}
+            mock_response.usage.return_value = mock_usage
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert shared["llm_usage"]["input_tokens"] == 100
+            assert shared["llm_usage"]["output_tokens"] == 50
+            assert shared["llm_usage"]["total_tokens"] == 150
+
+    def test_error_path_unaffected_by_schema(self):
+        """Error path still stores shared['response'] = '' (string, not dict)."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_model = Mock()
+            mock_model.prompt.side_effect = RuntimeError("API error")
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0)
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "error"
+            assert shared["response"] == ""
+            assert isinstance(shared["response"], str)
+            assert "error" in shared
+
+    def test_output_schema_none_is_string_response(self):
+        """Explicit output_schema=None → string behavior unchanged."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"key": "value"}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Test", "output_schema": None})
+            shared: dict = {}
+
+            node.run(shared)
+
+            assert isinstance(shared["response"], str)
+            assert shared["response"] == '{"key": "value"}'
+
+    def test_action_returns_default_with_schema(self):
+        """run() returns 'default' when output_schema is set."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"name": "Alice"}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode()
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "default"
+
+    def test_malformed_json_with_schema_raises(self):
+        """If structured output returns invalid JSON, exception propagates.
+
+        json.loads() is in post(), not exec(), so PocketFlow does NOT retry —
+        the exception crashes the node. This is correct: constrained decoding
+        should prevent this; if it happens, something is fundamentally broken.
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = "not valid json"
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0)
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            with pytest.raises(json.JSONDecodeError):
+                node.run(shared)

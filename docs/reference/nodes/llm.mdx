@@ -20,6 +20,7 @@ The LLM node calls AI models using [Simon Willison's llm library](https://llm.da
 | `temperature` | float | No | `1.0` | Sampling temperature (0.0-2.0) |
 | `max_tokens` | int | No | - | Maximum response tokens |
 | `images` | list | No | `[]` | Image URLs or file paths for vision models |
+| `output_schema` | dict | No | - | JSON Schema for structured output |
 
 ### Model resolution
 
@@ -37,7 +38,7 @@ See [LLM model settings](/reference/cli/settings#llm-model-settings) for the ful
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `response` | str | Model's text response |
+| `response` | str or dict | Text response (str), or parsed JSON (dict) when `output_schema` is set |
 | `llm_usage` | dict | Token usage metrics |
 | `error` | str | Error message (only present on failure) |
 
@@ -194,17 +195,37 @@ Translate the input text to Spanish.
 
 ### Structured output
 
-````markdown
+Use `output_schema` to get guaranteed JSON matching a schema. The schema is passed to the model's constrained decoding API — the model literally cannot produce non-conforming output.
+
+`````markdown
 ### extract
 
 Extract named entities from the document.
 
 - type: llm
-- system: Extract entities as JSON with keys: people, places, organizations
-- prompt: ${document.content}
-````
+- prompt: Extract entities from: ${document.content}
+- temperature: 0
 
-Access JSON fields from the response using dot notation in downstream templates: `${extract.response.people}`. The template system auto-parses JSON on demand when you use dot notation.
+```yaml output_schema
+type: object
+properties:
+  people:
+    type: array
+    items:
+      type: string
+  places:
+    type: array
+    items:
+      type: string
+required:
+  - people
+  - places
+```
+`````
+
+When `output_schema` is set, `response` is a dict — downstream templates access fields directly: `${extract.response.people}`.
+
+Without `output_schema`, you can still get JSON by prompting for it. The template system auto-parses JSON strings when you use dot notation: `${extract.response.people}`. But the model may not always comply — `output_schema` is the reliable approach.
 
 ### Image analysis
 
