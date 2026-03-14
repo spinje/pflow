@@ -6,6 +6,7 @@ logic will be tested in future subtasks.
 """
 
 import json
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -360,3 +361,18 @@ class TestCompileIrToFlow:
             # Also verify the other nodes ran
             assert "input" in shared_store
             assert "process" in shared_store
+
+
+class TestCompilerLogging:
+    """Test that compilation errors don't emit ERROR-level tracebacks."""
+
+    def test_compilation_error_no_error_log(self, caplog):
+        """Compilation failures should log at DEBUG, not ERROR level."""
+        caplog.set_level("DEBUG", logger="pflow.runtime.compiler")
+        registry = MagicMock()
+
+        with pytest.raises(CompilationError):
+            compile_ir_to_flow({"nodes": [], "edges": []}, registry)
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR and r.name == "pflow.runtime.compiler"]
+        assert len(error_records) == 0, f"Unexpected ERROR log from compiler: {[r.message for r in error_records]}"

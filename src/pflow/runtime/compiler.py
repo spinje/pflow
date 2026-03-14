@@ -1021,7 +1021,7 @@ def _validate_workflow(
     try:
         validate_ir_structure(ir_dict)
     except CompilationError:
-        logger.exception("IR validation failed", extra={"phase": "validation"})
+        logger.debug("IR validation failed", extra={"phase": "validation"}, exc_info=True)
         raise
 
     # Step 2.5: Get and validate template resolution mode
@@ -1050,14 +1050,14 @@ def _validate_workflow(
         if env_param_names:
             initial_params["__env_param_names__"] = list(env_param_names)
     except ValidationError:
-        logger.exception("Input validation failed", extra={"phase": "input_validation"})
+        logger.debug("Input validation failed", extra={"phase": "input_validation"}, exc_info=True)
         raise
 
     # Step 4: Validate outputs
     try:
         _validate_outputs(ir_dict, registry)
     except ValidationError:
-        logger.exception("Output validation failed", extra={"phase": "output_validation"})
+        logger.debug("Output validation failed", extra={"phase": "output_validation"}, exc_info=True)
         raise
 
     # Step 5: Validate templates if requested
@@ -1120,15 +1120,6 @@ def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
 
     # Get all possible outputs from nodes in the workflow
     all_node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
-
-    # For nested workflows, we need to also consider their output_mapping
-    for node in workflow_ir.get("nodes", []):
-        if node.get("type") in ["workflow", "pflow.runtime.workflow_executor"]:
-            # Get the output_mapping parameter if present
-            output_mapping = node.get("params", {}).get("output_mapping", {})
-            # The values in output_mapping become available outputs in parent workflow
-            for _child_key, parent_key in output_mapping.items():
-                all_node_outputs[parent_key] = {"type": "any"}
 
     logger.debug(
         f"Found {len(all_node_outputs)} possible outputs from nodes",
@@ -1211,7 +1202,7 @@ def compile_ir_to_flow(
         ir_dict = _parse_ir_input(ir_json)
     except json.JSONDecodeError:
         # Let JSONDecodeError bubble up as specified
-        logger.exception("JSON parsing failed", extra={"phase": "parsing"})
+        logger.debug("JSON parsing failed", extra={"phase": "parsing"}, exc_info=True)
         raise
 
     # Steps 2-5: Validate workflow and prepare parameters
@@ -1232,21 +1223,21 @@ def compile_ir_to_flow(
     try:
         nodes = _instantiate_nodes(ir_dict, registry, initial_params, metrics_collector, trace_collector)
     except CompilationError:
-        logger.exception("Node instantiation failed", extra={"phase": "node_instantiation"})
+        logger.debug("Node instantiation failed", extra={"phase": "node_instantiation"}, exc_info=True)
         raise
 
     # Step 8: Wire nodes together
     try:
         _wire_nodes(nodes, ir_dict.get("edges", []))
     except CompilationError:
-        logger.exception("Node wiring failed", extra={"phase": "flow_wiring"})
+        logger.debug("Node wiring failed", extra={"phase": "flow_wiring"}, exc_info=True)
         raise
 
     # Step 9: Get start node
     try:
         start_node = _get_start_node(nodes, ir_dict)
     except CompilationError:
-        logger.exception("Start node detection failed", extra={"phase": "start_detection"})
+        logger.debug("Start node detection failed", extra={"phase": "start_detection"}, exc_info=True)
         raise
 
     # Step 10: Create and return Flow

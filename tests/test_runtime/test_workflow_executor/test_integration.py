@@ -1,4 +1,15 @@
-"""Integration tests for WorkflowExecutor with full workflow execution."""
+"""Integration tests for WorkflowExecutor with full workflow execution.
+
+These tests compile and run full parent workflows that contain WorkflowExecutor
+nodes, verifying the end-to-end pipeline: IR -> compile -> run -> shared store.
+
+API (v0.9.0):
+  - workflow: file path or saved name (replaces old workflow_ref)
+  - workflow_ir: inline IR dict
+  - Non-reserved params passed directly as child inputs (replaces old param_mapping)
+  - Child outputs auto-exposed via namespace (replaces old output_mapping)
+  - Storage modes: "mapped" (default) and "shared" only ("isolated" removed)
+"""
 
 from unittest.mock import Mock, patch
 
@@ -12,60 +23,57 @@ from tests.shared.markdown_utils import write_workflow_file
 
 
 class TestWorkflowExecutorIntegration:
-    """Integration tests for WorkflowExecutor."""
+    """Integration tests for WorkflowExecutor with the full compilation pipeline."""
 
     def _setup_mock_imports(self, mock_test_node_class=None):
         """Setup mock imports for test nodes.
 
+        The compiler uses importlib.import_module to load node classes from
+        registry metadata. We mock this to provide test node implementations
+        without needing real module files on disk.
+
         Args:
-            mock_test_node_class: Optional custom test node class to use
+            mock_test_node_class: Optional custom test node class to use.
+                If None, a default MockExampleNode is created that reads
+                test_input from shared and writes test_output.
 
         Returns:
             Context manager for mocking imports
         """
-        from pflow.pocketflow import BaseNode
-
-        # Default mock ExampleNode if not provided
         if mock_test_node_class is None:
 
             class MockExampleNode(BaseNode):
                 def prep(self, shared):
-                    return None
+                    return shared.get("test_input", "no input")
 
                 def exec(self, prep_res):
-                    return None
+                    return f"Processed: {prep_res}"
 
                 def post(self, shared, prep_res, exec_res):
+                    shared["test_output"] = exec_res
                     return "default"
 
             mock_test_node_class = MockExampleNode
 
-        # Create the patch context
         mock_module = Mock()
         mock_module.ExampleNode = mock_test_node_class
-        mock_module.WorkflowExecutor = WorkflowExecutor  # Real WorkflowExecutor
-        mock_module.WriteFileNode = Mock()  # For other tests
+        mock_module.WorkflowExecutor = WorkflowExecutor
 
         def side_effect(module_path):
             if module_path == "pflow.nodes.test_node":
                 return mock_module
             elif module_path == "pflow.runtime.workflow_executor":
-                # Return the actual workflow module
                 import pflow.runtime.workflow_executor
 
                 return pflow.runtime.workflow_executor
-            elif module_path == "pflow.nodes.file.write_file":
-                # For file tests
-                return mock_module
             else:
-                # For other modules, return a mock
                 return mock_module
 
         return patch("importlib.import_module", side_effect=side_effect)
 
     @pytest.fixture
     def simple_workflow_ir(self):
-        """Create a simple test workflow IR."""
+        """A minimal child workflow IR with one test node."""
         return {
             "ir_version": "0.1.0",
             "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
@@ -73,26 +81,11 @@ class TestWorkflowExecutorIntegration:
         }
 
     @pytest.fixture
-    def file_workflow_ir(self, tmp_path):
-        """Create a workflow using file nodes."""
-        # Note: Don't use templates in nested workflow_ir since they can't be resolved
-        # at parent level. Templates should be resolved within the nested workflow.
-        test_file = tmp_path / "test.txt"
-        return {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "write",
-                    "type": "pflow.nodes.file.write_file",
-                    "params": {"file_path": str(test_file), "content": "test content"},
-                }
-            ],
-            "edges": [],
-        }
-
-    @pytest.fixture
     def nested_workflow_ir(self):
-        """Create a workflow that calls another workflow."""
+        """A parent workflow that calls a child workflow via inline IR.
+
+        Uses direct params (new API) instead of param_mapping.
+        """
         return {
             "ir_version": "0.1.0",
             "nodes": [
@@ -105,8 +98,7 @@ class TestWorkflowExecutorIntegration:
                             "nodes": [{"id": "inner", "type": "pflow.nodes.test_node", "params": {}}],
                             "edges": [],
                         },
-                        "param_mapping": {"test_input": "${outer_input}"},
-                        "output_mapping": {"test_output": "inner_result"},
+                        "test_input": "${outer_input}",
                     },
                 }
             ],
@@ -115,11 +107,10 @@ class TestWorkflowExecutorIntegration:
 
     @pytest.fixture
     def mock_registry(self, tmp_path):
-        """Create a mock registry with test nodes."""
+        """Create a mock registry with test nodes and workflow executor."""
         registry_path = tmp_path / "test_registry.json"
         registry = Registry(registry_path)
 
-        # Create registry data
         registry_data = {
             "pflow.nodes.test_node": {
                 "module": "pflow.nodes.test_node",
@@ -141,54 +132,48 @@ class TestWorkflowExecutorIntegration:
                     "inputs": [],
                     "outputs": [],
                     "parameters": [
-                        {"key": "workflow_ref", "type": "string", "required": False},
-                        {"key": "parameter_mapping", "type": "dict", "required": False},
-                    ],
-                },
-            },
-            "pflow.nodes.file.write_file": {
-                "module": "pflow.nodes.file.write_file",
-                "class_name": "WriteFileNode",
-                "docstring": "Write content to a file",
-                "file_path": "/mock/path/write_file.py",
-                "interface": {
-                    "inputs": [],
-                    "outputs": [],
-                    "parameters": [
-                        {"key": "file_path", "type": "string", "required": True},
-                        {"key": "content", "type": "string", "required": True},
+                        {"key": "workflow", "type": "string", "required": False},
+                        {"key": "workflow_ir", "type": "dict", "required": False},
+                        {"key": "storage_mode", "type": "string", "required": False},
+                        {"key": "max_depth", "type": "integer", "required": False},
+                        {"key": "error_action", "type": "string", "required": False},
                     ],
                 },
             },
         }
 
-        # Save registry data
         registry.save(registry_data)
-
         return registry
 
     @pytest.fixture
     def workflow_file(self, simple_workflow_ir, tmp_path):
-        """Create a temporary workflow file."""
+        """Create a temporary .pflow.md workflow file from simple_workflow_ir."""
         workflow_path = tmp_path / "test_workflow.pflow.md"
         write_workflow_file(simple_workflow_ir, workflow_path)
         return workflow_path
 
+    # ------------------------------------------------------------------ #
+    # Tests
+    # ------------------------------------------------------------------ #
+
     def test_inline_workflow_execution(self, simple_workflow_ir, mock_registry):
-        """Test executing an inline workflow."""
-        # Create parent workflow with WorkflowExecutor
+        """When a parent workflow contains an inline child, execution succeeds.
+
+        Verifies the full pipeline: compile parent IR with a WorkflowExecutor
+        node that uses workflow_ir, pass child inputs as direct params, and
+        confirm the flow returns "default".
+        """
         parent_ir = {
             "ir_version": "0.1.0",
-            "inputs": {},  # No inputs, message comes from shared store at runtime
+            "inputs": {},
             "nodes": [
                 {
                     "id": "sub",
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
                         "workflow_ir": simple_workflow_ir,
-                        # Don't use templates here, pass concrete values
-                        "param_mapping": {"test_input": "Hello from parent"},
-                        "output_mapping": {"test_output": "result"},
+                        # Direct param — passed as child input (new API)
+                        "test_input": "Hello from parent",
                     },
                 }
             ],
@@ -196,9 +181,7 @@ class TestWorkflowExecutorIntegration:
             "outputs": {},
         }
 
-        # Use the helper to setup mocks
         with self._setup_mock_imports():
-            # Compile and run
             flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {}
             result = flow.run(shared)
@@ -206,14 +189,21 @@ class TestWorkflowExecutorIntegration:
             assert result == "default"
 
     def test_file_workflow_execution(self, workflow_file, mock_registry):
-        """Test loading and executing workflow from file."""
+        """When a parent workflow references a child by file path, execution succeeds.
+
+        Uses the new 'workflow' param (replaces old 'workflow_ref') and direct
+        child input params (replaces old 'param_mapping').
+        """
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "sub",
                     "type": "pflow.runtime.workflow_executor",
-                    "params": {"workflow_ref": str(workflow_file), "param_mapping": {"test_input": "Hello from file"}},
+                    "params": {
+                        "workflow": str(workflow_file),
+                        "test_input": "Hello from file",
+                    },
                 }
             ],
             "edges": [],
@@ -227,8 +217,7 @@ class TestWorkflowExecutorIntegration:
             assert result == "default"
 
     def test_nested_workflow_execution(self, nested_workflow_ir, mock_registry):
-        """Test workflows calling other workflows."""
-        # Track execution order
+        """When workflows nest (parent -> child -> inner node), all levels execute."""
         execution_order = []
 
         class TrackingExampleNode(BaseNode):
@@ -248,24 +237,22 @@ class TestWorkflowExecutorIntegration:
             result = flow.run(shared)
 
             assert result == "default"
-            assert len(execution_order) > 0  # Inner node was executed
+            assert len(execution_order) > 0, "Inner node should have executed"
 
     def test_error_propagation(self, simple_workflow_ir, mock_registry):
-        """Test error propagation from child workflow."""
+        """When a child workflow node raises, the error propagates to parent shared store."""
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "sub",
                     "type": "pflow.runtime.workflow_executor",
-                    # WorkflowExecutor returns the value of error_action param (or "error" by default)
                     "params": {"workflow_ir": simple_workflow_ir, "error_action": "error"},
                 }
             ],
             "edges": [],
         }
 
-        # Create a failing test node
         class FailingExampleNode(BaseNode):
             def prep(self, shared):
                 return None
@@ -281,33 +268,41 @@ class TestWorkflowExecutorIntegration:
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
-            # WorkflowExecutor returns error_action value (or "error" by default)
+            # WorkflowExecutor returns error_action value
             assert result == "error"
             # With namespacing, error is at shared[node_id]["error"]
             assert "sub" in shared
             assert "error" in shared["sub"]
             assert "Child failed" in shared["sub"]["error"]
 
-    def test_storage_isolation(self, simple_workflow_ir, mock_registry):
-        """Test that storage isolation works correctly."""
+    def test_storage_mapped_isolation(self, simple_workflow_ir, mock_registry):
+        """When storage_mode is 'mapped' (default), child does not see parent data.
+
+        The child storage starts with only the mapped child inputs and internal
+        _pflow_ keys. Parent-level data like 'parent_data' is invisible.
+        """
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "sub",
                     "type": "pflow.runtime.workflow_executor",
-                    "params": {"workflow_ir": simple_workflow_ir, "storage_mode": "isolated"},
+                    "params": {
+                        "workflow_ir": simple_workflow_ir,
+                        "storage_mode": "mapped",
+                        "test_input": "child_sees_this",
+                    },
                 }
             ],
             "edges": [],
         }
 
-        # Track what the child sees
-        child_storage_snapshot = None
+        child_storage_snapshot = {}
 
         class StorageCapturingNode(BaseNode):
             def prep(self, shared):
                 nonlocal child_storage_snapshot
+                # Capture all non-internal keys that the child can see
                 child_storage_snapshot = {
                     k: v for k, v in shared.items() if not k.startswith("_pflow_") and not k.startswith("__")
                 }
@@ -321,23 +316,27 @@ class TestWorkflowExecutorIntegration:
 
         with self._setup_mock_imports(StorageCapturingNode):
             flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
-            shared = {"parent_data": "should_not_see", "__registry__": mock_registry}
+            shared = {"parent_data": "should_not_leak", "__registry__": mock_registry}
             result = flow.run(shared)
 
             assert result == "default"
-            assert len(child_storage_snapshot) == 0  # Isolated mode = empty
+            # Child should see only its mapped input, not parent_data
+            assert "parent_data" not in child_storage_snapshot
+            assert child_storage_snapshot.get("test_input") == "child_sees_this"
 
-    def test_parameter_mapping_flow(self, mock_registry, tmp_path):
-        """Test parameter mapping through workflow execution."""
-        # Create a simple workflow using test node instead of file node
-        # (file nodes are harder to mock correctly in nested workflows)
-        simple_test_workflow = {
+    def test_parameter_passing_to_child(self, mock_registry):
+        """When direct params are set on the workflow executor node, child receives them.
+
+        Uses the new API where non-reserved params are passed directly as child
+        inputs (replaces old param_mapping dict).
+        """
+        child_workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "test",
                     "type": "pflow.nodes.test_node",
-                    "params": {},  # Params will be provided via param_mapping
+                    "params": {},
                 }
             ],
             "edges": [],
@@ -350,42 +349,39 @@ class TestWorkflowExecutorIntegration:
                     "id": "writer",
                     "type": "pflow.runtime.workflow_executor",
                     "params": {
-                        "workflow_ir": simple_test_workflow,
-                        # Use concrete values for parameter mapping
-                        "param_mapping": {"test_input": "mapped_value"},
+                        "workflow_ir": child_workflow,
+                        "test_input": "mapped_value",
                     },
                 }
             ],
             "edges": [],
         }
 
-        # Track execution to verify nested workflow ran
-        execution_tracker = []
+        received_input = {}
 
-        class TrackingTestNode(BaseNode):
+        class InputCapturingNode(BaseNode):
             def prep(self, shared):
-                execution_tracker.append("executed")
-                return None
+                nonlocal received_input
+                received_input["test_input"] = shared.get("test_input")
+                return shared.get("test_input")
 
             def exec(self, prep_res):
-                return None
+                return f"Processed: {prep_res}"
 
             def post(self, shared, prep_res, exec_res):
+                shared["test_output"] = exec_res
                 return "default"
 
-        with self._setup_mock_imports(TrackingTestNode):
+        with self._setup_mock_imports(InputCapturingNode):
             flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
-            # Verify workflow executed successfully
             assert result == "default"
-            # Verify nested workflow's node was executed
-            assert len(execution_tracker) > 0, "Nested workflow node should have executed"
+            assert received_input["test_input"] == "mapped_value"
 
     def test_depth_tracking(self, mock_registry):
-        """Test that depth is properly tracked through nested workflows."""
-        # Create a 3-level nested workflow
+        """When workflows nest 3 levels deep, depth increments at each level."""
         level3 = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "leaf", "type": "pflow.nodes.test_node", "params": {}}],
@@ -424,5 +420,70 @@ class TestWorkflowExecutorIntegration:
             result = flow.run(shared)
 
             assert result == "default"
-            # Should see depths 0, 1, 2, 3 (including root)
-            assert max(depths_seen) >= 2  # At least reached depth 2
+            # Leaf node is at depth 2 (level1=0, level2=1, level3=2)
+            assert max(depths_seen) >= 2
+
+    def test_auto_output_exposure(self, mock_registry):
+        """When child workflow writes to shared, outputs are auto-exposed in parent namespace.
+
+        The chain is:
+        1. Child node "producer" writes to its NamespacedSharedStore, landing in
+           child_storage["producer"]["result_key"]
+        2. WorkflowExecutor.post() iterates child_storage root keys and copies
+           non-internal ones to its own shared (which is the parent's NamespacedSharedStore)
+        3. The parent NamespacedNodeWrapper for "sub" redirects writes so the
+           final location is: parent_shared["sub"]["producer"]["result_key"]
+        """
+        child_workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "pflow.nodes.test_node",
+                    "params": {},
+                }
+            ],
+            "edges": [],
+        }
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "sub",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow_ir": child_workflow,
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        class OutputProducingNode(BaseNode):
+            """Node that writes a known value to shared store."""
+
+            def prep(self, shared):
+                return None
+
+            def exec(self, prep_res):
+                return "computed_result"
+
+            def post(self, shared, prep_res, exec_res):
+                shared["result_key"] = exec_res
+                shared["extra_data"] = {"nested": True}
+                return "default"
+
+        with self._setup_mock_imports(OutputProducingNode):
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            shared = {"__registry__": mock_registry}
+            result = flow.run(shared)
+
+            assert result == "default"
+            # Child outputs are auto-exposed under the parent node's namespace.
+            # Because the child node "producer" is also namespaced inside the child
+            # workflow, its outputs land at shared["sub"]["producer"][key].
+            assert "sub" in shared
+            assert "producer" in shared["sub"]
+            assert shared["sub"]["producer"]["result_key"] == "computed_result"
+            assert shared["sub"]["producer"]["extra_data"] == {"nested": True}

@@ -1,26 +1,36 @@
-"""Tests for WorkflowExecutor's workflow_name parameter functionality."""
+"""Tests for WorkflowExecutor's saved workflow name loading via the 'workflow' parameter.
+
+The unified 'workflow' parameter accepts both file paths and saved workflow names.
+When the value does NOT contain '/' or '\\', does NOT start with '.', and does NOT
+end with '.pflow.md', it is treated as a saved workflow name and loaded via
+WorkflowManager.
+"""
 
 from unittest.mock import Mock, patch
 
 import pytest
 
 from pflow.core.exceptions import WorkflowNotFoundError
-from pflow.core.workflow_manager import WorkflowManager
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from tests.shared.markdown_utils import ir_to_markdown
 
 
-class TestWorkflowNameParameter:
-    """Test WorkflowExecutor's ability to load workflows by name."""
+class TestWorkflowSavedName:
+    """Test WorkflowExecutor's ability to load workflows by saved name."""
 
     @pytest.fixture
     def simple_workflow_ir(self):
         """Basic workflow IR for testing."""
-        return {"nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}], "edges": []}
+        return {
+            "nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
+        }
 
     @pytest.fixture
     def workflow_manager(self, tmp_path, simple_workflow_ir):
-        """Create WorkflowManager with a test workflow."""
+        """Create WorkflowManager with a test workflow saved to disk."""
+        from pflow.core.workflow_manager import WorkflowManager
+
         workflows_dir = tmp_path / ".pflow" / "workflows"
         workflows_dir.mkdir(parents=True)
 
@@ -35,13 +45,12 @@ class TestWorkflowNameParameter:
         return manager
 
     def test_workflow_name_only(self, workflow_manager, simple_workflow_ir):
-        """Test loading workflow by name using WorkflowManager."""
-        # Mock WorkflowManager to return our test workflow
+        """When workflow param is a plain name (no path chars), load via WorkflowManager."""
         with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
-            node.set_params({"workflow_name": "test-workflow"})
+            node.set_params({"workflow": "test-workflow"})
 
             shared = {}
             prep_res = node.prep(shared)
@@ -55,39 +64,19 @@ class TestWorkflowNameParameter:
             assert prep_res["workflow_source"] == "name:test-workflow"
 
     def test_workflow_name_not_found(self):
-        """Test error when workflow name doesn't exist."""
+        """When saved workflow name does not exist, raise ValueError with descriptive message."""
         node = WorkflowExecutor()
-        node.set_params({"workflow_name": "non-existent-workflow"})
+        node.set_params({"workflow": "non-existent-workflow"})
 
         shared = {}
         with pytest.raises(ValueError, match="Failed to load workflow 'non-existent-workflow'"):
             node.prep(shared)
 
-    def test_workflow_name_takes_precedence_over_ref(self, workflow_manager, simple_workflow_ir, tmp_path):
-        """Test that workflow_name takes precedence over workflow_ref."""
-        # Create a different workflow file
-        from tests.shared.markdown_utils import write_workflow_file
-
-        other_workflow = {"nodes": [{"id": "other", "type": "echo", "params": {"message": "other"}}], "edges": []}
-        workflow_file = tmp_path / "other.pflow.md"
-        write_workflow_file(other_workflow, workflow_file)
-
+    def test_workflow_and_workflow_ir_raises_error(self, simple_workflow_ir):
+        """When both 'workflow' and 'workflow_ir' are provided, raise ValueError."""
         node = WorkflowExecutor()
         node.set_params({
-            "workflow_name": "test-workflow",
-            "workflow_ref": str(workflow_file),  # Should be ignored
-        })
-
-        shared = {}
-        with pytest.raises(ValueError, match="Only one of"):
-            node.prep(shared)
-
-    def test_workflow_name_with_all_three_params(self, workflow_manager, simple_workflow_ir):
-        """Test error when all three workflow sources are provided."""
-        node = WorkflowExecutor()
-        node.set_params({
-            "workflow_name": "test-workflow",
-            "workflow_ref": "some-file.pflow.md",
+            "workflow": "test-workflow",
             "workflow_ir": simple_workflow_ir,
         })
 
@@ -96,14 +85,14 @@ class TestWorkflowNameParameter:
             node.prep(shared)
 
     def test_workflow_name_circular_dependency(self, workflow_manager):
-        """Test circular dependency detection with workflow_name."""
+        """When saved workflow is already on the execution stack, detect circular reference."""
         workflow_path = workflow_manager.get_path("test-workflow")
 
         with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
-            node.set_params({"workflow_name": "test-workflow"})
+            node.set_params({"workflow": "test-workflow"})
 
             # Simulate being called from within the same workflow
             shared = {"_pflow_stack": [workflow_path]}
@@ -111,18 +100,16 @@ class TestWorkflowNameParameter:
             with pytest.raises(ValueError, match="Circular workflow reference detected"):
                 node.prep(shared)
 
-    def test_workflow_name_with_param_mapping(self, workflow_manager):
-        """Test workflow_name with parameter mapping."""
+    def test_workflow_name_with_direct_params(self, workflow_manager):
+        """Non-reserved params are passed directly as child inputs (no param_mapping)."""
         with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
             node.set_params({
-                "workflow_name": "test-workflow",
-                "param_mapping": {
-                    "input_value": "static_value",  # Test static value
-                    "dynamic_value": "${parent_value}",  # Test template
-                },
+                "workflow": "test-workflow",
+                "input_value": "static_value",
+                "dynamic_value": "${parent_value}",
             })
 
             shared = {"parent_value": "test123"}
@@ -132,25 +119,24 @@ class TestWorkflowNameParameter:
             assert prep_res["child_params"]["dynamic_value"] == "test123"
 
     def test_workflow_name_logging(self, workflow_manager, caplog):
-        """Test that proper debug logging occurs when loading by name."""
+        """Verify debug logging when loading a workflow by saved name."""
         import logging
 
-        caplog.set_level(logging.DEBUG)
+        caplog.set_level(logging.DEBUG, logger="pflow.runtime.workflow_executor")
 
         with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
-            node.set_params({"workflow_name": "test-workflow"})
+            node.set_params({"workflow": "test-workflow"})
 
             shared = {}
             prep_res = node.prep(shared)
 
-            # Check debug log messages
             assert "Loading workflow by name: test-workflow" in caplog.text
 
-        # Mock the exec phase to test execution logging
-        with patch("pflow.runtime.compile_ir_to_flow") as mock_compile:
+        # Verify execution logging too
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
             mock_flow = Mock()
             mock_flow.run.return_value = "success"
             mock_compile.return_value = mock_flow
@@ -161,32 +147,30 @@ class TestWorkflowNameParameter:
 
     @patch("pflow.runtime.workflow_executor.WorkflowManager")
     def test_workflow_manager_error_handling(self, mock_manager_class):
-        """Test proper error handling when WorkflowManager fails."""
-        # Mock WorkflowManager to raise an exception
+        """When WorkflowManager raises, wrap in ValueError with workflow name context."""
         mock_manager = Mock()
         mock_manager.load_ir.side_effect = WorkflowNotFoundError("Workflow 'test' not found")
         mock_manager_class.return_value = mock_manager
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_name": "test"})
+        node.set_params({"workflow": "test"})
 
         shared = {}
         with pytest.raises(ValueError, match=r"Failed to load workflow 'test'.*not found"):
             node.prep(shared)
 
     def test_workflow_name_integration(self, workflow_manager, simple_workflow_ir):
-        """Test full integration with workflow_name through prep and exec phases."""
+        """Full prep-exec cycle: saved name loading with direct params, no output_mapping."""
         with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
             node.set_params({
-                "workflow_name": "test-workflow",
-                "param_mapping": {"test_param": "value123"},
-                "output_mapping": {"result": "parent_result"},
+                "workflow": "test-workflow",
+                "test_param": "value123",
             })
 
-            # Create a real Registry instance instead of a mock
+            # Inject a real Registry for the exec phase
             from pflow.registry import Registry
 
             registry = Registry()
@@ -195,14 +179,11 @@ class TestWorkflowNameParameter:
             shared = {}
             prep_res = node.prep(shared)
 
-            # Verify prep results (markdown IR adds 'purpose' field from descriptions)
+            # Verify prep results
             loaded_ir = prep_res["workflow_ir"]
             assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
             assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
             assert prep_res["child_params"]["test_param"] == "value123"
-
-            # Update prep_res to include parent_shared which is needed by exec
-            prep_res["parent_shared"] = shared
 
             # Mock compilation for exec phase
             with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
@@ -212,17 +193,12 @@ class TestWorkflowNameParameter:
 
                 exec_res = node.exec(prep_res)
 
-                # Debug output if test fails
-                if not exec_res.get("success"):
-                    print(f"exec_res error: {exec_res}")
-
                 assert exec_res["success"] is True
                 assert exec_res["result"] == "success"
 
                 # Verify compile was called with correct parameters
                 mock_compile.assert_called_once()
                 call_args = mock_compile.call_args
-                # Markdown IR includes 'purpose' from required descriptions
                 compiled_ir = call_args[0][0]
                 assert compiled_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
                 assert call_args[1]["initial_params"]["test_param"] == "value123"

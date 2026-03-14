@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.workflow_manager import WorkflowManager
@@ -17,111 +17,69 @@ logger = logging.getLogger(__name__)
 class WorkflowExecutor(BaseNode):
     """Runtime executor for nested workflow execution.
 
-    This is an internal runtime component that enables workflow composition
-    by loading and executing other workflows with controlled parameter passing
-    and storage isolation. This is NOT a user-facing node but rather part of
-    the pflow runtime infrastructure.
+    Enables workflow composition by loading and executing other workflows
+    with controlled parameter passing and storage isolation.
 
-    Inputs:
-        - Any keys defined in param_mapping will be read from shared store
+    Workflow nodes use the same syntax as any other node — non-reserved
+    params are passed as child inputs, and child outputs are auto-exposed
+    via the namespace system.
 
-    Outputs:
-        - Keys defined in output_mapping will be written to shared store
+    Example .pflow.md syntax:
+        ### process_title
+        - type: workflow
+        - workflow: ./child.pflow.md
+        - text: ${document_title}
+        - mode: title
+
+    Downstream access: ${process_title.result}
 
     Parameters:
-        - workflow_name (str): Name of a saved workflow to execute (e.g., "fix-issue")
-        - workflow_ref (str): Path to workflow file (absolute or relative)
-        - workflow_ir (dict): Inline workflow definition
-        - param_mapping (dict): Map parent values to child parameters
-        - output_mapping (dict): Map child outputs to parent keys
-        - storage_mode (str): "mapped" (default), "scoped", "isolated", or "shared"
+        - workflow (str): File path (.pflow.md) or saved workflow name
+        - workflow_ir (dict): Inline workflow definition (via yaml code block)
+        - storage_mode (str): "mapped" (default) or "shared"
         - max_depth (int): Maximum nesting depth (default: 10)
         - error_action (str): Action to return on error (default: "error")
 
-    Note: Only one of workflow_name, workflow_ref, or workflow_ir should be provided.
-    Priority order: workflow_name > workflow_ref > workflow_ir
+    All other params are passed as child workflow inputs.
 
     Actions:
         - default: Workflow executed successfully
         - error: Workflow execution failed (or custom error_action)
     """
 
-    # Class-level constants
     MAX_DEPTH_DEFAULT = 10
     RESERVED_KEY_PREFIX = "_pflow_"
 
-    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Load and prepare the sub-workflow for execution."""
-        # Get parameters with defaults
-        workflow_name = self.params.get("workflow_name")
-        workflow_ref = self.params.get("workflow_ref")
-        workflow_ir = self.params.get("workflow_ir")
-        max_depth = self.params.get("max_depth", self.MAX_DEPTH_DEFAULT)
+    # Params consumed by WorkflowExecutor itself, NOT passed to child
+    RESERVED_PARAMS = frozenset({
+        "workflow",
+        "workflow_ir",
+        "storage_mode",
+        "max_depth",
+        "error_action",
+        "__registry__",
+    })
 
-        # Validate inputs - ensure exactly one workflow source is provided
-        sources_provided = sum(bool(x) for x in [workflow_name, workflow_ref, workflow_ir])
-        if sources_provided == 0:
-            raise ValueError(
-                "WorkflowExecutor requires either 'workflow_name', 'workflow_ref', or 'workflow_ir' parameter"
-            )
-        if sources_provided > 1:
-            raise ValueError("Only one of 'workflow_name', 'workflow_ref', or 'workflow_ir' should be provided")
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        """Load the sub-workflow and prepare child inputs."""
+        max_depth = self.params.get("max_depth", self.MAX_DEPTH_DEFAULT)
 
         # Check nesting depth
         current_depth = shared.get(f"{self.RESERVED_KEY_PREFIX}depth", 0)
         if current_depth >= max_depth:
             raise RecursionError(f"Maximum workflow nesting depth ({max_depth}) exceeded")
 
-        # Track execution stack for circular dependency detection
         execution_stack = shared.get(f"{self.RESERVED_KEY_PREFIX}stack", [])
 
-        # Determine workflow source and load the workflow
-        workflow_path = None
-        workflow_source = None
+        # Load the workflow (file, saved name, or inline IR)
+        workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
 
-        if workflow_name:
-            # Load by name using WorkflowManager
-            logger.debug(f"Loading workflow by name: {workflow_name}")
-            workflow_source = f"name:{workflow_name}"
-            workflow_manager = WorkflowManager()
+        # Extract child inputs: all non-reserved params
+        child_inputs = self._extract_child_inputs()
+        child_params = self._resolve_child_inputs(child_inputs, shared)
 
-            try:
-                workflow_ir = workflow_manager.load_ir(workflow_name)
-                # Use the resolved path for circular dependency checking
-                workflow_path = Path(workflow_manager.get_path(workflow_name))
-
-                # Check circular dependency
-                if str(workflow_path) in execution_stack:
-                    cycle = " -> ".join([*execution_stack, str(workflow_path)])
-                    raise ValueError(f"Circular workflow reference detected: {cycle}")
-
-            except Exception as e:
-                raise ValueError(f"Failed to load workflow '{workflow_name}': {e!s}") from e
-
-        elif workflow_ref:
-            # Load from file path (existing logic)
-            logger.debug(f"Loading workflow by file reference: {workflow_ref}")
-            workflow_source = f"ref:{workflow_ref}"
-
-            # Validate path security
-            workflow_path = self._resolve_safe_path(workflow_ref, shared)
-
-            # Check circular dependency
-            if str(workflow_path) in execution_stack:
-                cycle = " -> ".join([*execution_stack, str(workflow_path)])
-                raise ValueError(f"Circular workflow reference detected: {cycle}")
-
-            # Load workflow file
-            workflow_ir = self._load_workflow_file(workflow_path)
-
-        else:
-            # Use inline workflow_ir
-            logger.debug("Using inline workflow definition")
-            workflow_source = "inline"
-
-        # Prepare child parameters
-        param_mapping = self.params.get("param_mapping", {})
-        child_params = self._resolve_parameter_mappings(param_mapping, shared)
+        # Validate child params against declared inputs
+        self._validate_child_params(workflow_ir, child_params, workflow_path)
 
         return {
             "workflow_ir": workflow_ir,
@@ -131,7 +89,7 @@ class WorkflowExecutor(BaseNode):
             "storage_mode": self.params.get("storage_mode", "mapped"),
             "current_depth": current_depth,
             "execution_stack": execution_stack,
-            "parent_shared": shared,  # Pass the parent shared storage
+            "parent_shared": shared,
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -145,15 +103,12 @@ class WorkflowExecutor(BaseNode):
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
-        # Get registry from node parameters (injected by compiler)
+        # Get registry (injected by compiler)
         registry = self.params.get("__registry__")
         if registry is not None and not isinstance(registry, Registry):
-            # If registry is provided but not the right type, that's an error
-            # Otherwise None is acceptable (compilation might still work with default registry)
             registry = None
 
         try:
-            # Compile the sub-workflow
             sub_flow = compile_ir_to_flow(
                 workflow_ir,
                 registry=registry,  # type: ignore[arg-type]
@@ -163,17 +118,11 @@ class WorkflowExecutor(BaseNode):
         except Exception as e:
             return {"success": False, "error": f"Failed to compile sub-workflow: {e!s}", "workflow_path": workflow_path}
 
-        # Create appropriate storage for child
-        child_storage = self._create_child_storage(
-            parent_shared,  # Parent shared storage from prep_res
-            storage_mode,
-            prep_res,
-        )
+        # Create child storage
+        child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)
 
         try:
-            # Execute the sub-workflow
             result = sub_flow.run(child_storage)
-
             return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
         except Exception as e:
             return {
@@ -184,69 +133,133 @@ class WorkflowExecutor(BaseNode):
             }
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
-        """Process results and update parent storage."""
+        """Auto-expose child outputs and update parent storage."""
         if not exec_res.get("success", False):
-            # Handle failure
             error_msg = exec_res.get("error", "Unknown error")
             workflow_path = exec_res.get("workflow_path", "<unknown>")
-
-            # Store error in shared storage
             shared["error"] = f"WorkflowExecutor failed at {workflow_path}: {error_msg}"
-
-            # Return error action
             error_action = self.params.get("error_action", "error")
             return str(error_action) if error_action else "error"
 
-        # Success - apply output mappings
-        output_mapping = self.params.get("output_mapping", {})
-        if output_mapping and exec_res.get("storage_mode") != "shared":
+        # Auto-expose child outputs (skip for shared mode — child already wrote to parent)
+        if exec_res.get("storage_mode") != "shared":
             child_storage = exec_res.get("child_storage", {})
+            child_ir = prep_res.get("workflow_ir", {})
+            child_declared_outputs = child_ir.get("outputs", {})
 
-            for child_key, parent_key in output_mapping.items():
-                # Skip reserved keys
-                if parent_key.startswith(self.RESERVED_KEY_PREFIX):
-                    continue
+            if child_declared_outputs:
+                # Child has ## Outputs — expose only declared outputs
+                for output_name in child_declared_outputs:
+                    if output_name in child_storage:
+                        shared[output_name] = child_storage[output_name]
+            else:
+                # No declared outputs — expose all non-internal, non-input root keys
+                child_input_keys = set(prep_res.get("child_params", {}).keys())
+                for key, value in child_storage.items():
+                    if key.startswith(("_pflow_", "__")):
+                        continue
+                    if key in child_input_keys:
+                        continue
+                    shared[key] = value
 
-                if child_key in child_storage:
-                    shared[parent_key] = child_storage[child_key]
-                else:
-                    available = [k for k in child_storage if not k.startswith(("_pflow_", "__"))]
-                    logger.warning(
-                        f"output_mapping key '{child_key}' not found in child workflow storage. "
-                        f"Available keys: {available}"
-                    )
-
-        # Return result action or default
+        # Return result action
         child_result = exec_res.get("result")
-        if isinstance(child_result, str):
-            return child_result
-        return "default"
+        return child_result if isinstance(child_result, str) else "default"
+
+    @staticmethod
+    def _is_file_reference(value: str) -> bool:
+        """Determine if a workflow param value is a file path or saved name."""
+        return "/" in value or "\\" in value or value.endswith(".pflow.md") or value.startswith(".")
+
+    def _extract_child_inputs(self) -> dict[str, Any]:
+        """Extract child workflow inputs from params (everything not reserved)."""
+        return {
+            key: value
+            for key, value in self.params.items()
+            if key not in self.RESERVED_PARAMS and not key.startswith("__")
+        }
+
+    def _resolve_child_inputs(self, child_inputs: dict[str, Any], shared: dict[str, Any]) -> dict[str, Any]:
+        """Resolve template variables in child input values."""
+        if not child_inputs:
+            return {}
+
+        context = dict(shared)
+        resolved = {}
+        for param_name, param_value in child_inputs.items():
+            if isinstance(param_value, str) and TemplateResolver.has_templates(param_value):
+                try:
+                    resolved[param_name] = TemplateResolver.resolve_template(param_value, context)
+                except Exception as e:
+                    raise ValueError(f"Failed to resolve parameter '{param_name}': {e}") from e
+            else:
+                resolved[param_name] = param_value
+        return resolved
+
+    def _load_workflow(
+        self, shared: dict[str, Any], execution_stack: list[str]
+    ) -> tuple[dict[str, Any], Optional[Path], str]:
+        """Load the workflow from file, saved name, or inline IR.
+
+        Returns:
+            (workflow_ir, workflow_path, workflow_source)
+        """
+        workflow = self.params.get("workflow")
+        workflow_ir = self.params.get("workflow_ir")
+
+        if not workflow and not workflow_ir:
+            raise ValueError("WorkflowExecutor requires either 'workflow' or 'workflow_ir' parameter")
+        if workflow and workflow_ir:
+            raise ValueError("Only one of 'workflow' or 'workflow_ir' should be provided")
+
+        workflow_path: Optional[Path] = None
+
+        if workflow:
+            if self._is_file_reference(workflow):
+                logger.debug(f"Loading workflow from file: {workflow}")
+                workflow_path = self._resolve_safe_path(workflow, shared)
+                if str(workflow_path) in execution_stack:
+                    cycle = " -> ".join([*execution_stack, str(workflow_path)])
+                    raise ValueError(f"Circular workflow reference detected: {cycle}")
+                workflow_ir = self._load_workflow_file(workflow_path)
+                workflow_source = f"ref:{workflow}"
+            else:
+                logger.debug(f"Loading workflow by name: {workflow}")
+                workflow_manager = WorkflowManager()
+                try:
+                    workflow_ir = workflow_manager.load_ir(workflow)
+                    workflow_path = Path(workflow_manager.get_path(workflow))
+                    if str(workflow_path) in execution_stack:
+                        cycle = " -> ".join([*execution_stack, str(workflow_path)])
+                        raise ValueError(f"Circular workflow reference detected: {cycle}")
+                except Exception as e:
+                    raise ValueError(f"Failed to load workflow '{workflow}': {e!s}") from e
+                workflow_source = f"name:{workflow}"
+        else:
+            logger.debug("Using inline workflow definition")
+            workflow_source = "inline"
+
+        if workflow_ir is None:
+            raise ValueError("WorkflowExecutor requires either 'workflow' or 'workflow_ir' parameter")
+        if "nodes" not in workflow_ir:
+            raise ValueError("Workflow IR must contain 'nodes' (use '## Steps' section in .pflow.md files)")
+
+        return workflow_ir, workflow_path, workflow_source
 
     def _resolve_safe_path(self, workflow_ref: str, shared: dict[str, Any]) -> Path:
-        """Resolve workflow path."""
-        # Convert to Path object
+        """Resolve workflow path, relative to parent workflow or CWD."""
         path = Path(workflow_ref)
-
-        # If relative, resolve from parent workflow location
         if not path.is_absolute():
             parent_file = shared.get(f"{self.RESERVED_KEY_PREFIX}workflow_file")
-            if parent_file:
-                base_dir = Path(parent_file).parent
-                path = base_dir / path
-            else:
-                # Resolve from current working directory
-                path = Path.cwd() / path
-
-        # Return resolved absolute path
+            base_dir = Path(parent_file).parent if parent_file else Path.cwd()
+            path = base_dir / path
         return path.resolve()
 
     def _load_workflow_file(self, path: Path) -> dict[str, Any]:
-        """Load workflow from .pflow.md file."""
-        # Check file exists
+        """Load and parse a .pflow.md workflow file."""
         if not path.exists():
             raise FileNotFoundError(f"Workflow file not found: {path}")
 
-        # Load and parse markdown workflow
         try:
             content = path.read_text(encoding="utf-8")
         except Exception as e:
@@ -258,77 +271,63 @@ class WorkflowExecutor(BaseNode):
             raise ValueError(f"Invalid workflow file {path}: {e}") from e
 
         workflow_ir = result.ir
-
-        # Basic validation
         if "nodes" not in workflow_ir:
             raise ValueError(f"Workflow file {path} must contain a '## Steps' section with at least one node")
-
         return workflow_ir
 
-    def _resolve_parameter_mappings(self, param_mapping: dict[str, Any], shared: dict[str, Any]) -> dict[str, Any]:
-        """Resolve parameter mappings using template resolution."""
-        if not param_mapping:
-            return {}
+    def _validate_child_params(
+        self, workflow_ir: dict[str, Any], child_params: dict[str, Any], workflow_path: Any
+    ) -> None:
+        """Validate provided params against child workflow's declared inputs."""
+        declared_inputs = workflow_ir.get("inputs", {})
+        if not declared_inputs:
+            return
 
-        # Build resolution context
-        context = dict(shared)
+        missing_required = []
+        for input_name, input_spec in declared_inputs.items():
+            has_default = "default" in input_spec
+            if not has_default and input_name not in child_params:
+                desc = input_spec.get("description", "")
+                input_type = input_spec.get("type", "any")
+                missing_required.append(
+                    f"  - {input_name} ({input_type}): {desc}" if desc else f"  - {input_name} ({input_type})"
+                )
 
-        # Resolve each parameter
-        resolved = {}
-        for child_param, parent_value in param_mapping.items():
-            if isinstance(parent_value, str) and TemplateResolver.has_templates(parent_value):
-                # Resolve template
-                try:
-                    resolved[child_param] = TemplateResolver.resolve_template(parent_value, context)
-                except Exception as e:
-                    raise ValueError(f"Failed to resolve parameter '{child_param}': {e}") from e
+        if missing_required:
+            provided = list(child_params.keys()) if child_params else []
+            path_str = workflow_path if workflow_path else "<inline>"
+            msg_parts = [
+                f"Child workflow '{path_str}' is missing required inputs:",
+                *missing_required,
+            ]
+            if provided:
+                msg_parts.append(f"You provided: {', '.join(provided)}")
             else:
-                # Static value
-                resolved[child_param] = parent_value
-
-        return resolved
+                msg_parts.append("You provided no inputs.")
+            all_input_names = list(declared_inputs.keys())
+            msg_parts.append(f"Available inputs: {', '.join(all_input_names)}")
+            raise ValueError("\n".join(msg_parts))
 
     def _create_child_storage(
         self, parent_shared: dict[str, Any], storage_mode: str, prep_res: dict[str, Any]
     ) -> dict[str, Any]:
         """Create storage for child workflow based on isolation mode."""
-        # Update depth and stack for child
         child_depth = prep_res["current_depth"] + 1
         child_stack = [*prep_res["execution_stack"], prep_res["workflow_path"]]
         child_storage: dict[str, Any]
 
         if storage_mode == "mapped":
-            # Only mapped parameters available
             child_storage = prep_res["child_params"].copy()
-
-        elif storage_mode == "isolated":
-            # Completely empty storage
-            child_storage = {}
-
-        elif storage_mode == "scoped":
-            # Filtered view of parent storage
-            prefix = self.params.get("scope_prefix", "child_")
-            child_storage = {
-                k[len(prefix) :]: v
-                for k, v in parent_shared.items()
-                if k.startswith(prefix) and not k.startswith(self.RESERVED_KEY_PREFIX)
-            }
-            # Also include mapped parameters
-            child_storage.update(prep_res["child_params"])
-
         elif storage_mode == "shared":
-            # Direct reference to parent storage (dangerous!)
             child_storage = parent_shared
-
         else:
-            raise ValueError(f"Invalid storage_mode: {storage_mode}")
+            raise ValueError(f"Invalid storage_mode: '{storage_mode}'. Use 'mapped' (default) or 'shared'.")
 
         # Always set execution context
         child_storage[f"{self.RESERVED_KEY_PREFIX}depth"] = child_depth
         child_storage[f"{self.RESERVED_KEY_PREFIX}stack"] = child_stack
         child_storage[f"{self.RESERVED_KEY_PREFIX}workflow_file"] = prep_res["workflow_path"]
 
-        # Pass through registry if available
         if "__registry__" in parent_shared:
             child_storage["__registry__"] = parent_shared["__registry__"]
 

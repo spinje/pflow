@@ -236,10 +236,18 @@ Conditional branching picks ONE path (not multiple simultaneously). Batch proces
 **Example**: "Monitor GitHub PRs, monitor issues, and monitor commits"
 → THREE workflows (each monitoring task is independent)
 
+#### Compose with Nested Workflows When:
+- Common sub-tasks are reused across multiple parent workflows
+- A complex workflow benefits from decomposition into self-contained phases
+- You want to test sub-workflows independently but run them together as a unit
+
+**Example**: "Fetch data, validate it (reusable), transform it, validate output (same validation reused)"
+→ Validation is a NESTED `workflow` node, called twice in the parent
+
 #### The Litmus Test
 Ask yourself: "Would a user ever want to run step X without step Y?"
 - If YES → Separate workflows
-- If NO → Single workflow
+- If NO → Single workflow, or nested workflows if sub-tasks are reusable
 
 **When unsure, ask the user directly**:
 "Should this be one workflow that does everything, or separate workflows you can run independently?"
@@ -264,6 +272,10 @@ Ask yourself: "Would a user ever want to run step X without step Y?"
 - **JSON REST APIs** → `http` node
 - **Binary/streaming data** → `shell` node with curl
 - **Service-specific APIs** → `mcp-{service}-{TOOL}` nodes (auto-auth)
+- **Reuse existing workflow** → `workflow` node
+  - Compose workflows: run a saved or file-based workflow as a step
+  - Same syntax as any other node — pass params as inputs, access outputs via `${node_id.output_name}`
+  - Child workflow must declare `## Inputs` (for required params) and `## Outputs` (for exposed results)
 
 **Async API optimization:**
 Try `Prefer: wait=60` header in `http` node first (eliminates polling nodes)
@@ -1836,6 +1848,61 @@ echo "B: ${route.result}"
 
 **When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
 
+### Pattern: Nested Workflow Composition
+
+**Use when**: A sequence of steps is reused across multiple workflows, or a workflow is too complex and benefits from decomposition.
+
+**Child workflow** (`to-uppercase.pflow.md`):
+````markdown
+# To Uppercase
+
+Convert text to uppercase.
+
+## Inputs
+
+### text
+- type: string
+
+## Outputs
+
+### result
+- source: ${transform.stdout}
+
+## Steps
+
+### transform
+- type: shell
+- command: echo "${text}" | tr '[:lower:]' '[:upper:]'
+````
+
+**Parent workflow** calling the child:
+````markdown
+## Steps
+
+### process_title
+- type: workflow
+- workflow: ./to-uppercase.pflow.md
+- text: ${title}
+
+### process_body
+- type: workflow
+- workflow: ./to-uppercase.pflow.md
+- text: ${body}
+
+### combine
+- type: shell
+- command: printf "Title: %s\nBody: %s" "${process_title.result}" "${process_body.result}"
+````
+
+**Key points:**
+- Child inputs are just params (like any other node)
+- Child outputs available via `${node_id.output_name}` (like any other node)
+- `workflow:` accepts a file path (`./child.pflow.md`) or a saved workflow name (`my-saved-workflow`)
+- Child must declare `## Inputs` for required params and `## Outputs` for exposed results
+- Nesting depth limited to 10 levels (configurable via `max_depth` param)
+
+**When to use**: Reusable validation, shared data processing steps, complex workflows with 30+ nodes that decompose into phases.
+
 ## Part 7: Reality Checks & Troubleshooting
 
 ### Common Mistakes - Detailed Solutions
@@ -1952,7 +2019,7 @@ I need to clarify a few details:
 | Smell | Problem | Fix |
 |-------|---------|-----|
 | No inputs | Not reusable | Extract all values as inputs |
-| 30+ nodes | Too complex | Break into multiple workflows |
+| 30+ nodes | Too complex | Break into nested sub-workflows or multiple workflows |
 | Repetitive nodes | Inefficient | Use batch with inline array |
 | LLM for extraction | Expensive & unreliable | Templates for paths, code node for transformation |
 | Hardcoded credentials | Security risk | Use inputs + settings |

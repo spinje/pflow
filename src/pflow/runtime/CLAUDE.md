@@ -194,13 +194,25 @@ Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
 
 ### WorkflowExecutor (`workflow_executor.py`)
 
-Runtime node for nested workflow execution:
-- Loads workflows by name, path (`.pflow.md`), or inline IR
-- Parameter mapping with template resolution
-- **Storage isolation modes**: mapped/isolated/scoped/shared ("shared" is dangerous — direct reference to parent storage)
-- Circular dependency detection via execution stack
-- Registry propagation to sub-workflows
-- **Relative paths resolve from parent workflow directory**, not CWD
+Runtime node for nested workflow execution. Uses the **same syntax as any other node** — non-reserved params are child inputs, child outputs auto-expose via namespace.
+
+```markdown
+### process_title
+- type: workflow
+- workflow: ./child.pflow.md
+- text: ${title}
+```
+Downstream: `${process_title.result}`
+
+- **`workflow` param**: unified — file paths (contains `/`, starts with `.`, ends `.pflow.md`) or saved workflow names
+- **`workflow_ir` param**: inline IR dict (via yaml code block)
+- **Params-as-inputs**: all non-reserved params (`RESERVED_PARAMS` frozenset) become child inputs
+- **Auto-outputs**: child's `## Outputs` declarations exposed via namespace. If no declarations, all non-internal keys exposed.
+- **Storage modes**: `mapped` (default, child sees only passed params) and `shared` (child uses parent storage directly)
+- **Circular dependency detection** via `_pflow_stack` execution stack
+- **Max depth enforcement** via `_pflow_depth` (default 10)
+- **Relative paths resolve from parent workflow directory** via `_pflow_workflow_file`, not CWD
+- **Child input validation**: compares provided params against child's `## Inputs`, gives actionable error with "You provided X, Available inputs: Y"
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 

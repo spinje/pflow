@@ -251,7 +251,7 @@ class TemplateValidator:
             return (errors, warnings)
 
         # Get full output structure from nodes
-        node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
+        node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry, available_params)
 
         logger.debug(
             f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
@@ -932,7 +932,11 @@ class TemplateValidator:
     ]
 
     @staticmethod
-    def _extract_node_outputs(workflow_ir: dict[str, Any], registry: Registry) -> dict[str, Any]:
+    def _extract_node_outputs(
+        workflow_ir: dict[str, Any],
+        registry: Registry,
+        initial_params: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
         """Extract full output structures from nodes using interface metadata.
 
         When namespacing is enabled, outputs are registered under both:
@@ -955,15 +959,26 @@ class TemplateValidator:
             if not node_type or not node_id:
                 continue
 
-            # Workflow nodes are handled specially by the compiler, not registered
-            # in the node registry. Their outputs come from output_mapping.
+            # Workflow nodes: resolve child outputs for validation.
+            # Try to load the child workflow and extract its declared outputs.
+            # If unresolvable, mark as dynamic (accept any output reference).
             if node_type in ("workflow", "pflow.runtime.workflow_executor"):
-                output_mapping = node.get("params", {}).get("output_mapping", {})
-                for _child_key, parent_key in output_mapping.items():
-                    output_info = {"type": "any", "node_id": node_id, "node_type": node_type}
-                    node_outputs[parent_key] = output_info
-                    if enable_namespacing:
-                        node_outputs[f"{node_id}.{parent_key}"] = output_info
+                child_outputs = TemplateValidator._resolve_child_workflow_outputs(node, initial_params)
+                if child_outputs is not None:
+                    for output_name, output_spec in child_outputs.items():
+                        output_type = output_spec.get("type", "any") if isinstance(output_spec, dict) else "any"
+                        output_info = {"type": output_type, "node_id": node_id, "node_type": node_type}
+                        node_outputs[output_name] = output_info
+                        if enable_namespacing:
+                            node_outputs[f"{node_id}.{output_name}"] = output_info
+                else:
+                    # Can't resolve child outputs — mark as dynamic
+                    node_outputs[node_id] = {
+                        "type": "any",
+                        "node_id": node_id,
+                        "node_type": node_type,
+                        "is_workflow_dynamic": True,
+                    }
                 continue
 
             # Check for batch configuration
@@ -1000,6 +1015,70 @@ class TemplateValidator:
                 )
 
         return node_outputs
+
+    @staticmethod
+    def _resolve_child_workflow_outputs(
+        node: dict[str, Any],
+        initial_params: Optional[dict[str, Any]],
+    ) -> Optional[dict[str, Any]]:
+        """Try to resolve a workflow node's child outputs for validation.
+
+        Returns the child's declared outputs dict if resolvable, or None if
+        the child can't be loaded (dynamic reference, missing file, etc.).
+        """
+        params = node.get("params", {})
+
+        # Inline workflow_ir — read outputs directly
+        workflow_ir = params.get("workflow_ir")
+        if isinstance(workflow_ir, dict):
+            outputs = workflow_ir.get("outputs", {})
+            return outputs if outputs else None
+
+        # File or saved name reference
+        workflow_ref = params.get("workflow")
+        if not workflow_ref or not isinstance(workflow_ref, str):
+            return None
+
+        # Skip template references — can't resolve at validation time
+        if "${" in workflow_ref:
+            return None
+
+        from pflow.runtime.workflow_executor import WorkflowExecutor
+
+        if WorkflowExecutor._is_file_reference(workflow_ref):
+            # File reference — try to load
+            try:
+                from pathlib import Path
+
+                from pflow.core.markdown_parser import parse_markdown
+
+                path = Path(workflow_ref)
+                if not path.is_absolute() and initial_params:
+                    parent_file = initial_params.get("_pflow_workflow_file")
+                    base_dir = Path(parent_file).parent if parent_file else Path.cwd()
+                    path = base_dir / path
+                path = path.resolve()
+                if not path.exists():
+                    return None
+                content = path.read_text(encoding="utf-8")
+                result = parse_markdown(content)
+                outputs = result.ir.get("outputs", {})
+                return outputs if outputs else None
+            except Exception:
+                logger.debug("Could not resolve child workflow outputs for '%s'", workflow_ref, exc_info=True)
+                return None
+        else:
+            # Saved workflow name — try to load via WorkflowManager
+            try:
+                from pflow.core.workflow_manager import WorkflowManager
+
+                wm = WorkflowManager()
+                child_ir = wm.load_ir(workflow_ref)
+                outputs = child_ir.get("outputs", {})
+                return outputs if outputs else None
+            except Exception:
+                logger.debug("Could not resolve child workflow outputs for '%s'", workflow_ref, exc_info=True)
+                return None
 
     @staticmethod
     def _register_batch_outputs(
@@ -1146,7 +1225,9 @@ class TemplateValidator:
 
         node_output_key = f"{base_var}.{base_output}"
         if node_output_key not in node_outputs:
-            return (False, None)
+            # Dynamic workflow nodes (outputs unknown at validation time) accept any output
+            is_dynamic = base_var in node_outputs and node_outputs[base_var].get("is_workflow_dynamic")
+            return (True, None) if is_dynamic else (False, None)
 
         output_info = node_outputs[node_output_key]
 

@@ -505,16 +505,16 @@ Internal infrastructure that executes workflows:
 Run a sub-workflow for processing.
 
 - type: workflow
-- workflow_ref: path/to/workflow.pflow.md
-- param_mapping: { "input": "${data}" }
+- workflow: path/to/workflow.pflow.md
+- input_data: ${data}
 ```
 
 **What happens internally**:
 1. Runtime sees `type: "workflow"` in the IR
 2. Instantiates `WorkflowExecutor` (not a regular node)
-3. Executor handles: loading sub-workflow, storage isolation, parameter mapping, recursive execution, output mapping, error context
+3. Executor handles: loading sub-workflow, storage isolation, passing inputs, recursive execution, auto-exposing outputs, error context
 
-Users simply specify `type: "workflow"` - they don't need to know about WorkflowExecutor.
+Users simply specify `type: "workflow"` — they don't need to know about WorkflowExecutor.
 
 ### Why This Separation?
 

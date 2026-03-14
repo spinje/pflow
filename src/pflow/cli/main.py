@@ -1368,6 +1368,11 @@ def _prepare_execution_environment(
     if planner_cache_chunks:
         enhanced_params["__planner_cache_chunks__"] = planner_cache_chunks
 
+    # Set workflow file path for relative path resolution in nested workflows
+    source_file_path = ctx.obj.get("source_file_path")
+    if source_file_path:
+        enhanced_params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
+
     return cli_output, display, workflow_trace, enhanced_params, effective_verbose
 
 
@@ -3419,6 +3424,16 @@ def _setup_workflow_execution(
         # Extract clean workflow name (strip file extension if present)
         workflow_name = first_arg[:-9] if first_arg.lower().endswith(".pflow.md") else first_arg
         ctx.obj["workflow_name"] = workflow_name
+        # Set source_file_path for saved workflows — needed for relative path
+        # resolution in nested workflows (so ./child.pflow.md resolves from
+        # the saved workflow's directory, not CWD)
+        try:
+            from pflow.core.workflow_manager import WorkflowManager
+
+            wm = WorkflowManager()
+            ctx.obj["source_file_path"] = wm.get_path(workflow_name)
+        except Exception:
+            logger.debug("Could not resolve saved workflow path for '%s'", workflow_name, exc_info=True)
 
     return metrics_collector
 
