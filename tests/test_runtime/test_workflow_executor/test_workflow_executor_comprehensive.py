@@ -1,5 +1,14 @@
-"""Comprehensive unit tests for WorkflowExecutor covering all 26 test criteria."""
+"""Comprehensive unit tests for WorkflowExecutor covering the new API.
 
+API changes from the old version:
+- workflow_ref/workflow_name → workflow (file path or saved name)
+- param_mapping → pass child params directly as non-reserved params
+- output_mapping → removed (auto-outputs via namespace)
+- isolated/scoped storage modes → removed (only mapped and shared)
+- Reserved params: workflow, workflow_ir, storage_mode, max_depth, error_action, __registry__
+"""
+
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -25,58 +34,37 @@ class FailingExampleNode(BaseNode):
 
 
 class TestWorkflowExecutorComprehensive:
-    """Comprehensive tests covering all 26 test criteria from spec."""
+    """Comprehensive tests covering the WorkflowExecutor API."""
 
     @pytest.fixture
     def simple_workflow_ir(self):
         """Basic workflow IR for testing."""
-        return {"nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}], "edges": []}
-
-    @pytest.fixture
-    def mock_registry(self, tmp_path):
-        """Mock registry for testing."""
-        registry_path = tmp_path / "test_registry.json"
-        registry = Registry(registry_path)
-
-        # Create minimal registry data
-        registry_data = {
-            "echo": {
-                "module": "test.module",
-                "class_name": "ExampleNode",
-                "docstring": "Test node",
-                "file_path": "/test/path.py",
-                "interface": {
-                    "inputs": [],
-                    "outputs": [{"key": "output", "type": "string"}],
-                    "parameters": [],
-                },
-            }
+        return {
+            "nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}],
+            "edges": [],
         }
 
-        registry.save(registry_data)
-        return registry
+    # --- Test 1: workflow file reference loads and parses correctly ---
 
-    # Test Criteria 1: workflow_ref only provided → loads and executes workflow
-    def test_workflow_ref_only(self, simple_workflow_ir, tmp_path):
-        """Test loading and executing workflow from file."""
-        # Create temporary workflow file
+    def test_workflow_file_reference(self, simple_workflow_ir, tmp_path):
+        """Test loading and executing workflow from file path."""
         workflow_file = tmp_path / "test_workflow.pflow.md"
         write_workflow_file(simple_workflow_ir, workflow_file)
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": str(workflow_file)})
+        node.set_params({"workflow": str(workflow_file)})
 
         shared = {}
         prep_res = node.prep(shared)
 
-        # Parsed markdown IR includes 'purpose' field from required descriptions
         loaded_ir = prep_res["workflow_ir"]
         assert loaded_ir["nodes"][0]["id"] == simple_workflow_ir["nodes"][0]["id"]
         assert loaded_ir["nodes"][0]["type"] == simple_workflow_ir["nodes"][0]["type"]
         assert loaded_ir["nodes"][0]["params"] == simple_workflow_ir["nodes"][0]["params"]
         assert prep_res["workflow_path"] == str(workflow_file)
 
-    # Test Criteria 2: workflow_ir only provided → executes inline workflow
+    # --- Test 2: workflow_ir only provided ---
+
     def test_workflow_ir_only(self, simple_workflow_ir):
         """Test executing inline workflow."""
         node = WorkflowExecutor()
@@ -88,83 +76,92 @@ class TestWorkflowExecutorComprehensive:
         assert prep_res["workflow_ir"] == simple_workflow_ir
         assert prep_res["workflow_path"] == "<inline>"
 
-    # Test Criteria 3: neither parameter provided → raises ValueError
+    # --- Test 3: neither parameter provided ---
+
     def test_neither_parameter_provided(self):
-        """Test error when neither workflow_ref nor workflow_ir provided."""
+        """Test error when neither workflow nor workflow_ir provided."""
         node = WorkflowExecutor()
         node.set_params({})
 
         shared = {}
-        with pytest.raises(ValueError, match="WorkflowExecutor requires either"):
+        with pytest.raises(ValueError, match="requires either 'workflow' or 'workflow_ir'"):
             node.prep(shared)
 
-    # Test Criteria 4: both parameters provided → raises ValueError
-    def test_both_parameters_provided(self, simple_workflow_ir):
-        """Test error when both workflow_ref and workflow_ir provided."""
+    # --- Test 4: both parameters provided ---
+
+    def test_both_parameters_provided(self, simple_workflow_ir, tmp_path):
+        """Test error when both workflow and workflow_ir provided."""
+        workflow_file = tmp_path / "test.pflow.md"
+        write_workflow_file(simple_workflow_ir, workflow_file)
+
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": "test.json", "workflow_ir": simple_workflow_ir})
+        node.set_params({"workflow": str(workflow_file), "workflow_ir": simple_workflow_ir})
 
         shared = {}
-        with pytest.raises(ValueError, match="Only one of"):
+        with pytest.raises(ValueError, match="Only one of 'workflow' or 'workflow_ir'"):
             node.prep(shared)
 
-    # Test Criteria 5: depth at max_depth → raises RecursionError
+    # --- Test 5: depth at max_depth ---
+
     def test_max_depth_exceeded(self, simple_workflow_ir):
         """Test error when maximum nesting depth exceeded."""
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "max_depth": 5})
 
-        shared = {"_pflow_depth": 5}  # Already at max
+        shared = {"_pflow_depth": 5}
         with pytest.raises(RecursionError, match="Maximum workflow nesting depth"):
             node.prep(shared)
 
-    # Test Criteria 6: workflow in execution stack → raises ValueError with cycle
+    # --- Test 6: circular dependency detection ---
+
     def test_circular_dependency_simple(self, simple_workflow_ir, tmp_path):
-        """Test circular dependency detection."""
+        """Test circular dependency detection for file references."""
         workflow_file = tmp_path / "workflow.pflow.md"
         write_workflow_file(simple_workflow_ir, workflow_file)
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": str(workflow_file)})
+        node.set_params({"workflow": str(workflow_file)})
 
-        shared = {
-            "_pflow_stack": [str(workflow_file)]  # Already in stack
-        }
+        shared = {"_pflow_stack": [str(workflow_file)]}
 
         with pytest.raises(ValueError, match="Circular workflow reference"):
             node.prep(shared)
 
-    # Test Criteria 7: workflow file missing → raises FileNotFoundError
+    # --- Test 7: workflow file missing ---
+
     def test_workflow_file_missing(self):
         """Test error when workflow file doesn't exist."""
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": "/non/existent/file.pflow.md"})
+        node.set_params({"workflow": "/non/existent/file.pflow.md"})
 
         shared = {}
         with pytest.raises(FileNotFoundError, match="Workflow file not found"):
             node.prep(shared)
 
-    # Test Criteria 8: workflow file malformed → raises ValueError
+    # --- Test 8: malformed workflow file ---
+
     def test_malformed_workflow(self, tmp_path):
         """Test error when workflow file is malformed."""
         workflow_file = tmp_path / "malformed.pflow.md"
-        # Write content that fails markdown parsing (no Steps section)
         workflow_file.write_text("# Bad Workflow\n\nJust some text, no steps.\n")
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": str(workflow_file)})
+        node.set_params({"workflow": str(workflow_file)})
 
         shared = {}
         with pytest.raises(ValueError):
             node.prep(shared)
 
-    # Test Criteria 9: param_mapping with template → resolves correctly
+    # --- Test 9: template resolution in direct params ---
+
     def test_template_resolution(self, simple_workflow_ir):
-        """Test template resolution in parameter mapping."""
+        """Test template resolution in params passed directly as child inputs."""
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "param_mapping": {"simple": "${value}", "nested": "${obj.field}", "static": "literal"},
+            "simple": "${value}",
+            "nested": "${obj.field}",
+            "static": "literal",
         })
 
         shared = {"value": "resolved", "obj": {"field": "nested_value"}}
@@ -174,13 +171,14 @@ class TestWorkflowExecutorComprehensive:
         assert prep_res["child_params"]["nested"] == "nested_value"
         assert prep_res["child_params"]["static"] == "literal"
 
-    # Test Criteria 10: storage_mode "mapped" → child sees only mapped params
+    # --- Test 10: storage_mode "mapped" ---
+
     def test_storage_mode_mapped(self, simple_workflow_ir):
-        """Test mapped storage mode isolation."""
+        """Test mapped storage mode: child sees only mapped params."""
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "param_mapping": {"allowed": "${value}"},
+            "allowed": "${value}",
             "storage_mode": "mapped",
         })
 
@@ -191,40 +189,12 @@ class TestWorkflowExecutorComprehensive:
 
         assert child_storage["allowed"] == "mapped_value"
         assert "other" not in child_storage
-        assert "_pflow_depth" in child_storage  # System keys preserved
+        assert "_pflow_depth" in child_storage
 
-    # Test Criteria 11: storage_mode "isolated" → child sees empty storage
-    def test_storage_mode_isolated(self, simple_workflow_ir):
-        """Test isolated storage mode."""
-        node = WorkflowExecutor()
-        node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "isolated"})
+    # --- Test 13: storage_mode "shared" ---
 
-        parent_shared = {"data": "parent_data"}
-        prep_res = node.prep(parent_shared)
-        child_storage = node._create_child_storage(parent_shared, "isolated", prep_res)
-
-        # Should only have system keys
-        user_keys = [k for k in child_storage if not k.startswith("_pflow_")]
-        assert len(user_keys) == 0
-
-    # Test Criteria 12: storage_mode "scoped" → child sees filtered storage
-    def test_storage_mode_scoped(self, simple_workflow_ir):
-        """Test scoped storage mode."""
-        node = WorkflowExecutor()
-        node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "scoped", "scope_prefix": "child_"})
-
-        parent_shared = {"child_data": "visible", "parent_data": "hidden", "child_nested": {"key": "value"}}
-
-        prep_res = node.prep(parent_shared)
-        child_storage = node._create_child_storage(parent_shared, "scoped", prep_res)
-
-        assert child_storage["data"] == "visible"
-        assert child_storage["nested"] == {"key": "value"}
-        assert "parent_data" not in child_storage
-
-    # Test Criteria 13: storage_mode "shared" → child uses parent storage
     def test_storage_mode_shared(self, simple_workflow_ir):
-        """Test shared storage mode."""
+        """Test shared storage mode: child uses same storage as parent."""
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "shared"})
 
@@ -232,35 +202,36 @@ class TestWorkflowExecutorComprehensive:
         prep_res = node.prep(parent_shared)
         child_storage = node._create_child_storage(parent_shared, "shared", prep_res)
 
-        assert child_storage is parent_shared  # Same object reference
+        assert child_storage is parent_shared
 
-    # Test Criteria 14: child compilation error → returns error result
+    # --- Test 14: compilation error ---
+
     def test_compilation_error(self, simple_workflow_ir):
         """Test handling of compilation errors."""
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "__registry__": None,  # Will cause compilation to fail
+            "__registry__": None,
         })
 
         prep_res = {
-            "workflow_ir": {"invalid": "ir"},  # Invalid IR
+            "workflow_ir": {"invalid": "ir"},
             "workflow_path": "test.json",
             "child_params": {},
             "storage_mode": "mapped",
         }
 
-        with patch("pflow.runtime.compile_ir_to_flow") as mock_compile:
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
             mock_compile.side_effect = Exception("Compilation failed")
             exec_res = node.exec(prep_res)
 
         assert exec_res["success"] is False
         assert "Failed to compile" in exec_res["error"]
 
-    # Test Criteria 15: child execution error → returns error result
+    # --- Test 15: execution error ---
+
     def test_execution_error(self, tmp_path):
         """Test handling of execution errors."""
-        # Create a registry with our failing test node
         registry_path = tmp_path / "test_registry.json"
         registry = Registry(registry_path)
 
@@ -274,7 +245,6 @@ class TestWorkflowExecutorComprehensive:
         }
         registry.save(registry_data)
 
-        # Create workflow that uses the failing node
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "fail", "type": "failing_node", "params": {}}],
@@ -284,7 +254,6 @@ class TestWorkflowExecutorComprehensive:
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": workflow_ir, "__registry__": registry})
 
-        # Prepare and execute
         shared = {}
         prep_res = node.prep(shared)
         exec_res = node.exec(prep_res)
@@ -293,32 +262,44 @@ class TestWorkflowExecutorComprehensive:
         assert "Sub-workflow execution failed" in exec_res["error"]
         assert "Execution failed as expected" in exec_res["error"]
 
-    # Test Criteria 16: successful execution → applies output mapping
-    def test_output_mapping(self, simple_workflow_ir):
-        """Test output mapping after successful execution."""
+    # --- Test 16: auto-outputs with declared outputs ---
+
+    def test_auto_outputs_declared(self, simple_workflow_ir):
+        """When child IR has outputs declarations, only those are exposed to parent."""
         node = WorkflowExecutor()
-        node.set_params({
-            "workflow_ir": simple_workflow_ir,
-            "output_mapping": {"result": "parent_result", "score": "analysis_score"},
-        })
+        node.set_params({"workflow_ir": simple_workflow_ir})
 
         shared = {}
-        prep_res = node.prep(shared)
+        # Simulate IR with declared outputs
+        prep_res = {
+            "workflow_ir": {
+                "nodes": [],
+                "outputs": {"result": {"description": "The result"}, "score": {"description": "Score"}},
+            },
+            "child_params": {},
+        }
         exec_res = {
             "success": True,
             "result": "default",
-            "child_storage": {"result": "child_value", "score": 95, "internal": "ignored"},
+            "child_storage": {
+                "result": "child_value",
+                "score": 95,
+                "internal": "should_not_be_exposed",
+                "_pflow_depth": 1,
+            },
             "storage_mode": "mapped",
         }
 
         action = node.post(shared, prep_res, exec_res)
 
-        assert shared["parent_result"] == "child_value"
-        assert shared["analysis_score"] == 95
+        assert shared["result"] == "child_value"
+        assert shared["score"] == 95
         assert "internal" not in shared
+        assert "_pflow_depth" not in shared
         assert action == "default"
 
-    # Test Criteria 17: child returns "custom_action" → returns "custom_action"
+    # --- Test 17: custom action return ---
+
     def test_custom_action_return(self, simple_workflow_ir):
         """Test propagation of custom action from child."""
         node = WorkflowExecutor()
@@ -331,7 +312,8 @@ class TestWorkflowExecutorComprehensive:
         action = node.post(shared, prep_res, exec_res)
         assert action == "custom_action"
 
-    # Test Criteria 18: child returns None → returns "default"
+    # --- Test 18: None return defaults to "default" ---
+
     def test_none_return_default(self, simple_workflow_ir):
         """Test default action when child returns None."""
         node = WorkflowExecutor()
@@ -344,10 +326,10 @@ class TestWorkflowExecutorComprehensive:
         action = node.post(shared, prep_res, exec_res)
         assert action == "default"
 
-    # Test Criteria 19: relative workflow_ref → resolves from parent directory
+    # --- Test 19: relative path resolution ---
+
     def test_relative_path_resolution(self, simple_workflow_ir, tmp_path):
-        """Test relative path resolution."""
-        # Create parent and child workflow files
+        """Test relative path resolution from parent workflow directory."""
         parent_dir = tmp_path / "parent"
         parent_dir.mkdir()
         child_dir = tmp_path / "child"
@@ -357,79 +339,59 @@ class TestWorkflowExecutorComprehensive:
         write_workflow_file(simple_workflow_ir, child_file)
 
         node = WorkflowExecutor()
-        node.set_params({
-            "workflow_ref": "../child/child.pflow.md"  # Relative path
-        })
+        node.set_params({"workflow": "../child/child.pflow.md"})
 
         shared = {"_pflow_workflow_file": str(parent_dir / "parent.pflow.md")}
 
         prep_res = node.prep(shared)
         assert prep_res["workflow_path"] == str(child_file.resolve())
 
-    # Test Criteria 20: missing param in mapping → handles gracefully
-    def test_missing_param_mapping(self, simple_workflow_ir):
-        """Test handling of missing parameters in mapping."""
+    # --- Test 20: unresolved template in input ---
+
+    def test_unresolved_template_in_input(self, simple_workflow_ir):
+        """Test that unresolved templates are preserved in child inputs."""
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "param_mapping": {"exists": "${present}", "missing": "${not_there}"},
+            "exists": "${present}",
+            "missing": "${not_there}",
         })
 
         shared = {"present": "value"}
         prep_res = node.prep(shared)
 
         assert prep_res["child_params"]["exists"] == "value"
-        assert prep_res["child_params"]["missing"] == "${not_there}"  # Templates preserve unresolved variables
+        # Unresolved templates are preserved as-is
+        assert prep_res["child_params"]["missing"] == "${not_there}"
 
-    # Test Criteria 21: missing output key → skips mapping
-    def test_missing_output_key(self, simple_workflow_ir):
-        """Test handling of missing output keys."""
-        node = WorkflowExecutor()
-        node.set_params({
-            "workflow_ir": simple_workflow_ir,
-            "output_mapping": {"exists": "target1", "missing": "target2"},
-        })
+    # --- Test 23: invalid storage_mode ---
 
-        shared = {}
-        prep_res = node.prep(shared)
-        exec_res = {
-            "success": True,
-            "result": "default",
-            "child_storage": {"exists": "value"},
-            "storage_mode": "mapped",
-        }
-
-        node.post(shared, prep_res, exec_res)
-
-        assert shared["target1"] == "value"
-        assert "target2" not in shared  # Skipped due to missing key
-
-    # Test Criteria 22: invalid storage_mode → raises ValueError
     def test_invalid_storage_mode(self, simple_workflow_ir):
-        """Test error on invalid storage mode."""
+        """Test error on invalid storage mode with helpful message."""
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "invalid_mode"})
 
         parent_shared = {}
         prep_res = node.prep(parent_shared)
 
-        with pytest.raises(ValueError, match="Invalid storage_mode"):
+        with pytest.raises(ValueError, match="Use 'mapped' \\(default\\) or 'shared'"):
             node._create_child_storage(parent_shared, "invalid_mode", prep_res)
 
-    # Test Criteria 23: multi-level circular dependency → detects cycle
+    # --- Test 24: multi-level circular dependency ---
+
     def test_multilevel_circular_dependency(self, simple_workflow_ir, tmp_path):
         """Test detection of multi-level circular dependencies."""
         workflow_file = tmp_path / "workflow.pflow.md"
         write_workflow_file(simple_workflow_ir, workflow_file)
 
         node = WorkflowExecutor()
-        node.set_params({"workflow_ref": str(workflow_file)})
+        node.set_params({"workflow": str(workflow_file)})
 
         shared = {
             "_pflow_stack": [
                 "/workflow1.pflow.md",
                 "/workflow2.pflow.md",
-                str(workflow_file),  # Creates cycle
+                str(workflow_file),
             ]
         }
 
@@ -439,28 +401,24 @@ class TestWorkflowExecutorComprehensive:
         assert "Circular workflow reference" in str(exc_info.value)
         assert "/workflow1.pflow.md" in str(exc_info.value)
 
-    # Test Criteria 24: malformed child IR → wraps error with context
+    # --- Test 25: malformed child IR context ---
+
     def test_malformed_child_ir_context(self):
         """Test error context for malformed child IR."""
         node = WorkflowExecutor()
         node.set_params({
-            "workflow_ir": {"missing": "nodes"},  # Invalid IR
+            "workflow_ir": {"missing": "nodes"},
             "__registry__": Mock(),
         })
 
-        prep_res = node.prep({})
+        # Malformed IR (no 'nodes' key) is caught early in prep()
+        with pytest.raises(ValueError, match="must contain 'nodes'"):
+            node.prep({})
 
-        with patch("pflow.runtime.compile_ir_to_flow") as mock_compile:
-            mock_compile.side_effect = ValueError("Invalid IR structure")
-            exec_res = node.exec(prep_res)
+    # --- Test 26: reserved key isolation ---
 
-        assert exec_res["success"] is False
-        assert "Failed to compile" in exec_res["error"]
-        assert exec_res["workflow_path"] == "<inline>"
-
-    # Test Criteria 25: reserved key modification → isolated to child
     def test_reserved_key_isolation(self, simple_workflow_ir):
-        """Test that reserved keys are isolated to child."""
+        """Test that reserved keys are isolated between parent and child."""
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": simple_workflow_ir, "storage_mode": "mapped"})
 
@@ -468,19 +426,18 @@ class TestWorkflowExecutorComprehensive:
         prep_res = node.prep(parent_shared)
         child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
 
-        # Child should have incremented depth
         assert child_storage["_pflow_depth"] == 2
-        # Parent should remain unchanged
         assert parent_shared["_pflow_depth"] == 1
 
-    # Test Criteria 26: concurrent execution → independent instances
+    # --- Test 27: concurrent execution independence ---
+
     def test_concurrent_execution_independence(self, simple_workflow_ir):
         """Test that concurrent executions are independent."""
         node1 = WorkflowExecutor()
         node2 = WorkflowExecutor()
 
-        node1.set_params({"workflow_ir": simple_workflow_ir, "param_mapping": {"data": "value1"}})
-        node2.set_params({"workflow_ir": simple_workflow_ir, "param_mapping": {"data": "value2"}})
+        node1.set_params({"workflow_ir": simple_workflow_ir, "data": "value1"})
+        node2.set_params({"workflow_ir": simple_workflow_ir, "data": "value2"})
 
         shared1 = {}
         shared2 = {}
@@ -488,10 +445,218 @@ class TestWorkflowExecutorComprehensive:
         prep_res1 = node1.prep(shared1)
         prep_res2 = node2.prep(shared2)
 
-        # Ensure parameters are independent
         assert prep_res1["child_params"]["data"] == "value1"
         assert prep_res2["child_params"]["data"] == "value2"
 
         # Modify one shouldn't affect the other
         prep_res1["child_params"]["data"] = "modified"
         assert prep_res2["child_params"]["data"] == "value2"
+
+    # --- Test 28: missing required child input gives actionable error ---
+
+    def test_missing_required_child_input_gives_actionable_error(self):
+        """Missing required child input raises error with provided vs expected."""
+        ir_with_inputs = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "text": {"type": "string", "description": "The text to process"},
+                "mode": {"type": "string", "default": "upper"},
+            },
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+        }
+
+        node = WorkflowExecutor()
+        node.set_params({
+            "workflow_ir": ir_with_inputs,
+            "wrong_name": "hello",
+        })
+
+        with pytest.raises(ValueError, match="missing required inputs") as exc_info:
+            node.prep({})
+
+        error_msg = str(exc_info.value)
+        assert "text" in error_msg  # Shows which input is missing
+        assert "wrong_name" in error_msg  # Shows what was provided
+        # mode has default, should not appear as missing
+        assert "mode" not in error_msg.split("missing required inputs")[0]
+
+    # --- Test 29: all required inputs provided passes ---
+
+    def test_all_required_inputs_provided_passes(self):
+        """No error when all required inputs are provided."""
+        ir_with_inputs = {
+            "ir_version": "0.1.0",
+            "inputs": {
+                "text": {"type": "string", "description": "The text to process"},
+                "mode": {"type": "string", "default": "upper"},
+            },
+            "nodes": [{"id": "n1", "type": "test", "params": {}}],
+            "edges": [],
+        }
+
+        node = WorkflowExecutor()
+        node.set_params({
+            "workflow_ir": ir_with_inputs,
+            "text": "hello",
+        })
+
+        # Should not raise — text is provided, mode has a default
+        prep_res = node.prep({})
+        assert prep_res["child_params"]["text"] == "hello"
+
+    # --- Test 30: no declared inputs skips validation ---
+
+    def test_no_declared_inputs_skips_validation(self, simple_workflow_ir):
+        """Workflows without declared inputs skip param validation."""
+        node = WorkflowExecutor()
+        node.set_params({
+            "workflow_ir": simple_workflow_ir,
+            "anything": "goes",
+        })
+
+        # Should not raise — no declared inputs to validate against
+        prep_res = node.prep({})
+        assert prep_res["child_params"]["anything"] == "goes"
+
+    # --- Test 31: relative path falls back to cwd ---
+
+    def test_relative_path_falls_back_to_cwd(self):
+        """When _pflow_workflow_file is not set, relative paths resolve from CWD."""
+        node = WorkflowExecutor()
+        resolved = node._resolve_safe_path("./some/relative.pflow.md", {})
+        assert resolved == (Path.cwd() / "some" / "relative.pflow.md").resolve()
+
+    # --- Test 32: _pflow_workflow_file flows to shared store ---
+
+    def test_pflow_workflow_file_flows_to_shared_store(self):
+        """_pflow_workflow_file in execution_params flows to shared store."""
+        from pflow.execution.executor_service import WorkflowExecutorService
+
+        service = WorkflowExecutorService()
+        shared = service._initialize_shared_store(
+            shared_store=None,
+            execution_params={"_pflow_workflow_file": "/path/to/workflow.pflow.md"},
+            stdin_data=None,
+            metrics_collector=None,
+        )
+        assert shared["_pflow_workflow_file"] == "/path/to/workflow.pflow.md"
+
+    # --- NEW: test_params_as_inputs_basic ---
+
+    def test_params_as_inputs_basic(self, simple_workflow_ir):
+        """Non-reserved params become child inputs; reserved params are excluded."""
+        node = WorkflowExecutor()
+        node.set_params({
+            "workflow_ir": simple_workflow_ir,
+            "text": "hello",
+            "count": 5,
+            "storage_mode": "mapped",
+        })
+
+        prep_res = node.prep({})
+
+        assert prep_res["child_params"] == {"text": "hello", "count": 5}
+        # storage_mode is reserved, not passed as child input
+        assert "storage_mode" not in prep_res["child_params"]
+
+    # --- NEW: test_auto_outputs_undeclared ---
+
+    def test_auto_outputs_undeclared(self, simple_workflow_ir):
+        """When child has no declared outputs, all non-internal root keys are exposed."""
+        node = WorkflowExecutor()
+        node.set_params({"workflow_ir": simple_workflow_ir})
+
+        shared = {}
+        prep_res = {
+            "workflow_ir": {"nodes": []},  # No outputs in IR
+            "child_params": {},
+        }
+        exec_res = {
+            "success": True,
+            "result": "default",
+            "child_storage": {
+                "node1": {"stdout": "hello"},
+                "some_key": "value",
+                "_pflow_depth": 1,
+                "__execution__": {},
+            },
+            "storage_mode": "mapped",
+        }
+
+        action = node.post(shared, prep_res, exec_res)
+
+        assert shared["node1"] == {"stdout": "hello"}
+        assert shared["some_key"] == "value"
+        assert "_pflow_depth" not in shared
+        assert "__execution__" not in shared
+        assert action == "default"
+
+    # --- NEW: test_auto_outputs_skip_child_inputs ---
+
+    def test_auto_outputs_skip_child_inputs(self, simple_workflow_ir):
+        """When no declared outputs, child input params are NOT re-exposed."""
+        node = WorkflowExecutor()
+        node.set_params({"workflow_ir": simple_workflow_ir})
+
+        shared = {}
+        prep_res = {
+            "workflow_ir": {"nodes": []},  # No declared outputs
+            "child_params": {"text": "hello", "mode": "upper"},
+        }
+        exec_res = {
+            "success": True,
+            "result": "default",
+            "child_storage": {
+                "text": "hello",  # Same as child input — should be skipped
+                "mode": "upper",  # Same as child input — should be skipped
+                "result": "HELLO",  # New output — should be exposed
+            },
+            "storage_mode": "mapped",
+        }
+
+        action = node.post(shared, prep_res, exec_res)
+
+        # Input params should NOT be re-exposed
+        assert "text" not in shared
+        assert "mode" not in shared
+        # New output should be exposed
+        assert shared["result"] == "HELLO"
+        assert action == "default"
+
+    # --- NEW: test_reserved_params_not_passed_as_inputs ---
+
+    def test_reserved_params_not_passed_as_inputs(self, simple_workflow_ir):
+        """Verify reserved params are NOT included in child_params."""
+        node = WorkflowExecutor()
+        node.set_params({
+            "workflow_ir": simple_workflow_ir,
+            "storage_mode": "mapped",
+            "max_depth": 10,
+            "error_action": "error",
+            "__registry__": Mock(),
+            "user_input": "this should be passed",
+        })
+
+        prep_res = node.prep({})
+
+        # Only user_input should be in child_params
+        assert prep_res["child_params"] == {"user_input": "this should be passed"}
+        for reserved in ("workflow_ir", "storage_mode", "max_depth", "error_action", "__registry__"):
+            assert reserved not in prep_res["child_params"]
+
+    # --- NEW: test_is_file_reference ---
+
+    def test_is_file_reference(self):
+        """Test file reference classification logic."""
+        # File references (contain / or \, start with ., or end with .pflow.md)
+        assert WorkflowExecutor._is_file_reference("./child.pflow.md") is True
+        assert WorkflowExecutor._is_file_reference("/absolute/path.pflow.md") is True
+        assert WorkflowExecutor._is_file_reference("path/to/child.pflow.md") is True
+        assert WorkflowExecutor._is_file_reference("..\\windows\\path.pflow.md") is True
+        assert WorkflowExecutor._is_file_reference("child.pflow.md") is True  # ends with .pflow.md
+        assert WorkflowExecutor._is_file_reference("./relative") is True  # starts with .
+
+        # Saved names (no path separators, no dots prefix, no .pflow.md suffix)
+        assert WorkflowExecutor._is_file_reference("my-workflow") is False
+        assert WorkflowExecutor._is_file_reference("simple") is False

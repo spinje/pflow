@@ -309,10 +309,14 @@ class TestWorkflowExecutorIntegration:
 
             with patch("pflow.runtime.compiler.importlib.import_module", return_value=mock_module):
                 executor = WorkflowExecutor()
-                executor.params = {"workflow_name": workflow_name, "__registry__": test_registry}
+                executor.params = {
+                    "workflow": workflow_name,
+                    "__registry__": test_registry,
+                    "text": "Executor",
+                }
 
                 # Prepare (loads workflow)
-                shared = {"text": "Executor"}
+                shared = {}
                 prep_res = executor.prep(shared)
 
                 # Verify workflow was loaded
@@ -333,29 +337,20 @@ class TestWorkflowExecutorIntegration:
         """Test WorkflowExecutor error handling for missing workflows."""
         with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
-            executor.params = {"workflow_name": "non-existent"}
+            executor.params = {"workflow": "non-existent"}
 
             shared = {}
             with pytest.raises(ValueError, match="Failed to load workflow 'non-existent'"):
                 executor.prep(shared)
 
-    def test_workflow_executor_priority_order(self, workflow_manager, sample_markdown, another_ir, tmp_path):
-        """Test that workflow_name has priority over workflow_ref and workflow_ir."""
-        # Save a workflow
+    def test_workflow_executor_mutual_exclusivity(self, workflow_manager, sample_markdown, tmp_path):
+        """Test that providing both workflow and workflow_ir raises error."""
         workflow_manager.save("priority-test", sample_markdown)
 
-        # Create temp file with different workflow
-        temp_path = tmp_path / "other.pflow.md"
-        from tests.shared.markdown_utils import write_workflow_file
-
-        write_workflow_file(another_ir, temp_path)
-
         with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
-            # Provide all three parameters - workflow_name should win
             executor = WorkflowExecutor()
             executor.params = {
-                "workflow_name": "priority-test",
-                "workflow_ref": str(temp_path),
+                "workflow": "priority-test",
                 "workflow_ir": {"dummy": "ir"},
             }
 
@@ -430,7 +425,11 @@ class TestFormatCompatibility:
 
             with patch("pflow.runtime.compiler.importlib.import_module", return_value=mock_module):
                 executor = WorkflowExecutor()
-                executor.params = {"workflow_name": "raw-ir-test", "__registry__": test_registry}
+                executor.params = {
+                    "workflow": "raw-ir-test",
+                    "__registry__": test_registry,
+                    "text": "test input",
+                }
 
                 prep_res = executor.prep({})
 
@@ -453,7 +452,7 @@ class TestErrorHandling:
         # WorkflowExecutor should raise error
         with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
-            executor.set_params({"workflow_name": "missing"})
+            executor.set_params({"workflow": "missing"})
             with pytest.raises(ValueError, match="Failed to load workflow 'missing'"):
                 executor.prep({})
 
@@ -632,8 +631,8 @@ def test_nested_workflow_with_real_nodes(tmp_path):
                 "id": "call_inner",
                 "type": "workflow",
                 "params": {
-                    "workflow_name": "inner-workflow",
-                    "param_mapping": {"message": "Hello from nested workflow!"},
+                    "workflow": "inner-workflow",
+                    "message": "Hello from nested workflow!",
                 },
             }
         ],

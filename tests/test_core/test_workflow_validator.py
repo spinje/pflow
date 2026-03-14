@@ -195,44 +195,91 @@ class TestWorkflowValidator:
         # Should not have "Unknown node type" for workflow
         assert not any("Unknown node type" in e for e in errors)
 
-    def test_workflow_output_mapping_resolves_in_templates(self, registry_with_nodes):
-        """Test that output_mapping keys from workflow nodes are available for template validation.
+    def test_workflow_auto_outputs_resolve_in_templates(self, tmp_path, registry_with_nodes):
+        """Workflow nodes auto-expose child's declared outputs for template validation.
 
-        When a workflow node defines output_mapping, downstream nodes should be
-        able to reference those mapped keys via ${node_id.mapped_key}.
+        When a workflow node references a child .pflow.md file that declares
+        ## Outputs, the template validator should resolve references to those
+        outputs without errors (e.g., ${process.result}).
         """
-        workflow = {
+        # Create child workflow with declared outputs
+        child_content = """# Child
+
+## Outputs
+
+### result
+
+- source: ${step.stdout}
+
+## Steps
+
+### step
+
+Do something.
+
+- type: shell
+- command: echo hello
+"""
+        child_file = tmp_path / "child.pflow.md"
+        child_file.write_text(child_content)
+
+        # Parent workflow references child and uses its output
+        workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
-                    "id": "sub",
+                    "id": "process",
                     "type": "workflow",
-                    "params": {
-                        "workflow_ref": "./child.pflow.md",
-                        "output_mapping": {"child_result": "mapped_output"},
-                    },
+                    "params": {"workflow": str(child_file)},
                 },
                 {
-                    "id": "use-result",
+                    "id": "use_output",
                     "type": "shell",
-                    "params": {
-                        "command": "echo ${sub.mapped_output}",
-                    },
+                    "params": {"command": "echo ${process.result}"},
                 },
             ],
-            "edges": [{"from": "sub", "to": "use-result"}],
-            "inputs": {},
+            "edges": [{"from": "process", "to": "use_output"}],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
-            workflow,
-            extracted_params={},
-            registry=registry_with_nodes,
-            skip_node_types=False,
-        )
+        # The template validator should resolve ${process.result} successfully
+        from pflow.runtime.template_validator import TemplateValidator
 
-        # Should not have template errors for ${sub.mapped_output}
-        assert not any("mapped_output" in e for e in errors)
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
+
+        template_errors = [e for e in errors if "process" in e and "result" in e]
+        assert len(template_errors) == 0, f"Unexpected errors for workflow output: {template_errors}"
+
+    def test_workflow_dynamic_outputs_no_false_errors(self, registry_with_nodes):
+        """Workflow nodes with unresolvable references should not produce false errors.
+
+        When a workflow node references a saved workflow name that can't be loaded
+        at validation time, the validator marks the node as dynamic and accepts
+        any output reference from it.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "workflow",
+                    "params": {"workflow": "some-saved-workflow"},
+                },
+                {
+                    "id": "use_output",
+                    "type": "shell",
+                    "params": {"command": "echo ${process.anything}"},
+                },
+            ],
+            "edges": [{"from": "process", "to": "use_output"}],
+        }
+
+        from pflow.runtime.template_validator import TemplateValidator
+
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
+
+        # Dynamic workflow should NOT produce errors for any output reference
+        template_errors = [e for e in errors if "process" in e and "anything" in e]
+        assert len(template_errors) == 0, f"False errors for dynamic workflow output: {template_errors}"
 
     def test_skip_node_types_for_mocks(self, registry_with_nodes):
         """Test selective validation skipping for mock nodes."""

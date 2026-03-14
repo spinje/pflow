@@ -89,35 +89,30 @@ class TestOutputValidation:
         assert "Declared output 'dynamic_key' cannot be traced to any node" in caplog.text
         assert "This may be fine if nodes write dynamic keys" in caplog.text
 
-    def test_nested_workflow_output_mapping(self, caplog):
-        """Test that nested workflows' output_mapping is considered."""
+    def test_nested_workflow_dynamic_outputs(self, caplog):
+        """Test that unresolvable workflow nodes produce warning, not error."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "nested",
                     "type": "workflow",
-                    "params": {"workflow_ref": "child.json", "output_mapping": {"child_result": "parent_result"}},
+                    "params": {"workflow": "some-saved-workflow"},
                 }
             ],
-            "outputs": {"parent_result": {"description": "Mapped from child workflow"}},
+            "outputs": {"parent_result": {"description": "From nested workflow"}},
         }
 
         # Mock registry - workflow type doesn't need interface
         registry = Mock()
-        registry.get_nodes_metadata.return_value = {
-            "workflow": {
-                "interface": {
-                    "outputs": []  # Workflow executor doesn't declare static outputs
-                }
-            }
-        }
+        registry.get_nodes_metadata.return_value = {"workflow": {"interface": {"outputs": []}}}
 
         with caplog.at_level(logging.DEBUG):
+            # Should NOT raise — dynamic workflow outputs produce warning, not error
             _validate_outputs(workflow_ir, registry)
 
-        # Should recognize parent_result from output_mapping
-        assert "Output 'parent_result' can be produced by workflow nodes" in caplog.text
+        # Workflow outputs can't be statically traced when child is unresolvable
+        assert "cannot be traced to any node" in caplog.text
 
     def test_multiple_outputs_mixed_validity(self, caplog):
         """Test workflow with mix of traceable and untraceable outputs."""
