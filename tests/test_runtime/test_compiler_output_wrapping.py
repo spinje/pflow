@@ -88,10 +88,10 @@ class TestCompilerOutputWrapping:
         flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
 
         # The run method should be wrapped
-        assert flow.run.__name__ == "run_with_outputs"
+        assert flow.run.__name__ == "run_with_hooks"
 
-    def test_no_wrapper_when_no_outputs(self, registry_with_echo):
-        """Verify no wrapper is added when outputs not declared."""
+    def test_wrapper_always_applied_for_visit_count_reset(self, registry_with_echo):
+        """Verify flow.run is always wrapped (for visit count reset)."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
@@ -102,8 +102,8 @@ class TestCompilerOutputWrapping:
 
         flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
 
-        # Should NOT be wrapped
-        assert flow.run.__name__ != "run_with_outputs"
+        # Always wrapped for visit count reset (even without outputs)
+        assert flow.run.__name__ == "run_with_hooks"
 
     def test_outputs_populated_on_success(self, registry_with_echo):
         """Verify outputs ARE populated when workflow succeeds."""

@@ -1,203 +1,265 @@
-# Task 38: Support Branching in Generated Workflows
+# Task 38: Conditional Branching in Workflows
 
 ## Overview
 
-Enable the pflow planner to generate workflows with conditional branching using PocketFlow's existing action-based transition support. The runtime already supports branching through the `node - "action" >> target` syntax, but the planner's workflow generator prompt explicitly prohibits it.
+Add conditional branching to `.pflow.md` workflows. Python code nodes can set `next` to dynamically route execution. Any node can use `- next:` for static routing and `- on-error:` for error handling. PocketFlow and the compiler already support action-based transitions — the work is in the markdown format, parser, and python code node.
 
-## Current State Analysis
+## Design
 
-### What Already Works ✅
+### Routing Mechanisms
 
-1. **Runtime Support**: The compiler (`src/pflow/runtime/compiler.py`) already handles action-based transitions:
-   ```python
-   # Line 374-378 in compiler.py
-   if action == "default":
-       source >> target
-   else:
-       source - action >> target
-   ```
+| Syntax | Where | What it does |
+|--------|-------|-------------|
+| Document order | All nodes | Default linear chain (unchanged) |
+| `- next: node-id` | Any node (markdown) | Override default successor |
+| `- next: end` | Any node (markdown) | Terminate flow (no successor) |
+| `- on-error: node-id` | Any node (markdown) | Route on node failure |
+| `next: str = "node-id"` | Python code node | Dynamic routing (code decides) |
 
-2. **PocketFlow Framework**: Fully supports conditional transitions via:
-   - `node >> target` for default transitions
-   - `node - "action" >> target` for conditional transitions
-   - Action strings returned from `post()` method control flow
+### Behavior Rules
 
-3. **IR Schema**: Already supports action field in edges:
-   ```json
-   {"from": "node1", "to": "node2", "action": "error"}
-   ```
+1. **No `next` set in code** → `post()` returns `"default"` → follows document order (or `- next:`)
+2. **`next` set in code** → `post()` returns that value → follows the matching edge
+3. **`result` is optional** when `next` is set (routing-only nodes don't need output data)
+4. **`- next: end`** on the last main-flow node prevents chaining into branch targets below it
+5. **`on-error`** fires after all retries are exhausted (repair system is gated/disabled)
+6. **Max 100 node visits** to guard against infinite loops (workflow-level default)
+7. **Code overrides markdown** — if both `- next:` and code `next =` exist, code wins at runtime
 
-4. **Example Files**: `examples/core/error-handling.json` demonstrates working branching
+### Example Workflow
 
-### What's Missing ❌
+```markdown
+## Steps
 
-1. **Planner Restrictions**: The workflow generator prompt (`src/pflow/planning/prompts/workflow_generator.md:189`) explicitly states:
-   ```
-   - Linear execution only (no branching)
-   ```
+### fetch-data
+Fetch user data from the API
 
-2. **Test Coverage**: Branching tests exist but are incomplete:
-   - `test_runtime/test_compiler_integration.py` has branching fixtures
-   - Tests don't verify actual branching behavior
+- type: http
+- url: https://api.example.com/users
+- on-error: handle-error
 
-3. **Documentation Conflicts**:
-   - `CLAUDE.md:98` lists conditional transitions as "Excluded from MVP"
-   - `CLAUDE.md:143` mentions "action-based transitions" in Execution Engine
-   - `mvp-implementation-guide.md:480` states "Linear before conditional - No branching logic in MVP"
+### classify
+Route based on the response
 
-### The Problem
+- type: python
+```python code
+category: str = shared["fetch-data"]["result"]["type"]
+if category == "premium":
+    next: str = "priority-process"
+elif category == "spam":
+    next: str = "quarantine"
+```
 
-As discovered in Task 28's analysis (`branching-analysis.md`), the LLM naturally creates branching workflows because:
+### standard-process
+Handle normal items
 
-1. **User requests imply parallelism**: "analyze data AND generate visualizations"
-2. **Efficiency**: Why serialize operations that could branch?
-3. **JSON structure allows it**: Multiple edges from one node is valid
-4. **Real-world workflows need it**: Error handling, retries, conditional logic
+- type: shell
+- command: ./process.sh standard
+- next: end
 
-Current test failures show the LLM creates branching in ~30% of complex workflows despite being told not to.
+### priority-process
+Fast-track premium items
 
-## Scope of Task 38
+- type: shell
+- command: ./process.sh priority
+- next: end
 
-### In Scope ✅
+### quarantine
+Isolate spam
 
-1. **Enable Simple Branching**: Allow workflows where:
-   - One node can have multiple outgoing edges with different actions
-   - Actions control which path is taken at runtime
-   - Example: `node - "error" >> error_handler` and `node >> success_path`
+- type: shell
+- command: ./quarantine.sh
 
-2. **Update Planner Prompts**:
-   - Remove "Linear execution only" restriction
-   - Add examples of proper branching patterns
-   - Document which actions nodes commonly return
+### handle-error
+Log the failure
 
-3. **Add Comprehensive Tests**:
-   - Test actual branching execution (not just compilation)
-   - Verify correct path selection based on actions
-   - Test error handling and retry patterns
+- type: shell
+- command: echo "Failed: ${fetch-data.error}"
+```
 
-4. **Update Documentation**:
-   - Clarify that conditional branching IS supported in MVP
-   - Document the action-based transition pattern
-   - Add branching examples to workflow documentation
+**Flow paths:**
+- Happy path (default): fetch-data → classify → standard-process (end)
+- Premium: fetch-data → classify → priority-process (end)
+- Spam: fetch-data → classify → quarantine
+- Error: fetch-data → handle-error
 
-### Out of Scope ❌
+### Common Patterns
 
-1. **Parallel Execution**: PocketFlow can't execute multiple branches simultaneously:
-   ```python
-   # This overwrites - only one path executes
-   node >> target1
-   node >> target2  # Overwrites previous edge!
-   ```
+**Error handling:**
+```markdown
+### call-api
+- type: http
+- url: https://api.example.com/data
+- on-error: handle-error
+```
 
-2. **Complex DAGs**: No support for:
-   - Reconverging branches (diamond patterns)
-   - True parallel processing
-   - Async/await patterns
+**Classification routing (LLM + code):**
+```markdown
+### classify
+- type: llm
+- prompt: Classify this ticket as billing, technical, or feature-request
 
-3. **New Runtime Features**: No changes to PocketFlow or compiler needed
+### route
+- type: python
+```python code
+category: str = shared["classify"]["result"]
+next: str = category
+```
+```
 
-## Implementation Plan
+**Skip-ahead:**
+```markdown
+### validate
+- type: python
+```python code
+data: dict = shared["fetch"]["result"]
+if data.get("already_processed"):
+    next: str = "save"
+```
 
-### Phase 1: Update Workflow Generator Prompt
+### transform
+Process the data
+...
 
-1. **Remove Linear-Only Restriction** (`workflow_generator.md`)
-   - Delete "Linear execution only (no branching)" constraint
-   - Add section on conditional transitions
+### save
+Write to disk
+...
+```
 
-2. **Add Branching Examples**:
-   ```json
-   {
-     "edges": [
-       {"from": "process", "to": "success", "action": "default"},
-       {"from": "process", "to": "retry", "action": "retry"},
-       {"from": "process", "to": "error_log", "action": "error"}
-     ]
-   }
-   ```
+**Retry loop:**
+```markdown
+### call-api
+- type: http
+- url: ${input.url}
+- on-error: wait-and-retry
 
-3. **Document Common Action Patterns**:
-   - "default" - Normal flow continuation
-   - "error" - Error handling path
-   - "retry" - Retry logic
-   - "skip" - Conditional skipping
-   - Custom actions from node implementations
+### process-result
+...
+- next: end
 
-### Phase 2: Enhance Test Coverage
+### wait-and-retry
+- type: shell
+- command: sleep 5
+- next: call-api
+```
 
-1. **Fix Existing Branching Tests** (`test_compiler_integration.py`)
-   - Actually verify which path was taken
-   - Test all action types
+**Convergence (branches rejoin):**
+```markdown
+### route
+- type: python
+- next: path-a, path-b
 
-2. **Add Planner Tests**:
-   - Test that generator creates appropriate branching
-   - Verify action fields are properly set
-   - Test error handling workflows
+### done
+Final step
+...
 
-3. **End-to-End Tests**:
-   - Complete workflow with error handling
-   - Retry patterns
-   - Conditional processing
+### path-a
+- type: shell
+- next: done
 
-### Phase 3: Update Documentation
+### path-b
+- type: shell
+- next: done
+```
 
-1. **Fix Documentation Conflicts**:
-   - Update CLAUDE.md to show branching IS in MVP
-   - Update mvp-implementation-guide.md
-   - Add branching to feature list
+## What Already Works
 
-2. **Add Usage Examples**:
-   - Error handling patterns
-   - Retry logic
-   - Conditional processing
-   - Decision trees
+1. **PocketFlow** (`src/pflow/pocketflow/__init__.py`): `node - "action" >> target` conditional transitions, `get_next_node()` resolves action → successor, `successors` dict stores action → node mappings
+2. **Compiler** (`src/pflow/runtime/compiler.py:798-862`): `_wire_nodes()` reads `action` field from edges, uses PocketFlow operators to wire
+3. **IR Schema** (`src/pflow/core/ir_schema.py`): `action` field on edges (default: `"default"`)
+4. **Wrapper chain**: All wrappers (Instrumented, TemplateAware, Namespaced) transparently pass action strings through
+5. **Existing nodes**: All return `"default"` or `"error"` from `post()` — these map to `- next:` and `- on-error:`
+
+## What Needs to Change
+
+### 1. Markdown Parser (`src/pflow/core/markdown_parser.py`)
+
+**Current**: Generates edges purely from document order (line 385-389). No syntax for routing.
+
+**Changes**:
+- Parse `- next:` field on step nodes (single value or comma-separated list)
+- Parse `- on-error:` field on step nodes
+- AST-parse python code blocks for literal `next: str = "..."` assignments to discover routing targets
+- Generate edges:
+  - Document-order edges with action `"default"` (for nodes without `- next:`)
+  - `- next: node-id` → edge with action `"default"` (overrides document order)
+  - `- next: end` → no outgoing edge
+  - `- on-error: node-id` → edge with action `"error"`
+  - AST-detected `next = "node-id"` → edge with action = the literal string (node ID)
+- Validate all targets reference existing node IDs (suggest corrections for close matches)
+
+### 2. Python Code Node (`src/pflow/nodes/python/python_code.py`)
+
+**Current**: Requires `result` variable, `post()` always returns `"default"` or `"error"`.
+
+**Changes**:
+- After exec, check if `next` was set in namespace
+- If `next` is set: `post()` returns that string instead of `"default"`
+- Make `result` optional when `next` is present in namespace
+- `next` shadows Python's `next` builtin — acceptable in isolated routing code blocks
+
+### 3. Loop Guard (flow runner level)
+
+**Current**: No protection against infinite loops.
+
+**Changes**:
+- Track per-node visit count during flow execution
+- Stop with clear error when any node exceeds 100 visits (default)
+- Configurable via workflow-level setting if needed later
+
+### 4. Tests
+
+- **Parser tests**: `- next:`, `- on-error:`, `- next: end`, AST detection of `next =` literals
+- **Python code node tests**: `next` variable routing, `result` optional when `next` set
+- **Integration tests**: Error handling, classification routing, skip-ahead, retry loops, convergence
+- **Validation tests**: Invalid targets, typo suggestions, loop guard
+
+### 5. Examples
+
+- Example `.pflow.md` workflows demonstrating each pattern
+- Update `examples/core/error-handling.pflow.md` to use `on-error` syntax
+
+## What Does NOT Change
+
+- **PocketFlow** (`src/pflow/pocketflow/__init__.py`) — no changes needed
+- **Compiler** (`src/pflow/runtime/compiler.py`) — already handles action-based edges
+- **IR Schema** (`src/pflow/core/ir_schema.py`) — already has `action` field
+- **Other node types** — they already return `"default"` / `"error"`, which maps to the new routing
+- **Planner** — gated (Task 107), not relevant
+
+## Out of Scope
+
+- **Parallel execution** (Task 39) — branching is conditional (ONE path), not parallel (ALL paths)
+- **Dynamic routing targets** — `next = some_variable` requires `- next:` declaration as fallback; AST only parses string literals
+- **Repair system integration** — repair is gated/disabled; `on-error` is the primary error mechanism
+- **Complex expression evaluation** — no `- if:` conditions; use python code nodes for any decision logic
+
+## Edge Cases and Decisions
+
+| Decision | Choice | Reasoning |
+|----------|--------|-----------|
+| Code `next =` vs markdown `- next:` | Code wins at runtime | Markdown is the default; code overrides dynamically |
+| `result` when `next` is set | Optional | Routing-only nodes don't produce output data |
+| `next` shadows Python builtin | Acceptable | Routing code blocks are isolated, `next()` never needed there |
+| Branch target exclusion from linear chain | Explicit `- next: end` | Auto-detection has unsolvable edge cases; explicit is predictable |
+| Loop protection | Max 100 visits per node | Prevents infinite loops; can be made configurable later |
+| Validation timing | Parse time for literals | All node IDs known at parse time; typo suggestions possible |
 
 ## Success Criteria
 
-1. **Planner generates branching workflows** when appropriate (error handling, retries, conditions)
-2. **All branching tests pass** including actual execution verification
-3. **Documentation is consistent** - no more conflicts about MVP scope
-4. **Complex test cases pass** like `data_analysis_pipeline` that naturally need branching
-
-## Technical Considerations
-
-### PocketFlow Limitations
-
-- Only ONE path executes per run (determined by action string)
-- No parallel execution (can't run multiple branches simultaneously)
-- Last edge wins if multiple edges have same action
-
-### Best Practices for Branching
-
-1. **Always include default path**: Ensure there's a fallback
-2. **Document action meanings**: Clear what triggers each branch
-3. **Test all paths**: Each branch needs test coverage
-4. **Keep branches simple**: Avoid complex reconverging patterns
-
-## Risks and Mitigations
-
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Users expect parallel execution | High | Clear documentation that branches are conditional, not parallel |
-| Complex DAGs attempted | Medium | Validation to reject reconverging branches |
-| Action string typos | Low | Runtime warnings for unmatched actions |
+1. All routing mechanisms work: `- next:`, `- on-error:`, `- next: end`, code `next =`
+2. Parser correctly generates edges with action strings
+3. Python code node returns `next` value as action string
+4. All patterns work end-to-end: error handling, classification, skip-ahead, loops, convergence
+5. Invalid targets caught at parse time with helpful error messages
+6. Loop guard prevents infinite execution
+7. `make test` and `make check` pass
 
 ## Status
-not started
+
+planning — design complete, implementation not started
 
 ## Dependencies
 
 - No external dependencies
-- Builds on existing runtime support
-- Compatible with current IR schema
-
-## Estimated Effort
-
-- **Low Complexity**: Runtime already supports it
-- **Main Work**: Prompt updates and testing
-- **Time Estimate**: 2-4 hours
-
-## Notes from Task 28 Analysis
-
-The LLM creates branching because it makes logical sense. Instead of fighting this natural tendency, we should embrace it within PocketFlow's capabilities. The runtime already supports conditional branching - we just need to allow the planner to use it.
-
-Key insight: "Linear only" was likely a simplification for initial implementation, but the infrastructure for branching has been there all along.
+- Builds on existing PocketFlow, compiler, and IR schema support

@@ -24,6 +24,7 @@ Data transformation → `code` node · External tools/side effects → `shell` n
 - **Passing `${node.result}` wholesale?** → Skip testing
 - **Templates reach any previous step** → No need for pass-through nodes
 - **Same operation per item?** → `batch` config (Batch Processing pattern)
+- **Need different paths?** → `on-error:` or code node with `next` (Conditional Branching pattern)
 - **Keep it simple** → Don't invent requirements or add unnecessary nodes.
 
 ### Core Philosophy - Understanding the WHY
@@ -77,7 +78,7 @@ fetch-data → process-data → save-results
 - `process-data` starts ONLY after `fetch-data` completely finishes
 - `save-results` starts ONLY after `process-data` completely finishes
 - No node can start until its predecessor completes
-- Each node has exactly ONE successor (except the last node which has none)
+- By default each node has one successor (next in document order), but conditional branching can override this (see Conditional Branching pattern)
 - No parallel execution (use `batch` with `parallel: true` for concurrent operations)
 
 #### Concept 2: Data Access (Templates)
@@ -191,10 +192,9 @@ Result: Formatted output includes both extracted data and original context
 **Alternative**: "I'll create a workflow that processes ALL files in one batch operation, applying the same logic to each"
 **→ Solution**: `batch` config enables this. See Batch Processing pattern.
 
-#### ❌ No Conditional Logic
-**User wants**: "If the API returns error, retry 3 times, else process data"
-**Why impossible**: No if/then/else branching in workflows
-**Alternative**: "I'll create two workflows: one for success path, one for error handling. You choose which to run based on the result"
+#### ✅ Conditional Branching (Supported)
+**User wants**: "If the API returns error, handle it; else process data"
+**How**: Use `- on-error:` for error routing, or a `code` node with `next: str = "target"` for data-driven decisions. See Conditional Branching pattern below.
 
 #### ❌ No State or Memory
 **User wants**: "Track which records we've already processed and skip them"
@@ -212,7 +212,7 @@ Result: Formatted output includes both extracted data and original context
 **Alternative**: "I'll process all items in a single node using batch operations"
 
 #### ❌ No Parallel Paths
-Each node has ONE successor (linear chain). Batch processing handles parallel operations.
+Conditional branching picks ONE path (not multiple simultaneously). Batch processing handles concurrent operations on multiple items.
 
 ### One Workflow or Multiple? (Critical Decision)
 
@@ -1642,7 +1642,7 @@ Results are always in input order. Each result contains `item` (original input) 
 **⚠️ Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`.
 
 **Inline array pattern** (parallel independent operations):
-Workflows are linear—this is the only way to run operations concurrently.
+Batch is the way to run operations concurrently (conditional branching picks ONE path, not multiple).
 ````markdown
 ### multi-format
 
@@ -1698,6 +1698,96 @@ ${previous.results[${item.idx}]}      # Access by item field
 - type: llm
 - prompt: "Summary of ${process-each.count} items:\n${process-each.results}"
 ```
+
+### Pattern: Conditional Branching
+
+Route execution based on data or errors. Default flow is top-to-bottom; branching overrides it.
+
+**Error routing** — any node can route failures to a handler:
+````markdown
+### call-api
+
+Fetch data from the API.
+
+- type: shell
+- on-error: handle-error
+
+```shell command
+curl -f https://api.example.com/data
+```
+
+### process
+
+Process the result.
+
+- type: code
+
+```python code
+data: str = shared["call-api"]["stdout"]
+result: dict = {"processed": True}
+```
+
+### handle-error
+
+Log the failure.
+
+- type: shell
+- next: end
+
+```shell command
+echo "API call failed" >&2
+```
+````
+
+**Data-driven routing** — a `code` node sets `next` to pick the path:
+````markdown
+### classify
+
+Route based on input size.
+
+- type: code
+
+```python code
+items: list = shared["fetch"]["result"]
+result: int = len(items)
+if len(items) > 100:
+    next: str = "bulk-process"
+else:
+    next: str = "simple-process"
+```
+
+### simple-process
+
+Handle small batches.
+
+- type: shell
+- next: end
+
+```shell command
+echo "Small batch: ${classify.result} items"
+```
+
+### bulk-process
+
+Handle large batches.
+
+- type: shell
+- next: end
+
+```shell command
+echo "Large batch: ${classify.result} items"
+```
+````
+
+**Routing rules:**
+- `- next: node-id` — override default successor (any node)
+- `- next: end` — terminate flow (no successor)
+- `- on-error: node-id` — route on failure (any node)
+- `next: str = "node-id"` — dynamic routing (code nodes only)
+- No `next` set in code → continues to next node in document order
+- Branch targets use `- next: end` or `- next: done` to prevent fall-through into nodes below them
+
+**When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
 
 ## Part 7: Reality Checks & Troubleshooting
 
@@ -1773,7 +1863,7 @@ Never put `${...}` inside a `python code` block — it's literal Python, not a t
 | "process the data" | What data? What processing? | Ask: "What's the data source? What processing do you need?" |
 | "send notification" | Where? To whom? | Ask: "Where should notifications go? (email, Slack, etc.)" |
 | "fast processing" | How fast? At what cost? | Explain tradeoff: "I can optimize for speed or thoroughness" |
-| "handle errors" | How to handle? | Explain: "Workflows can't branch. I can log errors or stop execution" |
+| "handle errors" | How to handle? | Use `- on-error: handler-node` to route failures to a handler |
 
 **Template for clarification:**
 ```

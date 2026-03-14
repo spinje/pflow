@@ -142,9 +142,9 @@ class TestCreateInstructions:
         assert result.exit_code == 0
         assert "Testing, Debugging & Validation" in result.output
         assert "Command Cheat Sheet" in result.output
-        # Part 3 should have ~550 lines
+        # Part 3 should have ~620 lines (grew with conditional branching pattern)
         line_count = len(result.output.split("\n"))
-        assert 400 <= line_count <= 700, f"Expected ~550 lines for Part 3, got {line_count}"
+        assert 400 <= line_count <= 800, f"Expected ~620 lines for Part 3, got {line_count}"
 
     def test_create_instructions_invalid_part(self, runner: CliRunner) -> None:
         """Test that invalid part number shows error."""

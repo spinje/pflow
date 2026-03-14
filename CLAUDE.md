@@ -193,11 +193,11 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 119: Publish Workflows as Claude Code Skills
 - ✅ Task 49: Publish to PyPI (v0.8.0)
 - ✅ Task 127: MCP Server Connection Pooling
+- ✅ Task 38: Conditional Branching in Workflows
 
 ### Planned Features (in order of priority)
 
 **v0.9.0 - Workflow Expressiveness:**
-- Task 38: Conditional Branching in Workflows
 - Task 59: Nested Workflows
 - Task 108: Smart Trace Debug Output
 - Task 125: Human-in-the-Loop Approval Gates

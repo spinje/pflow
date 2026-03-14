@@ -151,6 +151,10 @@ Interface:
 
 See `architecture/reference/enhanced-interface-format.md` for more details of the docstring format for pflow nodes.
 
+### Dynamic Routing via `next` Variable (Python Code Node)
+
+Python code nodes (`type: code`) support dynamic routing by setting `next: str = "target-node-id"` in the code. When `next` is set, it becomes the action returned by `post()`, routing execution to the matching edge. The `result` annotation is optional when `next` is declared.
+
 ### Key Rules:
 
 1. **Multi-line format**: Each input/output on its own line for readability

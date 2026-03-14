@@ -81,7 +81,7 @@ SANDBOX_AGENT_INSTRUCTIONS_PATH = _get_instructions_path("mcp-sandbox-agent-inst
     - Authentication and credential management
     - Common patterns and complete examples (batch processing, pipelines, orchestration)
     - Troubleshooting and debugging techniques
-    - What workflows CANNOT do (no conditionals, loops, or state)
+    - What workflows CANNOT do (no parallel paths, loops, or state) and what they CAN (conditional branching)
 
     The instructions are organized into sections:
     1. Foundation & Mental Model - Core concepts
@@ -214,7 +214,7 @@ Use these MCP tools to discover what you need:
 
 1. **Always discover first**: Run `workflow_discover()` before building new
 2. **Use templates for extraction, code nodes for transformation**: Never use LLM for structured data extraction
-3. **Sequential only**: Workflows are linear chains, no branches or loops
+3. **Sequential by default**: Workflows run top-to-bottom; use `on-error:` and code node `next` for conditional branching
 4. **Test MCP nodes**: Always test with `registry_run()` when accessing specific fields
 5. **Templates**: Use `${input}` for workflow inputs, `${node.output}` for node outputs
 6. **Store credentials**: Use `pflow settings set-env` for API keys (CLI command)
@@ -257,9 +257,9 @@ The instruction file could not be loaded from `~/.pflow/instructions/mcp-sandbox
    - Add explicit output nodes to capture intermediate data
    - Return useful error messages in workflow outputs
 
-4. **Sequential execution only**: No conditionals, loops, or state
-   - Workflows are linear chains of nodes
-   - Each node executes once in order
+4. **Sequential by default**: Use `- on-error:` and code node `next` for conditional branching
+   - Default flow is top-to-bottom; branching overrides with `- next:`, `- on-error:`, or `next: str = "target"` in code
+   - No parallel paths (use batch for concurrent operations)
 
 ## Example: Credentials as Workflow Inputs and saving to file
 

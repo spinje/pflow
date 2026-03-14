@@ -147,7 +147,12 @@ class PythonCodeNode(Node):
     - Writes: shared["stdout"]: str  # Captured print() output
     - Writes: shared["stderr"]: str  # Captured stderr output
     - Writes: shared["error"]: str  # Error message if execution failed
-    - Actions: default (success), error (failure)
+    - Actions: default (success), error (failure), <custom> (dynamic routing via next variable)
+
+    Dynamic routing:
+        Code can set ``next: str = "target-node-id"`` to control which node
+        runs after this one. When ``next`` is set, it becomes the action returned
+        by post(). The ``result`` annotation is optional when ``next`` is declared.
     """
 
     # Override auto-derived name so workflow type is "code" (not "python-code").
@@ -182,9 +187,24 @@ class PythonCodeNode(Node):
         # Validate annotations exist for every input variable
         self._check_input_annotations(inputs, annotations)
 
-        # Validate result annotation exists
-        if "result" not in annotations:
-            raise ValueError("Code must declare result type annotation: result: <type> = ...")
+        # Validate result or next annotation exists
+        has_result = "result" in annotations
+        has_next = "next" in annotations
+
+        if not has_result and not has_next:
+            raise ValueError(
+                "Code must declare result type annotation (result: <type> = ...) "
+                "or next type annotation (next: str = ...) for routing"
+            )
+
+        # Validate next annotation type if present
+        if has_next:
+            next_type_str = annotations["next"]
+            next_outer_type = _get_outer_type(next_type_str)
+            if next_outer_type is not None and next_outer_type is not str:
+                raise ValueError(
+                    f"'next' must be annotated as str, got {next_type_str}\n\nExample: next: str = \"target-node-id\""
+                )
 
         # Validate input types against annotations
         self._check_input_types(inputs, annotations)
@@ -196,6 +216,7 @@ class PythonCodeNode(Node):
             "requires": requires,
             "annotations": annotations,
             "code_source_line": self.params.get("_code_source_line", 0),
+            "has_result": has_result,
         }
 
     # ------------------------------------------------------------------
@@ -232,15 +253,27 @@ class PythonCodeNode(Node):
         stdout = namespace.pop("__stdout__", "")
         stderr = namespace.pop("__stderr__", "")
 
-        # Verify result variable was set
-        if "result" not in namespace:
-            raise ValueError("Code must set 'result' variable. Add: result = <your_value>")
+        # Extract result if declared
+        has_result = prep_res["has_result"]
 
-        return {
-            "result": namespace["result"],
+        if has_result:
+            if "result" not in namespace:
+                raise ValueError("Code must set 'result' variable. Add: result = <your_value>")
+            result_value = namespace["result"]
+        else:
+            result_value = None
+
+        exec_result: dict[str, Any] = {
+            "result": result_value,
             "stdout": stdout,
             "stderr": stderr,
         }
+
+        # Capture next variable if user code set it (for routing)
+        if "next" in namespace:
+            exec_result["next"] = namespace["next"]
+
+        return exec_result
 
     # ------------------------------------------------------------------
     # exec_fallback: format errors after retry exhaustion
@@ -274,28 +307,55 @@ class PythonCodeNode(Node):
             shared["stderr"] = exec_res.get("stderr", "")
             return "error"
 
-        # Validate result type against annotation
         annotations = prep_res["annotations"]
-        result_value = exec_res["result"]
-        result_type_str = annotations["result"]
-        expected_type = _get_outer_type(result_type_str)
+        has_result = prep_res["has_result"]
 
-        if expected_type is not None and not isinstance(result_value, expected_type):
-            actual_type = type(result_value).__name__
-            shared["error"] = (
-                f"Result declared as {result_type_str} but code returned {actual_type}\n\n"
-                f"Suggestions:\n"
-                f"  - Change result type annotation to: result: {actual_type}\n"
-                f"  - Or convert the value to match the declared type"
-            )
-            shared["stdout"] = exec_res.get("stdout", "")
-            shared["stderr"] = exec_res.get("stderr", "")
-            return "error"
+        # Validate and store result if declared
+        if has_result:
+            result_value = exec_res["result"]
+            result_type_str = annotations["result"]
+            expected_type = _get_outer_type(result_type_str)
 
-        # Success — write outputs
-        shared["result"] = result_value
+            if expected_type is not None and not isinstance(result_value, expected_type):
+                actual_type = type(result_value).__name__
+                shared["error"] = (
+                    f"Result declared as {result_type_str} but code returned {actual_type}\n\n"
+                    f"Suggestions:\n"
+                    f"  - Change result type annotation to: result: {actual_type}\n"
+                    f"  - Or convert the value to match the declared type"
+                )
+                shared["stdout"] = exec_res.get("stdout", "")
+                shared["stderr"] = exec_res.get("stderr", "")
+                return "error"
+
+            shared["result"] = result_value
+
+        # Always store stdout/stderr
         shared["stdout"] = exec_res.get("stdout", "")
         shared["stderr"] = exec_res.get("stderr", "")
+
+        # Determine action: use next if set, otherwise default
+        if "next" in exec_res:
+            next_value = exec_res["next"]
+            if not isinstance(next_value, str):
+                actual_type = type(next_value).__name__
+                shared["error"] = (
+                    f"'next' must be a string, got {actual_type}: {next_value!r}\n\n"
+                    f"Suggestions:\n"
+                    f"  - Convert to string: next: str = str(your_value)\n"
+                    f'  - Or use a string literal: next: str = "target-node"'
+                )
+                return "error"
+            if not next_value:
+                shared["error"] = (
+                    "'next' must not be empty\n\n"
+                    "Suggestions:\n"
+                    '  - Set to a valid node ID: next: str = "target-node"\n'
+                    "  - Or remove next to follow default routing"
+                )
+                return "error"
+            return next_value
+
         return "default"
 
     # ------------------------------------------------------------------

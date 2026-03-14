@@ -23,6 +23,8 @@ from typing import Any
 
 import yaml
 
+from pflow.core.suggestion_utils import find_similar_items
+
 # --- Exceptions ---
 
 
@@ -376,17 +378,31 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         for entity in input_entities:
             ir["inputs"][entity.id] = _build_input_dict(entity)
 
-    # Build nodes
+    # Build nodes with routing metadata
     nodes: list[dict[str, Any]] = []
+    routing_metadata: dict[str, dict[str, Any]] = {}
     for entity in step_entities:
-        nodes.append(_build_node_dict(entity))
+        node, routing = _build_node_dict(entity)
+        nodes.append(node)
+        if routing:
+            routing_metadata[entity.id] = routing
     ir["nodes"] = nodes
 
-    # Build edges from document order
-    if len(nodes) > 1:
-        ir["edges"] = [{"from": nodes[i]["id"], "to": nodes[i + 1]["id"]} for i in range(len(nodes) - 1)]
-    else:
-        ir["edges"] = []
+    # Collect AST-detected routing targets from python code blocks
+    ast_routing_targets: dict[str, list[str]] = {}
+    for entity in step_entities:
+        for block in entity.code_blocks:
+            if block.param_name == "code":
+                code_targets = _extract_next_targets_from_code(block.content)
+                if code_targets:
+                    ast_routing_targets[entity.id] = code_targets
+
+    # Build edges with routing
+    ir["edges"] = _build_edges(nodes, routing_metadata, ast_routing_targets)
+
+    # Validate routing targets
+    node_id_set = {n["id"] for n in nodes}
+    _validate_routing_targets(ir["edges"], node_id_set)
 
     # Build outputs
     output_entities = [e for e in entities if e.section_type == _SectionType.OUTPUTS]
@@ -699,11 +715,136 @@ def _route_code_blocks_to_node(entity: _Entity, node: dict[str, Any], params: di
                 source_lines[block.param_name] = block.start_line + 1
 
 
-def _build_node_dict(entity: _Entity) -> dict[str, Any]:
-    """Build a node dict from an entity.
+def _parse_next_targets(value: str) -> list[str]:
+    """Parse next field value into target list.
 
-    Routes: type → top-level, batch → top-level, prose → purpose,
-    everything else → params.
+    Handles: "node-id" (single), "end" (terminal), "a, b, c" (routing list).
+    """
+    if "," in str(value):
+        return [t.strip() for t in str(value).split(",") if t.strip()]
+    return [str(value).strip()]
+
+
+def _extract_next_targets_from_code(code: str) -> list[str]:
+    """Extract literal 'next' assignment targets from Python code via AST.
+
+    Finds ``next: str = "node-id"`` (AnnAssign) and ``next = "node-id"`` (Assign).
+    Only extracts string literals. Dynamic values are ignored.
+    """
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+
+    targets: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "next"
+            and node.value is not None
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ) or (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "next"
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            targets.append(node.value.value)
+
+    seen: set[str] = set()
+    unique: list[str] = []
+    for t in targets:
+        # "end" is a special keyword for flow termination, not a node reference
+        if t not in seen and t != "end":
+            seen.add(t)
+            unique.append(t)
+    return unique
+
+
+def _build_edges(
+    nodes: list[dict[str, Any]],
+    routing_metadata: dict[str, dict[str, Any]],
+    ast_routing_targets: dict[str, list[str]],
+) -> list[dict[str, Any]]:
+    """Build edge list from node order, routing metadata, and AST targets.
+
+    Rules:
+    - next: end -> no outgoing edge
+    - next: node-id -> edge with action "default" (overrides document order)
+    - next: a, b, c -> edges with action = target node ID
+    - No next -> document-order edge to next node (no action field)
+    - on-error: node-id -> edge with action "error"
+    - AST next = "literal" -> edge with action = literal string
+    """
+    edges: list[dict[str, Any]] = []
+
+    for i, node in enumerate(nodes):
+        node_id = node["id"]
+        routing = routing_metadata.get(node_id, {})
+        next_value = routing.get("next")
+        on_error_target = routing.get("on_error")
+        code_targets = ast_routing_targets.get(node_id, [])
+
+        # Default / next edges
+        if next_value is not None:
+            targets = _parse_next_targets(str(next_value))
+            if targets == ["end"]:
+                pass  # Terminal: no outgoing edge
+            elif len(targets) == 1:
+                edges.append({"from": node_id, "to": targets[0], "action": "default"})
+            else:
+                # Multi-target: all get named edges, first also gets default
+                for target in targets:
+                    edges.append({"from": node_id, "to": target, "action": target})
+                edges.append({"from": node_id, "to": targets[0], "action": "default"})
+        else:
+            # Document-order default edge
+            if i < len(nodes) - 1:
+                edges.append({"from": node_id, "to": nodes[i + 1]["id"]})
+
+        # Error edge
+        if on_error_target:
+            edges.append({"from": node_id, "to": str(on_error_target), "action": "error"})
+
+        # AST-detected routing edges (skip duplicates already covered)
+        existing_actions = {(e["from"], e.get("action")) for e in edges}
+        for target in code_targets:
+            if (node_id, target) not in existing_actions:
+                edges.append({"from": node_id, "to": target, "action": target})
+
+    return edges
+
+
+def _validate_routing_targets(
+    edges: list[dict[str, Any]],
+    node_ids: set[str],
+) -> None:
+    """Validate all edge targets reference existing node IDs."""
+    for edge in edges:
+        target = edge["to"]
+        source = edge["from"]
+        if target not in node_ids:
+            similar = find_similar_items(target, sorted(node_ids), method="fuzzy", cutoff=0.4)
+            if similar:
+                suggestion = f"Did you mean: {', '.join(similar)}?"
+            else:
+                suggestion = f"Available nodes: {', '.join(sorted(node_ids))}"
+            raise MarkdownParseError(f"Node '{source}' references unknown target '{target}'. {suggestion}")
+
+
+def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build a node dict and routing metadata from an entity.
+
+    Routes: type -> top-level, batch -> top-level, prose -> purpose,
+    next/on-error -> routing metadata, everything else -> params.
+
+    Returns:
+        Tuple of (node_dict, routing_dict). Routing dict may contain
+        "next" and/or "on_error" keys.
     """
     _validate_description(entity)
     _validate_code_blocks(entity)
@@ -732,6 +873,13 @@ def _build_node_dict(entity: _Entity) -> dict[str, Any]:
     if "batch" in all_params:
         node["batch"] = all_params.pop("batch")
 
+    # Extract routing metadata (not stored in params)
+    routing: dict[str, Any] = {}
+    if "next" in all_params:
+        routing["next"] = all_params.pop("next")
+    if "on-error" in all_params:
+        routing["on_error"] = all_params.pop("on-error")
+
     # Purpose from prose
     prose = _get_prose(entity)
     if prose:
@@ -742,7 +890,7 @@ def _build_node_dict(entity: _Entity) -> dict[str, Any]:
     if all_params:
         node["params"] = all_params
 
-    return node
+    return node, routing
 
 
 def _build_output_dict(entity: _Entity) -> dict[str, Any]:

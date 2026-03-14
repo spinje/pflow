@@ -1253,21 +1253,32 @@ def compile_ir_to_flow(
     logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
     flow = Flow(start=start_node)
 
-    # Step 11: Wrap flow.run to populate outputs if declared
-    if ir_dict.get("outputs"):
+    # Step 11: Wrap flow.run for per-execution setup and output population
+    has_outputs = bool(ir_dict.get("outputs"))
+    if has_outputs:
         from pflow.runtime.output_resolver import populate_declared_outputs
 
-        original_run = flow.run
+    original_run = flow.run
 
-        def run_with_outputs(shared_storage: dict[str, Any]) -> str:
-            """Run flow and populate declared outputs."""
-            result = original_run(shared_storage)
-            # Only populate outputs on successful execution
-            if not (result and isinstance(result, str) and result.startswith("error")):
-                populate_declared_outputs(shared_storage, ir_dict)
-            return str(result)
+    def run_with_hooks(shared_storage: dict[str, Any]) -> str:
+        """Run flow with per-execution setup and optional output population."""
+        # Reset node visit counts for this execution cycle.
+        # Visit counts track revisits WITHIN a single flow.run() (for loop
+        # detection and cache invalidation). They must reset between runs
+        # so that workflow resume/repair doesn't confuse cross-run revisits
+        # with in-run loops.
+        if "__execution__" in shared_storage and "node_visit_counts" in shared_storage["__execution__"]:
+            shared_storage["__execution__"]["node_visit_counts"] = {}
 
-        flow.run = run_with_outputs  # type: ignore[method-assign]
+        result = original_run(shared_storage)
+
+        # Populate declared outputs on successful execution
+        if has_outputs and not (result and isinstance(result, str) and result.startswith("error")):
+            populate_declared_outputs(shared_storage, ir_dict)
+
+        return str(result)
+
+    flow.run = run_with_hooks  # type: ignore[method-assign]
 
     logger.info(
         "Compilation successful",

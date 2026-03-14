@@ -138,7 +138,7 @@ class TestTypeAnnotationContract:
             )
 
     def test_missing_result_annotation_rejected(self):
-        """Code without result type annotation is rejected."""
+        """Code without result or next type annotation is rejected."""
         shared: dict = {}
         with pytest.raises(ValueError, match="result type annotation"):
             run_code_node(
@@ -362,6 +362,143 @@ class TestSafetyAndErrors:
         )
         assert action == "default"
         assert shared["result"] == 42
+
+
+# ======================================================================
+# Next variable routing (dynamic action from code)
+# ======================================================================
+
+
+class TestNextVariableRouting:
+    """Test dynamic routing via the `next` variable in code.
+
+    Code can set ``next: str = "target"`` to control which node runs after
+    this one. When ``next`` is set, it becomes the action returned by post().
+    The ``result`` annotation is optional when ``next`` is declared.
+    """
+
+    def test_next_set_returns_as_action(self):
+        """Setting next variable routes to the specified action."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='next: str = "priority"\nresult: int = 42',
+            inputs={},
+        )
+        assert action == "priority"
+        assert shared["result"] == 42
+
+    def test_next_not_set_returns_default(self):
+        """Without next variable, action is 'default' as before."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="result: int = 42",
+            inputs={},
+        )
+        assert action == "default"
+
+    def test_next_without_result_works(self):
+        """Code with only next (no result annotation) is valid for pure routing."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='next: str = "skip"',
+            inputs={},
+        )
+        assert action == "skip"
+        assert "result" not in shared
+
+    def test_next_conditionally_set(self):
+        """Next can be set conditionally based on input data."""
+        code = 'flag: bool\nresult: int = 0\nif flag:\n    next: str = "fast"\nelse:\n    next: str = "slow"'
+
+        # Branch: flag=True -> "fast"
+        shared_true: dict = {}
+        action_true = run_code_node(shared_true, code=code, inputs={"flag": True})
+        assert action_true == "fast"
+
+        # Branch: flag=False -> "slow"
+        shared_false: dict = {}
+        action_false = run_code_node(shared_false, code=code, inputs={"flag": False})
+        assert action_false == "slow"
+
+    def test_next_non_string_returns_error(self):
+        """Non-string next value is caught in post with actionable error."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="result: int = 1\nnext = 42",
+            inputs={},
+        )
+        assert action == "error"
+        assert "next" in shared["error"]
+        assert "string" in shared["error"].lower()
+
+    def test_next_empty_string_returns_error(self):
+        """Empty string next value is rejected."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='next: str = ""',
+            inputs={},
+        )
+        assert action == "error"
+        assert "empty" in shared["error"].lower()
+
+    def test_error_overrides_next(self):
+        """Runtime error takes precedence over next variable."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='next: str = "target"\nraise ValueError("boom")',
+            inputs={},
+        )
+        assert action == "error"
+        assert "boom" in shared["error"]
+
+    def test_no_result_and_no_next_rejected(self):
+        """Code without either result or next annotation is rejected in prep."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match="result type annotation"):
+            run_code_node(
+                shared,
+                code="x: int = 5",
+                inputs={},
+            )
+
+    def test_next_annotation_wrong_type_rejected(self):
+        """Next annotated as non-str type is rejected in prep."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match="'next' must be annotated as str"):
+            run_code_node(
+                shared,
+                code="next: int = 5\nresult: int = 1",
+                inputs={},
+            )
+
+    def test_next_not_stored_in_shared(self):
+        """Next is used for routing only -- not stored in shared store."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='next: str = "target"\nresult: int = 42',
+            inputs={},
+        )
+        assert action == "target"
+        assert shared["result"] == 42
+        assert "next" not in shared
+
+    def test_result_type_mismatch_still_errors_with_next(self):
+        """Result type mismatch is caught even when next is set."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='result: int = "string"\nnext: str = "target"',
+            inputs={},
+        )
+        assert action == "error"
+        assert "declared as int but code returned str" in shared["error"]
 
 
 # ======================================================================

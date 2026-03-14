@@ -245,7 +245,8 @@ shared["__execution__"] = {
     "completed_nodes": [],     # Successfully executed nodes
     "node_actions": {},        # Actions returned by each node
     "node_hashes": {},         # MD5 config hashes for cache validation
-    "failed_node": None        # Node that caused workflow failure
+    "failed_node": None,       # Node that caused workflow failure
+    "node_visit_counts": {},   # Per-node visit counter (loop guard)
 }
 
 # System keys

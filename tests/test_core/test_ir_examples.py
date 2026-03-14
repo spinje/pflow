@@ -33,6 +33,7 @@ class TestValidExamples:
             "simple-pipeline.pflow.md",
             "template-variables.pflow.md",
             "error-handling.pflow.md",
+            "conditional-branching.pflow.md",
             "proxy-mappings.pflow.md",
         ]
         for example in expected:
@@ -71,6 +72,7 @@ class TestValidExamples:
             "core/simple-pipeline.pflow.md",
             "core/template-variables.pflow.md",
             "core/error-handling.pflow.md",
+            "core/conditional-branching.pflow.md",
             "core/proxy-mappings.pflow.md",
             "advanced/github-workflow.pflow.md",
             "advanced/content-pipeline.pflow.md",
@@ -183,15 +185,38 @@ class TestExampleContent:
         assert "${recipient_email}" in content
 
     def test_error_handling_has_multiple_nodes(self, examples_dir):
-        """Verify error handling example has nodes for error/fallback/retry pattern."""
+        """Verify error handling example has nodes for error/fallback pattern."""
         content = (examples_dir / "core/error-handling.pflow.md").read_text()
         result = parse_markdown(content)
         ir_data = result.ir
 
         node_ids = [n["id"] for n in ir_data["nodes"]]
-        assert "log_error" in node_ids
-        assert "create_fallback" in node_ids
-        assert "retry_processor" in node_ids
+        assert "log-error" in node_ids
+        assert "create-fallback" in node_ids
+
+    def test_conditional_branching_has_routing(self, examples_dir):
+        """Verify conditional branching example has error and dynamic routing."""
+        content = (examples_dir / "core/conditional-branching.pflow.md").read_text()
+        result = parse_markdown(content)
+        ir_data = result.ir
+
+        node_ids = [n["id"] for n in ir_data["nodes"]]
+        assert "classify" in node_ids
+        assert "process-small" in node_ids
+        assert "process-large" in node_ids
+        assert "handle-error" in node_ids
+
+        # Verify routing edges exist
+        edges = ir_data.get("edges", [])
+        edge_tuples = [(e["from"], e["to"], e.get("action")) for e in edges]
+        # on-error edge from classify to handle-error
+        assert ("classify", "handle-error", "error") in edge_tuples
+        # Static next edges to done
+        assert ("process-small", "done", "default") in edge_tuples
+        assert ("process-large", "done", "default") in edge_tuples
+        # Terminal edge (handle-error -> end means no outgoing edge)
+        handle_error_outgoing = [e for e in edges if e["from"] == "handle-error"]
+        assert len(handle_error_outgoing) == 0
 
     def test_proxy_mappings_example_parses(self, examples_dir):
         """Verify proxy mappings example parses successfully.
