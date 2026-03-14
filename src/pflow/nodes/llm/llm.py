@@ -3,7 +3,9 @@
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+from pydantic import ValidationError
 
 # Add pocketflow to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
@@ -11,6 +13,100 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 import llm
 
 from pflow.pocketflow import Node
+
+# OpenRouter-style effort-to-token-budget ratios
+EFFORT_RATIOS: dict[str, float] = {
+    "xhigh": 0.95,
+    "high": 0.80,
+    "medium": 0.50,
+    "low": 0.20,
+    "minimal": 0.10,
+}
+
+# Default base for token budget calculation when max_tokens is not set
+DEFAULT_MAX_TOKENS_BASE = 16000
+
+
+def _map_direct_budget(option_fields: set[str], reasoning_max_tokens: int) -> dict[str, Any]:
+    """Map reasoning_max_tokens to provider-specific token budget param."""
+    if "thinking_budget" in option_fields:
+        kwargs: dict[str, Any] = {"thinking_budget": reasoning_max_tokens}
+        if "thinking" in option_fields:
+            kwargs["thinking"] = True
+        return kwargs
+    if "reasoning_max_tokens" in option_fields:
+        return {"reasoning_max_tokens": reasoning_max_tokens}
+    return {}
+
+
+def _map_effort(option_fields: set[str], effort: str, max_tokens: Optional[int]) -> dict[str, Any]:
+    """Map effort level string to provider-specific reasoning params.
+
+    Provider detection order matters — Anthropic Opus 4.5 has thinking_effort,
+    thinking, AND thinking_budget, so thinking_effort must be checked first.
+    """
+    # Anthropic Opus 4.5 — thinking_effort natively
+    if "thinking_effort" in option_fields:
+        mapped = {"xhigh": "high", "minimal": "low"}.get(effort, effort)
+        return {"thinking_effort": mapped}
+    # OpenAI / OpenRouter — reasoning_effort natively
+    if "reasoning_effort" in option_fields:
+        return {"reasoning_effort": effort}
+    # Gemini 3 — thinking_level natively
+    if "thinking_level" in option_fields:
+        mapped = {"xhigh": "high"}.get(effort, effort)
+        return {"thinking_level": mapped}
+    # Anthropic older / Gemini 2.5 — needs token budget calculation
+    if "thinking_budget" in option_fields:
+        base = max_tokens or DEFAULT_MAX_TOKENS_BASE
+        ratio = EFFORT_RATIOS.get(effort, 0.50)
+        budget = max(min(int(base * ratio), 128000), 1024)
+        kwargs: dict[str, Any] = {"thinking_budget": budget}
+        if "thinking" in option_fields:
+            kwargs["thinking"] = True
+        return kwargs
+    # Thinking-only (no budget control)
+    if "thinking" in option_fields:
+        return {"thinking": True}
+    return {}
+
+
+def _map_reasoning_options(
+    model: llm.Model,
+    reasoning_effort: Optional[str],
+    reasoning_max_tokens: Optional[int],
+    max_tokens: Optional[int],
+) -> dict[str, Any]:
+    """Map unified reasoning params to provider-specific model options.
+
+    Follows OpenRouter's approach: introspect the model's Options class
+    to determine which params it accepts, then map accordingly.
+
+    Args:
+        model: The llm Model instance (with Options class already set)
+        reasoning_effort: xhigh/high/medium/low/minimal/none
+        reasoning_max_tokens: Direct token budget (mutually exclusive with effort)
+        max_tokens: The max response tokens, used as base for budget formula
+    """
+    if not reasoning_effort and reasoning_max_tokens is None:
+        return {}
+
+    option_fields = set(model.Options.model_fields.keys())
+
+    # Direct token budget takes precedence over effort
+    if reasoning_max_tokens is not None:
+        return _map_direct_budget(option_fields, reasoning_max_tokens)
+
+    effort = reasoning_effort.lower()  # type: ignore[union-attr]
+
+    if effort == "none":
+        if "thinking" in option_fields:
+            return {"thinking": False}
+        if "thinking_budget" in option_fields:
+            return {"thinking_budget": 0}
+        return {}
+
+    return _map_effort(option_fields, effort, max_tokens)
 
 
 class LLMNode(Node):
@@ -24,6 +120,9 @@ class LLMNode(Node):
     - Params: system: str  # System prompt (optional)
     - Params: images: list[str]  # Image URLs or file paths (optional)
     - Params: output_schema: dict  # JSON Schema for structured output (optional)
+    - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
+    - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
+    - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional, overrides reasoning params if keys overlap)
     - Writes: shared["response"]: str|dict  # Text (str), or parsed JSON (dict) when output_schema is set
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
@@ -129,6 +228,13 @@ class LLMNode(Node):
                     )
                 attachments.append(llm.Attachment(path=str(path)))
 
+        # Validate reasoning_effort early (deterministic error, not worth retrying)
+        reasoning_effort = self.params.get("reasoning_effort")
+        valid_efforts = {*EFFORT_RATIOS.keys(), "none"}
+        if reasoning_effort and reasoning_effort.lower() not in valid_efforts:
+            valid_list = ", ".join(sorted(valid_efforts))
+            raise ValueError(f"Invalid reasoning_effort: '{reasoning_effort}'. Must be one of: {valid_list}")
+
         return {
             "prompt": prompt,
             "model": self.params.get("model", "gemini-3-flash-preview"),  # Default to reliable JSON-capable model
@@ -137,6 +243,9 @@ class LLMNode(Node):
             "max_tokens": self.params.get("max_tokens"),
             "attachments": attachments,
             "output_schema": self.params.get("output_schema"),
+            "reasoning_effort": reasoning_effort,
+            "reasoning_max_tokens": self.params.get("reasoning_max_tokens"),
+            "model_options": self.params.get("model_options", {}),
         }
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -160,8 +269,32 @@ class LLMNode(Node):
         if prep_res["output_schema"] is not None:
             kwargs["schema"] = prep_res["output_schema"]
 
-        # Let exceptions bubble up for retry mechanism
-        response = model.prompt(prep_res["prompt"], **kwargs)
+        # Map unified reasoning params to provider-specific options
+        reasoning_kwargs = _map_reasoning_options(
+            model,
+            prep_res.get("reasoning_effort"),
+            prep_res.get("reasoning_max_tokens"),
+            prep_res.get("max_tokens"),
+        )
+        kwargs.update(reasoning_kwargs)
+
+        # Apply any additional provider-specific model options (escape hatch)
+        kwargs.update(prep_res.get("model_options") or {})
+
+        # PATTERN EXCEPTION: try/except in exec() is normally an anti-pattern (prevents
+        # retries), but ValidationError from Pydantic Options is deterministic — retrying
+        # won't help. We catch it here to avoid 3 wasted attempts on bad model_options.
+        # Long-term fix: add NonRetriableError support to PocketFlow's _exec loop (#100).
+        try:
+            response = model.prompt(prep_res["prompt"], **kwargs)
+        except ValidationError as e:
+            return {
+                "response": "",
+                "error": f"Invalid model options for '{prep_res['model']}': {e}",
+                "model": prep_res["model"],
+                "usage": {},
+                "status": "error",
+            }
 
         # CRITICAL: Force evaluation with text()
         text = response.text()
