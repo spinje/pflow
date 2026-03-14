@@ -105,7 +105,8 @@ class TestCheckpointTracking:
             assert node.local_exec_count == 1
             assert output_file.read_text() == "api_call_node executed\n"
 
-            # Simulate resume: same wrapper, same shared store with checkpoint
+            # Simulate resume: reset visit counts (as flow.run() does) then re-run
+            shared["__execution__"]["node_visit_counts"] = {}
             result2 = wrapper._run(shared)
 
             # CRITICAL ASSERTIONS:
@@ -166,7 +167,8 @@ class TestCheckpointTracking:
             assert output_file.read_text() == "fetch_data executed\nprocess_data executed\n"
 
             # SIMULATE RESUME after repair:
-            # Re-run workflow with same shared store (checkpoint)
+            # Reset visit counts (as flow.run() does) then re-run
+            shared["__execution__"]["node_visit_counts"] = {}
 
             # Nodes 1 and 2 should NOT re-execute
             result1 = wrapper1._run(shared)
@@ -230,8 +232,11 @@ class TestCheckpointTracking:
 
         shared = {}
 
-        # Execute node multiple times
+        # Execute node multiple times (simulate repeated flow.run() calls)
         for _ in range(5):
+            # Reset visit counts as flow.run() would do between executions
+            if "__execution__" in shared and "node_visit_counts" in shared["__execution__"]:
+                shared["__execution__"]["node_visit_counts"] = {}
             result = wrapper._run(shared)
             assert result == "success"
 

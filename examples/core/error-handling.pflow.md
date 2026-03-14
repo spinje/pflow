@@ -1,58 +1,52 @@
 # Error Handling
 
-Demonstrates a file processing pipeline with error handling and fallback
-nodes. The original JSON workflow used action-based edge routing for
-error recovery — in the current linear-only markdown format, nodes are
-connected sequentially by document order.
-
-* Future: conditional branching (Task 38) will enable error/retry routing
-* Pattern: read → process → save → log errors → fallback → retry
+Demonstrates error handling with on-error routing. When a node fails,
+it routes to the error handler instead of the next node in document order.
 
 ## Steps
 
-### read_source
+### read-source
 
-Read the source data file from disk. In the branching version, failure
-here routes to log_error.
+Read the source data file from disk. On failure, routes to error handler.
 
 - type: read-file
 - file_path: data/input.txt
+- on-error: log-error
 
-### process_file
+### process-file
 
-Process the file data through the test processor. In the branching
-version, failure routes to log_error with retry support.
+Process the file data. On failure, routes to error handler.
 
-- type: test
+- type: shell
+- on-error: log-error
 
-### save_result
+```shell command
+echo "Processing data"
+```
+
+### save-result
 
 Save the processed result to the output directory.
 
 - type: write-file
 - file_path: output/result.txt
 
-### log_error
+### log-error
 
-Append any error information to the log file. Central error logging
-node that all error paths converge to.
+Log any error information. All error paths converge here.
 
-- type: write-file
-- file_path: logs/error.log
-- append: true
+- type: shell
+- next: create-fallback
 
-### create_fallback
+```shell command
+echo "Error occurred, creating fallback" >&2
+```
 
-Create a fallback output file with default content when processing
-fails. Ensures the workflow always produces some output.
+### create-fallback
+
+Create a fallback output when processing fails.
 
 - type: write-file
 - file_path: output/fallback.txt
 - content: Processing failed - using default content
-
-### retry_processor
-
-Retry the processing step up to three times before giving up.
-
-- type: test-retry
-- max_attempts: 3
+- next: end

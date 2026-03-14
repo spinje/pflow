@@ -74,6 +74,12 @@ def create_real_test_registry():
             "docstring": "Conditional test node (alias for test-node-retry)",
             "file_path": "src/pflow/nodes/test_node_retry.py",
         },
+        "code": {
+            "module": "pflow.nodes.python.python_code",
+            "class_name": "PythonCodeNode",
+            "docstring": "Python code execution node",
+            "file_path": "src/pflow/nodes/python/python_code.py",
+        },
     }
     registry.save(real_nodes_metadata)
     return registry
@@ -139,13 +145,24 @@ def multi_node_ir():
 
 @pytest.fixture
 def branching_ir():
-    """IR with branching nodes for conditional flow testing."""
+    """IR with code router node for conditional flow testing."""
     return {
         "ir_version": "0.1.0",
         "nodes": [
             {
-                "id": "start",
-                "type": "test-node",
+                "id": "router",
+                "type": "code",
+                "params": {
+                    "code": (
+                        "flag: bool\n"
+                        "result: str = 'routed'\n"
+                        "if flag:\n"
+                        "    next: str = 'success_path'\n"
+                        "else:\n"
+                        "    next: str = 'failure_path'\n"
+                    ),
+                    "inputs": {"flag": True},  # Default; overridden per test
+                },
             },
             {
                 "id": "success_path",
@@ -157,9 +174,9 @@ def branching_ir():
             },
         ],
         "edges": [
-            {"from": "start", "to": "success_path", "action": "success"},
-            {"from": "start", "to": "failure_path", "action": "failure"},
-            {"from": "start", "to": "success_path", "action": "default"},  # Default fallback
+            {"from": "router", "to": "success_path", "action": "success_path"},
+            {"from": "router", "to": "failure_path", "action": "failure_path"},
+            {"from": "router", "to": "success_path", "action": "default"},
         ],
     }
 
@@ -198,26 +215,28 @@ class TestEndToEndCompilation:
         assert result == "default"  # Default action from final node
 
     def test_branching_flow_with_success_path(self, branching_ir, test_registry):
-        """Test conditional flow taking success path."""
+        """Test conditional flow taking success path via code routing."""
+        # flag=True → next="success_path"
+        branching_ir["nodes"][0]["params"]["inputs"] = {"flag": True}
         flow = compile_ir_to_flow(branching_ir, test_registry)
-
-        # Run with condition = True
-        shared_storage = {"condition": True}
+        shared_storage: dict = {}
         flow.run(shared_storage)
-
-        # Verify success path was taken
-        # We can check which nodes executed by looking at node instances
-        # This is a simplified check - in real scenario we'd track execution
+        completed = shared_storage["__execution__"]["completed_nodes"]
+        assert "router" in completed
+        assert "success_path" in completed
+        assert "failure_path" not in completed
 
     def test_branching_flow_with_failure_path(self, branching_ir, test_registry):
-        """Test conditional flow taking failure path."""
+        """Test conditional flow taking failure path via code routing."""
+        # flag=False → next="failure_path"
+        branching_ir["nodes"][0]["params"]["inputs"] = {"flag": False}
         flow = compile_ir_to_flow(branching_ir, test_registry)
-
-        # Run with condition = False
-        shared_storage = {"condition": False}
+        shared_storage: dict = {}
         flow.run(shared_storage)
-
-        # Verify failure path was taken
+        completed = shared_storage["__execution__"]["completed_nodes"]
+        assert "router" in completed
+        assert "failure_path" in completed
+        assert "success_path" not in completed
 
     def test_flow_with_template_variables(self, test_registry):
         """Test that template variables pass through unchanged."""

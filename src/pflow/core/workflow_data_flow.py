@@ -27,7 +27,11 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
         CycleError: If circular dependency is detected
     """
     edges = workflow_ir.get("edges", [])
-    nodes = {node["id"] for node in workflow_ir.get("nodes", [])}
+    node_list = workflow_ir.get("nodes", [])
+    nodes = {node["id"] for node in node_list}
+
+    # Node positions for determining edge direction
+    node_positions = {node["id"]: i for i, node in enumerate(node_list)}
 
     # Build adjacency list
     graph: dict[str, list[str]] = {node_id: [] for node_id in nodes}
@@ -35,8 +39,17 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
 
     for edge in edges:
         if edge.get("from") and edge.get("to"):
-            graph[edge["from"]].append(edge["to"])
-            in_degree[edge["to"]] += 1
+            action = edge.get("action")
+            source_pos = node_positions.get(edge["from"], -1)
+            target_pos = node_positions.get(edge["to"], -1)
+
+            # Include edge if:
+            # - No action (document-order edges — always forward)
+            # - Any edge going forward (branch targets, error handlers, skip-ahead)
+            # Exclude backward edges (retry loops, error-to-earlier) to avoid cycles.
+            if action is None or source_pos < target_pos:
+                graph[edge["from"]].append(edge["to"])
+                in_degree[edge["to"]] += 1
 
     # Topological sort using Kahn's algorithm
     queue = [node for node in nodes if in_degree[node] == 0]

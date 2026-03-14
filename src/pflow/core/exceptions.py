@@ -44,3 +44,17 @@ class CriticalPlanningError(PflowError):
             message = f"{message}\nOriginal error: {original_error!s}"
 
         super().__init__(message)
+
+
+class MaxNodeVisitsError(RuntimeError):
+    """Raised when a node exceeds the maximum allowed visits (loop guard)."""
+
+    def __init__(self, node_id: str, visit_count: int, max_visits: int):
+        self.node_id = node_id
+        self.visit_count = visit_count
+        self.max_visits = max_visits
+        super().__init__(
+            f"Node '{node_id}' exceeded maximum visits ({visit_count}/{max_visits}). "
+            f"This likely indicates an infinite loop in the workflow. "
+            f"Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional."
+        )

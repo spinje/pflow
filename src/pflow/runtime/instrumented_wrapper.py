@@ -4,8 +4,13 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import time
 from typing import Any, Optional, cast
+
+from pflow.core.exceptions import MaxNodeVisitsError
+
+MAX_NODE_VISITS = int(os.environ.get("PFLOW_MAX_NODE_VISITS", "100"))
 
 logger = logging.getLogger(__name__)
 
@@ -544,11 +549,14 @@ class InstrumentedNodeWrapper:
                 "node_actions": {},
                 "node_hashes": {},  # Store configuration hashes
                 "failed_node": None,
+                "node_visit_counts": {},
             }
         else:
             # Ensure node_hashes exists in existing checkpoints (backward compatibility)
             if "node_hashes" not in shared["__execution__"]:
                 shared["__execution__"]["node_hashes"] = {}
+            if "node_visit_counts" not in shared["__execution__"]:
+                shared["__execution__"]["node_visit_counts"] = {}
 
         # Initialize cache hits tracking for JSON output
         if "__cache_hits__" not in shared:
@@ -644,6 +652,22 @@ class InstrumentedNodeWrapper:
 
         # Initialize execution state
         self._initialize_execution_state(shared)
+
+        # Loop guard: prevent infinite loops
+        visit_counts = shared["__execution__"]["node_visit_counts"]
+        visit_counts[self.node_id] = visit_counts.get(self.node_id, 0) + 1
+        if visit_counts[self.node_id] > MAX_NODE_VISITS:
+            raise MaxNodeVisitsError(self.node_id, visit_counts[self.node_id], MAX_NODE_VISITS)
+
+        # Invalidate cache for revisited nodes — cache is for workflow resume,
+        # not loops. Without this, looping nodes return the first iteration's
+        # cached action forever and never re-evaluate exit conditions.
+        if visit_counts[self.node_id] > 1:
+            completed = shared["__execution__"]["completed_nodes"]
+            if self.node_id in completed:
+                completed.remove(self.node_id)
+                shared["__execution__"]["node_actions"].pop(self.node_id, None)
+                shared["__execution__"]["node_hashes"].pop(self.node_id, None)
 
         # Check cache validity
         is_cached, cached_action = self._check_cache_validity(shared)

@@ -2066,3 +2066,679 @@ class TestSourceLineTracking:
         assert "code" in node["_source_lines"], "_source_lines should have 'code' entry"
         # Fence on line 15, content starts on line 16
         assert node["_source_lines"]["code"] == 16
+
+
+# ===========================================================================
+# 17. Conditional branching
+# ===========================================================================
+
+
+class TestConditionalBranching:
+    """Tests for conditional branching edge generation via next, on-error, and AST detection."""
+
+    def test_next_overrides_document_order(self) -> None:
+        """When a node has '- next: step-c', the edge skips step-b."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - next: step-c
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+
+            ### step-c
+
+            Third step.
+
+            - type: shell
+
+            ```shell command
+            echo c
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        # step-a should go to step-c with action "default", NOT to step-b
+        a_edges = [e for e in edges if e["from"] == "step-a"]
+        assert len(a_edges) == 1
+        assert a_edges[0]["to"] == "step-c"
+        assert a_edges[0]["action"] == "default"
+
+        # step-b should still have a document-order edge to step-c (no action field)
+        b_edges = [e for e in edges if e["from"] == "step-b"]
+        assert len(b_edges) == 1
+        assert b_edges[0] == {"from": "step-b", "to": "step-c"}
+
+    def test_next_end_produces_no_outgoing_edge(self) -> None:
+        """When a node has '- next: end', it produces no outgoing edge."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo b
+            ```
+
+            ### step-c
+
+            Third step.
+
+            - type: shell
+
+            ```shell command
+            echo c
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        # No edge should have from == "step-b"
+        b_edges = [e for e in edges if e["from"] == "step-b"]
+        assert b_edges == []
+
+    def test_next_single_target_has_default_action(self) -> None:
+        """A single '- next: step-b' produces an edge with action 'default'."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - next: step-b
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        a_edges = [e for e in edges if e["from"] == "step-a"]
+        assert len(a_edges) == 1
+        assert a_edges[0] == {"from": "step-a", "to": "step-b", "action": "default"}
+
+    def test_next_multiple_targets_comma_separated(self) -> None:
+        """Comma-separated '- next: path-a, path-b' produces named edges plus default."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### classify
+
+            Classifies input.
+
+            - type: shell
+            - next: path-a, path-b
+
+            ```shell command
+            echo classify
+            ```
+
+            ### path-a
+
+            Fast path.
+
+            - type: shell
+
+            ```shell command
+            echo a
+            ```
+
+            ### path-b
+
+            Slow path.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        classify_edges = [e for e in edges if e["from"] == "classify"]
+        # Should have: action=path-a, action=path-b, action=default (to first target)
+        assert len(classify_edges) == 3
+        assert {"from": "classify", "to": "path-a", "action": "path-a"} in classify_edges
+        assert {"from": "classify", "to": "path-b", "action": "path-b"} in classify_edges
+        assert {"from": "classify", "to": "path-a", "action": "default"} in classify_edges
+
+    def test_on_error_produces_error_action_edge(self) -> None:
+        """'- on-error: handler' produces an edge with action 'error'."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - on-error: handler
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+
+            ### handler
+
+            Error handler.
+
+            - type: shell
+
+            ```shell command
+            echo error
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        a_edges = [e for e in edges if e["from"] == "step-a"]
+        # Should have document-order edge to step-b AND error edge to handler
+        assert len(a_edges) == 2
+        assert {"from": "step-a", "to": "step-b"} in a_edges
+        assert {"from": "step-a", "to": "handler", "action": "error"} in a_edges
+
+    def test_on_error_combined_with_next(self) -> None:
+        """Both '- next: step-b' and '- on-error: handler' produce two edges."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - next: step-b
+            - on-error: handler
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+
+            ### handler
+
+            Error handler.
+
+            - type: shell
+
+            ```shell command
+            echo error
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        a_edges = [e for e in edges if e["from"] == "step-a"]
+        assert len(a_edges) == 2
+        assert {"from": "step-a", "to": "step-b", "action": "default"} in a_edges
+        assert {"from": "step-a", "to": "handler", "action": "error"} in a_edges
+
+    def test_ast_detects_next_literal(self) -> None:
+        """Python code with 'next: str = "target"' produces an extra edge."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### classify
+
+            Classify the input.
+
+            - type: code
+
+            ```python code
+            data: str
+            if data == "high":
+                next: str = "fast-path"
+            result: int = 0
+            ```
+
+            ### fast-path
+
+            Fast processing.
+
+            - type: shell
+
+            ```shell command
+            echo fast
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        classify_edges = [e for e in edges if e["from"] == "classify"]
+        # Document-order edge to fast-path (no action) + AST edge with action "fast-path"
+        assert {"from": "classify", "to": "fast-path", "action": "fast-path"} in classify_edges
+
+    def test_ast_detects_multiple_next_literals(self) -> None:
+        """Code with if/else setting next to different values produces edges for both."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### classify
+
+            Classify the input.
+
+            - type: code
+
+            ```python code
+            data: str
+            if data == "high":
+                next: str = "fast-path"
+            else:
+                next: str = "slow-path"
+            result: int = 0
+            ```
+
+            ### fast-path
+
+            Fast processing.
+
+            - type: shell
+
+            ```shell command
+            echo fast
+            ```
+
+            ### slow-path
+
+            Slow processing.
+
+            - type: shell
+
+            ```shell command
+            echo slow
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        classify_edges = [e for e in edges if e["from"] == "classify"]
+        actions = {e.get("action") for e in classify_edges}
+        assert "fast-path" in actions
+        assert "slow-path" in actions
+
+    def test_ast_ignores_non_literal_next(self) -> None:
+        """Dynamic 'next = some_variable' produces no extra edge."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### classify
+
+            Classify the input.
+
+            - type: code
+
+            ```python code
+            data: str
+            target = "fast" if data == "high" else "slow"
+            next = target
+            result: int = 0
+            ```
+
+            ### output
+
+            Output step.
+
+            - type: shell
+
+            ```shell command
+            echo done
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        # Only document-order edge from classify to output
+        classify_edges = [e for e in edges if e["from"] == "classify"]
+        assert len(classify_edges) == 1
+        assert classify_edges[0] == {"from": "classify", "to": "output"}
+
+    def test_invalid_target_raises_with_suggestion(self) -> None:
+        """'- next: nonexistent' raises MarkdownParseError with a suggestion."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - next: nonexistent
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"(Did you mean|Available nodes)"):
+            parse_markdown(content)
+
+    def test_on_error_invalid_target_raises(self) -> None:
+        """'- on-error: nonexistent' raises MarkdownParseError."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - on-error: nonexistent
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match=r"unknown target 'nonexistent'"):
+            parse_markdown(content)
+
+    def test_next_end_not_validated_as_node(self) -> None:
+        """'- next: end' should NOT raise an invalid target error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+        """)
+        # Should not raise — "end" is a special keyword, not a node reference
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+        a_edges = [e for e in edges if e["from"] == "step-a"]
+        assert a_edges == []
+
+    def test_next_and_on_error_not_in_params(self) -> None:
+        """Routing keys 'next' and 'on-error' should not appear in node params."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### step-a
+
+            First step.
+
+            - type: shell
+            - next: step-b
+            - on-error: handler
+
+            ```shell command
+            echo a
+            ```
+
+            ### step-b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+
+            ### handler
+
+            Error handler.
+
+            - type: shell
+
+            ```shell command
+            echo error
+            ```
+        """)
+        result = parse_markdown(content)
+        for node in result.ir["nodes"]:
+            params = node.get("params", {})
+            assert "next" not in params, f"'next' should not be in params for {node['id']}"
+            assert "on-error" not in params, f"'on-error' should not be in params for {node['id']}"
+
+    def test_document_order_unchanged_without_routing(self) -> None:
+        """Without any routing syntax, edges are plain document-order with NO action field."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### a
+
+            First step.
+
+            - type: shell
+
+            ```shell command
+            echo a
+            ```
+
+            ### b
+
+            Second step.
+
+            - type: shell
+
+            ```shell command
+            echo b
+            ```
+
+            ### c
+
+            Third step.
+
+            - type: shell
+
+            ```shell command
+            echo c
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        assert edges == [
+            {"from": "a", "to": "b"},
+            {"from": "b", "to": "c"},
+        ]
+        # Verify NO action field is present on any edge
+        for edge in edges:
+            assert "action" not in edge
+
+    def test_ast_detection_plus_document_order_default(self) -> None:
+        """Code node with 'next = "target"' still gets document-order default edge."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### classify
+
+            Classify the input.
+
+            - type: code
+
+            ```python code
+            data: str
+            if data == "high":
+                next: str = "fast-path"
+            result: int = 0
+            ```
+
+            ### slow-path
+
+            Default next step.
+
+            - type: shell
+
+            ```shell command
+            echo slow
+            ```
+
+            ### fast-path
+
+            Fast processing.
+
+            - type: shell
+
+            ```shell command
+            echo fast
+            ```
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        classify_edges = [e for e in edges if e["from"] == "classify"]
+        # Document-order edge to slow-path (no action) since no explicit "- next:"
+        assert {"from": "classify", "to": "slow-path"} in classify_edges
+        # AST-detected edge to fast-path with action
+        assert {"from": "classify", "to": "fast-path", "action": "fast-path"} in classify_edges

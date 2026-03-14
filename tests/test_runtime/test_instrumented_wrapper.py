@@ -420,6 +420,7 @@ class TestCollectorIntegration:
                 "node_actions": {"test_node": "test_result"},
                 "node_hashes": {"test_node": ANY},  # Hash value depends on config
                 "failed_node": None,
+                "node_visit_counts": {"test_node": 1},
             },
         }
         assert call_kwargs["shared_after"] == expected_shared
