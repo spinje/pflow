@@ -122,7 +122,7 @@ class LLMNode(Node):
     - Params: output_schema: dict  # JSON Schema for structured output (optional)
     - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
     - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
-    - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional)
+    - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional, overrides reasoning params if keys overlap)
     - Writes: shared["response"]: str|dict  # Text (str), or parsed JSON (dict) when output_schema is set
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
@@ -281,8 +281,10 @@ class LLMNode(Node):
         # Apply any additional provider-specific model options (escape hatch)
         kwargs.update(prep_res.get("model_options") or {})
 
-        # Catch validation errors (bad model_options, unsupported params) immediately —
-        # these are deterministic and retrying won't help
+        # PATTERN EXCEPTION: try/except in exec() is normally an anti-pattern (prevents
+        # retries), but ValidationError from Pydantic Options is deterministic — retrying
+        # won't help. We catch it here to avoid 3 wasted attempts on bad model_options.
+        # Long-term fix: add NonRetriableError support to PocketFlow's _exec loop (#100).
         try:
             response = model.prompt(prep_res["prompt"], **kwargs)
         except ValidationError as e:

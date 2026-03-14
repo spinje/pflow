@@ -261,6 +261,7 @@ class TestReasoningValidation:
         # Should fail with error, and model.prompt called only ONCE (no retries)
         assert shared.get("error")
         assert "Invalid model options" in shared["error"]
+        assert shared.get("response") == ""
         assert mock_model.prompt.call_count == 1
 
 
