@@ -52,7 +52,7 @@ git log --oneline <since_tag>..HEAD | wc -l
 uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag>
 ```
 
-If Composio/Slack is not configured, skip the notification:
+To skip the Slack notification, pass an empty channel (the workflow uses conditional branching to skip Slack steps automatically):
 
 ```bash
 uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> slack_channel=""
@@ -89,12 +89,21 @@ version = "<confirmed-version>"
             ver = "<confirmed-version>"
 ```
 
+Then update the lockfile and verify:
+
+```bash
+uv lock
+make check
+```
+
+The version bump in `pyproject.toml` makes `uv.lock` stale. CI runs `uv lock --locked` which will fail if the lockfile isn't updated. Always run `make check` before committing to catch this.
+
 ### 6. Commit
 
 Stage and commit the release artifacts together:
 
 ```bash
-git add pyproject.toml src/pflow/cli/main.py CHANGELOG.md docs/changelog.mdx releases/<version>-context.md
+git add pyproject.toml src/pflow/cli/main.py uv.lock CHANGELOG.md docs/changelog.mdx releases/<version>-context.md
 git commit -m "<version> changelog and version bump"
 ```
 
