@@ -2583,3 +2583,76 @@ class TestBatchIndexInjection:
 
         # Index 0 should be captured, not None
         assert inner.captured_indices == [0]
+
+
+class TestBatchPostErrorRouting:
+    """Tests that post() returns 'error' when continue mode had failures."""
+
+    def test_all_success_returns_default(self):
+        """No errors in continue mode returns 'default'."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        action = batch.post(shared, items, results)
+
+        assert action == "default"
+
+    def test_exception_errors_returns_error(self):
+        """Item exceptions in continue mode returns 'error'."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        action = batch.post(shared, items, results)
+
+        assert action == "error"
+        assert shared["test_node"]["error_count"] == 1
+
+    def test_error_in_result_returns_error(self):
+        """Error key in result dict in continue mode returns 'error'."""
+        inner = MockInnerNode("test_node", behavior="error_in_result")
+        inner.error_index = 0
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {"data": ["will_fail", "ok"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        action = batch.post(shared, items, results)
+
+        assert action == "error"
+
+    def test_fail_fast_no_error_returns_default(self):
+        """fail_fast with no errors returns 'default' (unchanged behavior)."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
+
+        shared = {"data": ["a", "b"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        action = batch.post(shared, items, results)
+
+        assert action == "default"
+
+    def test_parallel_errors_returns_error(self):
+        """Parallel batch with errors in continue mode returns 'error'."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 0
+        batch = PflowBatchNode(
+            inner,
+            "test_node",
+            {"items": "${data}", "error_handling": "continue", "parallel": True, "max_concurrent": 2},
+        )
+
+        shared = {"data": ["fail", "ok", "ok"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        action = batch.post(shared, items, results)
+
+        assert action == "error"
+        assert shared["test_node"]["error_count"] >= 1

@@ -803,7 +803,8 @@ class PflowBatchNode(Node):
             exec_res: List of results from _exec()
 
         Returns:
-            Action string ("default") for flow control
+            Action string for flow control: "error" if continue mode had
+            failures, "default" otherwise
         """
         # Count successes: non-None results without error keys
         success_count = sum(1 for r in exec_res if r is not None and not self._extract_error(r))
@@ -845,5 +846,9 @@ class PflowBatchNode(Node):
                 "parallel": self.parallel,
             },
         )
+
+        # Route to on-error edge when continue mode had item failures
+        if self.error_handling == "continue" and self._errors:
+            return "error"
 
         return "default"
