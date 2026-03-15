@@ -79,9 +79,65 @@ def _add_from_json_string(manager: MCPServerManager, json_str: str) -> list[str]
     )
 
 
+def _validate_timeout_flags(timeout: Optional[int], sse_timeout: Optional[int]) -> None:
+    """Validate timeout CLI flags before any config is saved.
+
+    Args:
+        timeout: HTTP connection timeout in seconds
+        sse_timeout: SSE read timeout in seconds
+
+    Raises:
+        click.BadParameter: If timeout values are invalid
+    """
+    if timeout is not None:
+        if timeout <= 0:
+            raise click.BadParameter("Timeout must be a positive number", param_hint="'--timeout'")
+        if timeout > 600:
+            raise click.BadParameter("Timeout cannot exceed 600 seconds (10 minutes)", param_hint="'--timeout'")
+    if sse_timeout is not None and sse_timeout <= 0:
+        raise click.BadParameter("SSE timeout must be a positive number", param_hint="'--sse-timeout'")
+
+
+def _apply_http_timeouts(
+    manager: MCPServerManager,
+    server_names: list[str],
+    timeout: Optional[int],
+    sse_timeout: Optional[int],
+) -> None:
+    """Apply timeout overrides to newly added HTTP servers.
+
+    Args:
+        manager: MCPServerManager instance
+        server_names: Names of servers to update
+        timeout: HTTP connection timeout in seconds
+        sse_timeout: SSE read timeout in seconds
+    """
+    config = manager.load()
+    servers = config.get("mcpServers", {})
+    updated = False
+    for name in server_names:
+        server = servers.get(name, {})
+        if server.get("type") == "http":
+            if timeout is not None:
+                server["timeout"] = timeout
+            if sse_timeout is not None:
+                server["sse_timeout"] = sse_timeout
+            updated = True
+    if updated:
+        manager.save(config)
+    else:
+        click.echo("⚠ --timeout/--sse-timeout flags only apply to HTTP servers, ignored for stdio servers", err=True)
+
+
 @mcp.command(name="add")
 @click.argument("config_sources", nargs=-1, required=True)
-def add(config_sources: tuple) -> None:
+@click.option(
+    "--timeout", type=int, default=None, help="HTTP connection timeout in seconds (applies to HTTP servers only)"
+)
+@click.option(
+    "--sse-timeout", type=int, default=None, help="SSE read timeout in seconds (applies to HTTP servers only)"
+)
+def add(config_sources: tuple, timeout: Optional[int], sse_timeout: Optional[int]) -> None:
     """Add MCP servers from config files or raw JSON.
 
     Examples:
@@ -91,8 +147,8 @@ def add(config_sources: tuple) -> None:
         # Add from raw JSON (simple format):
         pflow mcp add '{"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}'
 
-        # Add HTTP server:
-        pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}'
+        # Add HTTP server with custom timeout:
+        pflow mcp add '{"slack": {"type": "http", "url": "https://mcp.example.com/slack"}}' --timeout 60
 
         # Add from raw JSON (full MCP format, compatible with Claude Desktop):
         pflow mcp add '{"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"]}}}'
@@ -105,6 +161,9 @@ def add(config_sources: tuple) -> None:
         {"mcpServers": {"server-name": {...}}}
     """
     from pathlib import Path
+
+    # Validate timeout flags before saving anything
+    _validate_timeout_flags(timeout, sse_timeout)
 
     manager = MCPServerManager()
     total_added = []
@@ -141,6 +200,10 @@ def add(config_sources: tuple) -> None:
             click.echo(f"Error: Failed to add servers: {e}", err=True)
             sys.exit(1)
 
+    # Apply timeout overrides to newly added HTTP servers
+    if total_added and (timeout is not None or sse_timeout is not None):
+        _apply_http_timeouts(manager, total_added, timeout, sse_timeout)
+
     if total_added:
         click.echo(f"\nSuccessfully configured {len(total_added)} MCP server(s).")
         click.echo("Run 'pflow mcp sync --all' to discover available tools from all servers.")
@@ -170,6 +233,8 @@ def _format_http_server(config: dict) -> list[str]:
 
     if config.get("timeout"):
         lines.append(f"    Timeout: {config['timeout']}s")
+    if config.get("sse_timeout"):
+        lines.append(f"    SSE Timeout: {config['sse_timeout']}s")
 
     return lines
 

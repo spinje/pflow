@@ -646,13 +646,11 @@ def discover_nodes(query: str) -> None:
     default=None,
     help="Output format: json bypasses structure mode for raw output",
 )
-@click.option("--timeout", type=int, default=60, help="Execution timeout in seconds")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution information")
 def run_node(
     node_type: str,
     params: tuple[str, ...],
     output_format: str | None,
-    timeout: int,
     verbose: bool,
 ) -> None:
     """Run a single node with provided parameters for testing.
@@ -692,7 +690,6 @@ def run_node(
         params=params,
         output_format=output_format or "text",  # Default to text for formatter
         show_structure=(output_format != "json"),  # Structure mode unless --output-format json
-        timeout=timeout,
         verbose=verbose,
     )
 
