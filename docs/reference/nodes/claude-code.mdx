@@ -58,6 +58,7 @@ The `sandbox` parameter controls command execution isolation. See the [Claude Ag
 | Key | Type | Description |
 |-----|------|-------------|
 | `result` | str/dict | Response text or parsed schema dict |
+| `llm_usage` | dict | Token usage metrics (same format as [LLM node](/reference/nodes/llm)) |
 | `_claude_metadata` | dict | Execution metadata (cost, duration, turns) |
 | `_schema_error` | str | JSON parse error (only if schema provided and parsing failed) |
 

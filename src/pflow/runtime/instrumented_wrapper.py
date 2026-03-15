@@ -9,6 +9,7 @@ import time
 from typing import Any, Optional, cast
 
 from pflow.core.exceptions import MaxNodeVisitsError
+from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 
 try:
     MAX_NODE_VISITS = int(os.environ.get("PFLOW_MAX_NODE_VISITS", "100"))
@@ -142,6 +143,9 @@ class InstrumentedNodeWrapper:
         if not isinstance(llm_usage, dict):
             logger.warning(f"Node {self.node_id}: llm_usage is not a dict: {type(llm_usage).__name__}")
             return
+
+        # Enrich with cost (mutates in-place, so shared store gets it too)
+        enrich_llm_usage_with_cost(llm_usage)
 
         # Create a copy and add metadata - defensive copy in case it's modified elsewhere
         try:
