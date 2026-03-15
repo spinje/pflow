@@ -623,8 +623,11 @@ def _populate_declared_outputs_best_effort(shared_storage: dict[str, Any], workf
         from pflow.runtime.output_resolver import populate_declared_outputs
 
         populate_declared_outputs(shared_storage, workflow_ir)
-    except Exception:
-        # Ignore population failures; fallback behavior will handle printing
+    except Exception as e:
+        from pflow.core.user_errors import OutputResolutionError
+
+        if isinstance(e, OutputResolutionError):
+            click.echo(f"Warning: {e.title}\n{e.explanation}", err=True)
         return
 
 

@@ -5,6 +5,9 @@ Tests verify that source expressions are resolved correctly and outputs are popu
 at the root level of shared storage for workflows with namespacing.
 """
 
+import pytest
+
+from pflow.core.user_errors import OutputResolutionError
 from pflow.runtime.output_resolver import populate_declared_outputs, resolve_output_source
 
 
@@ -136,8 +139,11 @@ class TestPopulateDeclaredOutputs:
         populate_declared_outputs(shared, {"outputs": {}})
         assert shared == {"test": "value"}
 
-    def test_handles_unresolvable_sources_gracefully(self):
-        """Test that unresolvable sources are handled without failing."""
+    def test_raises_error_for_unresolvable_non_coalesce_sources(self):
+        """Non-coalesce unresolvable sources raise OutputResolutionError.
+
+        Valid outputs are still populated before the error is raised.
+        """
         shared = {"node1": {"output": "value1"}}
 
         workflow_ir = {
@@ -147,16 +153,19 @@ class TestPopulateDeclaredOutputs:
             }
         }
 
-        # Should not raise an exception
-        populate_declared_outputs(shared, workflow_ir)
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
 
-        # Valid output should be populated
+        # Valid output should still be populated before error
         assert shared["valid_output"] == "value1"
-        # Invalid output should not create a key
+        # Invalid output should not be populated
         assert "invalid_output" not in shared
+        # Error should reference the failed output
+        assert "invalid_output" in str(exc_info.value)
+        assert "missing" in str(exc_info.value)
 
-    def test_handles_malformed_source_expressions(self):
-        """Test that malformed source expressions don't crash."""
+    def test_raises_error_for_malformed_source_expressions(self):
+        """Malformed source expressions that can't resolve raise OutputResolutionError."""
         shared = {"node1": {"output": "value1"}}
 
         workflow_ir = {
@@ -173,8 +182,8 @@ class TestPopulateDeclaredOutputs:
             }
         }
 
-        # Should not raise an exception
-        populate_declared_outputs(shared, workflow_ir)
+        with pytest.raises(OutputResolutionError):
+            populate_declared_outputs(shared, workflow_ir)
 
         # No outputs should be created for malformed expressions
         assert "output1" not in shared
@@ -385,3 +394,142 @@ class TestEdgeCases:
         assert shared["full_data"] == shared["node1"]["data"]
         assert len(shared["just_results"]) == 3
         assert shared["status"] == "complete"
+
+
+class TestOutputResolutionErrors:
+    """Tests for error behavior when output sources cannot be resolved."""
+
+    def test_error_diagnosis_absent_root(self):
+        """Error includes 'did not execute' when root node is absent from store."""
+        shared = {"other_node": {"stdout": "data"}}
+
+        workflow_ir = {
+            "outputs": {
+                "result": {"source": "${missing_node.stdout}"},
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        error = exc_info.value
+        assert len(error.failures) == 1
+        assert "did not execute" in error.failures[0]["diagnostics"][0]
+        assert error.failures[0]["raw_diagnostics"][0]["root_absent"] is True
+
+    def test_error_diagnosis_path_not_found(self):
+        """Error includes 'path not found' when root is present but path is wrong."""
+        shared = {"node1": {"stdout": "data"}}
+
+        workflow_ir = {
+            "outputs": {
+                "result": {"source": "${node1.stddout}"},  # typo
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        error = exc_info.value
+        assert "path" in error.failures[0]["diagnostics"][0]
+        assert "not found" in error.failures[0]["diagnostics"][0]
+        assert error.failures[0]["raw_diagnostics"][0]["root_absent"] is False
+
+    def test_error_collects_all_failures(self):
+        """Multiple failed outputs are collected into a single error."""
+        shared = {}
+
+        workflow_ir = {
+            "outputs": {
+                "out_a": {"source": "${missing_a.stdout}"},
+                "out_b": {"source": "${missing_b.stdout}"},
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        error = exc_info.value
+        assert len(error.failures) == 2
+        output_names = {f["output_name"] for f in error.failures}
+        assert output_names == {"out_a", "out_b"}
+
+    def test_resolved_outputs_populated_before_error(self):
+        """Outputs that resolve are written to shared before the error is raised."""
+        shared = {"node1": {"result": "good_value"}}
+
+        workflow_ir = {
+            "outputs": {
+                "good": {"source": "${node1.result}"},
+                "bad": {"source": "${missing.result}"},
+            }
+        }
+
+        with pytest.raises(OutputResolutionError):
+            populate_declared_outputs(shared, workflow_ir)
+
+        assert shared["good"] == "good_value"
+        assert "bad" not in shared
+
+    def test_coalesce_all_absent_no_error(self):
+        """Coalesce expression with all operands absent does NOT raise."""
+        shared = {"unrelated": "data"}
+
+        workflow_ir = {
+            "outputs": {
+                "content": {"source": "${branch_a.stdout ?? branch_b.stdout}"},
+            }
+        }
+
+        # Should not raise — user opted into fallthrough with ??
+        populate_declared_outputs(shared, workflow_ir)
+        assert "content" not in shared
+
+    def test_error_suggests_coalesce_when_root_absent(self):
+        """Error suggestions include ?? hint when root node is absent."""
+        shared = {}
+
+        workflow_ir = {
+            "outputs": {
+                "result": {"source": "${branch_a.stdout}"},
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        assert any("??" in s for s in exc_info.value.suggestions)
+
+    def test_no_coalesce_suggestion_when_path_error(self):
+        """Error does NOT suggest ?? when root is present (it's a typo, not branching)."""
+        shared = {"node1": {"stdout": "data"}}
+
+        workflow_ir = {
+            "outputs": {
+                "result": {"source": "${node1.stddout}"},  # typo
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        assert not any("??" in s for s in exc_info.value.suggestions)
+
+    def test_error_format_for_cli(self):
+        """OutputResolutionError.format_for_cli() produces readable output."""
+        shared = {}
+
+        workflow_ir = {
+            "outputs": {
+                "result": {"source": "${branch_a.stdout}"},
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        formatted = exc_info.value.format_for_cli()
+        assert "Error:" in formatted
+        assert "branch_a" in formatted
+        assert "did not execute" in formatted
+        assert "??" in formatted
