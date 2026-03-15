@@ -1848,6 +1848,8 @@ echo "B: ${route.result}"
 
 **When to use**: Error handling, classification/routing, skip-ahead, retry loops. NOT for parallel execution (use batch for that).
 
+**Branch convergence** — use `??` to reference "whichever branch ran": `${branch-high.stdout ?? branch-low.stdout}`. Tries left-to-right, first operand whose node executed wins. Works in any node type — no merge node needed.
+
 ### Pattern: Nested Workflow Composition
 
 **Use when**: A sequence of steps is reused across multiple workflows, or a workflow is too complex and benefits from decomposition.
@@ -2077,6 +2079,7 @@ ${node_id.field.subfield}    # Nested object
 ${node_id.array[0]}          # Array index
 ${node_id.array[0].field}    # Array element field
 ${previous.result.data}      # Can skip nodes
+${a.stdout ?? b.stdout}      # Coalesce: first executed branch wins
 "literal_value"              # No template needed
 ```
 
