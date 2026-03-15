@@ -706,3 +706,45 @@ class TestOptionalInputInjection:
 
         # Value is already resolved (no ${), so it stays as-is
         assert result["high"] == "already-resolved"
+
+
+class TestCoalesceErrorMessages:
+    """Test that coalesce errors show per-operand diagnosis."""
+
+    def test_coalesce_error_shows_absent_nodes(self):
+        """When neither branch ran, error shows which nodes didn't execute."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(
+            node,
+            "test-node",
+            initial_params={"command": "${branch-high.stdout ?? branch-low.stdout}"},
+        )
+        wrapper.set_params({"command": "${branch-high.stdout ?? branch-low.stdout}"})
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run({})
+
+        error_msg = str(exc_info.value)
+        assert "Coalesce expression" in error_msg
+        assert "branch-high.stdout ?? branch-low.stdout" in error_msg
+        assert "branch-high" in error_msg and "did not execute" in error_msg
+        assert "branch-low" in error_msg and "did not execute" in error_msg
+
+    def test_coalesce_error_shows_path_error(self):
+        """When a branch ran but path is wrong, error shows the typo."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(
+            node,
+            "test-node",
+            initial_params={"command": "${branch-high.stddout ?? branch-low.stdout}"},
+        )
+        wrapper.set_params({"command": "${branch-high.stddout ?? branch-low.stdout}"})
+
+        shared = {"branch-high": {"stdout": "data"}}  # branch-high ran
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared)
+
+        error_msg = str(exc_info.value)
+        assert "Coalesce expression" in error_msg
+        assert "not found" in error_msg  # path error for stddout

@@ -370,3 +370,48 @@ Confirmed the gap is real (top-level `isinstance(param_value, str)` check skips 
 3. **No static validation for coalesce semantics**: The pre-execution validator validates each operand independently as a valid node reference, but doesn't check whether the operands are in different branches (i.e., it can't warn "these two operands will always both be present"). This would require branch reachability analysis.
 
 4. **Type mismatch between operands is the user's responsibility**: `${branch-returning-dict.stdout ?? branch-returning-text.stdout}` silently gives different types depending on which branch ran. Dot access is the normalization mechanism (drill into structured outputs to get consistent types).
+
+5. **`validate_data_flow()` doesn't traverse nested dict/list params**: Forward references inside `inputs: {"x": "${later.stdout}"}` pass data flow validation. Pre-existing gap (not introduced by Task 128). The template validator's `_extract_all_templates` does recurse. Recommended as a separate follow-up task.
+
+## 2026-03-15 — Coalesce-Aware Error Messages
+
+### Problem
+
+When a coalesce expression failed at runtime, the error message decomposed it into individual variables, losing the `??` context:
+
+```
+Unresolved variables in parameter 'command': ${branch-high.stdout}, ${branch-low.stdout}
+```
+
+An agent sees two broken references, not one coalesce expression where neither branch executed. The carefully designed typo-detection semantics (root present → path error vs root absent → branch didn't run) were invisible.
+
+### Fix
+
+Added `_diagnose_coalesce` static method to `TemplateAwareNodeWrapper`. It scans the original template for coalesce expressions, diagnoses each operand (root absent vs path not found), and returns formatted lines. `_build_enhanced_template_error` now shows coalesce-specific errors:
+
+```
+Unresolved template in parameter 'command':
+
+Coalesce expression ${branch-high.stdout ?? branch-low.stdout} failed — no operand resolved:
+  - ${branch-high.stdout}: node 'branch-high' did not execute
+  - ${branch-low.stdout}: node 'branch-low' did not execute
+```
+
+Or for typos:
+
+```
+  - ${branch-high.stddout}: node 'branch-high' executed but path 'branch-high.stddout' not found
+```
+
+Extracted `_append_error_context` helper to keep `_build_enhanced_template_error` under C901 complexity limit.
+
+### Tests
+
+Added `TestCoalesceErrorMessages` class (2 tests) to `test_node_wrapper_template_validation.py`:
+- `test_coalesce_error_shows_absent_nodes` — both roots absent → "did not execute" per operand
+- `test_coalesce_error_shows_path_error` — root present but path wrong → "not found"
+
+### Verification
+
+- `make test`: 4066 passed, 485 skipped, 0 failures
+- `make check`: all clean

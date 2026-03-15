@@ -764,6 +764,52 @@ class TemplateAwareNodeWrapper:
 
         return hints
 
+    @staticmethod
+    def _diagnose_coalesce(template_str: str, context: dict[str, Any]) -> tuple[list[str], set[str]]:
+        """Diagnose coalesce expressions in a template and return error lines.
+
+        For each coalesce expression, determines per-operand status:
+        - Root absent: branch/node didn't execute
+        - Root present but path failed: likely typo
+        - Resolved: operand worked (shouldn't appear in unresolved templates)
+
+        Args:
+            template_str: Original template string (may contain multiple ${...})
+            context: Resolution context
+
+        Returns:
+            Tuple of (diagnostic_lines, coalesce_variables) where
+            coalesce_variables is the set of variable names already diagnosed
+            (so they can be excluded from the generic unresolved list).
+        """
+        lines: list[str] = []
+        diagnosed_vars: set[str] = set()
+
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template_str):
+            expr = match.group(1)
+            if not TemplateResolver.is_coalesce_expression(expr):
+                continue
+
+            operands = TemplateResolver.split_coalesce_operands(expr)
+            diagnosed_vars.update(operands)
+
+            # Diagnose each operand
+            operand_lines: list[str] = []
+            for operand in operands:
+                root = TemplateResolver._ROOT_SPLIT_PATTERN.split(operand)[0]
+                if root not in context:
+                    operand_lines.append(f"  - ${{{operand}}}: node '{root}' did not execute")
+                elif TemplateResolver.variable_exists(operand, context):
+                    operand_lines.append(f"  - ${{{operand}}}: resolved (OK)")
+                else:
+                    # Root present but path failed — typo
+                    operand_lines.append(f"  - ${{{operand}}}: node '{root}' executed but path '{operand}' not found")
+
+            lines.append(f"Coalesce expression ${{{expr}}} failed — no operand resolved:")
+            lines.extend(operand_lines)
+
+        return lines, diagnosed_vars
+
     def _build_enhanced_template_error(self, param_key: str, template: str, context: dict[str, Any]) -> str:
         """Build detailed error message for unresolved template.
 
@@ -775,52 +821,67 @@ class TemplateAwareNodeWrapper:
         Returns:
             Formatted error message with context and suggestions
         """
-        # Extract variable names from template
-        all_variables = TemplateResolver.extract_variables(str(template))
+        template_str = str(template)
 
-        # Filter to only actually unresolved variables (not in context)
-        # This prevents misleading errors like "${provided}, ${missing}" when only ${missing} failed
-        variables = {v for v in all_variables if not TemplateResolver.variable_exists(v, context)}
+        # Diagnose coalesce expressions first (with per-operand status)
+        coalesce_lines, coalesce_vars = self._diagnose_coalesce(template_str, context)
 
-        # Build available keys section
+        # Extract all variable names, filter to unresolved, exclude already-diagnosed coalesce vars
+        all_variables = TemplateResolver.extract_variables(template_str)
+        variables = {v for v in all_variables if not TemplateResolver.variable_exists(v, context)} - coalesce_vars
+
+        # Build error header
+        error_parts: list[str] = []
+        if coalesce_lines:
+            error_parts.append(f"Unresolved template in parameter '{param_key}':")
+            error_parts.append("")
+            error_parts.extend(coalesce_lines)
+            if variables:
+                error_parts.append("")
+                error_parts.append(f"Also unresolved: {', '.join(f'${{{v}}}' for v in variables)}")
+        elif variables:
+            error_parts.append(
+                f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"
+            )
+        else:
+            # Edge case: all variables individually exist but template still unresolved
+            error_parts.append(f"Unresolved template in parameter '{param_key}'")
+
+        # Append context keys, JSON hints, and suggestions
+        all_unresolved = variables | {v for v in coalesce_vars if not TemplateResolver.variable_exists(v, context)}
+        self._append_error_context(error_parts, all_unresolved, context)
+
+        return "\n".join(error_parts)
+
+    def _append_error_context(self, error_parts: list[str], unresolved: set[str], context: dict[str, Any]) -> None:
+        """Append available keys, JSON hints, and suggestions to error message."""
         available_keys = [k for k in context if not k.startswith("__")]
         available_keys.sort()
 
-        # Limit to 20 keys for readability
         if len(available_keys) > 20:
             available_display = available_keys[:20]
             available_display.append(f"... and {len(available_keys) - 20} more")
         else:
             available_display = available_keys
 
-        # Simplified single-line error message (removes redundancy)
-        # Only report actually unresolved variables
-        error_parts = [f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"]
-
-        # Add available keys section (only if there are keys to show)
         if available_keys:
             error_parts.append("")
             error_parts.extend(self._format_available_keys(available_display, context))
 
-        # Check for JSON parsing failures (most actionable hint for this feature)
-        json_hints = self._detect_json_parse_hints(variables, context)
+        json_hints = self._detect_json_parse_hints(unresolved, context)
         if json_hints:
             error_parts.append("")
             error_parts.append("⚠️ JSON parsing issue:")
             for hint in json_hints:
                 error_parts.append(f"  {hint}")
             error_parts.append("  Fix: Ensure upstream node outputs valid JSON.")
-
-        # Add suggestions for close matches (only if no JSON hints - avoid confusion)
-        if not json_hints:
-            suggestions = self._generate_suggestions(variables, available_keys)
+        else:
+            suggestions = self._generate_suggestions(unresolved, available_keys)
             if suggestions:
                 error_parts.append("")
                 error_parts.append("💡 Suggestions:")
                 for s in suggestions:
                     error_parts.append(f"  {s}")
-
-        return "\n".join(error_parts)
 
     def _run(self, shared: dict[str, Any]) -> Any:  # noqa: C901
         """Execute with template resolution.
