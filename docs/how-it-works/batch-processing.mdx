@@ -239,6 +239,8 @@ Batch nodes write a special output structure to the shared store:
 
 Each result pairs `item` (the original input) with the inner node's outputs — so downstream nodes always know which output came from which input. When passing `${node.results}` to an LLM, it sees both inputs and outputs together.
 
+Inside a batch node, `${__index__}` gives the 0-based position of the current item. This is useful for position-aware processing like numbering outputs or selecting behavior based on position.
+
 Subsequent nodes can access results:
 
 ```markdown

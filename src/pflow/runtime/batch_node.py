@@ -77,6 +77,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from pflow.core.json_utils import try_parse_json
+from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 from pflow.pocketflow import Node
 from pflow.runtime.template_resolver import TemplateResolver
 
@@ -354,6 +355,9 @@ class PflowBatchNode(Node):
             llm_usage = item_shared[self.node_id].get("llm_usage")
 
         if llm_usage and isinstance(llm_usage, dict):
+            # Enrich with cost (mutates in-place, so batch item results get it too)
+            enrich_llm_usage_with_cost(llm_usage)
+
             # Copy the usage data and add batch context
             llm_call_data = llm_usage.copy()
             llm_call_data["node_id"] = self.node_id
