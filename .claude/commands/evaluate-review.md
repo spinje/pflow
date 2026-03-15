@@ -98,7 +98,7 @@ Before presenting the plan, explicitly call out:
 
 ## Output
 
-Write the evaluation to `scratchpads/review-evaluation/` as a markdown file. Do not overwrite existing files.
+Clearly describe your findings and proposed plan to the userin the following format:
 
 Present a summary to the user with:
 1. Total findings: N confirmed, N disputed, N needs investigation
