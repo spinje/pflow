@@ -7,6 +7,18 @@ all data dependencies are satisfied before nodes execute.
 import re
 from typing import Any, Optional
 
+_COALESCE_SPLIT = re.compile(r"\s*\?\?\s*")
+
+
+def _split_coalesce(ref: str) -> list[str]:
+    """Split a template reference on ?? into individual operands.
+
+    Mirrors TemplateResolver.split_coalesce_operands — keep in sync.
+    """
+    if "??" not in ref:
+        return [ref]
+    return [op.strip() for op in _COALESCE_SPLIT.split(ref)]
+
 
 class CycleError(Exception):
     """Raised when circular dependency is detected in workflow."""
@@ -225,16 +237,27 @@ def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
     for node in workflow_ir.get("nodes", []):
         node_id = node.get("id")
         node_position = node_positions.get(node_id, -1)
+        _validate_node_params(node, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors)
 
-        for param_name, param_value in node.get("params", {}).items():
-            if isinstance(param_value, str) and "${" in param_value:
-                # Find all template variable references
-                for match in re.finditer(r"\$\{([^}]+)\}", param_value):
-                    ref = match.group(1)
+    return errors
+
+
+def _validate_node_params(
+    node: dict[str, Any],
+    node_id: str,
+    node_position: int,
+    nodes_by_id: dict[str, Any],
+    node_positions: dict[str, int],
+    valid_simple_refs: set[str],
+    errors: list[str],
+) -> None:
+    """Validate template references in a single node's parameters."""
+    for param_name, param_value in node.get("params", {}).items():
+        if isinstance(param_value, str) and "${" in param_value:
+            for match in re.finditer(r"\$\{([^}]+)\}", param_value):
+                for operand in _split_coalesce(match.group(1)):
                     error = _validate_template_reference(
-                        ref, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
+                        operand, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
                     )
                     if error:
                         errors.append(error)
-
-    return errors

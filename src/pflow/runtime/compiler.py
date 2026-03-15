@@ -304,6 +304,7 @@ def _apply_template_wrapping(
     initial_params: dict[str, Any],
     template_resolution_mode: str = "strict",
     interface_metadata: Optional[dict[str, Any]] = None,
+    optional_input_keys: Optional[set[str]] = None,
 ) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
     """Apply template wrapping to a node if it has template parameters.
 
@@ -315,6 +316,8 @@ def _apply_template_wrapping(
         template_resolution_mode: Template resolution mode ('strict' or 'permissive')
         interface_metadata: Node interface metadata from registry (optional)
                           Contains input/param type information for validation
+        optional_input_keys: Set of input keys annotated as optional in code node
+                           source. Enables None injection for branch convergence.
 
     Returns:
         The original node or a wrapped version if templates are detected
@@ -334,7 +337,12 @@ def _apply_template_wrapping(
             },
         )
         return TemplateAwareNodeWrapper(
-            node_instance, node_id, initial_params, template_resolution_mode, interface_metadata
+            node_instance,
+            node_id,
+            initial_params,
+            template_resolution_mode,
+            interface_metadata,
+            optional_input_keys,
         )
 
     return node_instance
@@ -661,9 +669,30 @@ def _create_single_node(
         },
     )
 
+    # Extract optional input keys for code nodes (enables branch convergence)
+    # When a code node declares inputs as Optional[T] or T | None, the template
+    # wrapper injects None instead of erroring when the source node didn't execute.
+    optional_input_keys: Optional[set[str]] = None
+    if node_type == "code" and "code" in params and isinstance(params.get("inputs"), dict):
+        from pflow.nodes.python.python_code import extract_optional_input_keys
+
+        input_keys = set(params["inputs"].keys())
+        optional_input_keys = extract_optional_input_keys(params["code"], input_keys) or None
+        if optional_input_keys:
+            logger.debug(
+                f"Code node '{node_id}' has optional inputs: {optional_input_keys}",
+                extra={"phase": "node_instantiation", "node_id": node_id},
+            )
+
     # Apply template wrapping if needed (pass metadata for type validation)
     node_instance = _apply_template_wrapping(
-        node_instance, node_id, params, initial_params, template_resolution_mode, interface_metadata
+        node_instance,
+        node_id,
+        params,
+        initial_params,
+        template_resolution_mode,
+        interface_metadata,
+        optional_input_keys,
     )
 
     # Apply namespace wrapping if enabled

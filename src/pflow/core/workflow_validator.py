@@ -334,20 +334,25 @@ class WorkflowValidator:
 
         # Validate each template
         for template_var in matches:
-            # Skip if not a node reference (no dot)
-            if "." not in template_var:
-                continue  # Could be workflow input
+            # Split coalesce operands and validate each one
+            operands = (
+                [op.strip() for op in re.split(r"\s*\?\?\s*", template_var)] if "??" in template_var else [template_var]
+            )
+            for operand in operands:
+                # Skip if not a node reference (no dot)
+                if "." not in operand:
+                    continue  # Could be workflow input
 
-            # Parse node.key
-            node_id = template_var.split(".", 1)[0]
-            output_key = template_var.split(".", 1)[1] if "." in template_var else None
+                # Parse node.key
+                node_id = operand.split(".", 1)[0]
+                output_key = operand.split(".", 1)[1]
 
-            # Validate node exists
-            if node_id not in nodes_map:
-                error_msg = WorkflowValidator._format_template_node_error(
-                    output_name, source, node_id, output_key, nodes_map
-                )
-                errors.append(error_msg)
+                # Validate node exists
+                if node_id not in nodes_map:
+                    error_msg = WorkflowValidator._format_template_node_error(
+                        output_name, source, node_id, output_key, nodes_map
+                    )
+                    errors.append(error_msg)
 
         return errors
 

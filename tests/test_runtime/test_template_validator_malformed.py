@@ -281,3 +281,28 @@ class TestMalformedTemplateEdgeCases:
 
         assert len(errors) == 1
         assert "Found 2 '${' but only 0 valid template(s)" in errors[0]
+
+    def test_coalesce_with_nested_indices_not_malformed(self):
+        """Coalesce with multiple nested bracket indices is not malformed.
+
+        ${a[${i}] ?? b[${i}]} has 3 '${' but is 1 valid template with 2
+        nested bracket indices. The nested_count must count occurrences,
+        not just boolean presence per match.
+        """
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "node1",
+                    "type": "shell",
+                    "params": {"command": "echo ${a[${i}] ?? b[${i}]}"},
+                }
+            ],
+            "enable_namespacing": True,
+        }
+
+        registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
+
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+
+        # Should NOT flag as malformed — it's a valid coalesce with nested indices
+        assert not any("Malformed template syntax" in err for err in errors)

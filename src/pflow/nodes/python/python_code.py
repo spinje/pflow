@@ -27,10 +27,11 @@ import ast
 import io
 import logging
 import traceback
+import typing as _typing_module
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from contextlib import redirect_stderr, redirect_stdout
-from typing import Any
+from typing import Any, Optional
 
 from pflow.pocketflow import Node
 
@@ -77,15 +78,96 @@ def _extract_annotations(code: str) -> dict[str, str]:
     return annotations
 
 
+def _is_optional_type(type_str: str) -> bool:
+    """Check if a type annotation allows None.
+
+    Recognizes ``Optional[T]``, ``T | None``, and ``None | T`` forms.
+    """
+    stripped = type_str.strip()
+    # Optional[T] or typing.Optional[T]
+    if (stripped.startswith("Optional[") or stripped.startswith("typing.Optional[")) and stripped.endswith("]"):
+        return True
+    # T | None or None | T (handles spaces around |)
+    parts = [p.strip() for p in stripped.split("|")]
+    return "None" in parts
+
+
+def _get_inner_optional_type(type_str: str) -> Optional[str]:
+    """Extract the inner type from an Optional annotation.
+
+    Returns the inner type string if the annotation is optional, else None.
+
+    Examples::
+
+        'Optional[str]'     -> 'str'
+        'str | None'        -> 'str'
+        'None | str'        -> 'str'
+        'list[str] | None'  -> 'list[str]'
+        'str'               -> None
+    """
+    stripped = type_str.strip()
+    # typing.Optional[T] -> T
+    if stripped.startswith("typing.Optional[") and stripped.endswith("]"):
+        return stripped[len("typing.Optional[") : -1].strip()
+    # Optional[T] -> T
+    if stripped.startswith("Optional[") and stripped.endswith("]"):
+        return stripped[len("Optional[") : -1].strip()
+    # T | None or None | T
+    parts = [p.strip() for p in stripped.split("|")]
+    if "None" in parts:
+        non_none = [p for p in parts if p != "None"]
+        if non_none:
+            return " | ".join(non_none)
+    return None
+
+
 def _get_outer_type(type_str: str) -> type | tuple[type, ...] | None:
     """Resolve a type annotation string to a Python type for isinstance() checks.
 
     Strips generic parameters so ``list[dict[str, Any]]`` resolves to ``list``.
+    Decomposes optional types: ``str | None`` resolves to ``(str, type(None))``.
     Returns None for types not in ``_TYPE_MAP`` (e.g. user-defined classes),
     which skips the isinstance check.
     """
+    # Handle optional types: extract inner type and add NoneType
+    inner = _get_inner_optional_type(type_str)
+    if inner is not None:
+        inner_type = _get_outer_type(inner)
+        if inner_type is None:
+            return None  # Unknown inner type — skip check
+        if isinstance(inner_type, tuple):
+            return (*inner_type, type(None))
+        return (inner_type, type(None))
+
     base = type_str.split("[")[0].strip()
     return _TYPE_MAP.get(base)
+
+
+def extract_optional_input_keys(code: str, input_keys: set[str]) -> set[str]:
+    """Return input keys whose code annotations include None.
+
+    Used by the compiler to identify which code node inputs should tolerate
+    unresolved templates (i.e., when the source node didn't execute in a
+    conditional branch).
+
+    Args:
+        code: Python code string with type annotations.
+        input_keys: Set of input parameter names.
+
+    Returns:
+        Set of input key names annotated as optional (``T | None`` or ``Optional[T]``).
+    """
+    try:
+        annotations = _extract_annotations(code)
+    except SyntaxError:
+        return set()
+
+    optional_keys: set[str] = set()
+    for key in input_keys:
+        type_str = annotations.get(key)
+        if type_str and _is_optional_type(type_str):
+            optional_keys.add(key)
+    return optional_keys
 
 
 def _extract_error_location(exc: Exception, code: str, code_source_line: int = 0) -> str:
@@ -232,8 +314,10 @@ class PythonCodeNode(Node):
         inputs = prep_res["inputs"]
         timeout = prep_res["timeout"]
 
-        # Build namespace with unrestricted builtins + input variables
+        # Build namespace with unrestricted builtins + typing + input variables
         namespace: dict[str, Any] = {"__builtins__": __builtins__}
+        namespace["typing"] = _typing_module
+        namespace["Optional"] = _typing_module.Optional
         namespace.update(inputs)
 
         # Execute in thread with stdout/stderr capture.
