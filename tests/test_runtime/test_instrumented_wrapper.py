@@ -313,6 +313,67 @@ class TestLLMUsageAccumulation:
         assert "__llm_calls__" in shared
         assert len(shared["__llm_calls__"]) == 0
 
+    def test_llm_usage_enriched_with_cost_in_shared_store(self):
+        """After execution, shared store's llm_usage dict should have cost_usd added.
+
+        Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
+        The LLMSimulatorNode uses prompt_tokens/completion_tokens (OpenAI-style) which are
+        different keys, so we need a node that uses the correct key names for this test.
+        """
+
+        class LLMNodeWithStandardTokenKeys(Node):
+            """Node simulating LLM usage with input_tokens/output_tokens keys."""
+
+            def _run(self, shared):
+                shared["llm_usage"] = {
+                    "model": "gpt-4",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                }
+                return "done"
+
+        node = LLMNodeWithStandardTokenKeys()
+        wrapper = InstrumentedNodeWrapper(node, "llm_cost", None, None)
+
+        shared = {}
+        wrapper._run(shared)
+
+        # The original llm_usage in shared store should be enriched in-place
+        assert "llm_usage" in shared
+        assert "cost_usd" in shared["llm_usage"]
+        # gpt-4: $30/1M input, $60/1M output
+        # 1000 input = 0.03, 500 output = 0.03 => total = 0.06
+        assert isinstance(shared["llm_usage"]["cost_usd"], float)
+        assert shared["llm_usage"]["cost_usd"] == 0.06
+
+    def test_llm_calls_accumulator_has_cost_usd(self):
+        """The __llm_calls__ accumulator entries should also contain cost_usd."""
+
+        class LLMNodeWithStandardTokenKeys(Node):
+            """Node simulating LLM usage with input_tokens/output_tokens keys."""
+
+            def _run(self, shared):
+                shared["llm_usage"] = {
+                    "model": "gpt-4",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                }
+                return "done"
+
+        node = LLMNodeWithStandardTokenKeys()
+        wrapper = InstrumentedNodeWrapper(node, "llm_cost", None, None)
+
+        shared = {}
+        wrapper._run(shared)
+
+        assert len(shared["__llm_calls__"]) == 1
+        llm_call = shared["__llm_calls__"][0]
+        assert "cost_usd" in llm_call
+        assert isinstance(llm_call["cost_usd"], float)
+        assert llm_call["cost_usd"] == 0.06
+        # The accumulator entry should have the same cost as the shared store entry
+        assert llm_call["cost_usd"] == shared["llm_usage"]["cost_usd"]
+
 
 class TestErrorHandling:
     """Test error handling during node execution."""

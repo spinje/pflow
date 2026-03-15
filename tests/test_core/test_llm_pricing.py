@@ -2,7 +2,13 @@
 
 import pytest
 
-from pflow.core.llm_pricing import MODEL_PRICING, PRICING_VERSION, calculate_llm_cost, get_model_pricing
+from pflow.core.llm_pricing import (
+    MODEL_PRICING,
+    PRICING_VERSION,
+    calculate_llm_cost,
+    enrich_llm_usage_with_cost,
+    get_model_pricing,
+)
 
 
 class TestLLMPricing:
@@ -222,3 +228,143 @@ class TestLLMPricing:
         # "4o" is an alias for "gpt-4o"
         cost = calculate_llm_cost(model="4o", input_tokens=1000)
         assert cost["pricing_model"] == "gpt-4o"
+
+
+class TestEnrichLLMUsageWithCost:
+    """Test enrich_llm_usage_with_cost() in-place cost enrichment."""
+
+    def test_known_model_with_tokens_calculates_cost(self):
+        """When model is known and tokens are present, cost_usd should be a positive float."""
+        llm_usage = {
+            "model": "anthropic/claude-3-5-sonnet-20241022",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        assert "cost_usd" in llm_usage
+        assert isinstance(llm_usage["cost_usd"], float)
+        assert llm_usage["cost_usd"] > 0
+        # Verify against calculate_llm_cost for consistency
+        expected = calculate_llm_cost(
+            model="anthropic/claude-3-5-sonnet-20241022",
+            input_tokens=1000,
+            output_tokens=500,
+        )
+        assert llm_usage["cost_usd"] == expected["total_cost_usd"]
+
+    def test_total_cost_usd_copied_to_cost_usd(self):
+        """When total_cost_usd exists (Claude Code SDK), it should be copied to cost_usd."""
+        llm_usage = {
+            "model": "some-claude-code-model",
+            "total_cost_usd": 0.042,
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        assert llm_usage["cost_usd"] == 0.042
+        # Original total_cost_usd should be preserved
+        assert llm_usage["total_cost_usd"] == 0.042
+
+    def test_unknown_model_sets_cost_usd_none(self):
+        """When model is not in the pricing table, cost_usd should be None."""
+        llm_usage = {
+            "model": "totally-unknown-model-xyz",
+            "input_tokens": 500,
+            "output_tokens": 200,
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        assert "cost_usd" in llm_usage
+        assert llm_usage["cost_usd"] is None
+
+    def test_empty_model_string_sets_cost_usd_none(self):
+        """When model is an empty string, cost_usd should be None."""
+        llm_usage = {
+            "model": "",
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        assert "cost_usd" in llm_usage
+        assert llm_usage["cost_usd"] is None
+
+    def test_empty_dict_sets_cost_usd_none(self):
+        """When llm_usage is an empty dict (no model key), cost_usd should be None."""
+        llm_usage: dict = {}
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        assert "cost_usd" in llm_usage
+        assert llm_usage["cost_usd"] is None
+
+    def test_idempotent_does_not_overwrite_existing_cost_usd(self):
+        """When cost_usd is already present, calling enrich again should not change it."""
+        llm_usage = {
+            "model": "anthropic/claude-3-5-sonnet-20241022",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cost_usd": 0.999,  # Pre-existing value
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        # Should NOT be recalculated — the original value is preserved
+        assert llm_usage["cost_usd"] == 0.999
+
+    def test_mutates_in_place_returns_none(self):
+        """The function should mutate the dict in-place and return None."""
+        llm_usage = {
+            "model": "gpt-4",
+            "input_tokens": 100,
+            "output_tokens": 50,
+        }
+        original_id = id(llm_usage)
+
+        result = enrich_llm_usage_with_cost(llm_usage)
+
+        assert result is None
+        assert id(llm_usage) == original_id  # Same dict object
+        assert "cost_usd" in llm_usage  # Was mutated
+
+    def test_with_cache_tokens(self):
+        """When cache tokens are present, they should be included in cost calculation."""
+        llm_usage = {
+            "model": "anthropic/claude-sonnet-4-5",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "cache_creation_input_tokens": 2000,
+            "cache_read_input_tokens": 3000,
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        # Verify cost includes cache tokens
+        expected = calculate_llm_cost(
+            model="anthropic/claude-sonnet-4-5",
+            input_tokens=1000,
+            output_tokens=500,
+            cache_creation_tokens=2000,
+            cache_read_tokens=3000,
+        )
+        assert llm_usage["cost_usd"] == expected["total_cost_usd"]
+
+    def test_total_cost_usd_none_falls_through_to_calculation(self):
+        """When total_cost_usd is None, should fall through to token-based calculation."""
+        llm_usage = {
+            "model": "gpt-4",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+            "total_cost_usd": None,
+        }
+
+        enrich_llm_usage_with_cost(llm_usage)
+
+        # Should calculate from tokens, not use the None total_cost_usd
+        expected = calculate_llm_cost(model="gpt-4", input_tokens=1000, output_tokens=500)
+        assert llm_usage["cost_usd"] == expected["total_cost_usd"]
+        assert llm_usage["cost_usd"] > 0

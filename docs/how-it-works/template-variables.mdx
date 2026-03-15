@@ -195,6 +195,102 @@ Summarize each file.
 
 The `as: "file"` creates `${file}` as the item variable. See [Batch processing](/how-it-works/batch-processing) for details.
 
+## Coalesce operator
+
+The `??` operator returns the first resolved value, skipping variables that don't exist (e.g., from a branch that didn't execute):
+
+```markdown
+### report
+
+Report the result from whichever branch ran.
+
+- type: llm
+- prompt: Result was: ${success_branch.stdout ?? fallback_branch.stdout}
+```
+
+This is particularly useful with [conditional branching](/how-it-works/conditional-branching) where only one path executes. Without coalesce, referencing a node that didn't run would be an unresolved variable error.
+
+## Node metadata
+
+Beyond their primary outputs, some nodes expose metadata that downstream nodes can access through templates. This is useful for cost-aware workflows, debugging, or building on execution details.
+
+### LLM token usage
+
+Both `llm` and `claude-code` nodes write `llm_usage` with token counts:
+
+```markdown
+### analyze
+
+Analyze the document.
+
+- type: llm
+- model: gpt-4o
+- prompt: Analyze this document: ${doc.content}
+
+### log_cost
+
+Log the token usage from the analysis.
+
+- type: shell
+
+```shell command
+echo "Model: ${analyze.llm_usage.model}, Tokens: ${analyze.llm_usage.total_tokens}"
+```
+```
+
+Available fields on `${node_id.llm_usage}`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `model` | str | Model that was used |
+| `input_tokens` | int | Input tokens consumed |
+| `output_tokens` | int | Output tokens generated |
+| `total_tokens` | int | Input + output |
+| `cache_creation_input_tokens` | int | Tokens used for cache creation |
+| `cache_read_input_tokens` | int | Tokens read from cache |
+
+### Claude Code metadata
+
+The `claude-code` node exposes additional execution metadata through `_claude_metadata`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `total_cost_usd` | float | Actual cost in USD |
+| `duration_ms` | float | Total execution time |
+| `session_id` | str | Session ID (use with `resume` parameter to continue conversations) |
+| `num_turns` | int | Number of conversation turns |
+
+Access via `${node_id._claude_metadata.field}`:
+
+```markdown
+### step_one
+
+Start an analysis session.
+
+- type: claude-code
+- prompt: Analyze the codebase structure
+
+### step_two
+
+Continue the same session with follow-up work.
+
+- type: claude-code
+- prompt: Now refactor the issues you found
+- resume: ${step_one._claude_metadata.session_id}
+```
+
+### Shell command
+
+The `shell` node stores the resolved command that was actually executed, accessible as `${node_id.command}`. Useful for logging or debugging when the command is built dynamically from templates.
+
+### HTTP response details
+
+The `http` node exposes `response_headers` (dict) and `response_time` (seconds as float) alongside the response body. Useful for handling pagination links, rate limit headers, or performance monitoring.
+
+<Tip>
+  Per-node cost is available internally as `llm_usage.cost_usd` (estimated from token pricing, `null` for unknown models). Access it via a `code` node's `shared` dict — it's not exposed as a template variable because pricing coverage varies by model. Aggregate cost across all nodes appears in the CLI JSON output after the workflow finishes.
+</Tip>
+
 ## Escaping
 
 Literal `${...}` text (not a template variable) uses double dollar signs to escape:

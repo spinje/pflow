@@ -4,9 +4,6 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Import pricing from centralized module
-from pflow.core.llm_pricing import calculate_llm_cost
-
 
 @dataclass
 class MetricsCollector:
@@ -52,10 +49,11 @@ class MetricsCollector:
             self.workflow_nodes[node_id] = duration_ms
 
     def calculate_costs(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
-        """Calculate total cost from accumulated LLM calls.
+        """Sum pre-calculated costs from accumulated LLM calls.
 
-        Prioritizes actual cost (total_cost_usd) when available,
-        otherwise falls back to token-based calculation with cache awareness.
+        Each entry's cost_usd is set by the runtime wrappers
+        (InstrumentedNodeWrapper / PflowBatchNode) via enrich_llm_usage_with_cost().
+        Entries missing cost_usd are enriched here as a fallback.
 
         Args:
             llm_calls: List of LLM call data from shared["__llm_calls__"]
@@ -63,43 +61,26 @@ class MetricsCollector:
         Returns:
             Dict with total_cost_usd and pricing availability info
         """
-        import logging
+        from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 
-        logger = logging.getLogger(__name__)
         total_cost = 0.0
-        unavailable_models = set()
+        unavailable_models: set[str] = set()
 
         for call in llm_calls:
-            # Skip empty usage dicts
             if not call:
                 continue
 
-            # PRIORITY 1: Use pre-calculated cost if available
-            if "total_cost_usd" in call and call["total_cost_usd"] is not None:
-                total_cost += call["total_cost_usd"]
-                continue
+            # Enrich if wrapper didn't (e.g., direct calculate_costs call)
+            if "cost_usd" not in call:
+                enrich_llm_usage_with_cost(call)
 
-            # PRIORITY 2: Calculate using centralized pricing module
-            # Check both model field and prompt_kwargs.model for compatibility
-            model = call.get("model") or call.get("prompt_kwargs", {}).get("model", "unknown")
-
-            # Use the centralized calculate_llm_cost function
-            try:
-                cost_breakdown = calculate_llm_cost(
-                    model=model,
-                    input_tokens=call.get("input_tokens", 0),
-                    output_tokens=call.get("output_tokens", 0),
-                    cache_creation_tokens=call.get("cache_creation_input_tokens", 0),
-                    cache_read_tokens=call.get("cache_read_input_tokens", 0),
-                    thinking_tokens=call.get("thinking_tokens", 0),
-                )
-                total_cost += cost_breakdown["total_cost_usd"]
-            except ValueError as e:
-                # Track unknown models but don't crash
+            cost = call.get("cost_usd")
+            if cost is not None:
+                total_cost += cost
+            else:
+                model = call.get("model", "unknown")
                 unavailable_models.add(model)
-                logger.debug(f"Pricing not available for model '{model}': {e}")
 
-        # Return structured result
         if unavailable_models:
             return {
                 "total_cost_usd": None,

@@ -188,6 +188,45 @@ def calculate_llm_cost(
     }
 
 
+def enrich_llm_usage_with_cost(llm_usage: dict[str, Any]) -> None:
+    """Add cost_usd to an llm_usage dict in-place.
+
+    If total_cost_usd already exists (e.g., from Claude Code SDK), uses that.
+    Otherwise calculates from token counts using the pricing table.
+    Sets cost_usd to None if the model is not in the pricing table.
+
+    Args:
+        llm_usage: The llm_usage dict from a node's shared store output.
+                   Modified in-place to add the "cost_usd" key.
+    """
+    if "cost_usd" in llm_usage:
+        return  # Already enriched
+
+    # Claude Code provides actual cost from the SDK
+    if "total_cost_usd" in llm_usage and llm_usage["total_cost_usd"] is not None:
+        llm_usage["cost_usd"] = llm_usage["total_cost_usd"]
+        return
+
+    # Calculate from token counts
+    model = llm_usage.get("model", "")
+    if not model:
+        llm_usage["cost_usd"] = None
+        return
+
+    try:
+        cost = calculate_llm_cost(
+            model=model,
+            input_tokens=llm_usage.get("input_tokens", 0),
+            output_tokens=llm_usage.get("output_tokens", 0),
+            cache_creation_tokens=llm_usage.get("cache_creation_input_tokens", 0),
+            cache_read_tokens=llm_usage.get("cache_read_input_tokens", 0),
+            thinking_tokens=llm_usage.get("thinking_tokens", 0),
+        )
+        llm_usage["cost_usd"] = cost["total_cost_usd"]
+    except ValueError:
+        llm_usage["cost_usd"] = None
+
+
 def get_model_pricing(model: str) -> dict[str, float]:
     """Get pricing for a specific model.
 

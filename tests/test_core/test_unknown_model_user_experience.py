@@ -4,7 +4,6 @@ CRITICAL: This tests our most important guarantee - workflows complete even with
 """
 
 import time
-from unittest.mock import patch
 
 from pflow.core.metrics import MetricsCollector
 
@@ -115,14 +114,12 @@ class TestUnknownModelUserExperience:
         # 2. Update MODEL_PRICING if it's a new model
         # 3. File an issue if it's a legitimate new model
 
-    @patch("logging.Logger.debug")
-    def test_debug_logged_for_unknown_model(self, mock_debug):
-        """Test that debug info is logged for unknown models.
+    def test_unknown_model_surfaced_in_unavailable_models(self):
+        """Test that unknown models are surfaced via unavailable_models field.
 
-        NOTE: Changed from warning to debug level in commit 76e0bc2.
-        Unknown models are expected behavior (custom models, new models),
-        and the information is already surfaced to users via unavailable_models.
-        Debug logging is more appropriate for diagnostics.
+        Unknown models are expected behavior (custom models, new models).
+        The diagnostic info is surfaced via the unavailable_models field in the
+        return value — no logging needed.
         """
         collector = MetricsCollector()
 
@@ -134,10 +131,7 @@ class TestUnknownModelUserExperience:
             }
         ]
 
-        collector.calculate_costs(llm_calls)
+        cost_data = collector.calculate_costs(llm_calls)
 
-        # Verify debug message was logged with helpful diagnostic info
-        mock_debug.assert_called()
-        debug_message = mock_debug.call_args[0][0]
-        assert "unknown-model" in debug_message
-        assert "Pricing not available" in debug_message
+        assert cost_data["pricing_available"] is False
+        assert "unknown-model" in cost_data["unavailable_models"]
