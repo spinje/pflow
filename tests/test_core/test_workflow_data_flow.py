@@ -572,8 +572,8 @@ class TestNestedParamValidation:
     """Test that data flow validation recurses into nested dict/list params.
 
     Covers the fix for GitHub issue #108: _validate_node_params now recurses
-    into dict and list values using an inner _check_value() function, rather
-    than only checking top-level string params.
+    into dict and list values using _check_param_value(), rather than only
+    checking top-level string params.
     """
 
     def test_forward_reference_inside_dict_param_is_caught(self):
@@ -663,3 +663,5 @@ class TestNestedParamValidation:
         errors = validate_data_flow(workflow_ir)
         # Both a and b come after merge — should get errors for both
         assert len(errors) == 2
+        assert any("'a'" in e for e in errors)
+        assert any("'b'" in e for e in errors)
