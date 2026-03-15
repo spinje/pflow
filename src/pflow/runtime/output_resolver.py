@@ -17,6 +17,9 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> O
     - $node.output - Dollar prefix format
     - node.output - Plain format
 
+    Uses TemplateResolver.resolve_template() to support the full template syntax
+    including coalesce (??), nested index templates, and type preservation.
+
     Args:
         source_expr: Template expression like "${node.output}" or "node.output"
         shared_storage: The shared storage dictionary
@@ -24,14 +27,18 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> O
     Returns:
         The resolved value or None if not found
     """
-    # Strip template syntax wrappers (${...} or $...)
-    if source_expr.startswith("${") and source_expr.endswith("}"):
-        source_expr = source_expr[2:-1]
-    elif source_expr.startswith("$"):
-        source_expr = source_expr[1:]
+    # Normalize to ${...} format so resolve_template() can handle it
+    if not source_expr.startswith("${"):
+        source_expr = "${" + source_expr[1:] + "}" if source_expr.startswith("$") else "${" + source_expr + "}"
 
-    # Use existing TemplateResolver.resolve_value which handles path traversal
-    return TemplateResolver.resolve_value(source_expr, shared_storage)
+    # Use resolve_template() which handles coalesce (??), nested indices,
+    # type preservation, and all other template syntax
+    result = TemplateResolver.resolve_template(source_expr, shared_storage)
+
+    # resolve_template returns the original string if unresolved
+    if result == source_expr:
+        return None
+    return result
 
 
 def populate_declared_outputs(

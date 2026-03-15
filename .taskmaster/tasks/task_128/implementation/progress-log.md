@@ -415,3 +415,53 @@ Added `TestCoalesceErrorMessages` class (2 tests) to `test_node_wrapper_template
 
 - `make test`: 4066 passed, 485 skipped, 0 failures
 - `make check`: all clean
+
+## 2026-03-15 — Post-Merge Bug: Coalesce Doesn't Work in Output Sources or Batch Items
+
+### Discovery
+
+Bug report (`scratchpads/coalesce-operator-outputs-bug/bug-report.md`): `??` coalesce in `## Outputs` `- source:` declarations silently drops the output. No error, no warning — the output just vanishes. Non-coalesced outputs in the same workflow resolve fine.
+
+### Root Cause
+
+Two files bypassed `TemplateResolver.resolve_template()` by manually stripping `${...}` and calling `resolve_value()` directly — a low-level path traversal function with zero coalesce support:
+
+1. **`output_resolver.py:28-34`** — `source_expr[2:-1]` + `resolve_value()`. The `??` characters cause path traversal to fail, returning `None`. The `if value is not None` guard then silently skips the output.
+
+2. **`batch_node.py:258-260`** — same pattern for batch `items` template. `${a.items ?? b.items}` would raise `ValueError("resolved to None")`.
+
+### Why Phase 2 Impact Analysis Missed These
+
+The Phase 2 impact analysis searched for regex definitions and `TEMPLATE_PATTERN` usage across the codebase — 14 regex definitions across 8 files. But `output_resolver.py` uses no regex at all. It does manual `startswith("${")` + string slicing. `batch_node.py` does the same with `.strip()[2:-1]`. Both were invisible to a regex-focused scan.
+
+### Fix
+
+Both files now delegate to `TemplateResolver.resolve_template()` instead of manual stripping + `resolve_value()`. This is the same single resolution entry point that step parameters use.
+
+**`output_resolver.py`**: Normalizes `$node.output` and `node.output` formats to `${node.output}`, then calls `resolve_template()`. Returns `None` if the result equals the input (unresolved).
+
+**`batch_node.py`**: Calls `resolve_template(self.items_template.strip(), shared)` directly. Sets `items = None` if unresolved (same error path as before).
+
+### Audit of Other `resolve_value()` Call Sites
+
+Checked all 6 remaining direct `resolve_value()` callers — all are fine:
+
+- `cli/read_fields.py`, `mcp_server/services/field_service.py` — raw field paths from CLI/API, not template expressions
+- `execution/formatters/node_output_formatter.py` — display formatting with pre-extracted paths
+- `core/workflow_validator.py` — validation only, already coalesce-aware
+- `template_validator.py` — display formatting in warning messages
+
+### Tests
+
+**`test_output_resolver.py`** — Added `TestCoalesceInOutputSource` class (7 tests): first branch present, second branch present, all absent, three-way chain, type preservation, end-to-end via `populate_declared_outputs`, all-absent doesn't populate.
+
+**`test_batch_node.py`** — Added `TestItemsCoalesce` class (3 tests): first branch, second branch, all absent raises ValueError.
+
+### Lesson Learned
+
+When adding new syntax to the template system, audit ALL consumers — not just those using shared regex patterns. Ad-hoc consumers that do their own string manipulation are the ones that break silently.
+
+### Verification
+
+- `make test`: 4087 passed, 485 skipped, 0 failures
+- `make check`: all clean

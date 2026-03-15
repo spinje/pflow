@@ -255,9 +255,12 @@ class PflowBatchNode(Node):
             # Task 103's resolve_nested() preserves types in nested structures
             items = TemplateResolver.resolve_nested(self.items_template, shared)
         else:
-            # Template reference - extract variable path: "${x.y}" -> "x.y"
-            var_path = self.items_template.strip()[2:-1]
-            items = TemplateResolver.resolve_value(var_path, shared)
+            # Template reference - use resolve_template for full syntax support
+            # (coalesce ??, nested indices, type preservation)
+            items = TemplateResolver.resolve_template(self.items_template.strip(), shared)
+            # resolve_template returns original string if unresolved
+            if items == self.items_template.strip():
+                items = None
 
             # Auto-parse JSON strings (enables shell → batch patterns)
             # Shell nodes output text; if that text is valid JSON array, parse it
