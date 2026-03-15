@@ -285,7 +285,12 @@ class MCPServerManager:
         if env:
             config["env"] = env
 
-        # Note: timeout fields are not part of the standard, skip them
+        # Add timeout fields if provided (used by streamablehttp_client)
+        if timeout is not None:
+            config["timeout"] = timeout
+        if sse_timeout is not None:
+            config["sse_timeout"] = sse_timeout
+
         return config
 
     def _log_server_action(

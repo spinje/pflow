@@ -184,6 +184,120 @@ class TestHTTPConfiguration:
         assert config["mcpServers"]["composio"]["type"] == "http"
 
 
+class TestHTTPTimeoutPersistence:
+    """Test that timeout and sse_timeout are persisted in HTTP server config.
+
+    These tests verify that add_server(transport="http", ...) correctly stores
+    timeout fields in the config file, which was previously broken (they were
+    discarded by _build_http_config).
+    """
+
+    def test_add_http_server_persists_timeout(self, tmp_path):
+        """add_server with timeout=60 should store timeout: 60 in config."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        manager.add_server(
+            name="api-server",
+            transport="http",
+            url="https://api.example.com/mcp",
+            timeout=60,
+        )
+
+        config = manager.load()
+        server = config["mcpServers"]["api-server"]
+        assert server["timeout"] == 60
+
+    def test_add_http_server_persists_sse_timeout(self, tmp_path):
+        """add_server with sse_timeout=120 should store sse_timeout: 120 in config."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        manager.add_server(
+            name="streaming-server",
+            transport="http",
+            url="https://stream.example.com/mcp",
+            sse_timeout=120,
+        )
+
+        config = manager.load()
+        server = config["mcpServers"]["streaming-server"]
+        assert server["sse_timeout"] == 120
+
+    def test_add_http_server_persists_both_timeouts(self, tmp_path):
+        """add_server with both timeout and sse_timeout stores both."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        manager.add_server(
+            name="dual-timeout",
+            transport="http",
+            url="https://api.example.com/mcp",
+            timeout=60,
+            sse_timeout=120,
+        )
+
+        config = manager.load()
+        server = config["mcpServers"]["dual-timeout"]
+        assert server["timeout"] == 60
+        assert server["sse_timeout"] == 120
+
+    def test_add_http_server_no_timeout_omits_keys(self, tmp_path):
+        """add_server without timeout args should not include timeout keys."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        manager.add_server(
+            name="no-timeout",
+            transport="http",
+            url="https://api.example.com/mcp",
+        )
+
+        config = manager.load()
+        server = config["mcpServers"]["no-timeout"]
+        assert "timeout" not in server
+        assert "sse_timeout" not in server
+
+    def test_timeout_validation_rejects_negative(self, tmp_path):
+        """Negative timeout should be rejected during add_server."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        with pytest.raises(ValueError, match="Timeout must be a positive"):
+            manager.add_server(
+                name="bad-timeout",
+                transport="http",
+                url="https://api.example.com/mcp",
+                timeout=-5,
+            )
+
+    def test_timeout_validation_rejects_too_large(self, tmp_path):
+        """Timeout exceeding 600s should be rejected during add_server."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        with pytest.raises(ValueError, match="Timeout cannot exceed 600"):
+            manager.add_server(
+                name="huge-timeout",
+                transport="http",
+                url="https://api.example.com/mcp",
+                timeout=999,
+            )
+
+    def test_sse_timeout_validation_rejects_negative(self, tmp_path):
+        """Negative sse_timeout should be rejected during add_server."""
+        config_path = tmp_path / "mcp-servers.json"
+        manager = MCPServerManager(config_path=config_path)
+
+        with pytest.raises(ValueError, match="SSE timeout must be a positive"):
+            manager.add_server(
+                name="bad-sse",
+                transport="http",
+                url="https://api.example.com/mcp",
+                sse_timeout=-10,
+            )
+
+
 class TestHTTPTransportExecution:
     """Test HTTP transport execution in MCPNode."""
 

@@ -21,7 +21,6 @@ def execute_single_node(
     params: tuple[str, ...],
     output_format: str,
     show_structure: bool,
-    timeout: int,
     verbose: bool,
 ) -> None:
     """Execute a single node with provided parameters.
@@ -31,7 +30,6 @@ def execute_single_node(
         params: Tuple of parameter strings in key=value format
         output_format: Output format - "text" or "json"
         show_structure: Whether to show flattened structure for templates
-        timeout: Execution timeout in seconds (currently unused)
         verbose: Whether to show detailed execution information
     """
     # Step 1: Parse and validate parameters

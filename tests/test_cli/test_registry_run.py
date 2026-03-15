@@ -829,3 +829,48 @@ def test_multiple_parameters_are_parsed_correctly(runner, tmp_path):
         # File should be created
         assert test_file.exists()
         assert test_file.read_text() == "Hello"
+
+
+# ==============================================================================
+# 8. --timeout flag removal (no longer accepted)
+# ==============================================================================
+
+
+def test_timeout_flag_is_rejected(runner, mock_registry):
+    """Passing --timeout to registry run should fail because the flag was removed.
+
+    The --timeout option was removed from `pflow registry run` because node
+    execution timeout is not a CLI concern. This test ensures the flag is
+    not silently accepted.
+    """
+    _MockRegistry, _instance = mock_registry
+
+    result = runner.invoke(registry, ["run", "read-file", "file_path=/tmp/x", "--timeout", "30"])
+
+    assert result.exit_code != 0
+    assert "No such option" in result.output or "no such option" in result.output.lower()
+
+
+def test_registry_run_works_without_timeout(runner, tmp_path):
+    """Registry run succeeds without any --timeout flag.
+
+    Confirms that the removal of --timeout did not break basic execution.
+    """
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("hello")
+
+    from pflow.nodes.file.read_file import ReadFileNode
+
+    with (
+        patch("pflow.cli.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+    ):
+        instance = MagicMock()
+        instance.load.return_value = {"read-file": {}}
+        MockRegistry.return_value = instance
+        mock_import.return_value = ReadFileNode
+
+        result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}"])
+
+        assert result.exit_code == 0
+        assert "Node executed successfully" in result.output
