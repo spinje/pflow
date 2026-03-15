@@ -6,7 +6,14 @@ internal implementation structure (prep/exec/post).
 
 import pytest
 
-from pflow.nodes.python.python_code import PythonCodeNode, _extract_error_location
+from pflow.nodes.python.python_code import (
+    PythonCodeNode,
+    _extract_error_location,
+    _get_inner_optional_type,
+    _get_outer_type,
+    _is_optional_type,
+    extract_optional_input_keys,
+)
 
 
 def run_code_node(shared: dict, **params) -> str:
@@ -648,3 +655,162 @@ class TestErrorLocationWorkflowLine:
 
         assert "Location: line 3 in code block" in location
         assert "Source: raise ValueError" in location
+
+
+# ======================================================================
+# Optional type system support
+# ======================================================================
+
+
+class TestOptionalTypeSupport:
+    """Tests for Optional type annotation parsing and type checking.
+
+    Covers _is_optional_type, _get_inner_optional_type, _get_outer_type
+    (optional decomposition), _check_input_types (optional acceptance),
+    extract_optional_input_keys, and typing availability in exec namespace.
+    """
+
+    # --- _is_optional_type ---
+
+    def test_is_optional_type_str_pipe_none(self):
+        """'str | None' is recognized as optional."""
+        assert _is_optional_type("str | None") is True
+
+    def test_is_optional_type_optional_str(self):
+        """'Optional[str]' is recognized as optional."""
+        assert _is_optional_type("Optional[str]") is True
+
+    def test_is_optional_type_none_pipe_str(self):
+        """'None | str' is recognized as optional."""
+        assert _is_optional_type("None | str") is True
+
+    def test_is_optional_type_plain_str(self):
+        """'str' is NOT optional."""
+        assert _is_optional_type("str") is False
+
+    def test_is_optional_type_list_str_pipe_none(self):
+        """'list[str] | None' is recognized as optional."""
+        assert _is_optional_type("list[str] | None") is True
+
+    # --- _get_inner_optional_type ---
+
+    def test_get_inner_optional_type_str_pipe_none(self):
+        """'str | None' extracts inner type 'str'."""
+        assert _get_inner_optional_type("str | None") == "str"
+
+    def test_get_inner_optional_type_optional_str(self):
+        """'Optional[str]' extracts inner type 'str'."""
+        assert _get_inner_optional_type("Optional[str]") == "str"
+
+    def test_get_inner_optional_type_none_pipe_str(self):
+        """'None | str' extracts inner type 'str'."""
+        assert _get_inner_optional_type("None | str") == "str"
+
+    def test_get_inner_optional_type_list_pipe_none(self):
+        """'list[str] | None' extracts inner type 'list[str]'."""
+        assert _get_inner_optional_type("list[str] | None") == "list[str]"
+
+    def test_get_inner_optional_type_plain_str(self):
+        """'str' returns None (not optional)."""
+        assert _get_inner_optional_type("str") is None
+
+    # --- _get_outer_type (optional decomposition) ---
+
+    def test_get_outer_type_str_pipe_none(self):
+        """'str | None' resolves to (str, NoneType)."""
+        result = _get_outer_type("str | None")
+        assert result == (str, type(None))
+
+    def test_get_outer_type_optional_list(self):
+        """'Optional[list]' resolves to (list, NoneType)."""
+        result = _get_outer_type("Optional[list]")
+        assert result == (list, type(None))
+
+    def test_get_outer_type_float_pipe_none(self):
+        """'float | None' resolves to (int, float, NoneType) since float maps to (int, float)."""
+        result = _get_outer_type("float | None")
+        assert result == (int, float, type(None))
+
+    def test_get_outer_type_unchanged_for_plain(self):
+        """'str' resolves to str (unchanged, non-optional behavior)."""
+        result = _get_outer_type("str")
+        assert result is str
+
+    # --- _check_input_types (optional type acceptance) ---
+
+    def test_check_input_types_accepts_none_for_optional(self):
+        """None is accepted for 'str | None' annotation."""
+        # Should not raise
+        PythonCodeNode._check_input_types({"x": None}, {"x": "str | None"})
+
+    def test_check_input_types_accepts_value_for_optional(self):
+        """A string value is accepted for 'str | None' annotation."""
+        # Should not raise
+        PythonCodeNode._check_input_types({"x": "hello"}, {"x": "str | None"})
+
+    def test_check_input_types_rejects_none_for_non_optional(self):
+        """None is rejected for non-optional 'str' annotation."""
+        with pytest.raises(TypeError, match=r"x.*expects str.*received NoneType"):
+            PythonCodeNode._check_input_types({"x": None}, {"x": "str"})
+
+    def test_check_input_types_rejects_wrong_type_for_optional(self):
+        """Wrong type (int) is rejected even when annotation is optional."""
+        with pytest.raises(TypeError, match=r"x.*expects str \| None.*received int"):
+            PythonCodeNode._check_input_types({"x": 42}, {"x": "str | None"})
+
+    # --- extract_optional_input_keys ---
+
+    def test_extract_optional_input_keys(self):
+        """Both optional inputs are returned when both are annotated as optional."""
+        code = "high: str | None\nlow: str | None\nresult: str"
+        result = extract_optional_input_keys(code, {"high", "low"})
+        assert result == {"high", "low"}
+
+    def test_extract_optional_input_keys_mixed(self):
+        """Only the optional input is returned when annotations are mixed."""
+        code = "high: str | None\nlow: str\nresult: str"
+        result = extract_optional_input_keys(code, {"high", "low"})
+        assert result == {"high"}
+
+    def test_extract_optional_input_keys_syntax_error(self):
+        """Syntax error in code returns empty set (graceful fallback)."""
+        result = extract_optional_input_keys("invalid python ~~~", {"x"})
+        assert result == set()
+
+    # --- typing module available in exec namespace ---
+
+    def test_typing_available_in_namespace(self):
+        """Code using Optional[str] from typing module executes without NameError."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code='from typing import Optional\nx: Optional[str] = "hello"\nresult: str = x',
+            inputs={},
+        )
+        assert action == "default"
+        assert shared["result"] == "hello"
+
+    # --- typing.Optional[T] form ---
+
+    def test_is_optional_type_typing_dot_optional(self):
+        """'typing.Optional[str]' is recognized as optional."""
+        assert _is_optional_type("typing.Optional[str]") is True
+
+    def test_get_inner_optional_type_typing_dot_optional(self):
+        """'typing.Optional[str]' extracts inner type 'str'."""
+        assert _get_inner_optional_type("typing.Optional[str]") == "str"
+
+    def test_get_inner_optional_type_typing_dot_optional_list(self):
+        """'typing.Optional[list[str]]' extracts inner type 'list[str]'."""
+        assert _get_inner_optional_type("typing.Optional[list[str]]") == "list[str]"
+
+    def test_get_outer_type_typing_dot_optional(self):
+        """'typing.Optional[str]' resolves to (str, NoneType)."""
+        result = _get_outer_type("typing.Optional[str]")
+        assert result == (str, type(None))
+
+    def test_extract_optional_input_keys_typing_dot_optional(self):
+        """typing.Optional[str] annotation is detected by extract_optional_input_keys."""
+        code = "x: typing.Optional[str]\nresult: str = x or 'default'"
+        result = extract_optional_input_keys(code, {"x"})
+        assert result == {"x"}

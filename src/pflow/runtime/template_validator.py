@@ -917,9 +917,9 @@ class TemplateValidator:
     # More permissive pattern to catch malformed templates for validation
     # Supports array notation: ${node[0].field}, ${node.field[0].subfield}
     # Also supports nested index templates: ${node[${__index__}].field}
-    _PERMISSIVE_PATTERN = re.compile(
-        r"\$\{([a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?)\}"
-    )
+    # Also supports coalesce operator: ${a.field ?? b.field}
+    _PERM_VAR = r"[a-zA-Z_][\w-]*(?:(?:\[(?:[\d]+|\$\{[^}]+\})\])?(?:\.[\w-]*(?:\[(?:[\d]+|\$\{[^}]+\})\])?)*)?"
+    _PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_VAR}(?:\s*\?\?\s*{_PERM_VAR})*)\}}")
 
     # Batch output definitions matching PflowBatchNode.post() structure
     _BATCH_OUTPUTS: ClassVar[list[dict[str, str]]] = [
@@ -1562,7 +1562,7 @@ class TemplateValidator:
                     # - nested_count = 1 (one match contains '[${')
                     # - dollar_brace_count = 2
                     # - len(valid_matches) + nested_count = 3 >= 2 ✓ (no error)
-                    nested_count = sum(1 for m in valid_matches if "[${" in f"${{{m}}}")
+                    nested_count = sum(f"${{{m}}}".count("[${") for m in valid_matches)
 
                     # If mismatch (accounting for nested), we have malformed syntax
                     if len(valid_matches) + nested_count < dollar_brace_count:
@@ -1609,7 +1609,14 @@ class TemplateValidator:
                 if isinstance(value, str) and "$" in value:
                     # Use permissive pattern to catch malformed templates
                     matches = TemplateValidator._PERMISSIVE_PATTERN.findall(value)
-                    templates.update(matches)
+                    # Split coalesce operands so each is validated individually
+                    split_matches: list[str] = []
+                    for match in matches:
+                        if "??" in match:
+                            split_matches.extend(TemplateResolver.split_coalesce_operands(match))
+                        else:
+                            split_matches.append(match)
+                    templates.update(split_matches)
 
                     if matches:
                         logger.debug(

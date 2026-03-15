@@ -26,24 +26,24 @@ class TemplateResolver:
     # - Supports bracket notation for array indices
     _VAR_NAME_PATTERN = r"[a-zA-Z_][\w-]*(?:(?:\[\d+\])?(?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)?"
 
+    # Coalesce expression: one or more variable names separated by ??
+    # Matches: "a", "a ?? b", "a.field ?? b.field[0] ?? c"
+    _COALESCE_EXPR_PATTERN = rf"{_VAR_NAME_PATTERN}(?:\s*\?\?\s*{_VAR_NAME_PATTERN})*"
+
     # Pattern for finding templates in strings (can match multiple)
     # Must not be preceded by $ (to avoid $${var} escapes)
-    TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_VAR_NAME_PATTERN})\}}")
+    TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_COALESCE_EXPR_PATTERN})\}}")
 
     # Pattern for detecting simple templates (entire string is exactly one ${var})
     # Used to determine when to preserve type vs stringify
     # Uses same strict variable name pattern as TEMPLATE_PATTERN
-    SIMPLE_TEMPLATE_PATTERN = re.compile(rf"^\$\{{({_VAR_NAME_PATTERN})\}}$")
+    SIMPLE_TEMPLATE_PATTERN = re.compile(rf"^\$\{{({_COALESCE_EXPR_PATTERN})\}}$")
 
-    # Pattern for nested index templates: ${outer[${inner}]} or ${outer.path[${inner}].rest}
-    # Captures: (1) outer_var with optional dot path, (2) inner_template, (3) rest_of_path
-    # Examples: ${results[${item.index}]}, ${node.data[${__index__}].field}
-    # Inner template uses same strict variable naming as _VAR_NAME_PATTERN for defense-in-depth
-    NESTED_INDEX_PATTERN = re.compile(
-        r"\$\{([a-zA-Z_][\w-]*(?:\.[a-zA-Z_][\w-]*)*)\[(\$\{"
-        + _VAR_NAME_PATTERN
-        + r"\})\]((?:\.[a-zA-Z_][\w-]*(?:\[\d+\])?)*)\}"
-    )
+    # Pattern for bracket index templates: [${var}] anywhere in a string.
+    # Resolves inner ${var} to a static integer for array indexing.
+    # Examples: ${results[${__index__}].field}, ${a[${idx}].x ?? b.x}
+    # Captures: (1) the full inner template including ${...}
+    _BRACKET_INDEX_PATTERN = re.compile(r"\[(\$\{" + _VAR_NAME_PATTERN + r"\})\]")
 
     @staticmethod
     def has_templates(value: Any) -> bool:
@@ -68,31 +68,26 @@ class TemplateResolver:
 
     @staticmethod
     def resolve_nested_index_templates(template: str, context: dict[str, Any]) -> str:
-        """Pre-process nested index templates by resolving inner ${...} first.
+        """Pre-process bracket index templates by resolving [${var}] to [N].
 
-        Transforms templates like ${results[${item.index}].response} into
-        ${results[0].response} (if item.index resolves to 0).
+        Finds [${var}] patterns anywhere in the string and replaces them with
+        static integer indices. This is context-free — it doesn't need to
+        understand the surrounding template structure, so it naturally composes
+        with coalesce (${a[${idx}].x ?? b.x}) and any future syntax.
 
-        This enables dynamic array indexing in batch processing where the index
-        comes from a variable like ${__index__} or ${item.index}.
+        Examples:
+            ${results[${__index__}].field}  ->  ${results[0].field}
+            ${a[${idx}].x ?? b.x}           ->  ${a[0].x ?? b.x}
+            ${matrix[${row}][${col}]}       ->  ${matrix[0][1]}
 
-        Note: This is called automatically at the start of resolve_template()
-        for all templates. Only ONE level of nesting is supported:
-        - ${outer[${inner}]} works
-        - ${outer[${inner[${deep}]}]} is NOT supported (inner nesting ignored)
-
-        Handles array index patterns [${...}] only. Non-integer inner values
-        or missing variables leave the template unchanged for debugging.
-
-        Performance: Iterates up to 10 times per template (for multiple nested
-        patterns). Early exits when no nested pattern found or can't resolve.
+        Non-integer inner values or missing variables leave [${var}] unchanged.
 
         Args:
-            template: String that may contain nested index templates
+            template: String that may contain bracket index templates
             context: Dictionary containing values to resolve inner templates from
 
         Returns:
-            Template string with inner index templates resolved to static values
+            Template string with bracket indices resolved to static values
         """
         if "${" not in template or "[${" not in template:
             return template
@@ -100,30 +95,20 @@ class TemplateResolver:
         # Limit iterations to prevent infinite loops with malformed templates
         max_iterations = 10
         for _ in range(max_iterations):
-            match = TemplateResolver.NESTED_INDEX_PATTERN.search(template)
+            match = TemplateResolver._BRACKET_INDEX_PATTERN.search(template)
             if not match:
                 break
 
-            outer_var = match.group(1)  # e.g., "results" or "node.results"
-            inner_template = match.group(2)  # e.g., "${item.index}"
-            rest_path = match.group(3)  # e.g., ".response"
+            inner_template = match.group(1)  # e.g., "${__index__}"
 
             # Extract variable name from inner template
             inner_var = TemplateResolver.extract_simple_template_var(inner_template)
             if inner_var is None:
-                logger.debug(
-                    "Nested template resolution skipped: inner template not simple",
-                    extra={"template": template, "inner": inner_template},
-                )
                 break
 
             # Resolve inner variable
             resolved_inner = TemplateResolver.resolve_value(inner_var, context)
             if resolved_inner is None:
-                logger.debug(
-                    "Nested template resolution skipped: inner variable not found",
-                    extra={"template": template, "inner_var": inner_var},
-                )
                 break
 
             # Must resolve to integer for array indexing
@@ -134,9 +119,8 @@ class TemplateResolver:
                 )
                 break
 
-            # Build the resolved template with static index
-            resolved = f"${{{outer_var}[{resolved_inner}]{rest_path}}}"
-            template = template[: match.start()] + resolved + template[match.end() :]
+            # Replace [${var}] with [N] in-place
+            template = template[: match.start()] + f"[{resolved_inner}]" + template[match.end() :]
 
         return template
 
@@ -144,13 +128,20 @@ class TemplateResolver:
     def extract_variables(value: str) -> set[str]:
         """Extract all template variable names (including paths).
 
+        For coalesce expressions like ${a ?? b}, extracts both 'a' and 'b'.
+
         Args:
             value: String that may contain template variables
 
         Returns:
             Set of variable names found (e.g., {'url', 'data.field'})
         """
-        return set(TemplateResolver.TEMPLATE_PATTERN.findall(value))
+        raw_matches = set(TemplateResolver.TEMPLATE_PATTERN.findall(value))
+        variables: set[str] = set()
+        for match in raw_matches:
+            for operand in TemplateResolver.split_coalesce_operands(match):
+                variables.add(operand)
+        return variables
 
     @staticmethod
     def is_simple_template(value: str) -> bool:
@@ -176,6 +167,59 @@ class TemplateResolver:
             False
         """
         return bool(TemplateResolver.SIMPLE_TEMPLATE_PATTERN.match(value))
+
+    # Compiled pattern for splitting coalesce expressions on ??
+    _COALESCE_SPLIT_PATTERN = re.compile(r"\s*\?\?\s*")
+
+    # Compiled pattern for extracting root variable name (before first . or [)
+    _ROOT_SPLIT_PATTERN = re.compile(r"[\.\[]")
+
+    @staticmethod
+    def split_coalesce_operands(expr: str) -> list[str]:
+        """Split a coalesce expression on ?? into individual variable paths.
+
+        Returns single-element list if no ?? present.
+        """
+        if "??" not in expr:
+            return [expr]
+        return [op.strip() for op in TemplateResolver._COALESCE_SPLIT_PATTERN.split(expr)]
+
+    @staticmethod
+    def is_coalesce_expression(expr: str) -> bool:
+        """Check if a template expression contains the coalesce operator ??."""
+        return "??" in expr
+
+    @staticmethod
+    def resolve_coalesce(expr: str, context: dict[str, Any]) -> tuple[Any, str]:
+        """Resolve a coalesce expression, trying operands left to right.
+
+        Semantics:
+        - For each operand, extract root node (first segment before . or [)
+        - If root is ABSENT from context -> skip (branch didn't execute)
+        - If root is PRESENT and full path resolves -> return resolved value
+        - If root is PRESENT but path fails -> return the failing operand (typo)
+
+        Returns:
+            Tuple of (value, status) where status is:
+            - "resolved": value is the successfully resolved result
+            - "path_error": root present but path invalid; value is the failing operand string
+            - "unresolved": no operand's root was in context; value is None
+        """
+        operands = TemplateResolver.split_coalesce_operands(expr)
+
+        for operand in operands:
+            root = TemplateResolver._ROOT_SPLIT_PATTERN.split(operand)[0]
+
+            if root not in context:
+                continue  # Root absent — branch didn't execute, try next
+
+            # Root is present — this operand MUST resolve or it's a typo
+            if TemplateResolver.variable_exists(operand, context):
+                return (TemplateResolver.resolve_value(operand, context), "resolved")
+            else:
+                return (operand, "path_error")
+
+        return (None, "unresolved")
 
     @staticmethod
     def extract_simple_template_var(value: str) -> Optional[str]:
@@ -509,7 +553,17 @@ class TemplateResolver:
         # Check for simple template first - preserve type
         var_name = TemplateResolver.extract_simple_template_var(template)
         if var_name is not None:
-            if TemplateResolver.variable_exists(var_name, context):
+            if TemplateResolver.is_coalesce_expression(var_name):
+                value, status = TemplateResolver.resolve_coalesce(var_name, context)
+                if status == "resolved":
+                    logger.debug(
+                        f"Resolved coalesce template '${{{var_name}}}' -> {value!r} (type: {type(value).__name__})",
+                        extra={"var_name": var_name, "value_type": type(value).__name__},
+                    )
+                    return value
+                # path_error or unresolved: return template unchanged
+                return template
+            elif TemplateResolver.variable_exists(var_name, context):
                 resolved = TemplateResolver.resolve_value(var_name, context)
                 logger.debug(
                     f"Resolved simple template '${{{var_name}}}' -> {resolved!r} (type: {type(resolved).__name__})",
@@ -526,54 +580,68 @@ class TemplateResolver:
 
         # Complex template - do string interpolation
         result = template
-
-        # Find all template variables in the string
         for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template):
-            var_name = match.group(1)  # Get the variable name without ${}
-            resolved_value = TemplateResolver.resolve_value(var_name, context)
+            result = TemplateResolver._resolve_complex_match(match.group(1), result, context)
+        return result
 
-            # Note: We need to distinguish between:
-            # 1. "value not found" (template should remain)
-            # 2. "value is None at the end of path" (convert to empty string)
-            # 3. "None in middle of path" (can't traverse, template should remain)
+    @staticmethod
+    def _resolve_complex_match(var_expr: str, result: str, context: dict[str, Any]) -> str:
+        """Resolve a single template match within a complex template string.
 
-            if "." in var_name or "[" in var_name:
-                # Path traversal - check if we successfully resolved
-                # Extract base variable (before first dot or bracket)
-                base_var = re.split(r"[\.\[]", var_name)[0]
-                # Base exists and full path is valid - combine the conditions
-                if base_var in context and TemplateResolver.variable_exists(var_name, context):
-                    # Path fully resolved (even if final value is None)
-                    value_str = TemplateResolver._convert_to_string(resolved_value)
-                    result = result.replace(f"${{{var_name}}}", value_str)
-                    logger.debug(
-                        f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
-                        extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
-                    )
-                    continue
-            else:
-                # Simple variable - check if it exists
-                if var_name in context:
-                    # Variable exists, convert whatever value it has (including None)
-                    value_str = TemplateResolver._convert_to_string(resolved_value)
-                    result = result.replace(f"${{{var_name}}}", value_str)
-                    logger.debug(
-                        f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
-                        extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
-                    )
-                    continue
+        Args:
+            var_expr: The variable expression captured from ${...}
+            result: Current result string being built
+            context: Resolution context
 
-            # Variable doesn't exist - leave template as-is for debugging
-            # Provide more helpful warnings for common patterns
-            if ".response." in var_name:
-                # This pattern often indicates LLM didn't generate expected JSON structure
-                logger.warning(
-                    f"Template variable '${{{var_name}}}' could not be resolved. "
-                    f"This often indicates the LLM node didn't generate the expected JSON structure. "
-                    f"Check that the LLM response contains the field '{var_name.split('.')[-1]}'"
+        Returns:
+            Updated result string with this match resolved (or unchanged if unresolvable)
+        """
+        # Handle coalesce expressions
+        if TemplateResolver.is_coalesce_expression(var_expr):
+            value, status = TemplateResolver.resolve_coalesce(var_expr, context)
+            if status == "resolved":
+                value_str = TemplateResolver._convert_to_string(value)
+                result = result.replace(f"${{{var_expr}}}", value_str)
+                logger.debug(
+                    f"Resolved coalesce template '${{{var_expr}}}' -> '{value_str}'",
+                    extra={"var_name": var_expr, "value_type": type(value).__name__},
                 )
-            else:
-                logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
+            # path_error and unresolved: leave template as-is
+            return result
+
+        # Non-coalesce: existing resolution logic
+        var_name = var_expr
+        resolved_value = TemplateResolver.resolve_value(var_name, context)
+
+        if "." in var_name or "[" in var_name:
+            # Path traversal - check if we successfully resolved
+            base_var = TemplateResolver._ROOT_SPLIT_PATTERN.split(var_name)[0]
+            if base_var in context and TemplateResolver.variable_exists(var_name, context):
+                value_str = TemplateResolver._convert_to_string(resolved_value)
+                result = result.replace(f"${{{var_name}}}", value_str)
+                logger.debug(
+                    f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
+                    extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
+                )
+                return result
+        elif var_name in context:
+            value_str = TemplateResolver._convert_to_string(resolved_value)
+            result = result.replace(f"${{{var_name}}}", value_str)
+            logger.debug(
+                f"Resolved template variable '${{{var_name}}}' -> '{value_str}'",
+                extra={"var_name": var_name, "value_type": type(resolved_value).__name__},
+            )
+            return result
+
+        # Variable doesn't exist - leave template as-is for debugging
+        if ".response." in var_name:
+            logger.warning(
+                f"Template variable '${{{var_name}}}' could not be resolved. "
+                f"This often indicates the LLM node didn't generate the expected JSON structure. "
+                f"Check that the LLM response contains the field '{var_name.split('.')[-1]}'"
+            )
+        else:
+            logger.debug(f"Template variable '${{{var_name}}}' could not be resolved", extra={"var_name": var_name})
 
         return result
 

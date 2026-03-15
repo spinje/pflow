@@ -56,6 +56,11 @@ class TestVariableExtraction:
         expected = {"user.name", "user.company", "location"}
         assert TemplateResolver.extract_variables(template) == expected
 
+    def test_extracts_coalesce_operands(self):
+        """Coalesce expressions are split into individual variable names."""
+        assert TemplateResolver.extract_variables("${a ?? b.field}") == {"a", "b.field"}
+        assert TemplateResolver.extract_variables("${a ?? b ?? c}") == {"a", "b", "c"}
+
     def test_handles_malformed_templates(self):
         """Test that malformed templates are not extracted."""
         # Valid template should be extracted

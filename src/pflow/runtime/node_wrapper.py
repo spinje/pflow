@@ -39,6 +39,7 @@ class TemplateAwareNodeWrapper:
         initial_params: Optional[dict[str, Any]] = None,
         template_resolution_mode: str = "strict",
         interface_metadata: Optional[dict[str, Any]] = None,
+        optional_input_keys: Optional[set[str]] = None,
     ):
         """Initialize the wrapper.
 
@@ -52,12 +53,17 @@ class TemplateAwareNodeWrapper:
                                      permissive: warn and continue with unresolved templates
             interface_metadata: Node interface metadata from registry (optional)
                               Contains input/param type information for validation
+            optional_input_keys: Set of input keys (within the ``inputs`` dict param)
+                               that are annotated as optional in the code node's source.
+                               When the source node for these inputs didn't execute,
+                               None is injected instead of raising an unresolved error.
         """
         self.inner_node = inner_node
         self.node_id = node_id  # Node ID for debugging purposes only
         self.initial_params = initial_params or {}  # From planner extraction
         self.template_resolution_mode = template_resolution_mode  # Resolution behavior
         self.interface_metadata = interface_metadata  # Type information for validation
+        self.optional_input_keys = optional_input_keys or set()  # Branch convergence
         self.template_params: dict[str, Any] = {}  # Params containing templates
         self.static_params: dict[str, Any] = {}  # Params without templates
 
@@ -456,6 +462,68 @@ class TemplateAwareNodeWrapper:
                 return True
         return False
 
+    @staticmethod
+    def _all_variables_from_absent_nodes(template_str: str, context: dict[str, Any]) -> bool:
+        """Check if all template variables reference nodes absent from context.
+
+        Uses ``all()`` not ``any()`` — critical for coalesce correctness.
+        With ``${a ?? b}``, ``extract_variables`` returns ``{"a.stdout", "b.stdout"}``.
+        In normal convergence only ONE root is absent, so ``all()`` returns False
+        and injection is skipped — letting coalesce resolution handle it. Only when
+        ALL roots are absent (neither branch ran) should we inject None.
+        """
+        variables = TemplateResolver.extract_variables(template_str)
+        if not variables:
+            return False
+        return all(var.split(".")[0].split("[")[0] not in context for var in variables)
+
+    def _inject_none_for_optional_inputs(
+        self,
+        key: str,
+        resolved_value: Any,
+        template: Any,
+        context: dict[str, Any],
+    ) -> Any:
+        """Replace unresolved optional input templates with None.
+
+        For code nodes with optional input annotations (``T | None`` or
+        ``Optional[T]``), when the source node didn't execute (its namespace
+        is absent from the shared store), inject ``None`` instead of leaving
+        the unresolved ``${...}`` template string.
+
+        Preserves error detection for typos: when the source node DID execute
+        (root present in context) but the field path is wrong, the template
+        stays unresolved and the normal error fires.
+        """
+        if key != "inputs" or not self.optional_input_keys:
+            return resolved_value
+
+        if not isinstance(resolved_value, dict) or not isinstance(template, dict):
+            return resolved_value
+
+        modified = dict(resolved_value)
+        for input_key in self.optional_input_keys:
+            if input_key not in modified or input_key not in template:
+                continue
+
+            input_value = modified[input_key]
+            input_template = template[input_key]
+
+            # Only process if this value is still an unresolved template string
+            if not isinstance(input_value, str) or "${" not in input_value:
+                continue
+            if not isinstance(input_template, str) or input_value != input_template:
+                continue  # Partially resolved or non-string template — don't touch
+
+            if self._all_variables_from_absent_nodes(input_template, context):
+                modified[input_key] = None
+                logger.debug(
+                    f"Injected None for optional input '{input_key}' (source node not executed): {input_template}",
+                    extra={"node_id": self.node_id, "input_key": input_key},
+                )
+
+        return modified
+
     def _contains_unresolved_template(self, resolved_value: Any, original_template: Any, _depth: int = 0) -> bool:
         """Check if a resolved value contains unresolved templates.
 
@@ -528,41 +596,6 @@ class TemplateAwareNodeWrapper:
 
         return context
 
-    def _resolve_simple_template(self, template: str, context: dict[str, Any]) -> tuple[Any, bool]:
-        """Resolve a simple template variable like '${var}'.
-
-        Uses shared helper from TemplateResolver for consistent simple template detection.
-
-        Args:
-            template: Template string to resolve
-            context: Resolution context
-
-        Returns:
-            Tuple of (resolved_value, was_simple_template)
-        """
-        # Use shared helper for simple template detection
-        var_name = TemplateResolver.extract_simple_template_var(template)
-        if var_name is None:
-            return None, False
-
-        # Check if variable exists (even if its value is None)
-        if TemplateResolver.variable_exists(var_name, context):
-            # Variable exists - resolve and preserve its type (including None)
-            resolved_value = TemplateResolver.resolve_value(var_name, context)
-            logger.debug(
-                f"Resolved simple template: ${{{var_name}}} -> {resolved_value!r} "
-                f"(type: {type(resolved_value).__name__})",
-                extra={"node_id": self.node_id},
-            )
-            return resolved_value, True
-        else:
-            # Variable doesn't exist - keep template as-is for debugging
-            logger.debug(
-                f"Template variable '${{{var_name}}}' not found in context, keeping template as-is",
-                extra={"node_id": self.node_id},
-            )
-            return template, True
-
     def _resolve_template_parameter(self, key: str, template: Any, context: dict[str, Any]) -> tuple[Any, bool]:
         """Resolve a single template parameter.
 
@@ -585,14 +618,9 @@ class TemplateAwareNodeWrapper:
 
         # Handle string templates
         if isinstance(template, str) and "${" in template:
-            # Try simple template first
-            resolved_value, is_simple = self._resolve_simple_template(template, context)
-            if is_simple:
-                return resolved_value, True
-
-            # Complex template with text around it, must be string
+            is_simple = TemplateResolver.is_simple_template(template)
             resolved_value = TemplateResolver.resolve_template(template, context)
-            return resolved_value, False
+            return resolved_value, is_simple
 
         # No template variables present, preserve original type
         return template, False
@@ -736,6 +764,52 @@ class TemplateAwareNodeWrapper:
 
         return hints
 
+    @staticmethod
+    def _diagnose_coalesce(template_str: str, context: dict[str, Any]) -> tuple[list[str], set[str]]:
+        """Diagnose coalesce expressions in a template and return error lines.
+
+        For each coalesce expression, determines per-operand status:
+        - Root absent: branch/node didn't execute
+        - Root present but path failed: likely typo
+        - Resolved: operand worked (shouldn't appear in unresolved templates)
+
+        Args:
+            template_str: Original template string (may contain multiple ${...})
+            context: Resolution context
+
+        Returns:
+            Tuple of (diagnostic_lines, coalesce_variables) where
+            coalesce_variables is the set of variable names already diagnosed
+            (so they can be excluded from the generic unresolved list).
+        """
+        lines: list[str] = []
+        diagnosed_vars: set[str] = set()
+
+        for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template_str):
+            expr = match.group(1)
+            if not TemplateResolver.is_coalesce_expression(expr):
+                continue
+
+            operands = TemplateResolver.split_coalesce_operands(expr)
+            diagnosed_vars.update(operands)
+
+            # Diagnose each operand
+            operand_lines: list[str] = []
+            for operand in operands:
+                root = TemplateResolver._ROOT_SPLIT_PATTERN.split(operand)[0]
+                if root not in context:
+                    operand_lines.append(f"  - ${{{operand}}}: node '{root}' did not execute")
+                elif TemplateResolver.variable_exists(operand, context):
+                    operand_lines.append(f"  - ${{{operand}}}: resolved (OK)")
+                else:
+                    # Root present but path failed — typo
+                    operand_lines.append(f"  - ${{{operand}}}: node '{root}' executed but path '{operand}' not found")
+
+            lines.append(f"Coalesce expression ${{{expr}}} failed — no operand resolved:")
+            lines.extend(operand_lines)
+
+        return lines, diagnosed_vars
+
     def _build_enhanced_template_error(self, param_key: str, template: str, context: dict[str, Any]) -> str:
         """Build detailed error message for unresolved template.
 
@@ -747,52 +821,67 @@ class TemplateAwareNodeWrapper:
         Returns:
             Formatted error message with context and suggestions
         """
-        # Extract variable names from template
-        all_variables = TemplateResolver.extract_variables(str(template))
+        template_str = str(template)
 
-        # Filter to only actually unresolved variables (not in context)
-        # This prevents misleading errors like "${provided}, ${missing}" when only ${missing} failed
-        variables = {v for v in all_variables if not TemplateResolver.variable_exists(v, context)}
+        # Diagnose coalesce expressions first (with per-operand status)
+        coalesce_lines, coalesce_vars = self._diagnose_coalesce(template_str, context)
 
-        # Build available keys section
+        # Extract all variable names, filter to unresolved, exclude already-diagnosed coalesce vars
+        all_variables = TemplateResolver.extract_variables(template_str)
+        variables = {v for v in all_variables if not TemplateResolver.variable_exists(v, context)} - coalesce_vars
+
+        # Build error header
+        error_parts: list[str] = []
+        if coalesce_lines:
+            error_parts.append(f"Unresolved template in parameter '{param_key}':")
+            error_parts.append("")
+            error_parts.extend(coalesce_lines)
+            if variables:
+                error_parts.append("")
+                error_parts.append(f"Also unresolved: {', '.join(f'${{{v}}}' for v in variables)}")
+        elif variables:
+            error_parts.append(
+                f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"
+            )
+        else:
+            # Edge case: all variables individually exist but template still unresolved
+            error_parts.append(f"Unresolved template in parameter '{param_key}'")
+
+        # Append context keys, JSON hints, and suggestions
+        all_unresolved = variables | {v for v in coalesce_vars if not TemplateResolver.variable_exists(v, context)}
+        self._append_error_context(error_parts, all_unresolved, context)
+
+        return "\n".join(error_parts)
+
+    def _append_error_context(self, error_parts: list[str], unresolved: set[str], context: dict[str, Any]) -> None:
+        """Append available keys, JSON hints, and suggestions to error message."""
         available_keys = [k for k in context if not k.startswith("__")]
         available_keys.sort()
 
-        # Limit to 20 keys for readability
         if len(available_keys) > 20:
             available_display = available_keys[:20]
             available_display.append(f"... and {len(available_keys) - 20} more")
         else:
             available_display = available_keys
 
-        # Simplified single-line error message (removes redundancy)
-        # Only report actually unresolved variables
-        error_parts = [f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"]
-
-        # Add available keys section (only if there are keys to show)
         if available_keys:
             error_parts.append("")
             error_parts.extend(self._format_available_keys(available_display, context))
 
-        # Check for JSON parsing failures (most actionable hint for this feature)
-        json_hints = self._detect_json_parse_hints(variables, context)
+        json_hints = self._detect_json_parse_hints(unresolved, context)
         if json_hints:
             error_parts.append("")
             error_parts.append("⚠️ JSON parsing issue:")
             for hint in json_hints:
                 error_parts.append(f"  {hint}")
             error_parts.append("  Fix: Ensure upstream node outputs valid JSON.")
-
-        # Add suggestions for close matches (only if no JSON hints - avoid confusion)
-        if not json_hints:
-            suggestions = self._generate_suggestions(variables, available_keys)
+        else:
+            suggestions = self._generate_suggestions(unresolved, available_keys)
             if suggestions:
                 error_parts.append("")
                 error_parts.append("💡 Suggestions:")
                 for s in suggestions:
                     error_parts.append(f"  {s}")
-
-        return "\n".join(error_parts)
 
     def _run(self, shared: dict[str, Any]) -> Any:  # noqa: C901
         """Execute with template resolution.
@@ -875,6 +964,11 @@ class TemplateAwareNodeWrapper:
                         if upstream_context:
                             raise ValueError(str(e) + upstream_context) from None
                         raise
+
+            # Inject None for optional inputs from non-executed branches
+            # (must happen before unresolved check so injected Nones aren't flagged)
+            if key == "inputs" and self.optional_input_keys:
+                resolved_value = self._inject_none_for_optional_inputs(key, resolved_value, template, context)
 
             resolved_params[key] = resolved_value
 

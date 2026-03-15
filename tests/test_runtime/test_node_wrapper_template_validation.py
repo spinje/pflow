@@ -591,3 +591,160 @@ class TestErrorMessageAccuracy:
 
         # Should show available keys to help user debug
         assert "available_key" in error_msg or "Available context keys" in error_msg
+
+
+class TestOptionalInputInjection:
+    """Test _inject_none_for_optional_inputs for branch convergence.
+
+    When a code node has optional inputs (T | None), and the source node
+    for that input didn't execute (its namespace is absent from the shared
+    store), None should be injected instead of leaving the unresolved
+    ${...} template string. This enables conditional branching where only
+    one branch executes.
+    """
+
+    def test_injects_none_when_source_node_absent(self):
+        """When source node didn't execute (absent from context), inject None."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
+
+        resolved_value = {"high": "${branch-high.stdout}", "low": "resolved-value"}
+        template = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
+        context = {"branch-low": {"stdout": "resolved-value"}}
+
+        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+
+        assert result["high"] is None
+        assert result["low"] == "resolved-value"
+
+    def test_no_injection_when_source_node_present(self):
+        """When source node executed (present in context), leave unresolved for error detection.
+
+        This preserves typo detection: if the node ran but the field path is
+        wrong (e.g., stddout instead of stdout), the normal unresolved template
+        error should fire.
+        """
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
+
+        resolved_value = {"high": "${branch-high.stddout}", "low": "resolved-value"}
+        template = {"high": "${branch-high.stddout}", "low": "${branch-low.stdout}"}
+        context = {"branch-high": {"stdout": "data"}, "branch-low": {"stdout": "resolved-value"}}
+
+        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+
+        # Should NOT inject None — source node exists, this is a typo
+        assert result["high"] == "${branch-high.stddout}"
+        assert result["low"] == "resolved-value"
+
+    def test_no_injection_for_non_optional_keys(self):
+        """Keys not in optional_input_keys should never be injected with None."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
+
+        resolved_value = {"low": "${branch-low.stdout}"}
+        template = {"low": "${branch-low.stdout}"}
+        context = {}
+
+        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+
+        # "low" is not in optional_input_keys, so it stays unchanged
+        assert result["low"] == "${branch-low.stdout}"
+
+    def test_no_injection_when_key_not_inputs(self):
+        """Method only acts on key='inputs'; other keys are returned unchanged."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"x"})
+
+        resolved_value = {"x": "${source.value}"}
+        template = {"x": "${source.value}"}
+        context = {}
+
+        result = wrapper._inject_none_for_optional_inputs("prompt", resolved_value, template, context)
+
+        # key is "prompt", not "inputs" — no injection
+        assert result["x"] == "${source.value}"
+
+    def test_no_injection_when_no_optional_keys(self):
+        """With empty optional_input_keys, method is a no-op."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys=set())
+
+        resolved_value = {"high": "${branch-high.stdout}"}
+        template = {"high": "${branch-high.stdout}"}
+        context = {}
+
+        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+
+        # No optional keys configured — no injection
+        assert result["high"] == "${branch-high.stdout}"
+
+    def test_injects_none_for_multiple_optional_keys(self):
+        """When multiple optional keys have absent source nodes, all get None."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high", "low"})
+
+        resolved_value = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
+        template = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
+        context = {}  # Neither source node executed
+
+        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+
+        assert result["high"] is None
+        assert result["low"] is None
+
+    def test_resolved_value_not_modified(self):
+        """Already-resolved values (no ${) should not be touched."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
+
+        resolved_value = {"high": "already-resolved"}
+        template = {"high": "${branch-high.stdout}"}
+        context = {}
+
+        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+
+        # Value is already resolved (no ${), so it stays as-is
+        assert result["high"] == "already-resolved"
+
+
+class TestCoalesceErrorMessages:
+    """Test that coalesce errors show per-operand diagnosis."""
+
+    def test_coalesce_error_shows_absent_nodes(self):
+        """When neither branch ran, error shows which nodes didn't execute."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(
+            node,
+            "test-node",
+            initial_params={"command": "${branch-high.stdout ?? branch-low.stdout}"},
+        )
+        wrapper.set_params({"command": "${branch-high.stdout ?? branch-low.stdout}"})
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run({})
+
+        error_msg = str(exc_info.value)
+        assert "Coalesce expression" in error_msg
+        assert "branch-high.stdout ?? branch-low.stdout" in error_msg
+        assert "branch-high" in error_msg and "did not execute" in error_msg
+        assert "branch-low" in error_msg and "did not execute" in error_msg
+
+    def test_coalesce_error_shows_path_error(self):
+        """When a branch ran but path is wrong, error shows the typo."""
+        node = DummyNode()
+        wrapper = TemplateAwareNodeWrapper(
+            node,
+            "test-node",
+            initial_params={"command": "${branch-high.stddout ?? branch-low.stdout}"},
+        )
+        wrapper.set_params({"command": "${branch-high.stddout ?? branch-low.stdout}"})
+
+        shared = {"branch-high": {"stdout": "data"}}  # branch-high ran
+
+        with pytest.raises(ValueError) as exc_info:
+            wrapper._run(shared)
+
+        error_msg = str(exc_info.value)
+        assert "Coalesce expression" in error_msg
+        assert "not found" in error_msg  # path error for stddout
