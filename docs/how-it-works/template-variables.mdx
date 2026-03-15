@@ -288,7 +288,7 @@ The `shell` node stores the resolved command that was actually executed, accessi
 The `http` node exposes `response_headers` (dict) and `response_time` (seconds as float) alongside the response body. Useful for handling pagination links, rate limit headers, or performance monitoring.
 
 <Tip>
-  Per-node cost is available internally as `llm_usage.cost_usd` (estimated from token pricing, `null` for unknown models). Access it via a `code` node's `shared` dict — it's not exposed as a template variable because pricing coverage varies by model. Aggregate cost across all nodes appears in the CLI JSON output after the workflow finishes.
+  Per-node cost is available internally as `llm_usage.cost_usd` (estimated from token pricing, `null` for unknown models). Access it via a [code node's](/reference/nodes/code) `inputs` dict — it's not exposed as a template variable because pricing coverage varies by model. Aggregate cost across all nodes appears in the CLI JSON output after the workflow finishes.
 </Tip>
 
 ## Escaping

@@ -313,13 +313,8 @@ class TestLLMUsageAccumulation:
         assert "__llm_calls__" in shared
         assert len(shared["__llm_calls__"]) == 0
 
-    def test_llm_usage_enriched_with_cost_in_shared_store(self):
-        """After execution, shared store's llm_usage dict should have cost_usd added.
-
-        Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
-        The LLMSimulatorNode uses prompt_tokens/completion_tokens (OpenAI-style) which are
-        different keys, so we need a node that uses the correct key names for this test.
-        """
+    def _make_llm_cost_wrapper(self):
+        """Create an InstrumentedNodeWrapper around a node that writes standard llm_usage."""
 
         class LLMNodeWithStandardTokenKeys(Node):
             """Node simulating LLM usage with input_tokens/output_tokens keys."""
@@ -332,8 +327,16 @@ class TestLLMUsageAccumulation:
                 }
                 return "done"
 
-        node = LLMNodeWithStandardTokenKeys()
-        wrapper = InstrumentedNodeWrapper(node, "llm_cost", None, None)
+        return InstrumentedNodeWrapper(LLMNodeWithStandardTokenKeys(), "llm_cost", None, None)
+
+    def test_llm_usage_enriched_with_cost_in_shared_store(self):
+        """After execution, shared store's llm_usage dict should have cost_usd added.
+
+        Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
+        The LLMSimulatorNode uses prompt_tokens/completion_tokens (OpenAI-style) which are
+        different keys, so we need a node that uses the correct key names for this test.
+        """
+        wrapper = self._make_llm_cost_wrapper()
 
         shared = {}
         wrapper._run(shared)
@@ -348,20 +351,7 @@ class TestLLMUsageAccumulation:
 
     def test_llm_calls_accumulator_has_cost_usd(self):
         """The __llm_calls__ accumulator entries should also contain cost_usd."""
-
-        class LLMNodeWithStandardTokenKeys(Node):
-            """Node simulating LLM usage with input_tokens/output_tokens keys."""
-
-            def _run(self, shared):
-                shared["llm_usage"] = {
-                    "model": "gpt-4",
-                    "input_tokens": 1000,
-                    "output_tokens": 500,
-                }
-                return "done"
-
-        node = LLMNodeWithStandardTokenKeys()
-        wrapper = InstrumentedNodeWrapper(node, "llm_cost", None, None)
+        wrapper = self._make_llm_cost_wrapper()
 
         shared = {}
         wrapper._run(shared)
