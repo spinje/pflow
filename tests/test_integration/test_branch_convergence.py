@@ -442,7 +442,7 @@ class TestCoalesceInWorkflowOutputs:
     """Test coalesce in workflow output source declarations (full compile+execute).
 
     This tests the complete chain: compiler monkey-patches flow.run →
-    populate_declared_outputs → resolve_output_source → resolve_template.
+    populate_declared_outputs → resolve_template.
     The output resolver previously bypassed resolve_template, silently
     dropping coalesced outputs.
     """

@@ -619,16 +619,15 @@ def _try_declared_outputs(
 
 def _populate_declared_outputs_best_effort(shared_storage: dict[str, Any], workflow_ir: dict[str, Any]) -> None:
     """Best-effort population of declared outputs from source expressions."""
+    from pflow.core.user_errors import OutputResolutionError
+    from pflow.runtime.output_resolver import populate_declared_outputs
+
     try:
-        from pflow.runtime.output_resolver import populate_declared_outputs
-
         populate_declared_outputs(shared_storage, workflow_ir)
-    except Exception as e:
-        from pflow.core.user_errors import OutputResolutionError
-
-        if isinstance(e, OutputResolutionError):
-            click.echo(f"Warning: {e.title}\n{e.explanation}", err=True)
-        return
+    except OutputResolutionError as e:
+        click.echo(f"Warning: {e.title}\n{e.explanation}", err=True)
+    except Exception:  # noqa: S110
+        pass  # Best-effort: non-diagnostic errors silently ignored
 
 
 def _warn_missing_declared_outputs(declared_outputs: dict[str, Any], verbose: bool) -> None:

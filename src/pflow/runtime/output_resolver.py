@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from pflow.runtime.template_resolver import TemplateResolver
 
+# Split "node.path[0]" → "node" to extract root node ID
 _ROOT_SPLIT = re.compile(r"[.\[]")
 
 
@@ -35,9 +36,7 @@ def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> O
     Returns:
         The resolved value or None if not found
     """
-    # Normalize to ${...} format so resolve_template() can handle it
-    if not source_expr.startswith("${"):
-        source_expr = "${" + source_expr[1:] + "}" if source_expr.startswith("$") else "${" + source_expr + "}"
+    source_expr = _normalize_source(source_expr)
 
     # Use resolve_template() which handles coalesce (??), nested indices,
     # type preservation, and all other template syntax
