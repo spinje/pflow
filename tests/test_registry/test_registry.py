@@ -472,6 +472,24 @@ class TestRegistryRealWorldScenarios:
             assert "node-2" in final
             assert "node-1" not in final
 
+    def test_deepcopy_returns_same_instance(self):
+        """Registry must survive deep copy — parallel batch depends on this.
+
+        PflowBatchNode deep-copies the inner node chain for thread isolation.
+        Registry is injected as a param into workflow nodes and contains
+        SettingsManager._lock (threading.RLock), which cannot be pickled.
+
+        Registry.__deepcopy__ returns self because it's a shared, read-only
+        resource during execution. If this method is removed, parallel batch
+        on workflow nodes fails with 'cannot pickle _thread.RLock object'.
+        """
+        import copy
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry = Registry(Path(tmpdir) / "test.json")
+            copied = copy.deepcopy(registry)
+            assert copied is registry
+
 
 class TestRegistryVersionRefresh:
     """Test version-based registry refresh behavior.

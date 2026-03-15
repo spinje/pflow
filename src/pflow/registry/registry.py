@@ -32,6 +32,17 @@ class Registry:
         # Lazy load settings manager to avoid circular import
         self._settings_manager: Optional[Any] = None
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> "Registry":
+        """Return self on deep copy — Registry is a shared, read-only resource.
+
+        The Registry (and its SettingsManager with threading.RLock) cannot be
+        deep-copied. Parallel batch execution deep-copies the node chain, and
+        Registry is injected as a param. All threads should share the same
+        Registry instance since it's read-only during workflow execution.
+        """
+        memo[id(self)] = self
+        return self
+
     @property
     def settings_manager(self) -> Any:
         """Lazy load SettingsManager to avoid circular imports."""

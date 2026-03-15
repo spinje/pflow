@@ -1013,3 +1013,234 @@ class TestBatchTemplateValidation:
         # CRITICAL: Should NOT fail with "does not output 'results[${item'"
         bad_errors = [e for e in errors if "results[${item" in e]
         assert len(bad_errors) == 0, f"Regression: nested item.field incorrectly parsed: {bad_errors}"
+
+
+class TestBatchWorkflowNodeValidation:
+    """Tests for batch processing on workflow nodes (bug: validator blocked batch+workflow)."""
+
+    @staticmethod
+    def _child_workflow_ir(output_keys: list[str]) -> dict:
+        """Build a minimal inline child workflow IR with given output keys."""
+        outputs = {key: {"type": "any"} for key in output_keys}
+        return {
+            "nodes": [{"id": "step", "type": "llm", "params": {"prompt": "hi"}}],
+            "edges": [],
+            "outputs": outputs,
+        }
+
+    def test_workflow_batch_outputs_recognized(self):
+        """${node.results}, ${node.count}, etc. should be valid for batched workflow nodes."""
+        child_ir = self._child_workflow_ir(["content"])
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-all",
+                    "type": "workflow",
+                    "batch": {"items": "${items}", "parallel": True},
+                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                },
+                {
+                    "id": "summarize",
+                    "type": "llm",
+                    "params": {"prompt": "Results: ${process-all.results}, Count: ${process-all.count}"},
+                },
+            ],
+            "edges": [{"from": "process-all", "to": "summarize"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_workflow_batch_all_outputs_available(self):
+        """All batch outputs should be available on batched workflow nodes."""
+        child_ir = self._child_workflow_ir(["summary"])
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "batch-wf",
+                    "type": "workflow",
+                    "batch": {"items": "${items}"},
+                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                },
+                {
+                    "id": "report",
+                    "type": "llm",
+                    "params": {
+                        "prompt": (
+                            "Results: ${batch-wf.results} "
+                            "Count: ${batch-wf.count} "
+                            "Success: ${batch-wf.success_count} "
+                            "Errors: ${batch-wf.error_count} "
+                            "Error details: ${batch-wf.errors} "
+                            "Metadata: ${batch-wf.batch_metadata}"
+                        )
+                    },
+                },
+            ],
+            "edges": [{"from": "batch-wf", "to": "report"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": []}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_workflow_batch_inner_outputs_in_results(self):
+        """Child workflow outputs should be accessible inside results array items."""
+        child_ir = self._child_workflow_ir(["content"])
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-all",
+                    "type": "workflow",
+                    "batch": {"items": "${items}"},
+                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                },
+                {
+                    "id": "use-results",
+                    "type": "llm",
+                    "params": {
+                        "prompt": "First: ${process-all.results[0].content}, Item: ${process-all.results[0].item}"
+                    },
+                },
+            ],
+            "edges": [{"from": "process-all", "to": "use-results"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_workflow_batch_blocks_direct_child_outputs(self):
+        """Direct child output access should fail when batch is configured."""
+        child_ir = self._child_workflow_ir(["content"])
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-all",
+                    "type": "workflow",
+                    "batch": {"items": "${items}"},
+                    "params": {"workflow_ir": child_ir, "text": "${item}"},
+                },
+                {
+                    "id": "wrong",
+                    "type": "llm",
+                    "params": {"prompt": "Got: ${process-all.content}"},
+                },
+            ],
+            "edges": [{"from": "process-all", "to": "wrong"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        # Should fail because 'content' is inside results, not at top level
+        assert len(errors) > 0, "Should reject direct child output access on batched workflow"
+        assert any("content" in e for e in errors), f"Error should mention 'content': {errors}"
+
+    def test_workflow_batch_item_alias_recognized(self):
+        """${item} should be valid inside batched workflow node params."""
+        child_ir = self._child_workflow_ir(["content"])
+        workflow_ir = {
+            "inputs": {"items": {"type": "array", "required": True}},
+            "nodes": [
+                {
+                    "id": "process-all",
+                    "type": "workflow",
+                    "batch": {"items": "${items}", "as": "thing"},
+                    "params": {"workflow_ir": child_ir, "text": "${thing}"},
+                },
+            ],
+            "edges": [],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_workflow_batch_unresolvable_child_dynamic(self):
+        """Batched workflow with unresolvable child should still register batch outputs."""
+        workflow_ir = {
+            "inputs": {
+                "items": {"type": "array", "required": True},
+                "wf_path": {"type": "string", "required": True},
+            },
+            "nodes": [
+                {
+                    "id": "dynamic-wf",
+                    "type": "workflow",
+                    "batch": {"items": "${items}"},
+                    "params": {"workflow": "${wf_path}", "text": "${item}"},
+                },
+                {
+                    "id": "use-it",
+                    "type": "llm",
+                    "params": {"prompt": "Results: ${dynamic-wf.results}, Count: ${dynamic-wf.count}"},
+                },
+            ],
+            "edges": [{"from": "dynamic-wf", "to": "use-it"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"items": ["a"], "wf_path": "./child.pflow.md"}, registry
+        )
+        # Should pass — batch outputs are known even if child outputs aren't
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_workflow_batch_unresolvable_child_deep_access(self):
+        """Deep results access should work on batched workflow with unresolvable child."""
+        workflow_ir = {
+            "inputs": {
+                "items": {"type": "array", "required": True},
+                "wf_path": {"type": "string", "required": True},
+            },
+            "nodes": [
+                {
+                    "id": "dynamic-wf",
+                    "type": "workflow",
+                    "batch": {"items": "${items}"},
+                    "params": {"workflow": "${wf_path}", "text": "${item}"},
+                },
+                {
+                    "id": "use-deep",
+                    "type": "llm",
+                    "params": {"prompt": "Got: ${dynamic-wf.results[0].content}"},
+                },
+            ],
+            "edges": [{"from": "dynamic-wf", "to": "use-deep"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(
+            workflow_ir, {"items": ["a"], "wf_path": "./child.pflow.md"}, registry
+        )
+        # Should pass — unknown inner outputs should be permissive, not strict
+        assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_workflow_without_batch_still_works(self):
+        """Non-batched workflow nodes should still resolve child outputs normally."""
+        child_ir = self._child_workflow_ir(["content"])
+        workflow_ir = {
+            "inputs": {"text": {"type": "string", "required": True}},
+            "nodes": [
+                {
+                    "id": "single",
+                    "type": "workflow",
+                    "params": {"workflow_ir": child_ir, "text": "${text}"},
+                },
+                {
+                    "id": "use-it",
+                    "type": "llm",
+                    "params": {"prompt": "Got: ${single.content}"},
+                },
+            ],
+            "edges": [{"from": "single", "to": "use-it"}],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {"text": "hello"}, registry)
+        assert len(errors) == 0, f"Unexpected errors: {errors}"

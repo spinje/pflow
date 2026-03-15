@@ -960,25 +960,16 @@ class TemplateValidator:
                 continue
 
             # Workflow nodes: resolve child outputs for validation.
-            # Try to load the child workflow and extract its declared outputs.
-            # If unresolvable, mark as dynamic (accept any output reference).
             if node_type in ("workflow", "pflow.runtime.workflow_executor"):
-                child_outputs = TemplateValidator._resolve_child_workflow_outputs(node, initial_params)
-                if child_outputs is not None:
-                    for output_name, output_spec in child_outputs.items():
-                        output_type = output_spec.get("type", "any") if isinstance(output_spec, dict) else "any"
-                        output_info = {"type": output_type, "node_id": node_id, "node_type": node_type}
-                        node_outputs[output_name] = output_info
-                        if enable_namespacing:
-                            node_outputs[f"{node_id}.{output_name}"] = output_info
-                else:
-                    # Can't resolve child outputs — mark as dynamic
-                    node_outputs[node_id] = {
-                        "type": "any",
-                        "node_id": node_id,
-                        "node_type": node_type,
-                        "is_workflow_dynamic": True,
-                    }
+                TemplateValidator._register_workflow_node_outputs(
+                    node_outputs,
+                    node,
+                    node_id,
+                    node_type,
+                    enable_namespacing,
+                    registry,
+                    initial_params,
+                )
                 continue
 
             # Check for batch configuration
@@ -989,25 +980,7 @@ class TemplateValidator:
                 TemplateValidator._register_batch_outputs(
                     node_outputs, node_id, node_type, enable_namespacing, registry
                 )
-
-                # Register the item alias as an available variable
-                item_alias = batch_config.get("as", "item")
-                node_outputs[item_alias] = {
-                    "type": "any",
-                    "description": f"Current batch item during iteration (from node '{node_id}')",
-                    "node_id": node_id,
-                    "node_type": node_type,
-                    "is_batch_item": True,
-                }
-
-                # Register __index__ as an available variable (0-based batch item index)
-                node_outputs["__index__"] = {
-                    "type": "int",
-                    "description": f"Current batch item index (0-based) during iteration (from node '{node_id}')",
-                    "node_id": node_id,
-                    "node_type": node_type,
-                    "is_batch_item": True,
-                }
+                TemplateValidator._register_batch_item_variables(node_outputs, node_id, node_type, batch_config)
             else:
                 # Non-batch node: extract outputs from registry interface
                 TemplateValidator._register_node_outputs_from_registry(
@@ -1015,6 +988,94 @@ class TemplateValidator:
                 )
 
         return node_outputs
+
+    @staticmethod
+    def _register_workflow_node_outputs(
+        node_outputs: dict[str, Any],
+        node: dict[str, Any],
+        node_id: str,
+        node_type: str,
+        enable_namespacing: bool,
+        registry: Registry,
+        initial_params: Optional[dict[str, Any]],
+    ) -> None:
+        """Register outputs for a workflow node, handling both batch and non-batch cases.
+
+        Resolves the child workflow's declared outputs. When the node has batch config,
+        wraps those outputs in the batch structure (results, count, etc.) instead of
+        exposing them directly.
+        """
+        child_outputs = TemplateValidator._resolve_child_workflow_outputs(node, initial_params)
+        batch_config = node.get("batch")
+
+        if batch_config:
+            # Batch workflow: wrap child outputs in batch structure
+            if child_outputs is not None:
+                inner_outputs: dict[str, Any] = {}
+                for output_name, output_spec in child_outputs.items():
+                    output_type = output_spec.get("type", "any") if isinstance(output_spec, dict) else "any"
+                    inner_outputs[output_name] = {"type": output_type}
+                TemplateValidator._register_batch_outputs(
+                    node_outputs,
+                    node_id,
+                    node_type,
+                    enable_namespacing,
+                    registry,
+                    inner_outputs_override=inner_outputs,
+                )
+            else:
+                # Child unresolvable: register batch outputs without inner structure.
+                # skip_results_structure=True lets the validator accept any results[N].* path
+                # (falls through to permissive "array type" check).
+                TemplateValidator._register_batch_outputs(
+                    node_outputs,
+                    node_id,
+                    node_type,
+                    enable_namespacing,
+                    registry,
+                    skip_results_structure=True,
+                )
+            TemplateValidator._register_batch_item_variables(node_outputs, node_id, node_type, batch_config)
+        elif child_outputs is not None:
+            # Non-batch workflow with resolvable outputs
+            for output_name, output_spec in child_outputs.items():
+                output_type = output_spec.get("type", "any") if isinstance(output_spec, dict) else "any"
+                output_info = {"type": output_type, "node_id": node_id, "node_type": node_type}
+                node_outputs[output_name] = output_info
+                if enable_namespacing:
+                    node_outputs[f"{node_id}.{output_name}"] = output_info
+        else:
+            # Can't resolve child outputs — mark as dynamic
+            node_outputs[node_id] = {
+                "type": "any",
+                "node_id": node_id,
+                "node_type": node_type,
+                "is_workflow_dynamic": True,
+            }
+
+    @staticmethod
+    def _register_batch_item_variables(
+        node_outputs: dict[str, Any],
+        node_id: str,
+        node_type: str,
+        batch_config: dict[str, Any],
+    ) -> None:
+        """Register the item alias and __index__ as available variables for batch nodes."""
+        item_alias = batch_config.get("as", "item")
+        node_outputs[item_alias] = {
+            "type": "any",
+            "description": f"Current batch item during iteration (from node '{node_id}')",
+            "node_id": node_id,
+            "node_type": node_type,
+            "is_batch_item": True,
+        }
+        node_outputs["__index__"] = {
+            "type": "int",
+            "description": f"Current batch item index (0-based) during iteration (from node '{node_id}')",
+            "node_id": node_id,
+            "node_type": node_type,
+            "is_batch_item": True,
+        }
 
     @staticmethod
     def _resolve_child_workflow_outputs(
@@ -1081,12 +1142,41 @@ class TemplateValidator:
                 return None
 
     @staticmethod
+    def _get_inner_outputs_from_registry(node_type: str, registry: Registry) -> dict[str, Any]:
+        """Look up a node type's output structure from the registry.
+
+        Returns a dict mapping output key → {type, description, structure}.
+        Returns empty dict if node type is not found.
+        """
+        inner_outputs: dict[str, Any] = {}
+        try:
+            nodes_metadata = registry.get_nodes_metadata([node_type])
+            if node_type in nodes_metadata:
+                interface = nodes_metadata[node_type]["interface"]
+                for output in interface.get("outputs", []):
+                    if isinstance(output, str):
+                        inner_outputs[output] = {"type": "any"}
+                    else:
+                        key = output.get("key", "")
+                        if key:
+                            inner_outputs[key] = {
+                                "type": output.get("type", "any"),
+                                "description": output.get("description", ""),
+                                "structure": output.get("structure", {}),
+                            }
+        except (ValueError, KeyError):
+            pass
+        return inner_outputs
+
+    @staticmethod
     def _register_batch_outputs(
         node_outputs: dict[str, Any],
         node_id: str,
         node_type: str,
         enable_namespacing: bool,
         registry: Registry,
+        inner_outputs_override: Optional[dict[str, Any]] = None,
+        skip_results_structure: bool = False,
     ) -> None:
         """Register batch-specific outputs for a node with batch configuration.
 
@@ -1096,28 +1186,20 @@ class TemplateValidator:
         - success_count/error_count: Success/failure counts
         - errors: Error details if any
         - batch_metadata: Execution statistics
+
+        Args:
+            inner_outputs_override: Pre-resolved inner output structure (e.g., from
+                child workflow outputs). When provided, skips registry lookup.
+            skip_results_structure: When True, don't attach items structure to results.
+                Used when inner outputs are unknown (e.g., dynamic workflow child ref)
+                so the validator accepts any results[N].* path at validation time.
         """
-        # Try to get inner node's output structure for results array
-        inner_outputs_structure: dict[str, Any] = {}
-        try:
-            nodes_metadata = registry.get_nodes_metadata([node_type])
-            if node_type in nodes_metadata:
-                interface = nodes_metadata[node_type]["interface"]
-                # Build structure from inner node's outputs
-                for output in interface.get("outputs", []):
-                    if isinstance(output, str):
-                        inner_outputs_structure[output] = {"type": "any"}
-                    else:
-                        key = output.get("key", "")
-                        if key:
-                            inner_outputs_structure[key] = {
-                                "type": output.get("type", "any"),
-                                "description": output.get("description", ""),
-                                "structure": output.get("structure", {}),
-                            }
-        except (ValueError, KeyError):
-            # Graceful fallback if node type not found (e.g., during testing)
-            pass
+        if skip_results_structure:
+            inner_outputs_structure: dict[str, Any] = {}
+        elif inner_outputs_override is not None:
+            inner_outputs_structure = inner_outputs_override
+        else:
+            inner_outputs_structure = TemplateValidator._get_inner_outputs_from_registry(node_type, registry)
 
         for output in TemplateValidator._BATCH_OUTPUTS:
             key = output["key"]
@@ -1129,8 +1211,10 @@ class TemplateValidator:
                 "is_batch_output": True,
             }
 
-            # For 'results' array, add inner node's output structure plus 'item'
-            if key == "results":
+            # For 'results' array, add inner node's output structure plus 'item'.
+            # When skip_results_structure is True, omit items so the validator
+            # falls through to permissive array-type access for unknown inner outputs.
+            if key == "results" and not skip_results_structure:
                 # Each result always contains 'item' (original batch input)
                 result_structure = {"item": {"type": "any", "description": "Original batch input"}}
                 if inner_outputs_structure:
