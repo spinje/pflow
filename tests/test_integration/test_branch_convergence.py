@@ -442,7 +442,7 @@ class TestCoalesceInWorkflowOutputs:
     """Test coalesce in workflow output source declarations (full compile+execute).
 
     This tests the complete chain: compiler monkey-patches flow.run →
-    populate_declared_outputs → resolve_output_source → resolve_template.
+    populate_declared_outputs → resolve_template.
     The output resolver previously bypassed resolve_template, silently
     dropping coalesced outputs.
     """
@@ -605,3 +605,122 @@ class TestCoalesceWithOptionalInputs:
         # Both branches absent → coalesce unresolved → injection sets None →
         # code node sees branch_value=None → result = "NONE-INJECTED"
         assert shared["merge"]["result"] == "NONE-INJECTED"
+
+
+# ===========================================================================
+# TestOutputResolutionErrors — Non-coalesce output sources referencing
+# non-executed branches must error instead of silently dropping.
+# ===========================================================================
+
+
+class TestOutputResolutionErrors:
+    """Test that unresolvable non-coalesce output sources raise errors."""
+
+    def test_non_coalesce_output_errors_on_unexecuted_branch(self) -> None:
+        """Output source without ?? referencing non-executed branch raises error."""
+        from pflow.core.user_errors import OutputResolutionError
+
+        ir = _make_coalesce_ir(route_to_low=True)
+        # Non-coalesce source pointing to branch that didn't execute
+        ir["outputs"] = {
+            "content": {"source": "${branch-high.stdout}"},
+        }
+
+        with pytest.raises(OutputResolutionError, match="branch-high.*did not execute"):
+            compile_and_run_ir(ir)
+
+    def test_coalesce_output_resolves_on_unexecuted_branch(self) -> None:
+        """Output source WITH ?? resolves when one branch didn't execute."""
+        ir = _make_coalesce_ir(route_to_low=True)
+        ir["outputs"] = {
+            "content": {"source": "${branch-low.stdout ?? branch-high.stdout}"},
+        }
+        shared = compile_and_run_ir(ir)
+        assert "content" in shared
+        assert "LOW-VALUE" in shared["content"]
+
+    def test_nested_workflow_output_error_propagates_to_parent(self, tmp_path: Any) -> None:
+        """OutputResolutionError in child workflow surfaces in parent with diagnosis.
+
+        Full chain: parent flow → WorkflowExecutor.exec() → child flow.run() →
+        run_with_hooks() → populate_declared_outputs() raises OutputResolutionError →
+        WorkflowExecutor.exec() catches → post() writes error to parent shared store.
+
+        This is the primary motivating scenario: a parent workflow should see the
+        child's specific diagnosis ("node X did not execute"), not a generic
+        "unresolved variable" error pointing at the parent.
+        """
+
+        # Write child workflow as .pflow.md file — routes to branch-b,
+        # but output references branch-a (which won't execute)
+        child_md = _md("""\
+            # Child With Bad Output
+
+            A child workflow that routes to branch-b but declares an output
+            referencing branch-a without coalesce.
+
+            ## Steps
+
+            ### route
+
+            Route to branch-b always.
+
+            - type: code
+
+            ```python code
+            result: str = "going-b"
+            next: str = "branch-b"
+            ```
+
+            ### branch-a
+
+            Will not execute.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo "from A"
+            ```
+
+            ### branch-b
+
+            Will execute.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo "from B"
+            ```
+
+            ## Outputs
+
+            ### content
+
+            References branch-a without ?? — should error.
+
+            - source: ${branch-a.stdout}
+        """)
+        child_path = tmp_path / "child.pflow.md"
+        child_path.write_text(child_md)
+
+        # Parent: references child by file path
+        parent_ir = {
+            "nodes": [
+                {
+                    "id": "child",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path)},
+                },
+            ],
+            "edges": [],
+        }
+
+        shared = compile_and_run_ir(parent_ir)
+
+        # Child failed — error written to parent's shared store under child namespace
+        assert "child" in shared
+        error = shared["child"].get("error", "")
+        assert "branch-a" in error, f"Expected 'branch-a' in error, got: {error}"
+        assert "did not execute" in error, f"Expected 'did not execute' in error, got: {error}"

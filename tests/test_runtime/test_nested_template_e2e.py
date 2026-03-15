@@ -72,16 +72,6 @@ class TestNestedTemplateE2E:
             ],
             "edges": [],
             "start_node": "api_call",
-            "outputs": {
-                "response": {
-                    "description": "API response",
-                    "source": "${api_call.response}",
-                },
-                "status": {
-                    "description": "HTTP status code",
-                    "source": "${api_call.status_code}",
-                },
-            },
         }
 
         # Create mock registry with HTTP node metadata

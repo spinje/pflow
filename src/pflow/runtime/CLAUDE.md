@@ -39,7 +39,7 @@ src/pflow/runtime/
 **Non-obvious compiler behaviors**:
 - **LLM default model injection**: LLM nodes without `model` param get auto-injected default from `get_default_workflow_model()`. Fails with helpful message if no model configured anywhere.
 - **Source line threading**: `_source_lines` from markdown parser are threaded into params as `_<key>_source_line` — enables nodes to reference `.pflow.md` line numbers in errors.
-- **Flow.run monkey-patching**: When workflow declares outputs, compiler wraps `flow.run` to call `populate_declared_outputs()` after successful execution. Output resolution failures are silently swallowed (best-effort).
+- **Flow.run monkey-patching**: When workflow declares outputs, compiler wraps `flow.run` to call `populate_declared_outputs()` after successful execution. Output resolution raises `OutputResolutionError` for non-coalesce failures; coalesce (`??`) expressions with all-absent operands are silently skipped.
 - **Template resolution mode**: Can come from IR `template_resolution_mode` field OR global settings fallback. Stored in `initial_params["__template_resolution_mode__"]`.
 
 ## Wrapper Architecture
@@ -233,7 +233,7 @@ Downstream: `${process_title.result}`
 
 ### Output Resolver (`output_resolver.py`)
 
-`populate_declared_outputs()` — maps namespaced outputs to root level based on workflow output declarations.
+`populate_declared_outputs()` — maps namespaced outputs to root level based on workflow output declarations. Raises `OutputResolutionError` (from `core/user_errors.py`) for non-coalesce output sources that cannot be resolved (e.g., node didn't execute on the taken branch). Coalesce expressions (`??`) where all operands are absent are silently skipped — this is the expected pattern for branch-dependent outputs.
 
 ### Error Context (`error_context.py`)
 

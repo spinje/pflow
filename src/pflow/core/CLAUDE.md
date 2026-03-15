@@ -39,7 +39,7 @@ src/pflow/core/
 
 ### exceptions.py
 
-**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalPlanningError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard).
+**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalPlanningError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
@@ -214,7 +214,7 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 
 ### user_errors.py
 
-Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `PlannerError`, `CompilationError`.
+Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `PlannerError`, `CompilationError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
 
 ### validation_utils.py
 

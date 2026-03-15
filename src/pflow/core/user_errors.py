@@ -4,7 +4,7 @@ This module provides base classes and utilities for creating clear, actionable
 error messages that help users resolve issues independently.
 """
 
-from typing import Optional
+from typing import Any, Optional
 
 
 class UserFriendlyError(Exception):
@@ -119,3 +119,37 @@ class CompilationError(UserFriendlyError):
     """Error during workflow compilation."""
 
     pass
+
+
+class OutputResolutionError(UserFriendlyError):
+    """Error when workflow output source expressions cannot be resolved."""
+
+    def __init__(
+        self,
+        failures: list[dict[str, Any]],
+        technical_details: Optional[str] = None,
+    ):
+        self.failures = failures
+
+        count = len(failures)
+        title = f"{count} workflow output{'s' if count != 1 else ''} could not be resolved"
+
+        # Build explanation from per-output diagnostics
+        lines: list[str] = []
+        for f in failures:
+            lines.append(f"  Output '{f['output_name']}' (source: {f['source_expr']}):")
+            for diag in f.get("diagnostics", []):
+                lines.append(f"    - {diag}")
+        explanation = "\n".join(lines)
+
+        # Suggest ?? only when at least one variable's root node is absent
+        suggestions: list[str] = []
+        has_absent_root = any(d.get("root_absent") for f in failures for d in f.get("raw_diagnostics", []))
+        if has_absent_root:
+            suggestions.append(
+                "Use the ?? coalesce operator for branch-dependent outputs: "
+                "source: ${branch-a.result ?? branch-b.result}"
+            )
+        suggestions.append("Check that source expressions reference nodes that always execute on this path")
+
+        super().__init__(title, explanation, suggestions, technical_details)
