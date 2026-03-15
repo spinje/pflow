@@ -537,6 +537,40 @@ class TestItemsResolution:
             batch.prep(shared)
 
 
+class TestItemsCoalesce:
+    """Tests for coalesce (??) operator in batch items template."""
+
+    def test_items_coalesce_first_branch(self):
+        """Batch items resolved via coalesce when first branch executed."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${source_a.items ?? source_b.items}"})
+
+        shared = {"source_a": {"items": ["x", "y"]}}
+        items = batch.prep(shared)
+
+        assert items == ["x", "y"]
+
+    def test_items_coalesce_second_branch(self):
+        """Batch items resolved via coalesce when second branch executed."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${source_a.items ?? source_b.items}"})
+
+        shared = {"source_b": {"items": ["a", "b", "c"]}}
+        items = batch.prep(shared)
+
+        assert items == ["a", "b", "c"]
+
+    def test_items_coalesce_all_absent_raises(self):
+        """ValueError when all coalesce operands are absent."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${source_a.items ?? source_b.items}"})
+
+        shared = {}
+
+        with pytest.raises(ValueError, match="resolved to None"):
+            batch.prep(shared)
+
+
 class TestItemsJsonAutoParsing:
     """Tests for JSON string auto-parsing in batch.items.
 

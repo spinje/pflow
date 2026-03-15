@@ -434,6 +434,45 @@ class TestBranchConvergenceCoalesce:
 
 
 # ===========================================================================
+# TestCoalesceInWorkflowOutputs — Coalesce in ## Outputs source declarations
+# ===========================================================================
+
+
+class TestCoalesceInWorkflowOutputs:
+    """Test coalesce in workflow output source declarations (full compile+execute).
+
+    This tests the complete chain: compiler monkey-patches flow.run →
+    populate_declared_outputs → resolve_output_source → resolve_template.
+    The output resolver previously bypassed resolve_template, silently
+    dropping coalesced outputs.
+    """
+
+    def test_coalesced_output_resolves_to_executed_branch(self) -> None:
+        """Workflow output with ?? resolves to whichever branch ran."""
+        ir = _make_coalesce_ir(route_to_low=True)
+        ir["outputs"] = {
+            "content": {"source": "${branch-low.stdout ?? branch-high.stdout}"},
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        assert "content" in shared, "Coalesced output was not populated"
+        assert "LOW-VALUE" in shared["content"]
+
+    def test_coalesced_output_other_branch(self) -> None:
+        """Same test, opposite branch — ensures both directions work."""
+        ir = _make_coalesce_ir(route_to_low=False)
+        ir["outputs"] = {
+            "content": {"source": "${branch-high.stdout ?? branch-low.stdout}"},
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        assert "content" in shared, "Coalesced output was not populated"
+        assert "HIGH-VALUE" in shared["content"]
+
+
+# ===========================================================================
 # TestCoalesceWithOptionalInputs — Interaction between Phase 1 and Phase 2
 # ===========================================================================
 

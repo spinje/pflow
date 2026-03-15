@@ -210,6 +210,73 @@ class TestPopulateDeclaredOutputs:
         assert shared["output1"] == "value1"
 
 
+class TestCoalesceInOutputSource:
+    """Tests for coalesce (??) operator in output source expressions."""
+
+    def test_coalesce_resolves_first_present_branch(self):
+        """When first branch executed, coalesce returns its value."""
+        shared = {"branch_a": {"stdout": "hello from A"}}
+
+        result = resolve_output_source("${branch_a.stdout ?? branch_b.stdout}", shared)
+        assert result == "hello from A"
+
+    def test_coalesce_resolves_second_when_first_absent(self):
+        """When first branch absent, coalesce falls through to second."""
+        shared = {"branch_b": {"stdout": "hello from B"}}
+
+        result = resolve_output_source("${branch_b.stdout ?? branch_a.stdout}", shared)
+        assert result == "hello from B"
+
+    def test_coalesce_returns_none_when_all_absent(self):
+        """When no branch executed, coalesce returns None."""
+        shared = {}
+
+        result = resolve_output_source("${branch_a.stdout ?? branch_b.stdout}", shared)
+        assert result is None
+
+    def test_coalesce_three_operands(self):
+        """Three-way coalesce resolves to whichever branch ran."""
+        shared = {"branch_c": {"result": "from C"}}
+
+        result = resolve_output_source("${branch_a.result ?? branch_b.result ?? branch_c.result}", shared)
+        assert result == "from C"
+
+    def test_coalesce_preserves_type(self):
+        """Coalesce preserves non-string types (list, dict, int)."""
+        shared = {"node": {"data": [1, 2, 3]}}
+
+        result = resolve_output_source("${node.data ?? other.data}", shared)
+        assert result == [1, 2, 3]
+
+    def test_coalesce_in_populate_declared_outputs(self):
+        """End-to-end: coalesce in output source populates shared storage."""
+        shared = {"branch_a": {"stdout": "hello from A"}}
+
+        workflow_ir = {
+            "outputs": {
+                "content": {"source": "${branch_a.stdout ?? branch_b.stdout}"},
+            }
+        }
+
+        populate_declared_outputs(shared, workflow_ir)
+
+        assert shared["content"] == "hello from A"
+
+    def test_coalesce_all_absent_does_not_populate(self):
+        """When all coalesce operands absent, output is not written to shared."""
+        shared = {"unrelated": "data"}
+
+        workflow_ir = {
+            "outputs": {
+                "content": {"source": "${branch_a.stdout ?? branch_b.stdout}"},
+            }
+        }
+
+        populate_declared_outputs(shared, workflow_ir)
+
+        assert "content" not in shared
+
+
 class TestEdgeCases:
     """Test edge cases and error conditions."""
 
