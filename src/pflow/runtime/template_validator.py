@@ -1684,6 +1684,55 @@ class TemplateValidator:
         return True
 
     @staticmethod
+    def _check_string_template_types(
+        param_name: str,
+        value: str,
+        expected_type: str,
+        node_id: str,
+        workflow_ir: dict[str, Any],
+        node_outputs: dict[str, Any],
+        errors: list[str],
+    ) -> None:
+        """Validate template types in a string parameter value."""
+        templates = TemplateResolver.extract_variables(value)
+        for template in templates:
+            inferred_type = infer_template_type(template, workflow_ir, node_outputs)
+            if not inferred_type or inferred_type == "any":
+                continue
+            if not is_type_compatible(inferred_type, expected_type):
+                error_msg = (
+                    f"Type mismatch in node '{node_id}' parameter '{param_name}': "
+                    f"template ${{{template}}} has type '{inferred_type}' "
+                    f"but parameter expects '{expected_type}'"
+                )
+                if inferred_type in ["dict", "list", "object"] and expected_type in ["str", "string"]:
+                    error_msg += TemplateValidator._generate_type_fix_suggestion(template, node_outputs, expected_type)
+                errors.append(error_msg)
+
+    @staticmethod
+    def _check_param_type(
+        param_name: str,
+        value: Any,
+        expected_type: Optional[str],
+        node_id: str,
+        workflow_ir: dict[str, Any],
+        node_outputs: dict[str, Any],
+        errors: list[str],
+    ) -> None:
+        """Recursively validate template types in a parameter value."""
+        if isinstance(value, str) and TemplateResolver.has_templates(value):
+            if expected_type and expected_type != "any":
+                TemplateValidator._check_string_template_types(
+                    param_name, value, expected_type, node_id, workflow_ir, node_outputs, errors
+                )
+        elif isinstance(value, dict):
+            for val in value.values():
+                TemplateValidator._check_param_type(param_name, val, None, node_id, workflow_ir, node_outputs, errors)
+        elif isinstance(value, list):
+            for item in value:
+                TemplateValidator._check_param_type(param_name, item, None, node_id, workflow_ir, node_outputs, errors)
+
+    @staticmethod
     def _validate_template_types(
         workflow_ir: dict[str, Any], node_outputs: dict[str, Any], registry: Registry
     ) -> list[str]:
@@ -1697,7 +1746,7 @@ class TemplateValidator:
         Returns:
             List of type mismatch errors
         """
-        errors = []
+        errors: list[str] = []
 
         for node in workflow_ir.get("nodes", []):
             node_type = node.get("type")
@@ -1705,46 +1754,10 @@ class TemplateValidator:
             params = node.get("params", {})
 
             for param_name, param_value in params.items():
-                # Skip non-template parameters
-                if not isinstance(param_value, str) or not TemplateResolver.has_templates(param_value):
-                    continue
-
-                # Get expected type for this parameter
                 expected_type = get_parameter_type(node_type, param_name, registry)
-                if not expected_type or expected_type == "any":
-                    # No type constraint or accepts any type
-                    continue
-
-                # Extract templates from parameter value
-                templates = TemplateResolver.extract_variables(param_value)
-
-                for template in templates:
-                    # Infer template type
-                    inferred_type = infer_template_type(template, workflow_ir, node_outputs)
-
-                    # Skip if cannot infer (will be caught by path validation)
-                    if not inferred_type:
-                        continue
-
-                    # Skip if inferred type is 'any' (runtime validation)
-                    if inferred_type == "any":
-                        continue
-
-                    # Check compatibility
-                    if not is_type_compatible(inferred_type, expected_type):
-                        error_msg = (
-                            f"Type mismatch in node '{node_id}' parameter '{param_name}': "
-                            f"template ${{{template}}} has type '{inferred_type}' "
-                            f"but parameter expects '{expected_type}'"
-                        )
-
-                        # Add helpful suggestions with actual available fields
-                        if inferred_type in ["dict", "list", "object"] and expected_type in ["str", "string"]:
-                            error_msg += TemplateValidator._generate_type_fix_suggestion(
-                                template, node_outputs, expected_type
-                            )
-
-                        errors.append(error_msg)
+                TemplateValidator._check_param_type(
+                    param_name, param_value, expected_type, node_id, workflow_ir, node_outputs, errors
+                )
 
         return errors
 
