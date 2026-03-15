@@ -195,6 +195,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 127: MCP Server Connection Pooling
 - ✅ Task 38: Conditional Branching in Workflows
 - ✅ Task 59: Nested Workflows
+- ✅ Task 128: Branch Convergence for Conditional Workflows
 
 ### Planned Features (in order of priority)
 
@@ -236,6 +237,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 123: OAuth Authentication for MCP HTTP Servers
 
 **Later:**
+- Task 124: Code Node Dependency Management
 - Task 120: Strict Input Type Validation
 - Task 45: Evaluate n8n integration
 - Task 51: Refactor CLI main.py
