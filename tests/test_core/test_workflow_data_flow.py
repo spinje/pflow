@@ -566,3 +566,100 @@ class TestBatchDataFlowValidation:
         errors = validate_data_flow(workflow)
         assert len(errors) == 1, f"Expected error for __index__ without batch: {errors}"
         assert "__index__" in errors[0]
+
+
+class TestNestedParamValidation:
+    """Test that data flow validation recurses into nested dict/list params.
+
+    Covers the fix for GitHub issue #108: _validate_node_params now recurses
+    into dict and list values using an inner _check_value() function, rather
+    than only checking top-level string params.
+    """
+
+    def test_forward_reference_inside_dict_param_is_caught(self):
+        """Template inside a dict param value referencing a later node should error."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "merge", "type": "code", "params": {"inputs": {"x": "${later-node.stdout}"}, "code": "x"}},
+                {"id": "later-node", "type": "shell", "params": {"command": "echo hello"}},
+            ],
+            "edges": [
+                {"from": "merge", "to": "later-node"},  # merge runs first, but refs later-node
+            ],
+        }
+        errors = validate_data_flow(workflow_ir)
+        assert len(errors) == 1
+        assert "later-node" in errors[0]
+        assert "merge" in errors[0]
+
+    def test_non_existent_node_reference_inside_dict_param_is_caught(self):
+        """Template inside a dict param value referencing a non-existent node should error."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "merge", "type": "code", "params": {"inputs": {"x": "${no-such-node.stdout}"}, "code": "x"}},
+            ],
+        }
+        errors = validate_data_flow(workflow_ir)
+        assert len(errors) == 1
+        assert "non-existent" in errors[0].lower() or "no-such-node" in errors[0]
+
+    def test_template_inside_list_param_is_caught(self):
+        """Template inside a list param referencing a later node should error."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "process", "type": "code", "params": {"items": ["${future.stdout}"], "code": "x"}},
+                {"id": "future", "type": "shell", "params": {"command": "echo hi"}},
+            ],
+            "edges": [
+                {"from": "process", "to": "future"},  # process runs first, but refs future
+            ],
+        }
+        errors = validate_data_flow(workflow_ir)
+        assert len(errors) == 1
+        assert "future" in errors[0]
+
+    def test_deeply_nested_template_is_caught(self):
+        """Template buried in dict-inside-list-inside-dict should still be found."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "deep",
+                    "type": "code",
+                    "params": {"config": {"nested": [{"val": "${ghost.stdout}"}]}, "code": "x"},
+                },
+            ],
+        }
+        errors = validate_data_flow(workflow_ir)
+        assert len(errors) == 1
+        assert "ghost" in errors[0]
+
+    def test_valid_backward_reference_inside_dict_param_passes(self):
+        """Template inside a dict param referencing an earlier node should pass."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "first", "type": "shell", "params": {"command": "echo hello"}},
+                {"id": "merge", "type": "code", "params": {"inputs": {"x": "${first.stdout}"}, "code": "x"}},
+            ],
+            "edges": [
+                {"from": "first", "to": "merge"},
+            ],
+        }
+        errors = validate_data_flow(workflow_ir)
+        assert errors == []
+
+    def test_coalesce_expression_inside_dict_param_is_validated(self):
+        """Coalesce expression inside a dict param should validate all operands."""
+        workflow_ir = {
+            "nodes": [
+                {"id": "merge", "type": "code", "params": {"inputs": {"x": "${a.stdout ?? b.stdout}"}, "code": "x"}},
+                {"id": "a", "type": "shell", "params": {"command": "echo a"}},
+                {"id": "b", "type": "shell", "params": {"command": "echo b"}},
+            ],
+            "edges": [
+                {"from": "merge", "to": "a"},
+                {"from": "a", "to": "b"},
+            ],
+        }
+        errors = validate_data_flow(workflow_ir)
+        # Both a and b come after merge — should get errors for both
+        assert len(errors) == 2

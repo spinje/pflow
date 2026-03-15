@@ -242,6 +242,37 @@ def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _check_param_value(
+    param_name: str,
+    value: Any,
+    node_id: str,
+    node_position: int,
+    nodes_by_id: dict[str, Any],
+    node_positions: dict[str, int],
+    valid_simple_refs: set[str],
+    errors: list[str],
+) -> None:
+    """Recursively validate template references in a parameter value."""
+    if isinstance(value, str) and "${" in value:
+        for match in re.finditer(r"\$\{([^}]+)\}", value):
+            for operand in _split_coalesce(match.group(1)):
+                error = _validate_template_reference(
+                    operand, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
+                )
+                if error:
+                    errors.append(error)
+    elif isinstance(value, dict):
+        for val in value.values():
+            _check_param_value(
+                param_name, val, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors
+            )
+    elif isinstance(value, list):
+        for item in value:
+            _check_param_value(
+                param_name, item, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors
+            )
+
+
 def _validate_node_params(
     node: dict[str, Any],
     node_id: str,
@@ -253,11 +284,6 @@ def _validate_node_params(
 ) -> None:
     """Validate template references in a single node's parameters."""
     for param_name, param_value in node.get("params", {}).items():
-        if isinstance(param_value, str) and "${" in param_value:
-            for match in re.finditer(r"\$\{([^}]+)\}", param_value):
-                for operand in _split_coalesce(match.group(1)):
-                    error = _validate_template_reference(
-                        operand, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
-                    )
-                    if error:
-                        errors.append(error)
+        _check_param_value(
+            param_name, param_value, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors
+        )
