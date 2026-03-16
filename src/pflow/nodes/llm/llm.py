@@ -131,6 +131,7 @@ class LLMNode(Node):
         - total_tokens: int  # Total tokens (input + output)
         - cache_creation_input_tokens: int  # Tokens used for cache creation
         - cache_read_input_tokens: int  # Tokens read from cache
+        - cost_usd: float  # Estimated cost in USD (None if model not in pricing table)
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)

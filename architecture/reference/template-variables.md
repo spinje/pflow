@@ -1147,7 +1147,7 @@ Note: Type preservation ensures `max_tokens` receives `1000` (int), not `"1000"`
       "type": "file.write",
       "params": {
         "file_path": "output.txt",
-        "content": "Code: ${generate.response}\n\nCost: $${generate._claude_metadata.total_cost_usd}"
+        "content": "Code: ${generate.response}\n\nCost: $${generate.llm_usage.cost_usd}"
       }
     }
   ]

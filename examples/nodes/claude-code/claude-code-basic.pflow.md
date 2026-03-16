@@ -28,5 +28,5 @@ Report generation results and cost.
 - type: shell
 
 ```text command
-echo "Code generated and saved to fibonacci.py\n\nExecution cost: $${generate._claude_metadata.total_cost_usd}\nDuration: ${generate._claude_metadata.duration_ms}ms\nTokens used: ${generate._claude_metadata.usage.input_tokens} input, ${generate._claude_metadata.usage.output_tokens} output"
+echo "Code generated and saved to fibonacci.py\n\nExecution cost: $${generate.llm_usage.cost_usd}\nDuration: ${generate.llm_usage.duration_ms}ms\nTokens used: ${generate.llm_usage.input_tokens} input, ${generate.llm_usage.output_tokens} output"
 ```

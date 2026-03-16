@@ -10,7 +10,17 @@ Interface:
 - Params: output_schema: dict  # JSON schema for structured outputs (optional)
 - Writes: shared["result"]: any  # Response - string or dict with schema keys
 - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
-- Writes: shared["_claude_metadata"]: dict  # Execution metadata (cost, duration, usage, session_id)
+- Writes: shared["llm_usage"]: dict  # Token usage and execution metadata (empty dict {} if unavailable)
+    - model: str  # Model identifier used
+    - input_tokens: int  # Non-cached input tokens
+    - output_tokens: int  # Output tokens generated
+    - total_tokens: int  # Total tokens (input + output)
+    - cache_creation_input_tokens: int  # Tokens used for cache creation
+    - cache_read_input_tokens: int  # Tokens read from cache
+    - cost_usd: float  # Cost in USD from Claude Code SDK
+    - duration_ms: int  # Execution time in milliseconds
+    - num_turns: int  # Number of conversation turns
+    - session_id: str  # Session ID for resuming conversations
 - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
 - Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
 - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
@@ -29,7 +39,7 @@ Interface:
 
 Note: When output_schema is provided, the result is a dict with schema keys.
 Access values as shared["result"]["key"] in templates: ${node.result.key}
-Session ID is available at ${node._claude_metadata.session_id} for chaining sessions.
+Session ID is available at ${node.llm_usage.session_id} for chaining sessions.
 """
 
 import asyncio
@@ -100,15 +110,17 @@ class ClaudeCodeNode(Node):
     - Params: output_schema: dict  # Schema for structured outputs (optional): {"field": {"type": "str", "description": "..."}}
     - Writes: shared["result"]: any  # Response - string without schema, dict with schema
     - Writes: shared["_schema_error"]: str  # Error message if JSON parsing fails (optional)
-    - Writes: shared["_claude_metadata"]: dict  # Execution metadata
+    - Writes: shared["llm_usage"]: dict  # Token usage and execution metadata (empty dict {} if unavailable)
+        - model: str  # Model identifier used
+        - input_tokens: int  # Non-cached input tokens
+        - output_tokens: int  # Output tokens generated
+        - total_tokens: int  # Total tokens (input + output)
+        - cache_creation_input_tokens: int  # Tokens used for cache creation
+        - cache_read_input_tokens: int  # Tokens read from cache
+        - cost_usd: float  # Cost in USD from Claude Code SDK
         - duration_ms: int  # Execution time in milliseconds
-        - total_cost_usd: float  # Total cost in USD
+        - num_turns: int  # Number of conversation turns
         - session_id: str  # Session ID for resuming conversations
-        - usage: dict  # Token usage information
-            - input_tokens: int  # Number of input tokens
-            - output_tokens: int  # Number of output tokens
-            - cache_creation_input_tokens: int  # Cache creation tokens (if applicable)
-            - cache_read_input_tokens: int  # Cache read tokens (if applicable)
     - Params: cwd: str  # Working directory for Claude (default: os.getcwd())
     - Params: model: str  # Claude model identifier (default: claude-sonnet-4-5)
     - Params: allowed_tools: list  # Permitted tools (default: None = all tools including Task for subagents)
@@ -722,16 +734,8 @@ class ClaudeCodeNode(Node):
                 f"Claude API rate limit exceeded. Please wait a moment and try again.\nOriginal error: {error_msg}"
             ) from None
 
-        # Generic error
-        raise ValueError(
-            f"Claude Code execution failed after {self.max_retries} attempts.\n"
-            f"Error type: {exc_type}\n"
-            f"Error message: {error_msg}\n"
-            "Suggestions:\n"
-            "- Check your internet connection\n"
-            "- Verify Claude CLI is authenticated: claude doctor\n"
-            "- Try a simpler task to isolate the issue"
-        ) from None
+        # Generic error — pass through the SDK error message directly
+        raise ValueError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}") from None
 
     def _build_prompt(self, prep_res: dict[str, Any]) -> str:
         """Build the prompt for Claude Code.
@@ -858,12 +862,8 @@ class ClaudeCodeNode(Node):
             shared["_claude_progress"] = progress_events
             logger.debug(f"Stored {len(progress_events)} progress events for tracing")
 
-        # Store metadata in BOTH formats for compatibility
+        # Store metadata in standardized llm_usage format
         if metadata:
-            # Keep original format for backward compatibility
-            shared["_claude_metadata"] = metadata
-
-            # Store in standardized llm_usage format for tracing
             usage = metadata.get("usage", {})
 
             # Store token counts separately - do NOT aggregate cache tokens into input_tokens
@@ -877,14 +877,11 @@ class ClaudeCodeNode(Node):
                 "input_tokens": base_input,  # Only non-cached input tokens
                 "output_tokens": total_output,
                 "total_tokens": base_input + total_output,
-                "cache_creation_input_tokens": cache_creation,  # Keep breakdown for visibility
-                "cache_read_input_tokens": cache_read,  # Keep breakdown for visibility
-                # Additional Claude Code specific metrics
-                # NOTE: total_cost_usd is the ACTUAL cost from Claude Code
-                # The metrics system may calculate a different cost based on token counts
-                "total_cost_usd": metadata.get("total_cost_usd"),
+                "cache_creation_input_tokens": cache_creation,
+                "cache_read_input_tokens": cache_read,
+                # cost_usd set directly from SDK — enrich_llm_usage_with_cost will skip
+                "cost_usd": metadata.get("total_cost_usd"),
                 "duration_ms": metadata.get("duration_ms"),
-                "duration_api_ms": metadata.get("duration_api_ms"),
                 "num_turns": metadata.get("num_turns"),
                 "session_id": metadata.get("session_id"),
             }

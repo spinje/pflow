@@ -1,6 +1,9 @@
 """Tests for direct execution helper functions in CLI."""
 
-from pflow.cli.main import infer_type, is_likely_workflow_name, parse_workflow_params
+import click
+import click.testing
+
+from pflow.cli.main import _display_cost_summary, infer_type, is_likely_workflow_name, parse_workflow_params
 
 
 class TestInferType:
@@ -167,3 +170,76 @@ class TestIsLikelyWorkflowName:
 
         # --help with other arguments
         assert is_likely_workflow_name("my-workflow", ("--help", "param=value"))
+
+
+class TestDisplayCostSummary:
+    """Tests for _display_cost_summary pricing warning display."""
+
+    @staticmethod
+    def _make_formatted_result(
+        pricing_available: bool = True,
+        unavailable_models: list[str] | None = None,
+        partial_cost_usd: float | None = None,
+    ) -> dict:
+        total: dict = {"tokens_input": 10, "tokens_output": 5, "tokens_total": 15, "cost_usd": None}
+        if not pricing_available:
+            total["pricing_available"] = False
+            total["unavailable_models"] = unavailable_models or []
+            if partial_cost_usd is not None:
+                total["partial_cost_usd"] = partial_cost_usd
+        return {"metrics": {"total": total, "workflow": {"total_tokens": 15}}}
+
+    def test_unknown_model_shows_warning(self) -> None:
+        """When model not in pricing table, show warning with model name."""
+        result = self._make_formatted_result(pricing_available=False, unavailable_models=["my-custom-model"])
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(None, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "Cost unavailable" in cli_result.output
+        assert "my-custom-model" in cli_result.output
+
+    def test_partial_cost_shows_partial_with_models(self) -> None:
+        """When some models have pricing, show partial cost."""
+        result = self._make_formatted_result(
+            pricing_available=False,
+            unavailable_models=["unknown-model"],
+            partial_cost_usd=0.03,
+        )
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(None, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "$0.0300+" in cli_result.output
+        assert "unknown-model" in cli_result.output
+
+    def test_known_model_shows_normal_cost(self) -> None:
+        """When pricing is available, show normal cost."""
+        result = self._make_formatted_result()
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(0.05, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert "$0.0500" in cli_result.output
+        assert "unavailable" not in cli_result.output.lower()
+
+    def test_zero_cost_shows_nothing(self) -> None:
+        """When cost is zero, show nothing."""
+        result = self._make_formatted_result()
+
+        @click.command()
+        def cmd() -> None:
+            _display_cost_summary(0.0, result)
+
+        runner = click.testing.CliRunner()
+        cli_result = runner.invoke(cmd)
+        assert cli_result.output.strip() == ""

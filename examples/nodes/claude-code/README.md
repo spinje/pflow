@@ -24,7 +24,7 @@ pflow run examples/nodes/claude-code/claude-code-basic.json
 **Features demonstrated:**
 - Basic task execution
 - Accessing generated text via `${node.result}`
-- Cost tracking via `${node._claude_metadata.total_cost_usd}`
+- Cost tracking via `${node.llm_usage.cost_usd}`
 - Duration and token usage tracking
 
 ### 2. Structured Code Review (`claude-code-schema.json`)
@@ -101,26 +101,26 @@ Access values directly:
 
 ### Metadata Access
 
-Every execution captures valuable metadata in `_claude_metadata`:
+Every execution captures valuable metadata in `llm_usage`:
 
 ```json
 {
-  "total_cost_usd": 0.165,        // Execution cost
-  "duration_ms": 4805,            // Total duration
-  "duration_api_ms": 3046,        // API call duration
-  "num_turns": 2,                 // Actual turns used
-  "session_id": "...",            // Session identifier
-  "usage": {                      // Token usage details
-    "input_tokens": 1234,
-    "output_tokens": 567,
-    "cache_read_input_tokens": 890
-  }
+  "model": "claude-sonnet-4-5",
+  "input_tokens": 1234,
+  "output_tokens": 567,
+  "total_tokens": 1801,
+  "cache_creation_input_tokens": 0,
+  "cache_read_input_tokens": 890,
+  "cost_usd": 0.165,
+  "duration_ms": 4805,
+  "num_turns": 2,
+  "session_id": "..."
 }
 ```
 
 Access in templates:
-- `${node._claude_metadata.total_cost_usd}`
-- `${node._claude_metadata.usage.input_tokens}`
+- `${node.llm_usage.cost_usd}`
+- `${node.llm_usage.input_tokens}`
 
 ### Context Parameter
 
@@ -187,7 +187,7 @@ Always log costs for expensive operations:
 {
   "type": "echo",
   "params": {
-    "message": "Cost: $${node._claude_metadata.total_cost_usd}"
+    "message": "Cost: $${node.llm_usage.cost_usd}"
   }
 }
 ```
@@ -225,7 +225,7 @@ The node provides user-friendly error messages for common issues:
 1. **Minimize turns**: Each turn costs money and time
 2. **Use specific prompts**: Clear instructions reduce iterations
 3. **Cache when possible**: Reuse results across workflows
-4. **Monitor costs**: Track `total_cost_usd` for budget management
+4. **Monitor costs**: Track `cost_usd` for budget management
 5. **Set timeouts**: Default is 300s, adjust for long tasks
 
 ## Integration Patterns

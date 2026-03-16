@@ -251,16 +251,16 @@ Available fields on `${node_id.llm_usage}`:
 
 ### Claude Code metadata
 
-The `claude-code` node exposes additional execution metadata through `_claude_metadata`:
+The `claude-code` node includes additional execution metadata in `llm_usage` beyond the standard token fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `total_cost_usd` | float | Actual cost in USD |
-| `duration_ms` | float | Total execution time |
+| `cost_usd` | float | Cost in USD from Claude Code SDK |
+| `duration_ms` | int | Total execution time |
 | `session_id` | str | Session ID (use with `resume` parameter to continue conversations) |
 | `num_turns` | int | Number of conversation turns |
 
-Access via `${node_id._claude_metadata.field}`:
+Access via `${node_id.llm_usage.field}`:
 
 ```markdown
 ### step_one
@@ -276,7 +276,7 @@ Continue the same session with follow-up work.
 
 - type: claude-code
 - prompt: Now refactor the issues you found
-- resume: ${step_one._claude_metadata.session_id}
+- resume: ${step_one.llm_usage.session_id}
 ```
 
 ### Shell command
