@@ -270,6 +270,8 @@ This is faster and more reliable than subagents for simple substitutions. It can
 
 **Critical after `git mv`**: If files have been moved, subagents may read/write to old paths, recreating deleted files. Either: (a) give subagents explicit new paths, (b) delete old files before delegating, or (c) verify old files don't reappear after subagent work.
 
+**Subagent quality bar**: Searcher agents find information — give them specific questions. Implementer agents execute changes — give them exact verified content (file paths, line numbers, before/after text), not vague "around line X" guesses. Read the code yourself before dispatching implementers. One focused task per agent.
+
 ### Verifying changes applied
 
 After bulk replacements or subagent work, immediately grep for the OLD pattern:
@@ -314,6 +316,19 @@ grep -rn "OldClassName" src/ tests/
 grep -rn "old_file_name\.py" architecture/ docs/ src/ tests/
 ```
 
+
+### Terminology sweep
+
+The symbol-level grep above catches import paths and class names. But renames leave *vocabulary* behind — comments, docstrings, error messages, variable names. After renaming `planning` → `discovery`, you'll still find "repairable", "triggers repair", "planner" scattered across prose in 70+ files.
+
+Build a list of the old subsystem's domain terms (not just symbol names) and grep for those separately:
+
+```bash
+# Domain vocabulary — terms that won't appear in import paths
+grep -rn "repairable\|triggers repair\|planner" src/ tests/ --include="*.py" --include="*.md"
+```
+
+This is a separate pass from the import sweep. Do it after imports are clean.
 
 ### Migration audit
 
@@ -394,6 +409,11 @@ Hard-won knowledge from real refactors. These pass code review but fail in CI, o
 - When you delete dead code, DELETE its tests too. Don't try to fix them.
 - Subagents doing mechanical updates may also "fix" things you didn't ask for. Audit their diffs, not just "tests pass."
 - `mock.patch("module.path.ClassName")` is a string — breakage is at runtime, not import time. Grep for string-based references.
+- After tightening loose assertions, failures may indicate invalid test fixtures, not broken code. If a fixture uses a data shape that doesn't match what production code produces, the fixture is wrong.
+
+**Simplification traps:**
+- When you remove branches or collapse complex code paths, enumerate what each removed branch handled. The simplified path must either cover those cases or you've explicitly decided to drop them. Dormant code paths sometimes handle edge cases the "main" path doesn't.
+- Comments like "GATED: disabled pending X" mark code for removal, not preservation. Agents consistently misread these as "do not touch."
 
 **Naming traps:**
 - Name modules for what they contain, not where they came from. Utilities extracted from `template_validator.py` aren't necessarily "validation utils" — check whether they're all validation-specific.
