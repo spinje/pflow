@@ -10,7 +10,7 @@ registry/
 ├── registry.py              # Registry class — load/save/search/filter against ~/.pflow/registry.json
 ├── scanner.py               # Discover Node subclasses via importlib (executes code!)
 ├── metadata_extractor.py    # Parse Interface section from node docstrings into structured metadata
-├── context_builder.py       # Build LLM-optimized node/planning context (build_planning_context, build_nodes_context)
+├── context_builder.py       # Build LLM-optimized node/component context (build_component_context, build_nodes_context)
 ├── smart_filter.py          # LLM-powered field reduction for structure-only mode
 ├── discovery.py             # LLM-powered component discovery (discover_components)
 └── prompts/

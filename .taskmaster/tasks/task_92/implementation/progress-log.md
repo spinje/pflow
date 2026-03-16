@@ -398,3 +398,62 @@ These test at the `WorkflowExecutorService._build_error_list()` level — the ex
 ### Key learning
 
 19. **Test at the integration seam, not just the unit.** The API warning detection tests at the InstrumentedNodeWrapper level all passed — the bug was in how executor_service consumed the detection results. Writing tests at the boundary between producer (detection) and consumer (formatting) catches bugs that unit tests on either side miss.
+
+---
+
+## 2026-03-16 — Follow-up Review Fixes: Docs + Regression Guard Tightening
+
+After a later review pass, we evaluated 4 remaining "should we fix this?" items. I agreed to fix all of them, with one important correction: stronger CLI assertions exposed that two old test fixtures were not actually valid direct-execution workflows because they passed parameters without declaring workflow inputs.
+
+### 1. Fixed stale `build_planning_context` references in agent docs
+
+Updated the 5 authoritative agent-facing docs that still referenced the deleted/renamed symbol:
+
+- `src/pflow/cli/CLAUDE.md`
+- `src/pflow/mcp_server/CLAUDE.md`
+- `src/pflow/mcp_server/services/CLAUDE.md`
+- `src/pflow/registry/CLAUDE.md`
+- `tests/CLAUDE.md`
+
+All now reference `build_component_context()` instead of `build_planning_context()`.
+
+**Why this mattered**: In this repo, `CLAUDE.md` files are operational guidance for future agents, not optional prose. Leaving the old name behind would send agents to a function that no longer exists.
+
+### 2. Tightened CLI tests to assert post-planning behavior directly
+
+Updated `tests/test_cli/test_main.py` to remove planner-era fallback assertions and stale comments. Specifically:
+
+- `test_markdown_workflow_with_parameters()` now asserts exit code `0` and actual rendered output (`value1`)
+- `test_file_with_parameters()` now asserts exit code `0` and verifies `output.txt` contains copied content
+- `test_file_with_parameters_template_resolution()` now asserts exit code `0` and verifies `result.txt` contains `Hello World`
+- cleaned stale comments referencing deleted planner behavior / deleted `test_planner_input_validation.py`
+
+**Unexpected finding**: The first two tightened tests initially failed. Not because the direct execution path was broken, but because the old fixtures were passing parameters without declaring `inputs`. The old loose assertions masked that mismatch.
+
+**Fix**: Added explicit `inputs` declarations to those two workflow fixtures so they now reflect the direct execution contract they are testing.
+
+### 3. Locked down validation short-circuit explicitly
+
+Updated `tests/test_execution/test_workflow_execution.py::test_validation_failure_returns_error()` to patch `WorkflowExecutorService` and assert `execute_workflow()` is **not called** when validation fails.
+
+The pre-existing `shared_after == {}` check was useful but indirect. This new assertion makes the intended simplified contract explicit: validation failure returns immediately before the executor runs.
+
+### 4. Added degraded-success formatter coverage
+
+Added 2 tests to `tests/test_execution/formatters/test_success_formatter.py`:
+
+1. **`test_degraded_status_shows_warning_header`** — verifies `status="degraded"` renders "Workflow completed with warnings" instead of the clean success header
+2. **`test_warnings_section_renders_warning_messages`** — verifies warning data renders through the success formatter with node ID, type, and multi-line warning body
+
+This closes the gap left by the previous error-path tests: we already had coverage for warnings surfacing in the **failed** path, but not for the **successful-with-warnings** path.
+
+### Validation
+
+- `uv run pytest tests/test_cli/test_main.py tests/test_execution/test_workflow_execution.py tests/test_execution/formatters/test_success_formatter.py` → **56 passed**
+- `ReadLints` clean on all touched files
+
+### Key learning
+
+20. **Stronger assertions can expose invalid fixtures, not just invalid code.** Tightening the CLI tests from "something vaguely successful happened" to "this exact direct-execution outcome occurred" immediately revealed that two long-standing fixtures were missing declared inputs. The implementation was fine; the tests were under-specified.
+
+21. **Agent docs are part of the runtime for an AI-maintained repo.** A stale symbol name in `CLAUDE.md` is not just documentation drift — it changes what future agents search for, patch, and trust. Treating agent docs as first-class maintenance targets is the right standard here.

@@ -159,7 +159,7 @@ Note: there is no separate `search` subcommand — `pflow registry list <pattern
 
 Ambiguity detected → shows all matching full IDs with guidance.
 
-**Cross-module dependency**: `describe` uses `build_planning_context()` from `pflow.registry.context_builder` to produce detailed node output.
+**Cross-module dependency**: `describe` uses `build_component_context()` from `pflow.registry.context_builder` to produce detailed node output.
 
 ### Execution Caching Pipeline (registry_run.py + read_fields.py)
 
@@ -298,7 +298,7 @@ pflow instructions usage                # Agent guide
 - **Don't import execution module in `__init__.py`** — use lazy imports to avoid circular dependencies
 - **Don't mix output streams** — errors→stderr, results→stdout. This is what makes piping work.
 - **Don't assume TTY** — always check interactive mode before showing progress or prompts
-- **`describe` depends on registry/context_builder** — `registry describe` imports `build_planning_context` from `pflow.registry.context_builder`.
+- **`describe` depends on registry/context_builder** — `registry describe` imports `build_component_context` from `pflow.registry.context_builder`.
 
 ## Testing
 

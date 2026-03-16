@@ -24,10 +24,8 @@ def test_main_command_help():
     assert "Publish as AI skill" in result.output
 
 
-# REMOVED: Tests for old pre-planner "workflow collection" behavior
-# These tests expected unquoted multi-word input to be collected and echoed back.
-# With planner validation, these inputs now correctly show errors requiring quotes.
-# New tests for this behavior are in test_planner_input_validation.py
+# REMOVED: Tests for old workflow collection behavior
+# Unquoted multi-word input is no longer collected as a workflow request.
 
 
 def test_empty_arguments():
@@ -74,7 +72,7 @@ def test_empty_stdin_falls_back_to_argument_workflow():
     """Test that empty stdin allows arguments to be used as workflow."""
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1"], input="")
-    # With planner validation, single word shows helpful error
+    # A lone token is treated as an unknown workflow/command
     assert result.exit_code != 0
     assert "not a known workflow" in result.output
 
@@ -166,17 +164,17 @@ def test_markdown_workflow_with_parameters():
 
         workflow = {
             "ir_version": "0.1.0",
+            "inputs": {"param1": {"type": "string", "required": True}},
             "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${param1}"}}],
             "edges": [],
         }
         with open("workflow.pflow.md", "w") as f:
             f.write(ir_to_markdown(workflow))
 
-        # .pflow.md files are detected automatically and can accept parameters
+        # .pflow.md files are detected automatically and execute directly with params
         result = runner.invoke(main, ["--verbose", "./workflow.pflow.md", "param1=value1"])
-        # Due to Task 22 implementation bug, parameters with file workflows go through planner
-        # The condition checking for spaces prevents direct file+params execution
-        assert "param1" in result.output or "value1" in result.output or "planner" in result.output.lower()
+        assert result.exit_code == 0
+        assert "value1" in result.output
 
 
 def test_file_with_parameters():
@@ -197,6 +195,10 @@ def test_file_with_parameters():
         # Note: pflow uses ${variable} format for templates
         workflow = {
             "ir_version": "0.1.0",
+            "inputs": {
+                "input_file": {"type": "string", "required": True},
+                "output_file": {"type": "string", "required": True},
+            },
             "nodes": [
                 {"id": "reader", "type": "read-file", "params": {"file_path": "${input_file}"}},
                 {
@@ -219,10 +221,9 @@ def test_file_with_parameters():
             main, ["--verbose", "./workflow.pflow.md", "input_file=input.txt", "output_file=output.txt"]
         )
 
-        # Due to Task 22 implementation bug, parameters with file workflows go through planner
-        # The condition checking for spaces prevents direct file+params execution
-        # This test documents the current (broken) behavior
-        assert result.exit_code == 0 or "planner" in result.output.lower() or "input_file" in result.output
+        assert result.exit_code == 0
+        with open("output.txt") as f:
+            assert f.read() == "Test content"
 
 
 def test_pflow_file_with_no_parameters():
@@ -303,14 +304,9 @@ def test_file_with_parameters_template_resolution():
             main, ["--verbose", "./workflow.pflow.md", "input_file=hello.txt", "output_file=result.txt"]
         )
 
-        # Should execute successfully or show collection (test env has planner blocked)
-        assert (
-            "Collected workflow from args" in result.output  # Test env fallback
-            or "planner" in result.output.lower()  # With planner enabled
-            or "Workflow executed" in result.output  # Direct execution
-            or "Hello World" in result.output  # Content was processed
-            or result.exit_code == 0  # Success somehow
-        )
+        assert result.exit_code == 0
+        with open("result.txt") as f:
+            assert f.read() == "Hello World"
 
 
 def test_stdin_data_with_args():
@@ -318,7 +314,7 @@ def test_stdin_data_with_args():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["node1"], input="node2 => node3")
 
-    # With planner validation, single word shows helpful error
+    # A lone token is treated as an unknown workflow/command
     assert result.exit_code != 0
     assert "not a known workflow" in result.output
 
@@ -351,8 +347,7 @@ def test_stdin_with_file_workflow(mock_stdin_has_data):
 # Tests for context storage
 def test_context_storage_verification():
     """Test that context handles various input types correctly."""
-    # This test originally verified the old "workflow collection" behavior
-    # With planner validation, unquoted multi-word input now errors
+    # This test now verifies invalid multi-word input and stdin handling.
     runner = click.testing.CliRunner()
 
     # Test multi-word unquoted args - should error with quote suggestion
@@ -365,7 +360,7 @@ def test_context_storage_verification():
     assert result.exit_code == 1
     assert "No workflow" in result.output
 
-    # Test file input - non-JSON files go through planner
+    # Test file input - unsupported paths fall back to normal workflow lookup errors
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["./test.pflow"])
         # Non-existent file treated as workflow name
@@ -440,7 +435,7 @@ def test_signal_handling_exit_code():
     runner = click.testing.CliRunner()
     result = runner.invoke(main, ["test"])
 
-    # With planner validation, a lone token shows helpful error
+    # A lone token is treated as an unknown workflow/command
     assert result.exit_code != 0
     assert "not a known workflow" in result.output
 

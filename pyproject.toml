@@ -185,5 +185,4 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser (Task 107, in progress)
-DEP003 = ["anthropic"]  # Transitive dep via llm-anthropic; used by llm-anthropic plugin at runtime
+DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser

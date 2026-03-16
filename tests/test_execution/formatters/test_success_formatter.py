@@ -426,6 +426,51 @@ class TestFormatSuccessAsText:
         assert "Batch2 error 1" in text
         assert "Batch2 error 2" in text
 
+    def test_degraded_status_shows_warning_header(self):
+        """REGRESSION: Degraded workflows use the warning-oriented success header.
+
+        Real bug this catches: Success-with-warnings could be formatted like a
+        clean success, hiding that the workflow completed in a degraded state.
+        """
+        result_dict = {
+            "success": True,
+            "status": "degraded",
+            "duration_ms": 250,
+            "execution": {"nodes_executed": 1, "steps": []},
+        }
+
+        text = format_success_as_text(result_dict)
+
+        assert "Workflow completed with warnings" in text
+        assert "Workflow completed in" not in text
+
+    def test_warnings_section_renders_warning_messages(self):
+        """REGRESSION: Warnings are shown in the success formatter output.
+
+        Real bug this catches: Warning data could survive execution but be lost
+        in the final text output shown to CLI and MCP consumers.
+        """
+        result_dict = {
+            "success": True,
+            "status": "degraded",
+            "duration_ms": 250,
+            "warnings": [
+                {
+                    "node_id": "send-alert",
+                    "type": "api_warning",
+                    "message": "API error: Rate limit exceeded\nRetry after 30s",
+                }
+            ],
+            "execution": {"nodes_executed": 1, "steps": []},
+        }
+
+        text = format_success_as_text(result_dict)
+
+        assert "⚠️ Warnings:" in text
+        assert "send-alert (api_warning):" in text
+        assert "API error: Rate limit exceeded" in text
+        assert "Retry after 30s" in text
+
 
 class TestNonBatchNodesUnchanged:
     """Tests ensuring non-batch node formatting is unchanged."""

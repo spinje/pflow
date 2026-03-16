@@ -53,22 +53,28 @@ class TestWorkflowExecution:
             "edges": [{"from": "echo-hello", "to": "bad-ref", "action": "default"}],
         }
 
-        result = execute_workflow(
-            workflow_ir=workflow_ir,
-            execution_params={},
-        )
+        with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as MockExecutor:
+            mock_executor = MockExecutor.return_value
 
-        # Must fail at validation, not runtime
-        assert result.success is False
-        assert result.status == WorkflowStatus.FAILED
-        assert result.action_result == "validation_failed"
+            result = execute_workflow(
+                workflow_ir=workflow_ir,
+                execution_params={},
+            )
 
-        # No nodes should have executed (no side effects)
-        assert result.shared_after == {}
+            # Must fail at validation, not runtime
+            assert result.success is False
+            assert result.status == WorkflowStatus.FAILED
+            assert result.action_result == "validation_failed"
 
-        # Error should mention the bad template reference
-        assert len(result.errors) > 0
-        assert any("fake-node" in err["message"] for err in result.errors)
+            # Validation short-circuits before the executor runs
+            mock_executor.execute_workflow.assert_not_called()
+
+            # No nodes should have executed (no side effects)
+            assert result.shared_after == {}
+
+            # Error should mention the bad template reference
+            assert len(result.errors) > 0
+            assert any("fake-node" in err["message"] for err in result.errors)
 
     def test_runtime_failure_returns_error(self):
         """Test that runtime failures are returned without repair."""

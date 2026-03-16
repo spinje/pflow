@@ -217,7 +217,7 @@ Mocks from one file persist and break others → Use `@pytest.fixture(autouse=Tr
 ```
 
 ### 13. Context Builder Uses Fresh Instances
-`pflow.registry.context_builder.build_planning_context()` creates fresh `WorkflowManager` instances (no singleton). Pass `workflow_manager=` parameter to control which instance is used in tests.
+`pflow.registry.context_builder.build_component_context()` creates fresh `WorkflowManager` instances (no singleton). Pass `workflow_manager=` parameter to control which instance is used in tests.
 
 ### 14. Testing Implementation Instead of Behavior
 ```python

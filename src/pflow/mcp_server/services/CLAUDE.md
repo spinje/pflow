@@ -23,7 +23,7 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 - **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions
 - **ExecutionService** — Execute, validate, save workflows + run registry nodes (largest service)
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
-- **RegistryService** — Node describe, list/search via `build_planning_context()` and `Registry.search()`
+- **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
 - **WorkflowService** — Workflow list/describe with shared formatters, "did you mean" suggestions
 - **SettingsService** — Environment variable CRUD via SettingsManager (used by disabled settings_tools)
 

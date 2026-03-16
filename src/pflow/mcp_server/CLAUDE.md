@@ -84,7 +84,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `read_fields(execution_id, field_paths)` — Read specific fields from cached `registry_run` execution
 
 **registry_tools.py** (2 tools):
-- `registry_describe(nodes)` — Detailed specs using `build_planning_context()`
+- `registry_describe(nodes)` — Detailed specs using `build_component_context()`
 - `registry_list(filter_pattern)` — All nodes grouped by package; with filter: relevance-sorted search
 
 **workflow_tools.py** (2 tools):
@@ -113,7 +113,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 - **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions for LLM-powered discovery.
 - **ExecutionService** — Execute (NullOutput), validate (4-layer + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
-- **RegistryService** — `describe_nodes()` uses `build_planning_context()`, `list_all_nodes()` supports filter via Registry.search()
+- **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
 - **SettingsService** — Environment variable CRUD via SettingsManager (used by disabled settings_tools)
 
