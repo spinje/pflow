@@ -2023,16 +2023,28 @@ class TemplateValidator:
         safe_node_id = TemplateValidator._sanitize_for_display(node_id)
         safe_alias = TemplateValidator._sanitize_for_display(item_alias)
 
-        # The parent path: item.llm_usage
-        parent_path = f"{safe_alias}.{parts[0]}"
-        # The bad field: nope
-        bad_field = parts[-1].split("[")[0]
-        parent_type = field_info.get("type", "any")
-        nested_structure = field_info.get("structure", {})
+        # Walk through intermediate parts to find where validation actually fails.
+        # For ${item.a.b.c} where c doesn't exist on b, we need to identify b as
+        # the parent — not a — so the error message and available fields are correct.
+        current_info = field_info
+        valid_depth = 0
+        for part in parts[1:-1]:
+            sub = current_info.get("structure", {}) if isinstance(current_info, dict) else {}
+            if part in sub and isinstance(sub[part], dict):
+                current_info = sub[part]
+                valid_depth += 1
+            else:
+                break
+
+        parent_path = f"{safe_alias}.{'.'.join(parts[: 1 + valid_depth])}"
+        bad_field = parts[1 + valid_depth].split("[")[0]
+        parent_name = parts[valid_depth]
+        parent_type = current_info.get("type", "any") if isinstance(current_info, dict) else "any"
+        nested_structure = current_info.get("structure", {}) if isinstance(current_info, dict) else {}
 
         lines = [
             f"Node '{safe_node_id}': ${{{full_template}}} — "
-            f"'{bad_field}' does not exist on '{parts[0]}' ({parent_type}).",
+            f"'{bad_field}' does not exist on '{parent_name}' ({parent_type}).",
         ]
 
         if nested_structure:
@@ -2059,7 +2071,7 @@ class TemplateValidator:
         else:
             lines.append("")
             lines.append(
-                f"'{parts[0]}' has type '{parent_type}' with no known sub-fields. Nested access may fail at runtime."
+                f"'{parent_name}' has type '{parent_type}' with no known sub-fields. Nested access may fail at runtime."
             )
 
         return "\n".join(lines)
@@ -2097,7 +2109,7 @@ class TemplateValidator:
 
             field_refs = TemplateValidator._extract_item_field_refs(node.get("params", {}), item_alias)
 
-            seen_errors: set[str] = set()
+            seen_errors: set[str] = set()  # Mutated by _check_batch_item_ref to dedup
             for field_path, full_template in field_refs:
                 error = TemplateValidator._check_batch_item_ref(
                     field_path, full_template, item_structure, item_alias, items_template, node_id, seen_errors
