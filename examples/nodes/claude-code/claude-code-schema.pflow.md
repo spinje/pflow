@@ -79,7 +79,7 @@ ${review.result.improvements}
 ${review.result.refactored_code}
 
 ---
-*Review cost: $${review._claude_metadata.total_cost_usd}*
+*Review cost: $${review.llm_usage.cost_usd}*
 ```
 
 ### save_improved

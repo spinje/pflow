@@ -93,5 +93,5 @@ Display a cost report for the workflow execution.
 - type: shell
 
 ```text command
-echo "Workflow Cost Report:\n- Analysis: $${analyze_changes._claude_metadata.total_cost_usd} (${analyze_changes._claude_metadata.duration_ms}ms)\n- PR Generation: $${generate_pr._claude_metadata.total_cost_usd} (${generate_pr._claude_metadata.duration_ms}ms)"
+echo "Workflow Cost Report:\n- Analysis: $${analyze_changes.llm_usage.cost_usd} (${analyze_changes.llm_usage.duration_ms}ms)\n- PR Generation: $${generate_pr.llm_usage.cost_usd} (${generate_pr.llm_usage.duration_ms}ms)"
 ```

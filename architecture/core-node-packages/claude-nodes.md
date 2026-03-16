@@ -37,7 +37,7 @@ The Claude Agent SDK provides:
 - Params: `prompt`: str  # The prompt to send to Claude (required)
 - Params: `output_schema`: dict  # JSON schema for structured outputs (optional)
 - Writes: `shared["result"]`: any  # Response - string or dict with schema keys
-- Writes: `shared["_claude_metadata"]`: dict  # Execution metadata
+- Writes: `shared["llm_usage"]`: dict  # Token usage and execution metadata
 
 **Implementation Notes**:
 The claude-code node executes the Claude Agent SDK in headless mode, passing comprehensive instructions and extracting structured output including modified files, analysis, and implementation details.

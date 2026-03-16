@@ -812,11 +812,27 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
         total_cost: Total cost in USD
         formatted_result: Full formatted result containing metrics
     """
+    metrics = formatted_result.get("metrics", {})
+    total_metrics = metrics.get("total", {})
+
+    # Warn about models with unavailable pricing
+    if not total_metrics.get("pricing_available", True):
+        unavailable = total_metrics.get("unavailable_models", [])
+        models_str = ", ".join(unavailable)
+        partial = total_metrics.get("partial_cost_usd")
+        if partial is not None:
+            click.echo(
+                f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})",
+                err=True,
+            )
+        else:
+            click.echo(f"⚠️  Cost unavailable — model not in pricing table: {models_str}", err=True)
+        return
+
     if total_cost is None or total_cost <= 0:
         return
 
     # Get token count for context
-    metrics = formatted_result.get("metrics", {})
     workflow_metrics = metrics.get("workflow", {})
     total_tokens = workflow_metrics.get("total_tokens", 0)
 

@@ -208,9 +208,19 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
     # Show node execution details (matches CLI lines 646-655)
     _append_execution_steps(lines, success_dict.get("execution", {}))
 
-    # Show cost if > 0 (matches CLI lines 604-606)
-    if total_cost and total_cost > 0:
-        metrics = success_dict.get("metrics", {})
+    # Show cost (matches CLI _display_cost_summary)
+    metrics = success_dict.get("metrics", {})
+    total_metrics = metrics.get("total", {})
+
+    if not total_metrics.get("pricing_available", True):
+        unavailable = total_metrics.get("unavailable_models", [])
+        models_str = ", ".join(unavailable)
+        partial = total_metrics.get("partial_cost_usd")
+        if partial is not None:
+            lines.append(f"💰 Cost: ${partial:.4f}+ (partial — pricing unavailable for: {models_str})")
+        else:
+            lines.append(f"⚠️  Cost unavailable — model not in pricing table: {models_str}")
+    elif total_cost and total_cost > 0:
         workflow_metrics = metrics.get("workflow", {})
         total_tokens = workflow_metrics.get("total_tokens", 0)
 
