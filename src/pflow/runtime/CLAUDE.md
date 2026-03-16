@@ -14,7 +14,11 @@ src/pflow/runtime/
 ├── namespaced_wrapper.py    # Collision prevention wrapper (~95 lines)
 ├── namespaced_store.py      # Namespaced store proxy (~156 lines)
 ├── template_resolver.py     # Template variable resolution engine
-├── template_validator.py    # Pre-execution template validation with rich errors
+├── template_validator.py    # Validation orchestrator + output extraction (~500 lines)
+├── template_path_validation.py  # Pass 5: path existence, nested path traversal (~650 lines)
+├── template_type_validation.py  # Passes 6+7: type matching, shell command types (~350 lines)
+├── batch_item_validation.py     # Pass 8: ${item.field} validation (~250 lines)
+├── validation_utils.py          # Shared validation infrastructure (~250 lines)
 ├── workflow_executor.py     # Nested workflow executor node
 ├── workflow_trace.py        # Trace collection with thread-safe LLM interception
 ├── workflow_validator.py    # IR validation and input preparation
@@ -164,15 +168,39 @@ Batch processing wrapper. **Inherits from `Node`, not PocketFlow's `BatchNode`**
 
 > For JSON auto-parsing and type coercion details, see `architecture/core-concepts/data-type-coercion.md`.
 
-### TemplateValidator (`template_validator.py`)
+### Template Validation (split across 5 files)
 
-Pre-execution validation with rich error suggestions:
+Pre-execution validation with rich error suggestions, split by validation concern. Each file owns both detection logic AND error formatting for its concern.
+
+**Entry point**: `validate_workflow_templates()` in `template_validator.py` — orchestrates all passes.
+
+**File structure**:
+- `template_validator.py` — Orchestrator, output extraction, template extraction, simple passes (malformed, unused inputs)
+- `template_path_validation.py` — Pass 5: path existence, namespaced output, nested path traversal + all path error formatting
+- `template_type_validation.py` — Passes 6+7: type matching + shell command type safety
+- `batch_item_validation.py` — Pass 8: `${item.field}` validation against inferred item structure
+- `validation_utils.py` — Shared: `split_template_path`, `sanitize_for_display`, `find_similar_paths`, `flatten_output_structure`, `build_paths_from_entries`, `get_node_ids`, `ValidationWarning`, display constants
+
+**Dependency graph** (no cycles):
+```
+template_validator.py (orchestrator)
+  ├── template_path_validation → validation_utils
+  ├── template_type_validation → type_checker
+  └── batch_item_validation → template_path_validation, validation_utils
+```
+
+**Public API**:
+- `validate_workflow_templates(workflow_ir, available_params, registry)` — main entry point
+- `extract_node_outputs(workflow_ir, registry)` — builds node_outputs dict (also used by compiler.py)
+- `ValidationWarning` — re-exported from validation_utils for backward compat
+
+**Key behaviors**:
 - Validates all templates have sources using registry metadata for node outputs
 - Detects unused declared inputs
 - Flattens nested output structures showing array access patterns
 - "Did you mean X?" suggestions for typos (substring matching)
 - Shows all available paths (limit 20) with types
-- **Shell command validation**: Blocks dict/list templates in shell `command` params (would break shell parsing). Fix options: access specific fields, use stdin, or use the **single-quote escape hatch**: `'${var}'` signals user accepts runtime JSON coercion to string.
+- **Shell command validation**: Blocks dict/list templates in shell `command` params. Fix options: access specific fields, use stdin, or use the **single-quote escape hatch**: `'${var}'`
 
 **Error format example**:
 ```

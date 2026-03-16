@@ -23,7 +23,7 @@ from pflow.registry import Registry
 from .namespaced_wrapper import NamespacedNodeWrapper
 from .node_wrapper import TemplateAwareNodeWrapper
 from .template_resolver import TemplateResolver
-from .template_validator import TemplateValidator, ValidationWarning
+from .template_validator import ValidationWarning, extract_node_outputs, validate_workflow_templates
 from .workflow_validator import prepare_inputs, validate_ir_structure
 
 # Set up module logger
@@ -1092,9 +1092,7 @@ def _validate_workflow(
     # Step 5: Validate templates if requested
     if validate_templates:
         logger.debug("Validating template variables", extra={"phase": "template_validation"})
-        template_errors, template_warnings = TemplateValidator.validate_workflow_templates(
-            ir_dict, initial_params, registry
-        )
+        template_errors, template_warnings = validate_workflow_templates(ir_dict, initial_params, registry)
 
         # Display warnings if present (non-blocking)
         if template_warnings:
@@ -1148,7 +1146,7 @@ def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
             )
 
     # Get all possible outputs from nodes in the workflow
-    all_node_outputs = TemplateValidator._extract_node_outputs(workflow_ir, registry)
+    all_node_outputs = extract_node_outputs(workflow_ir, registry)
 
     logger.debug(
         f"Found {len(all_node_outputs)} possible outputs from nodes",

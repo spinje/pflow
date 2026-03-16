@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validator import TemplateValidator
+from pflow.runtime.validation_utils import flatten_output_structure
 
 # Constants
 MAX_DISPLAYED_FIELDS = 500  # Allow up to 500 template paths
@@ -393,9 +393,7 @@ def extract_metadata_paths(node_type: str, registry: Registry) -> tuple[list[tup
 
             # Flatten nested structure if present
             if structure:
-                nested_paths = TemplateValidator._flatten_output_structure(
-                    base_key=key, base_type=output_type, structure=structure
-                )
+                nested_paths = flatten_output_structure(base_key=key, base_type=output_type, structure=structure)
                 # Skip first as it's the base key we already added
                 all_paths.extend(nested_paths[1:])
 

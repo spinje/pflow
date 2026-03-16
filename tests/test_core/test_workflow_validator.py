@@ -242,9 +242,9 @@ Do something.
         }
 
         # The template validator should resolve ${process.result} successfully
-        from pflow.runtime.template_validator import TemplateValidator
+        from pflow.runtime.template_validator import validate_workflow_templates
 
-        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
+        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
 
         template_errors = [e for e in errors if "process" in e and "result" in e]
         assert len(template_errors) == 0, f"Unexpected errors for workflow output: {template_errors}"
@@ -273,9 +273,9 @@ Do something.
             "edges": [{"from": "process", "to": "use_output"}],
         }
 
-        from pflow.runtime.template_validator import TemplateValidator
+        from pflow.runtime.template_validator import validate_workflow_templates
 
-        errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
+        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
 
         # Dynamic workflow should NOT produce errors for any output reference
         template_errors = [e for e in errors if "process" in e and "anything" in e]

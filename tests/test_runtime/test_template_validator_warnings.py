@@ -8,7 +8,7 @@ Warning behavior:
 
 from unittest.mock import Mock
 
-from pflow.runtime.template_validator import TemplateValidator, ValidationWarning
+from pflow.runtime.template_validator import ValidationWarning, validate_workflow_templates
 
 
 def create_mock_registry_with_str_output():
@@ -115,7 +115,7 @@ class TestValidationWarnings:
         }
 
         registry = create_mock_registry_with_str_output()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should NOT error - str allows nested access via JSON auto-parsing
         assert len(errors) == 0, f"Expected no errors, got: {errors}"
@@ -149,7 +149,7 @@ class TestValidationWarnings:
         }
 
         registry = create_mock_registry_with_any_output()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should NOT error
         assert len(errors) == 0, f"Expected no errors, got: {errors}"
@@ -174,7 +174,7 @@ class TestValidationWarnings:
         }
 
         registry = create_mock_registry_with_str_output()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should not error or warn - direct access, no nesting
         assert len(errors) == 0
@@ -220,7 +220,7 @@ class TestValidationWarnings:
         }
 
         registry = create_mock_registry_with_str_output()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors, got: {errors}"
         assert len(warnings) == 2, f"Expected 2 warnings, got: {warnings}"
@@ -246,7 +246,7 @@ class TestValidationWarnings:
         }
 
         registry = create_mock_registry_with_str_output()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = validate_workflow_templates(workflow_ir, {}, registry)
 
         assert len(errors) == 0
         assert len(warnings) == 1
@@ -286,7 +286,7 @@ class TestWarningEdgeCases:
         }
 
         registry = create_mock_registry_with_str_output()
-        errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, {}, registry)
+        errors, warnings = validate_workflow_templates(workflow_ir, {}, registry)
 
         # Should have error for nonexistent node
         assert len(errors) >= 1
