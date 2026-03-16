@@ -7,7 +7,7 @@ allowing workflows with required inputs to pass validation correctly.
 import json
 from unittest.mock import Mock, patch
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning import create_planner_flow
 
 

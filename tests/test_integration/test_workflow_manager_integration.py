@@ -18,7 +18,7 @@ import pytest
 
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.markdown_parser import MarkdownParseError
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning.context_builder import build_planning_context
 from pflow.pocketflow import Node
 from pflow.registry.registry import Registry
@@ -510,7 +510,7 @@ class TestAtomicOperations:
 
 def test_real_workflow_execution_with_errors(tmp_path):
     """Test workflow execution with nodes that can actually fail."""
-    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.core.workflow.manager import WorkflowManager
     from pflow.registry import Registry
     from pflow.runtime.compiler import compile_ir_to_flow
 
@@ -601,7 +601,7 @@ def test_concurrent_workflow_operations(tmp_path):
 
 def test_nested_workflow_with_real_nodes(tmp_path):
     """Test nested workflow execution with actual file operations."""
-    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.core.workflow.manager import WorkflowManager
     from pflow.registry import Registry
     from pflow.runtime.compiler import compile_ir_to_flow
 

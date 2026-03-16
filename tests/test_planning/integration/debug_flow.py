@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning import create_planner_flow
 
 

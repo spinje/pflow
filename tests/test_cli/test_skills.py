@@ -99,7 +99,7 @@ class TestSkillSaveCommand:
         mock_wm.workflows_dir = Path("/home/user/.pflow/workflows")
 
         # Mock existing skill
-        from pflow.core.skill_service import SkillInfo
+        from pflow.core.workflow.skill_service import SkillInfo
 
         existing_skill = SkillInfo(
             name="test-workflow",
@@ -210,7 +210,7 @@ class TestSkillListCommand:
     @patch("pflow.cli.skills.find_pflow_skills")
     def test_skill_list_shows_skills(self, mock_find: MagicMock) -> None:
         """Test listing skills shows all pflow-managed skills grouped by workflow."""
-        from pflow.core.skill_service import SkillInfo
+        from pflow.core.workflow.skill_service import SkillInfo
 
         mock_skills = [
             SkillInfo(

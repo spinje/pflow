@@ -961,7 +961,7 @@ def validate_linear_workflow(workflow: dict, errors: list[str]) -> None:
             errors.append(f"Branching detected: node '{node_id}' has {count} outgoing edges")
 
 
-# Data flow validation functions have been moved to pflow.core.workflow_data_flow
+# Data flow validation functions have been moved to pflow.core.workflow.data_flow
 # and are now used via WorkflowValidator for production consistency
 
 
@@ -1041,7 +1041,7 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
     errors = []
 
     # PART 1: Use production WorkflowValidator for correctness
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
 
     # Check if test uses MCP nodes
     uses_mcp_nodes = any("mcp" in node_id for node_id in test_case.browsed_node_ids)

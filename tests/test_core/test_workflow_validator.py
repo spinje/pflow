@@ -2,7 +2,7 @@
 
 import pytest
 
-from pflow.core.workflow_validator import WorkflowValidator
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 # Note: Removed autouse fixture that was modifying user's registry.

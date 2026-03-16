@@ -563,7 +563,7 @@ def validate_workflow(workflow: dict, test_case: WorkflowTestCase) -> tuple[bool
     7. Linear workflow validation
     8. Full workflow validation
     """
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
 
     all_errors = []
 

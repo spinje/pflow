@@ -276,7 +276,7 @@ class TestCheckpointIntegration:
 
         # Mock validation and execution to succeed
         with (
-            patch("pflow.core.workflow_validator.WorkflowValidator.validate") as mock_validate,
+            patch("pflow.core.workflow.validator.WorkflowValidator.validate") as mock_validate,
             patch("pflow.execution.executor_service.WorkflowExecutorService.execute_workflow") as mock_execute,
         ):
             # No validation errors

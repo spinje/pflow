@@ -8,7 +8,7 @@ These tests catch REAL bugs in template validation:
 5. False positives → valid templates rejected
 """
 
-from pflow.core.workflow_validator import WorkflowValidator
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 

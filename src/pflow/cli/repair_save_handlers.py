@@ -44,7 +44,7 @@ def _save_repaired_saved_workflow(ctx: click.Context, repaired_workflow_ir: dict
         repaired_workflow_ir: The repaired workflow IR
         no_update: If True, save to repaired/ subfolder; if False, overwrite original
     """
-    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.core.workflow.manager import WorkflowManager
 
     workflow_name = ctx.obj.get("workflow_name")
     if not workflow_name:

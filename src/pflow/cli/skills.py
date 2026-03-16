@@ -10,7 +10,8 @@ from typing import Callable, TypeVar
 
 import click
 
-from pflow.core.skill_service import (
+from pflow.core.workflow.manager import WorkflowManager
+from pflow.core.workflow.skill_service import (
     DEFAULT_TARGET,
     SKILL_TARGETS,
     TARGET_LABELS,
@@ -20,10 +21,9 @@ from pflow.core.skill_service import (
     find_pflow_skills,
     find_skill_for_workflow,
 )
-from pflow.core.skill_service import (
+from pflow.core.workflow.skill_service import (
     remove_skill as remove_skill_service,
 )
-from pflow.core.workflow_manager import WorkflowManager
 
 F = TypeVar("F", bound=Callable[..., None])
 

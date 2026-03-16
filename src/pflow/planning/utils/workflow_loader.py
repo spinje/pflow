@@ -1,6 +1,6 @@
 """Thin wrapper for WorkflowManager."""
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 
 def load_workflow(name: str) -> dict:

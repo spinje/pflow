@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
-from pflow.core.workflow_manager import WorkflowManager
-from pflow.core.workflow_status import WorkflowStatus
+from pflow.core.workflow.manager import WorkflowManager
+from pflow.core.workflow.status import WorkflowStatus
 from pflow.mcp_server.utils.errors import sanitize_parameters
 
 from .output_interface import OutputInterface

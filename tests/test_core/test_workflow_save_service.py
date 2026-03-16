@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.exceptions import WorkflowValidationError
-from pflow.core.workflow_save_service import (
+from pflow.core.workflow.save_service import (
     RESERVED_WORKFLOW_NAMES,
     delete_draft_safely,
     generate_workflow_metadata,
@@ -219,11 +219,11 @@ class TestLoadAndValidateWorkflow:
 
         Bug prevented: Name resolution broken, stored workflows inaccessible.
         """
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
 
         # Temporarily use tmp_path as workflow directory
         with patch(
-            "pflow.core.workflow_manager.WorkflowManager.__init__",
+            "pflow.core.workflow.manager.WorkflowManager.__init__",
             lambda self: setattr(self, "workflows_dir", tmp_path),
         ):
             manager = WorkflowManager()
@@ -396,7 +396,7 @@ class TestSaveWorkflowWithOptions:
         markdown_content = ir_to_markdown(sample_ir)
 
         # Mock WorkflowManager to use tmp_path
-        with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
+        with patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = False
             mock_wm.save.return_value = str(tmp_path / "new-workflow.pflow.md")
@@ -418,7 +418,7 @@ class TestSaveWorkflowWithOptions:
         markdown_content = ir_to_markdown(sample_ir)
 
         # Mock WorkflowManager
-        with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
+        with patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = True
             mock_wm.save.return_value = str(tmp_path / "existing.pflow.md")
@@ -439,7 +439,7 @@ class TestSaveWorkflowWithOptions:
         markdown_content = ir_to_markdown(sample_ir)
 
         # Mock WorkflowManager to simulate existing workflow
-        with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
+        with patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = True  # Workflow already exists
             mock_wm_class.return_value = mock_wm
@@ -464,7 +464,7 @@ class TestSaveWorkflowWithOptions:
         metadata = {"keywords": ["test"], "capabilities": ["testing"]}
 
         # Mock WorkflowManager
-        with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
+        with patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = False
             mock_wm.save.return_value = str(tmp_path / "with-metadata.pflow.md")
@@ -484,7 +484,7 @@ class TestSaveWorkflowWithOptions:
         markdown_content = ir_to_markdown(sample_ir)
 
         # Mock WorkflowManager with delete failure
-        with patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class:
+        with patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class:
             mock_wm = Mock()
             mock_wm.exists.return_value = True
             mock_wm.delete.side_effect = Exception("Disk full")
@@ -502,8 +502,8 @@ class TestSaveWorkflowWithOptions:
         markdown_content = ir_to_markdown(sample_ir)
 
         with (
-            patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class,
-            patch("pflow.core.skill_service.re_enrich_if_skill") as mock_re_enrich,
+            patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class,
+            patch("pflow.core.workflow.skill_service.re_enrich_if_skill") as mock_re_enrich,
         ):
             mock_wm = Mock()
             mock_wm.exists.return_value = False
@@ -524,8 +524,8 @@ class TestSaveWorkflowWithOptions:
         markdown_content = ir_to_markdown(sample_ir)
 
         with (
-            patch("pflow.core.workflow_save_service.WorkflowManager") as mock_wm_class,
-            patch("pflow.core.skill_service.re_enrich_if_skill") as mock_re_enrich,
+            patch("pflow.core.workflow.save_service.WorkflowManager") as mock_wm_class,
+            patch("pflow.core.workflow.skill_service.re_enrich_if_skill") as mock_re_enrich,
         ):
             mock_wm = Mock()
             mock_wm.exists.return_value = False
@@ -636,7 +636,7 @@ class TestDeleteDraftSafely:
 
         assert draft.exists(), "Draft file should exist before deletion"
 
-        with patch("pflow.core.workflow_save_service.Path.home", return_value=home_dir):
+        with patch("pflow.core.workflow.save_service.Path.home", return_value=home_dir):
             result = delete_draft_safely(str(draft))
 
             assert result is True, "Should successfully delete file in safe directory"
@@ -655,7 +655,7 @@ class TestDeleteDraftSafely:
 
         assert draft.exists(), "Draft file should exist before deletion"
 
-        with patch("pflow.core.workflow_save_service.Path.cwd", return_value=tmp_path):
+        with patch("pflow.core.workflow.save_service.Path.cwd", return_value=tmp_path):
             result = delete_draft_safely(str(draft))
 
             assert result is True, "Should successfully delete file in safe directory"
@@ -670,7 +670,7 @@ class TestDeleteDraftSafely:
         unsafe_file = tmp_path / "important.json"
         unsafe_file.write_text("{}")
 
-        with patch("pflow.core.workflow_save_service.Path.home", return_value=tmp_path):
+        with patch("pflow.core.workflow.save_service.Path.home", return_value=tmp_path):
             result = delete_draft_safely(str(unsafe_file))
 
             assert result is False
@@ -693,7 +693,7 @@ class TestDeleteDraftSafely:
         symlink = pflow_dir / "draft.json"
         symlink.symlink_to(target)
 
-        with patch("pflow.core.workflow_save_service.Path.home", return_value=tmp_path):
+        with patch("pflow.core.workflow.save_service.Path.home", return_value=tmp_path):
             result = delete_draft_safely(str(symlink))
 
             assert result is False
@@ -717,7 +717,7 @@ class TestDeleteDraftSafely:
         # Create traversal path: .pflow/workflows/../../secret.txt
         traversal_path = str(pflow_dir / ".." / ".." / ".." / "secret.txt")
 
-        with patch("pflow.core.workflow_save_service.Path.home", return_value=home_dir):
+        with patch("pflow.core.workflow.save_service.Path.home", return_value=home_dir):
             result = delete_draft_safely(traversal_path)
 
             assert result is False
@@ -738,7 +738,7 @@ class TestDeleteDraftSafely:
         assert draft.exists(), "Draft file should exist before deletion attempt"
 
         with (
-            patch("pflow.core.workflow_save_service.Path.home", return_value=home_dir),
+            patch("pflow.core.workflow.save_service.Path.home", return_value=home_dir),
             patch.object(Path, "unlink", side_effect=PermissionError("Access denied")),
         ):
             result = delete_draft_safely(str(draft))

@@ -154,7 +154,7 @@ class TestNestedWorkflowCLI:
         set _pflow_workflow_file from the saved workflow's path so that
         `workflow: ./child.pflow.md` resolves from ~/.pflow/workflows/, not CWD.
         """
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
 
         # Create a temporary workflows dir to avoid polluting the real one
         workflows_dir = tmp_path / "workflows"
@@ -171,7 +171,7 @@ class TestNestedWorkflowCLI:
         wm.save("test-saved-nested", parent_content)
 
         # Patch WorkflowManager to use our tmp workflows dir
-        with patch("pflow.core.workflow_manager.WorkflowManager") as mock_wm_class:
+        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_wm_class:
             mock_wm_class.return_value = wm
 
             # Also patch the WorkflowManager used in CLI setup

@@ -573,7 +573,7 @@ def discover_nodes(query: str) -> None:
     """
     from datetime import datetime
 
-    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.core.workflow.manager import WorkflowManager
     from pflow.planning.nodes import ComponentBrowsingNode
 
     # Validate query before processing

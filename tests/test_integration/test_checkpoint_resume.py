@@ -215,7 +215,7 @@ class TestCheckpointResume:
 
             with (
                 patch("pflow.runtime.compiler.import_node_class", side_effect=get_node_class),
-                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+                patch("pflow.core.workflow.validator.WorkflowValidator.validate", return_value=([], [])),
             ):
                 # Mock the hash computation to match our checkpoint
                 def mock_compute_hash(self, config):
@@ -269,7 +269,7 @@ class TestCheckpointResume:
 
             with (
                 patch("pflow.runtime.compiler.import_node_class", side_effect=get_node_class),
-                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+                patch("pflow.core.workflow.validator.WorkflowValidator.validate", return_value=([], [])),
                 patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair,
             ):
                 # Execute with repair disabled
@@ -304,7 +304,7 @@ class TestCheckpointResume:
             with (
                 patch("pflow.runtime.compiler.import_node_class", side_effect=get_node_class),
                 # Mock validation to pass so we get to runtime errors
-                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+                patch("pflow.core.workflow.validator.WorkflowValidator.validate", return_value=([], [])),
                 patch("pflow.execution.workflow_execution.repair_workflow_with_validation") as mock_repair,
             ):
                 # Repair fails (returns success, repaired_ir, errors)

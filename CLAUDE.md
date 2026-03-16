@@ -105,6 +105,7 @@ pflow/
 │   ├── pocketflow/          # Embedded PocketFlow framework (~200 lines)
 │   ├── cli/                 # CLI entrypoints and subcommands
 │   ├── core/                # Schemas, settings, validation, utilities
+│   │   └── workflow/        # Workflow lifecycle (manager, validator, save, skills)
 │   ├── execution/           # Execution UX, repair, formatters
 │   ├── runtime/             # Compilation, wrappers, tracing
 │   ├── nodes/               # Platform node implementations

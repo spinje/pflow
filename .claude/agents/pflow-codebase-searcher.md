@@ -60,7 +60,7 @@ Trace `from pflow.X import Y` to understand dependencies. Check `__init__.py` fo
 ```
 CLI (cli/main.py, main_wrapper.py)
   → Markdown Parsing (core/markdown_parser.py)
-  → Validation (core/workflow_validator.py — 5-layer pipeline)
+  → Validation (core/workflow/validator.py — 5-layer pipeline)
   → Compilation (runtime/compiler.py — IR → PocketFlow Flow/Nodes)
   → Execution (runtime/workflow_executor.py → execution/ layer for UX)
   → Nodes (nodes/*/*.py — prep/exec/post lifecycle)
@@ -76,8 +76,8 @@ All node communication flows through the **shared store** using semantic keys. T
 | CLI subcommands | `cli/registry.py`, `cli/mcp.py`, `cli/skills.py`, `cli/commands/settings.py`, `cli/commands/workflow.py` |
 | Workflow parsing | `src/pflow/core/markdown_parser.py` (.pflow.md → IR dict) |
 | IR schema | `src/pflow/core/ir_schema.py` (Pydantic models) |
-| Unified validation | `src/pflow/core/workflow_validator.py` (orchestrates 5 layers) |
-| Data flow validation | `src/pflow/core/workflow_data_flow.py` |
+| Unified validation | `src/pflow/core/workflow/validator.py` (orchestrates 5 layers) |
+| Data flow validation | `src/pflow/core/workflow/data_flow.py` |
 | Compilation | `src/pflow/runtime/compiler.py` (IR → PocketFlow Flow) |
 | Template resolution | `src/pflow/runtime/template_resolver.py` |
 | Template validation | `src/pflow/runtime/template_validator.py` |
@@ -86,10 +86,10 @@ All node communication flows through the **shared store** using semantic keys. T
 | Node implementations | `src/pflow/nodes/{type}/{name}.py` |
 | PocketFlow framework | `src/pflow/pocketflow/__init__.py` (Node, BaseNode, Flow) |
 | Registry | `src/pflow/registry/registry.py`, `registry/scanner.py`, `registry/metadata_extractor.py` |
-| Workflow management | `src/pflow/core/workflow_manager.py` |
-| Workflow save | `src/pflow/core/workflow_save_service.py` (shared by CLI and MCP server) |
+| Workflow management | `src/pflow/core/workflow/manager.py` |
+| Workflow save | `src/pflow/core/workflow/save_service.py` (shared by CLI and MCP server) |
 | Settings | `src/pflow/core/settings.py` |
-| Skill management | `src/pflow/core/skill_service.py` (logic) + `cli/skills.py` (CLI) |
+| Skill management | `src/pflow/core/workflow/skill_service.py` (logic) + `cli/skills.py` (CLI) |
 | MCP client (tools in workflows) | `src/pflow/mcp/` |
 | MCP server (pflow as tool) | `src/pflow/mcp_server/` (tools/, services/, utils/) |
 | Planning (gated) | `src/pflow/planning/` (not accessible via normal CLI) |
@@ -106,9 +106,9 @@ All node communication flows through the **shared store** using semantic keys. T
 
 **Workflow format**: `.pflow.md` markdown files parsed by `core/markdown_parser.py` into IR dicts validated against Pydantic models in `core/ir_schema.py`.
 
-**Validation pipeline** (5 layers orchestrated by `core/workflow_validator.py`):
+**Validation pipeline** (5 layers orchestrated by `core/workflow/validator.py`):
 1. Schema validation (`core/ir_schema.py`)
-2. Data flow validation (`core/workflow_data_flow.py`)
+2. Data flow validation (`core/workflow/data_flow.py`)
 3. Template validation (`runtime/template_validator.py`)
 4. Node type validation
 5. Output source validation
@@ -157,9 +157,9 @@ All node communication flows through the **shared store** using semantic keys. T
 4. Check `tests/test_cli/` for CLI-level tests
 
 **Trace the validation pipeline for a workflow:**
-1. Read `src/pflow/core/workflow_validator.py` → the orchestrator
+1. Read `src/pflow/core/workflow/validator.py` → the orchestrator
 2. Read `src/pflow/core/ir_schema.py` → schema layer
-3. Read `src/pflow/core/workflow_data_flow.py` → data flow layer
+3. Read `src/pflow/core/workflow/data_flow.py` → data flow layer
 4. Read `src/pflow/runtime/template_validator.py` → template layer
 
 **Find how a feature was designed and why:**
@@ -193,15 +193,15 @@ All node communication flows through the **shared store** using semantic keys. T
 | Workflow parsing in `runtime/` | `core/markdown_parser.py` |
 | Single validation file | 5 layers across 4 files (see validation pipeline above) |
 | MCP in one directory | `mcp/` (client, using tools) vs `mcp_server/` (server, exposing tools) |
-| One workflow validator | Two: `core/workflow_validator.py` (pre-execution, 5-layer) vs `runtime/workflow_validator.py` (compiler-time) |
+| One workflow validator | Two: `core/workflow/validator.py` (pre-execution, 5-layer) vs `runtime/workflow_validator.py` (compiler-time) |
 | Display/UX logic in CLI | `execution/` layer (between CLI and runtime) |
-| Workflow save logic | `core/workflow_save_service.py` (shared by CLI and MCP server) |
+| Workflow save logic | `core/workflow/save_service.py` (shared by CLI and MCP server) |
 | Output formatting | `execution/formatters/` (return values, never print directly) |
 | Error types in one file | Split: `core/exceptions.py` (internal) + `core/user_errors.py` (user-facing) |
 | Output routing in one place | `core/output_controller.py` + `execution/output_interface.py` + `cli/cli_output.py` |
 | LLM via direct API | `core/llm_config.py` — uses Simon Willison's `llm` library |
 | Registry CLI in one file | `cli/registry.py` (commands) + `cli/registry_run.py` (single node execution) |
-| Skill management in one file | `core/skill_service.py` (logic) + `cli/skills.py` (CLI commands) |
+| Skill management in one file | `core/workflow/skill_service.py` (logic) + `cli/skills.py` (CLI commands) |
 | Security in node code | `core/security_utils.py` (parameter masking, sensitive detection) |
 | Rerun command in CLI | `cli/rerun_display.py` (builds safe rerun commands, masking secrets) |
 | Batch as a node type | `runtime/batch_node.py` (wrapper around any node for list iteration) |
@@ -218,7 +218,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | **Python node** | Executes user code in isolated namespace with safety restrictions, not a simple `exec()`. |
 | **Claude Code node** | Shells out to `claude` CLI binary, not an API call. |
 | **Execution layer** | `execution/` is display/orchestration between CLI and runtime — NOT where workflow execution logic lives (that's `runtime/`). |
-| **Two workflow validators** | `core/workflow_validator.py` (pre-execution, unified 5-layer) vs `runtime/workflow_validator.py` (used internally by compiler). |
+| **Two workflow validators** | `core/workflow/validator.py` (pre-execution, unified 5-layer) vs `runtime/workflow_validator.py` (used internally by compiler). |
 | **File nodes** | Not 1:1 type-to-file — `nodes/file/` has separate files: read_file, write_file, copy_file, move_file, delete_file. |
 | **Git vs GitHub** | `nodes/git/` (local git CLI operations) vs `nodes/github/` (GitHub API calls via HTTP). |
 | **Batch processing** | Not a node type — `runtime/batch_node.py` wraps any node for list iteration. |

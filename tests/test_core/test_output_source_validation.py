@@ -1,6 +1,6 @@
 """Test output source validation in WorkflowValidator."""
 
-from pflow.core.workflow_validator import WorkflowValidator
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 

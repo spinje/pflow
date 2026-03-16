@@ -19,7 +19,7 @@ import llm
 from pydantic import BaseModel, Field
 
 from pflow.core.exceptions import WorkflowNotFoundError
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning.context_blocks import PlannerContextBuilder
 from pflow.planning.context_builder import (
     _build_node_flow,
@@ -2584,7 +2584,7 @@ class ValidatorNode(Node):
         Returns:
             Dict with errors list (empty if valid)
         """
-        from pflow.core.workflow_validator import WorkflowValidator
+        from pflow.core.workflow.validator import WorkflowValidator
 
         workflow = prep_res.get("workflow")
         if not workflow:

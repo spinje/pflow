@@ -28,7 +28,7 @@ from pflow.core.shell_integration import (
     read_stdin_enhanced,
 )
 from pflow.core.validation_utils import is_valid_parameter_name
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution import DisplayManager, ExecutionResult
 from pflow.runtime.compiler import _display_validation_warnings
 
@@ -1985,7 +1985,7 @@ def _perform_validation(
     Raises:
         SystemExit: If validation raises an exception
     """
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
     from pflow.registry.registry import Registry
 
     registry = Registry()
@@ -2108,7 +2108,7 @@ def _validate_before_execution(
         output_format: Output format (text or json)
         verbose: Verbose flag
     """
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
     from pflow.execution.formatters.validation_formatter import format_validation_failure
     from pflow.registry.registry import Registry
 
@@ -2158,7 +2158,7 @@ def execute_json_workflow(
 
     All logic delegated to WorkflowExecutorService.
     """
-    from pflow.core.workflow_manager import WorkflowManager
+    from pflow.core.workflow.manager import WorkflowManager
     from pflow.execution.workflow_execution import execute_workflow
 
     # Setup execution context
@@ -3430,7 +3430,7 @@ def _setup_workflow_execution(
         # resolution in nested workflows (so ./child.pflow.md resolves from
         # the saved workflow's directory, not CWD)
         try:
-            from pflow.core.workflow_manager import WorkflowManager
+            from pflow.core.workflow.manager import WorkflowManager
 
             wm = WorkflowManager()
             ctx.obj["source_file_path"] = wm.get_path(workflow_name)

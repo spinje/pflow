@@ -2,7 +2,7 @@
 
 import pytest
 
-from pflow.core.workflow_data_flow import CycleError, build_execution_order, validate_data_flow
+from pflow.core.workflow.data_flow import CycleError, build_execution_order, validate_data_flow
 
 
 class TestBuildExecutionOrder:

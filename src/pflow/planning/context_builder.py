@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from typing import Any, Optional
 
-from ..core.workflow_manager import WorkflowManager
+from ..core.workflow.manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
 

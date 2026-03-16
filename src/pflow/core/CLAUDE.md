@@ -24,14 +24,16 @@ src/pflow/core/
 ├── suggestion_utils.py      # "Did you mean" fuzzy matching
 ├── user_errors.py           # User-friendly CLI error formatting
 ├── validation_utils.py      # Parameter name validation (security-aware)
-├── workflow_data_flow.py    # Execution order and dependency validation
-├── workflow_manager.py      # Workflow lifecycle (save/load/list/delete)
-├── workflow_save_service.py # Shared save operations (CLI + MCP)
-├── workflow_status.py       # SUCCESS/DEGRADED/FAILED tri-state enum
-├── workflow_validator.py    # Unified validation orchestrator
 ├── smart_filter.py          # LLM-powered field reduction for structure-only mode
-├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── execution_cache.py       # Two-phase execution cache for registry run
+├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
+│   ├── __init__.py          # Re-exports public API
+│   ├── manager.py           # Workflow lifecycle (save/load/list/delete)
+│   ├── save_service.py      # Shared save operations (CLI + MCP)
+│   ├── validator.py         # Unified validation orchestrator
+│   ├── data_flow.py         # Execution order and dependency validation
+│   ├── status.py            # SUCCESS/DEGRADED/FAILED tri-state enum
+│   └── skill_service.py     # Publish workflows as AI agent skills (symlinks)
 └── CLAUDE.md
 ```
 
@@ -94,56 +96,9 @@ Memory limit configurable via `PFLOW_STDIN_MEMORY_LIMIT`.
 
 **Stdin routing**: Stdin routes to workflow input declared with `"stdin": true`. Routing happens in CLI (`_route_stdin_to_params()`) before input validation. CLI params override piped stdin. Only one input per workflow can have `stdin: true`.
 
-### workflow_manager.py
+### workflow/
 
-**Storage format**: `.pflow.md` files with YAML frontmatter for system metadata, stored at `~/.pflow/workflows/`:
-```markdown
----
-created_at: "2026-01-14T15:43:57.425006+00:00"
-updated_at: "2026-01-14T22:03:06.823530+00:00"
-version: "1.0.0"
-execution_count: 5
-last_execution_success: true
-last_execution_params:
-  repo: "owner/repo"
----
-
-# Fix GitHub Issues
-
-Fixes GitHub issues automatically.
-
-## Steps
-...
-```
-
-**Non-obvious behaviors**:
-- Metadata is flat (no `rich_metadata` wrapper)
-- Workflow `name` derived from filename (`my-workflow.pflow.md` → `my-workflow`)
-- `description` extracted from H1 prose during `load()`, not stored separately in metadata
-- `load()` returns flat metadata dict with parsed IR; `load_ir()` returns just the IR dict (for execution)
-- Atomic operations: `os.link()` for creates, `os.replace()` for updates (prevents race conditions — discovered in Task 24)
-- **⚠️ `update_ir()` is DEAD CODE** — preserved but unreachable (repair system gated, Task 107)
-
-### workflow_validator.py
-
-Unified validation orchestrator. **Key history**: Replaces scattered validation that existed in multiple places. Previously, tests had data flow validation that production lacked — workflows could pass validation but fail at runtime.
-
-**7-step validation pipeline**:
-1. Structural (IR schema) — always runs
-2. Stdin inputs — only one `stdin: true` allowed per workflow
-3. Data flow (execution order, dependencies) — always runs
-4. Templates (variable resolution) — if params provided
-5. Node types (registry verification) — unless `skip_node_types=True`
-6. Output sources — validates `${node.key}` refs in outputs, with fuzzy "did you mean?" suggestions
-7. Unknown param warnings — flags params not in node interface metadata (warnings, not errors)
-
-### workflow_data_flow.py
-
-Uses Kahn's algorithm for topological sort. Catches: forward references, circular dependencies, references to non-existent nodes, undefined input parameters.
-
-**Bash syntax detection**: Template refs like `${#array[@]}`, `${var:-default}`, `${var%%pattern}` are detected as bash syntax and **skipped** during validation. Without this, shell commands with bash parameter expansion would trigger false "undefined input" errors.
-
-**This validation was previously only in tests, not production** — critical addition that ensures workflows execute correctly at runtime.
+See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeline, data flow algorithm, skill publishing, known issues).
 
 ### llm_pricing.py
 
@@ -226,20 +181,6 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 - LLM-extracted parameters NOT validated
 - MCP tool parameters NOT validated (external servers could provide dangerous names)
 
-### workflow_save_service.py
-
-**Reserved workflow names**: `null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`, `skill`.
-
-**`generate_workflow_metadata()`**: Functional but dependency-gated — requires planning module (`from pflow.planning.nodes import MetadataGenerationNode`). Works when planning is available, silently returns None otherwise.
-
-### skill_service.py
-
-Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. **Symlink-based**: `{tool}/skills/{name}/SKILL.md` → `~/.pflow/workflows/{name}.pflow.md`.
-
-**`enrich_workflow()`**: Injects `## Usage` section (with example command) and adds `name`/`description` to frontmatter. **⚠️ Bug**: Claude Code currently requires `description` in frontmatter for skill discovery (workaround in code).
-
-**`re_enrich_if_skill()`**: Auto-called by `save_workflow_with_options()` after `--force` saves. Restores enrichment lost when the file was replaced. Scans all tool targets for symlinks pointing to the workflow.
-
 ### smart_filter.py
 
 LLM-powered field reduction for `registry run` structure-only mode. Triggers when field count > 30 (`SMART_FILTER_THRESHOLD`). Reduces 200+ fields to 8-15 business-relevant ones.
@@ -264,20 +205,16 @@ Two-phase execution pattern for AI agents: (1) execute node → return structure
 
 19 sensitive parameter names detected (password, token, api_key, secret, etc.). Case-insensitive matching. Used by MCP error sanitization and CLI rerun display.
 
-### workflow_status.py
-
-Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g., unresolved templates in permissive mode), `FAILED` (errors).
-
 ## Imports — Not Exported (require direct imports)
 
-These modules are NOT in `__init__.py`:
-- `workflow_save_service` — used by CLI and MCP server
+These modules are NOT in `core/__init__.py` (require direct imports):
 - `suggestion_utils` — used by CLI, runtime, formatters, MCP
 - `security_utils` — used by MCP errors and CLI display
 - `llm_config` — used by CLI startup, compiler, smart_filter, planning
-- `skill_service` — used by CLI skills commands, workflow_save_service
 - `smart_filter` — used by CLI registry run (structure-only mode)
 - `execution_cache` — used by CLI registry run
+
+The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Import from `pflow.core.workflow.manager`, `pflow.core.workflow.validator`, etc.
 
 ## Integration Map
 
@@ -296,20 +233,6 @@ These modules are NOT in `__init__.py`:
 **🚨 Security**: Parameter validation gaps — template variables, node params, LLM/MCP params not validated for shell special characters.
 
 **🐛 Broken**: Two LLM pricing aliases point to non-existent entries.
-
-**⚠️ Dead code**: `update_ir()` in workflow_manager — preserved but unreachable (repair system disabled).
-
-**⚠️ Bug**: Claude Code requires `description` in frontmatter for skill discovery (workaround in `skill_service.py`).
-
-## Key Lessons
-
-**Race condition (Task 24)**: Initial tests were too shallow. Only proper concurrent tests discovered a critical race condition in `WorkflowManager.save()`. Fixed with atomic `os.link()`. Lesson: always test with real threads for file I/O.
-
-**Content preservation**: Save operations store original markdown with YAML frontmatter prepended. The markdown body is never modified by metadata updates.
-
-**Data flow validation gap**: Tests had execution order validation that production lacked — workflows passed validation but failed at runtime. Now unified in `WorkflowValidator`.
-
-See `.taskmaster/tasks/task_24/task-review.md` for detailed WorkflowManager implementation review.
 
 ## Testing and Examples
 

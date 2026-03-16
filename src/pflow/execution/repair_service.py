@@ -338,7 +338,7 @@ def _validate_repaired_workflow_static(repaired_ir: dict, execution_params: Opti
     Returns:
         Dictionary with "success" bool and optional "errors" list
     """
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
     from pflow.registry import Registry
 
     try:

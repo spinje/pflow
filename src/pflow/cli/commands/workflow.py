@@ -6,7 +6,7 @@ from typing import Any
 
 import click
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 
 @click.group(name="workflow")
@@ -315,7 +315,7 @@ def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metad
         return None
 
     from pflow.core.llm_config import get_model_for_feature
-    from pflow.core.workflow_save_service import generate_workflow_metadata
+    from pflow.core.workflow.save_service import generate_workflow_metadata
 
     # Get LLM model from settings → auto-detect → fallback
     discovery_model = get_model_for_feature("discovery")
@@ -348,7 +348,7 @@ def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[
         SystemExit: If workflow exists and force=False, or save fails
     """
     from pflow.core.exceptions import WorkflowValidationError
-    from pflow.core.workflow_save_service import save_workflow_with_options
+    from pflow.core.workflow.save_service import save_workflow_with_options
 
     try:
         saved_path = save_workflow_with_options(
@@ -389,7 +389,7 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
     if not delete_draft:
         return
 
-    from pflow.core.workflow_save_service import delete_draft_safely
+    from pflow.core.workflow.save_service import delete_draft_safely
 
     if delete_draft_safely(file_path):
         click.echo(f"✓ Deleted draft: {file_path}")
@@ -416,7 +416,7 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool, ge
     Example:
         pflow workflow save ./my-workflow.pflow.md --name my-analyzer
     """
-    from pflow.core.workflow_save_service import validate_workflow_name
+    from pflow.core.workflow.save_service import validate_workflow_name
 
     # Validate workflow name
     is_valid, error = validate_workflow_name(name)

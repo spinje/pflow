@@ -103,7 +103,7 @@ def _handle_validation_phase(
     Returns:
         Tuple of (was_repaired, workflow_ir, original_workflow_ir)
     """
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
     from pflow.registry import Registry
 
     registry = Registry()
@@ -547,7 +547,7 @@ def execute_workflow(
         # Check if validation failed completely
         if not validated_ir:
             # Return failure result with validation errors
-            from pflow.core.workflow_validator import WorkflowValidator
+            from pflow.core.workflow.validator import WorkflowValidator
             from pflow.registry import Registry
 
             registry = Registry()
@@ -603,7 +603,7 @@ def execute_workflow(
         # =================================================================
         # REPAIR DISABLED: Validate first, fail fast on errors, no repair
         # =================================================================
-        from pflow.core.workflow_validator import WorkflowValidator
+        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry import Registry
 
         registry = Registry()
@@ -612,7 +612,7 @@ def execute_workflow(
         )
 
         if validation_errors:
-            from pflow.core.workflow_status import WorkflowStatus
+            from pflow.core.workflow.status import WorkflowStatus
 
             return ExecutionResult(
                 success=False,

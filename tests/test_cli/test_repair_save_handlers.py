@@ -81,7 +81,7 @@ class TestSaveRepairedWorkflow:
 class TestSaveRepairedSavedWorkflow:
     """Test saving repaired workflows from workflow manager."""
 
-    @patch("pflow.core.workflow_manager.WorkflowManager")
+    @patch("pflow.core.workflow.manager.WorkflowManager")
     @patch("click.echo")
     def test_default_updates_original(self, mock_echo, mock_wm_class, mock_ctx, sample_workflow_ir):
         """Test that default behavior updates original workflow."""
@@ -126,7 +126,7 @@ class TestSaveRepairedSavedWorkflow:
         call_kwargs = mock_display.call_args.kwargs
         assert call_kwargs["params"] == {"param1": "value1"}
 
-    @patch("pflow.core.workflow_manager.WorkflowManager")
+    @patch("pflow.core.workflow.manager.WorkflowManager")
     @patch("pflow.cli.repair_save_handlers.logger")
     @patch("click.echo")
     def test_handles_update_error_gracefully(self, mock_echo, mock_logger, mock_wm_class, mock_ctx, sample_workflow_ir):
@@ -282,7 +282,7 @@ class TestSaveRepairedPlannerWorkflow:
 class TestIntegration:
     """Integration tests for the full repair save flow."""
 
-    @patch("pflow.core.workflow_manager.WorkflowManager")
+    @patch("pflow.core.workflow.manager.WorkflowManager")
     def test_full_flow_saved_workflow_with_params(self, mock_wm_class, mock_ctx, sample_workflow_ir):
         """Test complete flow for saved workflow with parameters."""
         # Setup context

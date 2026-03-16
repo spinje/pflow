@@ -103,7 +103,7 @@ def _import_test_modules() -> tuple:
 
     # WorkflowManager is required
     try:
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
     except ImportError as e:
         pytest.fail(f"WorkflowManager required for test isolation could not be imported: {e}")
 

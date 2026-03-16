@@ -156,7 +156,7 @@ class WorkflowValidator:
         Returns:
             List of data flow validation errors
         """
-        from pflow.core.workflow_data_flow import validate_data_flow
+        from pflow.core.workflow.data_flow import validate_data_flow
 
         try:
             return validate_data_flow(workflow_ir)

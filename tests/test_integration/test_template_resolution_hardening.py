@@ -22,7 +22,7 @@ FIX HISTORY:
 
 import pytest
 
-from pflow.core.workflow_status import WorkflowStatus
+from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.workflow_execution import execute_workflow
 
 

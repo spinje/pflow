@@ -12,7 +12,7 @@ from typing import Any, Optional
 from pflow.core.exceptions import WorkflowValidationError
 from pflow.core.ir_schema import normalize_ir, validate_ir
 from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,7 @@ def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool
 
     # Step 2: Comprehensive workflow validation (data flow, output sources, node types)
     from pflow.core.validation_utils import generate_dummy_parameters
-    from pflow.core.workflow_validator import WorkflowValidator
+    from pflow.core.workflow.validator import WorkflowValidator
     from pflow.registry import Registry
 
     try:
@@ -300,7 +300,7 @@ def save_workflow_with_options(
 
     # Re-enrich if this workflow is published as a Claude Code skill (Task 119)
     try:
-        from pflow.core.skill_service import re_enrich_if_skill
+        from pflow.core.workflow.skill_service import re_enrich_if_skill
 
         re_enrich_if_skill(name)
     except Exception:
