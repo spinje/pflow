@@ -238,9 +238,10 @@ Identify dead code found during the audit. Refactoring is the right time to remo
 2. **Create new files** in dependency order (leaves first): utils → leaf modules → orchestrator
 3. **Rewrite the original file** as the orchestrator (if it stays as entry point)
 4. **Update production imports** (use dedicated subagents for mechanical changes)
-5. **Update test imports** (use dedicated subagents — one for straightforward changes, one for mock.patch sites)
-6. **Verify**: `make test && make check` — pass count should match baseline (minus any deleted dead-code tests)
-7. **Final grep**: confirm zero references to old class/function names in src/ and tests/
+5. **Delete old source files** and **verify**: `make test` — isolates source migration from test migration. All production-path tests should pass; only test files with old imports should fail.
+6. **Update test imports** (use dedicated subagents — one for straightforward changes, one for mock.patch sites)
+7. **Delete old test files** and **verify**: `make test && make check` — pass count should match baseline (minus any deleted dead-code tests)
+8. **Final grep**: confirm zero references to old class/function names in src/ and tests/
 
 ### Subagent delegation strategy
 
