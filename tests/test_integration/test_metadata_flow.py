@@ -8,7 +8,7 @@ This tests the integration between:
 """
 
 from pflow import pocketflow
-from pflow.planning.context_builder import _format_node_section_enhanced
+from pflow.registry.context_builder import _format_node_section_enhanced
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 

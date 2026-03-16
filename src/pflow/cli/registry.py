@@ -571,10 +571,7 @@ def discover_nodes(query: str) -> None:
     Example:
         pflow registry discover "I need to fetch GitHub data and analyze it"
     """
-    from datetime import datetime
-
-    from pflow.core.workflow.manager import WorkflowManager
-    from pflow.planning.nodes import ComponentBrowsingNode
+    from pflow.registry.discovery import discover_components
 
     # Validate query before processing
     query = query.strip()
@@ -586,26 +583,8 @@ def discover_nodes(query: str) -> None:
         click.echo("  Please use a more concise description", err=True)
         sys.exit(1)
 
-    # Get LLM model from settings → auto-detect → fallback
-    from pflow.core.llm_config import get_model_for_feature
-
-    discovery_model = get_model_for_feature("discovery")
-
-    # Create complete shared store context (required by ComponentBrowsingNode)
-    workflow_manager = WorkflowManager()
-    shared = {
-        "user_input": query,
-        "workflow_manager": workflow_manager,  # Required for workflow context
-        "current_date": datetime.now().strftime("%Y-%m-%d"),  # Standard context
-        "cache_planner": False,  # Disable cache for CLI (no planner context)
-    }
-
-    # Create browsing node and set model via params (PocketFlow convention)
-    node = ComponentBrowsingNode()
-    node.params["model"] = discovery_model
-
     try:
-        node.run(shared)
+        result = discover_components(query)
     except Exception as e:
         # Show agent-friendly error without internal details
         from pflow.cli.discovery_errors import handle_discovery_error
@@ -621,17 +600,12 @@ def discover_nodes(query: str) -> None:
         sys.exit(1)
 
     # Display planning context
-    if "planning_context" in shared:
-        click.echo(shared["planning_context"])
-    elif "browsed_components" in shared:
-        # Fallback if planning context not built
-        components = shared["browsed_components"]
-        if isinstance(components, dict) and (node_ids := components.get("node_ids", [])):
-            click.echo(f"Found {len(node_ids)} relevant nodes:")
-            for nid in node_ids:
-                click.echo(f"  - {nid}")
-        else:
-            click.echo("No relevant nodes found.")
+    if result.planning_context:
+        click.echo(result.planning_context)
+    elif result.node_ids:
+        click.echo(f"Found {len(result.node_ids)} relevant nodes:")
+        for nid in result.node_ids:
+            click.echo(f"  - {nid}")
     else:
         click.echo("No relevant nodes found.")
         click.echo("\nTip: Try a more specific query or use 'pflow registry list' to see all nodes.")
@@ -819,7 +793,7 @@ def describe_nodes(node_ids: tuple[str, ...]) -> None:
     Example:
         pflow registry describe github-get-pr llm write-file
     """
-    from pflow.planning.context_builder import build_planning_context
+    from pflow.registry.context_builder import build_planning_context
 
     # Load registry
     reg = Registry()

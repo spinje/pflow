@@ -1,0 +1,117 @@
+"""Component discovery via LLM-powered selection.
+
+Finds nodes (and optionally workflows) needed for building a workflow
+based on a natural language task description.
+Replaces the PocketFlow-based ComponentBrowsingNode with a plain function.
+"""
+
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
+import llm
+from pydantic import BaseModel
+
+from pflow.core.llm_utils import parse_structured_response
+from pflow.core.prompt_utils import format_prompt, load_prompt
+from pflow.core.workflow.context import build_workflows_context
+from pflow.registry.context_builder import build_nodes_context, build_planning_context
+
+logger = logging.getLogger(__name__)
+
+_PROMPT_PATH = Path(__file__).parent / "prompts" / "component_browsing.md"
+
+
+class ComponentSelectionSchema(BaseModel):
+    """Schema for LLM structured output."""
+
+    node_ids: list[str]
+    workflow_names: list[str]
+    reasoning: str
+
+
+@dataclass(frozen=True)
+class ComponentSelection:
+    """Result of LLM-powered component discovery."""
+
+    node_ids: list[str]
+    reasoning: str
+    planning_context: str  # Pre-rendered markdown specs from build_planning_context()
+
+
+def discover_components(
+    task: str,
+    model_name: Optional[str] = None,
+) -> ComponentSelection:
+    """Discover components (nodes) needed for building a workflow.
+
+    Args:
+        task: Natural language description of what needs to be built
+        model_name: LLM model to use (defaults to discovery model from settings)
+
+    Returns:
+        ComponentSelection with selected node IDs and planning context
+    """
+    from pflow.core.llm_config import get_model_for_feature
+    from pflow.core.workflow.manager import WorkflowManager
+    from pflow.registry import Registry
+
+    resolved_model = model_name or get_model_for_feature("discovery")
+
+    # Load registry
+    registry = Registry()
+    registry_metadata = registry.load()
+
+    # Build contexts
+    nodes_context = build_nodes_context(registry_metadata=registry_metadata)
+    workflows_context = build_workflows_context()
+
+    # Load and format prompt
+    prompt_template = load_prompt(_PROMPT_PATH)
+    formatted_prompt = format_prompt(
+        prompt_template,
+        {
+            "nodes_context": nodes_context,
+            "workflows_context": workflows_context,
+            "user_input": task,
+            "requirements": "None",
+        },
+    )
+
+    # LLM call
+    model = llm.get_model(resolved_model)
+    response = model.prompt(formatted_prompt, schema=ComponentSelectionSchema)
+    result = parse_structured_response(response, ComponentSelectionSchema)
+
+    # Clear workflow_names (current behavior — nested workflow selection not yet integrated)
+    if result.get("workflow_names"):
+        logger.info(
+            f"discover_components: Ignoring {len(result['workflow_names'])} workflows "
+            "(nested workflows not integrated in discovery yet)",
+        )
+        result["workflow_names"] = []
+
+    logger.info(f"discover_components: Selected {len(result['node_ids'])} nodes")
+
+    # Build planning context for selected components
+    workflow_manager = WorkflowManager()
+    planning_context = build_planning_context(
+        selected_node_ids=result["node_ids"],
+        selected_workflow_names=[],
+        registry_metadata=registry_metadata,
+        workflow_manager=workflow_manager,
+    )
+
+    # Handle error dict from build_planning_context
+    if isinstance(planning_context, dict) and "error" in planning_context:
+        logger.warning(f"discover_components: Planning context error - {planning_context['error']}")
+        planning_context_str = ""
+    else:
+        planning_context_str = str(planning_context)
+
+    return ComponentSelection(
+        node_ids=result["node_ids"],
+        reasoning=result["reasoning"],
+        planning_context=planning_context_str,
+    )

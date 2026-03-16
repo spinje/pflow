@@ -21,7 +21,7 @@ from typing import Any
 import llm
 from pydantic import BaseModel
 
-from pflow.planning.utils.llm_helpers import parse_structured_response
+from pflow.core.llm_utils import parse_structured_response
 
 logger = logging.getLogger(__name__)
 
@@ -316,7 +316,7 @@ def get_cache_stats() -> dict[str, float | int]:
         - hit_rate: Cache hit percentage (0-100)
 
     Examples:
-        >>> from pflow.core.smart_filter import get_cache_stats
+        >>> from pflow.registry.smart_filter import get_cache_stats
         >>> stats = get_cache_stats()
         >>> print(f"Cache hit rate: {stats['hit_rate']}%")
         Cache hit rate: 85.3%
@@ -347,7 +347,7 @@ def clear_cache() -> None:
         Cache is automatically cleared on process restart.
 
     Examples:
-        >>> from pflow.core.smart_filter import clear_cache
+        >>> from pflow.registry.smart_filter import clear_cache
         >>> clear_cache()
         # Cache is now empty, next call will be cache miss
     """

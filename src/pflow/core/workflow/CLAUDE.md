@@ -13,6 +13,10 @@ core/workflow/
 ├── data_flow.py        # Execution order (topological sort) and dependency validation
 ├── status.py           # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py    # Publish workflows as AI agent skills (symlinks)
+├── context.py          # Build workflow context for discovery (build_workflows_context)
+├── discovery.py        # LLM-powered workflow discovery (discover_workflow → WorkflowMatch)
+├── prompts/
+│   └── discovery.md    # Workflow discovery prompt template
 └── CLAUDE.md
 ```
 

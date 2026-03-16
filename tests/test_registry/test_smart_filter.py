@@ -7,7 +7,7 @@ This test suite verifies:
 4. Type preservation through filtering
 """
 
-from pflow.core.smart_filter import (
+from pflow.registry.smart_filter import (
     SMART_FILTER_THRESHOLD,
     FilteredFields,
     smart_filter_fields,
@@ -230,7 +230,7 @@ class TestFallbackBehavior:
         def mock_parse_error(response, schema):
             raise ValueError("Response did not match expected schema")
 
-        monkeypatch.setattr("pflow.core.smart_filter.parse_structured_response", mock_parse_error)
+        monkeypatch.setattr("pflow.registry.smart_filter.parse_structured_response", mock_parse_error)
 
         result = smart_filter_fields(fields, threshold=50)
 
@@ -353,7 +353,7 @@ class TestSmartFilterCaching:
 
     def test_cache_hit_on_identical_structure(self, mock_llm_calls):
         """Second call with identical field structure should hit cache."""
-        from pflow.core.smart_filter import clear_cache, smart_filter_fields_cached
+        from pflow.registry.smart_filter import clear_cache, smart_filter_fields_cached
 
         # Clear cache to start fresh
         clear_cache()
@@ -377,7 +377,7 @@ class TestSmartFilterCaching:
         assert result1 == result2  # Results identical
 
         # Verify cache was hit
-        from pflow.core.smart_filter import get_cache_stats
+        from pflow.registry.smart_filter import get_cache_stats
 
         stats = get_cache_stats()
         assert stats["hits"] >= 1  # At least one hit
@@ -385,7 +385,7 @@ class TestSmartFilterCaching:
 
     def test_cache_miss_on_different_structure(self, mock_llm_calls):
         """Different field structure should cause cache miss."""
-        from pflow.core.smart_filter import clear_cache, smart_filter_fields_cached
+        from pflow.registry.smart_filter import clear_cache, smart_filter_fields_cached
 
         clear_cache()
 
@@ -404,14 +404,14 @@ class TestSmartFilterCaching:
         smart_filter_fields_cached(fields2, threshold=1)
 
         # Both should have been cache misses (different structures)
-        from pflow.core.smart_filter import get_cache_stats
+        from pflow.registry.smart_filter import get_cache_stats
 
         stats = get_cache_stats()
         assert stats["misses"] >= 2  # At least 2 misses for different structures
 
     def test_cache_order_independence(self, mock_llm_calls):
         """Field order doesn't matter for caching - same fingerprint generated."""
-        from pflow.core.smart_filter import _calculate_fingerprint, clear_cache, smart_filter_fields_cached
+        from pflow.registry.smart_filter import _calculate_fingerprint, clear_cache, smart_filter_fields_cached
 
         clear_cache()
 
@@ -437,7 +437,7 @@ class TestSmartFilterCaching:
         smart_filter_fields_cached(fields2, threshold=2)
 
         # Verify cache hit occurred
-        from pflow.core.smart_filter import get_cache_stats
+        from pflow.registry.smart_filter import get_cache_stats
 
         stats = get_cache_stats()
         assert stats["hits"] == 1  # Exactly one hit (second call)
@@ -445,7 +445,7 @@ class TestSmartFilterCaching:
 
     def test_cache_stats_accuracy(self, mock_llm_calls):
         """Cache statistics should update correctly."""
-        from pflow.core.smart_filter import (
+        from pflow.registry.smart_filter import (
             clear_cache,
             get_cache_stats,
             smart_filter_fields_cached,
@@ -488,7 +488,7 @@ class TestSmartFilterCaching:
 
     def test_cache_clear_resets_state(self, mock_llm_calls):
         """Cache clear should reset cache state."""
-        from pflow.core.smart_filter import (
+        from pflow.registry.smart_filter import (
             clear_cache,
             get_cache_stats,
             smart_filter_fields_cached,
@@ -523,7 +523,7 @@ class TestSmartFilterCaching:
 
     def test_below_threshold_not_cached(self):
         """Fields below threshold should not trigger caching."""
-        from pflow.core.smart_filter import clear_cache, smart_filter_fields_cached
+        from pflow.registry.smart_filter import clear_cache, smart_filter_fields_cached
 
         clear_cache()
 

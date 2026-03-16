@@ -1,36 +1,20 @@
-"""Context builder for LLM-based workflow planning.
+"""Context builder for node registry and planning.
 
-This module transforms node registry metadata into LLM-optimized markdown
-documentation that enables natural language workflow composition.
+Transforms node registry metadata into LLM-optimized markdown documentation
+for component discovery and workflow planning.
 """
-
-# DEPRECATED: Active code moved to pflow.registry.context_builder.
-# This file is pending deletion in Phase 2 of planning removal.
 
 import json
 import logging
-import os
-from pathlib import Path
 from typing import Any, Optional
 
-from ..core.workflow.manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
 
 # Constants
 MAX_OUTPUT_SIZE = 200000  # 200KB limit for LLM context (increased for detailed format)
 MAX_STRUCTURE_HINTS = 100  # Increased limit for structure display
-
-# Module-level WorkflowManager instance (lazy initialization)
-_workflow_manager = None
-
-
-def _get_workflow_manager() -> WorkflowManager:
-    """Get or create the workflow manager instance."""
-    global _workflow_manager
-    if _workflow_manager is None:
-        _workflow_manager = WorkflowManager()
-    return _workflow_manager
 
 
 def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], int]:
@@ -204,141 +188,6 @@ def _group_nodes_by_category(nodes: dict[str, dict]) -> dict[str, list[str]]:
     return categories
 
 
-def _validate_workflow_fields(workflow_data: dict[str, Any], filename: str) -> bool:
-    """Validate required fields and types in workflow data.
-
-    Args:
-        workflow_data: The parsed workflow JSON data
-        filename: Name of the file for error messages
-
-    Returns:
-        True if all validations pass, False otherwise
-    """
-    # Validate required fields presence
-    # Note: name is NOT required in file - it's derived from filename at load time
-    required_fields = ["description", "ir"]
-    missing_fields = [field for field in required_fields if field not in workflow_data]
-
-    if missing_fields:
-        logger.warning(f"Workflow file {filename} missing required fields: {missing_fields}")
-        return False
-
-    # Validate field types (name is not validated - it's derived from filename)
-    validations = [
-        ("description", str, "string"),
-        ("ir", dict, "dict"),
-    ]
-
-    for field_name, expected_type, type_name in validations:
-        if not isinstance(workflow_data[field_name], expected_type):
-            logger.warning(f"Invalid '{field_name}' type in {filename}: expected {type_name}")
-            return False
-
-    return True
-
-
-def _load_single_workflow(json_file: Path) -> Optional[dict[str, Any]]:
-    """Load and validate a single workflow file.
-
-    Args:
-        json_file: Path to the JSON file
-
-    Returns:
-        Workflow data dict if valid, None otherwise
-    """
-    # GATED: Context builder disabled pending markdown format migration (Task 107).
-    # Expects JSON metadata wrapper format. Re-enable after workflow format migration.
-    logger.warning(f"_load_single_workflow skipped (gated for Task 107): {json_file.name}")
-    return None
-
-    try:
-        # Read and parse JSON
-        content = json_file.read_text()
-
-        # Handle empty files
-        if not content.strip():
-            logger.warning(f"Workflow file is empty: {json_file.name}")
-            return None
-
-        workflow_data = json.loads(content)
-
-        # Validate the workflow
-        if not _validate_workflow_fields(workflow_data, json_file.name):
-            return None
-
-        # Derive name from filename (single source of truth)
-        workflow_data["name"] = json_file.stem
-
-        logger.debug(f"Loaded workflow '{workflow_data['name']}' from {json_file.name}")
-        return workflow_data  # type: ignore[no-any-return, unused-ignore]
-
-    except json.JSONDecodeError as e:
-        logger.warning(f"Failed to parse JSON from {json_file.name}: {e}")
-        return None
-    except PermissionError:
-        logger.warning(f"Permission denied reading {json_file.name}")
-        return None
-    except Exception as e:
-        logger.warning(f"Unexpected error reading {json_file.name}: {type(e).__name__}: {e}")
-        return None
-
-
-# TODO: Deprecated - kept for reference, will be removed after full migration
-def _load_saved_workflows() -> list[dict[str, Any]]:
-    """Load all workflow JSON files from ~/.pflow/workflows/ directory.
-
-    Creates the directory if it doesn't exist. Skips invalid files with warnings.
-
-    Returns:
-        List of workflow metadata dicts with at least:
-        - name: str
-        - description: str
-        - ir: dict (full workflow IR)
-
-        Additional fields preserved if present:
-        - ir_version, version, tags, created_at, updated_at
-    """
-    workflows_dir = Path.home() / ".pflow" / "workflows"
-
-    # Create directory if it doesn't exist
-    try:
-        os.makedirs(workflows_dir, exist_ok=True)
-        logger.debug(f"Ensured workflow directory exists at {workflows_dir}")
-    except Exception as e:
-        logger.warning(f"Failed to create workflow directory: {e}")
-        return []
-
-    # Check if directory is accessible
-    if not workflows_dir.exists() or not workflows_dir.is_dir():
-        logger.debug("Workflow directory does not exist or is not a directory")
-        return []
-
-    workflows = []
-
-    try:
-        # List all workflow files in the directory
-        workflow_files = list(workflows_dir.glob("*.pflow.md"))
-
-        if not workflow_files:
-            logger.debug("No workflow files found")
-            return []
-
-        logger.debug(f"Found {len(workflow_files)} workflow files to process")
-
-        # Process each workflow file
-        for json_file in workflow_files:
-            workflow_data = _load_single_workflow(json_file)
-            if workflow_data:
-                workflows.append(workflow_data)
-
-    except Exception as e:
-        logger.warning(f"Error listing workflow files: {type(e).__name__}: {e}")
-        return []
-
-    logger.info(f"Loaded {len(workflows)} workflows from {workflows_dir}")
-    return workflows
-
-
 def _format_structure_combined(
     structure: dict[str, Any], parent_path: str = ""
 ) -> tuple[dict[str, Any], list[tuple[str, str, str]]]:
@@ -408,21 +257,6 @@ def _format_structure_combined(
     return json_struct, paths
 
 
-def _extract_workflow_description(workflow: dict[str, Any]) -> str:
-    """Extract description from workflow metadata.
-
-    Args:
-        workflow: Workflow metadata dict
-
-    Returns:
-        Description string or empty string
-    """
-    # Get description from workflow metadata (flat structure, no rich_metadata wrapper)
-    if workflow.get("description", "").strip():
-        return str(workflow["description"]).strip()
-    return ""
-
-
 def build_nodes_context(
     node_ids: Optional[list[str]] = None,
     registry_metadata: Optional[dict[str, dict[str, Any]]] = None,
@@ -473,172 +307,6 @@ def build_nodes_context(
         sections.append("")  # Empty line between categories
 
     return "\n".join(sections).strip()
-
-
-def _find_flow_start(
-    nodes: list[dict[str, Any]], edges: list[dict[str, Any]], workflow_ir: dict[str, Any]
-) -> Optional[str]:
-    """Find the starting node for the workflow flow."""
-    # Find nodes with no incoming edges
-    has_incoming = {str(edge["to"]) for edge in edges}
-    start_nodes: list[str] = [str(node["id"]) for node in nodes if str(node["id"]) not in has_incoming]
-
-    if start_nodes:
-        return start_nodes[0]
-
-    # Use explicit start_node or first node
-    start_node = workflow_ir.get("start_node")
-    if start_node:
-        return str(start_node)
-
-    if nodes:
-        return str(nodes[0]["id"])
-    return None
-
-
-def _build_linear_flow(start_id: str, node_types: dict[str, str], graph: dict[str, list[str]]) -> list[str]:
-    """Build a linear flow from a starting node."""
-    flow: list[str] = []
-    visited: set[str] = set()
-    current: Optional[str] = start_id
-
-    while current and current not in visited and current in node_types:
-        visited.add(current)
-        flow.append(node_types[current])
-        # Follow first outgoing edge
-        next_nodes = graph.get(current, [])
-        current = next_nodes[0] if next_nodes else None
-
-    return flow
-
-
-def _build_node_flow(workflow_ir: dict[str, Any]) -> str:
-    """Build a readable flow string from workflow nodes and edges.
-
-    Uses node IDs (e.g. "get-commits", "classify-commits") rather than
-    types (e.g. "shell", "llm") because IDs are author-chosen names that
-    describe what each step does, giving the LLM far better matching signal.
-
-    Args:
-        workflow_ir: The workflow IR containing nodes and edges
-
-    Returns:
-        A flow string like "get-remote → classify-commits → write-changelog"
-    """
-    nodes = workflow_ir.get("nodes", [])
-    edges = workflow_ir.get("edges", [])
-
-    if not nodes:
-        return ""
-
-    # Check if nodes have IDs (proper IR format) or are simplified (test format)
-    first_node = nodes[0]
-    has_ids = "id" in first_node
-
-    if not has_ids:
-        # Simplified format without IDs - just list node types
-        # This handles test cases that create nodes without IDs
-        return " + ".join(node.get("type", "unknown") for node in nodes)
-
-    # Map node ID → node ID (identity) so _build_linear_flow emits IDs
-    node_ids: dict[str, str] = {str(node["id"]): str(node["id"]) for node in nodes}
-
-    if not edges:
-        # No edges - just list node IDs
-        return " + ".join(str(node["id"]) for node in nodes)
-
-    # Build adjacency list
-    graph: dict[str, list[str]] = {str(node["id"]): [] for node in nodes}
-    for edge in edges:
-        from_id = str(edge["from"])
-        to_id = str(edge["to"])
-        if from_id in graph:
-            graph[from_id].append(to_id)
-
-    # Find starting point and build flow
-    start_id = _find_flow_start(nodes, edges, workflow_ir)
-    if not start_id:
-        return " + ".join(str(node["id"]) for node in nodes)
-
-    flow_parts = _build_linear_flow(start_id, node_ids, graph)
-
-    return " → ".join(flow_parts) if flow_parts else ""
-
-
-def _build_workflow_entry(idx: int, workflow: dict[str, Any]) -> str:
-    """Build a single workflow context entry with metadata.
-
-    Args:
-        idx: 1-based index for numbered display
-        workflow: Workflow metadata dict from WorkflowManager
-
-    Returns:
-        Formatted workflow entry string
-    """
-    name = workflow["name"]
-    description = _extract_workflow_description(workflow)
-
-    entry_parts = []
-
-    if description:
-        entry_parts.append(f"**{idx}. `{name}`** - {description}")
-    else:
-        entry_parts.append(f"**{idx}. `{name}`**")
-
-    # Add workflow inputs grouped by required/optional
-    ir = workflow.get("ir", {})
-    inputs = ir.get("inputs", {}) if ir else {}
-    if inputs:
-        required = [n for n, s in inputs.items() if s.get("required", False)]
-        optional = [n for n, s in inputs.items() if not s.get("required", False)]
-        if required:
-            entry_parts.append(f"   **Inputs:** {', '.join(required)}")
-        if optional:
-            entry_parts.append(f"   **Optional:** {', '.join(optional)}")
-
-    # Add node flow to show what the workflow actually does
-    if ir:
-        node_flow = _build_node_flow(ir)
-        if node_flow:
-            entry_parts.append(f"   **Flow:** `{node_flow}`")
-
-    # Metadata fields are at top level (flat structure, no rich_metadata wrapper)
-    capabilities = workflow.get("capabilities", [])
-    if capabilities:
-        entry_parts.append(f"   **Can:** {', '.join(capabilities)}")
-
-    use_cases = workflow.get("typical_use_cases", [])
-    if use_cases:
-        entry_parts.append(f"   **For:** {', '.join(use_cases)}")
-
-    return "\n".join(entry_parts)
-
-
-def build_workflows_context(
-    workflow_names: Optional[list[str]] = None,
-    workflow_manager: Optional[WorkflowManager] = None,
-) -> str:
-    """Build context containing only workflow information as a numbered list.
-
-    Args:
-        workflow_names: List of workflow names to include (None = all workflows)
-        workflow_manager: Optional WorkflowManager instance.
-
-    Returns:
-        Numbered list of workflows with descriptions
-    """
-    manager = workflow_manager if workflow_manager else _get_workflow_manager()
-    saved_workflows = manager.list_all()
-
-    if workflow_names is not None:
-        filtered_workflows = [w for w in saved_workflows if w["name"] in workflow_names]
-    else:
-        filtered_workflows = saved_workflows
-
-    sorted_workflows = sorted(filtered_workflows, key=lambda w: w["name"])
-    sections = [_build_workflow_entry(idx, wf) for idx, wf in enumerate(sorted_workflows, 1)]
-
-    return "\n\n".join(sections).strip()
 
 
 def _check_missing_components(
@@ -751,6 +419,7 @@ def build_planning_context(
         selected_workflow_names: Workflow names to include (required)
         registry_metadata: Full registry metadata dict
         saved_workflows: Pre-loaded workflow list (optional, will load if None)
+        workflow_manager: Optional WorkflowManager instance (used when saved_workflows is None)
 
     Returns:
         Either:
@@ -762,13 +431,8 @@ def build_planning_context(
 
     # Load workflows if not provided
     if saved_workflows is None:
-        # Check if _load_saved_workflows is being mocked (for tests)
-        if hasattr(_load_saved_workflows, "_mock_name"):
-            saved_workflows = _load_saved_workflows()
-        else:
-            # Use provided workflow_manager or fallback to singleton
-            manager = workflow_manager if workflow_manager else _get_workflow_manager()
-            saved_workflows = manager.list_all()
+        manager = workflow_manager if workflow_manager else WorkflowManager()
+        saved_workflows = manager.list_all()
 
     # Check for missing components
     error_dict = _check_missing_components(
@@ -792,162 +456,6 @@ def build_planning_context(
     markdown_sections.extend(_format_planning_workflows(selected_workflows))
 
     return "\n".join(markdown_sections).strip()
-
-
-def _extract_input_keys(inputs: list) -> set:
-    """Extract keys from input list."""
-    input_keys = set()
-    for inp in inputs:
-        if isinstance(inp, dict):
-            input_keys.add(inp["key"])
-        else:
-            input_keys.add(inp)
-    return input_keys
-
-
-def _format_param_line(param: dict | str, input_keys: set) -> str | None:
-    """Format a single parameter line if not in input_keys."""
-    if isinstance(param, dict):
-        key = param["key"]
-        if key not in input_keys:
-            type_str = param.get("type", "any")
-            desc = param.get("description", "")
-            line = f"- `{key}: {type_str}`"
-            if desc:
-                line += f" - {desc}"
-            return line
-    else:
-        if param not in input_keys:
-            return f"- `{param}`"
-    return None
-
-
-def _format_template_variables(inputs: list, lines: list[str]) -> None:
-    """Legacy template variable formatting - now integrated into _format_all_parameters.
-
-    Kept for backward compatibility but no longer used in main flow.
-    """
-    template_vars = []
-    for inp in inputs:
-        if isinstance(inp, dict):
-            key = inp["key"]
-            template_vars.append(f'{key}: "${{{key}}}"')
-
-    if template_vars:
-        lines.append("**Template Variables**: Use ${variables} in params field for inputs:")
-        for var in template_vars[:3]:  # Limit to first 3 to avoid bloat
-            lines.append(f"- {var}")
-        if len(template_vars) > 3:
-            lines.append(f"- ... and {len(template_vars) - 3} more")
-    else:
-        lines.append("**Template Variables**: Use ${variables} in params field for any input")
-
-
-# DEPRECATED: Replaced by _format_all_parameters_new which shows ALL parameters
-# def _format_all_parameters(node_data: dict, inputs: list, lines: list[str]) -> None:
-#     """Format all parameters with clear indication of template variable usage.
-#
-#     With namespacing enabled, nodes cannot read inputs from shared store directly.
-#     All inputs must be passed via parameters using template variables.
-#
-#     Args:
-#         node_data: Node metadata containing params
-#         inputs: List of inputs that need to be passed via params
-#         lines: List to append formatted lines to
-#     """
-#     params = node_data["params"]
-#     input_keys = _extract_input_keys(inputs)
-#
-#     if not params:
-#         lines.append("**Parameters**: none")
-#         return
-#
-#     lines.append("**Parameters**:")
-#
-#     # Format each parameter
-#     for param in params:
-#         _format_single_parameter(param, input_keys, lines)
-#
-#     # Add template variable usage example if needed
-#     if input_keys:
-#         _add_template_usage_example(input_keys, inputs, lines)
-
-
-def _format_single_parameter(param: dict | str, input_keys: set, lines: list[str]) -> None:
-    """Format a single parameter line."""
-    if isinstance(param, dict):
-        key = param["key"]
-        type_str = param.get("type", "any")
-        desc = param.get("description", "")
-
-        # Build the parameter line
-        if key in input_keys:
-            line = f"- `{key}: {type_str}` *(required for input, use ${{input_name}})*"
-        else:
-            line = f"- `{key}: {type_str}`"
-
-        if desc:
-            line += f" - {desc}"
-        lines.append(line)
-    else:
-        # Simple string param
-        if param in input_keys:
-            lines.append(f"- `{param}` *(required for input, use ${{input_name}})*")
-        else:
-            lines.append(f"- `{param}`")
-
-
-# DEPRECATED: Replaced by _format_usage_example which shows realistic examples
-# def _add_template_usage_example(input_keys: set, inputs: list, lines: list[str]) -> None:
-#     """Add template variable usage example for inputs."""
-#     lines.append("")
-#     lines.append("**Template Variable Usage**:")
-#     lines.append("Since nodes use namespacing, pass input values via params:")
-#     lines.append("```json")
-#     lines.append("{")
-#
-#     example_params = []
-#     for key in list(input_keys)[:2]:  # Show first 2 as examples
-#         # Find the input to get its description
-#         input_info = next(
-#             (inp for inp in inputs if (isinstance(inp, dict) and inp.get("key") == key) or inp == key), None
-#         )
-#         if input_info and isinstance(input_info, dict):
-#             example_params.append(f'  "{key}": "${{{key}}}"  // {input_info.get("description", "from workflow input")}')
-#         else:
-#             example_params.append(f'  "{key}": "${{{key}}}"')
-#
-#     if len(input_keys) > 2:
-#         example_params.append(f"  // ... and {len(input_keys) - 2} more input mappings")
-#
-#     lines.append(",\n".join(example_params))
-#     lines.append("}")
-#     lines.append("```")
-
-
-def _format_interface_item(item: dict | str, item_type: str, lines: list[str]) -> None:
-    """Format a single interface item (input/output/param).
-
-    Args:
-        item: The item to format (dict or string)
-        item_type: Type of item ("input", "output", "param")
-        lines: List to append formatted lines to
-    """
-    if isinstance(item, dict):
-        key = item["key"]
-        type_str = item.get("type", "any")
-        desc = item.get("description", "")
-
-        line = f"- `{key}: {type_str}`"
-        if desc:
-            line += f" - {desc}"
-        lines.append(line)
-
-        # Enhanced structure display for complex types
-        if type_str in ("dict", "list", "list[dict]") and "structure" in item:
-            _add_enhanced_structure_display(lines, key, item["structure"])
-    else:
-        lines.append(f"- `{item}`")
 
 
 def _collect_all_parameters(inputs: list, params: list) -> tuple[list[dict], set]:
@@ -1266,8 +774,6 @@ def _add_enhanced_structure_display(lines: list[str], key: str, structure: dict[
     wrapper = {key: json_struct}
 
     # Pretty print the JSON
-    import json
-
     json_str = json.dumps(wrapper, indent=2)
     lines.append(json_str)
     lines.append("```")

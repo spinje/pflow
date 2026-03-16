@@ -157,59 +157,35 @@ def discover_workflows(query: str) -> None:
     Example:
         pflow workflow discover "I need to analyze pull requests"
     """
-    from pflow.core.llm_config import get_model_for_feature
-    from pflow.planning.nodes import WorkflowDiscoveryNode
+    from pflow.core.workflow.discovery import discover_workflow
 
     # Validate query before processing
     query = _validate_discovery_query(query, "workflow discover")
 
-    # Get LLM model from settings → auto-detect → fallback
-    discovery_model = get_model_for_feature("discovery")
-
-    # Create discovery node and set model via params (PocketFlow convention)
-    node = WorkflowDiscoveryNode()
-    node.params["model"] = discovery_model
-
-    shared = {
-        "user_input": query,
-        "workflow_manager": WorkflowManager(),
-    }
+    manager = WorkflowManager()
 
     try:
-        action = node.run(shared)
+        result = discover_workflow(query, workflow_manager=manager)
     except Exception as e:
         _handle_discovery_error(e)
         sys.exit(1)
 
     # Display results
-    if action == "found_existing":
-        result = shared.get("discovery_result")
-        workflow = shared.get("found_workflow")
+    if result.found and result.workflow:
+        from pflow.execution.formatters.discovery_formatter import format_discovery_result
 
-        if workflow and result and isinstance(result, dict) and isinstance(workflow, dict):
-            # Use shared formatter (same as MCP)
-            from pflow.execution.formatters.discovery_formatter import format_discovery_result
-
-            formatted = format_discovery_result(result, workflow)
-            click.echo(formatted)
+        result_dict = {
+            "workflow_name": result.workflow_name,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+        }
+        formatted = format_discovery_result(result_dict, result.workflow)
+        click.echo(formatted)
     else:
-        # No match found - show available workflows as suggestions
         from pflow.execution.formatters.discovery_formatter import format_no_matches_with_suggestions
 
-        workflow_manager_obj = shared.get("workflow_manager", WorkflowManager())
-        # Type narrowing for mypy
-        if not isinstance(workflow_manager_obj, WorkflowManager):
-            workflow_manager_obj = WorkflowManager()
-        all_workflows = workflow_manager_obj.list_all()
-
-        # Get reasoning from discovery result if available
-        result_obj = shared.get("discovery_result", {})
-        # Type narrowing for mypy
-        if not isinstance(result_obj, dict):
-            result_obj = {}
-        reasoning = result_obj.get("reasoning")
-
-        formatted = format_no_matches_with_suggestions(all_workflows, query, reasoning=reasoning)
+        all_workflows = manager.list_all()
+        formatted = format_no_matches_with_suggestions(all_workflows, query, reasoning=result.reasoning)
         click.echo(formatted)
 
 

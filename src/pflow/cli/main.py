@@ -3671,18 +3671,6 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     return False
 
 
-def _install_anthropic_model_if_needed(verbose: bool) -> None:
-    """Install Anthropic model wrapper for planning models unless in tests."""
-    import os
-
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
-
-        install_anthropic_model()
-        if verbose:
-            click.echo("cli: Using Anthropic SDK for planning models", err=True)
-
-
 def _inject_settings_env_vars() -> None:
     """Inject API keys from pflow settings into environment.
 

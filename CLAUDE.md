@@ -104,16 +104,16 @@ pflow/
 ├── src/pflow/
 │   ├── pocketflow/          # Embedded PocketFlow framework (~200 lines)
 │   ├── cli/                 # CLI entrypoints and subcommands
-│   ├── core/                # Schemas, settings, validation, utilities
-│   │   └── workflow/        # Workflow lifecycle (manager, validator, save, skills)
+│   ├── core/                # Schemas, settings, validation, utilities, LLM/prompt utils
+│   │   └── workflow/        # Workflow lifecycle (manager, validator, save, skills, discovery)
 │   ├── execution/           # Execution UX, repair, formatters
 │   ├── runtime/             # Compilation, wrappers, tracing
 │   ├── nodes/               # Platform node implementations
 │   │   └── (shell, http, llm, file, git, github, mcp, python, claude, test)
-│   ├── planning/            # Natural language planner (GATED — Task 107)
+│   ├── planning/            # Natural language planner (GATED — Task 107, pending Phase 2 deletion)
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
-│   └── registry/            # Node registry and scanning
+│   └── registry/            # Node registry, scanning, context building, discovery
 ├── tests/                   # Test suite
 │   ├── shared/              # Shared utilities (llm_mock, markdown_utils, registry_utils)
 │   ├── test_cli/            # CLI tests

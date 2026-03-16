@@ -24,9 +24,10 @@ class TestFormatDiscoveryResult:
             "reasoning": "Matches PR analysis requirements",
         }
         workflow = {
-            "metadata": {"description": "Analyzes GitHub PRs", "version": "1.0.0"},
+            "description": "Analyzes GitHub PRs",
+            "version": "1.0.0",
             "ir": {
-                "flow": [
+                "edges": [
                     {"from": "fetch-pr", "to": "analyze"},
                     {"from": "analyze", "to": "report"},
                 ],
@@ -255,7 +256,7 @@ class TestHelperFunctions:
 
     def test_format_workflow_metadata(self):
         """METADATA: Formats description and version."""
-        workflow = {"metadata": {"description": "Test workflow", "version": "2.0.0"}}
+        workflow = {"description": "Test workflow", "version": "2.0.0"}
 
         lines = format_workflow_metadata(workflow)
 
@@ -265,7 +266,7 @@ class TestHelperFunctions:
     def test_format_workflow_flow_truncates_long_flows(self):
         """FLOW: Truncates flows longer than 3 nodes."""
         ir = {
-            "flow": [
+            "edges": [
                 {"from": "node1", "to": "node2"},
                 {"from": "node2", "to": "node3"},
                 {"from": "node3", "to": "node4"},

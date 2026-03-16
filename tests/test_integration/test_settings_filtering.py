@@ -47,8 +47,8 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
         os.environ["HOME"] = str(test_home)
 
         # Import after setting HOME to use test settings
-        from pflow.planning.context_builder import build_planning_context
         from pflow.registry import Registry
+        from pflow.registry.context_builder import build_planning_context
 
         # Load filtered registry and build context
         registry = Registry()

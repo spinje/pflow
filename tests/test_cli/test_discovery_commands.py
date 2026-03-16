@@ -1,61 +1,43 @@
 """Tests for discovery commands (workflow discover & registry discover).
 
-These tests validate CLI-to-node integration for LLM-powered discovery commands.
-They mock at the node.run() level (not internal LLM calls) to test integration behavior.
+These tests validate CLI integration for LLM-powered discovery commands.
+They mock the discovery functions (not internal LLM calls) to test CLI behavior.
 
 Critical bugs these tests prevent:
-1. Missing workflow_manager in shared store causes "Invalid request" error
-2. Missing Anthropic monkey patch causes cryptic Pydantic errors
-3. Poor error messages when LLM unavailable
+1. Poor error messages when LLM unavailable
+2. Missing or malformed output when discovery returns results
+3. Graceful handling of empty queries and no-match scenarios
 """
 
-import json
+from unittest.mock import patch
 
 import click.testing
 
 from pflow.cli.commands.workflow import workflow as workflow_cmd
 from pflow.cli.registry import registry as registry_cmd
+from pflow.core.workflow.discovery import WorkflowMatch
+from pflow.registry.discovery import ComponentSelection
 
 
 class TestWorkflowDiscover:
     """Tests for 'pflow workflow discover' command."""
 
-    def test_workflow_discover_with_mocked_llm(self, tmp_path, monkeypatch):
+    def test_workflow_discover_with_mocked_llm(self):
         """Returns matching workflows when LLM available.
 
-        Real behavior: Uses WorkflowDiscoveryNode to find relevant workflows.
-        Mock at node.run() level to avoid prep() complexities.
+        Mocks discover_workflow() to return a successful WorkflowMatch.
+        Verifies CLI formats name, description, confidence, and reasoning.
         """
-        # Setup workflow library
-        home_pflow = tmp_path / ".pflow" / "workflows"
-        home_pflow.mkdir(parents=True)
-
-        workflow = {
-            "ir_version": "0.1.0",
-            "metadata": {
+        mock_result = WorkflowMatch(
+            found=True,
+            workflow_name="pr-analyzer",
+            confidence=0.9,
+            reasoning="Matches GitHub PR analysis task",
+            workflow={
                 "description": "Analyzes GitHub pull requests",
-                "capabilities": ["GitHub API", "LLM analysis"],
-            },
-            "nodes": [],
-            "edges": [],
-        }
-        (home_pflow / "pr-analyzer.json").write_text(json.dumps(workflow))
-
-        # Mock WorkflowDiscoveryNode.run() to return match
-        def mock_discovery_run(self, shared):
-            # Populate shared store as the node would
-            shared["discovery_result"] = {
-                "workflow_name": "pr-analyzer",
-                "confidence": 0.9,
-                "reasoning": "Matches GitHub PR analysis task",
-            }
-            shared["found_workflow"] = {
-                "metadata": {
-                    "description": "Analyzes GitHub pull requests",
-                    "version": "1.0.0",
-                },
+                "version": "1.0.0",
                 "ir": {
-                    "flow": [
+                    "edges": [
                         {"from": "fetch-pr", "to": "analyze"},
                         {"from": "analyze", "to": "report"},
                     ],
@@ -67,13 +49,12 @@ class TestWorkflowDiscover:
                         "analysis": {"type": "str", "description": "Analysis result"},
                     },
                 },
-            }
-            return "found_existing"
+            },
+        )
 
-        monkeypatch.setattr("pflow.planning.nodes.WorkflowDiscoveryNode.run", mock_discovery_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(workflow_cmd, ["discover", "analyze pull requests"], env={"HOME": str(tmp_path)})
+        with patch("pflow.core.workflow.discovery.discover_workflow", return_value=mock_result):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(workflow_cmd, ["discover", "analyze pull requests"])
 
         assert result.exit_code == 0
         assert "pr-analyzer" in result.output
@@ -81,84 +62,79 @@ class TestWorkflowDiscover:
         assert "90%" in result.output  # Confidence
         assert "Matches GitHub PR analysis task" in result.output  # Reasoning
 
-    def test_workflow_discover_requires_workflow_manager(self, tmp_path, monkeypatch):
-        """Validates that workflow_manager is provided to discovery node.
+    def test_workflow_discover_calls_function_with_query(self):
+        """Verifies the CLI passes the query and a WorkflowManager to discover_workflow().
 
-        Critical bug: Missing workflow_manager causes "Invalid request" error.
-        This test ensures the CLI properly instantiates and passes WorkflowManager.
+        Previously tested that workflow_manager was in the shared store.
+        Now verifies the function receives the expected arguments.
         """
-        workflow_manager_provided = []
+        mock_result = WorkflowMatch(
+            found=True,
+            workflow_name="test",
+            confidence=0.95,
+            reasoning="Test match",
+            workflow={"metadata": {}, "ir": {}},
+        )
 
-        # Mock to check for workflow_manager
-        def mock_discovery_run(self, shared):
-            # Track whether workflow_manager was provided
-            if "workflow_manager" in shared:
-                workflow_manager_provided.append(True)
-                # Simulate successful discovery
-                shared["discovery_result"] = {"workflow_name": "test"}
-                shared["found_workflow"] = {"metadata": {}, "ir": {}}
-                return "found_existing"
-            else:
-                # This would be the bug - missing workflow_manager
-                raise ValueError("workflow_manager required in shared store")
+        with patch("pflow.core.workflow.discovery.discover_workflow", return_value=mock_result) as mock_fn:
+            runner = click.testing.CliRunner()
+            result = runner.invoke(workflow_cmd, ["discover", "test query"])
 
-        monkeypatch.setattr("pflow.planning.nodes.WorkflowDiscoveryNode.run", mock_discovery_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(workflow_cmd, ["discover", "test query"], env={"HOME": str(tmp_path)})
-
-        # Should succeed because CLI provides workflow_manager
         assert result.exit_code == 0
-        assert len(workflow_manager_provided) > 0, "workflow_manager must be provided"
+        mock_fn.assert_called_once()
+        call_args = mock_fn.call_args
+        assert call_args[0][0] == "test query"  # First positional arg is the query
+        # CLI passes workflow_manager as keyword argument
+        assert "workflow_manager" in call_args[1]
 
-    def test_workflow_discover_llm_unavailable(self, tmp_path, monkeypatch):
+    def test_workflow_discover_llm_unavailable(self):
         """Shows helpful message when LLM unavailable.
 
-        Real behavior: Suggests using 'workflow list' instead.
+        Mocks discover_workflow() to raise RuntimeError.
+        Verifies the CLI presents guidance to the user.
         """
-
-        # Mock to simulate LLM configuration error
-        def mock_discovery_run(self, shared):
-            # Raise a generic exception (will be handled by discovery error handler)
-            raise RuntimeError("No LLM API keys configured. Please set ANTHROPIC_API_KEY or OPENAI_API_KEY.")
-
-        monkeypatch.setattr("pflow.planning.nodes.WorkflowDiscoveryNode.run", mock_discovery_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(workflow_cmd, ["discover", "test query"], env={"HOME": str(tmp_path)})
+        with patch(
+            "pflow.core.workflow.discovery.discover_workflow",
+            side_effect=RuntimeError("No LLM API keys configured. Please set ANTHROPIC_API_KEY or OPENAI_API_KEY."),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(workflow_cmd, ["discover", "test query"])
 
         # Should fail but with helpful message
         assert result.exit_code != 0
-        # Should contain helpful guidance (one of these patterns)
-        # Either the error message or the alternatives
+        # Should contain helpful guidance (error message or alternatives)
         helpful_patterns = ["API key", "workflow list", "pflow workflow"]
         assert any(pattern.lower() in result.output.lower() for pattern in helpful_patterns)
 
-    def test_workflow_discover_empty_query(self, tmp_path):
-        """Handles empty or whitespace-only queries gracefully."""
-        runner = click.testing.CliRunner()
-        result = runner.invoke(workflow_cmd, ["discover", ""], env={"HOME": str(tmp_path)})
+    def test_workflow_discover_empty_query(self):
+        """Handles empty or whitespace-only queries gracefully.
 
-        # Click should reject empty argument before we even get to the node
+        No mock needed - tests CLI validation before any discovery call.
+        """
+        runner = click.testing.CliRunner()
+        result = runner.invoke(workflow_cmd, ["discover", ""])
+
+        # Click should reject empty argument before we even get to the function
         # But if it doesn't, we should still handle it gracefully
         assert result.exit_code != 0 or "no" in result.output.lower() or "not found" in result.output.lower()
 
-    def test_workflow_discover_no_workflows_exist(self, tmp_path, monkeypatch):
-        """Handles empty workflow library gracefully."""
-        home_pflow = tmp_path / ".pflow" / "workflows"
-        home_pflow.mkdir(parents=True)
-        # Empty directory - no workflows
+    def test_workflow_discover_no_workflows_exist(self):
+        """Handles empty workflow library gracefully.
 
-        # Mock discovery to return "not found"
-        def mock_discovery_run(self, shared):
-            # Node returns "not_found" action when no matches
-            # Don't set discovery_result or found_workflow
-            return "not_found"
+        Mocks discover_workflow() to return WorkflowMatch(found=False).
+        Verifies the CLI shows a "no match" message.
+        """
+        mock_result = WorkflowMatch(
+            found=False,
+            workflow_name=None,
+            confidence=0.0,
+            reasoning="No existing workflows match the query",
+            workflow=None,
+        )
 
-        monkeypatch.setattr("pflow.planning.nodes.WorkflowDiscoveryNode.run", mock_discovery_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(workflow_cmd, ["discover", "test query"], env={"HOME": str(tmp_path)})
+        with patch("pflow.core.workflow.discovery.discover_workflow", return_value=mock_result):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(workflow_cmd, ["discover", "test query"])
 
         assert result.exit_code == 0  # Not an error, just no matches
         assert "no" in result.output.lower() or "not found" in result.output.lower()
@@ -167,15 +143,16 @@ class TestWorkflowDiscover:
 class TestRegistryDiscover:
     """Tests for 'pflow registry discover' command."""
 
-    def test_registry_discover_with_mocked_llm(self, tmp_path, monkeypatch):
+    def test_registry_discover_with_mocked_llm(self):
         """Returns relevant nodes when LLM available.
 
-        Real behavior: Uses ComponentBrowsingNode to build planning context.
+        Mocks discover_components() to return a ComponentSelection with planning_context.
+        Verifies the CLI displays the context content.
         """
-
-        # Mock ComponentBrowsingNode.run() to populate planning_context
-        def mock_browsing_run(self, shared):
-            shared["planning_context"] = """## GitHub Operations
+        mock_result = ComponentSelection(
+            node_ids=["github-get-pr", "github-list-prs"],
+            reasoning="Selected GitHub PR tools for the task",
+            planning_context="""## GitHub Operations
 
 ### github-get-pr
 **Description**: Fetch pull request details
@@ -190,34 +167,30 @@ class TestRegistryDiscover:
 **Inputs**:
   - repo: str (required) - Repository name
   - state: str (optional) - PR state filter
-"""
-            return "generate"
+""",
+        )
 
-        monkeypatch.setattr("pflow.planning.nodes.ComponentBrowsingNode.run", mock_browsing_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(registry_cmd, ["discover", "fetch GitHub pull requests"], env={"HOME": str(tmp_path)})
+        with patch("pflow.registry.discovery.discover_components", return_value=mock_result):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(registry_cmd, ["discover", "fetch GitHub pull requests"])
 
         assert result.exit_code == 0
         assert "github-get-pr" in result.output
         assert "Fetch pull request details" in result.output
         assert "pr_number" in result.output
 
-    def test_registry_discover_llm_unavailable(self, tmp_path, monkeypatch):
+    def test_registry_discover_llm_unavailable(self):
         """Shows helpful message when LLM not configured.
 
-        Real behavior: Suggests using 'registry list' instead.
+        Mocks discover_components() to raise RuntimeError.
+        Verifies the CLI presents guidance to the user.
         """
-
-        # Mock to simulate LLM error
-        def mock_browsing_run(self, shared):
-            # Raise a generic exception (will be handled by discovery error handler)
-            raise RuntimeError("No LLM API keys configured. Please set ANTHROPIC_API_KEY or OPENAI_API_KEY.")
-
-        monkeypatch.setattr("pflow.planning.nodes.ComponentBrowsingNode.run", mock_browsing_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(registry_cmd, ["discover", "test query"], env={"HOME": str(tmp_path)})
+        with patch(
+            "pflow.registry.discovery.discover_components",
+            side_effect=RuntimeError("No LLM API keys configured. Please set ANTHROPIC_API_KEY or OPENAI_API_KEY."),
+        ):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(registry_cmd, ["discover", "test query"])
 
         # Should fail with helpful message
         assert result.exit_code != 0
@@ -225,53 +198,42 @@ class TestRegistryDiscover:
         helpful_patterns = ["API key", "registry list", "pflow registry"]
         assert any(pattern.lower() in result.output.lower() for pattern in helpful_patterns)
 
-    def test_discovery_commands_have_anthropic_patch(self, tmp_path, monkeypatch):
-        """Verifies Anthropic monkey patch is installed.
+    def test_workflow_discover_returns_success(self):
+        """Verifies the workflow discover command works end-to-end with a mock.
 
-        Critical discovery: Without patch, Anthropic LLM calls fail with cryptic
-        Pydantic error: "cache_blocks - Extra inputs are not permitted"
-
-        This test validates that the code path exists (we can't test actual installation
-        because PYTEST_CURRENT_TEST is set during tests).
+        Replaces the old Anthropic monkey patch test - that patch was removed
+        when discovery switched from PocketFlow nodes to plain functions.
         """
+        mock_result = WorkflowMatch(
+            found=True,
+            workflow_name="test-workflow",
+            confidence=0.85,
+            reasoning="Good match",
+            workflow={"metadata": {"description": "A test workflow"}, "ir": {}},
+        )
 
-        # Mock discovery node to succeed quickly
-        def mock_discovery_run(self, shared):
-            shared["discovery_result"] = {"workflow_name": "test"}
-            shared["found_workflow"] = {"metadata": {}, "ir": {}}
-            return "found_existing"
+        with patch("pflow.core.workflow.discovery.discover_workflow", return_value=mock_result):
+            runner = click.testing.CliRunner()
+            result = runner.invoke(workflow_cmd, ["discover", "test"])
 
-        monkeypatch.setattr("pflow.planning.nodes.WorkflowDiscoveryNode.run", mock_discovery_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(workflow_cmd, ["discover", "test"], env={"HOME": str(tmp_path)})
-
-        # Command should work - this verifies the integration is correct
-        # The actual patch installation is skipped in tests (PYTEST_CURRENT_TEST check)
-        # but we verify the command structure is correct
         assert result.exit_code == 0
+        assert "test-workflow" in result.output
 
-    def test_registry_discover_requires_workflow_manager(self, tmp_path, monkeypatch):
-        """Validates workflow_manager is provided to ComponentBrowsingNode.
+    def test_registry_discover_calls_function_correctly(self):
+        """Verifies discover_components is called with the user's query.
 
-        ComponentBrowsingNode needs workflow_manager for workflow context.
+        Replaces the old test that checked workflow_manager in shared store.
+        The new discover_components() handles its own dependencies internally.
         """
-        workflow_manager_provided = []
+        mock_result = ComponentSelection(
+            node_ids=["shell", "read-file"],
+            reasoning="Selected for file processing",
+            planning_context="## File Processing\n\nSome context",
+        )
 
-        # Mock to check for workflow_manager
-        def mock_browsing_run(self, shared):
-            if "workflow_manager" in shared:
-                workflow_manager_provided.append(True)
-                shared["planning_context"] = "## Test\n\nSome context"
-                return "generate"
-            else:
-                raise ValueError("workflow_manager required")
+        with patch("pflow.registry.discovery.discover_components", return_value=mock_result) as mock_fn:
+            runner = click.testing.CliRunner()
+            result = runner.invoke(registry_cmd, ["discover", "process files"])
 
-        monkeypatch.setattr("pflow.planning.nodes.ComponentBrowsingNode.run", mock_browsing_run)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(registry_cmd, ["discover", "test query"], env={"HOME": str(tmp_path)})
-
-        # Should succeed
         assert result.exit_code == 0
-        assert len(workflow_manager_provided) > 0, "workflow_manager must be provided"
+        mock_fn.assert_called_once_with("process files")

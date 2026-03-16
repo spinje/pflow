@@ -228,7 +228,7 @@ def _apply_smart_filtering(
     paths: list[tuple[str, str]], source_desc: str | None, original_count: int
 ) -> tuple[list[tuple[str, str]], str | None]:
     """Apply smart filtering to paths and update source description."""
-    from pflow.core.smart_filter import smart_filter_fields_cached
+    from pflow.registry.smart_filter import smart_filter_fields_cached
 
     paths_tuple = tuple(paths)
     filtered_tuple = smart_filter_fields_cached(paths_tuple, threshold=25)

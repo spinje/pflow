@@ -50,7 +50,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `success_formatter`, `error_formatter` | `MetricsCollector` | LLM usage/cost metrics |
 | `node_output_formatter` | `Registry` | Metadata for template path extraction |
 | `node_output_formatter` | `TemplateResolver`, `template_validation` | Path resolution and flattening |
-| `node_output_formatter` | `smart_filter_fields_cached` (core) | LLM-based field filtering in smart mode |
+| `node_output_formatter` | `smart_filter_fields_cached` (registry) | LLM-based field filtering in smart mode |
 | `error_formatter` | `sanitize_parameters` (mcp_server.utils) | Security sanitization (lazy import) |
 
 ## Hard-Won: Update BOTH Call Sites

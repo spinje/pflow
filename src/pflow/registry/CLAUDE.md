@@ -9,7 +9,12 @@ registry/
 ├── __init__.py              # Re-exports: Registry, scan_for_nodes
 ├── registry.py              # Registry class — load/save/search/filter against ~/.pflow/registry.json
 ├── scanner.py               # Discover Node subclasses via importlib (executes code!)
-└── metadata_extractor.py    # Parse Interface section from node docstrings into structured metadata
+├── metadata_extractor.py    # Parse Interface section from node docstrings into structured metadata
+├── context_builder.py       # Build LLM-optimized node/planning context (build_planning_context, build_nodes_context)
+├── smart_filter.py          # LLM-powered field reduction for structure-only mode
+├── discovery.py             # LLM-powered component discovery (discover_components)
+└── prompts/
+    └── component_browsing.md  # Component browsing prompt template
 ```
 
 ## How the Registry Works
@@ -56,7 +61,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 | `cli/registry.py` commands | List, search, describe, scan | Mixed — see known bugs |
 | `core/workflow/validator.py` | Validate node types exist | Default (filtered) |
 | `mcp_server/services/` | Registry service for MCP server | Default (filtered) |
-| `planning/` | Context building for planner | Default (filtered) |
+| `registry/context_builder.py` | Node specs for discovery and planning | Default (filtered) |
 
 ## Critical Details
 

@@ -34,7 +34,7 @@ class RegistryService(BaseService):
         Returns:
             Formatted markdown description with structure and available paths
         """
-        from pflow.planning.context_builder import build_planning_context
+        from pflow.registry.context_builder import build_planning_context
 
         # Load registry
         registry = Registry()  # Fresh instance

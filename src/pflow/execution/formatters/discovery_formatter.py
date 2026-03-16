@@ -8,7 +8,7 @@ Usage:
     >>> from pflow.execution.formatters.discovery_formatter import format_discovery_result
     >>> result = format_discovery_result(
     ...     discovery_result={"workflow_name": "test", "confidence": 0.9},
-    ...     workflow={"metadata": {...}, "ir": {...}},
+    ...     workflow={"description": "...", "ir": {...}},
     ... )
     >>> print(result)
     ## test
@@ -37,7 +37,7 @@ def format_discovery_result(result: dict[str, Any], workflow: dict[str, Any]) ->
         ...     "reasoning": "Matches PR analysis requirements"
         ... }
         >>> workflow = {
-        ...     "metadata": {"description": "Analyzes PRs", "version": "1.0.0"},
+        ...     "description": "Analyzes PRs", "version": "1.0.0",
         ...     "ir": {
         ...         "inputs": {"repo": {"required": True, "type": "string"}},
         ...         "outputs": {"analysis": {"type": "object"}}
@@ -84,19 +84,32 @@ def format_discovery_result(result: dict[str, Any], workflow: dict[str, Any]) ->
 def format_workflow_metadata(workflow: dict[str, Any]) -> list[str]:
     """Format workflow metadata section.
 
+    Handles both flat metadata (from WorkflowManager.load()) and legacy
+    wrapper format ({"metadata": {"description": ...}}).
+
     Args:
-        workflow: Workflow dict with metadata
+        workflow: Workflow dict with metadata (flat or wrapped)
 
     Returns:
         List of formatted lines
     """
     lines = []
 
-    if "metadata" in workflow:
+    # Flat metadata (production format from WorkflowManager.load())
+    description = workflow.get("description")
+    version = workflow.get("version")
+
+    # Fallback to legacy wrapper format
+    if description is None and "metadata" in workflow:
         meta = workflow["metadata"]
         if isinstance(meta, dict):
-            lines.append(f"**Description**: {meta.get('description', 'No description')}")
-            lines.append(f"**Version**: {meta.get('version', '1.0.0')}")
+            description = meta.get("description")
+            version = meta.get("version")
+
+    if description:
+        lines.append(f"**Description**: {description}")
+    if version:
+        lines.append(f"**Version**: {version}")
 
     # Add execution history if available (flat metadata, fields at top level)
     if workflow.get("execution_count", 0) > 0:
@@ -110,22 +123,23 @@ def format_workflow_metadata(workflow: dict[str, Any]) -> list[str]:
 def format_workflow_flow(ir: dict[str, Any]) -> list[str]:
     """Format workflow node flow.
 
+    Handles both "edges" (production IR format) and legacy "flow" key.
+
     Args:
-        ir: Workflow IR with flow field
+        ir: Workflow IR with edges or flow field
 
     Returns:
         List of formatted lines
     """
     lines = []
 
-    if "flow" in ir:
-        flow = ir.get("flow", [])
-        if flow:
-            # Show first 3 nodes in flow
-            flow_str = " >> ".join([edge["from"] for edge in flow[:3]])
-            if len(flow) > 3:
-                flow_str += " >> ..."
-            lines.append(f"**Node Flow**: {flow_str}")
+    edges = ir.get("edges") or ir.get("flow") or []
+    if edges:
+        # Show first 3 nodes in flow
+        flow_str = " >> ".join([str(edge.get("from", "?")) for edge in edges[:3]])
+        if len(edges) > 3:
+            flow_str += " >> ..."
+        lines.append(f"**Node Flow**: {flow_str}")
 
     return lines
 

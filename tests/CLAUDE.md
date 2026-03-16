@@ -257,12 +257,8 @@ Mocks from one file persist and break others → Use `@pytest.fixture(autouse=Tr
 # ✅ {"module": "pflow.nodes.test_node", "class_name": "ExampleNode"}
 ```
 
-### 13. Global State in context_builder
-`_workflow_manager` global persists between tests. Always patch:
-```python
-with patch("pflow.planning.context_builder._workflow_manager", None):
-    context = build_planning_context(...)
-```
+### 13. Context Builder Uses Fresh Instances
+`registry.context_builder.build_planning_context()` creates fresh `WorkflowManager` instances (no singleton). Pass `workflow_manager=` parameter to control which instance is used in tests.
 
 ### 14. Testing Implementation Instead of Behavior
 ```python

@@ -164,7 +164,7 @@ Note: there is no separate `search` subcommand — `pflow registry list <pattern
 
 Ambiguity detected → shows all matching full IDs with guidance.
 
-**Cross-module dependency**: `describe` uses `build_planning_context()` from `pflow.planning.context_builder` to produce detailed node output.
+**Cross-module dependency**: `describe` uses `build_planning_context()` from `pflow.registry.context_builder` to produce detailed node output.
 
 ### Execution Caching Pipeline (registry_run.py + read_fields.py)
 
@@ -194,9 +194,7 @@ Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (L
 
 **Workflow history** (`pflow workflow history <name>`): Shows execution history and last used inputs — useful for finding previously used parameter values.
 
-**Discovery commands use planning nodes directly** — `WorkflowDiscoveryNode`, `ComponentBrowsingNode`. No logic extraction needed. Nodes are self-contained with clear inputs/outputs.
-
-**Discovery context requirements**: `ComponentBrowsingNode` requires `workflow_manager`, `current_date`, and `cache_planner` in the shared store. `WorkflowDiscoveryNode` requires `user_input` and `workflow_manager`.
+**Discovery commands use plain functions** — `discover_workflow()` from `core/workflow/discovery` and `discover_components()` from `registry/discovery`. Both return typed dataclasses (`WorkflowMatch`, `ComponentSelection`).
 
 ### Skill Commands (skills.py)
 
@@ -325,9 +323,7 @@ pflow instructions usage                # Agent guide
 - **Don't import execution module in `__init__.py`** — use lazy imports to avoid circular dependencies
 - **Don't mix output streams** — errors→stderr, results→stdout. This is what makes piping work.
 - **Don't assume TTY** — always check interactive mode before showing progress or prompts
-- **Anthropic monkey patch** — required for discovery commands, installed per-command (bypasses main CLI setup). Check for `PYTEST_CURRENT_TEST` to skip during testing.
-- **Direct node reuse** — discovery commands use planning nodes (`WorkflowDiscoveryNode`, `ComponentBrowsingNode`) directly. Don't extract their logic into separate functions.
-- **`describe` depends on planning** — `registry describe` imports `build_planning_context` from `pflow.planning.context_builder`. Not a pure registry operation.
+- **`describe` depends on registry/context_builder** — `registry describe` imports `build_planning_context` from `pflow.registry.context_builder`.
 
 ## Testing
 
