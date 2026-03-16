@@ -94,7 +94,7 @@ InstrumentedNodeWrapper.set_params()
 
 Outermost wrapper. Provides:
 - **Checkpoint system**: MD5-based configuration caching (skip re-execution on resume)
-- **API warning detection**: 3-tier priority system with 73 validation + 20 resource patterns. **Unwraps MCP nested responses** (JSON string `result`, `data` field, HTTP `response`+`status_code`) before checking. **When error matches both validation and resource patterns, defaults to repairable** (validation wins).
+- **API warning detection**: 3-tier priority system with 73 validation + 20 resource patterns. **Unwraps MCP nested responses** (JSON string `result`, `data` field, HTTP `response`+`status_code`) before checking. **When error matches both validation and resource patterns, defaults to validation** (validation wins).
 - **LLM usage capture**: Token tracking and cost attribution
 - **Progress callbacks**: Real-time execution feedback via OutputInterface
 - **Cache hit tracking**: Records which nodes used cache in `shared["__cache_hits__"]`
@@ -114,7 +114,7 @@ Template resolution at runtime:
 - Resolves `${variable}` syntax during `_run()`
 - **Bidirectional type coercion**: (1) str→dict/list auto-parse when expected type is structured, (2) dict/list→str auto-serialize via `coerce_to_declared_type` when expected type is str. Both use registry interface metadata. This enables shell→MCP and MCP→shell patterns.
 - Partial resolution detection via set intersection (Task 85)
-- **Strict mode** (default): Template/type errors are fatal ValueError → triggers repair
+- **Strict mode** (default): Template/type errors are fatal ValueError
 - **Permissive mode**: Warnings only, stores errors in `shared["__template_errors__"]`
 - **Params temporarily mutated**: `inner_node.params` is swapped to resolved params during `_run()`, restored in `finally` block. Critical for understanding parallel batch execution.
 
@@ -154,10 +154,10 @@ Batch processing wrapper. **Inherits from `Node`, not PocketFlow's `BatchNode`**
 - **Inline objects** (`{"key": "${dict_var}"}`): Preserve inner types (no double-serialization)
 - **Type conversion**: None→"", False→"False", True→"True", 0→"0", []→"[]", {}→"{}", dicts/lists→JSON serialized
 - **Unresolved templates**: Remain as-is for debugging visibility
-- **Template errors**: Fatal ValueError triggers repair in strict mode
+- **Template errors**: Fatal ValueError in strict mode
 
 **Resolution priority**:
-1. `initial_params` (from planner/CLI)
+1. `initial_params` (from CLI)
 2. Shared store (runtime data from upstream nodes)
 3. Workflow inputs
 
@@ -243,13 +243,10 @@ shared["__execution__"] = {
 # System keys
 shared["__llm_calls__"] = []              # LLM usage tracking (initialize as empty list!)
 shared["__progress_callback__"] = func    # Progress updates from OutputInterface
-shared["__non_repairable_error__"] = bool # Skip repair flag (API errors)
 shared["__warnings__"] = {}               # Node warnings → triggers DEGRADED status
-shared["__modified_nodes__"] = []         # Nodes changed during repair
 shared["__cache_hits__"] = []             # Nodes that used cached results
 shared["__template_errors__"] = {}        # Template/type errors in permissive mode
 shared["__mcp_pool__"] = MCPConnectionPool  # MCP server connection pool (see mcp/pool.py)
-shared["__is_planner__"] = bool            # Cost attribution flag for planner nodes
 shared["__index__"] = int                  # 0-based batch item index (injected by PflowBatchNode)
 
 # Nested workflow keys (different prefix — _pflow_ not __)
@@ -276,18 +273,18 @@ shared["_pflow_workflow_file"] = str       # Current workflow file path
 
 Cache used when: node in `completed_nodes` AND config hash matches AND no error action returned. Invalidated on parameter change (hash mismatch).
 
-### Error Categorization
+### Error Categorization (API Warning Detection)
 
-**Repairable** (repair attempted):
-- `validation_error` — parameter format issues (73 patterns checked)
+**Validation errors** (parameter format issues, 73 patterns checked):
+- `validation_error` — bad request, invalid parameter, schema error
 - `template_error` — unresolved variables (triggers ValueError)
 
-**Non-repairable** (workflow stops, sets `__non_repairable_error__`):
-- `resource_error` — not found, forbidden (20 patterns)
+**Resource errors** (external state, 20 patterns):
+- `resource_error` — not found, forbidden
 - API warnings: Slack `"ok": false`, Discord errors, GraphQL `"errors": []`
 - HTTP status codes: 401, 403, 404, 429
 
-**Ambiguity rule**: When an error matches BOTH validation and resource patterns, it's treated as **repairable** (validation wins). Default for unknown errors is also repairable — loop detection is the safety net.
+**Ambiguity rule**: When an error matches BOTH validation and resource patterns, it's treated as **validation** (validation wins).
 
 ### MCP Node Handling
 
@@ -317,10 +314,9 @@ Cache used when: node in `completed_nodes` AND config hash matches AND no error 
 ## Cross-Module Dependencies
 
 Key runtime modules used outside `runtime/`:
-- **`TemplateResolver`** (`template_resolver.py`): Used by `cli/read_fields.py`, `execution/formatters/`, `mcp_server/services/`, `planning/nodes.py` — not runtime-internal only.
+- **`TemplateResolver`** (`template_resolver.py`): Used by `cli/read_fields.py`, `execution/formatters/`, `mcp_server/services/` — not runtime-internal only.
 - **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `node_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `runtime/workflow_validator.py`.
 - **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `node_wrapper.py`, `batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
-- **`__is_planner__`**: Set by `planning/debug.py`, read by `instrumented_wrapper.py` → routes to `core/metrics.py` for planner vs workflow cost separation.
 - **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `instrumented_wrapper.py` and `batch_node.py` for progress callback indentation depth.
 
 ## Gotchas
@@ -330,4 +326,4 @@ Key runtime modules used outside `runtime/`:
 - **`__` prefixed params are reserved** — never use for user parameters
 - **Don't modify `__execution__` structure** — checkpoint integrity is critical for resume
 - **Cache assumes immutability** — don't modify cached node state
-- **`validate=False` only for testing** — skipping validation breaks repair
+- **`validate=False` only for testing** — skipping validation bypasses safety checks

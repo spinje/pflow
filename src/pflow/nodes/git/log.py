@@ -277,7 +277,7 @@ class GitLogNode(Node):
             shared["error"] = exec_res.get("error", "Git operation failed")
             shared["commits"] = []
             logger.error("Git log failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"})
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         # Store the commits in shared store for success
         shared["commits"] = exec_res.get("commits", [])

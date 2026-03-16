@@ -106,11 +106,10 @@ pflow/
 │   ├── cli/                 # CLI entrypoints and subcommands
 │   ├── core/                # Schemas, settings, validation, utilities, LLM/prompt utils
 │   │   └── workflow/        # Workflow lifecycle (manager, validator, save, skills, discovery)
-│   ├── execution/           # Execution UX, repair, formatters
+│   ├── execution/           # Execution UX, formatters
 │   ├── runtime/             # Compilation, wrappers, tracing
 │   ├── nodes/               # Platform node implementations
 │   │   └── (shell, http, llm, file, git, github, mcp, python, claude, test)
-│   ├── planning/            # Natural language planner (GATED — Task 107, pending Phase 2 deletion)
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
 │   └── registry/            # Node registry, scanning, context building, discovery
@@ -119,13 +118,12 @@ pflow/
 │   ├── test_cli/            # CLI tests
 │   ├── test_core/           # Core module tests
 │   ├── test_docs/           # Docs/link validation
-│   ├── test_execution/      # Execution/repair tests (includes formatters/)
+│   ├── test_execution/      # Execution tests (includes formatters/)
 │   ├── test_integration/    # End-to-end workflow tests
 │   ├── test_mcp/            # MCP client integration tests
 │   ├── test_mcp_server/     # MCP server tests
 │   ├── test_nodes/          # Node implementation tests
-│   ├── test_planning/       # Planner tests
-│   ├── test_registry/       # Registry/scanner tests
+│   ├── test_registry/       # Registry/scanner/discovery tests
 │   └── test_runtime/        # Runtime/compiler/executor tests
 └── .taskmaster/             # Task management and planning
     └── tasks/task_N/        # Per-task specs, reviews, and progress logs
@@ -179,8 +177,6 @@ Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading doc
 MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` for version history.
 
 **What's implemented**: shell/http/llm/file/git/github/mcp/python/claude-code nodes, template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
-
-**Planner**: Natural language → workflow generation exists but is **GATED** (Task 107) pending markdown format prompt rewrite.
 
 **Recently Completed:**
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
@@ -247,7 +243,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 74: Knowledge base system
 - Task 79: Tool definitions as JSON
 - Task 90: Workflows as Remote HTTP MCP Servers
-- Task 92: Replace Planner with Agent + MCP
 - Task 98: First-Class IR Execution
 - Task 100: Reduce/Fold for Batch
 - Task 101: Shell Node File Input

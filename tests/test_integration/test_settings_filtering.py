@@ -13,7 +13,7 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
     """Critical: Ensure denied nodes don't leak to LLM prompts.
 
     This test verifies that when nodes are denied via settings,
-    they are completely hidden from the LLM/planner context.
+    they are completely hidden from the LLM component-discovery context.
     This is a security feature to prevent access to dangerous operations.
 
     FIX HISTORY:
@@ -48,13 +48,13 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
 
         # Import after setting HOME to use test settings
         from pflow.registry import Registry
-        from pflow.registry.context_builder import build_planning_context
+        from pflow.registry.context_builder import build_component_context
 
         # Load filtered registry and build context
         registry = Registry()
         metadata = registry.load()
         # Build context with all filtered nodes (simulates what LLM would see)
-        context = build_planning_context(
+        context = build_component_context(
             selected_node_ids=list(metadata.keys()),
             selected_workflow_names=[],
             registry_metadata=metadata,

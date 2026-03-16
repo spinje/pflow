@@ -11,7 +11,7 @@ pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line 
 
 1. **CLI** - Execute workflows via `pflow workflow.pflow.md` or `pflow saved-name param=value`
 2. **MCP Server** - AI agents can interact via Model Context Protocol (`src/pflow/mcp_server/`)
-3. **Natural Language (Legacy)** - Built-in planner for NL to workflow conversion (being phased out)
+3. **Natural language (Removed)** - Previously supported quoted requests for workflow generation
 
 > **Important:** Users and AI agents ALWAYS interact via these interfaces using `.pflow.md` workflows. Direct PocketFlow usage (creating `Node` subclasses, `Flow` objects) is reserved for pflow internal development only. See `pflow-pocketflow-integration-guide.md` for internal development patterns.
 
@@ -78,14 +78,14 @@ AI agents interact with pflow through CLI commands that expose internal capabili
 
 Agents write `.pflow.md` workflows directly using these primitives. For the complete agent guide, run `pflow instructions usage`.
 
-### 2. Natural Language (Legacy - for Human Users)
+### 2. Natural language (Removed)
 
-The built-in planner converts natural language to workflows:
+Previously, a built-in planner converted natural language to workflows:
 ```bash
 pflow "create a summary of this file"
 ```
 
-> **Status:** Legacy. Gated pending markdown format migration (Task 107). Being phased out in favor of agent-direct `.pflow.md` creation.
+> **Status:** Removed. Use agent-direct `.pflow.md` creation instead.
 
 ### 3. MCP Server (Experimental)
 
@@ -108,7 +108,7 @@ Workflow Resolution
     │
     ├── File path: Parse .pflow.md
     ├── Saved name: Look up in ~/.pflow/workflows/
-    └── Natural language: Legacy planner (gated)
+    └── Natural language: Error with guidance
     │
     ▼
 Validation Pipeline (6 layers)
@@ -336,18 +336,16 @@ AI agents can use pflow via MCP (`src/pflow/mcp_server/`):
 
 > **Implementation details:** See `src/pflow/mcp_server/CLAUDE.md` for the 3-layer architecture (async tools → sync services → core pflow).
 
-## Self-Healing Workflows (Runtime Feature)
+## Checkpoints and resume
 
-pflow can detect and repair certain workflow errors at runtime:
+pflow tracks execution state for caching, warnings, and resume behavior:
 
 1. **Checkpoint data** stored in `shared["__execution__"]`
-2. **Error categorization** (repairable vs non-repairable)
-3. **LLM-assisted repair** using Claude
+2. **Cache validation** using node configuration hashes
+3. **Warning capture** for degraded-but-understood execution paths
 4. **Resume from checkpoint** (skip completed nodes)
 
-> **⚠️ GATED (Task 107 Decision 26).** Repair prompts assume JSON workflow format. All code is preserved in `src/pflow/execution/repair_service.py` but unreachable from CLI and MCP. The `--auto-repair` CLI flag is disabled. Re-enabling requires rewriting repair prompts for the `.pflow.md` markdown format. AI agents building workflows should use `pflow --validate-only` for pre-execution validation and iterate on `.pflow.md` files directly.
-
-> **Implementation details:** See `src/pflow/execution/CLAUDE.md` for checkpoint structure, error categories, and repair loop implementation.
+> **Implementation details:** See `src/pflow/execution/CLAUDE.md` and `src/pflow/runtime/CLAUDE.md` for checkpoint structure and runtime behavior.
 
 ## CLI Interface
 

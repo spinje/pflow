@@ -5,9 +5,9 @@
 **Chosen Approach**: Structured docstring parsing with hybrid extraction
 **Primary Format**: Interface sections in Python docstrings
 **Parsing Strategy**: Custom regex patterns with support for both simple and enhanced formats
-**Purpose**: Enable metadata-driven planner selection from static node library
+**Purpose**: Enable metadata-driven node selection from the static node library
 
-This document defines the infrastructure for extracting structured metadata from developer-written pflow nodes to support the planner's discovery and validation capabilities. The system now supports an enhanced format with type annotations and semantic descriptions while maintaining backward compatibility.
+This document defines the infrastructure for extracting structured metadata from developer-written pflow nodes to support discovery and validation capabilities. The system now supports an enhanced format with type annotations and semantic descriptions while maintaining backward compatibility.
 
 ---
 
@@ -16,17 +16,17 @@ This document defines the infrastructure for extracting structured metadata from
 ### Integration with Static Node Architecture
 
 **Established Reality**: Developers write static, reusable node classes
-**Our Solution**: Extract rich metadata to enable intelligent planner selection
-**Key Benefit**: Bridge between human-written nodes and AI-driven flow planning
+**Our Solution**: Extract rich metadata to enable intelligent node selection
+**Key Benefit**: Bridge between human-written nodes and AI-driven workflow construction
 
 ### Technical Benefits
 
-1. **Zero Runtime Overhead** - Pre-extracted JSON for fast planner access
+1. **Zero Runtime Overhead** - Pre-extracted JSON for fast metadata access
 2. **Source of Truth** - Metadata extracted from actual node code
 3. **Framework Integration** - Works with established pocketflow patterns
 4. **Registry Compatible** - Integrates with versioning and discovery systems
-5. **Planner Ready** - Enables metadata-driven LLM selection and validation
-6. **Type Aware** - Enhanced format provides type information for better planning
+5. **Discovery Ready** - Enables metadata-driven LLM selection and validation
+6. **Type Aware** - Enhanced format provides type information for better workflow construction
 
 ---
 
@@ -34,11 +34,9 @@ This document defines the infrastructure for extracting structured metadata from
 
 This metadata extraction infrastructure directly supports several core pflow systems:
 
-### Planner Discovery Integration
+### Discovery integration
 
-> **Note**: The planner is a legacy component being phased out. See [Planner Specification (Historical)](../historical/planner-specification.md) for reference.
-
-The extraction process feeds the planner's metadata-driven selection:
+The extraction process feeds metadata-driven selection:
 
 - Builds registry of available nodes with natural language descriptions
 - Provides interface compatibility data with type information for validation
@@ -495,7 +493,7 @@ The context builder has been updated to display the enhanced metadata:
 
 1. **Metadata Extraction**: Parser extracts types and descriptions
 2. **Registry Storage**: Enhanced metadata stored in JSON
-3. **Context Building**: Formats metadata for planner consumption
+3. **Context Building**: Formats metadata for discovery/tooling consumption
 4. **Type Display**: Shows types inline with keys
 5. **Description Display**: Includes semantic descriptions
 6. **Structure Hints**: For complex types, shows hierarchical structure
@@ -533,7 +531,7 @@ for param in params:
             exclusive_params.append(param)
 ```
 
-This ensures the planner only sees truly exclusive parameters, reducing confusion.
+This ensures discovery/tooling only sees truly exclusive parameters, reducing confusion.
 
 ---
 
@@ -617,7 +615,7 @@ The enhanced metadata extraction infrastructure provides rich type information w
 - **Reduced Redundancy**: Exclusive params pattern eliminates duplication
 - **Future Ready**: Foundation for advanced type features
 
-The infrastructure continues to enable intelligent flow planning while preserving the simplicity and reliability of pflow's curated node ecosystem.
+The infrastructure continues to enable intelligent workflow construction while preserving the simplicity and reliability of pflow's curated node ecosystem.
 
 ## See Also
 

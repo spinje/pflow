@@ -19,7 +19,6 @@ if TYPE_CHECKING:
     from pflow.core.markdown_parser import MarkdownParseError
 
 from pflow.core import StdinData
-from pflow.core.exceptions import WorkflowExistsError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
@@ -687,7 +686,6 @@ def _format_node_status_line(step: dict[str, Any]) -> str:
     status = step.get("status", "unknown")
     duration_ms = step.get("duration_ms", 0)
     cached = step.get("cached", False)
-    repaired = step.get("repaired", False)
 
     timing = _format_node_timing(duration_ms)
 
@@ -695,8 +693,6 @@ def _format_node_status_line(step: dict[str, Any]) -> str:
     tags = []
     if cached:
         tags.append("cached")
-    if repaired:
-        tags.append("repaired")
     # Add smart handling tag for visibility (grep no-match, which not-found, etc.)
     # Tag mapping for smart handling patterns defined in shell.py _is_safe_non_error().
     # When adding new patterns there, ensure reason contains "no matches" or "not found",
@@ -1032,7 +1028,7 @@ def _create_workflow_metadata(name: str | None, action: str) -> dict[str, Any]:
 def _extract_workflow_node_count(metrics_summary: dict[str, Any]) -> int:
     """Extract workflow node count from metrics summary.
 
-    Only counts workflow nodes, not planner nodes.
+    Only counts workflow nodes.
     """
     workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
     node_count = workflow_metrics.get("nodes_executed", 0)
@@ -1057,16 +1053,10 @@ def _create_json_error_output(
         Dictionary with unified error structure
     """
     from pflow.core.user_errors import UserFriendlyError
-    from pflow.planning.error_handler import PlannerError
 
     # Determine error type
     suggestion: str | None
-    if isinstance(exception, PlannerError):
-        error_type = "PlannerError"
-        message = exception.message
-        details = str(exception)
-        suggestion = exception.user_action
-    elif isinstance(exception, UserFriendlyError):
+    if isinstance(exception, UserFriendlyError):
         error_type = exception.__class__.__name__
         # Extract components from UserFriendlyError
         message = exception.title
@@ -1199,136 +1189,14 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
                 click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
-def _auto_save_workflow(ir_data: dict[str, Any], metadata: dict[str, Any] | None = None) -> tuple[bool, str | None]:
-    """Automatically save workflow without prompting (for non-interactive mode).
-
-    Args:
-        ir_data: The workflow IR data to save
-        metadata: Optional metadata with suggested_name and description from planner
-
-    Returns:
-        Tuple of (was_saved, workflow_name) where was_saved indicates if the workflow
-        was successfully saved and workflow_name is the name if saved.
-    """
-    workflow_manager = WorkflowManager()
-
-    # Extract or generate workflow name
-    default_name = metadata.get("suggested_name", "") if metadata else ""
-    if not default_name:
-        # Generate a timestamp-based name if no suggestion
-        from datetime import datetime
-
-        default_name = f"workflow_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    # Extract flat metadata if available (no rich_metadata wrapper)
-    flat_metadata = None
-    if metadata:
-        flat_metadata = {
-            "search_keywords": metadata.get("search_keywords", []),
-            "capabilities": metadata.get("capabilities", []),
-            "typical_use_cases": metadata.get("typical_use_cases", []),
-        }
-        # Filter out empty lists
-        flat_metadata = {k: v for k, v in flat_metadata.items() if v}
-        if not flat_metadata:
-            flat_metadata = None
-
-    # Try to save with the generated name
-    # GATED: Planner is disabled (Task 107). This code path is unreachable.
-    # When re-enabled, the planner must produce markdown content instead of IR dicts.
-    # WorkflowManager.save() now expects (name, markdown_content, metadata=...).
-    workflow_name = default_name
-    counter = 1
-    while True:
-        try:
-            workflow_manager.save(workflow_name, ir_data, metadata=flat_metadata)  # type: ignore[arg-type]
-            return (True, workflow_name)
-        except WorkflowExistsError:
-            # If name exists, append a counter
-            workflow_name = f"{default_name}_{counter}"
-            counter += 1
-            if counter > 100:  # Safety limit
-                return (False, None)
-        except Exception:
-            # Other errors, don't save
-            return (False, None)
-
-
-def _prompt_workflow_save(
-    ir_data: dict[str, Any], metadata: dict[str, Any] | None = None, default_save: bool = False
-) -> tuple[bool, str | None]:
-    """Prompt user to save workflow after execution.
-
-    Args:
-        ir_data: The workflow IR data to save
-        metadata: Optional metadata with suggested_name and description from planner
-        default_save: Whether the default prompt response should be "yes"
-
-    Returns:
-        Tuple of (was_saved, workflow_name) where was_saved indicates if the workflow
-        was successfully saved and workflow_name is the name if saved.
-    """
-    default_response = "y" if default_save else "n"
-    save_response = click.prompt("\nSave this workflow? (y/n)", type=str, default=default_response).lower()
-    if save_response != "y":
-        return (False, None)
-
-    workflow_manager = WorkflowManager()
-
-    # Extract defaults from metadata if available
-    default_name = metadata.get("suggested_name", "") if metadata else ""
-
-    # Loop until successful save or user cancels
-    while True:
-        # Get workflow name with intelligent default
-        if default_name:
-            workflow_name = click.prompt("Workflow name", default=default_name, type=str)
-        else:
-            workflow_name = click.prompt("Workflow name", type=str)
-
-        try:
-            # Extract flat metadata if available (no rich_metadata wrapper)
-            flat_metadata = None
-            if metadata:
-                flat_metadata = {
-                    "search_keywords": metadata.get("search_keywords", []),
-                    "capabilities": metadata.get("capabilities", []),
-                    "typical_use_cases": metadata.get("typical_use_cases", []),
-                }
-                # Filter out empty lists
-                flat_metadata = {k: v for k, v in flat_metadata.items() if v}
-                if not flat_metadata:
-                    flat_metadata = None
-
-            # GATED: Planner is disabled (Task 107). This code path is unreachable.
-            # When re-enabled, the planner must produce markdown content instead of IR dicts.
-            # WorkflowManager.save() now expects (name, markdown_content, metadata=...).
-            workflow_manager.save(workflow_name, ir_data, metadata=flat_metadata)  # type: ignore[arg-type]
-            click.echo(f"\n✅ Workflow saved as '{workflow_name}'")
-            return (True, workflow_name)  # Success, return saved status
-        except WorkflowExistsError:
-            click.echo(f"\n❌ Error: A workflow named '{workflow_name}' already exists.")
-            # Offer to use a different name
-            retry = click.prompt("Try with a different name? (y/n)", type=str, default="n").lower()
-            if retry != "y":
-                return (False, None)  # User declined to retry
-            # Continue loop to try again
-        except WorkflowValidationError as e:
-            click.echo(f"\n❌ Error: Invalid workflow name: {e!s}")
-            return (False, None)  # Invalid name, don't retry
-        except Exception as e:
-            click.echo(f"\n❌ Error saving workflow: {e!s}")
-            return (False, None)  # Other error, don't retry
-
-
 def _prepare_execution_environment(
     ctx: click.Context,
     ir_data: dict[str, Any],
     output_format: str,
     verbose: bool,
     execution_params: dict[str, Any] | None,
-    planner_llm_calls: list[dict[str, Any]] | None,
-    planner_cache_chunks: list[dict[str, Any]] | None = None,
+    seeded_llm_calls: list[dict[str, Any]] | None,
+    cache_chunks: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, Any, Any, dict[str, Any], bool]:
     """Prepare the execution environment for workflow execution.
 
@@ -1365,10 +1233,10 @@ def _prepare_execution_environment(
     # Prepare execution params with verbose flag and LLM calls
     enhanced_params = execution_params or {}
     enhanced_params["__verbose__"] = effective_verbose
-    if planner_llm_calls:
-        enhanced_params["__llm_calls__"] = planner_llm_calls
-    if planner_cache_chunks:
-        enhanced_params["__planner_cache_chunks__"] = planner_cache_chunks
+    if seeded_llm_calls:
+        enhanced_params["__llm_calls__"] = seeded_llm_calls
+    if cache_chunks:
+        enhanced_params["__cache_chunks__"] = cache_chunks
 
     # Set workflow file path for relative path resolution in nested workflows
     source_file_path = ctx.obj.get("source_file_path")
@@ -1502,7 +1370,6 @@ def _display_mcp_error_details(mcp_error: dict[str, Any]) -> None:
 def _display_single_error(
     error: dict[str, Any],
     error_number: int,
-    auto_repair: bool,
     verbose: bool = False,
 ) -> None:
     """Display a single workflow error with all details.
@@ -1510,7 +1377,6 @@ def _display_single_error(
     Args:
         error: Error dict from ExecutionResult
         error_number: Error number for display (1-indexed)
-        auto_repair: Whether auto-repair is enabled
         verbose: Whether to show extended details (command, stdout, etc.)
     """
     if error_number == 1:
@@ -1578,14 +1444,12 @@ def _display_shell_error_details(error: dict[str, Any]) -> None:
 
 def _display_text_error_details(
     result: Any,
-    auto_repair: bool,
     verbose: bool = False,
 ) -> None:
     """Display detailed text error output.
 
     Args:
         result: ExecutionResult with error details
-        auto_repair: Whether auto-repair is enabled
         verbose: Whether to show extended details (command, stdout, etc.)
     """
     if not result or not hasattr(result, "errors") or not result.errors:
@@ -1595,7 +1459,7 @@ def _display_text_error_details(
         return
 
     for i, error in enumerate(result.errors, 1):
-        _display_single_error(error, i, auto_repair, verbose=verbose)
+        _display_single_error(error, i, verbose=verbose)
 
 
 def _handle_workflow_error(
@@ -1606,7 +1470,6 @@ def _handle_workflow_error(
     metrics_collector: Any | None,
     shared_storage: dict[str, Any],
     verbose: bool,
-    auto_repair: bool,
     ir_data: dict[str, Any] | None = None,
 ) -> None:
     """Handle workflow execution error with rich error context."""
@@ -1617,7 +1480,7 @@ def _handle_workflow_error(
         _serialize_json_result(error_output, verbose)
     else:
         # Text mode: Show detailed rich error context
-        _display_text_error_details(result, auto_repair, verbose=verbose)
+        _display_text_error_details(result, verbose=verbose)
 
     # Save trace even on error
     if workflow_trace:
@@ -1702,16 +1565,14 @@ def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
         error_message = e.format_for_cli(verbose=verbose)
         click.echo(error_message, err=True)
     elif isinstance(e, CompilerCompilationError):
-        # Handle old-style CompilationError with suggestion field
-        # Keep as "Planning failed" for consistency with existing tests and UX
-        click.echo(f"❌ Planning failed: {e}", err=True)
+        click.echo(f"❌ Compilation failed: {e}", err=True)
         if hasattr(e, "suggestion") and e.suggestion:
             click.echo(f"\n{e.suggestion}", err=True)
         if verbose:
             click.echo(f"\ncli: Error details: {e}", err=True)
     else:
         # Fallback for other exceptions
-        click.echo(f"❌ Planning failed: {e}", err=True)
+        click.echo(f"❌ Compilation failed: {e}", err=True)
         if verbose:
             click.echo(f"cli: Error details: {e}", err=True)
 
@@ -1798,7 +1659,6 @@ def _execute_workflow_and_handle_result(
             metrics_collector=metrics_collector,
             shared_storage=shared_storage,
             verbose=verbose,
-            auto_repair=ctx.obj.get("auto_repair", False),
             ir_data=ir_data,
         )
 
@@ -1920,27 +1780,12 @@ def _handle_workflow_exception(
     ctx.exit(1)
 
 
-def _save_repaired_workflow(
-    ctx: click.Context,
-    repaired_workflow_ir: dict[str, Any],
-) -> None:
-    """Save repaired workflow based on source type.
-
-    Args:
-        ctx: Click context containing workflow_source, workflow_name, etc.
-        repaired_workflow_ir: The repaired workflow IR to save
-    """
-    from .repair_save_handlers import save_repaired_workflow
-
-    save_repaired_workflow(ctx, repaired_workflow_ir)
-
-
 def _setup_execution_context(
     ctx: click.Context,
     ir_data: dict[str, Any],
     output_format: str,
     metrics_collector: Any | None,
-) -> tuple[bool, bool, Any | None]:
+) -> tuple[bool, Any | None]:
     """Setup execution context and return configuration values.
 
     Args:
@@ -1950,10 +1795,9 @@ def _setup_execution_context(
         metrics_collector: Optional metrics collector
 
     Returns:
-        Tuple of (verbose, auto_repair, metrics_collector)
+        Tuple of (verbose, metrics_collector)
     """
     verbose = ctx.obj.get("verbose", False)
-    auto_repair = ctx.obj.get("auto_repair", False)
 
     # Set up metrics collector if not provided (for both text and JSON mode)
     if not metrics_collector:
@@ -1964,7 +1808,7 @@ def _setup_execution_context(
     # Note: Validation now happens after _prepare_execution_environment()
     # with real enhanced_params, in execute_json_workflow()
 
-    return verbose, auto_repair, metrics_collector
+    return verbose, metrics_collector
 
 
 def _perform_validation(
@@ -2149,10 +1993,10 @@ def execute_json_workflow(
     stdin_data: str | StdinData | None = None,
     output_key: str | None = None,
     execution_params: dict[str, Any] | None = None,
-    planner_llm_calls: list[dict[str, Any]] | None = None,
+    seeded_llm_calls: list[dict[str, Any]] | None = None,
     output_format: str = "text",
     metrics_collector: Any | None = None,
-    planner_cache_chunks: list[dict[str, Any]] | None = None,
+    cache_chunks: list[dict[str, Any]] | None = None,
 ) -> None:
     """Thin CLI wrapper for workflow execution.
 
@@ -2162,7 +2006,7 @@ def execute_json_workflow(
     from pflow.execution.workflow_execution import execute_workflow
 
     # Setup execution context
-    verbose, auto_repair, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
+    verbose, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
 
     # Suppress logging in JSON mode (except CRITICAL) to keep output clean
     if output_format == "json":
@@ -2176,17 +2020,13 @@ def execute_json_workflow(
 
     # Extract additional context values
     workflow_name = ctx.obj.get("workflow_name")
-    original_request = ctx.obj.get("workflow_text")  # From planner
 
     # Prepare execution environment
     cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
-        ctx, ir_data, output_format, verbose, execution_params, planner_llm_calls, planner_cache_chunks
+        ctx, ir_data, output_format, verbose, execution_params, seeded_llm_calls, cache_chunks
     )
 
-    # Validate before execution (if not using auto-repair)
-    # Auto-repair mode handles validation inside execute_workflow() with repair capability
-    if not auto_repair:
-        _validate_before_execution(ctx, ir_data, enhanced_params, output_format, verbose)
+    _validate_before_execution(ctx, ir_data, enhanced_params, output_format, verbose)
 
     # Show execution starting
     node_count = len(ir_data.get("nodes", []))
@@ -2199,18 +2039,10 @@ def execute_json_workflow(
         warnings.filterwarnings("ignore", message="Flow ends:*", module="pflow.pocketflow")
 
     try:
-        # Get planner model from context for repair service (with smart default)
-        from pflow.core.llm_config import get_default_llm_model
-
-        planner_model = ctx.obj.get("planner_model") or get_default_llm_model()
-
-        # Execute workflow with unified function (includes repair capability)
+        # Execute workflow with unified function
         result = execute_workflow(
             workflow_ir=ir_data,
             execution_params=enhanced_params,
-            enable_repair=auto_repair,  # Repair disabled by default, must opt-in
-            resume_state=None,  # Fresh execution
-            original_request=original_request,
             output=cli_output,
             workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "saved" else None,
             workflow_name=workflow_name,
@@ -2218,12 +2050,7 @@ def execute_json_workflow(
             output_key=output_key,
             metrics_collector=metrics_collector,
             trace_collector=workflow_trace,
-            repair_model=planner_model,  # Use same model as planner
         )
-
-        # Save repaired workflow if applicable
-        if result.success and result.repaired_workflow_ir:
-            _save_repaired_workflow(ctx, result.repaired_workflow_ir)
 
         # Handle result
         _execute_workflow_and_handle_result(
@@ -2363,459 +2190,6 @@ def _check_llm_configuration(verbose: bool) -> None:
         if verbose:
             click.echo(f"cli: LLM model check failed: {model_error}", err=True)
         raise ValueError(f"LLM model {model_name} not available") from model_error
-
-
-def _save_trace_if_needed(trace_collector: Any, trace_planner: bool, success: bool, ctx: click.Context) -> None:
-    """Save trace file if needed based on conditions."""
-    should_save = trace_planner or not success
-    if not should_save:
-        return
-
-    trace_file = trace_collector.save_to_file()
-
-    if not success:
-        _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
-    else:  # trace_planner is True and success is True
-        _echo_trace(ctx, f"📝 Planner trace saved: {trace_file}")
-
-
-def _create_debug_context(raw_input: str, ctx: click.Context, metrics_collector: Any | None = None) -> tuple[Any, Any]:
-    """Create debugging context for planner execution.
-
-    Args:
-        raw_input: The natural language input
-        ctx: Click context containing configuration
-        metrics_collector: Optional MetricsCollector for cost tracking
-
-    Returns:
-        Tuple of (debug_context, trace_collector)
-    """
-    from pflow.planning.debug import DebugContext, PlannerProgress, TraceCollector
-
-    # Get output controller to determine interactive mode
-    output_controller = _get_output_controller(ctx)
-
-    trace_collector = TraceCollector(raw_input)
-    progress = PlannerProgress(is_interactive=output_controller.is_interactive())
-    debug_context = DebugContext(
-        trace_collector=trace_collector, progress=progress, metrics_collector=metrics_collector
-    )
-    return debug_context, trace_collector
-
-
-def _show_timeout_help(planner_timeout: int) -> None:
-    """Display helpful message for timeout errors."""
-    click.echo(f"\n⏰ Operation exceeded {planner_timeout}s timeout", err=True)
-    click.echo("", err=True)
-    click.echo("💡 This is likely due to AI service overload causing slow responses", err=True)
-    click.echo("   Try one of these solutions:", err=True)
-    click.echo("   • Wait a few minutes and try again", err=True)
-    click.echo('   • Increase timeout: pflow --planner-timeout 120 "your request"', err=True)
-    click.echo("   • Check service status at status.anthropic.com", err=True)
-
-
-def _handle_timeout_completion(
-    ctx: click.Context, shared: dict, trace_collector: Any, planner_timeout: int, verbose: bool
-) -> None:
-    """Handle timeout cases after planner completion."""
-    planner_output = shared.get("planner_output", {})
-
-    if isinstance(planner_output, dict) and planner_output.get("success"):
-        # Workflow succeeded despite timeout
-        if verbose:
-            click.echo(f"\n⚠️  Operation took longer than {planner_timeout}s but completed successfully", err=True)
-            click.echo("💡 Consider increasing --planner-timeout if this happens often", err=True)
-        trace_collector.set_final_status("success", shared)
-    elif isinstance(planner_output, dict) and planner_output.get("error_details"):
-        # Flow completed but with API errors
-        _handle_planning_failure(ctx, planner_output)
-    else:
-        # True timeout - show help
-        _show_timeout_help(planner_timeout)
-        trace_collector.set_final_status("timeout", shared)
-        trace_file = trace_collector.save_to_file()
-        _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
-        ctx.exit(1)
-
-
-def _setup_planner_execution(
-    ctx: click.Context,
-    raw_input: str,
-    stdin_data: str | StdinData | None,
-    verbose: bool,
-    cache_planner: bool,
-) -> tuple[Any | None, Any, Any, dict[str, Any]]:
-    """Set up planner execution environment.
-
-    Returns:
-        Tuple of (metrics_collector, debug_context, trace_collector, shared_state)
-    """
-    # Show what we're doing if verbose
-    if verbose:
-        click.echo("cli: Using natural language planner to process input")
-        click.echo("cli: Note: This may take 10-30 seconds for complex requests")
-
-    # Create metrics collector if JSON output is requested
-    metrics_collector = None
-    if ctx.obj.get("output_format") == "json":
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-        metrics_collector.record_planner_start()
-
-    # Create debugging context with optional metrics
-    debug_context, trace_collector = _create_debug_context(raw_input, ctx, metrics_collector)
-
-    # Initialize shared state
-    shared = {
-        "user_input": raw_input,
-        "workflow_manager": WorkflowManager(),  # Uses default ~/.pflow/workflows
-        "stdin_data": stdin_data if stdin_data else None,
-        "cache_planner": cache_planner,  # Enable cross-session caching if flag is set
-    }
-
-    # Initialize LLM calls list when metrics collection is enabled
-    if metrics_collector:
-        shared["__llm_calls__"] = []
-
-    return metrics_collector, debug_context, trace_collector, shared
-
-
-def _run_planner_with_timeout(
-    ctx: click.Context,
-    planner_flow: Any,
-    shared: dict[str, Any],
-    trace_collector: Any,
-    planner_timeout: int,
-    verbose: bool,
-) -> None:
-    """Run the planner flow with timeout handling.
-
-    Raises exceptions if planner fails.
-    """
-    import threading
-
-    # Set up timeout detection (can only detect after completion due to Python limitations)
-    timed_out = threading.Event()
-    timer = threading.Timer(planner_timeout, lambda: timed_out.set())
-    timer.start()
-
-    try:
-        # Run the planner (BLOCKING - cannot be interrupted)
-        planner_flow.run(shared)
-
-        # Check timeout AFTER completion
-        if timed_out.is_set():
-            _handle_timeout_completion(ctx, shared, trace_collector, planner_timeout, verbose)
-
-    except SystemExit:
-        # Don't catch intentional exits (from timeout handler, etc.)
-        raise
-    except Exception as e:
-        # Import here to avoid circular dependency
-        from pflow.core.exceptions import CriticalPlanningError
-
-        # Handle critical planning failures with clear user messaging
-        if isinstance(e, CriticalPlanningError):
-            trace_collector.set_final_status("critical_failure", shared, {"message": str(e)})
-            trace_file = trace_collector.save_to_file()
-            click.echo(f"❌ Planning aborted: {e.reason}", err=True)
-            if verbose and e.original_error:
-                click.echo(f"   Original error: {e.original_error}", err=True)
-            # Only show trace messages in interactive mode
-            _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
-        else:
-            # Handle other execution errors
-            trace_collector.set_final_status("error", shared, {"message": str(e)})
-            trace_file = trace_collector.save_to_file()
-            click.echo(f"❌ Planner failed: {e}", err=True)
-            _echo_trace(ctx, f"📝 Debug trace saved: {trace_file}")
-        ctx.exit(1)
-
-    finally:
-        timer.cancel()
-
-
-def _process_planner_result(
-    ctx: click.Context,
-    shared: dict[str, Any],
-    trace_collector: Any,
-    metrics_collector: Any | None,
-    stdin_data: str | StdinData | None,
-    output_key: str | None,
-    verbose: bool,
-) -> None:
-    """Process planner result and execute workflow or handle failure."""
-    # Check result
-    planner_output = shared.get("planner_output", {})
-    if not isinstance(planner_output, dict):
-        planner_output = {}
-
-    # Clean up LLM interception BEFORE workflow execution
-    trace_collector.cleanup_llm_interception()
-
-    # Set final status in trace
-    success = planner_output.get("success", False)
-    if success:
-        trace_collector.set_final_status("success", shared)
-    else:
-        trace_collector.set_final_status("failed", shared, planner_output.get("error"))
-
-    # Save trace if needed (using trace_planner flag for planner traces)
-    trace_planner = ctx.obj.get("trace_planner", False)
-    _save_trace_if_needed(trace_collector, trace_planner, success, ctx)
-
-    # Record planner end if metrics are being collected
-    if metrics_collector:
-        metrics_collector.record_planner_end()
-
-    # Execute workflow or handle failure
-    if success:
-        _execute_successful_workflow(ctx, planner_output, stdin_data, output_key, verbose, metrics_collector, shared)
-    else:
-        _handle_planning_failure(ctx, planner_output)
-
-
-def _execute_planner_and_workflow(
-    ctx: click.Context,
-    raw_input: str,
-    stdin_data: str | StdinData | None,
-    output_key: str | None,
-    verbose: bool,
-    create_planner_flow: Any,
-    trace: bool,
-    planner_timeout: int,
-    cache_planner: bool,
-) -> None:
-    """Execute the planner flow and resulting workflow with optional debugging."""
-    # Set up planner execution environment
-    metrics_collector, debug_context, trace_collector, shared = _setup_planner_execution(
-        ctx, raw_input, stdin_data, verbose, cache_planner
-    )
-
-    # Resolve planner model with smart detection and error handling
-    planner_model = ctx.obj.get("planner_model")
-    if planner_model is None:
-        from pflow.core.llm_config import get_default_llm_model, get_llm_setup_help
-
-        planner_model = get_default_llm_model()
-        if planner_model is None:
-            # No LLM keys configured - error at decision point
-            click.echo("Error: Cannot plan workflow without LLM configuration\n", err=True)
-            click.echo(get_llm_setup_help(), err=True)
-            sys.exit(1)
-
-    # Create planner flow with detected/specified model
-    planner_flow = create_planner_flow(debug_context=debug_context, model=planner_model)
-
-    # Run planner with timeout handling
-    _run_planner_with_timeout(ctx, planner_flow, shared, trace_collector, planner_timeout, verbose)
-
-    # Process result and execute workflow
-    _process_planner_result(ctx, shared, trace_collector, metrics_collector, stdin_data, output_key, verbose)
-
-
-def _determine_workflow_metadata(
-    ctx: click.Context,
-    planner_output: dict,
-    output_controller: Any,
-) -> tuple[bool, str | None]:
-    """Determine workflow metadata and handle pre-execution saving.
-
-    Args:
-        ctx: Click context
-        planner_output: Planner output dictionary
-        output_controller: Output controller for interactive checks
-
-    Returns:
-        Tuple of (was_saved, saved_name) for new workflows
-    """
-    workflow_source = planner_output.get("workflow_source")
-    save_flag = ctx.obj.get("save", True)  # Default to True
-
-    if workflow_source and workflow_source.get("found"):
-        # Existing workflow was reused
-        workflow_name = workflow_source.get("workflow_name", "unknown")
-        ctx.obj["workflow_metadata"] = _create_workflow_metadata(workflow_name, "reused")
-        return False, None
-
-    if not save_flag:
-        # save_flag is False, don't save at all
-        ctx.obj["workflow_metadata"] = _get_default_workflow_metadata()
-        return False, None
-
-    # New workflow with save_flag=True
-    if output_controller.should_show_prompts():
-        # Interactive mode: will prompt after execution
-        ctx.obj["workflow_metadata"] = None  # Will be set after execution
-        return False, None
-
-    # Non-interactive mode: auto-save NOW before execution
-    was_saved, saved_name = _auto_save_workflow(
-        planner_output["workflow_ir"], metadata=planner_output.get("workflow_metadata")
-    )
-    workflow_metadata = (
-        _create_workflow_metadata(saved_name, "created")
-        if was_saved and saved_name
-        else _get_default_workflow_metadata()
-    )
-    ctx.obj["workflow_metadata"] = workflow_metadata
-    return was_saved, saved_name
-
-
-def _handle_post_execution_display(
-    ctx: click.Context,
-    planner_output: dict,
-    output_controller: Any,
-    save_flag: bool,
-) -> None:
-    """Handle post-execution display and prompts.
-
-    Args:
-        ctx: Click context
-        planner_output: Planner output dictionary
-        output_controller: Output controller for interactive checks
-        save_flag: Whether saving is enabled
-    """
-    from .rerun_display import display_rerun_commands
-
-    workflow_source = planner_output.get("workflow_source")
-
-    if workflow_source and workflow_source.get("found"):
-        # Handle reused workflow display
-        if not output_controller.should_show_prompts():
-            return
-
-        workflow_name = workflow_source.get("workflow_name", "unknown")
-        click.echo(f"\n✅ Reused existing workflow: '{workflow_name}'")
-
-        execution_params = planner_output.get("execution_params")
-        if execution_params is not None and workflow_name != "unknown":
-            display_rerun_commands(workflow_name, execution_params)
-
-    elif save_flag and output_controller.should_show_prompts():
-        # Interactive mode: prompt for save after execution
-        was_saved, saved_name = _prompt_workflow_save(
-            planner_output["workflow_ir"],
-            metadata=planner_output.get("workflow_metadata"),
-            default_save=True,  # Default to "yes" when --save is set
-        )
-
-        # Update workflow metadata based on save result
-        workflow_metadata = (
-            _create_workflow_metadata(saved_name, "created")
-            if was_saved and saved_name
-            else _get_default_workflow_metadata()
-        )
-        ctx.obj["workflow_metadata"] = workflow_metadata
-
-        # Display rerun command if saved
-        if was_saved and saved_name:
-            execution_params = planner_output.get("execution_params")
-            if execution_params is not None:
-                display_rerun_commands(saved_name, execution_params)
-
-
-def _extract_planner_cache_chunks(planner_shared: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Extract cache chunks from planner shared store in priority order."""
-    # Priority 1: Most complete context (has retry history)
-    if accumulated := planner_shared.get("planner_accumulated_blocks"):
-        return cast(list[dict[str, Any]], accumulated)
-
-    # Priority 2: Planning context (has execution plan)
-    if extended := planner_shared.get("planner_extended_blocks"):
-        return cast(list[dict[str, Any]], extended)
-
-    # Priority 3: Base context (minimal but better than nothing)
-    if base := planner_shared.get("planner_base_blocks"):
-        return cast(list[dict[str, Any]], base)
-
-    # No planner context available
-    return None
-
-
-def _execute_successful_workflow(
-    ctx: click.Context,
-    planner_output: dict,
-    stdin_data: str | StdinData | None,
-    output_key: str | None,
-    verbose: bool,
-    metrics_collector: Any | None = None,
-    planner_shared: dict[str, Any] | None = None,
-) -> None:
-    """Execute the successfully planned workflow."""
-    if verbose:
-        click.echo("cli: Executing generated/discovered workflow")
-
-    # Pre-determine workflow metadata and handle saving BEFORE execution
-    output_controller = _get_output_controller(ctx)
-    _determine_workflow_metadata(ctx, planner_output, output_controller)
-
-    # Execute the workflow
-    # Extract cache chunks for repair context
-    planner_cache_chunks = _extract_planner_cache_chunks(planner_shared) if planner_shared else None
-
-    # Store execution params for potential repair save (strip internal params)
-    from .rerun_display import filter_user_params
-
-    execution_params = planner_output.get("execution_params")
-    ctx.obj["execution_params"] = filter_user_params(execution_params)
-
-    execute_json_workflow(
-        ctx,
-        planner_output["workflow_ir"],
-        stdin_data,
-        output_key,
-        execution_params,  # CRITICAL: Pass params for templates!
-        planner_shared.get("__llm_calls__", []) if planner_shared else None,  # Pass planner LLM calls
-        ctx.obj.get("output_format", "text"),
-        metrics_collector,
-        planner_cache_chunks,  # NEW: Pass cache chunks for repair context
-    )
-
-    # Handle post-execution actions (prompts and display for interactive mode)
-    save_flag = ctx.obj.get("save", True)
-    _handle_post_execution_display(ctx, planner_output, output_controller, save_flag)
-
-
-def _handle_planning_failure(ctx: click.Context, planner_output: dict) -> None:
-    """Handle planning failure with intelligent error messages and user guidance."""
-    verbose = ctx.obj.get("verbose", False)
-
-    # Check for structured error details from our new error classification
-    error_details = planner_output.get("error_details")
-    if error_details:
-        # We have rich error information from PlannerError
-        from pflow.planning.error_handler import ErrorCategory, PlannerError
-
-        # Reconstruct PlannerError if we have a dict
-        if isinstance(error_details, dict):
-            planner_error = PlannerError(
-                category=ErrorCategory(error_details.get("category", "unknown")),
-                message=error_details.get("message", "Unknown error"),
-                user_action=error_details.get("user_action", "Please retry"),
-                technical_details=error_details.get("technical_details"),
-                retry_suggestion=error_details.get("retry_suggestion", False),
-            )
-        else:
-            planner_error = error_details
-
-        # Display the formatted error
-        click.echo(planner_error.format_for_cli(verbose), err=True)
-    else:
-        # Fallback to old error handling for backward compatibility
-        error_msg = planner_output.get("error", "Unknown planning error")
-        click.echo(f"❌ Planning failed: {error_msg}", err=True)
-
-        # Show missing parameters if that's the issue
-        missing_params = planner_output.get("missing_params")
-        if missing_params:
-            click.echo("👉 Missing required parameters:", err=True)
-            for param in missing_params:
-                click.echo(f"   - {param}", err=True)
-            click.echo("👉 Provide these parameters in your request", err=True)
-
-    ctx.exit(1)
 
 
 def _setup_signals() -> None:
@@ -3006,13 +2380,6 @@ def _initialize_context(
     output_format: str,
     print_flag: bool,
     trace_enabled: bool,
-    trace_planner: bool,
-    planner_timeout: int,
-    save: bool,
-    cache_planner: bool,
-    planner_model: str,
-    auto_repair: bool,
-    no_update: bool,
     validate_only: bool,
 ) -> None:
     """Initialize the click context with configuration.
@@ -3024,13 +2391,6 @@ def _initialize_context(
         output_format: Output format (text/json)
         print_flag: Force non-interactive output flag
         trace_enabled: Trace execution flag (enabled by default)
-        trace_planner: Trace planner flag
-        planner_timeout: Planner timeout in seconds
-        save: Save workflow flag
-        cache_planner: Enable cross-session caching for planner
-        planner_model: LLM model for planning nodes
-        auto_repair: Enable automatic workflow repair on failure
-        no_update: Save repairs to separate file instead of updating original
         validate_only: Validate workflow without executing
     """
     if ctx.obj is None:
@@ -3041,21 +2401,6 @@ def _initialize_context(
     ctx.obj["output_format"] = output_format
     ctx.obj["print_flag"] = print_flag
     ctx.obj["trace"] = trace_enabled
-    ctx.obj["trace_planner"] = trace_planner
-    ctx.obj["planner_timeout"] = planner_timeout
-    ctx.obj["save"] = save
-    ctx.obj["cache_planner"] = cache_planner
-    # Use smart default if no model specified (will be resolved when needed)
-    ctx.obj["planner_model"] = planner_model  # None triggers auto-detection later
-    # GATED: Auto-repair disabled pending markdown format migration (Task 107).
-    # Repair prompts assume JSON workflow format. Re-enable after prompt rewrite.
-    if auto_repair:
-        click.echo(
-            "Warning: --auto-repair is temporarily disabled pending markdown format migration.",
-            err=True,
-        )
-    ctx.obj["auto_repair"] = False  # Force disabled (Task 107 gating)
-    ctx.obj["no_update"] = no_update
     ctx.obj["validate_only"] = validate_only
 
     # Create OutputController once and store it for reuse
@@ -3091,9 +2436,7 @@ def _validate_workflow_flags(workflow: tuple[str, ...], ctx: click.Context) -> N
         SystemExit: If misplaced flags are found
     """
     misplaced_flags = [
-        arg
-        for arg in workflow
-        if arg in ("--no-trace", "--verbose", "-v", "--planner-timeout", "--output-key", "-o", "--output-format")
+        arg for arg in workflow if arg in ("--no-trace", "--verbose", "-v", "--output-key", "-o", "--output-format")
     ]
     if misplaced_flags:
         click.echo("cli: Error - CLI flags must come BEFORE the workflow text", err=True)
@@ -3414,7 +2757,7 @@ def _setup_workflow_execution(
         # Workflow from file - it's unsaved
         ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "unsaved")
 
-    # Store workflow source and name for potential repair saving
+    # Store workflow source and name for execution metadata
     ctx.obj["workflow_source"] = source
 
     if source == "file" and first_arg.endswith(".pflow.md"):
@@ -3478,7 +2821,7 @@ def _handle_named_workflow(
     # Validate and prepare parameters (including stdin routing)
     params = _validate_and_prepare_workflow_params(ctx, workflow_ir, remaining_args, stdin_data)
 
-    # Store execution params for potential repair save (strip internal params)
+    # Store execution params for rerun hints (strip internal params)
     from .rerun_display import filter_user_params
 
     ctx.obj["execution_params"] = filter_user_params(params)
@@ -3551,57 +2894,6 @@ def _handle_workflow_not_found(ctx: click.Context, workflow_name: str, source: s
     ctx.exit(1)
 
 
-def _execute_with_planner(
-    ctx: click.Context,
-    raw_input: str,
-    stdin_data: str | StdinData | None,
-    output_key: str | None,
-    verbose: bool,
-    source: str,
-    trace: bool,
-    planner_timeout: int,
-    cache_planner: bool,
-) -> None:
-    """Execute workflow using the natural language planner.
-
-    Falls back to old behavior if planner is not available.
-    """
-    try:
-        # Try to import planner first - this will raise ImportError if not available
-        from pflow.planning import create_planner_flow
-
-        # Check if LLM is configured before attempting to use planner
-        try:
-            _check_llm_configuration(verbose)
-        except (ImportError, ValueError) as llm_error:
-            # LLM not configured - fall back to old behavior
-            if verbose:
-                click.echo(f"cli: LLM not configured, falling back to simple echo: {llm_error}", err=True)
-            click.echo(f"Collected workflow from {source}: {raw_input}")
-            _display_stdin_data(stdin_data)
-            return
-
-        # Execute planner and workflow
-        _execute_planner_and_workflow(
-            ctx, raw_input, stdin_data, output_key, verbose, create_planner_flow, trace, planner_timeout, cache_planner
-        )
-
-    except ImportError:
-        # Planner not available (likely in test environment or not fully installed)
-        # Fall back to old behavior for compatibility
-        click.echo(f"Collected workflow from {source}: {raw_input}")
-        _display_stdin_data(stdin_data)
-
-    except SystemExit:
-        # Don't catch intentional exits (from timeout handler, etc.)
-        raise
-    except Exception as e:
-        # Other errors in planner execution
-        # Avoid duplicating the message printed by compilation handler
-        click.echo(f"❌ Planning failed: {e}", err=True)
-        ctx.exit(1)
-
-
 def _single_word_hint(word: str) -> str | None:
     """Return a helpful hint for obvious single-word commands.
 
@@ -3621,7 +2913,7 @@ def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:
     """Determine if text is likely a workflow name vs natural language.
 
     Uses heuristics to guess if the input is a workflow name that should
-    be loaded directly, rather than sent to the planner.
+    be loaded directly, rather than treated as a free-form request.
 
     Args:
         text: The first argument from command line
@@ -3716,20 +3008,8 @@ def _try_execute_named_workflow(
     return True  # We handled it by showing an error
 
 
-def _is_valid_natural_language_input(workflow: tuple[str, ...]) -> bool:
-    """Determine whether the workflow tuple is suitable for planner execution."""
-    if len(workflow) != 1:
-        return False
-
-    text = workflow[0]
-    if " " not in text:
-        return False
-
-    return not _is_path_like(text)
-
-
-def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...]) -> None:
-    """Emit user guidance for workflows that cannot be handled by the planner."""
+def _handle_invalid_workflow_input(ctx: click.Context, workflow: tuple[str, ...]) -> None:
+    """Emit user guidance for input that is not a known workflow or command."""
     if not workflow:
         click.echo("❌ No workflow specified.", err=True)
         click.echo("", err=True)
@@ -3757,32 +3037,6 @@ def _handle_invalid_planner_input(ctx: click.Context, workflow: tuple[str, ...])
     ctx.exit(1)
 
 
-def _validate_and_join_workflow_input(workflow: tuple[str, ...]) -> str:
-    """Join workflow tokens and validate constraints for planner execution.
-
-    Args:
-        workflow: Raw workflow arguments tuple
-
-    Returns:
-        Joined workflow string
-
-    Raises:
-        ClickException: If input is empty or exceeds size limits
-    """
-    raw_input = " ".join(workflow) if workflow else ""
-
-    if not raw_input:
-        raise click.ClickException("cli: No workflow provided. Use --help to see usage examples.")
-
-    # Validate input length (100KB limit)
-    if len(raw_input) > 100 * 1024:
-        raise click.ClickException(
-            "cli: Workflow input too large (max 100KB). Consider breaking it into smaller workflows."
-        )
-
-    return raw_input
-
-
 # NOTE: This MUST be @click.command, not @click.group with catch-all argument.
 # Click groups consume ALL positional args when using @click.argument("workflow", nargs=-1),
 # preventing subcommands from being recognized. The wrapper (main_wrapper.py) handles routing.
@@ -3803,30 +3057,6 @@ def _validate_and_join_workflow_input(workflow: tuple[str, ...]) -> str:
     is_flag=True,
     help="Disable workflow execution trace saving (enabled by default)",
 )
-# Planner options (gated - Task 107: pending markdown format prompt rewrite)
-@click.option("--trace-planner", is_flag=True, hidden=True, help="Save planner execution trace to file")
-@click.option("--planner-timeout", type=int, default=60, hidden=True, help="Timeout for planner execution (seconds)")
-@click.option("--save/--no-save", default=True, hidden=True, help="Save generated workflow (default: save)")
-@click.option(
-    "--cache-planner",
-    is_flag=True,
-    hidden=True,
-    help="Enable cross-session caching for planner LLM calls (reduces cost for repeated runs)",
-)
-@click.option(
-    "--planner-model",
-    default=None,  # Will auto-detect based on available API keys
-    hidden=True,
-    help="LLM model for planning (default: auto-detect). Supports Anthropic, OpenAI, Gemini, etc.",
-)
-# Repair options (gated - Task 107: pending markdown format migration)
-@click.option("--auto-repair", is_flag=True, hidden=True, help="Enable automatic workflow repair on failure")
-@click.option(
-    "--no-update",
-    is_flag=True,
-    hidden=True,
-    help="Save repairs to separate .repaired.json file instead of updating original",
-)
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
@@ -3837,13 +3067,6 @@ def workflow_command(
     output_format: str,
     print_flag: bool,
     no_trace: bool,
-    trace_planner: bool,
-    planner_timeout: int,
-    save: bool,
-    cache_planner: bool,
-    planner_model: str,
-    auto_repair: bool,
-    no_update: bool,
     validate_only: bool,
     workflow: tuple[str, ...],
 ) -> None:
@@ -3927,13 +3150,6 @@ def workflow_command(
             output_format,
             print_flag,
             trace_enabled,
-            trace_planner,
-            planner_timeout,
-            save,
-            cache_planner,
-            planner_model,
-            auto_repair,
-            no_update,
             validate_only,
         )
 
@@ -3965,19 +3181,7 @@ def workflow_command(
         if _try_execute_named_workflow(ctx, workflow, stdin_data, output_key, output_format, verbose):
             return
 
-        if not _is_valid_natural_language_input(workflow):
-            _handle_invalid_planner_input(ctx, workflow)
-            return
-
-        # GATED: Planner disabled pending markdown format migration (Task 107).
-        # Planner prompts assume JSON workflow format. Re-enable after prompt rewrite.
-        click.echo(
-            "Natural language workflow generation is temporarily unavailable.\n"
-            "Provide a workflow file (.pflow.md) or saved workflow name instead.\n"
-            "Example: pflow ./my-workflow.pflow.md",
-            err=True,
-        )
-        ctx.exit(1)
+        _handle_invalid_workflow_input(ctx, workflow)
     finally:
         # Restore original logging levels if we changed them
         if "root" in original_log_levels:

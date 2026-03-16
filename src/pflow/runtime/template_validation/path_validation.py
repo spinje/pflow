@@ -41,7 +41,7 @@ def validate_template_paths(
 
     Args:
         all_templates: Set of all template variable names found
-        available_params: Parameters available from planner or CLI
+        available_params: Parameters available from workflow inputs or CLI
         node_outputs: Pre-computed node outputs from extraction
         workflow_ir: The workflow IR
         registry: Registry instance
@@ -85,7 +85,7 @@ def validate_template_path(
 
     Args:
         template: Template string like "var" or "var.field.subfield"
-        initial_params: Parameters provided by planner
+        initial_params: Parameters provided before execution
         node_outputs: Full structure info from node interfaces
         workflow_ir: The workflow IR to check for node IDs
         registry: Registry instance (passed through for consistency)

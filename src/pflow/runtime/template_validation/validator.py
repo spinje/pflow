@@ -72,7 +72,7 @@ def validate_workflow_templates(
 
     Args:
         workflow_ir: The workflow IR containing nodes with template parameters
-        available_params: Parameters available from planner or CLI
+        available_params: Parameters available from workflow inputs or CLI
         registry: Registry instance with parsed node metadata
 
     Returns:

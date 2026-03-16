@@ -107,7 +107,7 @@ class InstrumentedNodeWrapper:
         return self.inner_node - action_str
 
     def _capture_llm_usage(
-        self, shared: dict[str, Any], shared_before: dict[str, Any] | None, duration_ms: float, is_planner: bool
+        self, shared: dict[str, Any], shared_before: dict[str, Any] | None, duration_ms: float
     ) -> None:
         """Capture and record LLM usage data with defensive validation.
 
@@ -115,7 +115,6 @@ class InstrumentedNodeWrapper:
             shared: Current shared store
             shared_before: Shared store state before execution
             duration_ms: Execution duration in milliseconds
-            is_planner: Whether this is a planner node
         """
         # Validate shared has __llm_calls__ list
         if "__llm_calls__" not in shared:
@@ -156,7 +155,6 @@ class InstrumentedNodeWrapper:
 
         llm_call_data["node_id"] = self.node_id
         llm_call_data["duration_ms"] = duration_ms
-        llm_call_data["is_planner"] = is_planner
 
         # Intelligently capture the prompt
         llm_prompt = self._find_llm_prompt(shared_before)
@@ -208,7 +206,6 @@ class InstrumentedNodeWrapper:
         start_time: float,
         shared_before: Optional[dict[str, Any]],
         callback: Optional[Any],
-        is_planner: bool,
     ) -> str:
         """Handle API warning detection.
 
@@ -218,15 +215,11 @@ class InstrumentedNodeWrapper:
             start_time: Start time for duration calculation
             shared_before: Shared state before execution
             callback: Progress callback
-            is_planner: Whether this is a planner node
 
         Returns:
             "error" to stop workflow
         """
         logger.debug(f"API warning detected for {self.node_id}: {warning_msg}")
-
-        # Mark as non-repairable to prevent futile repair attempts
-        shared["__non_repairable_error__"] = True
 
         # Store warning for display
         if "__warnings__" not in shared:
@@ -243,7 +236,7 @@ class InstrumentedNodeWrapper:
 
         # Record metrics if collector present
         if self.metrics:
-            self.metrics.record_node_execution(self.node_id, duration_ms, is_planner=is_planner)
+            self.metrics.record_node_execution(self.node_id, duration_ms)
 
         # Call progress callback with warning
         if callable(callback):
@@ -275,9 +268,9 @@ class InstrumentedNodeWrapper:
 
             logger.debug(f"Node {self.node_id} cached with hash {node_hash[:8]}...")
         else:
-            # Don't cache error results - they should be retryable
+            # Don't cache error results
             logger.debug(f"Node {self.node_id} returned error, not caching")
-            # Record the failed node for repair context
+            # Record the failed node for execution state
             shared["__execution__"]["failed_node"] = self.node_id
 
     def _call_completion_callback(
@@ -314,9 +307,6 @@ class InstrumentedNodeWrapper:
             if ignore_errors:
                 error_msg = f"Command failed with exit code {exit_code}"
 
-        # Check if node was modified during repair
-        is_modified = self.node_id in shared.get("__modified_nodes__", [])
-
         # Detect if this is a batch node by checking for batch_metadata in output
         node_output = shared.get(self.node_id, {})
         is_batch = isinstance(node_output, dict) and "batch_metadata" in node_output
@@ -336,7 +326,6 @@ class InstrumentedNodeWrapper:
                 depth,
                 error_message=error_msg,
                 ignore_errors=ignore_errors,
-                is_modified=is_modified,
                 is_error=(result == "error"),
                 is_batch=is_batch,
                 batch_total=batch_total,
@@ -602,11 +591,6 @@ class InstrumentedNodeWrapper:
         Args:
             shared: The shared store for inter-node communication
         """
-        # Mark this node as modified for display
-        if "__modified_nodes__" not in shared:
-            shared["__modified_nodes__"] = []
-        shared["__modified_nodes__"].append(self.node_id)
-
         # Clear cache entries
         shared["__execution__"]["completed_nodes"].remove(self.node_id)
         shared["__execution__"]["node_actions"].pop(self.node_id, None)
@@ -651,9 +635,6 @@ class InstrumentedNodeWrapper:
         start_time = time.perf_counter()
         shared_before = dict(shared) if (self.trace or self.metrics) else None
 
-        # Track if this is a planner node (for cost attribution)
-        is_planner = shared.get("__is_planner__", False)
-
         # Set up LLM interception if needed
         self._setup_llm_interception()
 
@@ -696,7 +677,7 @@ class InstrumentedNodeWrapper:
             # Check for API warning patterns (execution succeeded but returned error data)
             warning_msg = self._detect_api_warning(shared)
             if warning_msg:
-                return self._handle_api_warning(shared, warning_msg, start_time, shared_before, callback, is_planner)
+                return self._handle_api_warning(shared, warning_msg, start_time, shared_before, callback)
 
             # Cache successful results
             self._cache_result_if_successful(shared, result)
@@ -706,10 +687,10 @@ class InstrumentedNodeWrapper:
 
             # Record metrics if collector present
             if self.metrics:
-                self.metrics.record_node_execution(self.node_id, duration_ms, is_planner=is_planner)
+                self.metrics.record_node_execution(self.node_id, duration_ms)
 
             # Capture LLM usage if present
-            self._capture_llm_usage(shared, shared_before, duration_ms, is_planner)
+            self._capture_llm_usage(shared, shared_before, duration_ms)
 
             # Validate LLM JSON output if applicable
             self._validate_llm_json_output(shared_before, shared)
@@ -729,7 +710,7 @@ class InstrumentedNodeWrapper:
             duration_ms = (time.perf_counter() - start_time) * 1000
 
             if self.metrics:
-                self.metrics.record_node_execution(self.node_id, duration_ms, is_planner=is_planner)
+                self.metrics.record_node_execution(self.node_id, duration_ms)
 
             # Record trace with error
             self._record_trace(duration_ms, shared_before, dict(shared), success=False, error=str(e))
@@ -790,15 +771,15 @@ class InstrumentedNodeWrapper:
 
     def _detect_api_warning(self, shared: dict) -> Optional[str]:
         """
-        Detect non-repairable API errors (resource/permission issues).
+        Detect API errors that should surface as warnings.
 
-        Returns None for validation errors to allow repair attempts.
+        Returns None for validation-style errors so normal error handling can proceed.
 
         Strategy:
         1. Check error codes first (most reliable)
-        2. Check for validation patterns (let repair handle)
-        3. Check for resource patterns (prevent repair)
-        4. Default to repairable (loop detection is safety net)
+        2. Check for validation patterns (defer to normal execution errors)
+        3. Check for resource patterns (surface warning)
+        4. Default to no API warning
         """
         # Get node output
         if self.node_id not in shared:
@@ -835,30 +816,29 @@ class InstrumentedNodeWrapper:
             error_category = self._categorize_by_error_code(error_code)
 
             if error_category == "validation":
-                # Validation error - let repair handle it
-                logger.debug(f"Validation error detected (repairable): {error_code} - {error_msg}")
+                # Validation error - leave it to normal execution handling
+                logger.debug(f"Validation error detected: {error_code} - {error_msg}")
                 return None
 
             elif error_category == "resource":
-                # Resource error - prevent repair
-                logger.info(f"Resource error detected (non-repairable): {error_code} - {error_msg}")
+                # Resource error - surface as API warning
+                logger.info(f"Resource error detected: {error_code} - {error_msg}")
                 return f"API error ({error_code}): {error_msg}"
 
             # Unknown error code - continue to message analysis
 
-        # PRIORITY 2: Check if it's a validation error (repairable)
+        # PRIORITY 2: Check if it's a validation error
         if self._is_validation_error(error_msg):
-            logger.debug(f"Validation error detected (repairable): {error_msg}")
-            return None  # Let repair handle it
+            logger.debug(f"Validation error detected: {error_msg}")
+            return None
 
-        # PRIORITY 3: Check if it's a resource error (not repairable)
+        # PRIORITY 3: Check if it's a resource error
         if self._is_resource_error(error_msg):
-            logger.info(f"Resource error detected (non-repairable): {error_msg}")
+            logger.info(f"Resource error detected: {error_msg}")
             return f"API error: {error_msg}"
 
-        # DEFAULT: When in doubt, let repair try
-        # Loop detection will prevent infinite attempts
-        logger.debug(f"Unknown error type, allowing repair attempt: {error_msg}")
+        # DEFAULT: When in doubt, do not convert to an API warning.
+        logger.debug(f"Unknown error type, skipping API warning conversion: {error_msg}")
         return None
 
     def _unwrap_mcp_response(self, output: Any) -> Optional[dict]:
@@ -1049,7 +1029,7 @@ class InstrumentedNodeWrapper:
         """Categorize error by error code."""
         code_upper = str(code).upper()
 
-        # Validation error codes (REPAIRABLE)
+        # Validation error codes
         VALIDATION_CODES = [
             "VALIDATION_ERROR",
             "INVALID_PARAMETER",
@@ -1067,7 +1047,7 @@ class InstrumentedNodeWrapper:
             "400",  # Bad Request usually means fixable
         ]
 
-        # Resource error codes (NOT REPAIRABLE)
+        # Resource error codes
         RESOURCE_CODES = [
             "NOT_FOUND",
             "RESOURCE_NOT_FOUND",
@@ -1206,7 +1186,7 @@ class InstrumentedNodeWrapper:
         is_resource = any(pattern in msg_lower for pattern in RESOURCE_PATTERNS)
         is_validation = self._is_validation_error(error_msg)
 
-        # If it looks like both, prefer validation (repairable)
+        # If it looks like both, prefer the validation classification
         return is_resource and not is_validation
 
     def set_params(self, params: dict[str, Any]) -> None:

@@ -65,7 +65,7 @@ def format_execution_success(
         result["duration_ms"] = metrics_summary.get("duration_ms")
         result["total_cost_usd"] = metrics_summary.get("total_cost_usd")
 
-        # Extract workflow node count (not planner nodes)
+        # Extract workflow node count
         workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
         result["nodes_executed"] = int(workflow_metrics.get("nodes_executed", 0))
 
@@ -88,11 +88,6 @@ def format_execution_success(
                     "nodes_total": nodes_total,
                     "steps": steps,
                 }
-
-                # Add repaired flag if any nodes were modified
-                modified_nodes = shared_storage.get("__modified_nodes__", [])
-                if modified_nodes:
-                    result["repaired"] = True
 
     # Add trace_path if provided (MCP bonus feature)
     if trace_path:
@@ -331,8 +326,6 @@ def _format_batch_node_line(step: dict[str, Any]) -> str:
     success = step.get("batch_success", 0)
     errors = step.get("batch_errors", 0)
     cached = step.get("cached", False)
-    repaired = step.get("repaired", False)
-
     # Build timing string
     timing = f"({int(duration)}ms)"
 
@@ -340,8 +333,6 @@ def _format_batch_node_line(step: dict[str, Any]) -> str:
     tags = []
     if cached:
         tags.append("cached")
-    if repaired:
-        tags.append("repaired")
     tag_str = f" [{', '.join(tags)}]" if tags else ""
 
     if errors > 0:
@@ -404,8 +395,6 @@ def _format_execution_step(step: dict[str, Any]) -> str:
     status = step.get("status", "unknown")
     duration = step.get("duration_ms") or 0  # Handle explicit None
     cached = step.get("cached", False)
-    repaired = step.get("repaired", False)
-
     # Build status indicator
     indicator_map = {"completed": "✓", "failed": "❌"}
     indicator = indicator_map.get(status, "⚠️")
@@ -414,8 +403,6 @@ def _format_execution_step(step: dict[str, Any]) -> str:
     tags = []
     if cached:
         tags.append("cached")
-    if repaired:
-        tags.append("repaired")
 
     tag_str = f" [{', '.join(tags)}]" if tags else ""
     # Round duration to integer for readability (matches CLI format)

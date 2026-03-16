@@ -167,7 +167,6 @@ class TestExecutionStateGuardrails:
         shared_storage = {
             "__execution__": {"completed_nodes": ["fetch", "process"], "failed_node": "send"},
             "__cache_hits__": [],
-            "__modified_nodes__": [],
         }
         result = ExecutionResult(success=False, errors=[{"message": "Send failed"}], shared_after=shared_storage)
 
@@ -189,7 +188,6 @@ class TestExecutionStateGuardrails:
         shared_storage = {
             "__execution__": {"completed_nodes": ["node1", "node2"]},
             "__cache_hits__": ["node1"],  # Only node1 used cache
-            "__modified_nodes__": [],
         }
         result = ExecutionResult(success=False, errors=[{"message": "Later error"}], shared_after=shared_storage)
 
@@ -199,27 +197,6 @@ class TestExecutionStateGuardrails:
         steps = formatted["execution"]["steps"]
         assert steps[0]["cached"] is True  # node1 used cache
         assert steps[1]["cached"] is False  # node2 did not
-
-    def test_repaired_nodes_must_be_marked(self):
-        """CORRECTNESS: Repaired nodes must be identified for transparency.
-
-        Real bug this catches: If repair tracking breaks, agents can't understand
-        which parts of workflow were auto-fixed vs. original.
-        """
-        ir_data = {"nodes": [{"id": "broken"}, {"id": "working"}]}
-        shared_storage = {
-            "__execution__": {"completed_nodes": ["broken", "working"]},
-            "__cache_hits__": [],
-            "__modified_nodes__": ["broken"],  # This node was repaired
-        }
-        result = ExecutionResult(success=False, errors=[{"message": "Final error"}], shared_after=shared_storage)
-
-        formatted = format_execution_errors(result, shared_storage, ir_data)
-
-        # CORRECTNESS REQUIREMENT: Repair status visible
-        steps = formatted["execution"]["steps"]
-        assert steps[0].get("repaired") is True  # broken was repaired
-        assert "repaired" not in steps[1]  # working was not
 
 
 class TestRobustnessGuardrails:
@@ -273,7 +250,6 @@ class TestRobustnessGuardrails:
         shared_storage = {
             "__execution__": {"completed_nodes": ["test"]},
             "__cache_hits__": [],
-            "__modified_nodes__": [],
         }
         result = ExecutionResult(success=False, errors=[{"message": "Error"}], shared_after=shared_storage)
 

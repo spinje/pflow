@@ -33,7 +33,7 @@ class TestDescribeSingleNode:
     def test_describe_single_node(self, runner: click.testing.CliRunner) -> None:
         """Shows complete specification for a single node.
 
-        Real behavior: Uses build_planning_context() to get full interface
+        Real behavior: Uses build_component_context() to get full interface
         """
         result = runner.invoke(registry, ["describe", "shell"])
 

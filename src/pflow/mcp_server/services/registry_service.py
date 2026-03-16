@@ -34,7 +34,7 @@ class RegistryService(BaseService):
         Returns:
             Formatted markdown description with structure and available paths
         """
-        from pflow.registry.context_builder import build_planning_context
+        from pflow.registry.context_builder import build_component_context
 
         # Load registry
         registry = Registry()  # Fresh instance
@@ -47,7 +47,7 @@ class RegistryService(BaseService):
 
         # Use same function as CLI for perfect parity
         try:
-            context = build_planning_context(
+            context = build_component_context(
                 selected_node_ids=node_ids,
                 selected_workflow_names=[],
                 registry_metadata=registry_metadata,

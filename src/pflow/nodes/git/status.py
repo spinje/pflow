@@ -224,7 +224,7 @@ class GitStatusNode(Node):
             shared["error"] = exec_res["error"]
             shared["git_status"] = exec_res
             logger.error("Git status failed", extra={"error": exec_res["error"], "phase": "post"})
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         # Store the git status in shared store for success
         shared["git_status"] = exec_res

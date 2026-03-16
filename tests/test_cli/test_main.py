@@ -3,7 +3,6 @@
 from unittest.mock import patch
 
 import click.testing
-import pytest
 
 from pflow.cli.main import main
 
@@ -433,22 +432,6 @@ def test_error_file_encoding():
         assert result.exit_code != 0
         # File encoding errors now show explicit decoding message
         assert "Unable to read file" in result.output
-
-
-@pytest.mark.skip(reason="Gated pending markdown format migration (Task 107) — size validation is in planner path")
-def test_oversized_workflow_input_shows_clear_size_limit_error():
-    """Test that workflow input exceeding size limit shows informative error."""
-    runner = click.testing.CliRunner()
-    # Create a workflow larger than 100KB (current limit)
-    # With planner validation, we need a single quoted string WITH SPACES > 100KB
-    # to pass validation and reach the size check
-    large_prompt = "do something " * 10000  # Over 100KB with spaces
-
-    result = runner.invoke(main, [large_prompt])
-
-    assert result.exit_code != 0
-    assert "Workflow input too large" in result.output
-    assert "100KB" in result.output  # Size limit mentioned
 
 
 def test_signal_handling_exit_code():

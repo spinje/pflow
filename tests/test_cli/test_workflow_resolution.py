@@ -455,7 +455,7 @@ class TestWorkflowResolutionCLI:
             assert result.exit_code in (0, 1)
 
     def test_natural_language_fallback(self):
-        """Test that natural language shows gated planner message when workflow not found."""
+        """Test that natural language shows invalid input guidance when workflow not found."""
         runner = click.testing.CliRunner()
 
         with patch("pflow.cli.main.WorkflowManager") as MockWM:
@@ -465,9 +465,9 @@ class TestWorkflowResolutionCLI:
 
             result = runner.invoke(main, ["analyze this text and summarize"])
 
-            # GATED: Planner disabled (Task 107) — should show gated message
+            # Should show invalid planner input guidance
             assert result.exit_code != 0
-            assert "temporarily unavailable" in result.output
+            assert "not a known workflow" in result.output or "Invalid input" in result.output
 
 
 class TestIsLikelyWorkflowName:

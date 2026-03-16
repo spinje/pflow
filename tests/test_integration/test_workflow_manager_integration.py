@@ -20,7 +20,7 @@ from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, Wo
 from pflow.core.markdown_parser import MarkdownParseError
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import Node
-from pflow.registry.context_builder import build_planning_context
+from pflow.registry.context_builder import build_component_context
 from pflow.registry.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
@@ -247,7 +247,7 @@ class TestContextBuilderIntegration:
         workflow_manager.save("ctx-workflow-2", another_markdown)
 
         # Build context with workflows
-        context = build_planning_context(
+        context = build_component_context(
             selected_node_ids=["test_echo"],
             selected_workflow_names=["ctx-workflow-1", "ctx-workflow-2"],
             registry_metadata=test_registry.load(),

@@ -20,7 +20,6 @@ class TestMetricsThinkingCache:
                 "thinking_tokens": 2048,
                 "thinking_budget": 4096,
                 "node_id": "PlanningNode",
-                "is_planner": True,
             },
             {
                 "model": "anthropic/claude-3-5-sonnet-20241022",
@@ -29,14 +28,13 @@ class TestMetricsThinkingCache:
                 "thinking_tokens": 1500,
                 "thinking_budget": 4096,
                 "node_id": "WorkflowGeneratorNode",
-                "is_planner": True,
             },
         ]
 
-        collector.record_planner_start()
+        collector.record_workflow_start()
         for call in llm_calls:
-            collector.record_node_execution(call["node_id"], 1000, is_planner=True)
-        collector.record_planner_end()
+            collector.record_node_execution(call["node_id"], 1000)
+        collector.record_workflow_end()
 
         summary = collector.get_summary(llm_calls)
 
@@ -47,8 +45,8 @@ class TestMetricsThinkingCache:
         assert summary["thinking_performance"]["thinking_utilization_pct"] == 43.3
 
         # Check thinking tokens in detailed metrics
-        assert summary["metrics"]["planner"]["thinking_tokens"] == 3548
-        assert summary["metrics"]["planner"]["thinking_budget"] == 8192
+        assert summary["metrics"]["workflow"]["thinking_tokens"] == 3548
+        assert summary["metrics"]["workflow"]["thinking_budget"] == 8192
 
     def test_cache_tokens_aggregation(self):
         """Test that cache tokens are properly aggregated."""
@@ -62,7 +60,6 @@ class TestMetricsThinkingCache:
                 "cache_creation_input_tokens": 2914,
                 "cache_read_input_tokens": 0,
                 "node_id": "PlanningNode",
-                "is_planner": True,
             },
             {
                 "model": "anthropic/claude-3-5-sonnet-20241022",
@@ -71,14 +68,13 @@ class TestMetricsThinkingCache:
                 "cache_creation_input_tokens": 0,
                 "cache_read_input_tokens": 2914,
                 "node_id": "WorkflowGeneratorNode",
-                "is_planner": True,
             },
         ]
 
-        collector.record_planner_start()
+        collector.record_workflow_start()
         for call in llm_calls:
-            collector.record_node_execution(call["node_id"], 1000, is_planner=True)
-        collector.record_planner_end()
+            collector.record_node_execution(call["node_id"], 1000)
+        collector.record_workflow_end()
 
         summary = collector.get_summary(llm_calls)
 
@@ -90,8 +86,8 @@ class TestMetricsThinkingCache:
         assert summary["cache_performance"]["cache_total_tokens"] == 5828
 
         # Check cache tokens in detailed metrics
-        assert summary["metrics"]["planner"]["cache_creation_tokens"] == 2914
-        assert summary["metrics"]["planner"]["cache_read_tokens"] == 2914
+        assert summary["metrics"]["workflow"]["cache_creation_tokens"] == 2914
+        assert summary["metrics"]["workflow"]["cache_read_tokens"] == 2914
 
     def test_combined_thinking_and_cache(self):
         """Test that both thinking and cache metrics work together."""
@@ -107,7 +103,6 @@ class TestMetricsThinkingCache:
                 "thinking_tokens": 2048,
                 "thinking_budget": 4096,
                 "node_id": "PlanningNode",
-                "is_planner": True,
             },
             {
                 "model": "anthropic/claude-3-5-sonnet-20241022",
@@ -118,14 +113,13 @@ class TestMetricsThinkingCache:
                 "thinking_tokens": 1500,
                 "thinking_budget": 4096,
                 "node_id": "WorkflowGeneratorNode",
-                "is_planner": True,
             },
         ]
 
-        collector.record_planner_start()
+        collector.record_workflow_start()
         for call in llm_calls:
-            collector.record_node_execution(call["node_id"], 1000, is_planner=True)
-        collector.record_planner_end()
+            collector.record_node_execution(call["node_id"], 1000)
+        collector.record_workflow_end()
 
         summary = collector.get_summary(llm_calls)
 
@@ -147,13 +141,12 @@ class TestMetricsThinkingCache:
                 "input_tokens": 1000,
                 "output_tokens": 500,
                 "node_id": "SomeNode",
-                "is_planner": False,
             },
         ]
 
         collector.record_workflow_start()
         for call in llm_calls:
-            collector.record_node_execution(call["node_id"], 1000, is_planner=False)
+            collector.record_node_execution(call["node_id"], 1000)
         collector.record_workflow_end()
 
         summary = collector.get_summary(llm_calls)
@@ -177,7 +170,6 @@ class TestMetricsThinkingCache:
                 "output_tokens": 500,  # $0.0075
                 "thinking_tokens": 1000,  # $0.015 (billed at output rate)
                 "node_id": "PlanningNode",
-                "is_planner": True,
             },
         ]
 
@@ -199,7 +191,6 @@ class TestMetricsThinkingCache:
                 "cache_creation_input_tokens": 1000,  # Cache creation: $0.006 (2x cost)
                 "cache_read_input_tokens": 1000,  # Cache read: $0.0003 (10% cost)
                 "node_id": "PlanningNode",
-                "is_planner": True,
             },
         ]
 

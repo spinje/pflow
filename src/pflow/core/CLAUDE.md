@@ -46,7 +46,7 @@ src/pflow/core/
 
 ### exceptions.py
 
-**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalPlanningError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
+**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalDiscoveryError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
@@ -174,7 +174,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### user_errors.py
 
-Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `PlannerError`, `CompilationError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
+Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `CompilationError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
 
 ### validation_utils.py
 
@@ -221,7 +221,6 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 | CLI (`cli/main.py`) | shell_integration, WorkflowManager, OutputController, MetricsCollector, UserFriendlyError | Pipe support, saves, display, metrics, error formatting |
 | Compiler (`runtime/compiler.py`) | validate_ir, validation_utils, SettingsManager | IR validation, param security, env loading |
 | Execution (`execution/`) | WorkflowValidator, OutputController, WorkflowManager | Validation phase, display, metadata updates |
-| Planning (`planning/`) | WorkflowValidator, WorkflowManager, CriticalPlanningError | Validation, workflow discovery, error handling |
 | Registry (`registry/`) | SettingsManager | Node filtering at load time |
 | Runtime (`runtime/instrumented_wrapper.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |
 | MCP Server (`mcp_server/`) | workflow_save_service, suggestion_utils, security_utils | Save ops, suggestions, error sanitization |

@@ -74,4 +74,4 @@ class DiscoveryService(BaseService):
         logger.info(f"Component discovery completed, selected {len(result.node_ids)} nodes")
 
         # Return markdown directly (same as CLI)
-        return result.planning_context
+        return result.component_context

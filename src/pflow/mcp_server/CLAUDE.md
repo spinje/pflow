@@ -111,7 +111,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 
 - **BaseService** — `@ensure_stateless` decorator (logs instance creation), `validate_stateless()` checks
 - **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions for LLM-powered discovery.
-- **ExecutionService** — Execute (enable_repair=False, NullOutput), validate (4-layer + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
+- **ExecutionService** — Execute (NullOutput), validate (4-layer + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
 - **RegistryService** — `describe_nodes()` uses `build_planning_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
@@ -152,7 +152,6 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 ## Agent-Optimized Defaults
 
 MCP execution differs from CLI:
-- `enable_repair=False` — Agents get explicit errors with checkpoints (no silent fixes)
 - `output=NullOutput()` — Silent execution (no progress output)
 - Traces always saved to `~/.pflow/debug/workflow-trace-{timestamp}.json`
 - Text output format (LLMs parse text better than nested JSON)

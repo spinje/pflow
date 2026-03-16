@@ -5,15 +5,12 @@
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-# Find the two most recent planner trace files
-TRACE1=$(ls -t ~/.pflow/debug/planner-trace-*.json 2>/dev/null | sed -n '2p')
-TRACE2=$(ls -t ~/.pflow/debug/planner-trace-*.json 2>/dev/null | sed -n '1p')
+# Find the two most recent workflow trace files
+TRACE1=$(ls -t ~/.pflow/debug/workflow-trace-*.json 2>/dev/null | sed -n '2p')
+TRACE2=$(ls -t ~/.pflow/debug/workflow-trace-*.json 2>/dev/null | sed -n '1p')
 
 if [ -z "$TRACE1" ] || [ -z "$TRACE2" ]; then
-    echo "❌ Need at least 2 planner trace files in ~/.pflow/debug/"
-    echo ""
-    echo "Available planner traces:"
-    ls -t ~/.pflow/debug/planner-trace-*.json 2>/dev/null | head -5
+    echo "❌ Need at least 2 workflow trace files in ~/.pflow/debug/"
     echo ""
     echo "Available workflow traces:"
     ls -t ~/.pflow/debug/workflow-trace-*.json 2>/dev/null | head -5

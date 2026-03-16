@@ -212,7 +212,7 @@ class TestTimingCapture:
         wrapper._run(shared)
 
         # Verify timing was calculated correctly (500ms)
-        metrics.record_node_execution.assert_called_once_with("test_id", 500.0, is_planner=False)
+        metrics.record_node_execution.assert_called_once_with("test_id", 500.0)
 
     @patch("time.perf_counter")
     def test_timing_capture_with_error(self, mock_perf_counter):
@@ -228,7 +228,7 @@ class TestTimingCapture:
             wrapper._run(shared)
 
         # Verify timing was still recorded (250ms)
-        metrics.record_node_execution.assert_called_once_with("test_id", 250.0, is_planner=False)
+        metrics.record_node_execution.assert_called_once_with("test_id", 250.0)
 
 
 class TestLLMUsageAccumulation:
@@ -253,7 +253,6 @@ class TestLLMUsageAccumulation:
         assert llm_call["total_tokens"] == 150
         assert llm_call["node_id"] == "llm_node_1"
         assert "duration_ms" in llm_call
-        assert not llm_call["is_planner"]
 
     def test_multiple_llm_calls_accumulation(self):
         """Test that multiple LLM calls are accumulated correctly."""
@@ -274,17 +273,6 @@ class TestLLMUsageAccumulation:
         assert len(shared["__llm_calls__"]) == 2
         assert shared["__llm_calls__"][0]["node_id"] == "llm_node_1"
         assert shared["__llm_calls__"][1]["node_id"] == "llm_node_2"
-
-    def test_llm_usage_with_planner_flag(self):
-        """Test that is_planner flag is correctly captured."""
-        node = LLMSimulatorNode()
-        wrapper = InstrumentedNodeWrapper(node, "planner_llm", None, None)
-
-        shared = {"__is_planner__": True}
-        wrapper._run(shared)
-
-        # Check that is_planner flag was captured
-        assert shared["__llm_calls__"][0]["is_planner"]
 
     def test_preserves_existing_llm_calls(self):
         """Test that existing __llm_calls__ list is preserved."""
@@ -383,7 +371,6 @@ class TestErrorHandling:
         call_args = metrics.record_node_execution.call_args
         assert call_args[0][0] == "error_node"  # node_id
         assert isinstance(call_args[0][1], float)  # duration_ms
-        assert not call_args[1]["is_planner"]
 
     def test_trace_recorded_on_error(self):
         """Test that trace is recorded when node fails."""
@@ -438,7 +425,6 @@ class TestCollectorIntegration:
         call_args = metrics.record_node_execution.call_args
         assert call_args[0][0] == "test_node"
         assert isinstance(call_args[0][1], float)  # duration_ms
-        assert not call_args[1]["is_planner"]
 
         # Verify node still executed correctly
         assert result == "test_result"
@@ -770,4 +756,4 @@ class TestEdgeCases:
         wrapper._run(shared)
 
         # Should record 0.0 duration
-        metrics.record_node_execution.assert_called_once_with("test_node", 0.0, is_planner=False)
+        metrics.record_node_execution.assert_called_once_with("test_node", 0.0)

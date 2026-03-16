@@ -36,7 +36,7 @@ pflow hello.json
 
 1. **`ir_version`** (REQUIRED) - Must be `"0.1.0"`
    - Without this field, pflow won't recognize your JSON as a workflow
-   - The error message will mention falling back to the planner
+   - The error message will indicate the JSON is not a valid workflow
 
 2. **`nodes`** (REQUIRED) - Array of node definitions
    - Each node needs: `id`, `type`, and optionally `params`

@@ -6,7 +6,7 @@ This directory contains reusable test utilities and mock fixtures that can be sh
 
 ### llm_mock.py
 
-Provides a clean LLM-level mock that prevents actual API calls while allowing the planning module to function normally.
+Provides a clean LLM-level mock that prevents actual API calls during tests.
 
 #### Key Components:
 
@@ -35,11 +35,9 @@ def test_something(mock_llm_responses):
         {"found": True, "workflow_name": "test-workflow"}
     )
 
-    # Run code that uses LLM
-    result = some_planner_function()
-
-    # LLM is mocked, no actual API calls made
-    assert result.workflow_name == "test-workflow"
+    # Run code that uses LLM — no actual API calls made
+    result = discover_workflow("find a workflow")
+    assert result.found
 ```
 
 ### markdown_utils.py
@@ -67,55 +65,16 @@ markdown = ir_to_markdown({"nodes": [{"id": "echo", "type": "shell", "params": {
 write_workflow_file(ir_dict, tmp_path / "workflow.pflow.md")
 ```
 
-### planner_block.py
-
-Provides a clean way to block the planner import for CLI and integration tests that need to test fallback behavior.
-
-#### Key Functions:
-
-- `create_planner_block_fixture()`: Creates a fixture that blocks planner imports
-
-#### Purpose:
-
-The planner blocker:
-1. Makes `from pflow.planning import create_planner_flow` raise ImportError
-2. Triggers CLI fallback behavior (shows "Collected workflow from..." messages)
-3. Allows testing of non-planner functionality
-4. Uses monkeypatch for clean, scoped patching
-
-#### Usage:
-
-In your test's `conftest.py`:
-
-```python
-from tests.shared.planner_block import create_planner_block_fixture
-
-# Block planner to test fallback behavior
-block_planner = create_planner_block_fixture()
-```
-
 ## Mock Architecture
 
-The testing infrastructure uses two complementary mocking strategies:
-
-1. **LLM Mock** (llm_mock.py): Applied globally to prevent API calls
-   - Mocks at the LLM API level (`llm.get_model`)
-   - Allows planning module to work normally
-   - Used by all tests except those in `llm/` directories
-   - Configured in `tests/conftest.py`
-
-2. **Planner Blocker** (planner_block.py): Applied to CLI/integration tests
-   - Blocks planner import to test fallback behavior
-   - Uses clean monkeypatch approach
-   - Scoped to specific test directories
-   - Used in `tests/test_cli/conftest.py` and `tests/test_integration/conftest.py`
+The LLM mock is applied globally to prevent API calls:
+- Mocks at the LLM API level (`llm.get_model`)
+- Used by all tests except those in `llm/` directories
+- Configured in `tests/conftest.py`
 
 ## Test Organization
 
 - **All tests**: Protected from real LLM calls by the global LLM mock
-- **CLI tests**: Use planner blocker to test fallback messages
-- **Integration tests**: Use planner blocker to focus on workflow execution
-- **Planning tests**: Use LLM mock with configured responses
 - **LLM tests** (in `llm/` dirs): Skip mocking when `RUN_LLM_TESTS=1` is set
 
 ## Adding New Shared Utilities

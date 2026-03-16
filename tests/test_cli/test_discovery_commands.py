@@ -146,13 +146,13 @@ class TestRegistryDiscover:
     def test_registry_discover_with_mocked_llm(self):
         """Returns relevant nodes when LLM available.
 
-        Mocks discover_components() to return a ComponentSelection with planning_context.
+        Mocks discover_components() to return a ComponentSelection with component_context.
         Verifies the CLI displays the context content.
         """
         mock_result = ComponentSelection(
             node_ids=["github-get-pr", "github-list-prs"],
             reasoning="Selected GitHub PR tools for the task",
-            planning_context="""## GitHub Operations
+            component_context="""## GitHub Operations
 
 ### github-get-pr
 **Description**: Fetch pull request details
@@ -228,7 +228,7 @@ class TestRegistryDiscover:
         mock_result = ComponentSelection(
             node_ids=["shell", "read-file"],
             reasoning="Selected for file processing",
-            planning_context="## File Processing\n\nSome context",
+            component_context="## File Processing\n\nSome context",
         )
 
         with patch("pflow.registry.discovery.discover_components", return_value=mock_result) as mock_fn:

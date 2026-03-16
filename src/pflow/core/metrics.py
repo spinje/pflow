@@ -10,22 +10,11 @@ class MetricsCollector:
     """Lightweight metrics aggregation for pflow execution."""
 
     start_time: float = field(default_factory=time.perf_counter)
-    planner_start: Optional[float] = None
-    planner_end: Optional[float] = None
     workflow_start: Optional[float] = None
     workflow_end: Optional[float] = None
 
     # Node execution timings (node_id -> duration_ms)
-    planner_nodes: dict[str, float] = field(default_factory=dict)
     workflow_nodes: dict[str, float] = field(default_factory=dict)
-
-    def record_planner_start(self) -> None:
-        """Mark the start of planner execution."""
-        self.planner_start = time.perf_counter()
-
-    def record_planner_end(self) -> None:
-        """Mark the end of planner execution."""
-        self.planner_end = time.perf_counter()
 
     def record_workflow_start(self) -> None:
         """Mark the start of workflow execution."""
@@ -35,18 +24,14 @@ class MetricsCollector:
         """Mark the end of workflow execution."""
         self.workflow_end = time.perf_counter()
 
-    def record_node_execution(self, node_id: str, duration_ms: float, is_planner: bool = False) -> None:
+    def record_node_execution(self, node_id: str, duration_ms: float) -> None:
         """Record the execution time of a node.
 
         Args:
             node_id: Unique identifier for the node
             duration_ms: Execution duration in milliseconds
-            is_planner: Whether this node is part of planner execution
         """
-        if is_planner:
-            self.planner_nodes[node_id] = duration_ms
-        else:
-            self.workflow_nodes[node_id] = duration_ms
+        self.workflow_nodes[node_id] = duration_ms
 
     def calculate_costs(self, llm_calls: list[dict[str, Any]]) -> dict[str, Any]:
         """Sum pre-calculated costs from accumulated LLM calls.
@@ -94,23 +79,19 @@ class MetricsCollector:
                 "pricing_available": True,
             }
 
-    def _calculate_durations(self) -> tuple[float, Optional[float], Optional[float]]:
-        """Calculate total, planner, and workflow durations.
+    def _calculate_durations(self) -> tuple[float, Optional[float]]:
+        """Calculate total and workflow durations.
 
         Returns:
-            Tuple of (total_duration_ms, planner_duration_ms, workflow_duration_ms)
+            Tuple of (total_duration_ms, workflow_duration_ms)
         """
         total_duration = (time.perf_counter() - self.start_time) * 1000
-
-        planner_duration = None
-        if self.planner_start and self.planner_end:
-            planner_duration = (self.planner_end - self.planner_start) * 1000
 
         workflow_duration = None
         if self.workflow_start and self.workflow_end:
             workflow_duration = (self.workflow_end - self.workflow_start) * 1000
 
-        return total_duration, planner_duration, workflow_duration
+        return total_duration, workflow_duration
 
     def _aggregate_token_counts(self, llm_calls: list[dict[str, Any]]) -> dict[str, int]:
         """Aggregate token counts from LLM calls.
@@ -135,15 +116,13 @@ class MetricsCollector:
         llm_calls: list[dict[str, Any]],
         node_timings: dict[str, float],
         duration: Optional[float],
-        is_planner: bool,
     ) -> dict[str, Any]:
-        """Build metrics for planner or workflow execution.
+        """Build metrics for workflow execution.
 
         Args:
-            llm_calls: Filtered LLM calls for this execution type
+            llm_calls: LLM calls for this execution
             node_timings: Node execution timings
             duration: Execution duration in milliseconds
-            is_planner: Whether this is for planner metrics
 
         Returns:
             Dictionary with execution metrics
@@ -227,7 +206,7 @@ class MetricsCollector:
             Dictionary with top-level metrics and detailed breakdown
         """
         # Calculate durations
-        total_duration, planner_duration, workflow_duration = self._calculate_durations()
+        total_duration, workflow_duration = self._calculate_durations()
 
         # Aggregate total token counts
         total_tokens = self._aggregate_token_counts(llm_calls)
@@ -236,24 +215,14 @@ class MetricsCollector:
         cost_data = self.calculate_costs(llm_calls)
 
         # Count nodes
-        num_nodes = len(self.planner_nodes) + len(self.workflow_nodes)
+        num_nodes = len(self.workflow_nodes)
 
         # Build metrics structure
         metrics = {}
 
-        # Add planner metrics if present
-        if self.planner_nodes:
-            planner_llm_calls = [c for c in llm_calls if c.get("is_planner", False)]
-            metrics["planner"] = self._build_execution_metrics(
-                planner_llm_calls, self.planner_nodes, planner_duration, is_planner=True
-            )
-
         # Add workflow metrics if present
         if self.workflow_nodes:
-            workflow_llm_calls = [c for c in llm_calls if not c.get("is_planner", False)]
-            metrics["workflow"] = self._build_execution_metrics(
-                workflow_llm_calls, self.workflow_nodes, workflow_duration, is_planner=False
-            )
+            metrics["workflow"] = self._build_execution_metrics(llm_calls, self.workflow_nodes, workflow_duration)
 
         # Add total metrics
         total_metrics = {
@@ -287,7 +256,6 @@ class MetricsCollector:
         # Build summary dict
         summary = {
             "duration_ms": round(total_duration, 2),
-            "duration_planner_ms": round(planner_duration, 2) if planner_duration else None,
             "total_cost_usd": cost_data.get("total_cost_usd"),
             "num_nodes": num_nodes,
             "metrics": metrics,

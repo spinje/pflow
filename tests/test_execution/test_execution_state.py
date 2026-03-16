@@ -202,8 +202,8 @@ class TestBuildExecutionStepsStderr:
         assert steps[2]["stderr"] == "Warning 3"
 
 
-class TestBuildExecutionStepsCacheAndRepair:
-    """Tests for cache and repair flags in build_execution_steps."""
+class TestBuildExecutionStepsCache:
+    """Tests for cache flags in build_execution_steps."""
 
     def test_cache_hit_flag(self):
         """Should set cached flag for nodes in __cache_hits__."""
@@ -220,19 +220,3 @@ class TestBuildExecutionStepsCacheAndRepair:
 
         assert steps[0]["cached"] is True
         assert steps[1]["cached"] is False
-
-    def test_repaired_flag(self):
-        """Should set repaired flag for nodes in __modified_nodes__."""
-        workflow_ir = {"nodes": [{"id": "node1"}, {"id": "node2"}]}
-        shared_storage = {
-            "__execution__": {
-                "completed_nodes": ["node1", "node2"],
-                "failed_node": None,
-            },
-            "__modified_nodes__": ["node2"],
-        }
-
-        steps = build_execution_steps(workflow_ir, shared_storage, None)
-
-        assert "repaired" not in steps[0]
-        assert steps[1]["repaired"] is True

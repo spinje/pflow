@@ -125,7 +125,6 @@ Read the relevant one before working in any directory:
 | `src/pflow/nodes/` | Node implementation patterns, PocketFlow retry, wrapper chain |
 | `src/pflow/runtime/` | Compilation, wrapper order, templating, instrumentation |
 | `src/pflow/mcp_server/` | Three-layer stateless architecture, tool registration |
-| `src/pflow/planning/` | Natural language planner (currently gated) |
 
 ## Scope Discipline
 

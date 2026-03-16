@@ -167,7 +167,7 @@ pflow becomes the **orchestration layer** for the MCP ecosystem, not another wal
 Our moat isn't the nodes we build. It's:
 
 1. **Best-in-class orchestration** of MCP tools
-2. **Natural language planning** that understands MCP capabilities
+2. **Natural-language workflow generation** that understands MCP capabilities
 3. **Deterministic workflow compilation** from English to execution
 4. **CLI-first experience** for developers
 
@@ -177,7 +177,7 @@ Others can copy using MCP servers. They can't copy our orchestration intelligenc
 
 ### What We Build
 - **Orchestration engine** that's excellent
-- **Natural language planner** that's intelligent
+- **Natural-language workflow generation** that's intelligent
 - **CLI experience** that's delightful
 - **Core control flow** that's robust
 

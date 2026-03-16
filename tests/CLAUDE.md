@@ -7,14 +7,13 @@ tests/
 ├── shared/                # Shared test utilities and mocks
 │   ├── llm_mock.py       # LLM-level mock (prevents API calls)
 │   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for .pflow.md test files
-│   ├── planner_block.py  # Planner blocker for CLI tests
 │   ├── registry_utils.py # ensure_test_registry() helper
 │   └── README.md         # Docs for shared utilities
 ├── test_pocketflow/       # PocketFlow framework tests (sync/async, batch, flow composition)
 ├── test_cli/              # CLI command tests (CliRunner-based)
 ├── test_core/             # IR schema, shell integration, settings, workflow manager
 ├── test_docs/             # Documentation validation
-├── test_execution/        # Execution/repair service tests
+├── test_execution/        # Execution service tests
 │   └── formatters/        # Formatter tests (CLI/MCP parity, security)
 ├── test_integration/      # End-to-end workflow tests
 ├── test_mcp/              # MCP client-side integration tests (connection pool, http transport)
@@ -25,8 +24,7 @@ tests/
 │   ├── test_git/          # Git node tests (status/commit/push/checkout/log/tag)
 │   ├── test_claude/       # Claude Code node tests
 │   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
-├── test_planning/         # Workflow planning tests (see test_planning/CLAUDE.md)
-├── test_registry/         # Registry and scanner tests
+├── test_registry/         # Registry, scanner, smart filter, and component discovery tests
 └── test_runtime/          # Compiler, flow construction, dynamic imports
 ```
 
@@ -73,7 +71,7 @@ def test_something(isolate_pflow_config):
 When a test calls an LLM, the mock resolves in this order:
 1. Exact model+schema match (e.g., `"anthropic/claude-sonnet-4-5"` + `WorkflowDecision`)
 2. Wildcard `"*"` + schema match
-3. Built-in schema defaults (has defaults for `WorkflowDecision`, `ComponentSelection`, `ParameterDiscovery`, `ParameterExtraction`, `FlowIR`, `WorkflowMetadata`, `FilteredFields`)
+3. Built-in schema defaults (has defaults for `WorkflowDecision`, `ComponentSelection`, `FilteredFields`)
 4. Final fallback: `{"response": "mock response"}`
 
 If your custom mock isn't being used, check that model name AND schema type both match.
@@ -89,30 +87,11 @@ If your custom mock isn't being used, check that model name AND schema type both
 |------|-----------------|
 | `tests/conftest.py` | Root: auto-applied LLM mock, isolated config, test nodes |
 | `tests/shared/llm_mock.py` | LLM-level mock (configurable responses) |
-| `tests/shared/planner_block.py` | Blocks planner import for CLI fallback testing |
-| `tests/test_cli/conftest.py` | CLI-specific: uses planner blocker |
-| `tests/test_integration/conftest.py` | Integration: uses planner blocker |
-| `tests/test_planning/conftest.py` | Autouse `skip_planning_tests` — **skips ALL planning tests** (gated, Task 107) |
-| `tests/test_planning/llm/prompts/conftest.py` | Session-scoped autouse: redirects LLM to `PFLOW_TEST_MODEL`, tracks tokens to `PFLOW_TOKEN_TRACKER_FILE` |
-
-**Planning test skip override**: New files added to `test_planning/` are silently skipped. To make tests run, override the fixture:
-```python
-@pytest.fixture(autouse=True)
-def skip_planning_tests():
-    pass  # Override parent conftest's skip
-```
 
 To configure LLM mock responses:
 ```python
 def test_something(mock_llm_responses):
     mock_llm_responses.set_response("anthropic/claude-sonnet-4-5", WorkflowDecision, {"found": True, "workflow_name": "test"})
-```
-
-To block planner in new test directories:
-```python
-# tests/test_new_feature/conftest.py
-from tests.shared.planner_block import create_planner_block_fixture
-block_planner = create_planner_block_fixture()
 ```
 
 ## Pytest Markers
@@ -130,7 +109,7 @@ Other markers used across the suite:
 
 | Command | Workers | What it excludes |
 |---------|---------|-----------------|
-| `make test` | `-n 4` | `test_planning/llm`, `test_llm_integration.py` |
+| `make test` | `-n 4` | `test_llm_integration.py` |
 | `make test-debug` | sequential | Same exclusions |
 | `make test-llm` | sequential | Only runs LLM-specific tests |
 | `make test-all` | `-n 4` | Nothing — runs everything |
@@ -165,10 +144,9 @@ registry = {"nodes": {"shell": {"module": "pflow.nodes.shell.shell", "class_name
 
 ## `PYTEST_CURRENT_TEST` in Production Code
 
-pytest sets `PYTEST_CURRENT_TEST` automatically. **Four production files check it** to skip dangerous operations during tests:
+pytest sets `PYTEST_CURRENT_TEST` automatically. **Three production files check it** to skip dangerous operations during tests:
 - `src/pflow/core/llm_config.py` — Skips LLM key detection
 - `src/pflow/cli/main.py` — Guards CLI behavior
-- `src/pflow/mcp_server/main.py` — Skips Anthropic model install
 - `src/pflow/cli/logging_config.py` — Adjusts logging config
 
 If you modify these files, be aware they behave differently under test.
@@ -186,25 +164,6 @@ These are NOT interchangeable — the code under test may use either `os.environ
 **ALWAYS use `wait=0`** when testing retries:
 ```python
 node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
-```
-
-## Workflow Planning Test Prompts
-
-Prompt specificity determines whether pflow creates new workflows or reuses existing ones:
-
-**Testing generation (Path B)** — use specific, detailed prompts:
-```python
-# ✅ Specific → triggers generation
-"Create an issue triage report by fetching the last 30 open bug issues from github project-x, categorize by priority, write to reports/bug-triage.md"
-
-# ❌ Vague → triggers reuse instead
-"Create an issue triage report"
-```
-
-**Testing reuse (Path A)** — use vague, minimal prompts:
-```python
-# ✅ Vague → triggers reuse
-"generate a changelog"
 ```
 
 ## Pitfalls and Gotchas
@@ -258,7 +217,7 @@ Mocks from one file persist and break others → Use `@pytest.fixture(autouse=Tr
 ```
 
 ### 13. Context Builder Uses Fresh Instances
-`registry.context_builder.build_planning_context()` creates fresh `WorkflowManager` instances (no singleton). Pass `workflow_manager=` parameter to control which instance is used in tests.
+`pflow.registry.context_builder.build_planning_context()` creates fresh `WorkflowManager` instances (no singleton). Pass `workflow_manager=` parameter to control which instance is used in tests.
 
 ### 14. Testing Implementation Instead of Behavior
 ```python

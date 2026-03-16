@@ -1,7 +1,7 @@
 """Discovery tools for the MCP server.
 
 These tools provide intelligent discovery capabilities using
-LLM-powered planning nodes for workflow and component selection.
+LLM-powered workflow and component selection.
 """
 
 import asyncio
@@ -107,7 +107,7 @@ async def registry_discover(
     # Run in thread pool to avoid blocking
     result = await asyncio.to_thread(_sync_discover)
 
-    logger.debug("registry_discover returning formatted markdown (planning_context)")
+    logger.debug("registry_discover returning formatted markdown (component_context)")
     return result
 
 

@@ -96,10 +96,9 @@ Tests mirror source: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`
 | `tests/test_integration/` | 19 | End-to-end workflow execution |
 | `tests/test_mcp/` | 12 | MCP client integration |
 | `tests/test_mcp_server/` | 8 | pflow-as-MCP-server |
-| `tests/test_planning/` | 7 | Planner (gated, has `unit/` `integration/` `llm/` subdirs) |
 | `tests/test_nodes/` | 3+ subdirs | Node implementations (file/, shell/, llm/, git/, etc.) |
-| `tests/test_execution/` | 6 | Execution services, repair, formatters |
-| `tests/test_registry/` | 6 | Registry, scanner, metadata extraction |
+| `tests/test_execution/` | 6 | Execution services, formatters |
+| `tests/test_registry/` | 6+ | Registry, scanner, metadata extraction, smart filter, discovery |
 | `tests/test_docs/` | 2 | Documentation validation |
 | `tests/pocketflow/` | 10 | PocketFlow framework (async, batch, flow composition) |
 
@@ -121,7 +120,6 @@ These apply to ALL tests automatically — you don't need to request them:
 | LLM mock | `from tests.shared.llm_mock import create_mock_get_model` | Prevents real LLM API calls |
 | Markdown utils | `from tests.shared.markdown_utils import write_workflow_file, ir_to_markdown` | Convert IR dicts to .pflow.md files |
 | Registry utils | `from tests.shared.registry_utils import ensure_test_registry` | Initialize test registry with all core nodes |
-| Planner block | `from tests.shared.planner_block import create_planner_block_fixture` | Block planner import for CLI fallback tests |
 
 ### Configuring LLM Mock Responses
 

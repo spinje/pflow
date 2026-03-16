@@ -1,7 +1,6 @@
 ---
 name: component_browsing
-test_path: tests/test_planning/llm/prompts/test_browsing_prompt.py::TestComponentBrowsingPrompt
-test_command: uv run python tools/test_prompt_accuracy.py component_browsing
+test_path: tests/test_registry/test_component_discovery.py
 version: '1.2'
 latest_accuracy: 91.7
 test_runs: [50.0, 50.0, 91.7, 66.7, 0.0, 91.7]

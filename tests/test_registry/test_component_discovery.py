@@ -4,7 +4,7 @@ from pflow.registry.discovery import ComponentSelection, ComponentSelectionSchem
 
 
 class TestDiscoverComponentsBasic:
-    """discover_components returns a ComponentSelection with node_ids, reasoning, and planning_context."""
+    """discover_components returns a ComponentSelection with node_ids, reasoning, and component_context."""
 
     def test_returns_component_selection_with_selected_nodes(self, mock_llm_calls, monkeypatch):
         """LLM selects nodes and planning context is built for them."""
@@ -17,7 +17,7 @@ class TestDiscoverComponentsBasic:
             lambda **kwargs: "",
         )
         monkeypatch.setattr(
-            "pflow.registry.discovery.build_planning_context",
+            "pflow.registry.discovery.build_component_context",
             lambda **kwargs: "## read-file\nReads files from disk.",
         )
 
@@ -36,7 +36,7 @@ class TestDiscoverComponentsBasic:
         assert isinstance(result, ComponentSelection)
         assert result.node_ids == ["read-file", "write-file"]
         assert "file" in result.reasoning.lower()
-        assert "read-file" in result.planning_context
+        assert "read-file" in result.component_context
 
 
 class TestDiscoverComponentsClearsWorkflowNames:
@@ -53,16 +53,16 @@ class TestDiscoverComponentsClearsWorkflowNames:
             lambda **kwargs: "1. `deploy` - Deploy to prod",
         )
 
-        # build_planning_context receives the cleared workflow names
+        # build_component_context receives the cleared workflow names
         captured_kwargs = {}
 
-        def fake_build_planning_context(**kwargs):
+        def fake_build_component_context(**kwargs):
             captured_kwargs.update(kwargs)
             return "## shell\nRuns shell commands."
 
         monkeypatch.setattr(
-            "pflow.registry.discovery.build_planning_context",
-            fake_build_planning_context,
+            "pflow.registry.discovery.build_component_context",
+            fake_build_component_context,
         )
 
         mock_llm_calls.set_response(
@@ -77,17 +77,17 @@ class TestDiscoverComponentsClearsWorkflowNames:
 
         result = discover_components("deploy the app")
 
-        # The function always passes empty workflow names to build_planning_context
+        # The function always passes empty workflow names to build_component_context
         assert captured_kwargs["selected_workflow_names"] == []
         # Result should have nodes but no trace of workflow_names
         assert result.node_ids == ["shell"]
 
 
-class TestDiscoverComponentsPlanningContextError:
-    """When build_planning_context returns an error dict, discover_components handles it gracefully."""
+class TestDiscoverComponentsComponentContextError:
+    """When build_component_context returns an error dict, discover_components handles it gracefully."""
 
-    def test_returns_empty_planning_context_on_error(self, mock_llm_calls, monkeypatch):
-        """An error dict from build_planning_context results in empty planning_context string."""
+    def test_returns_empty_component_context_on_error(self, mock_llm_calls, monkeypatch):
+        """An error dict from build_component_context results in empty component_context string."""
         monkeypatch.setattr(
             "pflow.registry.discovery.build_nodes_context",
             lambda **kwargs: "1. `fake-node` - Does something",
@@ -97,7 +97,7 @@ class TestDiscoverComponentsPlanningContextError:
             lambda **kwargs: "",
         )
         monkeypatch.setattr(
-            "pflow.registry.discovery.build_planning_context",
+            "pflow.registry.discovery.build_component_context",
             lambda **kwargs: {"error": "No matching nodes found", "missing_nodes": ["fake-node"]},
         )
 
@@ -113,7 +113,7 @@ class TestDiscoverComponentsPlanningContextError:
 
         result = discover_components("do something with fake-node")
 
-        assert result.planning_context == ""
+        assert result.component_context == ""
         assert result.node_ids == ["fake-node"]
 
 
@@ -131,7 +131,7 @@ class TestDiscoverComponentsModelSelection:
             lambda **kwargs: "",
         )
         monkeypatch.setattr(
-            "pflow.registry.discovery.build_planning_context",
+            "pflow.registry.discovery.build_component_context",
             lambda **kwargs: "context",
         )
 
@@ -173,7 +173,7 @@ class TestDiscoverComponentsModelSelection:
             lambda **kwargs: "",
         )
         monkeypatch.setattr(
-            "pflow.registry.discovery.build_planning_context",
+            "pflow.registry.discovery.build_component_context",
             lambda **kwargs: "context",
         )
 

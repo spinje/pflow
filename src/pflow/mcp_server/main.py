@@ -22,10 +22,9 @@ def run_server() -> None:
 
     This function:
     1. Injects API keys from pflow settings into environment
-    2. Installs Anthropic model wrapper (required for planning nodes)
-    3. Registers all tools with the server
-    4. Sets up signal handlers for graceful shutdown
-    5. Runs the server with stdio transport
+    2. Registers MCP tools
+    3. Sets up signal handlers for graceful shutdown
+    4. Runs the server with stdio transport
 
     The server uses stdio transport where:
     - stdin: Receives JSON-RPC requests from the client

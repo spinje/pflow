@@ -278,7 +278,7 @@ pflow has a dual MCP role:
 
 The CLI is recommended for iterative work (building, debugging). The MCP server provides the same capabilities for environments like Claude Desktop where terminal access isn't available.
 
-**Legacy Planner:** Natural language to workflow conversion is gated pending markdown format prompt rewrites (Task 107 Decision 26). The planner code is preserved but unreachable from CLI/MCP. Discovery commands (`pflow workflow discover`, `pflow registry discover`) remain active.
+**Legacy natural-language workflow generation:** This path is not part of the maintained CLI/MCP surface. Discovery commands (`pflow workflow discover`, `pflow registry discover`) remain active.
 
 ### Node Types
 

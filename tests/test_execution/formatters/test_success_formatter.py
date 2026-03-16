@@ -95,25 +95,6 @@ class TestBatchNodeLineFormatting:
 
         assert "[cached]" in result
 
-    def test_batch_line_includes_repaired_tag(self):
-        """FORMAT: Repaired batch nodes must show repaired tag.
-
-        Real bug this catches: Without repaired indicator, users can't identify
-        which batch nodes were auto-repaired.
-        """
-        step = {
-            "node_id": "process",
-            "duration_ms": 50,
-            "is_batch": True,
-            "batch_total": 5,
-            "batch_success": 5,
-            "batch_errors": 0,
-            "repaired": True,
-        }
-        result = _format_batch_node_line(step)
-
-        assert "[repaired]" in result
-
 
 class TestBatchErrorsSectionFormatting:
     """Tests for batch errors section formatting."""
@@ -492,18 +473,3 @@ class TestNonBatchNodesUnchanged:
         result = _format_execution_step(step)
 
         assert result == "  ✓ fetch (0ms) [cached]"
-
-    def test_repaired_node_unchanged(self):
-        """REGRESSION: Repaired nodes show repaired tag.
-
-        Real bug this catches: Repaired tag formatting could be broken.
-        """
-        step = {
-            "node_id": "send",
-            "status": "completed",
-            "duration_ms": 100,
-            "repaired": True,
-        }
-        result = _format_execution_step(step)
-
-        assert result == "  ✓ send (100ms) [repaired]"

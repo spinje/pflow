@@ -271,43 +271,6 @@ def _load_and_parse_workflow(file_path: str) -> tuple[dict[str, Any], str, str |
         sys.exit(1)
 
 
-def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metadata: bool) -> dict[str, Any] | None:
-    """Generate rich metadata for workflow if requested.
-
-    Args:
-        validated_ir: Validated workflow IR
-        generate_metadata: Whether to generate metadata
-
-    Returns:
-        Generated metadata dict or None
-    """
-    # GATED: Metadata generation disabled pending markdown format migration (Task 107).
-    # Uses MetadataGenerationNode from planner which assumes JSON workflow format.
-    if generate_metadata:
-        click.echo("Warning: --generate-metadata is temporarily disabled pending markdown format migration.", err=True)
-    return None
-
-    if not generate_metadata:
-        return None
-
-    from pflow.core.llm_config import get_model_for_feature
-    from pflow.core.workflow.save_service import generate_workflow_metadata
-
-    # Get LLM model from settings → auto-detect → fallback
-    discovery_model = get_model_for_feature("discovery")
-
-    click.echo("Generating rich metadata...")
-    metadata = generate_workflow_metadata(validated_ir, model_name=discovery_model)
-
-    if metadata:
-        click.echo(f"  Generated {len(metadata.get('keywords', []))} keywords")
-        click.echo(f"  Generated {len(metadata.get('capabilities', []))} capabilities")
-    else:
-        click.echo("  Warning: Could not generate metadata", err=True)
-
-    return metadata
-
-
 def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[str, Any] | None, force: bool) -> str:
     """Save workflow to library with overwrite handling.
 
@@ -381,8 +344,7 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
 @click.option("--name", required=True, help="Workflow name (lowercase-with-hyphens, max 30 chars)")
 @click.option("--delete-draft", is_flag=True, help="Delete source file after save")
 @click.option("--force", is_flag=True, help="Overwrite existing workflow")
-@click.option("--generate-metadata", is_flag=True, help="Generate rich discovery metadata")
-def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool, generate_metadata: bool) -> None:
+def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) -> None:
     """Save a workflow file to the global library.
 
     Takes a .pflow.md workflow file and saves it to the global library
@@ -403,8 +365,7 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool, ge
     # Load, parse, and validate workflow
     validated_ir, markdown_content, _description = _load_and_parse_workflow(file_path)
 
-    # Generate metadata if requested
-    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
+    metadata = None
 
     # Save workflow (passes markdown content, not IR)
     saved_path = _save_with_overwrite_check(name, markdown_content, metadata, force)

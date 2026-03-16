@@ -86,7 +86,7 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 **vision/** — All vision docs describe FUTURE directions. `north-star-examples.md` uses `>>` CLI syntax that was never implemented. Read for design intent, not current behavior.
 
-**historical/** — See `historical/CLAUDE.md` for full index. Design-time documents with valuable rationale but outdated specifics. Key paradigm shift: project moved from planner-first to primitives-first approach.
+**historical/** — See `historical/CLAUDE.md` for full index. Design-time documents with valuable rationale but outdated specifics. Key paradigm shift: project moved from natural-language generation-first to primitives-first.
 
 ## Reading Paths by Goal
 
@@ -105,7 +105,7 @@ These `CLAUDE.md` files in the source tree provide implementation-level guidance
 
 | Architecture Concept | Implementation Guide | Key Content |
 |---------------------|---------------------|-------------|
-| Execution pipeline, repair | `src/pflow/execution/CLAUDE.md` | ExecutionResult, repair loop |
+| Execution pipeline | `src/pflow/execution/CLAUDE.md` | ExecutionResult, formatters, status flow |
 | Compilation, wrapper chain | `src/pflow/runtime/CLAUDE.md` | Compiler stages, wrapper order |
 | Node implementation | `src/pflow/nodes/CLAUDE.md` | Retry patterns, interface format |
 | CLI commands | `src/pflow/cli/CLAUDE.md` | Routing, subcommands |

@@ -92,7 +92,6 @@ All node communication flows through the **shared store** using semantic keys. T
 | Skill management | `src/pflow/core/workflow/skill_service.py` (logic) + `cli/skills.py` (CLI) |
 | MCP client (tools in workflows) | `src/pflow/mcp/` |
 | MCP server (pflow as tool) | `src/pflow/mcp_server/` (tools/, services/, utils/) |
-| Planning (gated) | `src/pflow/planning/` (not accessible via normal CLI) |
 | LLM configuration | `src/pflow/core/llm_config.py` (uses Simon Willison's `llm` library) |
 | Task discovery | `./scripts/tasks`, `./scripts/tasks N`, `./scripts/tasks --search X` |
 
@@ -115,7 +114,7 @@ All node communication flows through the **shared store** using semantic keys. T
 
 **Node interface metadata**: Nodes declare inputs/outputs in docstrings using Enhanced Interface Format. Extracted by `registry/metadata_extractor.py` for registry, validation, and discovery.
 
-**Mirror test structure**: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`. Fixtures in `conftest.py` at each level. LLM mocking via `tests/shared/llm_mock.py` prevents real API calls. Real LLM tests gated by `RUN_LLM_TESTS=1`. Some test dirs (notably `test_planning/`) use `unit/` → `integration/` → `llm/` subdirectories.
+**Mirror test structure**: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`. Fixtures in `conftest.py` at each level. LLM mocking via `tests/shared/llm_mock.py` prevents real API calls. Real LLM tests gated by `RUN_LLM_TESTS=1`.
 
 ## Quick Search Patterns
 
@@ -213,7 +212,6 @@ All node communication flows through the **shared store** using semantic keys. T
 
 | Area | What's Different |
 |------|-----------------|
-| **Planning system** | Gated (Task 107). Uses PocketFlow meta-workflow (flow of flows), not normal workflow execution. Lives in `planning/` but unreachable from normal CLI. |
 | **MCP server** | Has its own `tools/services/utils` layer — NOT a thin CLI wrapper. Async tool layer calls sync service layer. |
 | **Python node** | Executes user code in isolated namespace with safety restrictions, not a simple `exec()`. |
 | **Claude Code node** | Shells out to `claude` CLI binary, not an API call. |

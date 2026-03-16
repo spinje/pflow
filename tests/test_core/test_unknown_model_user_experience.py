@@ -20,9 +20,9 @@ class TestUnknownModelUserExperience:
         collector.record_workflow_start()
 
         # Execute some nodes
-        collector.record_node_execution("read-file", 100.5, is_planner=False)
+        collector.record_node_execution("read-file", 100.5)
         time.sleep(0.001)  # Ensure measurable duration
-        collector.record_node_execution("llm", 500.2, is_planner=False)
+        collector.record_node_execution("llm", 500.2)
 
         # Workflow completes
         collector.record_workflow_end()
@@ -33,7 +33,6 @@ class TestUnknownModelUserExperience:
                 "model": "my-custom-ollama-model",  # Unknown model
                 "input_tokens": 1000,
                 "output_tokens": 500,
-                "is_planner": False,
             }
         ]
 

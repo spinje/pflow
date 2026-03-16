@@ -1,6 +1,6 @@
 # Enhanced Interface Format Specification
 
-This document provides the complete specification for the Enhanced Interface Format used in pflow nodes. The enhanced format adds type annotations and semantic descriptions to node interfaces, enabling better understanding by the workflow planner.
+This document provides the complete specification for the Enhanced Interface Format used in pflow nodes. The enhanced format adds type annotations and semantic descriptions to node interfaces, enabling better understanding by discovery and workflow-building tools.
 
 ## Overview
 
@@ -160,7 +160,7 @@ Interface:
 
 ### How Structure Documentation Works
 
-The parser automatically detects indented structure definitions and extracts nested field information. When these structured outputs are displayed in planning contexts, they appear in a dual format optimized for LLM comprehension:
+The parser automatically detects indented structure definitions and extracts nested field information. When these structured outputs are displayed in component contexts, they appear in a dual format optimized for LLM comprehension:
 
 **Structure (JSON format):**
 ```json
@@ -190,7 +190,7 @@ The parser automatically detects indented structure definitions and extracts nes
 - issue_data.labels[].name (str) - Label text
 - issue_data.labels[].color (str) - Hex color code
 
-This dual representation enables the workflow planner to:
+This dual representation enables discovery and workflow-building tools to:
 1. **Understand data relationships** using the JSON structure
 2. **Generate proxy mappings** by copying paths directly (e.g., `"author": "issue_data.user.login"`)
 
@@ -241,7 +241,7 @@ class GitHubIssueNode(Node):
     """
 ```
 
-This documentation will be parsed and displayed in the planning context as both JSON structure and available paths, enabling accurate workflow generation.
+This documentation will be parsed and displayed in the component context as both JSON structure and available paths, enabling accurate workflow generation.
 
 ## Migration from Simple Format
 
@@ -423,7 +423,7 @@ These limitations are well-documented and the parser works reliably for normal u
 - Enhanced interface format with type annotations
 - Multi-line interface documentation
 - **Full structure parsing** for nested dict and list types
-- **Structure display** in dual JSON + paths format for planning contexts
+- **Structure display** in dual JSON + paths format for component contexts
 - Params-only input pattern (all inputs via params, no Reads)
 - Parser support for all basic types (str, int, float, bool, dict, list)
 
@@ -474,13 +474,13 @@ This example demonstrates:
 To validate your Interface format:
 
 1. **Parser test**: The metadata extractor will parse your format
-2. **Context builder**: Check how your node appears in the planning context
-3. **Integration test**: Verify the planner can use your type information
+2. **Context builder**: Check how your node appears in the component context
+3. **Integration test**: Verify discovery tooling can use your type information
 
 ## Summary
 
 The Enhanced Interface Format provides a clear, type-safe way to document node interfaces. By following this specification, you ensure that:
-- The workflow planner understands your node's data types
+- Discovery tooling understands your node's data types
 - Other developers can easily understand your node's interface
 - The system can provide better error messages and validation
 - Future enhancements can build on this foundation

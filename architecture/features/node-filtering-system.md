@@ -57,7 +57,7 @@ file.write
 git.status
 # (no echo or test nodes)
 
-# LLM/planner doesn't see denied nodes
+# LLM tooling doesn't see denied nodes
 $ pflow "create a workflow"
 # LLM context excludes denied nodes
 ```

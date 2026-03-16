@@ -599,9 +599,9 @@ def discover_nodes(query: str) -> None:
         )
         sys.exit(1)
 
-    # Display planning context
-    if result.planning_context:
-        click.echo(result.planning_context)
+    # Display rendered component context
+    if result.component_context:
+        click.echo(result.component_context)
     elif result.node_ids:
         click.echo(f"Found {len(result.node_ids)} relevant nodes:")
         for nid in result.node_ids:
@@ -793,7 +793,7 @@ def describe_nodes(node_ids: tuple[str, ...]) -> None:
     Example:
         pflow registry describe github-get-pr llm write-file
     """
-    from pflow.registry.context_builder import build_planning_context
+    from pflow.registry.context_builder import build_component_context
 
     # Load registry
     reg = Registry()
@@ -812,7 +812,7 @@ def describe_nodes(node_ids: tuple[str, ...]) -> None:
 
     # Build detailed context using normalized IDs
     try:
-        context = build_planning_context(
+        context = build_component_context(
             selected_node_ids=normalized_ids, selected_workflow_names=[], registry_metadata=registry_metadata
         )
         click.echo(context)

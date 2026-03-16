@@ -153,7 +153,7 @@ def _detect_default_model() -> Optional[str]:
     """Detect best available LLM model based on configured API keys.
 
     Priority order:
-    1. Anthropic Claude (best quality for planning/repair)
+    1. Anthropic Claude (best overall quality)
     2. Google Gemini (good quality, cheaper)
     3. OpenAI (widely available fallback)
 
@@ -165,7 +165,7 @@ def _detect_default_model() -> Optional[str]:
         logger.debug("Skipping LLM detection in test environment")
         return None
 
-    # Try Anthropic first (best for planning/repair)
+    # Try Anthropic first (best overall quality)
     if _has_provider_key("anthropic"):
         logger.debug("Using Anthropic Claude (key detected)")
         return "anthropic/claude-sonnet-4-5"

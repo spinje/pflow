@@ -285,9 +285,7 @@ class TestCheckpointIntegration:
             mock_execute.return_value = success_result
 
             # Execute without repair
-            result = execute_workflow(
-                workflow_ir=workflow_ir, execution_params={}, enable_repair=False, output=NullOutput()
-            )
+            result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, output=NullOutput())
 
             # Verify validation WAS called (always validates, even with repair disabled)
             assert mock_validate.called

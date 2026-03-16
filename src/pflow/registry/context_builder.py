@@ -1,7 +1,7 @@
-"""Context builder for node registry and planning.
+"""Context builder for node registry and component discovery.
 
 Transforms node registry metadata into LLM-optimized markdown documentation
-for component discovery and workflow planning.
+for component discovery and workflow authoring.
 """
 
 import json
@@ -193,7 +193,7 @@ def _format_structure_combined(
 ) -> tuple[dict[str, Any], list[tuple[str, str, str]]]:
     """Transform nested structure into JSON representation and path list.
 
-    This is the PREFERRED method for displaying structures in the planning phase.
+    This is the preferred method for displaying structures in discovery output.
     It produces a combined JSON + paths format that is optimal for LLM comprehension
     and enables accurate proxy mapping generation (e.g., "author": "issue_data.user.login").
 
@@ -357,13 +357,13 @@ def _check_missing_components(
     return None
 
 
-def _validate_planning_inputs(
+def _validate_component_context_inputs(
     selected_node_ids: list[str],
     selected_workflow_names: list[str],
     registry_metadata: dict[str, dict[str, Any]],
     saved_workflows: Optional[list[dict[str, Any]]],
 ) -> None:
-    """Validate inputs for build_planning_context."""
+    """Validate inputs for build_component_context."""
     if not isinstance(selected_node_ids, list):
         raise TypeError(f"selected_node_ids must be a list, got {type(selected_node_ids).__name__}")
     if not isinstance(selected_workflow_names, list):
@@ -374,8 +374,8 @@ def _validate_planning_inputs(
         raise TypeError(f"saved_workflows must be a list or None, got {type(saved_workflows).__name__}")
 
 
-def _format_planning_nodes(selected_node_ids: list[str], processed_nodes: dict[str, dict]) -> list[str]:
-    """Format nodes section for planning context."""
+def _format_component_nodes(selected_node_ids: list[str], processed_nodes: dict[str, dict]) -> list[str]:
+    """Format nodes section for component context."""
     markdown_sections = []
 
     for node_id in sorted(selected_node_ids):
@@ -387,8 +387,8 @@ def _format_planning_nodes(selected_node_ids: list[str], processed_nodes: dict[s
     return markdown_sections
 
 
-def _format_planning_workflows(selected_workflows: list[dict[str, Any]]) -> list[str]:
-    """Format workflows section for planning context."""
+def _format_component_workflows(selected_workflows: list[dict[str, Any]]) -> list[str]:
+    """Format workflows section for component context."""
     markdown_sections = []
 
     if selected_workflows:
@@ -402,17 +402,17 @@ def _format_planning_workflows(selected_workflows: list[dict[str, Any]]) -> list
     return markdown_sections
 
 
-def build_planning_context(
+def build_component_context(
     selected_node_ids: list[str],
     selected_workflow_names: list[str],
     registry_metadata: dict[str, dict[str, Any]],
     saved_workflows: Optional[list[dict[str, Any]]] = None,
     workflow_manager: Optional[WorkflowManager] = None,
 ) -> str | dict[str, Any]:
-    """Build detailed planning context for selected components.
+    """Build detailed component context for selected components.
 
     This function provides complete interface details for components selected
-    during the discovery phase, enabling accurate workflow generation.
+    during discovery, enabling accurate workflow authoring.
 
     Args:
         selected_node_ids: Node IDs to include (required)
@@ -423,11 +423,11 @@ def build_planning_context(
 
     Returns:
         Either:
-        - Markdown formatted planning context with full details
+        - Markdown formatted component context with full details
         - Error dict with keys: "error", "missing_nodes", "missing_workflows"
     """
     # Input validation
-    _validate_planning_inputs(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows)
+    _validate_component_context_inputs(selected_node_ids, selected_workflow_names, registry_metadata, saved_workflows)
 
     # Load workflows if not provided
     if saved_workflows is None:
@@ -449,11 +449,11 @@ def build_planning_context(
     markdown_sections = ["## Selected Components\n"]
 
     # Add nodes
-    markdown_sections.extend(_format_planning_nodes(selected_node_ids, processed_nodes))
+    markdown_sections.extend(_format_component_nodes(selected_node_ids, processed_nodes))
 
     # Add workflows
     selected_workflows = [w for w in saved_workflows if w["name"] in selected_workflow_names]
-    markdown_sections.extend(_format_planning_workflows(selected_workflows))
+    markdown_sections.extend(_format_component_workflows(selected_workflows))
 
     return "\n".join(markdown_sections).strip()
 
@@ -756,7 +756,7 @@ def _add_enhanced_structure_display(lines: list[str], key: str, structure: dict[
 
     This method implements Decision 9 from task-15-context-builder-ambiguities.md,
     providing the dual representation format that enables LLMs to generate accurate
-    proxy mappings. It's used by build_planning_context() for the planning phase.
+    proxy mappings. It's used by build_component_context() when rendering detailed component context.
 
     Args:
         lines: List to append formatted lines to
@@ -866,7 +866,7 @@ def _format_workflow_outputs(workflow: dict[str, Any]) -> list[str]:
 
 
 def _format_workflow_section(workflow: dict[str, Any]) -> str:
-    """Format a workflow's information for planning context.
+    """Format a workflow's information for component context.
 
     Args:
         workflow: Workflow metadata dict

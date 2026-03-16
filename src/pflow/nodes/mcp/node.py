@@ -401,8 +401,8 @@ class MCPNode(Node):
                 "timeout": exec_res.get("timeout", False),
             }
             logger.debug(exec_res["error"], extra=shared["error_details"])
-            # WORKAROUND: Return "default" instead of "error" because the planner
-            # doesn't generate error handling edges in workflows. This prevents
+            # WORKAROUND: Return "default" instead of "error" because many workflows
+            # do not declare explicit error-handling edges. This prevents
             # "Flow ends: 'error' not found" crashes. The error is still stored
             # in shared["error"] for downstream nodes to handle.
             return "default"
@@ -415,8 +415,9 @@ class MCPNode(Node):
             shared["error"] = result.get("error", "Tool execution failed")
             shared["error_details"] = {"server": prep_res["server"], "tool": prep_res["tool"], "is_tool_error": True}
             logger.debug(f"MCP tool returned error: {shared['error']}", extra=shared["error_details"])
-            # Return "error" to trigger repair system
-            # The API warning detection in InstrumentedNodeWrapper will determine if it's repairable
+            # Return "error" so workflow error handling can respond
+            # API warning detection in InstrumentedNodeWrapper may upgrade clear
+            # resource failures into user-facing warnings before execution stops.
             return "error"
 
         # Store successful result

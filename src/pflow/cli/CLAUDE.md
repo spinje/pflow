@@ -26,9 +26,8 @@ Routing Decision (pre-parses sys.argv, first non-option arg)
 src/pflow/cli/
 ├── __init__.py              # Exports cli_main
 ├── main_wrapper.py          # Entry point router (pre-parses sys.argv)
-├── main.py                  # Core workflow execution (~3900 lines)
+├── main.py                  # Core workflow execution (~3300 lines)
 ├── cli_output.py            # OutputInterface implementation for Click
-├── repair_save_handlers.py  # ⚠️ GATED (Task 107) — repair save logic
 ├── rerun_display.py         # Rerun command display with secret masking
 ├── discovery_errors.py      # Shared error handling for LLM discovery
 ├── read_fields.py           # CLI command: retrieve fields from cached registry run results
@@ -55,7 +54,7 @@ workflow_command()
     ↓ _initialize_context()
     ↓ _auto_discover_mcp_servers() ← smart sync (skips if config unchanged)
     ↓ _read_stdin_data()
-    ↓ _try_execute_named_workflow() or planner (GATED)
+    ↓ _try_execute_named_workflow()
 ```
 
 The env injection step is critical — it makes API keys stored via `pflow settings set-env` available to the `llm` library and other tools that read `os.environ`. Skipped in test environment.
@@ -73,12 +72,9 @@ The env injection step is critical — it makes API keys stored via `pflow setti
 workflow (nargs=-1)    # Catch-all: file path, saved name, or natural language
 ```
 
-Hidden planner flags (GATED — Task 107): `--trace-planner`, `--planner-timeout`, `--planner-model`, `--save/--no-save`, `--cache-planner`, `--auto-repair`, `--no-update`. These won't appear in `--help`.
-
 ### Workflow Name Detection
 
-`is_likely_workflow_name()` determines whether input goes to file/saved resolution vs planner. Heuristics:
-- Contains spaces → never a workflow name (natural language)
+`is_likely_workflow_name()` determines whether input is a file path or saved workflow name. Heuristics:
 - Has file extension (`.pflow.md`, `.json`, `.md`) or path separators → file path
 - Followed by `key=value` args → workflow name with params
 - Contains hyphens (kebab-case) → likely workflow name
@@ -90,7 +86,7 @@ Also: `pflow run my-workflow` silently strips the `run` prefix (`_preprocess_run
 
 1. Check if valid file path (`.pflow.md`; `.json` → rejection error directing to markdown)
 2. Try loading from WorkflowManager (saved name)
-3. Natural language → planner (**GATED** — Task 107)
+3. Error
 
 ### Output Streams
 
@@ -116,22 +112,21 @@ Interactive detection rules are in `core/CLAUDE.md` (output_controller). CLI-spe
 - Starts with `[` or `{` → parsed as JSON list/dict
 - Everything else → `str`
 
-**Internal parameters**: `__` prefixed params are system-internal, filtered from display by `filter_user_params()`. Includes `__verbose__`, `__llm_calls__`, `__planner_cache_chunks__`.
+**Internal parameters**: `__` prefixed params are system-internal, filtered from display by `filter_user_params()`. Includes `__verbose__`, `__llm_calls__`.
 
 **Sensitive parameter masking**: 15 predefined sensitive keys auto-masked as `<REDACTED>` in rerun display. Shell injection protection via `shlex.quote()`.
 
 ### Trace File System
 
 - Workflow: `~/.pflow/debug/workflow-trace-{name}-{YYYYMMDD-HHMMSS}.json` — saved automatically (disable with `--no-trace`)
-- Planner: `~/.pflow/debug/planner-trace-{YYYYMMDD-HHMMSS}.json` — saved when `--trace-planner` OR on failure
 
 ### Error Display
 
-Error categories with different handlers: `PlannerError`, `UserFriendlyError`, `CompilationError`, generic exceptions.
+Error categories with different handlers: `UserFriendlyError`, `CompilationError`, generic exceptions.
 
 Shell error details (verbose mode): shows command, stdout, stderr with truncation (200/300/300 chars).
 
-JSON errors include structured execution state: per-node status (completed/failed/not_executed), duration, cached, repaired.
+JSON errors include structured execution state: per-node status (completed/failed/not_executed), duration, cached.
 
 ### Context (`ctx.obj`) — Non-Obvious Keys
 
@@ -190,8 +185,6 @@ Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (L
 - Name validation: lowercase, numbers, hyphens only, max 30 chars (shell/URL/git-safe)
 - Description extracted from markdown H1 prose (`--description` flag removed)
 - `--delete-draft` safety check: only works in `.pflow/workflows/`, resolves symlinks, refuses to delete symlinked files
-- `--generate-metadata` **GATED** (Task 107)
-
 **Workflow history** (`pflow workflow history <name>`): Shows execution history and last used inputs — useful for finding previously used parameter values.
 
 **Discovery commands use plain functions** — `discover_workflow()` from `core/workflow/discovery` and `discover_components()` from `registry/discovery`. Both return typed dataclasses (`WorkflowMatch`, `ComponentSelection`).
@@ -238,12 +231,6 @@ LLM model resolution chain (genuinely hard to discover):
 
 **Registry settings** (`settings registry` subgroup): `output-mode` (smart/structure/full).
 
-### Repair Save Handlers (repair_save_handlers.py)
-
-**⚠️ GATED** (Task 107): All entry points return early with warning. Code preserved for re-enabling.
-
-Three save strategies (when re-enabled): saved workflows (update via WorkflowManager), file workflows (overwrite original, no backup), planner workflows (save as timestamped repaired file).
-
 ### CLI Output (cli_output.py)
 
 `CliOutput` implements `OutputInterface`, wraps `OutputController`. Delegates interactive detection, creates progress callbacks.
@@ -267,18 +254,6 @@ What `--validate-only` checks (and doesn't):
 ## Stdin Handling
 
 See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData modes, and routing details. Key CLI-specific behavior: validation happens AFTER stdin routing, so required inputs can be satisfied by piped data.
-
-## Planner Cache Flow
-
-```
-PlanningNode → shared["planner_extended_blocks"]
-    ↓
-CLI extracts with priority: accumulated > extended > base
-    ↓
-enhanced_params["__planner_cache_chunks__"]
-    ↓
-RepairService uses as cache_blocks for LLM context continuity
-```
 
 ## Signal Handling
 
@@ -327,6 +302,6 @@ pflow instructions usage                # Agent guide
 
 ## Testing
 
-Key mock points: `create_planner_flow()`, `execute_workflow()`, `click.prompt()`, `WorkflowManager`.
+Key mock points: `execute_workflow()`, `click.prompt()`, `WorkflowManager`.
 
 **TTY limitation**: Click's `CliRunner.isatty()` always returns False — can't test interactive mode paths in unit tests.

@@ -542,77 +542,17 @@ class TestSaveWorkflowWithOptions:
 
 
 class TestGenerateWorkflowMetadata:
-    """Test generate_workflow_metadata() - LLM-based metadata generation.
+    """Test generate_workflow_metadata() stub after planning module removal."""
 
-    Prevents regression in metadata generation integration (CLI-only feature).
-    """
-
-    def test_successful_metadata_generation(self) -> None:
-        """LLM SUCCESS: Generate metadata successfully.
-
-        Bug prevented: Metadata generation broken, CLI --generate-metadata flag useless.
-        """
+    def test_always_returns_none(self) -> None:
+        """Stub returns None unconditionally (planning module removed)."""
         sample_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
-
-        expected_metadata = {
-            "keywords": ["shell", "command", "echo"],
-            "capabilities": ["Execute shell commands"],
-            "typical_use_cases": ["Run system commands"],
-        }
-
-        # Mock MetadataGenerationNode where it's imported (lazy import inside function)
-        with patch("pflow.planning.nodes.MetadataGenerationNode") as mock_node_class:
-            mock_node = Mock()
-            mock_node_class.return_value = mock_node
-
-            # Simulate node populating shared store
-            def mock_run(shared):
-                shared["workflow_metadata"] = expected_metadata
-
-            mock_node.run.side_effect = mock_run
-
-            result = generate_workflow_metadata(sample_ir)
-
-            assert result == expected_metadata
-            assert "keywords" in result
-            assert "capabilities" in result
-
-    def test_returns_none_on_failure(self) -> None:
-        """LLM FAILURE: Return None gracefully on error (no crash).
-
-        Bug prevented: Metadata generation failure crashes entire save operation.
-        Critical: Metadata is optional, failures must not block saves.
-        """
-        sample_ir = {"ir_version": "0.1.0", "nodes": [], "edges": []}
-
-        # Mock MetadataGenerationNode to raise exception (lazy import location)
-        with patch("pflow.planning.nodes.MetadataGenerationNode", side_effect=Exception("LLM API error")):
-            result = generate_workflow_metadata(sample_ir)
-
-            assert result is None, "Should return None on failure, not crash"
-
-    def test_returns_none_on_empty_metadata(self) -> None:
-        """LLM EMPTY: Return None if node doesn't populate workflow_metadata.
-
-        Bug prevented: Empty metadata dict saved instead of None, causes downstream issues.
-        """
-        sample_ir = {"ir_version": "0.1.0", "nodes": [], "edges": []}
-
-        # Mock at lazy import location
-        with patch("pflow.planning.nodes.MetadataGenerationNode") as mock_node_class:
-            mock_node = Mock()
-            mock_node_class.return_value = mock_node
-
-            # Node runs but doesn't set workflow_metadata
-            mock_node.run.return_value = None
-
-            result = generate_workflow_metadata(sample_ir)
-
-            assert result is None
+        assert generate_workflow_metadata(sample_ir) is None
+        assert generate_workflow_metadata(sample_ir, model_name="some-model") is None
 
 
 class TestDeleteDraftSafely:

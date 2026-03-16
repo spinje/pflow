@@ -329,8 +329,8 @@ Simple nodes have straightforward metadata without action complexity, following 
 }
 ```
 
-### Planning Engine Updates
-The LLM planner works with simple node selection:
+### Discovery Updates
+LLM-driven discovery works with simple node selection:
 - Select specific nodes based on exact requirements
 - No action dispatch complexity to manage
 - Clear interface matching between nodes
@@ -353,7 +353,7 @@ Node discovery supports simple node organization:
 
 ### Implementation Updates
 - Update node registry for simple node metadata
-- Modify planner to select specific nodes instead of actions
+- Modify discovery tooling to select specific nodes instead of actions
 - Implement simple node pattern without dispatch complexity
 - Update CLI flag resolution for direct node parameters
 

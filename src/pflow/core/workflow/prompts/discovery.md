@@ -1,7 +1,6 @@
 ---
 name: discovery
-test_path: tests/test_planning/llm/prompts/test_discovery_prompt.py::TestDiscoveryPrompt
-test_command: uv run python tools/test_prompt_accuracy.py discovery
+test_path: tests/test_core/test_workflow_discovery.py
 version: '1.2'
 latest_accuracy: 100.0
 test_runs: [0.0, 0.0, 0.0, 100.0, 0.0, 0.0, 100.0, 41.7, 75.0, 100.0]

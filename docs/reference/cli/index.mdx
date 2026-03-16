@@ -59,15 +59,9 @@ pflow ./workflow.pflow.md
 pflow ~/workflows/analysis.pflow.md param=value
 ```
 
-<Accordion title="Natural language mode (experimental)">
-  pflow can generate workflows from natural language, but this feature is experimental. For production use, let your AI agent build workflows directly.
-
-  ```bash
-  pflow "read data.txt and summarize the content"
-  ```
-
-  Natural language requests must be quoted. The planner generates a workflow, which you can save for reuse. Requires an LLM to be configured.
-</Accordion>
+<Info>
+  **No built-in natural language mode.** pflow executes workflow files and saved workflows. Your AI agent builds workflows using pflow's MCP tools or CLI primitives — pflow doesn't have its own natural language interface.
+</Info>
 
 ## Global options
 
@@ -82,23 +76,9 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `--validate-only` | Validate workflow without running |
 | `--help` | Show help message |
 
-<Accordion title="Planner options (experimental)">
-  These options apply when using natural language mode to generate workflows:
-
-  | Option | Description |
-  |--------|-------------|
-  | `--trace-planner` | Save planner execution trace |
-  | `--auto-repair` | Enable automatic workflow repair on failure |
-  | `--planner-timeout INT` | Timeout for planner in seconds (default: 60) |
-  | `--save / --no-save` | Save generated workflow (default: save) |
-  | `--cache-planner` | Enable cross-session LLM caching to reduce costs |
-  | `--planner-model TEXT` | LLM model for planning (default: auto-detect) |
-  | `--no-update` | Save repairs to separate file instead of updating original |
-
-  <Note>
-    This is not the recommended way to use pflow. It may be deprecated in favor of using pflow through AI agents via the CLI or MCP server.
-  </Note>
-</Accordion>
+<Note>
+  Older natural-language workflow generation flags have been removed. Use the current global options shown above, or let your AI agent build `.pflow.md` workflows directly.
+</Note>
 
 ## Parameter syntax
 

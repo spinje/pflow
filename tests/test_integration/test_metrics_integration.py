@@ -471,20 +471,6 @@ class TestTraceGeneration:
             Path(workflow_file).unlink()
 
 
-class TestPlannerIntegration:
-    """Test metrics with planner + workflow execution.
-
-    Note: The planner cannot be tested through the CLI in integration tests
-    because the test_integration directory blocks planner imports. Tests for
-    planner metrics exist in test_planning/ where the planner can be tested
-    directly. Workflow metrics are tested in this file with pre-built workflows.
-    The separation of planner and workflow metrics is inherent in the architecture
-    and verified through unit tests in test_core/test_metrics.py.
-    """
-
-    pass  # Placeholder class - specific planner tests are in test_planning/
-
-
 class TestWrapperIntegration:
     """Test multi-layer wrapper compatibility."""
 
@@ -702,29 +688,6 @@ class TestCLIFlags:
 
         finally:
             Path(workflow_file).unlink()
-
-    @patch("llm.get_model")
-    def test_trace_planner_flag(self, mock_get_model, temp_home, temp_registry):
-        """Test that --trace-planner enables planner tracing."""
-        runner = CliRunner()
-
-        # Setup minimal planner mock
-        mock_llm = create_mock_get_model()
-        mock_get_model.return_value = mock_llm("gpt-4o-mini")
-
-        with tempfile.TemporaryDirectory() as temp_home_dir, patch.dict("os.environ", {"HOME": temp_home_dir}):
-            result = runner.invoke(cli, ["--trace-planner", "test workflow"])
-
-            # Verify the command accepted the flag (may not succeed without full setup)
-            # The important thing is that --trace-planner flag is recognized
-            assert result is not None  # Command executed
-
-            # Check for planner trace files
-            debug_dir = Path(temp_home_dir) / ".pflow" / "debug"
-            if debug_dir.exists():
-                list(debug_dir.glob("planner_*.json"))
-                # Planner traces would be created if planner ran
-                # This test mainly verifies the flag is accepted
 
     def test_output_format_json_always_includes_metrics(self, temp_home, temp_registry, simple_workflow):
         """JSON output should include metrics without requiring explicit trace flags."""

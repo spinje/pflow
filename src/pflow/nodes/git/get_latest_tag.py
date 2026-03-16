@@ -192,7 +192,7 @@ class GitGetLatestTagNode(Node):
             logger.error(
                 "Failed to get latest tag", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"}
             )
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         # Store the latest tag in shared store for success
         shared["latest_tag"] = exec_res.get("latest_tag", {})

@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from pflow.core.llm_utils import parse_structured_response
 from pflow.core.prompt_utils import format_prompt, load_prompt
 from pflow.core.workflow.context import build_workflows_context
-from pflow.registry.context_builder import build_nodes_context, build_planning_context
+from pflow.registry.context_builder import build_component_context, build_nodes_context
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class ComponentSelection:
 
     node_ids: list[str]
     reasoning: str
-    planning_context: str  # Pre-rendered markdown specs from build_planning_context()
+    component_context: str  # Pre-rendered markdown specs from build_component_context()
 
 
 def discover_components(
@@ -51,7 +51,7 @@ def discover_components(
         model_name: LLM model to use (defaults to discovery model from settings)
 
     Returns:
-        ComponentSelection with selected node IDs and planning context
+        ComponentSelection with selected node IDs and rendered component context
     """
     from pflow.core.llm_config import get_model_for_feature
     from pflow.core.workflow.manager import WorkflowManager
@@ -94,24 +94,24 @@ def discover_components(
 
     logger.info(f"discover_components: Selected {len(result['node_ids'])} nodes")
 
-    # Build planning context for selected components
+    # Build detailed component context for selected components
     workflow_manager = WorkflowManager()
-    planning_context = build_planning_context(
+    component_context = build_component_context(
         selected_node_ids=result["node_ids"],
         selected_workflow_names=[],
         registry_metadata=registry_metadata,
         workflow_manager=workflow_manager,
     )
 
-    # Handle error dict from build_planning_context
-    if isinstance(planning_context, dict) and "error" in planning_context:
-        logger.warning(f"discover_components: Planning context error - {planning_context['error']}")
-        planning_context_str = ""
+    # Handle error dict from build_component_context
+    if isinstance(component_context, dict) and "error" in component_context:
+        logger.warning(f"discover_components: Component context error - {component_context['error']}")
+        component_context_str = ""
     else:
-        planning_context_str = str(planning_context)
+        component_context_str = str(component_context)
 
     return ComponentSelection(
         node_ids=result["node_ids"],
         reasoning=result["reasoning"],
-        planning_context=planning_context_str,
+        component_context=component_context_str,
     )
