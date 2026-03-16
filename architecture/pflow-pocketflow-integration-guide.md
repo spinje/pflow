@@ -8,7 +8,7 @@
 **Related Documents:**
 - **Framework**: pocketflow Source (`src/pflow/pocketflow/__init__.py`) | pocketflow Docs (`src/pflow/pocketflow/CLAUDE.md`)
 - **Architecture**: [Architecture](./architecture.md) | [Shared Store](./core-concepts/shared-store.md)
-- **Concepts**: [Planner](./historical/planner-specification.md) | [Execution Reference](./historical/execution-reference-original.md)
+- **Concepts**: Historical workflow-generation spec | [Execution Reference](./historical/execution-reference-original.md)
 - **Implementation**: [Runtime CLAUDE.md](../src/pflow/runtime/CLAUDE.md)
 
 ## Overview
@@ -25,7 +25,7 @@ This document captures critical insights about how pflow and pocketflow integrat
 
 1. **Writing platform nodes** - All nodes inherit from `pocketflow.Node`. This is the standard pattern for extending pflow's capabilities. Wrappers (template resolution, namespacing, instrumentation) are applied automatically by the compiler - node authors don't implement these.
 
-2. **Direct PocketFlow flows** - Used ONLY in exceptional cases where pflow itself needs an internal workflow (e.g., the planner). This is rare and should be avoided unless there's a compelling reason. Currently only the planner uses this pattern.
+2. **Direct PocketFlow flows** - Used ONLY in exceptional cases where pflow itself needs an internal workflow. This is rare and should be avoided unless there's a compelling reason.
 
 **For the compilation/runtime layer** where the workflow IR is transformed into executable PocketFlow objects, see `src/pflow/runtime/CLAUDE.md`.
 
@@ -64,7 +64,7 @@ result = flow.run(shared)
 - Markdown parser (`.pflow.md` → IR dict) and IR-to-Flow compilation
 - Node registry and discovery
 - Template variable resolution
-- Natural language planning (currently gated — Task 107 Decision 26)
+- Legacy natural-language workflow generation
 
 ## Critical Insight #2: No Wrapper Classes Needed
 
@@ -284,7 +284,7 @@ def scan_for_nodes(directory):
 2. **When you want to wrap pocketflow** - Use it directly instead
 3. **When designing nodes** - Follow the natural interface pattern (shared["key"])
 4. **When building the CLI** - Keep flag parsing simple
-5. **When implementing planning** - Let the LLM handle structure, not details
+5. **When implementing workflow-generation helpers** - Let the LLM handle structure, not details
 
 ## The Core Principle: "Extend, Don't Wrap"
 
@@ -296,7 +296,7 @@ This principle guides every architectural decision:
 
 This prevents the "framework on framework" anti-pattern and keeps pflow as a thin, focused layer that:
 - Makes pocketflow accessible via CLI
-- Adds natural language planning
+- Adds natural-language workflow generation
 - Provides platform-specific nodes
 - Enables workflow reuse
 
@@ -315,6 +315,6 @@ Where:
 
 ## Final Wisdom
 
-pflow is a **CLI tool** that makes pocketflow accessible, not a framework on top of a framework. Every line of code should have a clear purpose: CLI interface, node discovery, workflow planning, or IR compilation. If you find yourself reimplementing something that feels like execution orchestration, you're probably duplicating pocketflow functionality.
+pflow is a **CLI tool** that makes pocketflow accessible, not a framework on top of a framework. Every line of code should have a clear purpose: CLI interface, node discovery, workflow authoring support, or IR compilation. If you find yourself reimplementing something that feels like execution orchestration, you're probably duplicating pocketflow functionality.
 
 **Remember**: We're extending pocketflow, not replacing it.

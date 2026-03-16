@@ -7,7 +7,7 @@
 
 **Related Documents:**
 - **Architecture**: [PRD](../historical/prd.md) | [Architecture](../architecture.md) | [MVP Implementation Guide](../historical/mvp-implementation-guide.md)
-- **Components**: [Planner](../historical/planner-specification.md) | [Execution Reference](../historical/execution-reference-original.md) | [CLI Runtime](../historical/cli-runtime-original.md)
+- **Components**: Historical workflow-generation spec | [Execution Reference](../historical/execution-reference-original.md) | [CLI Runtime](../historical/cli-runtime-original.md)
 - **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/llm-nodes.md)
 - **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
 
@@ -62,8 +62,8 @@ claude-code --prompt="<instructions>
                       </instructions>
                       This is the issue: ${issue}"
 
-# Planner generates workflow where ${issue} will map to shared["issue"] (from shell node output)
-# The generated workflow will contain the actual prompt with template already planned
+# Workflow tooling generates a workflow where ${issue} will map to shared["issue"] (from shell node output)
+# The generated workflow will contain the actual prompt with template already resolved into the workflow structure
 claude-code --prompt="<instructions>...This is the issue: ${issue}"
 ```
 
@@ -76,16 +76,16 @@ pflow shell --command="gh issue view 1234 --json title,body" => \
   shell --command="git commit -m '${commit_message}'"
 
 # Template variables in the generated workflow will map to:
-# ${comprehensive_fix_instructions} → planner-generated instructions
+# ${comprehensive_fix_instructions} → generated instructions
 # ${code_report} → output from claude-code node
 # ${commit_message} → output from llm node
 ```
 
 ### Template Resolution Process
-1. **Variable Detection**: Planner identifies ${variable} patterns when generating workflows
-2. **Planner Validation**: Planner ensures all variables will map to shared store values
-3. **IR Generation**: Planner creates workflows where template variables reference future shared store values
-4. **Error Handling**: Missing variables trigger planner replanning (internal to planner)
+1. **Variable Detection**: Workflow tooling identifies ${variable} patterns when generating workflows
+2. **Validation**: Tooling ensures all variables will map to shared store values
+3. **IR Generation**: Generated workflows reference future shared store values through template variables
+4. **Error Handling**: Missing variables surface as validation errors
 
 ### Context-Aware CLI Resolution
 
@@ -93,7 +93,7 @@ The CLI intelligently routes different types of flags:
 
 - **Data flags** (workflow data) → shared store: `--issue=1234` → `shared["issue_number"] = "1234"`
 - **Behavior flags** (node configuration) → node parameters: `--temperature=0.3` → `node.set_params({"temperature": 0.3})`
-- **Template variables** (dynamic references) → planner maps to shared store: `${code_report}` → `shared["code_report"]`
+- **Template variables** (dynamic references) → workflow tooling maps to shared store: `${code_report}` → `shared["code_report"]`
 
 ### Variable Dependency Flow
 
@@ -522,7 +522,7 @@ The round-trip cognitive architecture enhances developer experience through desc
 ### Why not have agents generate code directly?
 
 - Code is harder to validate, merge, or edit programmatically
-- IR supports structural planning, inspection, and transformation
+- IR supports structural workflow construction, inspection, and transformation
 - Agents make fewer errors when emitting structured data
 - Code generation remains possible via `pflow export` once the flow is stable
 
@@ -641,7 +641,7 @@ This pattern enables **progressive user empowerment** by making flow orchestrati
 
 The shared store pattern is fundamental to pflow and is used by:
 
-- **Planner** ([planner-specification.md](../historical/planner-specification.md)): Generates template strings with variables
+- **Historical workflow-generation spec**: Describes how template strings with variables were produced in older designs
 - **All Node Packages**: Every node reads/writes using shared store keys
   - [Claude Nodes](../core-node-packages/claude-nodes.md)
   - [LLM Node](../core-node-packages/llm-nodes.md)

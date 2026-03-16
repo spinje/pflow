@@ -1,8 +1,9 @@
-"""High-value tests for API warning detection system."""
+"""High-value tests for API warning detection and error formatting system."""
 
 import json
 from unittest.mock import Mock
 
+from pflow.execution.executor_service import WorkflowExecutorService
 from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
 
 
@@ -30,9 +31,8 @@ class TestCriticalAPIWarningScenarios:
         # Execute the node
         result = wrapper._run(shared)
 
-        # Verify it prevents repair
+        # Verify it stops workflow execution and records a warning
         assert result == "error", "Should stop workflow"
-        assert shared.get("__non_repairable_error__") is True, "Should prevent repair attempts"
         assert shared["__warnings__"]["send_response"] == "API error: channel_not_found"
 
     def test_graphql_http_200_with_errors(self):
@@ -59,54 +59,6 @@ class TestCriticalAPIWarningScenarios:
 
         warning = wrapper._detect_api_warning(shared)
         assert warning is None, "Should not check 4xx responses (node handles it)"
-
-    def test_handle_non_repairable_error_adds_warnings_to_errors(self):
-        """Test that _handle_non_repairable_error converts warnings to errors.
-
-        The non-repairable error flow:
-        1. Node detects API error (tested in test_slack_mcp_channel_not_found)
-        2. InstrumentedNodeWrapper sets __non_repairable_error__ flag
-        3. execute_workflow checks flag and calls _handle_non_repairable_error
-        4. _handle_non_repairable_error adds warnings to errors list
-
-        This test verifies step 4 - the conversion of warnings to errors.
-        """
-        from pflow.execution import ExecutionResult
-        from pflow.execution.workflow_execution import _handle_non_repairable_error
-
-        # Create a result with non-repairable error flag and warnings
-        result = ExecutionResult(
-            success=False,
-            shared_after={
-                "__non_repairable_error__": True,
-                "__warnings__": {
-                    "send_response": "API error: channel_not_found",
-                    "another_node": "API error: rate_limited",
-                },
-            },
-            errors=[],
-            action_result="error",
-            node_count=2,
-            duration=1.0,
-            output_data=None,
-            metrics_summary=None,
-        )
-
-        # Call the handler
-        handled_result = _handle_non_repairable_error(result)
-
-        # Verify warnings were converted to non_repairable errors
-        assert len(handled_result.errors) == 2
-
-        error_messages = [e["message"] for e in handled_result.errors]
-        assert "channel_not_found" in error_messages[0] or "channel_not_found" in error_messages[1]
-        assert "rate_limited" in error_messages[0] or "rate_limited" in error_messages[1]
-
-        # Verify all errors are marked non_repairable
-        for error in handled_result.errors:
-            assert error["category"] == "non_repairable"
-            assert error["fixable"] is False
-            assert error["source"] == "api"
 
     def test_no_false_positive_on_null_error(self):
         """Test that successful responses with error:null don't trigger warnings.
@@ -191,19 +143,107 @@ class TestIntegrationWithExistingSystems:
         # The actual checkpoint behavior is tested in test_slack_mcp_channel_not_found
         # This test just verifies the detection logic for checkpoint-related errors
 
-    def test_loop_detection_fallback(self):
-        """Test that loop detection still works if we miss an API error."""
-        # This test verifies our safety net is still in place
-        # Even if API warning detection misses something,
-        # loop detection will catch it after 1-2 attempts
+    def test_api_warning_detection_reports_resource_errors(self):
+        """Test that API warning detection reports resource errors.
 
-        from pflow.execution.workflow_execution import _get_error_signature
+        When an API error is detected (e.g., channel_not_found), the
+        warning should surface clearly in execution state.
+        """
+        wrapper = InstrumentedNodeWrapper(Mock(), "api")
 
-        # Same error before and after repair
-        errors1 = [{"message": "Unknown API error pattern", "node_id": "api"}]
-        errors2 = [{"message": "Unknown API error pattern", "node_id": "api"}]
+        shared = {
+            "api": {"ok": False, "error": "channel_not_found"},
+        }
 
-        sig1 = _get_error_signature(errors1)
-        sig2 = _get_error_signature(errors2)
+        warning = wrapper._detect_api_warning(shared)
+        assert warning is not None, "Should detect channel_not_found as API error"
 
-        assert sig1 == sig2, "Loop detection should identify repeated errors"
+
+class TestErrorFormattingSurfacesWarnings:
+    """Tests that API warnings survive through the error formatting path.
+
+    These protect against regressions where detection works but the actionable
+    message is lost during error list construction. All three bugs were found
+    by code reviewers — the detection tests above passed while production
+    showed generic "Workflow failed with action: error" messages.
+    """
+
+    def test_api_warning_message_reaches_error_list(self):
+        """API warning in __warnings__ must appear in _build_error_list output.
+
+        Bug: _extract_error_info never checked __warnings__, so GraphQL 200-with-errors
+        produced "Workflow failed with action: error" instead of "API error: Repository not found".
+        """
+        svc = WorkflowExecutorService()
+
+        shared = {
+            "__execution__": {
+                "completed_nodes": ["github-graphql"],
+                "node_actions": {"github-graphql": "error"},
+                "node_hashes": {},
+                "failed_node": "github-graphql",
+            },
+            "__warnings__": {"github-graphql": "API error: Repository not found"},
+            "github-graphql": {
+                "response": {"errors": [{"message": "Repository not found"}], "data": None},
+                "status_code": 200,
+            },
+        }
+
+        errors = svc._build_error_list(False, "error", shared)
+        assert len(errors) >= 1
+        assert "Repository not found" in errors[0]["message"]
+
+    def test_mcp_null_error_with_nested_data_error(self):
+        """MCP response {"error": null, "data": {"error": "X"}} must surface "X".
+
+        Bug: "error" key present but null → str(None) → user saw "None" as error message.
+        After fix for null, nested data.error was still not unwrapped → generic fallback.
+        """
+        svc = WorkflowExecutorService()
+
+        mcp_response = json.dumps({
+            "successful": True,
+            "error": None,
+            "data": {"ok": False, "error": "channel_not_found"},
+        })
+
+        shared = {
+            "__execution__": {
+                "completed_nodes": ["send"],
+                "node_actions": {"send": "error"},
+                "node_hashes": {},
+                "failed_node": "send",
+            },
+            "send": {"result": mcp_response},
+        }
+
+        errors = svc._build_error_list(False, "error", shared)
+        assert len(errors) >= 1
+        assert "channel_not_found" in errors[0]["message"]
+        assert "None" not in errors[0]["message"]
+
+    def test_api_warning_takes_priority_over_node_error(self):
+        """When both __warnings__ and node-level error exist, warning wins.
+
+        The warning message from InstrumentedNodeWrapper is the most actionable
+        (e.g., "API error: Repository not found"). The node-level error may be
+        a less useful raw message. Priority ordering in _extract_error_info matters.
+        """
+        svc = WorkflowExecutorService()
+
+        shared = {
+            "__execution__": {
+                "completed_nodes": ["api-call"],
+                "node_actions": {"api-call": "error"},
+                "node_hashes": {},
+                "failed_node": "api-call",
+            },
+            "__warnings__": {"api-call": "API error: Rate limit exceeded"},
+            "api-call": {"error": "HTTP request failed"},  # Less actionable
+        }
+
+        errors = svc._build_error_list(False, "error", shared)
+        assert len(errors) >= 1
+        assert "Rate limit exceeded" in errors[0]["message"]
+        assert "HTTP request failed" not in errors[0]["message"]

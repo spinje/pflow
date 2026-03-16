@@ -982,7 +982,6 @@ name = "pflow-cli"
 version = "0.9.0"
 source = { editable = "." }
 dependencies = [
-    { name = "anthropic" },
     { name = "claude-agent-sdk" },
     { name = "click" },
     { name = "jsonschema" },
@@ -1012,7 +1011,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.75" },
     { name = "claude-agent-sdk", specifier = ">=0.1.17" },
     { name = "click" },
     { name = "jsonschema", specifier = ">=4.20.0" },

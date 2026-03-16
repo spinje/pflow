@@ -122,7 +122,7 @@ class TestValidationBeforeExecution:
     def test_validation_error_has_clean_message(self, tmp_path: Path) -> None:
         """Validation errors should have clean, user-friendly messages.
 
-        Not ugly tracebacks or "Planning failed" messages.
+        Not ugly tracebacks or "Compilation failed" messages.
         """
         workflow = {
             "ir_version": "0.1.0",
@@ -147,7 +147,7 @@ class TestValidationBeforeExecution:
 
         # Should NOT have ugly traceback messages
         assert "Traceback" not in combined_output
-        assert "Planning failed" not in combined_output
+        assert "Compilation failed" not in combined_output
 
         # Should have the unknown node type mentioned
         assert "this-node-does-not-exist" in combined_output.lower()

@@ -553,7 +553,7 @@ class TestEdgeCases:
             "user_param": "value1",
             "count": 42,
             "__verbose__": False,
-            "__planner_cache_chunks__": ["chunk1", "chunk2"],
+            "__cache_chunks__": ["chunk1", "chunk2"],
             "__internal_flag__": True,
             "normal_param": "normal_value",
         }
@@ -567,12 +567,12 @@ class TestEdgeCases:
 
         # Should NOT include internal parameters
         assert "__verbose__" not in result
-        assert "__planner_cache_chunks__" not in result
+        assert "__cache_chunks__" not in result
         assert "__internal_flag__" not in result
         assert "chunk1" not in result  # Content from internal params
 
     def test_real_world_internal_params_bug(self):
-        """Test the specific bug where __verbose__ and __planner_cache_chunks__ were shown."""
+        """Test the specific bug where internal cache chunks were shown."""
         # This reproduces the exact scenario from the bug report
         params = {
             "message_count": 10,
@@ -582,7 +582,7 @@ class TestEdgeCases:
             "date_format": "%Y-%m-%d",
             "time_format": "%H:%M:%S",
             "__verbose__": False,
-            "__planner_cache_chunks__": [
+            "__cache_chunks__": [
                 {"text": "# Workflow System Overview\n\nYou are a specialized workflow planner..."},
             ],
         }
@@ -599,7 +599,7 @@ class TestEdgeCases:
 
         # Should NOT include internal parameters
         assert "__verbose__" not in result
-        assert "__planner_cache_chunks__" not in result
+        assert "__cache_chunks__" not in result
         assert "false" not in result  # __verbose__ value
         assert "Workflow System Overview" not in result  # Content from cache chunks
 

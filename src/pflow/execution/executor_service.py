@@ -29,13 +29,12 @@ class ExecutionResult:
     duration: float = 0.0
     output_data: Optional[str] = None
     metrics_summary: Optional[dict[str, Any]] = None
-    repaired_workflow_ir: Optional[dict] = None  # Repaired workflow IR if repair occurred
 
 
 class WorkflowExecutorService:
     """Reusable workflow execution service.
 
-    Extracted from CLI to enable use by repair service and future interfaces.
+    Extracted from CLI to enable reuse across interfaces.
     This service encapsulates all the execution logic that was previously
     embedded in the CLI, making it reusable and testable.
     """
@@ -307,7 +306,6 @@ class WorkflowExecutorService:
             "message": error_info["message"],
             "action": action_result,
             "node_id": error_info["failed_node"],
-            "fixable": True,  # Assume fixable for repair
         }
 
         # Extract rich error data from namespaced node output
@@ -378,14 +376,23 @@ class WorkflowExecutorService:
         error_message = f"Workflow failed with action: {action_result}"
         failed_node = self._get_failed_node_from_execution(shared_store)
 
-        # Try multiple sources for error message
+        # Try multiple sources for error message (priority order)
+
+        # 1. API warnings — actionable messages from InstrumentedNodeWrapper
+        # (e.g., "API error: Repository not found", "API error: channel_not_found")
+        api_warnings = shared_store.get("__warnings__", {})
+        if failed_node and failed_node in api_warnings:
+            error_message = api_warnings[failed_node]
+            return {"message": error_message, "failed_node": failed_node}
+
+        # 2. Root-level error field
         root_error = self._extract_root_level_error(shared_store)
         if root_error:
             error_message = root_error["message"]
             if not failed_node:
                 failed_node = root_error.get("node")
         else:
-            # Try node-level error
+            # 3. Node-level error from shared store
             node_error = self._extract_node_level_error(failed_node, shared_store)
             if node_error:
                 error_message = node_error
@@ -446,8 +453,8 @@ class WorkflowExecutorService:
         if not isinstance(node_output, dict):
             return None
 
-        # Check direct error field
-        if "error" in node_output:
+        # Check direct error field (skip None/falsy — MCP responses have "error": null)
+        if node_output.get("error"):
             return str(node_output["error"])
 
         # Check MCP result format
@@ -458,6 +465,9 @@ class WorkflowExecutorService:
 
     def _extract_error_from_mcp_result(self, result: Any) -> Optional[str]:
         """Extract error from MCP result format.
+
+        Handles nested payloads like Slack/Discord responses:
+        {"successful": true, "error": null, "data": {"ok": false, "error": "channel_not_found"}}
 
         Args:
             result: The MCP result field
@@ -472,9 +482,20 @@ class WorkflowExecutorService:
 
         try:
             result_data = json.loads(result)
-            if isinstance(result_data, dict) and "error" in result_data:
+            if not isinstance(result_data, dict):
+                return None
+
+            # Check top-level error (skip null/falsy)
+            if result_data.get("error"):
                 error = result_data["error"]
                 return error if isinstance(error, str) else str(error)
+
+            # Check nested data.error (Slack/Discord style)
+            data = result_data.get("data")
+            if isinstance(data, dict) and data.get("error"):
+                error = data["error"]
+                return error if isinstance(error, str) else str(error)
+
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -588,7 +609,6 @@ class WorkflowExecutorService:
             "category": "exception",
             "message": str(exception),
             "exception_type": type(exception).__name__,
-            "fixable": self._is_fixable_error(exception),
         }
 
         # Add node_id if we found it
@@ -740,64 +760,3 @@ class WorkflowExecutorService:
                 return str(node_output[key])
 
         return None
-
-    def _is_fixable_error(self, exception: Exception) -> bool:
-        """Determine if an error can be fixed by repair.
-
-        This method categorizes errors into fixable and non-fixable based
-        on the error message content. Infrastructure and auth issues are
-        generally not fixable, while template and field errors often are.
-
-        KNOWN LIMITATION: Uses naive keyword matching on error messages.
-        Cannot distinguish between missing INPUT parameters (not fixable)
-        and incorrect template paths (potentially fixable). Both contain
-        "missing" in error message but have different fixability.
-        See: scratchpads/fixable-error-classification/critical-user-decisions/fixable-error-logic.md
-        TODO: If auto-repair is not being deprecated, enhance this with
-        structured data (workflow_ir, context) to properly classify errors.
-
-        Args:
-            exception: The exception to analyze
-
-        Returns:
-            True if the error is potentially fixable, False otherwise
-        """
-        error_msg = str(exception).lower()
-
-        # Non-fixable infrastructure/auth issues
-        non_fixable_keywords = [
-            "api key",
-            "authentication",
-            "unauthorized",
-            "forbidden",
-            "rate limit",
-            "quota",
-            "connection refused",
-            "timeout",
-            "permission denied",
-            "out of memory",
-        ]
-
-        for keyword in non_fixable_keywords:
-            if keyword in error_msg:
-                return False
-
-        # Template and field errors are usually fixable
-        fixable_keywords = [
-            "template",
-            "field",
-            "not found",
-            "missing",
-            "undefined",
-            "key error",
-            "attribute",
-            "type error",
-            "value error",
-        ]
-
-        for keyword in fixable_keywords:
-            if keyword in error_msg:
-                return True
-
-        # Default to optimistically fixable
-        return True

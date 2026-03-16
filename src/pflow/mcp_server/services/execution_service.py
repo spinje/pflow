@@ -214,7 +214,7 @@ class ExecutionService(BaseService):
 
         Built-in behaviors (no flags needed):
         - Text output format (LLMs parse better than JSON)
-        - No auto-repair (explicit errors)
+        - Explicit error reporting
         - Trace saved to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
         - Auto-normalization of workflow IR
 
@@ -256,7 +256,6 @@ class ExecutionService(BaseService):
             result = execute_workflow(
                 workflow_ir=workflow_ir,
                 execution_params=validated_params,
-                enable_repair=False,  # Always False for agents
                 output=NullOutput(),  # Silent execution
                 workflow_manager=workflow_manager,
                 workflow_name=workflow_name,

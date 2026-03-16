@@ -575,8 +575,8 @@ class TestSmartFilteringIntegration:
 
     def test_large_field_set_triggers_smart_filtering(self, mock_llm_calls):
         """Large field sets (>50) should trigger smart filtering and show count."""
-        from pflow.core.smart_filter import FilteredFields
         from pflow.execution.formatters.node_output_formatter import format_node_output
+        from pflow.registry.smart_filter import FilteredFields
 
         # Create mock registry with node that has 100 output fields
         registry = Mock(spec=Registry)

@@ -1,244 +1,65 @@
-# Trace Analysis Tools
+# Trace analysis tools
 
-This directory contains tools for analyzing pflow planner trace files to help improve prompts and debug issues.
+This directory contains helpers for analyzing `workflow-trace-*.json` files saved in `~/.pflow/debug/`.
 
-## Overview
+## What these scripts do
 
-Traces are saved automatically when you run pflow. These tools help you:
+- Inspect per-node LLM prompts, responses, token usage, and duration
+- Summarize a single workflow trace into readable markdown
+- Compare two workflow traces to see what changed between runs
 
-- 📊 **Analyze token usage** - See how many tokens each prompt/response uses
-- 💰 **Estimate costs** - Understand the cost implications of your prompts
-- 📝 **Review prompts** - Read prompts in a clean, formatted way
-- 🔍 **Compare traces** - See what changed between runs
-- 🎯 **Improve efficiency** - Identify opportunities to reduce token usage
+## Files
 
-## Directory Structure
-
-```
+```text
 scripts/analyze-trace/
-├── README.md          # This file
-├── analyze.py         # Main analyzer - splits traces into individual files
-├── compare.py         # Compare two traces to see differences
-├── latest.sh          # Quick script to analyze the most recent trace
-├── compare-latest.sh  # Quick script to compare the two most recent traces
-└── output/            # Generated analysis files go here
-    ├── planner-trace-*/  # One directory per analyzed planner trace
-    ├── workflow-trace-*/  # One directory per analyzed workflow trace
-    │   ├── README.md                      # Index with summary statistics
-    │   ├── 01-WorkflowDiscoveryNode.md   # Individual node analysis
-    │   ├── 02-ComponentBrowsingNode.md   # Each LLM call gets its own file
-    │   └── ...
-    └── comparison-*.md  # Comparison reports between traces
-First, run pflow to generate a trace file (saved to ~/.pflow/debug/ by default):
+├── README.md
+├── analyze.py
+├── compare.py
+├── latest.sh
+└── compare-latest.sh
+```
 
 ## Usage
 
-### 1. Generate a Trace
-
-pflow saves traces automatically (planner and workflow). Run your workflow normally, and only add `--no-trace` if you explicitly want to skip logging.
+Generate a workflow trace:
 
 ```bash
-uv run pflow "create a workflow that generates a changelog"
-# Trace files are saved to ~/.pflow/debug/
-# - Planner traces: planner-trace-*.json
-# - Workflow traces: workflow-trace-*.json
+uv run pflow my-workflow
 ```
 
-### 2. Analyze a Trace
-
-#### Option A: Analyze the Most Recent Trace
+Analyze the latest trace:
 
 ```bash
-# Quick way - analyzes the latest trace and opens in VS Code (if available)
 ./scripts/analyze-trace/latest.sh
 ```
 
-#### Option B: Analyze a Specific Trace
+Analyze a specific trace:
 
 ```bash
-# Analyze a specific trace file
-uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/planner-trace-20250815-120310.json
-
-# Or specify a custom output directory
-uv run python scripts/analyze-trace/analyze.py trace.json my-analysis/
+uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/workflow-trace-20250815-120310.json
 ```
 
-### 3. Review the Analysis
-
-The analyzer creates a directory with:
-
-- **README.md** - Overview with summary statistics, token counts, costs, and execution flow
-- **Individual node files** - One markdown file per LLM call with:
-  - Token usage breakdown (prompt vs response)
-  - Cost estimates
-  - Full prompt text
-  - Complete response
-  - Analysis notes section
-
-Example output structure:
-```
-output/planner-trace-20250815-120310/
-├── README.md                      # Summary with stats and navigation
-├── 01-WorkflowDiscoveryNode.md   # First LLM call
-├── 02-ComponentBrowsingNode.md   # Second LLM call
-├── 03-ParameterDiscoveryNode.md  # Third LLM call
-└── ...
-```
-
-### 4. Compare Two Traces
-
-Compare traces to see what changed between runs:
-
-#### Option A: Compare the Two Most Recent Traces
+Compare the two most recent traces:
 
 ```bash
-# Quick way - compares the two latest traces automatically
 ./scripts/analyze-trace/compare-latest.sh
 ```
 
-#### Option B: Compare Specific Traces
+Compare two specific traces:
 
 ```bash
-# Compare two specific trace files
 uv run python scripts/analyze-trace/compare.py trace1.json trace2.json
-
-# Example with full paths
-uv run python scripts/analyze-trace/compare.py \
-  ~/.pflow/debug/planner-trace-20250815-120310.json \
-  ~/.pflow/debug/planner-trace-20250815-130415.json
 ```
 
-The comparison report is saved to `output/comparison-{timestamp1}-vs-{timestamp2}.md` and includes:
-- Prompt differences (with unified diffs)
-- Response changes (side-by-side JSON)
-- Performance metrics comparison (duration, tokens, status)
-- Success/failure status changes
+## Output
 
-The report is automatically opened in your editor (Cursor or VS Code) if available.
+The analyzer writes markdown files under `scripts/analyze-trace/output/`, including:
 
-### 5. Quick Comparison Commands
+- A top-level `README.md` with summary metrics
+- One markdown file per captured LLM call
+- Comparison reports for two-trace diffs
 
-```bash
-# Compare the two most recent traces
-./scripts/analyze-trace/compare-latest.sh
+## Notes
 
-# Or manually with:
-TRACE1=$(ls -t ~/.pflow/debug/planner-trace-*.json | sed -n '2p')
-TRACE2=$(ls -t ~/.pflow/debug/planner-trace-*.json | sed -n '1p')
-uv run python scripts/analyze-trace/compare.py "$TRACE1" "$TRACE2"
-```
-
-## Understanding the Output
-
-### Token Usage Table
-
-Each node file includes a token breakdown:
-
-```markdown
-## 📊 Token Usage
-
-| Type | Count | Percentage |
-|------|-------|------------|
-| **Prompt** | 1,675 | 86.1% |
-| **Response** | 271 | 13.9% |
-| **Total** | 1,946 | 100% |
-
-**Estimated Cost:** $0.009090
-```
-
-### Summary Statistics
-
-The README.md index shows aggregate metrics:
-
-```markdown
-## 📊 Summary Statistics
-
-- **Total LLM Calls:** 8
-- **Total Duration:** 35.2s
-- **Total Tokens:** 7,536
-  - Prompt Tokens: 5,813
-  - Response Tokens: 1,723
-- **Estimated Total Cost:** $0.0433
-```
-
-### Execution Flow
-
-See the sequence of nodes and their resource usage:
-
-```markdown
-## 🔄 Execution Flow
-
-| # | Node | Duration | Tokens | File |
-|---|------|----------|--------|------|
-| 1 | WorkflowDiscovery | 5.3s | 587 | [01-WorkflowDiscoveryNode.md](./01-WorkflowDiscoveryNode.md) |
-## Workflow for Prompt Improvement
-
-1. **Baseline** - Run your workflow to establish baseline metrics (trace saved automatically)
-2. **Analyze** - Use `latest.sh` to quickly analyze the trace
-3. **Identify Issues** - Look for:
-   - High token usage in specific nodes
-   - Redundant information in prompts
-   - Inefficient response formats
-   - Failed validations or retries
-4. **Modify Prompts** - Edit the prompts in `src/pflow/planning/prompts/`
-5. **Test Changes** - Run the same workflow again (trace saved automatically)
-6. **Compare** - Use `compare.py` to see the differences
-7. **Iterate** - Repeat until satisfied with token usage and accuracy
-
-## Tips for Reducing Token Usage
-
-1. **Remove redundant context** - Only include necessary information in prompts
-2. **Use concise instructions** - Be clear but brief
-3. **Optimize response formats** - Request only the fields you need
-4. **Cache common patterns** - Reuse successful prompt structures
-5. **Eliminate examples** - Only include examples when absolutely necessary
-
-## Token Counting
-
-The analyzer provides token estimates using a simple heuristic (1 token ≈ 4 characters). For more accurate counts, you could enhance the analyzer with tiktoken:
-
-```python
-# Install: pip install tiktoken
-import tiktoken
-encoding = tiktoken.encoding_for_model("gpt-4")
-tokens = len(encoding.encode(text))
-```
-
-## Cost Estimates
-
-Default cost estimates are based on common pricing:
-- Input tokens: $3 per 1M tokens
-- Output tokens: $15 per 1M tokens
-
-Adjust these in `analyze.py` if using different models or pricing tiers.
-
-## Troubleshooting
-
-### No trace files found
-- Ensure tracing is enabled (do not use `--no-trace`)
-- Check that traces are being saved to `~/.pflow/debug/`
-
-- Make sure tracing isn't disabled with `--no-trace`
-- The analyzer handles large traces well
-- Individual node files make it easy to focus on specific parts
-
-### VS Code doesn't open
-- The `latest.sh` script will show the output directory path
-- You can manually open the directory in any text editor
-
-## Future Enhancements
-
-Potential improvements to these tools:
-
-- **Batch analysis** - Analyze multiple traces at once
-- **Trend analysis** - Track token usage over time
-- **Prompt templates** - Extract successful prompts as templates
-- **A/B testing** - Compare different prompt strategies
-- **Regression detection** - Alert when prompts degrade
-- **Cost tracking** - Monitor spending across all runs
-
-## Continue working
-
-This feature was implemented with Claude Code with session id: `e040e5f0-9389-424a-b369-b4fddaea9594`
-
-If the user want to work on this feature, you should suggest they run the following command: `claude -r e040e5f0-9389-424a-b369-b4fddaea9594`
+- Use `--no-trace` only when you explicitly want to skip trace capture.
+- The analyzer still tolerates some older trace shapes, but current usage is workflow-trace based.

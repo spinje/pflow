@@ -61,53 +61,18 @@ pflow registry list git
 pflow registry list github
 ```
 
-## Natural language planner
+## Workflow trace analysis
 
-pflow has a built-in natural language planner that lets you run commands like:
+Workflow tracing is available for debugging executions:
 
 ```bash
-pflow "fetch the latest issues from my repo and summarize them"
+uv run pflow my-workflow
+uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/workflow-trace-*.json
 ```
+
 <Note>
-  This is **experimental**. Using an agent (Claude Code, Cursor, etc.) is the recommended approach — agents are more capable, and your subscription covers the costs instead of per-call API pricing.
+  If you're building workflows interactively, using an agent (Claude Code, Cursor, etc.) is still the recommended path. The trace tools are mainly for debugging and inspection.
 </Note>
-
-### When to use it
-
-- Quick one-off tasks when you're not in an AI tool
-- Testing or exploring pflow capabilities
-- Environments where external agents aren't available
-
-### Debugging planner issues
-
-If you do use the planner and need to debug:
-
-```bash
-pflow --trace-planner "your request"
-```
-
-This saves the planning process to `~/.pflow/debug/planner-trace-*.json`.
-
-## Auto-repair
-
-pflow can automatically attempt to fix failing workflows using LLM-powered repair. This is **not enabled by default**.
-
-```bash
-pflow my-workflow --auto-repair
-```
-
-When enabled:
-- pflow analyzes the error
-- Attempts to fix the workflow
-- Retries execution (up to 3 attempts)
-
-### Caveats
-
-- Uses LLM calls (costs money)
-- May not fix all issues
-- Can get stuck in repair loops on unfixable problems
-
-Your agent doesn't know about this flag - it's for manual experimentation.
 
 ## Feedback
 

@@ -314,54 +314,10 @@ def generate_workflow_metadata(
 ) -> Optional[dict[str, Any]]:
     """Generate rich metadata for workflow using LLM.
 
-    This is an optional CLI-only feature that generates:
-    - keywords: Search terms for workflow discovery
-    - capabilities: What the workflow can do
-    - typical_use_cases: Common scenarios for using this workflow
-
-    Note: This operation takes 10-30 seconds and costs ~$0.01 per workflow.
-    MCP server does not use this feature to keep saves fast.
-
-    Args:
-        workflow_ir: Validated workflow IR
-        model_name: Optional LLM model to use (defaults to node's default)
-
-    Returns:
-        Metadata dict with keywords, capabilities, use_cases
-        Or None if generation fails
+    Stub — rich metadata generation is currently disabled.
+    Returns None unconditionally.
     """
-    try:
-        # Lazy import to avoid dependency in MCP context
-        from pflow.planning.nodes import MetadataGenerationNode
-
-        node = MetadataGenerationNode()
-
-        # Set model via params if provided (PocketFlow convention)
-        if model_name:
-            node.params["model"] = model_name
-
-        shared: dict[str, Any] = {
-            "generated_workflow": workflow_ir,
-            "user_input": "",  # Not needed for metadata generation
-            "cache_planner": False,  # Disable caching for metadata
-        }
-
-        node.run(shared)
-
-        metadata = shared.get("workflow_metadata")
-        if metadata and isinstance(metadata, dict):
-            logger.debug(
-                f"Generated metadata: {len(metadata.get('keywords', []))} keywords, "
-                f"{len(metadata.get('capabilities', []))} capabilities"
-            )
-            return metadata  # type: ignore[no-any-return]
-
-        logger.warning("MetadataGenerationNode returned no metadata")
-        return None
-
-    except Exception as e:
-        logger.warning(f"Failed to generate workflow metadata: {e}")
-        return None
+    return None
 
 
 def delete_draft_safely(file_path: str) -> bool:

@@ -138,7 +138,7 @@ To output literal `${...}` text without resolution:
 
 Template variables are resolved in this order:
 
-1. **`initial_params`** - From planner extraction or CLI arguments
+1. **`initial_params`** - From workflow inputs or CLI arguments
 2. **Shared store** - Runtime data from node outputs
 3. **Workflow inputs** - Declared inputs with defaults
 
@@ -570,8 +570,8 @@ Some nodes legitimately output data containing `${...}` patterns:
 try:
     execute_node(params)
 except ValueError as e:
-    # Triggers repair system (currently gated — Task 107 Decision 26)
-    repair_workflow(workflow_ir, error=e)
+    # Surface the validation error to the caller
+    raise e
 ```
 
 **When to use**: Production workflows, API calls with required fields
@@ -661,7 +661,7 @@ Did you mean: ${fetch.response.messages[0].text}?
 Common fix: Change ${fetch.response} to ${fetch.response.messages[0].text}
 ```
 
-This guides users to the correct template path. (The repair system, which also uses these suggestions, is currently gated — Task 107 Decision 26.)
+This guides users to the correct template path.
 
 ### Type Checking Examples
 
@@ -802,8 +802,6 @@ These keys **always** go to the root shared store (bypassing namespaces):
 - `__cache_hits__` - Cache hit tracking
 - `__warnings__` - API warnings
 - `__template_errors__` - Template resolution errors
-- `__modified_nodes__` - Repair tracking (repair system gated — Task 107 Decision 26)
-- `__non_repairable_error__` - Skip repair flag (repair system gated)
 - `__progress_callback__` - Progress updates
 
 **Why?**: These are system-level metadata, not node outputs.
@@ -824,7 +822,6 @@ These keys **always** go to the root shared store (bypassing namespaces):
 #
 # Error: Template variable ${missing_variable} has no valid source
 # → Raises ValueError
-# → Triggers repair system (currently gated — Task 107 Decision 26)
 ```
 
 **Permissive Mode**:
@@ -885,9 +882,9 @@ Introduced in Task 85 (GitHub #96):
 
 This prevents silent failures where some data is missing.
 
-### Error Recovery
+### Error recovery
 
-pflow integrates template validation with the **repair system** (currently gated pending markdown format prompt rewrites — Task 107 Decision 26):
+Template validation errors stop execution early so the workflow can be fixed at the source:
 
 ```
 ┌─────────────────────────────────────┐
@@ -899,19 +896,14 @@ pflow integrates template validation with the **repair system** (currently gated
 └─────────────────────────────────────┘
          ↓ Errors
 ┌─────────────────────────────────────┐
-│ 2. Repair Service                   │
+│ 2. Update workflow or inputs        │
 │    ↓                                │
-│    Send to LLM with:                │
-│    - Original workflow IR           │
-│    - Validation errors              │
-│    - Available node interfaces      │
-│    ↓                                │
-│    LLM fixes template references    │
-│    └→ Returns repaired IR           │
+│    Fix template paths or types      │
+│    using the validation message     │
 └─────────────────────────────────────┘
-         ↓ Repaired IR
+         ↓ Fixed workflow
 ┌─────────────────────────────────────┐
-│ 3. Re-validate                      │
+│ 3. Re-run                           │
 │    ↓                                │
 │    Template Validation (again)      │
 │    └→ Fixed? Execute!               │

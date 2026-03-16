@@ -659,7 +659,7 @@ class ClaudeCodeNode(Node):
             exec_res: Execution results from exec()
 
         Returns:
-            Always "default" due to planner limitations
+            Always "default" because workflows may not declare explicit error edges
         """
         # Store results based on schema or as raw text
         self._store_results(shared, exec_res)

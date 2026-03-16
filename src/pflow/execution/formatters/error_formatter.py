@@ -98,14 +98,9 @@ def format_execution_errors(
                 "steps": steps,
             }
 
-            # Add repaired flag if any nodes were modified
-            modified_nodes = shared_storage.get("__modified_nodes__", [])
-            if modified_nodes:
-                result_dict["repaired"] = True
-
     # Add metrics summary if available
     if metrics_summary:
-        # Extract workflow node count (not planner nodes)
+        # Extract workflow node count
         workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
         node_count = workflow_metrics.get("nodes_executed", 0)
 

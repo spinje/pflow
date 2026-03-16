@@ -27,9 +27,8 @@ dependencies = [
     "click", # CLI framework (more flexible than Typer)
     "jsonschema>=4.20.0", # JSON Schema validation for workflow IR
     "llm>=0.28", # Simon Willison's LLM library for text processing
-    "llm-anthropic==0.23", # Anthropic Claude models for planner
-    "anthropic>=0.75", # Anthropic SDK for direct API access (thinking/caching)
-    "pydantic", # IR/metadata validation (used in planning/ir_models.py)
+    "llm-anthropic==0.23", # Anthropic Claude models (provides anthropic as transitive dep)
+    "pydantic", # IR/metadata validation
     "mcp[cli]>=1.17.0", # Model Context Protocol for MCP server support
     "requests>=2.32.5", # HTTP requests library for HttpNode (2.32.5 fixes SSLContext regression)
     "claude-agent-sdk>=0.1.17", # Claude Agent SDK for agentic development node
@@ -186,4 +185,4 @@ ignore = [
 preview = true
 
 [tool.deptry.per_rule_ignores]
-DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser (Task 107, in progress)
+DEP002 = ["llm-anthropic", "llm-gemini", "PyYAML"]  # Plugins for llm library, loaded dynamically not imported; PyYAML used by markdown parser

@@ -27,10 +27,10 @@ class WorkflowValidationError(PflowError):
     pass
 
 
-class CriticalPlanningError(PflowError):
-    """Raised when a critical planning node fails and cannot provide meaningful fallback.
+class CriticalDiscoveryError(PflowError):
+    """Raised when a critical discovery call fails and cannot provide meaningful fallback.
 
-    This error indicates the planning flow should abort immediately as continuing
+    This error indicates discovery should abort immediately as continuing
     would produce nonsensical or invalid results.
     """
 

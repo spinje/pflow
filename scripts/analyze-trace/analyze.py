@@ -381,13 +381,13 @@ def _add_header_metadata(md: list, trace: dict, trace_file: Path) -> None:
     timestamp = trace.get("timestamp") or trace.get("start_time", "unknown")
     md.append(f"**Timestamp:** {timestamp}  ")
 
-    # Handle status field differences (planner uses 'status', workflow uses 'final_status')
+    # Handle status field differences across trace formats
     status = trace.get("status") or trace.get("final_status", "unknown")
     md.append(f"**Status:** {status}  ")
 
     md.append(f"**Duration:** {trace.get('duration_ms', 0) / 1000:.1f}s  ")
 
-    # Path taken is only in planner traces
+    # Path information is only present in older trace variants
     if "path_taken" in trace:
         md.append(f"**Path:** {trace.get('path_taken', 'unknown')}  ")
     md.append("\n")
@@ -682,10 +682,10 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
     # Create output directory
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get LLM calls - handle both planner and workflow trace formats
+    # Get LLM calls - handle both legacy and current workflow trace formats
     llm_calls = []
 
-    # Check for planner trace format (llm_calls at root level)
+    # Check for legacy trace format (llm_calls at root level)
     if "llm_calls" in trace:
         llm_calls = trace.get("llm_calls", [])
 
@@ -695,7 +695,7 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
         for node in trace.get("nodes", []):
             # Handle regular node LLM calls
             if node.get("llm_call"):
-                # Convert workflow trace format to match planner format
+                # Convert workflow trace format to a normalized analyzer format
                 # Now we can extract the prompt from the trace!
                 # Model is already in llm_call dict
                 llm_call = {
@@ -714,20 +714,6 @@ def analyze_trace(trace_file: Path, output_dir: Path) -> None:
                 if "cost" in node.get("llm_call", {}):
                     llm_call["cost"] = node["llm_call"]["cost"]
 
-                llm_calls.append(llm_call)
-
-            # Handle repair LLM calls (stored as special event types)
-            elif node.get("type") == "repair_llm_call":
-                # Extract repair LLM call data
-                llm_call = {
-                    "node": "repair_service",
-                    "duration_ms": 0,  # repair events don't track duration
-                    "prompt": node.get("llm_prompt", node.get("llm_prompt_truncated", "")),
-                    "response": node.get("llm_response", node.get("llm_response_truncated", "")),
-                    "tokens": {"input": 0, "output": 0},  # repair events don't track tokens yet
-                    "model": "claude-sonnet-4-0",  # repair uses Sonnet
-                    "is_repair": True,  # flag to identify repair calls
-                }
                 llm_calls.append(llm_call)
 
     if not llm_calls:
@@ -770,7 +756,7 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python analyze_trace_split.py <trace-file.json> [output-dir]")
         print("\nExample:")
-        print("  python analyze_trace_split.py ~/.pflow/debug/planner-trace-20250815-120310.json")
+        print("  python analyze_trace_split.py ~/.pflow/debug/workflow-trace-20250815-120310.json")
         print("  python analyze_trace_split.py trace.json my-analysis/")
         sys.exit(1)
 

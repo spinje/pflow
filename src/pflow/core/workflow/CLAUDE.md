@@ -13,6 +13,10 @@ core/workflow/
 ├── data_flow.py        # Execution order (topological sort) and dependency validation
 ├── status.py           # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py    # Publish workflows as AI agent skills (symlinks)
+├── context.py          # Build workflow context for discovery (build_workflows_context)
+├── discovery.py        # LLM-powered workflow discovery (discover_workflow → WorkflowMatch)
+├── prompts/
+│   └── discovery.md    # Workflow discovery prompt template
 └── CLAUDE.md
 ```
 
@@ -110,7 +114,7 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 
 **Reserved workflow names**: `null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`, `skill`.
 
-**`generate_workflow_metadata()`**: Dependency-gated — requires planning module (`from pflow.planning.nodes import MetadataGenerationNode`). Silently returns None when planning is unavailable.
+**`generate_workflow_metadata()`**: Stub — returns None unconditionally (planning module removed).
 
 ### skill_service.py
 
@@ -125,8 +129,6 @@ Publishes workflows as AI agent skills for Claude Code, Cursor, Codex, Copilot. 
 Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g., unresolved templates in permissive mode), `FAILED` (errors).
 
 ## Known Issues
-
-**⚠️ Dead code**: `update_ir()` in manager.py — preserved but unreachable (repair system gated, Task 107).
 
 **⚠️ Bug**: Claude Code requires `description` in frontmatter for skill discovery (workaround in `skill_service.py`).
 

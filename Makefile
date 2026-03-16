@@ -18,18 +18,18 @@ check: ## Run code quality tools.
 .PHONY: test
 test: ## Test the code with pytest in parallel (excludes LLM tests that require API keys)
 	@echo "🚀 Testing code: Running pytest in parallel with 4 workers (excluding LLM tests)"
-	@uv run python -m pytest -n 4 --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+	@uv run python -m pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
 .PHONY: test-debug
 test-debug: ## Test the code with pytest sequentially for debugging
 	@echo "🚀 Testing code: Running pytest sequentially (for debugging)"
-	@uv run python -m pytest -n 0 -vv --tb=short --doctest-modules --ignore=tests/test_planning/llm --ignore=tests/test_nodes/test_llm/test_llm_integration.py
+	@uv run python -m pytest -n 0 -vv --tb=short --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py
 
 .PHONY: test-llm
 test-llm: ## Run LLM integration tests with real API calls (requires API keys)
 	@echo "🚀 Testing LLM with real API calls"
 	@echo "📝 Note: Requires 'llm keys set openai' (or 'llm keys set anthropic' with llm-anthropic plugin)"
-	@RUN_LLM_TESTS=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py tests/test_planning/llm -v
+	@RUN_LLM_TESTS=1 uv run python -m pytest tests/test_nodes/test_llm/test_llm_integration.py -v
 
 .PHONY: test-all
 test-all: ## Run all tests including LLM integration tests in parallel

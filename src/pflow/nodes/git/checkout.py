@@ -475,7 +475,7 @@ class GitCheckoutNode(Node):
             logger.error(
                 "Branch checkout failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"}
             )
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         # Store results in shared store for success
         shared["current_branch"] = exec_res.get("current_branch", "")

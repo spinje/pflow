@@ -29,7 +29,7 @@ def handle_discovery_error(
 
     Examples:
         >>> handle_discovery_error(
-        ...     CriticalPlanningError("Authentication failed"),
+        ...     CriticalDiscoveryError("Authentication failed"),
         ...     "workflow",
         ...     [
         ...         ("pflow workflow list", "Show all saved workflows"),
@@ -37,10 +37,10 @@ def handle_discovery_error(
         ...     ]
         ... )
     """
-    from pflow.core.exceptions import CriticalPlanningError
+    from pflow.core.exceptions import CriticalDiscoveryError
 
-    if isinstance(exception, CriticalPlanningError):
-        # Known planning error - handle gracefully
+    if isinstance(exception, CriticalDiscoveryError):
+        # Known discovery error - handle gracefully
         reason_lower = exception.reason.lower()
         if "authentication" in reason_lower or "api key" in reason_lower:
             click.echo(
@@ -54,7 +54,7 @@ def handle_discovery_error(
             for cmd, desc in alternative_commands:
                 click.echo(f"  {cmd:<35} # {desc}", err=True)
         else:
-            # Other CriticalPlanningError - use existing reason
+            # Other CriticalDiscoveryError - use existing reason
             click.echo(f"Error: {exception.reason}", err=True)
 
     else:

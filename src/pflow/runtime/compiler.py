@@ -773,7 +773,7 @@ def _instantiate_nodes(
     Args:
         ir_dict: The IR dictionary containing nodes array and optional enable_namespacing flag
         registry: Registry instance for node class lookup
-        initial_params: Parameters extracted by planner (for template resolution)
+        initial_params: Parameters provided before execution (for template resolution)
         metrics_collector: Optional MetricsCollector for cost tracking
         trace_collector: Optional WorkflowTraceCollector for debugging
 
@@ -1205,7 +1205,7 @@ def compile_ir_to_flow(
     Args:
         ir_json: JSON string or dict representing the workflow IR
         registry: Registry instance for node metadata lookup
-        initial_params: Parameters extracted by planner from natural language
+        initial_params: Parameters provided before execution
                        Example: {"issue_number": "1234", "repo": "pflow"}
                        from user saying "fix github issue 1234 in pflow repo"
         validate: Whether to validate templates (default: True)
@@ -1283,7 +1283,7 @@ def compile_ir_to_flow(
         # Reset node visit counts for this execution cycle.
         # Visit counts track revisits WITHIN a single flow.run() (for loop
         # detection and cache invalidation). They must reset between runs
-        # so that workflow resume/repair doesn't confuse cross-run revisits
+        # so that workflow resume state doesn't confuse cross-run revisits
         # with in-run loops.
         if "__execution__" in shared_storage and "node_visit_counts" in shared_storage["__execution__"]:
             shared_storage["__execution__"]["node_visit_counts"] = {}

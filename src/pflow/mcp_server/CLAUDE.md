@@ -58,10 +58,9 @@ src/pflow/mcp_server/
 
 **main.py** — Server startup sequence:
 1. `inject_settings_env_vars()` — Injects API keys from `~/.pflow/settings.json` into environment. **Must happen before any LLM operations.** Skipped during tests (`PYTEST_CURRENT_TEST` check).
-2. `install_anthropic_model()` — Monkey-patches `llm.get_model()` for Claude models (prompt caching, thinking tokens). Required for discovery tools. Also skipped during tests.
-3. `register_tools()` — Imports tool/resource modules to trigger `@mcp.tool()` decorator registration.
-4. Signal handlers (SIGTERM/SIGINT) for graceful shutdown.
-5. `mcp.run("stdio")` — **FastMCP manages its own event loop.** Never wrap in `asyncio.run()`.
+2. `register_tools()` — Imports tool/resource modules to trigger `@mcp.tool()` decorator registration.
+3. Signal handlers (SIGTERM/SIGINT) for graceful shutdown.
+4. `mcp.run("stdio")` — **FastMCP manages its own event loop.** Never wrap in `asyncio.run()`.
 
 **stdout is reserved for MCP protocol messages** — all logging goes to stderr.
 
@@ -85,7 +84,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 - `read_fields(execution_id, field_paths)` — Read specific fields from cached `registry_run` execution
 
 **registry_tools.py** (2 tools):
-- `registry_describe(nodes)` — Detailed specs using `build_planning_context()`
+- `registry_describe(nodes)` — Detailed specs using `build_component_context()`
 - `registry_list(filter_pattern)` — All nodes grouped by package; with filter: relevance-sorted search
 
 **workflow_tools.py** (2 tools):
@@ -111,10 +110,10 @@ If none found, returns a fallback message with tool reference and troubleshootin
 All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_stateless` decorator. Every request creates fresh instances of Registry, WorkflowManager, etc.
 
 - **BaseService** — `@ensure_stateless` decorator (logs instance creation), `validate_stateless()` checks
-- **DiscoveryService** — Wraps WorkflowDiscoveryNode and ComponentBrowsingNode. Sets model via `get_model_for_feature("discovery")`.
-- **ExecutionService** — Execute (enable_repair=False, NullOutput), validate (4-layer + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
+- **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions for LLM-powered discovery.
+- **ExecutionService** — Execute (NullOutput), validate (4-layer + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
-- **RegistryService** — `describe_nodes()` uses `build_planning_context()`, `list_all_nodes()` supports filter via Registry.search()
+- **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
 - **SettingsService** — Environment variable CRUD via SettingsManager (used by disabled settings_tools)
 
@@ -153,7 +152,6 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 ## Agent-Optimized Defaults
 
 MCP execution differs from CLI:
-- `enable_repair=False` — Agents get explicit errors with checkpoints (no silent fixes)
 - `output=NullOutput()` — Silent execution (no progress output)
 - Traces always saved to `~/.pflow/debug/workflow-trace-{timestamp}.json`
 - Text output format (LLMs parse text better than nested JSON)

@@ -24,7 +24,8 @@ src/pflow/core/
 ├── suggestion_utils.py      # "Did you mean" fuzzy matching
 ├── user_errors.py           # User-friendly CLI error formatting
 ├── validation_utils.py      # Parameter name validation (security-aware)
-├── smart_filter.py          # LLM-powered field reduction for structure-only mode
+├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
+├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
 ├── execution_cache.py       # Two-phase execution cache for registry run
 ├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
 │   ├── __init__.py          # Re-exports public API
@@ -33,7 +34,11 @@ src/pflow/core/
 │   ├── validator.py         # Unified validation orchestrator
 │   ├── data_flow.py         # Execution order and dependency validation
 │   ├── status.py            # SUCCESS/DEGRADED/FAILED tri-state enum
-│   └── skill_service.py     # Publish workflows as AI agent skills (symlinks)
+│   ├── skill_service.py     # Publish workflows as AI agent skills (symlinks)
+│   ├── context.py           # Workflow context for discovery (build_workflows_context)
+│   ├── discovery.py         # LLM-powered workflow discovery (discover_workflow)
+│   └── prompts/
+│       └── discovery.md     # Workflow discovery prompt template
 └── CLAUDE.md
 ```
 
@@ -41,7 +46,7 @@ src/pflow/core/
 
 ### exceptions.py
 
-**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalPlanningError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
+**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalDiscoveryError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
@@ -169,7 +174,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### user_errors.py
 
-Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `PlannerError`, `CompilationError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
+Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `CompilationError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
 
 ### validation_utils.py
 
@@ -180,14 +185,6 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 - Node parameters in IR NOT validated
 - LLM-extracted parameters NOT validated
 - MCP tool parameters NOT validated (external servers could provide dangerous names)
-
-### smart_filter.py
-
-LLM-powered field reduction for `registry run` structure-only mode. Triggers when field count > 30 (`SMART_FILTER_THRESHOLD`). Reduces 200+ fields to 8-15 business-relevant ones.
-
-**Caching**: LRU cache (100 entries, process lifetime). Fields sorted by path before caching for order independence. Cache hit = 0ms/$0, miss = 2.5-3.5s/~$0.003.
-
-**Model selection**: Uses `get_model_for_feature("filtering")`. Reduces thinking for Gemini models (`thinking_level=minimal` for gemini-3, `thinking_budget=0` for gemini-2.5).
 
 ### execution_cache.py
 
@@ -210,8 +207,9 @@ Two-phase execution pattern for AI agents: (1) execute node → return structure
 These modules are NOT in `core/__init__.py` (require direct imports):
 - `suggestion_utils` — used by CLI, runtime, formatters, MCP
 - `security_utils` — used by MCP errors and CLI display
-- `llm_config` — used by CLI startup, compiler, smart_filter, planning
-- `smart_filter` — used by CLI registry run (structure-only mode)
+- `llm_config` — used by CLI startup, compiler, registry/smart_filter, discovery
+- `llm_utils` — shared LLM response parsing (used by registry/smart_filter, discovery)
+- `prompt_utils` — prompt loading/formatting (used by discovery functions)
 - `execution_cache` — used by CLI registry run
 
 The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Import from `pflow.core.workflow.manager`, `pflow.core.workflow.validator`, etc.
@@ -223,7 +221,6 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 | CLI (`cli/main.py`) | shell_integration, WorkflowManager, OutputController, MetricsCollector, UserFriendlyError | Pipe support, saves, display, metrics, error formatting |
 | Compiler (`runtime/compiler.py`) | validate_ir, validation_utils, SettingsManager | IR validation, param security, env loading |
 | Execution (`execution/`) | WorkflowValidator, OutputController, WorkflowManager | Validation phase, display, metadata updates |
-| Planning (`planning/`) | WorkflowValidator, WorkflowManager, CriticalPlanningError | Validation, workflow discovery, error handling |
 | Registry (`registry/`) | SettingsManager | Node filtering at load time |
 | Runtime (`runtime/instrumented_wrapper.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |
 | MCP Server (`mcp_server/`) | workflow_save_service, suggestion_utils, security_utils | Save ops, suggestions, error sanitization |

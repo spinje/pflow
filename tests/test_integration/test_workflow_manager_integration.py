@@ -19,8 +19,8 @@ import pytest
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.markdown_parser import MarkdownParseError
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.planning.context_builder import build_planning_context
 from pflow.pocketflow import Node
+from pflow.registry.context_builder import build_component_context
 from pflow.registry.registry import Registry
 from pflow.runtime.compiler import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
@@ -246,29 +246,27 @@ class TestContextBuilderIntegration:
         workflow_manager.save("ctx-workflow-1", sample_markdown)
         workflow_manager.save("ctx-workflow-2", another_markdown)
 
-        # Mock the _get_workflow_manager to return our test manager
-        with patch("pflow.planning.context_builder._get_workflow_manager", return_value=workflow_manager):
-            # Build context with workflows
-            context = build_planning_context(
-                selected_node_ids=["test_echo"],
-                selected_workflow_names=["ctx-workflow-1", "ctx-workflow-2"],
-                registry_metadata=test_registry.load(),
-                saved_workflows=workflow_manager.list_all(),
-            )
+        # Build context with workflows
+        context = build_component_context(
+            selected_node_ids=["test_echo"],
+            selected_workflow_names=["ctx-workflow-1", "ctx-workflow-2"],
+            registry_metadata=test_registry.load(),
+            saved_workflows=workflow_manager.list_all(),
+        )
 
-            # Convert to string if needed
-            if isinstance(context, dict):
-                context = str(context)
+        # Convert to string if needed
+        if isinstance(context, dict):
+            context = str(context)
 
-            # The planning context returns structured data as a dict or formatted string
-            # Let's check both the content
-            assert context  # Should not be empty
+        # The planning context returns structured data as a dict or formatted string
+        # Let's check both the content
+        assert context  # Should not be empty
 
-            # Check the workflows were processed
-            workflows = workflow_manager.list_all()
-            assert len(workflows) == 2
-            assert any(w["name"] == "ctx-workflow-1" for w in workflows)
-            assert any(w["name"] == "ctx-workflow-2" for w in workflows)
+        # Check the workflows were processed
+        workflows = workflow_manager.list_all()
+        assert len(workflows) == 2
+        assert any(w["name"] == "ctx-workflow-1" for w in workflows)
+        assert any(w["name"] == "ctx-workflow-2" for w in workflows)
 
     def test_context_builder_workflow_format(self, workflow_manager, sample_markdown, test_registry):
         """Test that Context Builder returns workflows in correct format."""
@@ -276,20 +274,19 @@ class TestContextBuilderIntegration:
         workflow_manager.save("format-test", sample_markdown)
 
         # Get workflows as Context Builder would
-        with patch("pflow.planning.context_builder._get_workflow_manager", return_value=workflow_manager):
-            workflows = workflow_manager.list_all()
+        workflows = workflow_manager.list_all()
 
-            # Verify format matches what Context Builder expects (flat metadata)
-            assert len(workflows) == 1
-            workflow = workflows[0]
+        # Verify format matches what Context Builder expects (flat metadata)
+        assert len(workflows) == 1
+        workflow = workflows[0]
 
-            # Check flat metadata fields
-            assert "name" in workflow
-            assert "description" in workflow
-            assert "ir" in workflow
-            assert "created_at" in workflow
-            assert "updated_at" in workflow
-            assert "version" in workflow
+        # Check flat metadata fields
+        assert "name" in workflow
+        assert "description" in workflow
+        assert "ir" in workflow
+        assert "created_at" in workflow
+        assert "updated_at" in workflow
+        assert "version" in workflow
 
 
 class TestWorkflowExecutorIntegration:
@@ -445,9 +442,8 @@ class TestErrorHandling:
     def test_loading_nonexistent_workflow(self, workflow_manager):
         """Test error handling when workflow doesn't exist."""
         # Context Builder should handle gracefully
-        with patch("pflow.planning.context_builder._get_workflow_manager", return_value=workflow_manager):
-            workflows = workflow_manager.list_all()
-            assert workflows == []  # Empty list, no error
+        workflows = workflow_manager.list_all()
+        assert workflows == []  # Empty list, no error
 
         # WorkflowExecutor should raise error
         with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):

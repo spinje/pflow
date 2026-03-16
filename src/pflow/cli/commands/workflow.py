@@ -157,59 +157,35 @@ def discover_workflows(query: str) -> None:
     Example:
         pflow workflow discover "I need to analyze pull requests"
     """
-    from pflow.core.llm_config import get_model_for_feature
-    from pflow.planning.nodes import WorkflowDiscoveryNode
+    from pflow.core.workflow.discovery import discover_workflow
 
     # Validate query before processing
     query = _validate_discovery_query(query, "workflow discover")
 
-    # Get LLM model from settings → auto-detect → fallback
-    discovery_model = get_model_for_feature("discovery")
-
-    # Create discovery node and set model via params (PocketFlow convention)
-    node = WorkflowDiscoveryNode()
-    node.params["model"] = discovery_model
-
-    shared = {
-        "user_input": query,
-        "workflow_manager": WorkflowManager(),
-    }
+    manager = WorkflowManager()
 
     try:
-        action = node.run(shared)
+        result = discover_workflow(query, workflow_manager=manager)
     except Exception as e:
         _handle_discovery_error(e)
         sys.exit(1)
 
     # Display results
-    if action == "found_existing":
-        result = shared.get("discovery_result")
-        workflow = shared.get("found_workflow")
+    if result.found and result.workflow:
+        from pflow.execution.formatters.discovery_formatter import format_discovery_result
 
-        if workflow and result and isinstance(result, dict) and isinstance(workflow, dict):
-            # Use shared formatter (same as MCP)
-            from pflow.execution.formatters.discovery_formatter import format_discovery_result
-
-            formatted = format_discovery_result(result, workflow)
-            click.echo(formatted)
+        result_dict = {
+            "workflow_name": result.workflow_name,
+            "confidence": result.confidence,
+            "reasoning": result.reasoning,
+        }
+        formatted = format_discovery_result(result_dict, result.workflow)
+        click.echo(formatted)
     else:
-        # No match found - show available workflows as suggestions
         from pflow.execution.formatters.discovery_formatter import format_no_matches_with_suggestions
 
-        workflow_manager_obj = shared.get("workflow_manager", WorkflowManager())
-        # Type narrowing for mypy
-        if not isinstance(workflow_manager_obj, WorkflowManager):
-            workflow_manager_obj = WorkflowManager()
-        all_workflows = workflow_manager_obj.list_all()
-
-        # Get reasoning from discovery result if available
-        result_obj = shared.get("discovery_result", {})
-        # Type narrowing for mypy
-        if not isinstance(result_obj, dict):
-            result_obj = {}
-        reasoning = result_obj.get("reasoning")
-
-        formatted = format_no_matches_with_suggestions(all_workflows, query, reasoning=reasoning)
+        all_workflows = manager.list_all()
+        formatted = format_no_matches_with_suggestions(all_workflows, query, reasoning=result.reasoning)
         click.echo(formatted)
 
 
@@ -295,43 +271,6 @@ def _load_and_parse_workflow(file_path: str) -> tuple[dict[str, Any], str, str |
         sys.exit(1)
 
 
-def _generate_metadata_if_requested(validated_ir: dict[str, Any], generate_metadata: bool) -> dict[str, Any] | None:
-    """Generate rich metadata for workflow if requested.
-
-    Args:
-        validated_ir: Validated workflow IR
-        generate_metadata: Whether to generate metadata
-
-    Returns:
-        Generated metadata dict or None
-    """
-    # GATED: Metadata generation disabled pending markdown format migration (Task 107).
-    # Uses MetadataGenerationNode from planner which assumes JSON workflow format.
-    if generate_metadata:
-        click.echo("Warning: --generate-metadata is temporarily disabled pending markdown format migration.", err=True)
-    return None
-
-    if not generate_metadata:
-        return None
-
-    from pflow.core.llm_config import get_model_for_feature
-    from pflow.core.workflow.save_service import generate_workflow_metadata
-
-    # Get LLM model from settings → auto-detect → fallback
-    discovery_model = get_model_for_feature("discovery")
-
-    click.echo("Generating rich metadata...")
-    metadata = generate_workflow_metadata(validated_ir, model_name=discovery_model)
-
-    if metadata:
-        click.echo(f"  Generated {len(metadata.get('keywords', []))} keywords")
-        click.echo(f"  Generated {len(metadata.get('capabilities', []))} capabilities")
-    else:
-        click.echo("  Warning: Could not generate metadata", err=True)
-
-    return metadata
-
-
 def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[str, Any] | None, force: bool) -> str:
     """Save workflow to library with overwrite handling.
 
@@ -405,8 +344,7 @@ def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
 @click.option("--name", required=True, help="Workflow name (lowercase-with-hyphens, max 30 chars)")
 @click.option("--delete-draft", is_flag=True, help="Delete source file after save")
 @click.option("--force", is_flag=True, help="Overwrite existing workflow")
-@click.option("--generate-metadata", is_flag=True, help="Generate rich discovery metadata")
-def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool, generate_metadata: bool) -> None:
+def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) -> None:
     """Save a workflow file to the global library.
 
     Takes a .pflow.md workflow file and saves it to the global library
@@ -427,8 +365,7 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool, ge
     # Load, parse, and validate workflow
     validated_ir, markdown_content, _description = _load_and_parse_workflow(file_path)
 
-    # Generate metadata if requested
-    metadata = _generate_metadata_if_requested(validated_ir, generate_metadata)
+    metadata = None
 
     # Save workflow (passes markdown content, not IR)
     saved_path = _save_with_overwrite_check(name, markdown_content, metadata, force)

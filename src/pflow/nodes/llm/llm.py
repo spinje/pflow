@@ -316,7 +316,7 @@ class LLMNode(Node):
             shared["error"] = exec_res.get("error", "Unknown error")
             shared["response"] = ""
             shared["llm_usage"] = {}
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         raw_response = exec_res["response"]
 

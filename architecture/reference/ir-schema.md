@@ -5,7 +5,7 @@ This document defines JSON schema governance for two key pflow artifacts:
 1. **Flow IR**: JSON representation of executable flows (orchestration, mappings, execution)
 2. **Node Metadata**: JSON interface definitions extracted from node docstrings (inputs, outputs, params)
 
-Both schemas work together to enable metadata-driven flow planning and validation.
+Both schemas work together to enable metadata-driven flow construction and validation.
 
 > **Format Note**: This document describes the **internal IR dict structure** that all workflows compile to. Users author workflows as `.pflow.md` markdown files, which `parse_markdown()` (in `src/pflow/core/markdown_parser.py`) converts to this IR structure. Fields like `ir_version` are added automatically by `normalize_ir()` and do not appear in authored `.pflow.md` files. The JSON examples below show the IR dict shape, not user-authored file format. For the authoring format, see the [format specification](../../.taskmaster/tasks/task_107/starting-context/format-specification.md).
 
@@ -22,7 +22,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
   "metadata": {
     "created": "2025-01-01T12:00:00Z",
     "description": "YouTube video summary pipeline",
-    "planner_version": "1.0.0",
+    "generator_version": "1.0.0",
     "locked_nodes": {
       "core/yt-transcript": "1.0.0",
       "core/llm": "1.0.0"
@@ -40,7 +40,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
   > Note: The `$schema` URL is aspirational; the actual schema is defined in `src/pflow/core/ir_schema.py`.
 - `ir_version` uses semantic versioning; unknown higher major → refuse to run
 - `metadata.locked_nodes` mirrors version lockfile for deterministic execution (see `.taskmaster/feature-dump/registry-versioning.md` for design notes)
-- `metadata.planner_version` tracks planner that generated IR for provenance
+- `metadata.generator_version` can track the tool that generated IR for provenance
 
 > **Example**: See [examples/core/minimal.pflow.md](../../examples/core/minimal.pflow.md) for the simplest valid workflow — a single node with no edges or metadata. The markdown parser converts it to the IR dict structure shown above.
 
@@ -48,7 +48,7 @@ Both schemas work together to enable metadata-driven flow planning and validatio
 
 ## Workflow Input/Output Declaration
 
-Workflows can declare their expected inputs and outputs, enabling workflow composition and validation. This feature is essential for the natural language planner (Task 17) and nested workflow execution (Task 20).
+Workflows can declare their expected inputs and outputs, enabling workflow composition and validation. This feature is essential for nested workflow execution and workflow reuse.
 
 ### Workflow Input Declaration
 
@@ -194,13 +194,13 @@ The optional `outputs` field declares what the workflow produces:
 1. **Workflow Composition**: Workflows can be nested and composed by matching outputs to inputs
 2. **Validation**: Early detection of missing or incompatible parameters
 3. **Documentation**: Self-documenting workflows with clear interface contracts
-4. **Planning**: The natural language planner uses interface declarations to understand workflow capabilities
+4. **Discovery**: Interface declarations help tooling understand workflow capabilities
 5. **Type Safety**: Runtime type checking prevents data mismatches
 
 ### Integration with Other Components
 
 - **WorkflowExecutor** (Task 20): Uses input declarations to validate parameters and output declarations to extract results
-- **Natural Language Planner** (Task 17): Analyzes workflow interfaces to select and compose appropriate workflows
+- **Discovery tooling**: Can analyze workflow interfaces to select and compose appropriate workflows
 - **Registry**: Workflow interfaces are indexed alongside node metadata for discovery
 - **CLI**: The `pflow run` command validates inputs against workflow declarations
 
@@ -210,7 +210,7 @@ The optional `outputs` field declares what the workflow produces:
 
 ## Node Metadata Schema
 
-Node metadata is extracted from Python docstrings and stored as JSON for fast planner access.
+Node metadata is extracted from Python docstrings and stored as JSON for fast discovery access.
 
 ### 2.1 Node Metadata Structure
 
@@ -398,7 +398,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 |---|---|---|
 | `id` | Unique token, `[A-Za-z0-9_-]{1,64}` | Flow-scoped identifier |
 | `registry_id` | Namespace/name format | References node in registry for metadata resolution |
-| `version` | Semantic version string | Resolved during [planner validation](../historical/planner-specification.md) |
+| `version` | Semantic version string | Resolved during IR validation |
 | `params` | Arbitrary JSON for node behavior | **Never** contains shared store keys or execution directives |
 | `execution.max_retries` | Integer ≥ 0, only for `@flow_safe` nodes | See `.taskmaster/feature-dump/flow-safe-caching.md` for design notes |
 | `execution.use_cache` | Boolean, only for `@flow_safe` nodes | Cache eligibility enforced at runtime |
@@ -410,7 +410,7 @@ Flow IR references nodes by registry ID, with metadata resolved during validatio
 
 **Interface Resolution:**
 
-- Planner resolves inputs/outputs from node metadata during validation
+- Validation resolves inputs/outputs from node metadata
 - Nodes may inherit from either BaseNode or Node from pocketflow
 - Registry metadata validates params and execution config eligibility
 - Node interfaces declared through docstring metadata, not IR params
@@ -527,7 +527,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 - Clear data flow from input to output
 - Interface compatibility between connected nodes
 
-> **Flow Structure**: See [planner specification](../historical/planner-specification.md) for simple node sequencing
+> **Flow Structure**: See the examples below for simple node sequencing.
 
 **Examples from the Repository:**
 - Sequential flow: [examples/core/simple-pipeline.pflow.md](../../examples/core/simple-pipeline.pflow.md) - Basic 3-node pipeline
@@ -556,7 +556,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 **Mapping Purpose:**
 
 - Enable complex flow routing while preserving natural node interfaces
-- Generated by planner for marketplace compatibility scenarios
+- Can be generated by external tooling for compatibility scenarios
 - Completely optional - nodes use direct shared store access when no mappings defined
 - Transparent to node code via `NodeAwareSharedStore` proxy
 
@@ -573,7 +573,7 @@ Node purity status determined by `@flow_safe` decorator (see `.taskmaster/featur
 - Only `@flow_safe` nodes may specify `max_retries > 0`
 - Only `@flow_safe` nodes may specify `use_cache: true`
 - Purity status read from node manifest; IR does not repeat it
-- Validation occurs during [planner pipeline](../historical/planner-specification.md)
+- Validation occurs during the normal workflow validation pipeline
 
 ---
 
@@ -659,7 +659,7 @@ Node purity status determined by `@flow_safe` decorator (see `.taskmaster/featur
   "metadata": {
     "created": "2025-01-01T12:00:00Z",
     "description": "YouTube video summary with error handling",
-    "planner_version": "1.0.0",
+    "generator_version": "1.0.0",
     "locked_nodes": {
       "core/yt-transcript": "1.0.0",
       "core/llm": "1.0.0"
@@ -734,7 +734,7 @@ Start with the core examples to understand fundamental concepts before exploring
 
 ---
 
-This document defines the schemas for Flow IR and Node Metadata, providing the foundation for validation, evolution, and metadata-driven planning capabilities.
+This document defines the schemas for Flow IR and Node Metadata, providing the foundation for validation, evolution, and metadata-driven workflow tooling.
 
 ## See Also
 

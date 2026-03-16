@@ -129,7 +129,7 @@ def display_file_rerun_commands(
     show_save_tip: bool = False,
     suggested_name: str | None = None,
 ) -> None:
-    """Display rerun commands for file-based workflows (including repaired ones).
+    """Display rerun commands for file-based workflows.
 
     Args:
         file_path: Path to the workflow file
@@ -148,4 +148,4 @@ def display_file_rerun_commands(
     if show_save_tip:
         save_name = suggested_name or "my-workflow"
         click.echo("\n💡 Save as named workflow for easier access:")
-        click.echo(f"  $ pflow --save {file_path} {save_name}")
+        click.echo(f"  $ pflow workflow save {file_path} --name {save_name}")

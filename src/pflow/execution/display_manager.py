@@ -1,7 +1,7 @@
 """Manages all workflow execution display operations."""
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from pflow.core.workflow.status import WorkflowStatus
 
@@ -19,21 +19,13 @@ class DisplayManager:
 
     output: OutputInterface
 
-    def show_execution_start(self, node_count: int, context: str = "") -> None:
+    def show_execution_start(self, node_count: int) -> None:
         """Show workflow execution starting.
 
         Args:
             node_count: Number of nodes in the workflow
-            context: Execution context ("resume", "repair_validation", or "")
         """
-        if context == "resume":
-            message = "Resuming workflow from checkpoint..."
-        elif context == "repair_validation":
-            message = f"Validating repair ({node_count} nodes):"
-        else:
-            message = f"Executing workflow ({node_count} nodes):"
-
-        self.output.show_progress(message)
+        self.output.show_progress(f"Executing workflow ({node_count} nodes):")
 
     def show_node_progress(self, node_id: str, status: str, duration: float = 0) -> None:
         """Show individual node progress.
@@ -74,34 +66,6 @@ class DisplayManager:
             else:
                 self.output.show_error("Workflow execution failed")
         # Note: data output is handled by CLI handlers, not here
-
-    def show_repair_start(self) -> None:
-        """Show repair process starting."""
-        self.output.show_progress("\n🔧 Auto-repairing workflow...")
-
-    def show_repair_issue(self, error_message: str, context: Optional[dict[str, Any]] = None) -> None:
-        """Show what issue is being repaired.
-
-        Args:
-            error_message: The error message being addressed
-            context: Optional additional context about the error
-        """
-        self.output.show_progress(f"  • Issue detected: {error_message}")
-
-        if context and context.get("available_fields"):
-            fields = ", ".join(context["available_fields"])
-            self.output.show_progress(f"    Available fields: {fields}")
-
-    def show_repair_result(self, success: bool) -> None:
-        """Show repair attempt result.
-
-        Args:
-            success: Whether the repair was successful
-        """
-        if success:
-            self.output.show_progress("  ✅ Workflow repaired successfully!")
-        else:
-            self.output.show_progress("  ❌ Could not repair automatically")
 
     def show_progress(self, message: str) -> None:
         """Show general progress message.

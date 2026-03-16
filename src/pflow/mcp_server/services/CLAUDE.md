@@ -20,24 +20,24 @@ See `mcp_server/CLAUDE.md` for detailed explanation of why this matters.
 ## Services (7)
 
 - **BaseService** — Pattern enforcement via `@ensure_stateless` decorator
-- **DiscoveryService** — Wraps WorkflowDiscoveryNode / ComponentBrowsingNode via PocketFlow shared store pattern
+- **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions
 - **ExecutionService** — Execute, validate, save workflows + run registry nodes (largest service)
 - **FieldService** — Read cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. **Not exported from `__init__.py`** — imported directly in execution_tools.py.
-- **RegistryService** — Node describe, list/search via `build_planning_context()` and `Registry.search()`
+- **RegistryService** — Node describe, list/search via `build_component_context()` and `Registry.search()`
 - **WorkflowService** — Workflow list/describe with shared formatters, "did you mean" suggestions
 - **SettingsService** — Environment variable CRUD via SettingsManager (used by disabled settings_tools)
 
-## Planning Node Integration (DiscoveryService)
+## Discovery Integration (DiscoveryService)
 
-Discovery services use PocketFlow's shared store pattern to communicate with planning nodes:
+Discovery services call plain functions that return typed dataclasses:
 
 ```python
-shared = {"user_input": query, "workflow_manager": workflow_manager}
-action = node.run(shared)
-result = shared.get("discovery_result")  # Extract result from shared store
+from pflow.core.workflow.discovery import discover_workflow
+result = discover_workflow(query, workflow_manager=WorkflowManager())
+# result is WorkflowMatch(found, workflow_name, confidence, reasoning, workflow)
 ```
 
-Model is set via `get_model_for_feature("discovery")` on `node.params["model"]`.
+Model defaults to `get_model_for_feature("discovery")`.
 
 ## Error Handling
 

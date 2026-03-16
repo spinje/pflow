@@ -52,7 +52,6 @@ def build_execution_steps(
         shared_storage: Shared store after execution containing:
             - __execution__: Execution checkpoint data
             - __cache_hits__: List of nodes that hit cache
-            - __modified_nodes__: List of nodes modified by repair
         metrics_summary: Optional metrics summary from collector containing
             node timing data
 
@@ -62,7 +61,6 @@ def build_execution_steps(
         - status: "completed", "failed", or "not_executed"
         - duration_ms: Execution time in milliseconds (if available)
         - cached: Boolean indicating cache hit
-        - repaired: Boolean indicating node was repaired (if applicable)
 
         For batch nodes (detected via batch_metadata key in output):
         - is_batch: True
@@ -113,8 +111,6 @@ def build_execution_steps(
     completed = exec_state.get("completed_nodes", [])
     failed = exec_state.get("failed_node")
     cache_hits = shared_storage.get("__cache_hits__", [])
-    modified_nodes = shared_storage.get("__modified_nodes__", [])
-
     # Extract node timings from metrics
     node_timings = {}
     if metrics_summary:
@@ -127,7 +123,6 @@ def build_execution_steps(
         node_id = node["id"]
 
         # Determine execution status
-        # Check completed first - if a node failed then was repaired, it's completed
         if node_id in completed:
             status = "completed"
         elif node_id == failed:
@@ -142,10 +137,6 @@ def build_execution_steps(
             "duration_ms": node_timings.get(node_id, 0),  # Default to 0 if not found
             "cached": node_id in cache_hits,
         }
-
-        # Mark repaired nodes
-        if node_id in modified_nodes:
-            step["repaired"] = True
 
         # Add batch metadata if this is a batch node
         # Batch nodes write to shared[node_id] with batch_metadata key

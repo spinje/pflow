@@ -46,7 +46,7 @@ class TemplateAwareNodeWrapper:
         Args:
             inner_node: The actual node being wrapped
             node_id: Node identifier from IR (for debugging/tracking)
-            initial_params: Parameters extracted by planner from natural language
+            initial_params: Parameters provided before execution
                           These have higher priority than shared store values
             template_resolution_mode: Template resolution mode ('strict' or 'permissive')
                                      strict: fail immediately on unresolved templates (default)
@@ -60,7 +60,7 @@ class TemplateAwareNodeWrapper:
         """
         self.inner_node = inner_node
         self.node_id = node_id  # Node ID for debugging purposes only
-        self.initial_params = initial_params or {}  # From planner extraction
+        self.initial_params = initial_params or {}  # Seeded before execution
         self.template_resolution_mode = template_resolution_mode  # Resolution behavior
         self.interface_metadata = interface_metadata  # Type information for validation
         self.optional_input_keys = optional_input_keys or set()  # Branch convergence
@@ -575,8 +575,8 @@ class TemplateAwareNodeWrapper:
     def _build_resolution_context(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Build the context for template resolution.
 
-        Combines shared store data with initial parameters from planner.
-        Planner parameters have higher priority.
+        Combines shared store data with initial parameters provided before execution.
+        Initial parameters have higher priority.
 
         Args:
             shared: The shared store containing runtime data
@@ -585,7 +585,7 @@ class TemplateAwareNodeWrapper:
             Combined context dictionary
         """
         context = dict(shared)  # Start with shared store data
-        context.update(self.initial_params)  # Planner parameters override
+        context.update(self.initial_params)  # Initial parameters override
 
         # Debug: Log context keys when we have template params
         if self.template_params and logger.isEnabledFor(logging.DEBUG):
@@ -888,7 +888,7 @@ class TemplateAwareNodeWrapper:
 
         This is the key interception point. We resolve templates just
         before execution, using both the shared store (runtime data)
-        and initial parameters (from planner).
+        and initial parameters passed into the workflow.
 
         Args:
             shared: The shared store containing runtime data
@@ -1005,7 +1005,7 @@ class TemplateAwareNodeWrapper:
                     upstream_context = get_upstream_stderr(str(template), context)
                     if upstream_context:
                         error_msg += upstream_context
-                    # Make template errors fatal to trigger repair
+                    # Make template errors fatal so execution stops with a clear error
                     raise ValueError(error_msg)
                 else:
                     # Permissive mode: Warn and continue with unresolved template

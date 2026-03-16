@@ -187,7 +187,7 @@ class GitPushNode(Node):
                     "phase": "post",
                 },
             )
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         # Store the push result in shared store for success
         shared["push_result"] = {

@@ -466,36 +466,3 @@ class WorkflowManager:
             if isinstance(e, WorkflowNotFoundError):
                 raise
             raise WorkflowValidationError(f"Failed to update workflow metadata: {e}") from e
-
-    def update_ir(self, name: str, new_ir: dict[str, Any]) -> None:
-        """Update just the IR of an existing workflow, preserving metadata.
-
-        DEPRECATED: Only caller was the repair save handler, which is gated
-        pending markdown format migration (Task 107). Preserved for backwards
-        compatibility but unreachable from production code.
-
-        Args:
-            name: Workflow name
-            new_ir: New workflow IR to replace the existing one
-
-        Raises:
-            WorkflowNotFoundError: If workflow doesn't exist
-            WorkflowValidationError: If update fails
-        """
-        if not self.exists(name):
-            raise WorkflowNotFoundError(f"Workflow '{name}' does not exist")
-
-        try:
-            # Load existing workflow
-            workflow_data = self.load(name)
-
-            # update_ir is gated — repair system is the only caller and it's disabled.
-            # This method is preserved but should not be called in production.
-            logger.warning(f"update_ir called for '{name}' — this method is deprecated (Task 107)")
-            _ = workflow_data  # Acknowledge loaded data
-            _ = new_ir  # Acknowledge new IR
-
-        except WorkflowNotFoundError:
-            raise
-        except Exception as e:
-            raise WorkflowValidationError(f"Failed to update workflow IR: {e}") from e

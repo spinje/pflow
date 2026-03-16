@@ -75,8 +75,6 @@ class LLMSettings(BaseModel):
     - Discovery commands (discovery_model)
     - Smart filtering (filtering_model)
 
-    The planner always uses Anthropic for its advanced features.
-
     Resolution order:
     - LLM nodes:  workflow params → default_model → llm CLI default → error
     - discovery:  discovery_model → default_model → auto-detect → fallback

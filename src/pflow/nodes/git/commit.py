@@ -195,7 +195,7 @@ class GitCommitNode(Node):
             shared["commit_message"] = exec_res.get("commit_message", "")
             shared["commit_status"] = "error"
             logger.error("Git commit failed", extra={"error": exec_res.get("error", "Unknown error"), "phase": "post"})
-            return "error"  # Return error to trigger repair
+            return "error"  # Return error action so workflow error handling can respond
 
         # Store the commit SHA and message in shared store for success
         shared["commit_sha"] = exec_res.get("commit_sha", "")

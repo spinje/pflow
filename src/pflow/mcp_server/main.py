@@ -22,10 +22,9 @@ def run_server() -> None:
 
     This function:
     1. Injects API keys from pflow settings into environment
-    2. Installs Anthropic model wrapper (required for planning nodes)
-    3. Registers all tools with the server
-    4. Sets up signal handlers for graceful shutdown
-    5. Runs the server with stdio transport
+    2. Registers MCP tools
+    3. Sets up signal handlers for graceful shutdown
+    4. Runs the server with stdio transport
 
     The server uses stdio transport where:
     - stdin: Receives JSON-RPC requests from the client
@@ -42,15 +41,6 @@ def run_server() -> None:
 
         inject_settings_env_vars()
         logger.info("Injected environment variables from pflow settings")
-
-    # Install Anthropic model wrapper (REQUIRED for planning nodes)
-    # This monkey-patches llm.get_model() to return AnthropicLLMModel
-    # for Claude models, enabling prompt caching and thinking tokens
-    if not os.environ.get("PYTEST_CURRENT_TEST"):
-        from pflow.planning.utils.anthropic_llm_model import install_anthropic_model
-
-        install_anthropic_model()
-        logger.info("Installed Anthropic model wrapper for planning nodes")
 
     # Register all tools before starting the server
     register_tools()

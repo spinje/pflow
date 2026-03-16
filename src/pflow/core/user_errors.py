@@ -109,12 +109,6 @@ class MCPError(UserFriendlyError):
         super().__init__(title, explanation, suggestions, technical_details)
 
 
-class PlannerError(UserFriendlyError):
-    """Error during workflow planning/generation."""
-
-    pass
-
-
 class CompilationError(UserFriendlyError):
     """Error during workflow compilation."""
 

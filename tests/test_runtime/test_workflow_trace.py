@@ -152,7 +152,6 @@ class TestWorkflowTraceCollector:
             "__private__": "should_be_filtered",
             "__llm_calls__": ["call1", "call2"],
             "__metrics__": {"key": "value"},
-            "__is_planner__": True,
             "normal_key": "keep_this",
         }
 
@@ -169,7 +168,6 @@ class TestWorkflowTraceCollector:
         assert "__private__" not in filtered_after
         assert "__llm_calls__" in filtered_after
         assert "__metrics__" in filtered_after
-        assert "__is_planner__" in filtered_after
         assert filtered_after["normal_key"] == "keep_this"
 
     def test_shared_store_filtering_internal_keys(self, collector):

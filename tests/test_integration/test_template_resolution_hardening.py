@@ -72,7 +72,7 @@ class TestIssue95Prevention:
         }
 
         # Execute workflow
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # CRITICAL ASSERTIONS: Workflow must FAIL
         assert not result.success, "Workflow should fail with unresolved template"
@@ -117,7 +117,7 @@ class TestIssue95Prevention:
             "edges": [{"from": "empty-echo", "to": "consumer", "action": "default"}],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # This should SUCCEED because stdout field exists (just empty/newline)
         # The bug in Issue #95 was when the FIELD doesn't exist at all
@@ -158,7 +158,7 @@ class TestIssue95Prevention:
             "edges": [{"from": "produces-nothing", "to": "api-call", "action": "default"}],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # CRITICAL: Must fail BEFORE executing api-call node
         assert result.success is False
@@ -192,7 +192,7 @@ class TestIssue95Prevention:
             "edges": [],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Verify workflow failed
         assert result.success is False
@@ -241,7 +241,7 @@ class TestTriStateStatus:
             "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # CRITICAL: Must be SUCCESS, not DEGRADED
         assert result.success
@@ -277,7 +277,7 @@ class TestTriStateStatus:
             "edges": [],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Static validator catches the invalid template before execution
         assert not result.success
@@ -307,7 +307,7 @@ class TestTriStateStatus:
             "edges": [],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Should fail
         assert not result.success
@@ -353,7 +353,7 @@ class TestConfigurationHierarchy:
             "edges": [],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Static validator catches it - fails before execution
         assert not result.success
@@ -378,7 +378,7 @@ class TestConfigurationHierarchy:
             "edges": [],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Should FAIL (strict mode default)
         assert not result.success
@@ -420,7 +420,7 @@ class TestMultipleTemplateErrors:
             "edges": [{"from": "node1", "to": "node2", "action": "default"}],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Static validator catches both errors before execution
         assert not result.success
@@ -456,7 +456,7 @@ class TestMultipleTemplateErrors:
             "edges": [{"from": "node1", "to": "node2", "action": "default"}],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Should fail
         assert not result.success
@@ -509,7 +509,7 @@ class TestEnhancedErrorMessages:
             "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, enable_repair=False)
+        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
         # Should fail with detailed error
         assert not result.success

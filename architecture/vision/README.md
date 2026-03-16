@@ -16,7 +16,7 @@ This directory contains strategic vision and aspirational architecture documents
 |------|---------|------------|
 | `AI-Agents-Need-Hands.md` | Marketing vision for workflow value | Presents implemented features as future possibilities |
 | `mcp-as-extension-api.md` | Future MCP-only extension philosophy | Current pflow uses hybrid approach (platform nodes + MCP) |
-| `north-star-examples.md` | Planner demonstration examples | Uses `>>` CLI syntax that was never implemented; planner is now "legacy" |
+| `north-star-examples.md` | Natural-language workflow examples | Uses `>>` CLI syntax that was never implemented |
 
 ## For AI Agents
 
@@ -24,5 +24,5 @@ Read these for design philosophy context, but **always verify technical claims a
 
 1. **Platform nodes exist**: pflow has 30+ platform nodes (shell, file, git, etc.) - not MCP-only as some vision docs suggest
 2. **CLI syntax**: pflow uses `pflow workflow.pflow.md` and `pflow saved-name`, NOT `node >> node >> node`
-3. **Planner status**: The natural language planner is functional but labeled "legacy" - agents should use CLI primitives
+3. **Natural-language workflow generation**: Treat these examples as design intent, not current CLI guidance
 4. **MCP integration**: MCP is implemented (both client and server), but as one option among several, not the sole extension mechanism

@@ -108,7 +108,6 @@ class OutputController:
         duration_ms: Optional[float],
         error_message: Optional[str],
         ignore_errors: bool,
-        is_modified: bool,
         is_error: bool,
         is_batch: bool = False,
         batch_total: Optional[int] = None,
@@ -120,7 +119,6 @@ class OutputController:
             duration_ms: Execution duration in milliseconds
             error_message: Error message for failed nodes
             ignore_errors: Whether errors are being ignored
-            is_modified: Whether node was modified during repair
             is_error: Whether this is a fatal error
             is_batch: Whether this is a batch node completion
             batch_total: Total items in batch (for batch nodes)
@@ -137,11 +135,7 @@ class OutputController:
             # Batch node: progress already showed count/status, just add timing
             if duration_ms is not None:
                 timing_text = click.style(f" {duration_ms / 1000:.1f}s", fg="green")
-                if is_modified:
-                    mod_text = click.style(" [repaired]", fg="cyan")
-                    click.echo(f"{timing_text}{mod_text}", err=True)
-                else:
-                    click.echo(timing_text, err=True)
+                click.echo(timing_text, err=True)
             else:
                 click.echo("", err=True)  # Just newline to complete the line
             return
@@ -154,11 +148,6 @@ class OutputController:
                 click.echo(f"{warning_text}{success_text}", err=True)
             else:
                 click.echo(warning_text, err=True)
-        elif is_modified and duration_ms is not None:
-            # Modified node during repair
-            success_text = click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green")
-            mod_text = click.style(" [repaired]", fg="cyan")
-            click.echo(f"{success_text}{mod_text}", err=True)
         elif duration_ms is not None:
             # Normal success
             click.echo(click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green"), err=True)
@@ -204,7 +193,6 @@ class OutputController:
             depth: int = 0,
             error_message: Optional[str] = None,
             ignore_errors: bool = False,
-            is_modified: bool = False,
             is_error: bool = False,
             # Batch progress parameters
             batch_current: Optional[int] = None,
@@ -222,7 +210,6 @@ class OutputController:
                 depth: Nesting depth for indentation
                 error_message: Error message for failed nodes
                 ignore_errors: Whether errors are being ignored (warning vs error)
-                is_modified: Whether node was modified during repair
                 is_error: Whether this is a fatal error
                 batch_current: Items completed so far (for batch_progress)
                 batch_total: Total items in batch (for batch_progress and node_complete)
@@ -240,7 +227,6 @@ class OutputController:
                     duration_ms,
                     error_message,
                     ignore_errors,
-                    is_modified,
                     is_error,
                     is_batch=is_batch,
                     batch_total=batch_total,
