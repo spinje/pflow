@@ -434,7 +434,7 @@ pflow uses **two-phase validation** to ensure template correctness:
 
 ### Phase 1: Compile-Time Validation
 
-Located: `src/pflow/runtime/template_validator.py`
+Located: `src/pflow/runtime/template_validation/validator.py`
 
 ```python
 def validate_workflow_templates(
@@ -596,7 +596,7 @@ if unresolved_templates:
 
 ### Schema-Aware Type Validation
 
-Located: `src/pflow/runtime/type_checker.py`
+Located: `src/pflow/runtime/template_validation/type_checker.py`
 
 pflow validates that template types match parameter expectations using node interface schemas.
 
