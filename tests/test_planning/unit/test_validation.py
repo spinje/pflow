@@ -84,7 +84,7 @@ class TestValidatorNode:
         # Mock validate_ir to pass
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.return_value = ([], [])
 
@@ -104,7 +104,7 @@ class TestValidatorNode:
         # Mock validate_ir to raise ValidationError
         with patch("pflow.core.ir_schema.validate_ir") as mock_validate:
             mock_validate.side_effect = Exception("Missing required field: ir_version")
-            with patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate:
+            with patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate:
                 mock_validate.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
@@ -123,7 +123,7 @@ class TestValidatorNode:
         # Mock validate_ir to raise error
         with patch("pflow.core.ir_schema.validate_ir") as mock_validate:
             mock_validate.side_effect = Exception("Missing required field: ir_version")
-            with patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate:
+            with patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate:
                 mock_validate.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
@@ -149,7 +149,7 @@ class TestValidatorNode:
 
             mock_validate.side_effect = ValidationError()
 
-            with patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate:
+            with patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate:
                 mock_validate.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
@@ -165,7 +165,7 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.return_value = (
                 [
@@ -188,7 +188,7 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.return_value = ([], [])
 
@@ -215,7 +215,7 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.return_value = ([], [])
 
@@ -256,7 +256,7 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.return_value = ([], [])
 
@@ -272,7 +272,7 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.side_effect = Exception("Template parsing failed")
 
@@ -297,7 +297,7 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),  # Mock passes
-            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
+            patch("pflow.runtime.template_validation.validate_workflow_templates") as mock_validate,
         ):
             mock_validate.return_value = ([], [])  # No errors
 

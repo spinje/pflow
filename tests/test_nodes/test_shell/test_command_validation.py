@@ -1,7 +1,7 @@
 """Test command template validation (Issue #2 defensive checks).
 
 Note: dict/list detection in shell commands is now done at template validation time
-(in template_validator.py), not at shell node runtime. These tests verify shell node
+(in template_validation/type_validation.py), not at shell node runtime. These tests verify shell node
 still handles safe cases correctly.
 """
 

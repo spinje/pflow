@@ -242,7 +242,7 @@ Do something.
         }
 
         # The template validator should resolve ${process.result} successfully
-        from pflow.runtime.template_validator import validate_workflow_templates
+        from pflow.runtime.template_validation import validate_workflow_templates
 
         errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
 
@@ -273,7 +273,7 @@ Do something.
             "edges": [{"from": "process", "to": "use_output"}],
         }
 
-        from pflow.runtime.template_validator import validate_workflow_templates
+        from pflow.runtime.template_validation import validate_workflow_templates
 
         errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
 

@@ -177,6 +177,16 @@ Do NOT create subdirectories for:
 
 If creating a subdirectory, do the split AND the move in one pass. Two passes means touching every consumer file twice for no benefit.
 
+### `__init__.py` public API design
+
+When creating a subdirectory with `__init__.py`, only re-export symbols that external consumers actually import. Audit with grep, don't guess.
+
+- **Re-export**: Functions/classes imported by code outside the package
+- **Don't re-export**: Private helpers (`_function`) used only by tests — tests import directly from the submodule (e.g., `from package.module import _helper`)
+- **Don't re-export**: Internal functions only used between files within the package
+
+The `__init__.py` IS the package's public API. Polluting it with test helpers or internal wiring defeats the purpose of having one.
+
 ## Phase 4: Write the Plan
 
 Write a detailed plan to a scratchpad (`scratchpads/<refactor-name>/PLAN.md`).
@@ -228,9 +238,10 @@ Identify dead code found during the audit. Refactoring is the right time to remo
 2. **Create new files** in dependency order (leaves first): utils → leaf modules → orchestrator
 3. **Rewrite the original file** as the orchestrator (if it stays as entry point)
 4. **Update production imports** (use dedicated subagents for mechanical changes)
-5. **Update test imports** (use dedicated subagents — one for straightforward changes, one for mock.patch sites)
-6. **Verify**: `make test && make check` — pass count should match baseline (minus any deleted dead-code tests)
-7. **Final grep**: confirm zero references to old class/function names in src/ and tests/
+5. **Delete old source files** and **verify**: `make test` — isolates source migration from test migration. All production-path tests should pass; only test files with old imports should fail.
+6. **Update test imports** (use dedicated subagents — one for straightforward changes, one for mock.patch sites)
+7. **Delete old test files** and **verify**: `make test && make check` — pass count should match baseline (minus any deleted dead-code tests)
+8. **Final grep**: confirm zero references to old class/function names in src/ and tests/
 
 ### Subagent delegation strategy
 
@@ -257,8 +268,32 @@ If tests fail, diagnose before fixing. The failure tells you what was missed.
 ```bash
 make test                    # Must match baseline (minus deleted dead-code tests)
 make check                   # ruff + mypy + deptry must pass
-grep -rn "OldClassName" src/ tests/  # Must find zero code references
 ```
+
+### Stale reference sweep
+
+Grep for ALL old path patterns across the **entire** codebase — not just `src/` and `tests/`:
+
+```bash
+# Code imports (src + tests)
+grep -rn "old_module_name" src/ tests/
+
+# CLAUDE.md files project-wide
+grep -rn "old_module_name" --include="CLAUDE.md" .
+
+# Architecture docs and code examples
+grep -rn "old_module_name" architecture/ docs/
+
+# String-based mock.patch targets (won't fail at import time!)
+grep -rn "old_module_name" tests/ --include="*.py"
+
+# Docstrings referencing old class/module names
+grep -rn "OldClassName" src/ tests/
+
+# Bare file paths in docs (e.g., "Located: src/pflow/runtime/old_file.py")
+grep -rn "old_file_name\.py" architecture/ docs/ src/ tests/
+```
+
 
 ### Migration audit
 
@@ -275,6 +310,8 @@ Constants are easy to duplicate accidentally (defined in old location AND new lo
 
 - Update the parent module's CLAUDE.md to reflect new file structure
 - If a subdirectory was created, write a focused CLAUDE.md for it
+- If test files moved to a subdirectory, write a short CLAUDE.md with source-to-test mapping and any non-obvious patterns (e.g., "each file has its own mock registry — intentional, don't extract")
+- Grep ALL other CLAUDE.md files for references to moved/renamed modules — stale references in other directories are easy to miss
 - Don't over-document — the code should be self-explanatory; the CLAUDE.md covers non-obvious relationships
 
 ---
@@ -296,6 +333,7 @@ When source files move to a subdirectory, consider whether tests should mirror t
 - Move test files to mirrored subdirectory
 - Update imports in test files
 - Add `conftest.py` if needed for shared fixtures
+- Write a short CLAUDE.md with source-to-test mapping table and any non-obvious patterns (e.g., "each file creates its own mock registry — intentional isolation, don't extract to conftest")
 
 ## Reference: Scope Management
 

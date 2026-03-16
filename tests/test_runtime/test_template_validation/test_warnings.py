@@ -8,7 +8,7 @@ Warning behavior:
 
 from unittest.mock import Mock
 
-from pflow.runtime.template_validator import ValidationWarning, validate_workflow_templates
+from pflow.runtime.template_validation import ValidationWarning, validate_workflow_templates
 
 
 def create_mock_registry_with_str_output():

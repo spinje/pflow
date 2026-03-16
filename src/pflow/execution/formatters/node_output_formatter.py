@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.validation_utils import flatten_output_structure
+from pflow.runtime.template_validation import flatten_output_structure
 
 # Constants
 MAX_DISPLAYED_FIELDS = 500  # Allow up to 500 template paths

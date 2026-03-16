@@ -23,7 +23,7 @@ from pflow.registry import Registry
 from .namespaced_wrapper import NamespacedNodeWrapper
 from .node_wrapper import TemplateAwareNodeWrapper
 from .template_resolver import TemplateResolver
-from .template_validator import ValidationWarning, extract_node_outputs, validate_workflow_templates
+from .template_validation import ValidationWarning, extract_node_outputs, validate_workflow_templates
 from .workflow_validator import prepare_inputs, validate_ir_structure
 
 # Set up module logger

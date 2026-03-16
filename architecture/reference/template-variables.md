@@ -434,7 +434,7 @@ pflow uses **two-phase validation** to ensure template correctness:
 
 ### Phase 1: Compile-Time Validation
 
-Located: `src/pflow/runtime/template_validator.py`
+Located: `src/pflow/runtime/template_validation/validator.py`
 
 ```python
 def validate_workflow_templates(
@@ -596,7 +596,7 @@ if unresolved_templates:
 
 ### Schema-Aware Type Validation
 
-Located: `src/pflow/runtime/type_checker.py`
+Located: `src/pflow/runtime/template_validation/type_checker.py`
 
 pflow validates that template types match parameter expectations using node interface schemas.
 
@@ -1598,14 +1598,15 @@ uv run pflow my-workflow
 ### Inspect Template Validation
 
 ```python
-from pflow.runtime.template_validator import TemplateValidator
+from pflow.runtime.template_validation import validate_workflow_templates
+from pflow.runtime.template_validation.validator import _extract_all_templates
 from pflow.registry import Registry
 
 registry = Registry.load()
 workflow_ir = {...}
 available_params = {"user_id": "123"}
 
-errors, warnings = TemplateValidator.validate_workflow_templates(
+errors, warnings = validate_workflow_templates(
     workflow_ir, available_params, registry
 )
 
@@ -1613,7 +1614,7 @@ print(f"Errors: {errors}")
 print(f"Warnings: {warnings}")
 
 # Extract all templates
-templates = TemplateValidator._extract_all_templates(workflow_ir)
+templates = _extract_all_templates(workflow_ir)
 print(f"Found templates: {templates}")
 ```
 

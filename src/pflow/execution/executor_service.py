@@ -343,7 +343,7 @@ class WorkflowExecutorService:
 
                 # For template errors, capture available fields (use same limit as template validator)
                 if category == "template_error":
-                    from pflow.runtime.validation_utils import MAX_DISPLAYED_FIELDS
+                    from pflow.runtime.template_validation import MAX_DISPLAYED_FIELDS
 
                     # Defensive: ensure node_output is dict-like and convert keys to strings
                     # This handles edge cases where node_output might not be a dict or keys aren't strings

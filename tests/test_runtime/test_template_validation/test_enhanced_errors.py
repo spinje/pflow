@@ -2,7 +2,7 @@
 
 from unittest.mock import Mock
 
-from pflow.runtime.template_validator import validate_workflow_templates
+from pflow.runtime.template_validation import validate_workflow_templates
 
 
 def create_mock_registry():

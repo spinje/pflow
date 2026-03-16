@@ -1,4 +1,4 @@
-"""Test the enhancement to TemplateValidator for array notation support.
+"""Test array notation support in template validation.
 
 This module tests that:
 - _extract_all_templates() finds array notation patterns
@@ -10,10 +10,8 @@ from unittest.mock import patch
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validator import (
-    _extract_all_templates,
-    validate_workflow_templates,
-)
+from pflow.runtime.template_validation import validate_workflow_templates
+from pflow.runtime.template_validation.validator import _extract_all_templates
 
 
 class TestTemplateArrayNotation:
@@ -39,7 +37,7 @@ class TestTemplateArrayNotation:
         assert len(templates) == 2
 
     def test_template_validator_finds_nested_array_notation(self):
-        """Test that TemplateValidator finds complex nested array patterns."""
+        """Test that _extract_all_templates finds complex nested array patterns."""
         workflow_ir = {
             "nodes": [
                 {
@@ -65,7 +63,7 @@ class TestTemplateArrayNotation:
         assert len(templates) == 3
 
     def test_template_validator_finds_arrays_in_lists(self):
-        """Test that TemplateValidator finds array notation within list parameters."""
+        """Test that _extract_all_templates finds array notation within list parameters."""
         workflow_ir = {
             "nodes": [
                 {

@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.type_checker import (
+from pflow.runtime.template_validation.type_checker import (
     get_parameter_type,
     infer_template_type,
     is_type_compatible,

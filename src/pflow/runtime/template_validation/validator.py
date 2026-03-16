@@ -4,10 +4,10 @@ This module is the orchestrator for template validation. It runs all
 validation passes in sequence and aggregates errors/warnings.
 
 Validation passes are split by concern into separate modules:
-- template_path_validation: Pass 5 (path existence)
-- template_type_validation: Passes 6+7 (type matching, shell command types)
+- path_validation: Pass 5 (path existence)
+- type_validation: Passes 6+7 (type matching, shell command types)
 - batch_item_validation: Pass 8 (${item.field} validation)
-- validation_utils: Shared infrastructure
+- utils: Shared infrastructure
 
 This module owns:
 - The main entry point (validate_workflow_templates)
@@ -21,19 +21,18 @@ import re
 from typing import Any, Optional
 
 from pflow.registry import Registry
-from pflow.runtime.batch_item_validation import validate_batch_item_fields
-from pflow.runtime.template_path_validation import validate_template_paths
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_type_validation import (
+from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
+from pflow.runtime.template_validation.path_validation import validate_template_paths
+from pflow.runtime.template_validation.type_validation import (
     validate_shell_command_types,
     validate_template_types,
 )
-from pflow.runtime.validation_utils import (
+from pflow.runtime.template_validation.utils import (
     ValidationWarning,
     get_node_ids,
 )
 
-# Re-export for backward compatibility (imported by compiler.py, tests)
 __all__ = ["ValidationWarning", "extract_node_outputs", "validate_workflow_templates"]
 
 logger = logging.getLogger(__name__)

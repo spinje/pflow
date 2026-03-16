@@ -11,7 +11,7 @@ import pytest
 
 from pflow.core.exceptions import WorkflowValidationError
 from pflow.core.workflow_manager import WorkflowManager
-from pflow.runtime.validation_utils import sanitize_for_display
+from pflow.runtime.template_validation import sanitize_for_display
 
 
 class TestSanitizeForDisplay:

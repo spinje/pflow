@@ -7,24 +7,19 @@ Compilation and execution infrastructure. Transforms workflow IR into executable
 ```
 src/pflow/runtime/
 ├── __init__.py              # Exports: compile_ir_to_flow(), import_node_class(), CompilationError
-├── compiler.py              # Main IR→Flow compiler (~1042 lines)
+├── compiler.py              # Main IR→Flow compiler (~1310 lines)
 ├── batch_node.py            # Batch processing wrapper (sequential/parallel)
-├── instrumented_wrapper.py  # Metrics, tracing, caching, API error detection (~1168 lines)
-├── node_wrapper.py          # Template resolution wrapper (~680 lines)
-├── namespaced_wrapper.py    # Collision prevention wrapper (~95 lines)
-├── namespaced_store.py      # Namespaced store proxy (~156 lines)
+├── instrumented_wrapper.py  # Metrics, tracing, caching, API error detection (~1249 lines)
+├── node_wrapper.py          # Template resolution wrapper (~1100 lines)
+├── namespaced_wrapper.py    # Collision prevention wrapper (~94 lines)
+├── namespaced_store.py      # Namespaced store proxy (~183 lines)
 ├── template_resolver.py     # Template variable resolution engine
-├── template_validator.py    # Validation orchestrator + output extraction (~500 lines)
-├── template_path_validation.py  # Pass 5: path existence, nested path traversal (~650 lines)
-├── template_type_validation.py  # Passes 6+7: type matching, shell command types (~350 lines)
-├── batch_item_validation.py     # Pass 8: ${item.field} validation (~250 lines)
-├── validation_utils.py          # Shared validation infrastructure (~250 lines)
+├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
 ├── workflow_executor.py     # Nested workflow executor node
 ├── workflow_trace.py        # Trace collection with thread-safe LLM interception
 ├── workflow_validator.py    # IR validation and input preparation
 ├── output_resolver.py       # Output declaration resolver
-├── error_context.py         # Upstream error context extraction
-└── type_checker.py          # Runtime type checking utilities
+└── error_context.py         # Upstream error context extraction
 ```
 
 ## Compilation Pipeline
@@ -168,55 +163,11 @@ Batch processing wrapper. **Inherits from `Node`, not PocketFlow's `BatchNode`**
 
 > For JSON auto-parsing and type coercion details, see `architecture/core-concepts/data-type-coercion.md`.
 
-### Template Validation (split across 5 files)
+### Template Validation (`template_validation/`)
 
-Pre-execution validation with rich error suggestions, split by validation concern. Each file owns both detection logic AND error formatting for its concern.
+Pre-execution validation of template variables. Extracted to its own package — see `template_validation/CLAUDE.md` for full details.
 
-**Entry point**: `validate_workflow_templates()` in `template_validator.py` — orchestrates all passes.
-
-**File structure**:
-- `template_validator.py` — Orchestrator, output extraction, template extraction, simple passes (malformed, unused inputs)
-- `template_path_validation.py` — Pass 5: path existence, namespaced output, nested path traversal + all path error formatting
-- `template_type_validation.py` — Passes 6+7: type matching + shell command type safety
-- `batch_item_validation.py` — Pass 8: `${item.field}` validation against inferred item structure
-- `validation_utils.py` — Shared: `split_template_path`, `sanitize_for_display`, `find_similar_paths`, `flatten_output_structure`, `build_paths_from_entries`, `get_node_ids`, `ValidationWarning`, display constants
-
-**Dependency graph** (no cycles):
-```
-template_validator.py (orchestrator)
-  ├── template_path_validation → validation_utils
-  ├── template_type_validation → type_checker
-  └── batch_item_validation → template_path_validation, validation_utils
-```
-
-**Public API**:
-- `validate_workflow_templates(workflow_ir, available_params, registry)` — main entry point
-- `extract_node_outputs(workflow_ir, registry)` — builds node_outputs dict (also used by compiler.py)
-- `ValidationWarning` — re-exported from validation_utils for backward compat
-
-**Key behaviors**:
-- Validates all templates have sources using registry metadata for node outputs
-- Detects unused declared inputs
-- Flattens nested output structures showing array access patterns
-- "Did you mean X?" suggestions for typos (substring matching)
-- Shows all available paths (limit 20) with types
-- **Shell command validation**: Blocks dict/list templates in shell `command` params. Fix options: access specific fields, use stdin, or use the **single-quote escape hatch**: `'${var}'`
-
-**Error format example**:
-```
-Node 'fetch-messages' (mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY)
-does not have output 'msg'
-
-Available outputs from this node:
-  - result: dict
-  - result.messages: array
-  - result.messages[0].text: string
-
-Did you mean one of these?
-  - result.messages (array)
-
-Common fix: Change ${fetch-messages.msg} to ${fetch-messages.result.messages}
-```
+**Import**: `from pflow.runtime.template_validation import validate_workflow_templates, extract_node_outputs, ValidationWarning`
 
 ## Other Components
 
