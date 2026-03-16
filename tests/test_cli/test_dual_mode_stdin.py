@@ -594,19 +594,16 @@ class TestWorkflowChaining:
         assert result.stdout.strip() == "30", f"Expected '30' but got '{result.stdout.strip()}'"
 
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
-    def test_empty_pipe_routes_empty_string(self, tmp_path, uv_exe, prepared_subprocess_env):
-        """Test that empty pipe (echo -n '') routes empty string to stdin: true input.
+    def test_empty_pipe_rejected_for_required_input(self, tmp_path, uv_exe, prepared_subprocess_env):
+        """Test that empty pipe (echo -n '') is rejected for required stdin input.
 
-        This is Unix-standard behavior: empty piped content IS valid content.
-        With FIFO-only detection, real pipes are always read regardless of content.
-        The empty string is routed to the stdin: true input.
-
-        This test uses write-file node because shell nodes may have issues with
-        empty stdin. The write-file node writes the content directly via Python.
+        Empty piped content IS routed to the stdin: true input, but required
+        inputs reject empty strings to catch silent failures (e.g., failed
+        upstream commands producing no output).
         """
         output_file = tmp_path / "output.txt"
 
-        # Workflow that writes stdin content wrapped in markers
+        # Workflow with required stdin input
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
@@ -626,7 +623,46 @@ class TestWorkflowChaining:
 
         env = prepared_subprocess_env
 
-        # Pipe empty string using printf (more portable than echo -n)
+        # Pipe empty string — should be rejected for required input
+        cmd = f"printf '' | {uv_exe} run pflow {workflow_file}"
+        result = subprocess.run(  # noqa: S602
+            cmd,
+            capture_output=True,
+            text=True,
+            shell=True,
+            env=env,
+            timeout=30,
+        )
+
+        assert result.returncode == 1, f"Should fail: stdout={result.stdout}, stderr={result.stderr}"
+        assert "empty" in result.stderr.lower()
+
+    @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
+    def test_empty_pipe_accepted_for_optional_input(self, tmp_path, uv_exe, prepared_subprocess_env):
+        """Test that empty pipe content is accepted for optional stdin inputs."""
+        output_file = tmp_path / "output.txt"
+
+        # Workflow with optional stdin input
+        workflow = {
+            "ir_version": "0.1.0",
+            "inputs": {"data": {"type": "string", "required": False, "stdin": True, "default": ""}},
+            "nodes": [
+                {
+                    "id": "write",
+                    "type": "write-file",
+                    "params": {"file_path": str(output_file), "content": "got:[${data}]"},
+                }
+            ],
+            "edges": [],
+            "start_node": "write",
+        }
+
+        workflow_file = tmp_path / "workflow.pflow.md"
+        workflow_file.write_text(ir_to_markdown(workflow))
+
+        env = prepared_subprocess_env
+
+        # Pipe empty string — should be accepted for optional input
         cmd = f"printf '' | {uv_exe} run pflow {workflow_file}"
         result = subprocess.run(  # noqa: S602
             cmd,
@@ -638,7 +674,6 @@ class TestWorkflowChaining:
         )
 
         assert result.returncode == 0, f"Failed: stdout={result.stdout}, stderr={result.stderr}"
-        # Verify empty string was routed (file contains "got:[]")
         assert output_file.exists(), "Output file should exist"
         content = output_file.read_text()
         assert content == "got:[]", f"Expected 'got:[]' but got '{content}'"

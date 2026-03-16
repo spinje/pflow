@@ -77,6 +77,46 @@ def _resolve_missing_input(
     return None, "implicit_none", False
 
 
+def _is_empty_required_string(input_spec: dict[str, Any], value: Any) -> bool:
+    """Check if a required input has been resolved to an empty string."""
+    is_required = input_spec.get("required", True)
+    return is_required and isinstance(value, str) and value == ""
+
+
+def _resolve_and_validate_missing_input(
+    input_name: str,
+    input_spec: dict[str, Any],
+    settings_env: dict[str, str],
+    errors: list[tuple[str, str, str]],
+    defaults: dict[str, Any],
+    env_param_names: set[str],
+) -> None:
+    """Resolve a missing input from fallback sources and validate the result.
+
+    Mutates errors, defaults, and env_param_names in place.
+    """
+    resolved_value, source, is_from_settings = _resolve_missing_input(input_name, input_spec, settings_env)
+    description = input_spec.get("description", "No description provided")
+
+    if source is None:
+        errors.append((
+            f"Workflow requires input '{input_name}': {description}",
+            f"inputs.{input_name}",
+            "",
+        ))
+    elif _is_empty_required_string(input_spec, resolved_value):
+        errors.append((
+            f"Required input '{input_name}' is empty (resolved from {source}): {description}",
+            f"inputs.{input_name}",
+            "Provide a non-empty value",
+        ))
+    else:
+        coerced_value, _ = _coerce_provided_input(input_name, input_spec, resolved_value)
+        defaults[input_name] = coerced_value
+        if is_from_settings:
+            env_param_names.add(input_name)
+
+
 def _coerce_provided_input(
     input_name: str,
     input_spec: dict[str, Any],
@@ -256,25 +296,19 @@ def prepare_inputs(
 
         # Check if input is provided
         if input_name not in provided_params:
-            resolved_value, source, is_from_settings = _resolve_missing_input(input_name, input_spec, settings_env)
-            if source is None:
-                # Missing required input
+            _resolve_and_validate_missing_input(input_name, input_spec, settings_env, errors, defaults, env_param_names)
+        else:
+            provided_value = provided_params[input_name]
+            if _is_empty_required_string(input_spec, provided_value):
                 description = input_spec.get("description", "No description provided")
                 errors.append((
-                    f"Workflow requires input '{input_name}': {description}",
+                    f"Required input '{input_name}' is empty: {description}",
                     f"inputs.{input_name}",
-                    "",  # No suggestion needed - agent knows how to pass parameters
+                    "Provide a non-empty value",
                 ))
-            else:
-                # Apply coercion to env/settings/defaults values too
-                # (e.g., env var "42" should become int 42 if declared type is "integer")
-                coerced_value, _ = _coerce_provided_input(input_name, input_spec, resolved_value)
-                defaults[input_name] = coerced_value
-                if is_from_settings:
-                    env_param_names.add(input_name)
-        else:
-            # Input is provided - coerce to declared type if needed
-            provided_value = provided_params[input_name]
+                continue
+
+            # Coerce to declared type if needed
             coerced_value, was_coerced = _coerce_provided_input(input_name, input_spec, provided_value)
             if was_coerced:
                 defaults[input_name] = coerced_value

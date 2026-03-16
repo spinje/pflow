@@ -200,15 +200,16 @@ class TestSettingsEnvPopulation:
         assert errors == []
         assert defaults["optional_param"] == "default_value"
 
-    def test_settings_env_with_empty_string_value(self, sample_workflow_ir: dict) -> None:
-        """Test that empty string value in settings.env is used (not skipped)."""
+    def test_settings_env_with_empty_string_value_required(self, sample_workflow_ir: dict) -> None:
+        """Test that empty string in settings.env is rejected for required inputs."""
         provided_params = {"model": "cli_model"}
-        settings_env = {"api_key": ""}  # Empty string
+        settings_env = {"api_key": ""}  # Empty string for required input
 
         errors, defaults, _env_param_names = prepare_inputs(sample_workflow_ir, provided_params, settings_env)
 
-        assert errors == []
-        assert defaults["api_key"] == ""  # Empty string is valid
+        assert len(errors) == 1
+        assert "api_key" in errors[0][0]
+        assert "empty" in errors[0][0].lower()
 
 
 class TestBackwardCompatibility:
@@ -578,8 +579,8 @@ class TestShellEnvironmentVariables:
         assert defaults["api_key"] == "shell_api_key"  # Shell beats settings
         assert defaults["branch"] == "main"
 
-    def test_shell_env_var_empty_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test that empty string in shell env var is preserved."""
+    def test_shell_env_var_empty_string_required(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that empty string in shell env var is rejected for required inputs."""
         monkeypatch.setenv("api_key", "")
 
         workflow_ir = {"inputs": {"api_key": {"required": True}}}
@@ -588,8 +589,9 @@ class TestShellEnvironmentVariables:
 
         errors, defaults, _env_param_names = prepare_inputs(workflow_ir, provided_params, settings_env)
 
-        assert errors == []
-        assert defaults["api_key"] == ""  # Empty string is valid
+        assert len(errors) == 1
+        assert "api_key" in errors[0][0]
+        assert "empty" in errors[0][0].lower()
 
     def test_shell_env_var_with_special_characters(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that special characters in shell env vars are preserved."""
