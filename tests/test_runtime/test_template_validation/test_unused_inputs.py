@@ -1,4 +1,4 @@
-"""Test suite for unused input detection in TemplateValidator.
+"""Test suite for unused input detection in template validation.
 
 This module tests the Task 17 Subtask 5 enhancement that detects when
 declared inputs are never used as template variables in the workflow.
@@ -7,7 +7,7 @@ declared inputs are never used as template variables in the workflow.
 import pytest
 
 from pflow.registry import Registry
-from pflow.runtime.template_validator import validate_workflow_templates
+from pflow.runtime.template_validation import validate_workflow_templates
 
 
 class MockRegistry(Registry):

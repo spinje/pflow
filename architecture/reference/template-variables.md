@@ -1598,14 +1598,14 @@ uv run pflow my-workflow
 ### Inspect Template Validation
 
 ```python
-from pflow.runtime.template_validator import TemplateValidator
+from pflow.runtime.template_validation import validate_workflow_templates, _extract_all_templates
 from pflow.registry import Registry
 
 registry = Registry.load()
 workflow_ir = {...}
 available_params = {"user_id": "123"}
 
-errors, warnings = TemplateValidator.validate_workflow_templates(
+errors, warnings = validate_workflow_templates(
     workflow_ir, available_params, registry
 )
 
@@ -1613,7 +1613,7 @@ print(f"Errors: {errors}")
 print(f"Warnings: {warnings}")
 
 # Extract all templates
-templates = TemplateValidator._extract_all_templates(workflow_ir)
+templates = _extract_all_templates(workflow_ir)
 print(f"Found templates: {templates}")
 ```
 

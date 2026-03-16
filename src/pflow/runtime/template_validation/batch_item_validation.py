@@ -7,9 +7,9 @@ that referenced fields actually exist on each item.
 
 from typing import Any, Optional
 
-from pflow.runtime.template_path_validation import validate_nested_path
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.validation_utils import (
+from pflow.runtime.template_validation.path_validation import validate_nested_path
+from pflow.runtime.template_validation.utils import (
     find_similar_paths,
     sanitize_for_display,
 )

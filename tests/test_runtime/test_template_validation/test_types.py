@@ -3,7 +3,7 @@
 import pytest
 
 from pflow.registry.registry import Registry
-from pflow.runtime.template_validator import validate_workflow_templates
+from pflow.runtime.template_validation import validate_workflow_templates
 
 
 @pytest.fixture

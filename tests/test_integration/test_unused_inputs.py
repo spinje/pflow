@@ -7,7 +7,7 @@ a realistic scenario where a workflow declares inputs but doesn't use them all.
 import pytest
 
 from pflow.registry import Registry
-from pflow.runtime.template_validator import validate_workflow_templates
+from pflow.runtime.template_validation import validate_workflow_templates
 
 
 class MockRegistry(Registry):

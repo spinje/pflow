@@ -9,7 +9,7 @@ import logging
 from typing import Any, Optional
 
 from pflow.registry import Registry
-from pflow.runtime.validation_utils import (
+from pflow.runtime.template_validation.utils import (
     MAX_DISPLAYED_FIELDS,
     ValidationWarning,
     build_paths_from_entries,
