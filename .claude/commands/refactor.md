@@ -288,6 +288,9 @@ grep -rn "old_module_name" tests/ --include="*.py"
 
 # Docstrings referencing old class/module names
 grep -rn "OldClassName" src/ tests/
+
+# Bare file paths in docs (e.g., "Located: src/pflow/runtime/old_file.py")
+grep -rn "old_file_name\.py" architecture/ docs/ src/ tests/
 ```
 
 
