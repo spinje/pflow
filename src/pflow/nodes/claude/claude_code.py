@@ -735,7 +735,7 @@ class ClaudeCodeNode(Node):
             ) from None
 
         # Generic error — pass through the SDK error message directly
-        raise ValueError(f"Claude Code execution failed: {error_msg}") from None
+        raise ValueError(f"Claude Code execution failed after {self.max_retries} attempts: {error_msg}") from None
 
     def _build_prompt(self, prep_res: dict[str, Any]) -> str:
         """Build the prompt for Claude Code.

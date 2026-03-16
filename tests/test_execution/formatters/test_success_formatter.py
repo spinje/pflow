@@ -518,3 +518,61 @@ class TestNonBatchNodesUnchanged:
         result = _format_execution_step(step)
 
         assert result == "  ✓ fetch (0ms) [cached]"
+
+
+class TestPricingUnavailableWarning:
+    """Tests for cost display when model pricing is unavailable."""
+
+    def _make_result_dict(
+        self,
+        pricing_available: bool = True,
+        unavailable_models: list[str] | None = None,
+        partial_cost_usd: float | None = None,
+        total_cost_usd: float | None = None,
+    ) -> dict:
+        metrics: dict = {
+            "workflow": {"duration_ms": 100, "nodes_executed": 1, "total_tokens": 10},
+            "total": {"tokens_input": 5, "tokens_output": 5, "tokens_total": 10, "cost_usd": total_cost_usd},
+        }
+        if not pricing_available:
+            metrics["total"]["pricing_available"] = False
+            metrics["total"]["unavailable_models"] = unavailable_models or []
+            if partial_cost_usd is not None:
+                metrics["total"]["partial_cost_usd"] = partial_cost_usd
+        return {
+            "success": True,
+            "status": "success",
+            "duration_ms": 100,
+            "total_cost_usd": total_cost_usd,
+            "execution": {"nodes_executed": 1, "steps": []},
+            "metrics": metrics,
+        }
+
+    def test_unknown_model_shows_warning(self):
+        """When all models lack pricing, show warning with model names."""
+        result_dict = self._make_result_dict(pricing_available=False, unavailable_models=["my-custom-model"])
+        text = format_success_as_text(result_dict)
+
+        assert "Cost unavailable" in text
+        assert "my-custom-model" in text
+
+    def test_partial_cost_shows_partial_amount(self):
+        """When some models have pricing, show partial cost with disclaimer."""
+        result_dict = self._make_result_dict(
+            pricing_available=False,
+            unavailable_models=["unknown-model"],
+            partial_cost_usd=0.03,
+        )
+        text = format_success_as_text(result_dict)
+
+        assert "$0.0300+" in text
+        assert "partial" in text
+        assert "unknown-model" in text
+
+    def test_known_model_shows_normal_cost(self):
+        """When pricing is available, show normal cost line."""
+        result_dict = self._make_result_dict(total_cost_usd=0.05)
+        text = format_success_as_text(result_dict)
+
+        assert "$0.0500" in text
+        assert "Cost unavailable" not in text

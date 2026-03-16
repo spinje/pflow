@@ -846,7 +846,7 @@ def test_generic_error_fallback(claude_node):
         claude_node.exec_fallback(prep_res, generic_error)
 
     error_msg = str(exc_info.value)
-    assert "Claude Code execution failed: Something went wrong" in error_msg
+    assert "Claude Code execution failed after 2 attempts: Something went wrong" in error_msg
 
 
 def test_no_temperature_parameter():
