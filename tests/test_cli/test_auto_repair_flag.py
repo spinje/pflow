@@ -57,7 +57,7 @@ class TestAutoRepairFlag:
 
         try:
             with (
-                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+                patch("pflow.core.workflow.validator.WorkflowValidator.validate", return_value=([], [])),
                 patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute,
             ):
                 mock_execute.return_value = MagicMock(
@@ -128,7 +128,7 @@ class TestAutoRepairFlag:
 
         try:
             with (
-                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+                patch("pflow.core.workflow.validator.WorkflowValidator.validate", return_value=([], [])),
                 patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute,
             ):
                 mock_execute.return_value = MagicMock(
@@ -188,7 +188,7 @@ class TestAutoRepairFlag:
 
         try:
             with (
-                patch("pflow.core.workflow_validator.WorkflowValidator.validate", return_value=([], [])),
+                patch("pflow.core.workflow.validator.WorkflowValidator.validate", return_value=([], [])),
                 patch("pflow.runtime.compiler.compile_ir_to_flow") as mock_compile,
             ):
                 mock_flow = MagicMock()

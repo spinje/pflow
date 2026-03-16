@@ -511,7 +511,7 @@ def _resolve_child_workflow_outputs(
     else:
         # Saved workflow name — try to load via WorkflowManager
         try:
-            from pflow.core.workflow_manager import WorkflowManager
+            from pflow.core.workflow.manager import WorkflowManager
 
             wm = WorkflowManager()
             child_ir = wm.load_ir(workflow_ref)

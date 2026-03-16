@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Demo of WorkflowManager functionality."""
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 # Sample workflow IR
 sample_workflow_ir = {

@@ -203,7 +203,7 @@ Downstream: `${process_title.result}`
 
 ### Validation Utilities (`workflow_validator.py`)
 
-**Warning**: Two `workflow_validator.py` files exist — `runtime/workflow_validator.py` (compiler-time, used here) and `core/workflow_validator.py` (pre-execution unified pipeline, 7+ external consumers). Don't confuse them.
+**Warning**: Two `workflow_validator.py` files exist — `runtime/workflow_validator.py` (compiler-time, used here) and `core/workflow/validator.py` (pre-execution unified pipeline, 7+ external consumers). Don't confuse them.
 
 - `validate_ir_structure()` — basic IR validation
 - `prepare_inputs()` — input validation, defaults, and **type coercion** (converts CLI string values to declared types)

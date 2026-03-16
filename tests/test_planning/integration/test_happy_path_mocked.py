@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning.nodes import WorkflowDiscoveryNode
 
 logger = logging.getLogger(__name__)

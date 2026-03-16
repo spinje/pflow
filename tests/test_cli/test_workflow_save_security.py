@@ -10,7 +10,7 @@ Tests validate that security measures prevent common attacks:
 import pytest
 
 from pflow.core.exceptions import WorkflowValidationError
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.runtime.template_validation import sanitize_for_display
 
 

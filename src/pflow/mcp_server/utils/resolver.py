@@ -10,7 +10,7 @@ from typing import Any
 
 from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.suggestion_utils import find_similar_items
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
 

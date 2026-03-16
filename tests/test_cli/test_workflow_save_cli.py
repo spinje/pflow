@@ -229,7 +229,7 @@ class TestWorkflowSaveCLI:
         home_pflow.mkdir(parents=True)
 
         # Create existing workflow
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
 
         wm = WorkflowManager(home_pflow)
         old_ir = {"ir_version": "0.1.0", "nodes": [], "edges": []}
@@ -265,7 +265,7 @@ class TestWorkflowSaveCLI:
         home_pflow.mkdir(parents=True)
 
         # Create existing workflow
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
 
         wm = WorkflowManager(home_pflow)
         wm.save("my-workflow", ir_to_markdown(sample_workflow_ir, title="Existing"))

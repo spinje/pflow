@@ -6,7 +6,8 @@ import pytest
 import yaml
 
 from pflow.core.markdown_parser import parse_markdown
-from pflow.core.skill_service import (
+from pflow.core.workflow.manager import WorkflowManager
+from pflow.core.workflow.skill_service import (
     _inject_or_replace_usage,
     create_skill_symlink,
     enrich_workflow,
@@ -15,7 +16,6 @@ from pflow.core.skill_service import (
     generate_usage_section,
     remove_skill,
 )
-from pflow.core.workflow_manager import WorkflowManager
 
 # Sample workflow markdown for testing
 SAMPLE_WORKFLOW_WITH_REQUIRED = """# Test Workflow
@@ -758,7 +758,7 @@ class TestReEnrichment:
         """Test that ## Usage section is restored after workflow save --force."""
         from unittest.mock import patch
 
-        from pflow.core.skill_service import re_enrich_if_skill
+        from pflow.core.workflow.skill_service import re_enrich_if_skill
 
         # Create workflows directory and workflow
         workflows_dir = tmp_path / "workflows"
@@ -800,7 +800,7 @@ class TestReEnrichment:
 
         # Patch WorkflowManager in skill_service to use our workflows_dir
         with patch(
-            "pflow.core.skill_service.WorkflowManager",
+            "pflow.core.workflow.skill_service.WorkflowManager",
             lambda workflows_dir=None: WorkflowManager(workflows_dir=workflows_dir or (tmp_path / "workflows")),
         ):
             # Call re-enrich
@@ -817,7 +817,7 @@ class TestReEnrichment:
         """Test that re-enrichment replaces ## Usage, doesn't duplicate it."""
         from unittest.mock import patch
 
-        from pflow.core.skill_service import re_enrich_if_skill
+        from pflow.core.workflow.skill_service import re_enrich_if_skill
 
         workflows_dir = tmp_path / "workflows"
         wm = WorkflowManager(workflows_dir=workflows_dir)
@@ -836,7 +836,7 @@ class TestReEnrichment:
         monkeypatch.setattr(Path, "cwd", lambda: project_dir)
 
         with patch(
-            "pflow.core.skill_service.WorkflowManager",
+            "pflow.core.workflow.skill_service.WorkflowManager",
             lambda workflows_dir=None: WorkflowManager(workflows_dir=workflows_dir or (tmp_path / "workflows")),
         ):
             # Re-enrich multiple times
@@ -853,7 +853,7 @@ class TestReEnrichment:
         """Test that re-enrich does nothing when workflow has no skill."""
         from unittest.mock import patch
 
-        from pflow.core.skill_service import re_enrich_if_skill
+        from pflow.core.workflow.skill_service import re_enrich_if_skill
 
         workflows_dir = tmp_path / "workflows"
         wm = WorkflowManager(workflows_dir=workflows_dir)
@@ -870,7 +870,7 @@ class TestReEnrichment:
         content_before = workflow_path.read_text(encoding="utf-8")
 
         with patch(
-            "pflow.core.skill_service.WorkflowManager",
+            "pflow.core.workflow.skill_service.WorkflowManager",
             lambda workflows_dir=None: WorkflowManager(workflows_dir=workflows_dir or (tmp_path / "workflows")),
         ):
             # Re-enrich should be a no-op

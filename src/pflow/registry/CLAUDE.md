@@ -54,7 +54,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 | `mcp/registrar.py` | Register/remove virtual MCP tool entries | **True** (safe) |
 | `cli/main.py` auto-sync | Clean old MCP entries before re-syncing | **True** (safe) |
 | `cli/registry.py` commands | List, search, describe, scan | Mixed — see known bugs |
-| `core/workflow_validator.py` | Validate node types exist | Default (filtered) |
+| `core/workflow/validator.py` | Validate node types exist | Default (filtered) |
 | `mcp_server/services/` | Registry service for MCP server | Default (filtered) |
 | `planning/` | Context building for planner | Default (filtered) |
 

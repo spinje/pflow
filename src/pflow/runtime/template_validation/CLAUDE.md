@@ -57,7 +57,7 @@ validator.py (orchestrator)
 | File | What it imports |
 |------|----------------|
 | `runtime/compiler.py` | `validate_workflow_templates`, `extract_node_outputs`, `ValidationWarning` |
-| `core/workflow_validator.py` | `validate_workflow_templates` (lazy) |
+| `core/workflow/validator.py` | `validate_workflow_templates` (lazy) |
 | `execution/formatters/node_output_formatter.py` | `flatten_output_structure` |
 | `execution/executor_service.py` | `MAX_DISPLAYED_FIELDS` (lazy) |
 
@@ -98,3 +98,37 @@ Passes use `is_batch_output` and `is_batch_item` to branch behavior. Workflow no
 - Shell validation has a single-quote escape hatch: `'${var}'` signals user accepts JSON coercion
 - `flatten_output_structure` shows array access patterns: `result.messages[0].text`
 - `ValidationWarning` emitted when str-type output needs JSON auto-parsing at runtime
+
+## Design Decisions
+
+### Two regex patterns for template discovery
+
+`_PERMISSIVE_PATTERN` (validator.py) and `TEMPLATE_PATTERN` (template_resolver.py) intentionally diverge:
+
+| | `_PERMISSIVE_PATTERN` (validation) | `TEMPLATE_PATTERN` (runtime) |
+|-|-------------------------------------|------------------------------|
+| Nested `${...}` in brackets | Yes: `${node[${__index__}].field}` | No: captures inner `${__index__}` only |
+| `$$` escape handling | No lookbehind | Yes: `(?<!\$)` lookbehind |
+| First-char rules | Permissive (`[\w-]*`) | Strict (`[a-zA-Z_][\w-]*`) |
+
+The validator needs to find all template-like patterns (including edge cases) to give good error messages. The resolver only needs to match well-formed templates it can actually resolve. These are different jobs — do not try to unify them.
+
+### Coalesce operands are pre-split before passes
+
+`_extract_all_templates()` splits `${a.field ?? b.field}` into individual operands before any pass sees them. Passes 5-8 validate each operand independently. This means both operands are validated even though at runtime the fallback may never execute — a deliberate tradeoff favoring early error detection over suppressing unreachable-path warnings.
+
+### Passes 5 vs 6-7 see different template sets
+
+Pass 5 (path validation) uses `_PERMISSIVE_PATTERN` via `_extract_all_templates()` with `split_template_path()` — it sees and validates nested bracket templates like `${results[${__index__}].field}`.
+
+Passes 6-7 (type validation) use `TemplateResolver.extract_variables()` which uses the strict `TEMPLATE_PATTERN` — nested bracket templates are invisible to it (only the inner `${__index__}` is captured). These templates silently skip type checking. This is acceptable because the inner variables (typically `__index__`) resolve to simple types (`int`) that don't cause type conflicts.
+
+When writing new path-traversal code, always use `split_template_path()` from utils.py — never `str.split(".")`, which breaks on dots inside nested `${...}` expressions.
+
+### Type compatibility matrix
+
+`str → dict/list` is compatible (JSON auto-parsing exists at runtime), but `str → int/float/bool` is not (no primitive coercion). Union handling is asymmetric: source unions require ALL member types to be compatible, target unions require ANY. These follow from the runtime's actual coercion capabilities.
+
+### `initial_params` is a validation boundary
+
+Path validation accepts any nested access on user parameters (`${user_param.deeply.nested.path}`) without checking deeper structure — runtime values can't be validated at compile time. Only node output paths (known structure) get full traversal validation.

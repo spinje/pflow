@@ -46,7 +46,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         result = WorkflowService.list_workflows(filter_pattern=None)
 
@@ -63,7 +63,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         result = WorkflowService.list_workflows(filter_pattern="slack")
 
@@ -81,7 +81,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         result = WorkflowService.list_workflows(filter_pattern="github")
 
@@ -102,7 +102,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         # Filter: "slack qa" should match workflows with BOTH "slack" AND "qa"
         result = WorkflowService.list_workflows(filter_pattern="slack qa")
@@ -124,7 +124,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         # No workflow has both "slack" and "github"
         result = WorkflowService.list_workflows(filter_pattern="slack github")
@@ -139,7 +139,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         # Test with different cases
         result1 = WorkflowService.list_workflows(filter_pattern="SLACK")
@@ -157,7 +157,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         # Filter with extra spaces should still work
         result = WorkflowService.list_workflows(filter_pattern="  slack   qa  ")
@@ -172,7 +172,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         # "analyzes" appears in descriptions of multiple workflows
         result = WorkflowService.list_workflows(filter_pattern="analyzes slack")
@@ -194,7 +194,7 @@ class TestWorkflowListFiltering:
         def mock_list_all(self):
             return sample_workflows
 
-        monkeypatch.setattr("pflow.core.workflow_manager.WorkflowManager.list_all", mock_list_all)
+        monkeypatch.setattr("pflow.core.workflow.manager.WorkflowManager.list_all", mock_list_all)
 
         # No workflow has both "slack" and "github"
         result = WorkflowService.list_workflows(filter_pattern="slack github")

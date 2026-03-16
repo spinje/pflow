@@ -24,7 +24,7 @@ from typing import Optional
 
 import pytest
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning.nodes import WorkflowDiscoveryNode
 
 # Set up logger for immediate failure reporting

@@ -116,7 +116,7 @@ class TestLoopDetectionIntegration:
         """Test that execution stops when repair doesn't fix the error."""
         workflow = {"ir_version": "1.0", "nodes": [{"id": "node1", "type": "shell", "params": {"command": "exit 1"}}]}
 
-        with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
+        with patch("pflow.core.workflow.validator.WorkflowValidator") as mock_validator:
             mock_validator.validate.return_value = ([], [])  # No validation errors, no warnings
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
@@ -146,7 +146,7 @@ class TestLoopDetectionIntegration:
         """Test that execution continues when errors change."""
         workflow = {"ir_version": "1.0", "nodes": [{"id": "node1", "type": "shell", "params": {}}]}
 
-        with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
+        with patch("pflow.core.workflow.validator.WorkflowValidator") as mock_validator:
             mock_validator.validate.return_value = ([], [])
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
@@ -184,7 +184,7 @@ class TestLoopDetectionIntegration:
         """Test that loop detection handles None or empty errors gracefully."""
         workflow = {"ir_version": "1.0", "nodes": []}
 
-        with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
+        with patch("pflow.core.workflow.validator.WorkflowValidator") as mock_validator:
             mock_validator.validate.return_value = ([], [])
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:
@@ -210,7 +210,7 @@ class TestLoopDetectionIntegration:
         """Test that first failure doesn't trigger loop detection."""
         workflow = {"ir_version": "1.0", "nodes": []}
 
-        with patch("pflow.core.workflow_validator.WorkflowValidator") as mock_validator:
+        with patch("pflow.core.workflow.validator.WorkflowValidator") as mock_validator:
             mock_validator.validate.return_value = ([], [])
 
             with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as mock_executor:

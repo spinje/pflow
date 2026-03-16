@@ -30,7 +30,7 @@ import yaml
 from click.testing import CliRunner
 
 from pflow.cli.main import main
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 

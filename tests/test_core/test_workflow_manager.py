@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from tests.shared.markdown_utils import ir_to_markdown
 
 

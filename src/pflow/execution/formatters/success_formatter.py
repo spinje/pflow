@@ -6,7 +6,7 @@ ensuring CLI and MCP return identical output structures.
 
 from typing import Any, Optional
 
-from pflow.core.workflow_status import WorkflowStatus
+from pflow.core.workflow.status import WorkflowStatus
 
 
 def format_execution_success(

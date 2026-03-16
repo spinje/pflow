@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from pflow.core.workflow_status import WorkflowStatus
+from pflow.core.workflow.status import WorkflowStatus
 
 from .output_interface import OutputInterface
 

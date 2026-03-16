@@ -3,7 +3,7 @@
 import pytest
 import yaml
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.executor_service import WorkflowExecutorService
 from tests.shared.markdown_utils import ir_to_markdown
 

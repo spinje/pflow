@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pflow.core.workflow_manager import WorkflowManager, WorkflowNotFoundError, WorkflowValidationError
+from pflow.core.workflow.manager import WorkflowManager, WorkflowNotFoundError, WorkflowValidationError
 
 # GATED: update_ir is dead code pending markdown format migration (Task 107).
 # The only caller (repair save handler) is gated. Skip all tests in this file.
@@ -67,7 +67,7 @@ class TestWorkflowManagerUpdateIR:
             json.dump(sample_workflow, f, indent=2)
 
         # Update the IR
-        with patch("pflow.core.workflow_manager.datetime") as mock_dt:
+        with patch("pflow.core.workflow.manager.datetime") as mock_dt:
             mock_dt.now.return_value.isoformat.return_value = "2024-01-02T12:00:00Z"
             workflow_manager.update_ir("test-workflow", new_ir)
 

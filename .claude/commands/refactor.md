@@ -128,17 +128,18 @@ Do NOT rely on subagent summaries for the file being refactored. Read it line by
 
 ```bash
 grep -rn "from <module> import" src/ tests/
-grep -rn "<ClassName>" src/ tests/  # includes mock.patch string paths
+grep -rn "from \.\.*<module> import" src/    # relative imports — easy to miss!
+grep -rn "<ClassName>" src/ tests/            # includes mock.patch string paths
 ```
 
 Categorize each consumer:
-- **Production code**: direct imports, lazy imports inside functions
+- **Production code**: direct imports, lazy imports inside functions, **relative imports** (e.g., `from ..core.module import X`)
 - **Test code**: imports, `mock.patch()` string targets, docstring references
 - **Documentation**: CLAUDE.md references, comments
 
 ### Check for existing analysis
 
-Look in `scratchpads/` for prior work. If a spec exists, verify it against the actual code — specs may be incomplete or wrong. Trust code over documentation.
+Look in `scratchpads/` for prior work. If a spec exists, **verify key claims against the actual code** — specs may be outdated or wrong. Specifically check: symbol names actually exist, import counts match reality, line numbers are current, proposed `__init__.py` re-exports match real function names. Trust code over documentation.
 
 ## Phase 3: Identify Split Boundaries
 
@@ -186,6 +187,12 @@ When creating a subdirectory with `__init__.py`, only re-export symbols that ext
 - **Don't re-export**: Internal functions only used between files within the package
 
 The `__init__.py` IS the package's public API. Polluting it with test helpers or internal wiring defeats the purpose of having one.
+
+### `__init__.py` transitive loading cost
+
+Eager imports in `__init__.py` fire whenever the *package* is imported — including via the parent `__init__.py`. If `parent/__init__.py` does `from .subpackage import X`, every eager import in `subpackage/__init__.py` loads transitively for ALL consumers of `parent/`.
+
+Before maintaining backward-compat re-exports in a parent `__init__.py`, **verify they have actual consumers**: `grep -rn "from pflow.<parent> import <symbol>" src/ tests/`. Dead re-exports add import-time cost for zero benefit.
 
 ## Phase 4: Write the Plan
 
@@ -237,29 +244,42 @@ Identify dead code found during the audit. Refactoring is the right time to remo
 1. **Baseline**: `make test && make check` — record pass count
 2. **Create new files** in dependency order (leaves first): utils → leaf modules → orchestrator
 3. **Rewrite the original file** as the orchestrator (if it stays as entry point)
-4. **Update production imports** (use dedicated subagents for mechanical changes)
-5. **Delete old source files** and **verify**: `make test` — isolates source migration from test migration. All production-path tests should pass; only test files with old imports should fail.
-6. **Update test imports** (use dedicated subagents — one for straightforward changes, one for mock.patch sites)
-7. **Delete old test files** and **verify**: `make test && make check` — pass count should match baseline (minus any deleted dead-code tests)
-8. **Final grep**: confirm zero references to old class/function names in src/ and tests/
+4. **Update production imports** — for deterministic string replacements, use `sed` with `grep -rl` (see below)
+5. **Intermediate checkpoint**: `make check` — mypy catches broken imports before you touch tests
+6. **Delete old source files** if not already removed by `git mv`
+7. **Update test imports and patch strings** — again, `sed` for deterministic replacements
+8. **Delete old test files** and **verify**: `make test && make check` — pass count should match baseline (minus any deleted dead-code tests)
+9. **Final grep**: confirm zero references to old class/function names in src/ and tests/
 
-### Subagent delegation strategy
+### Bulk replacement strategy
 
-Use subagents for mechanical import updates. Give each subagent:
-- ONE clear instruction (e.g., "change `ClassName.method(` to `method(`")
+**For deterministic string replacements** (import paths, patch strings), use `sed` directly:
+
+```bash
+grep -rl "from pflow.old.path import" src/ --include="*.py" | \
+  xargs sed -i '' 's/from pflow\.old\.path import/from pflow.new.path import/g'
+```
+
+This is faster and more reliable than subagents for simple substitutions. It can't misinterpret context, can't write to wrong files, and can't silently fail.
+
+**For transformations requiring judgment** (deciding lazy vs top-level, restructuring multi-line imports, updating code that references moved symbols in complex ways), use subagents with:
+- ONE clear instruction per subagent
 - The complete list of files to update
-- The instruction to NOT change any test logic
+- Explicit file paths at their NEW locations (after `git mv`)
+- The instruction to NOT change any logic
 
-Do NOT give subagents two simultaneous transformations (rename + change import path). That doubles the error surface per file.
+**Critical after `git mv`**: If files have been moved, subagents may read/write to old paths, recreating deleted files. Either: (a) give subagents explicit new paths, (b) delete old files before delegating, or (c) verify old files don't reappear after subagent work.
 
-### Handling unforeseen issues
+### Verifying changes applied
 
-After subagents complete, audit their work:
-- Check for stale references they may have missed
-- Check for references they changed incorrectly (e.g., importing private functions from wrong modules)
-- Run tests immediately — don't batch multiple changes before verifying
+After bulk replacements or subagent work, immediately grep for the OLD pattern:
 
-If tests fail, diagnose before fixing. The failure tells you what was missed.
+```bash
+grep -rn "old_pattern" src/ tests/ --include="*.py"
+# Must return zero matches
+```
+
+If matches remain, changes didn't apply. Don't proceed to the next phase — diagnose first.
 
 ## Phase 6: Verify Completeness
 
@@ -308,11 +328,16 @@ Constants are easy to duplicate accidentally (defined in old location AND new lo
 
 ## Phase 7: Documentation
 
-- Update the parent module's CLAUDE.md to reflect new file structure
-- If a subdirectory was created, write a focused CLAUDE.md for it
-- If test files moved to a subdirectory, write a short CLAUDE.md with source-to-test mapping and any non-obvious patterns (e.g., "each file has its own mock registry — intentional, don't extract")
+**Content placement principle**: Agents in subdirectories automatically see parent CLAUDE.md files. So:
+- **Subdirectory CLAUDE.md**: per-file non-obvious details, internal dependencies, known issues, key lessons — content only relevant when working on those files
+- **Parent CLAUDE.md**: cross-cutting concerns (error philosophy, integration map, security issues), brief pointer to subdirectory CLAUDE.md
+- Don't duplicate between the two — the hierarchy gives agents both
+
+**Checklist:**
+- Update the parent module's CLAUDE.md — remove moved-file details, replace with pointer
+- Write a focused subdirectory CLAUDE.md with the moved details
+- If test files moved, add source-to-test mapping and any non-obvious test patterns
 - Grep ALL other CLAUDE.md files for references to moved/renamed modules — stale references in other directories are easy to miss
-- Don't over-document — the code should be self-explanatory; the CLAUDE.md covers non-obvious relationships
 
 ---
 
@@ -356,6 +381,10 @@ Hard-won knowledge from real refactors. These pass code review but fail in CI, o
 - Recursive functions referencing the old class (`ClassName._flatten(...)`) must become `flatten(...)`. Easy to miss inside the function being moved.
 - `# noqa: C901` on complex functions must be preserved. Linters re-check after the move.
 - Nested closures defined inside methods reference module-level names. When moving, verify these references still resolve.
+
+**File-move traps:**
+- After `git mv`, the Edit tool can recreate deleted files at old paths if a subagent reads/writes to them. Always verify old files stay deleted after subagent work (`ls` the old paths).
+- Relative imports (`from ..module import X`) won't match absolute-path greps. Always search for both patterns.
 
 **Duplication traps:**
 - Same-name constants in different files (`MAX_DISPLAYED_FIELDS = 20` vs `= 500`) are DIFFERENT constants. Always grep project-wide before deciding where a constant lives.

@@ -114,7 +114,7 @@ def mock_compile():
 @pytest.fixture
 def mock_validate_ir():
     """Mock IR validation to always pass."""
-    with patch("pflow.core.workflow_validator.WorkflowValidator.validate") as mock:
+    with patch("pflow.core.workflow.validator.WorkflowValidator.validate") as mock:
         # Return (errors=[], warnings=[]) to indicate validation passed
         mock.return_value = ([], [])
         yield mock

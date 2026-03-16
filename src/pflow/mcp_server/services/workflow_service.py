@@ -6,7 +6,7 @@ All operations are stateless with fresh WorkflowManager instances.
 
 import logging
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 
 from .base_service import BaseService, ensure_stateless
 

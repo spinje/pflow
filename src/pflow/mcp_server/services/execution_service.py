@@ -12,8 +12,8 @@ from typing import Any
 
 from pflow.core.ir_schema import normalize_ir
 from pflow.core.metrics import MetricsCollector
-from pflow.core.workflow_manager import WorkflowManager
-from pflow.core.workflow_validator import WorkflowValidator
+from pflow.core.workflow.manager import WorkflowManager
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.null_output import NullOutput
 from pflow.execution.workflow_execution import execute_workflow
 from pflow.registry import Registry
@@ -384,7 +384,7 @@ class ExecutionService(BaseService):
         """
         from pflow.core.exceptions import WorkflowValidationError
         from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
-        from pflow.core.workflow_save_service import (
+        from pflow.core.workflow.save_service import (
             load_and_validate_workflow,
             validate_workflow_name,
         )
@@ -446,7 +446,7 @@ class ExecutionService(BaseService):
             ValueError: If save fails
         """
         from pflow.core.exceptions import WorkflowValidationError
-        from pflow.core.workflow_save_service import save_workflow_with_options
+        from pflow.core.workflow.save_service import save_workflow_with_options
         from pflow.execution.formatters.workflow_save_formatter import format_save_success
 
         try:

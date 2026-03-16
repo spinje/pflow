@@ -10,7 +10,7 @@ validation is no longer relevant since workflows are authored in markdown, not J
 
 import pytest
 
-from pflow.core.workflow_validator import WorkflowValidator
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 

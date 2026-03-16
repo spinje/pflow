@@ -29,7 +29,7 @@ class TestWorkflowSavedName:
     @pytest.fixture
     def workflow_manager(self, tmp_path, simple_workflow_ir):
         """Create WorkflowManager with a test workflow saved to disk."""
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
 
         workflows_dir = tmp_path / ".pflow" / "workflows"
         workflows_dir.mkdir(parents=True)

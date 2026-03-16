@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from pflow.core.workflow_manager import WorkflowManager
+from pflow.core.workflow.manager import WorkflowManager
 from pflow.planning.nodes import ComponentBrowsingNode
 
 # Set up logger for immediate failure reporting

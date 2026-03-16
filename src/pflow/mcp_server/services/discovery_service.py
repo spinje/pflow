@@ -33,7 +33,7 @@ class DiscoveryService(BaseService):
             Markdown formatted string with discovery results (same as CLI)
         """
         from pflow.core.llm_config import get_model_for_feature
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
         from pflow.planning.nodes import WorkflowDiscoveryNode
 
         # Create fresh instances (CRITICAL for stateless pattern)
@@ -101,7 +101,7 @@ class DiscoveryService(BaseService):
             Markdown formatted string with selected components (same as CLI)
         """
         from pflow.core.llm_config import get_model_for_feature
-        from pflow.core.workflow_manager import WorkflowManager
+        from pflow.core.workflow.manager import WorkflowManager
         from pflow.planning.nodes import ComponentBrowsingNode
 
         # Create fresh instances
