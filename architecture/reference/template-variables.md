@@ -1598,7 +1598,8 @@ uv run pflow my-workflow
 ### Inspect Template Validation
 
 ```python
-from pflow.runtime.template_validation import validate_workflow_templates, _extract_all_templates
+from pflow.runtime.template_validation import validate_workflow_templates
+from pflow.runtime.template_validation.validator import _extract_all_templates
 from pflow.registry import Registry
 
 registry = Registry.load()
