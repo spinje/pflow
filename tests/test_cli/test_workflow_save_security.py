@@ -11,16 +11,16 @@ import pytest
 
 from pflow.core.exceptions import WorkflowValidationError
 from pflow.core.workflow_manager import WorkflowManager
-from pflow.runtime.template_validator import TemplateValidator
+from pflow.runtime.validation_utils import sanitize_for_display
 
 
 class TestSanitizeForDisplay:
-    """Test _sanitize_for_display prevents log injection attacks."""
+    """Test sanitize_for_display prevents log injection attacks."""
 
     def test_sanitize_blocks_newline_injection(self):
         """Newlines must be stripped to prevent log injection."""
         malicious = "fake\n[INFO] admin logged in\n"
-        result = TemplateValidator._sanitize_for_display(malicious)
+        result = sanitize_for_display(malicious)
         assert "\n" not in result
         assert "\r" not in result
         assert result == "fake[INFO] admin logged in"
@@ -28,42 +28,42 @@ class TestSanitizeForDisplay:
     def test_sanitize_blocks_carriage_return(self):
         """Carriage returns must be stripped."""
         malicious = "node\rmalicious_override"
-        result = TemplateValidator._sanitize_for_display(malicious)
+        result = sanitize_for_display(malicious)
         assert "\r" not in result
         assert result == "nodemalicious_override"
 
     def test_sanitize_blocks_tab_characters(self):
         """Tab characters must be stripped."""
         malicious = "node\tmalicious"
-        result = TemplateValidator._sanitize_for_display(malicious)
+        result = sanitize_for_display(malicious)
         assert "\t" not in result
         assert result == "nodemalicious"
 
     def test_sanitize_blocks_vertical_tab(self):
         """Vertical tabs (\x0b) must be stripped."""
         malicious = "node\x0bmalicious"
-        result = TemplateValidator._sanitize_for_display(malicious)
+        result = sanitize_for_display(malicious)
         assert "\x0b" not in result
         assert result == "nodemalicious"
 
     def test_sanitize_blocks_form_feed(self):
         """Form feeds (\x0c) must be stripped."""
         malicious = "node\x0cmalicious"
-        result = TemplateValidator._sanitize_for_display(malicious)
+        result = sanitize_for_display(malicious)
         assert "\x0c" not in result
         assert result == "nodemalicious"
 
     def test_sanitize_truncates_long_strings(self):
         """Long strings should be truncated with ellipsis."""
         long_string = "a" * 200
-        result = TemplateValidator._sanitize_for_display(long_string, max_length=100)
+        result = sanitize_for_display(long_string, max_length=100)
         assert len(result) == 103  # 100 chars + "..."
         assert result.endswith("...")
 
     def test_sanitize_preserves_safe_characters(self):
         """Safe characters should pass through unchanged."""
         safe = "node-123_abc.xyz"
-        result = TemplateValidator._sanitize_for_display(safe)
+        result = sanitize_for_display(safe)
         assert result == safe
 
 

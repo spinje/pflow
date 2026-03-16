@@ -84,9 +84,9 @@ class TestValidatorNode:
         # Mock validate_ir to pass
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            mock_validate.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -104,8 +104,8 @@ class TestValidatorNode:
         # Mock validate_ir to raise ValidationError
         with patch("pflow.core.ir_schema.validate_ir") as mock_validate:
             mock_validate.side_effect = Exception("Missing required field: ir_version")
-            with patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator:
-                MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            with patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate:
+                mock_validate.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
                 exec_res = validator_node.exec(prep_res)
@@ -123,8 +123,8 @@ class TestValidatorNode:
         # Mock validate_ir to raise error
         with patch("pflow.core.ir_schema.validate_ir") as mock_validate:
             mock_validate.side_effect = Exception("Missing required field: ir_version")
-            with patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator:
-                MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            with patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate:
+                mock_validate.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
                 exec_res = validator_node.exec(prep_res)
@@ -149,8 +149,8 @@ class TestValidatorNode:
 
             mock_validate.side_effect = ValidationError()
 
-            with patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator:
-                MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            with patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate:
+                mock_validate.return_value = ([], [])
 
                 prep_res = validator_node.prep(shared)
                 exec_res = validator_node.exec(prep_res)
@@ -165,9 +165,9 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = (
+            mock_validate.return_value = (
                 [
                     "Template error: Unknown variable {{unknown_var}}",
                     "Unused input: input_file",
@@ -188,9 +188,9 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            mock_validate.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -215,9 +215,9 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            mock_validate.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -256,9 +256,9 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])
+            mock_validate.return_value = ([], [])
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -272,9 +272,9 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.side_effect = Exception("Template parsing failed")
+            mock_validate.side_effect = Exception("Template parsing failed")
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)
@@ -297,9 +297,9 @@ class TestValidatorNode:
 
         with (
             patch("pflow.core.ir_schema.validate_ir"),  # Mock passes
-            patch("pflow.runtime.template_validator.TemplateValidator") as MockTemplateValidator,
+            patch("pflow.runtime.template_validator.validate_workflow_templates") as mock_validate,
         ):
-            MockTemplateValidator.validate_workflow_templates.return_value = ([], [])  # No errors
+            mock_validate.return_value = ([], [])  # No errors
 
             prep_res = validator_node.prep(shared)
             exec_res = validator_node.exec(prep_res)

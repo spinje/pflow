@@ -7,7 +7,7 @@ a realistic scenario where a workflow declares inputs but doesn't use them all.
 import pytest
 
 from pflow.registry import Registry
-from pflow.runtime.template_validator import TemplateValidator
+from pflow.runtime.template_validator import validate_workflow_templates
 
 
 class MockRegistry(Registry):
@@ -112,7 +112,7 @@ def test_unused_inputs_detected_before_execution(tmp_path):
         # Note: unused_option and another_unused are not provided but have defaults or are optional
     }
 
-    errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, registry)
+    errors, _warnings = validate_workflow_templates(workflow_ir, initial_params, registry)
 
     # Should detect the unused inputs
     assert len(errors) == 1
@@ -177,7 +177,7 @@ def test_workflow_with_all_inputs_used(tmp_path):
         "backup_file": str(tmp_path / "backup.txt"),
     }
 
-    errors, _warnings = TemplateValidator.validate_workflow_templates(workflow_ir, initial_params, registry)
+    errors, _warnings = validate_workflow_templates(workflow_ir, initial_params, registry)
 
     # Should have no errors since all inputs are used
     assert len(errors) == 0
@@ -224,7 +224,7 @@ def test_unused_inputs_with_nested_workflows(tmp_path):
 
     initial_params = {"config_path": str(tmp_path / "config.json")}
 
-    errors, _warnings = TemplateValidator.validate_workflow_templates(parent_workflow, initial_params, registry)
+    errors, _warnings = validate_workflow_templates(parent_workflow, initial_params, registry)
 
     # Should detect the unused debug flag
     assert any("unused_debug_flag" in error for error in errors)

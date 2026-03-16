@@ -1,7 +1,7 @@
 """Test the enhancement to TemplateValidator for array notation support.
 
 This module tests that:
-- TemplateValidator._extract_all_templates() finds array notation patterns
+- _extract_all_templates() finds array notation patterns
 - TemplateResolver.TEMPLATE_PATTERN matches array notation correctly
 - Workflows with array templates work end-to-end
 """
@@ -10,14 +10,17 @@ from unittest.mock import patch
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validator import TemplateValidator
+from pflow.runtime.template_validator import (
+    _extract_all_templates,
+    validate_workflow_templates,
+)
 
 
 class TestTemplateArrayNotation:
     """Test array notation support in template validation and resolution."""
 
     def test_template_validator_finds_simple_array_notation(self):
-        """Test that TemplateValidator._extract_all_templates() finds ${node[0].field} patterns."""
+        """Test that _extract_all_templates() finds ${node[0].field} patterns."""
         workflow_ir = {
             "nodes": [
                 {
@@ -28,7 +31,7 @@ class TestTemplateArrayNotation:
             ]
         }
 
-        templates = TemplateValidator._extract_all_templates(workflow_ir)
+        templates = _extract_all_templates(workflow_ir)
 
         # Should find both array notation templates
         assert "api.items[0].name" in templates
@@ -53,7 +56,7 @@ class TestTemplateArrayNotation:
             ]
         }
 
-        templates = TemplateValidator._extract_all_templates(workflow_ir)
+        templates = _extract_all_templates(workflow_ir)
 
         # Should find all nested array templates
         assert "github.repos[0].issues[0].title" in templates
@@ -75,7 +78,7 @@ class TestTemplateArrayNotation:
             ]
         }
 
-        templates = TemplateValidator._extract_all_templates(workflow_ir)
+        templates = _extract_all_templates(workflow_ir)
 
         # Should find all templates in list
         assert "data[0].value" in templates
@@ -158,7 +161,7 @@ class TestTemplateArrayNotation:
             mock_metadata.side_effect = get_metadata
 
             # Should validate - array notation is in templates
-            errors, _warnings = TemplateValidator.validate_workflow_templates(
+            errors, _warnings = validate_workflow_templates(
                 workflow_ir,
                 {},  # No external params needed
                 registry,
@@ -185,7 +188,7 @@ class TestTemplateArrayNotation:
             ]
         }
 
-        templates = TemplateValidator._extract_all_templates(workflow_ir)
+        templates = _extract_all_templates(workflow_ir)
 
         # Should extract both, validation happens at runtime
         assert "api.data[0]" in templates
@@ -208,7 +211,7 @@ class TestTemplateArrayNotation:
             ]
         }
 
-        templates = TemplateValidator._extract_all_templates(workflow_ir)
+        templates = _extract_all_templates(workflow_ir)
 
         # Should find all template types
         assert "node.field.subfield" in templates

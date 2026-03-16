@@ -179,10 +179,10 @@ class WorkflowValidator:
             - errors: List of template validation errors
             - warnings: List of ValidationWarning objects
         """
-        from pflow.runtime.template_validator import TemplateValidator
+        from pflow.runtime.template_validator import validate_workflow_templates
 
         try:
-            errors, warnings = TemplateValidator.validate_workflow_templates(workflow_ir, extracted_params, registry)
+            errors, warnings = validate_workflow_templates(workflow_ir, extracted_params, registry)
             return (errors, warnings)
         except Exception as e:
             return ([f"Template validation error: {e!s}"], [])
