@@ -3128,7 +3128,7 @@ def workflow_command(
         try:
             ver = pkg_version("pflow-cli")
         except Exception:
-            ver = "0.9.0"
+            ver = "0.10.0"
         click.echo(f"pflow version {ver}")
         ctx.exit(0)
 

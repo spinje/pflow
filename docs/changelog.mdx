@@ -5,6 +5,122 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="March 2026" description="v0.10.0" tags={["New releases", "Improvements", "Bug fixes", "Breaking changes"]}>
+  ## Branch convergence
+
+  Workflows now support branch convergence. When downstream nodes need to reference "whichever branch ran" after a conditional split, you can use the new coalesce operator (`??`) or optional inputs in code nodes to handle skipped branches.
+
+  `````markdown
+  ### summarize
+  - type: llm
+  - prompt: Result was: ${branch-high.stdout ?? branch-low.stdout}
+  `````
+
+  <Tip>
+    The coalesce operator checks if the root node actually executed. If `branch-high` was skipped, it falls through to `branch-low`. If the node *did* execute but you misspelled the field (e.g., `stddout`), it catches the typo and raises an error instead of silently falling through.
+  </Tip>
+
+  **Highlights**
+  - Added the `??` coalesce operator for template syntax (`${a.stdout ?? b.stdout}`). The resolver tries each operand left-to-right and skips branches that did not execute.
+  - Coalesce is supported in all template contexts: inline strings, shell commands, LLM prompts, input dicts, workflow output sources, and batch items.
+  - Python code nodes now accept `Optional[T]` or `T | None` input annotations. If the source branch didn't execute, `None` is injected automatically instead of raising a runtime error.
+
+  ## Nested workflows
+
+  Workflow nodes now look and behave like every other node type. You pass parameters as regular inputs, and child outputs are exposed via the standard namespace system.
+
+  `````markdown
+  ### process-document
+  - type: workflow
+  - workflow: ./child.pflow.md
+  - title: "Hello World"
+  - body: ${read-file.content}
+  `````
+
+  <Note>
+    Child workflow inputs are validated before execution starts. If you miss a required input or provide the wrong parameter name, the parent workflow fails immediately with an error listing the child's declared inputs.
+  </Note>
+
+  **Highlights**
+  - Unified `workflow` parameter handles both file paths and saved workflow names.
+  - Non-reserved parameters become child inputs.
+  - If the child workflow declares `## Outputs`, they are exposed to the parent via standard dot notation (`${node_id.output_name}`).
+  - Fixed relative path resolution so `./child.pflow.md` always resolves from the parent workflow's directory, even across deep nesting levels.
+  - The template validator now statically resolves child workflow outputs to catch typos during compilation.
+
+  ## LLM reasoning and cost tracking
+
+  You can now control reasoning and thinking depth across all LLM providers using a unified interface. pflow translates your settings to the provider-specific parameters — Anthropic's `thinking_budget`, OpenAI's `reasoning_effort`, Gemini's thinking config.
+
+  `````markdown
+  ### analyze-data
+  - type: llm
+  - model: claude-sonnet-4-5
+  - reasoning_effort: high
+  - prompt: Analyze this dataset...
+  `````
+
+  **Highlights**
+  - Added `reasoning_effort` (xhigh, high, medium, low, minimal, none) and `reasoning_max_tokens` (direct token budget) to the LLM node.
+  - Added a `model_options` parameter to the LLM node as an escape hatch for provider-specific fields.
+  - Unified LLM cost access: `${node.llm_usage.cost_usd}` now works in workflow templates for both standard LLM and Claude Code nodes.
+  - LLM costs are computed at execution time, making `cost_usd` available in the shared store immediately after each node runs.
+  - The Claude Code node's redundant `_claude_metadata` output was removed; all metadata is consolidated into `llm_usage`.
+
+  ## Validation and execution robustness
+
+  Several compile-time and runtime edge cases around batch processing, validation depth, and parallel execution have been fixed.
+
+  **Highlights**
+  - The template validator now infers the internal structure of batch items based on the upstream batch source, catching invalid `${item.field}` references at compile time with "did you mean?" suggestions.
+  - Validation now recurses into nested dictionaries and lists (such as the `inputs` dict on code nodes) to catch typos and non-existent forward references.
+  - Required workflow inputs now strictly fail validation when provided as empty strings.
+  - Batch nodes now return an "error" action on partial failures when `error_handling: continue` is set, enabling proper `on-error` routing for partial batch failures.
+  - Fixed a bug where the validator blocked batch processing entirely on nested workflow nodes.
+  - Resolved a `_thread.RLock` pickle error that caused parallel batch processing to crash at runtime.
+
+  **Other**
+  - Added `--timeout` and `--sse-timeout` flags to `pflow mcp add` so custom timeout values are preserved in config files.
+
+  <Accordion title="Breaking changes">
+    ### Removal of planning module and repair system
+    The built-in natural language planning module and auto-repair systems have been removed (~40,000 lines of code). AI agents handle planning directly — pflow provides the runtime, validation, and execution primitives they compose.
+    - Removed CLI flags: `--trace-planner`, `--planner-timeout`, `--planner-model`, `--auto-repair`, `--cache-planner`, `--save/--no-save`, `--no-update`, and `--generate-metadata`.
+    - Component and workflow discovery features have been preserved as plain functions for agents to query available resources.
+
+    ### Nested workflow API
+    - The `workflow_ref` and `workflow_name` parameters have been consolidated into a single `workflow` parameter.
+    - `param_mapping` and `output_mapping` have been removed entirely. Pass arguments directly as inputs, and access outputs via standard dot notation.
+    - `isolated` and `scoped` storage modes have been removed.
+
+    <CodeGroup>
+      ```yaml Before (v0.9.0)
+      ### process
+      - type: workflow
+      - workflow_ref: ./child.pflow.md
+      - param_mapping:
+          text: ${source.text}
+      - output_mapping:
+          summary: child_summary
+      ```
+
+      ```yaml After (v0.10.0)
+      ### process
+      - type: workflow
+      - workflow: ./child.pflow.md
+      - text: ${source.text}
+      # Outputs are automatically mapped to ${process.summary}
+      ```
+    </CodeGroup>
+
+    ### Unresolvable output errors
+    When a workflow output source references a node that didn't execute (e.g., a branch not taken) and no `??` coalesce operator is used, it now raises an `OutputResolutionError` with a precise diagnostic message. Previously, these unresolvable outputs were silently dropped, causing confusing downstream failures in nested workflows.
+
+    ### Removed registry run timeout flag
+    The `--timeout` flag on the `pflow registry run` command has been removed as it was redundant. Timeouts can be passed directly as a per-node parameter (e.g., `timeout=30`).
+  </Accordion>
+</Update>
+
 <Update label="March 2026" description="v0.9.0" tags={["New releases", "Improvements", "Bug fixes", "Breaking changes"]}>
   ## Conditional branching and loops
 

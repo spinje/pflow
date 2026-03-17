@@ -1,5 +1,26 @@
 # Changelog
 
+## v0.10.0 (2026-03-17)
+
+- Removed the experimental natural language planning module, workflow repair system, and associated CLI flags (e.g., `--trace-planner`, `--auto-repair`) [#122](https://github.com/spinje/pflow/pull/122) ([Task 92](.taskmaster/tasks/task_92/task-review.md))
+- Removed `param_mapping`, `output_mapping`, `isolated`, and `scoped` storage modes from nested workflows in favor of a simplified parameters-as-inputs API [#101](https://github.com/spinje/pflow/pull/101) ([Task 59](.taskmaster/tasks/task_59/task-review.md))
+- Removed the duplicate `_claude_metadata` output from the Claude Code node, consolidating all token and cost metadata into a unified `llm_usage` output [#124](https://github.com/spinje/pflow/pull/124)
+- Removed the unused `--timeout` flag from the `pflow registry run` command [#106](https://github.com/spinje/pflow/pull/106)
+- Changed nested workflows to use a unified `workflow:` parameter (accepting both file paths and saved names), where child outputs are automatically exposed to the parent namespace [#101](https://github.com/spinje/pflow/pull/101) ([Task 59](.taskmaster/tasks/task_59/task-review.md))
+- Changed documentation terminology to replace "re-planning" with "repeated workflow generation", reflecting the removal of the built-in planner
+- Added support for branch convergence in conditional workflows via the `??` coalesce operator in templates and optional inputs (`str | None`) on code nodes [#109](https://github.com/spinje/pflow/pull/109)
+- Added unified reasoning and thinking control for the LLM node (`reasoning_effort`, `reasoning_max_tokens`, `model_options`), mapping automatically to provider-specific parameters like Anthropic's `thinking_budget` or OpenAI's `reasoning_effort` [#99](https://github.com/spinje/pflow/pull/99)
+- Added compile-time validation for `${item.field}` references inside batch nodes, providing actionable errors when referencing invalid fields before execution [#117](https://github.com/spinje/pflow/pull/117)
+- Added per-node LLM cost computation (`cost_usd`) at execution time for both LLM and Claude Code nodes, making it accessible in the shared store and workflow templates [#113](https://github.com/spinje/pflow/pull/113), [#124](https://github.com/spinje/pflow/pull/124)
+- Added `--timeout` and `--sse-timeout` CLI flags to `pflow mcp add` and ensured timeout settings are properly preserved in configuration files [#106](https://github.com/spinje/pflow/pull/106)
+- Added a new debugging script and documentation section for analyzing workflow execution traces locally (`scripts/analyze-trace/analyze.py`)
+- Fixed workflow output resolution to raise an `OutputResolutionError` with per-variable diagnosis instead of silently dropping unresolvable sources [#115](https://github.com/spinje/pflow/pull/115) ([Task 128](.taskmaster/tasks/task_128/task-review.md))
+- Fixed the `??` coalesce operator silently failing when used in workflow `outputs` declarations and batch `items` templates [#112](https://github.com/spinje/pflow/pull/112) ([Task 128](.taskmaster/tasks/task_128/task-review.md))
+- Fixed template validation to correctly recurse into nested dictionary and list parameters (such as code node `inputs`), catching hidden forward references and typos [#110](https://github.com/spinje/pflow/pull/110) ([Task 128](.taskmaster/tasks/task_128/task-review.md))
+- Fixed an issue where the template validator blocked batch processing on workflow nodes and resolved parallel execution deepcopy failures [#104](https://github.com/spinje/pflow/pull/104)
+- Fixed batch node to return an "error" action on partial item failures when `error_handling: continue` is set, enabling proper on-error routing
+- Fixed workflow validation to properly reject required inputs when they are provided as empty strings
+
 ## v0.9.0 (2026-03-14)
 
 - Added conditional branching to workflows. Nodes can now route execution based on errors (`- on-error: node-id`) or static and dynamic data-driven decisions (`- next: node-id` in markdown, `next: str = "node-id"` in Python code nodes). Includes parse-time validation to prevent silent fall-through in branch targets. [#96](https://github.com/spinje/pflow/pull/96) ([Task 38](.taskmaster/tasks/task_38/task-review.md))
