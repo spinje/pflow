@@ -232,7 +232,7 @@ class TestLoopExecution:
     def test_loop_guard_raises_at_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When a node always loops back to itself, MaxNodeVisitsError is raised."""
         # Lower the limit to keep the test fast
-        monkeypatch.setattr("pflow.runtime.instrumented_wrapper.MAX_NODE_VISITS", 5)
+        monkeypatch.setattr("pflow.runtime.wrappers.instrumented_wrapper.MAX_NODE_VISITS", 5)
 
         ir = {
             "nodes": [
@@ -263,7 +263,7 @@ class TestLoopExecution:
         nodes would be cached after the first iteration and return stale
         actions forever — never reaching the exit condition.
         """
-        monkeypatch.setattr("pflow.runtime.instrumented_wrapper.MAX_NODE_VISITS", 20)
+        monkeypatch.setattr("pflow.runtime.wrappers.instrumented_wrapper.MAX_NODE_VISITS", 20)
 
         ir = {
             "nodes": [

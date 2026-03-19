@@ -6,7 +6,7 @@ against expected parameter types from node metadata.
 
 import pytest
 
-from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 
 class DummyNode:

@@ -7,7 +7,7 @@ text to propagate to node execution.
 
 import pytest
 
-from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 
 class DummyNode:

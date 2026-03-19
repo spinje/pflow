@@ -9,7 +9,7 @@ import json
 import pytest
 
 from pflow.pocketflow import Node
-from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 
 class SimpleNode(Node):

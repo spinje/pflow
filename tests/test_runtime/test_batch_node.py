@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from pflow.runtime.batch_node import PflowBatchNode
+from pflow.runtime.wrappers.batch_node import PflowBatchNode
 
 
 class MockInnerNode:

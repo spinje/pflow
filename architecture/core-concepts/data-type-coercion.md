@@ -101,7 +101,7 @@ Every location in pflow where automatic JSON parsing or type coercion occurs:
 
 ### Point 3: Node Wrapper Target-Side Coercion (GOOD)
 
-**Location**: `src/pflow/runtime/node_wrapper.py:827-842`
+**Location**: `src/pflow/runtime/wrappers/template_wrapper.py:827-842`
 
 **When it fires**: After template resolution, if the resolved value is a string and the target node's interface declares the parameter as `dict`, `list`, `object`, or `array`.
 
@@ -113,7 +113,7 @@ Every location in pflow where automatic JSON parsing or type coercion occurs:
 
 ### Point 4: Batch Node Items Parse (GOOD)
 
-**Location**: `src/pflow/runtime/batch_node.py:262-271`
+**Location**: `src/pflow/runtime/wrappers/batch_node.py:262-271`
 
 **When it fires**: Batch items template resolves to a string (typically from shell stdout).
 

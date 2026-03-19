@@ -67,8 +67,8 @@ class TestInstantiateNodes:
         node = nodes["node1"]
 
         # With namespacing and instrumentation enabled by default, nodes are wrapped multiple times
-        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+        from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
 
         # Node may be wrapped with InstrumentedNodeWrapper (in real execution) or just NamespacedNodeWrapper (in tests)
         if isinstance(node, InstrumentedNodeWrapper):
@@ -124,8 +124,8 @@ class TestInstantiateNodes:
         assert all(key in nodes for key in ["node1", "node2", "node3"])
 
         # With namespacing, nodes are wrapped (possibly multiple times)
-        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+        from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
 
         # Helper to get the NamespacedNodeWrapper (may be wrapped by InstrumentedNodeWrapper)
         def get_namespaced_wrapper(node):
@@ -192,8 +192,8 @@ class TestInstantiateNodes:
         node = nodes["node1"]
 
         # With namespacing, node is wrapped - get inner node
-        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+        from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
 
         # Helper to get the NamespacedNodeWrapper (may be wrapped by InstrumentedNodeWrapper)
         if isinstance(node, NamespacedNodeWrapper):
@@ -253,8 +253,8 @@ class TestInstantiateNodes:
         node = nodes["node1"]
 
         # With namespacing, node is wrapped - get inner node
-        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
+        from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
 
         # Helper to get the NamespacedNodeWrapper (may be wrapped by InstrumentedNodeWrapper)
         if isinstance(node, NamespacedNodeWrapper):

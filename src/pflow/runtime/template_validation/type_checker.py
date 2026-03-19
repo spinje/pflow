@@ -16,7 +16,7 @@ from pflow.registry.registry import Registry
 #
 #   Direction 1: str → dict/list (auto-parse feature)
 #     Allows: ${shell.stdout} (type: str) → values (type: list) parameter
-#     Runtime behavior (see node_wrapper.py:746-780):
+#     Runtime behavior (see wrappers/template_wrapper.py):
 #     - Simple templates (${var}) with JSON strings auto-parse to dict/list
 #     - Complex templates ("text ${var}") stay as strings (escape hatch)
 #     - Auto-parsing only happens when:

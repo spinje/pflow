@@ -524,7 +524,7 @@ Warns if declared inputs are never used:
 
 ### Phase 2: Runtime Validation
 
-Located: `src/pflow/runtime/node_wrapper.py`
+Located: `src/pflow/runtime/wrappers/template_wrapper.py`
 
 Runtime validation happens **after** template resolution, detecting:
 
