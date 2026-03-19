@@ -3,10 +3,6 @@ description: Identify and resolve task ambiguities before implementation
 argument-hint: [task-id]
 ---
 
-# Task Ambiguity Resolution - Meta-Prompt for AI Agents
-
-This command instructs an AI agent to identify and resolve ambiguities for a pflow task before implementation.
-
 ## Inputs
 
 Inputs: $ARGUMENTS
