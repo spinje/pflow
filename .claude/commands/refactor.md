@@ -57,6 +57,19 @@ File size is just one symptom. Look deeper:
 - **Self-describing structure**: Does `ls` on a directory communicate the architecture? File names should cluster by concern (shared prefixes like `template_*validation*.py`).
 - **Isolation of concerns**: Can an agent modify one concern without understanding others? If adding a new validation pass requires understanding the wrapper chain, the module boundaries are wrong. Each concern should be a "context island" an agent can load independently.
 
+### Scenario analysis — measure context loading cost
+
+The most powerful assessment technique: pick 5-6 real tasks an agent would perform on this module (bug fixes, feature additions, debugging) and trace which files each task requires. For each scenario, classify every file as MUST-READ, SCAN, or NOT-NEEDED.
+
+This turns subjective "should we restructure?" into quantitative evidence:
+- **Within-file noise ratio**: Agent loads 1,300 lines but needs 140 → 9:1 waste. Extraction fixes this.
+- **Between-file scanning cost**: Agent must scan 17 filenames to find the 3 relevant ones. Subdirectories fix this.
+- **Cross-concern isolation**: No scenario should require reading files from two different concerns. If it does, the boundary is wrong.
+
+Use a subagent to run the analysis — give it the scenarios and the file list, let it trace the dependencies. You synthesize the results into a recommendation.
+
+The key insight: within-file bloat is usually worse than between-file confusion. Extractions are the 80%, subdirectories are the 20%. But they compose — doing both together avoids touching consumers twice.
+
 ### Investigate cross-module issues with subagents
 
 When the initial survey reveals smells that cross module boundaries — imports reaching into other modules' internals, functions that seem misplaced, coupling patterns — launch `pflow-codebase-searcher` subagents **in parallel** to investigate. Don't burn your own context window tracing import chains across the whole codebase.
@@ -170,6 +183,8 @@ A subdirectory earns its keep when:
 - 5+ cohesive files that change together for the same reason
 - Enough internal complexity to warrant a dedicated CLAUDE.md
 - External consumers would benefit from a clean `__init__.py` re-export API
+
+**Cohesion trap**: Don't measure cohesion by import coupling alone. Files that barely import from each other can still be highly cohesive if they share an architectural concept (e.g., wrapper chain), a protocol (e.g., `_run(shared)` interception), or a single consumer that assembles them. Import coupling is a narrow proxy — conceptual cohesion matters more for agent navigability and CLAUDE.md scoping.
 
 Do NOT create subdirectories for:
 - Categories ("utils/", "helpers/") — these become dumping grounds
@@ -330,6 +345,12 @@ grep -rn "repairable\|triggers repair\|planner" src/ tests/ --include="*.py" --i
 
 This is a separate pass from the import sweep. Do it after imports are clean.
 
+### Naming review
+
+After all moves are complete, review every filename in the new structure. Names that were fine in the old context may be wrong in the new one. For example, `node_wrapper.py` was acceptable at the `runtime/` level, but inside a `wrappers/` directory it's generic — every file there wraps nodes. It should be `template_wrapper.py`.
+
+Ask for each file: "If I saw only this filename in `ls` output, would I know what it does?" If the answer is "it could be any of several files," the name is too generic for its new context.
+
 ### Migration audit
 
 Use a subagent to verify every item from the Phase 4 mapping exists in exactly one target file:
@@ -387,6 +408,8 @@ Refactors expand. "Split one file" becomes "should we use subdirectories?" becom
 
 The wrong move is expanding silently — doing more than asked without acknowledging the scope change.
 
+**Blast radius as a scoping metric:** Count external `src/` consumers for each file group. Files with zero external consumers (only consumed within their own module + tests) have small blast radius — do them first. Files with many external consumers (imported by CLI, execution, MCP server) have large blast radius — separate session. This gives a concrete, defensible answer to "how do we scope this?" rather than relying on gut feel about complexity.
+
 ## Reference: Gotchas That Break Refactors
 
 Hard-won knowledge from real refactors. These pass code review but fail in CI, or worse, fail silently.
@@ -400,6 +423,8 @@ Hard-won knowledge from real refactors. These pass code review but fail in CI, o
 **File-move traps:**
 - After `git mv`, the Edit tool can recreate deleted files at old paths if a subagent reads/writes to them. Always verify old files stay deleted after subagent work (`ls` the old paths).
 - Relative imports (`from ..module import X`) won't match absolute-path greps. Always search for both patterns.
+- **`from src.pflow.X` imports**: Some test files use `from src.pflow.module` instead of `from pflow.module`. Your `sed` patterns for `from pflow.X` won't match these. Always grep for BOTH `from pflow\.` AND `from src\.pflow\.` during consumer audits. This has tripped multiple agents.
+- **`make check` needs two runs** after relative import changes: ruff auto-fixes import ordering on the first run (exit code 1), then passes clean on the second. Don't panic at the first failure — re-run immediately.
 
 **Duplication traps:**
 - Same-name constants in different files (`MAX_DISPLAYED_FIELDS = 20` vs `= 500`) are DIFFERENT constants. Always grep project-wide before deciding where a constant lives.

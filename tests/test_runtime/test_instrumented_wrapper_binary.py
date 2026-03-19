@@ -130,7 +130,7 @@ class TestInstrumentedWrapperBinarySupport:
         warning = shared["__warnings__"]["api_node"]
         assert "Resource not found" in warning or "API request failed" in warning
 
-    def testunwrap_mcp_response_with_non_dict(self):
+    def test_unwrap_mcp_response_with_non_dict(self):
         """Test unwrap_mcp_response handles non-dict correctly."""
         # Test with various non-dict types
         assert unwrap_mcp_response("string") is None
@@ -139,7 +139,7 @@ class TestInstrumentedWrapperBinarySupport:
         assert unwrap_mcp_response(None) is None
         assert unwrap_mcp_response(b"bytes") is None
 
-    def testextract_error_code_with_non_dict(self):
+    def test_extract_error_code_with_non_dict(self):
         """Test extract_error_code handles non-dict safely."""
         # Should return None for non-dict inputs
         assert extract_error_code("string") is None
@@ -147,7 +147,7 @@ class TestInstrumentedWrapperBinarySupport:
         assert extract_error_code(None) is None
         assert extract_error_code([]) is None
 
-    def testextract_error_message_with_non_dict(self):
+    def test_extract_error_message_with_non_dict(self):
         """Test extract_error_message handles non-dict safely."""
         # Should return None for non-dict inputs
         assert extract_error_message("string") is None
