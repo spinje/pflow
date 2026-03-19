@@ -236,9 +236,9 @@ class TestNestedTemplateResolution:
         assert resolved["nested_empty"]["sub"] == {}
         assert resolved["nested_empty"]["items"] == []
 
-    def test_node_wrapper_integration(self):
-        """Test that node wrapper properly handles nested template params."""
-        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+    def test_template_wrapper_integration(self):
+        """Test that template wrapper properly handles nested template params."""
+        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
         # Create a mock node
         class MockNode:

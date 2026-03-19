@@ -1,6 +1,11 @@
 """Test InstrumentedWrapper with non-dict outputs (binary data case)."""
 
-from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
+from pflow.runtime.wrappers.api_warning_detector import (
+    extract_error_code,
+    extract_error_message,
+    unwrap_mcp_response,
+)
+from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
 
 
 class MockNode:
@@ -126,38 +131,29 @@ class TestInstrumentedWrapperBinarySupport:
         assert "Resource not found" in warning or "API request failed" in warning
 
     def test_unwrap_mcp_response_with_non_dict(self):
-        """Test _unwrap_mcp_response handles non-dict correctly."""
-        mock_node = MockNode()
-        wrapper = InstrumentedNodeWrapper(mock_node, "test")
-
+        """Test unwrap_mcp_response handles non-dict correctly."""
         # Test with various non-dict types
-        assert wrapper._unwrap_mcp_response("string") is None
-        assert wrapper._unwrap_mcp_response(123) is None
-        assert wrapper._unwrap_mcp_response([1, 2, 3]) is None
-        assert wrapper._unwrap_mcp_response(None) is None
-        assert wrapper._unwrap_mcp_response(b"bytes") is None
+        assert unwrap_mcp_response("string") is None
+        assert unwrap_mcp_response(123) is None
+        assert unwrap_mcp_response([1, 2, 3]) is None
+        assert unwrap_mcp_response(None) is None
+        assert unwrap_mcp_response(b"bytes") is None
 
     def test_extract_error_code_with_non_dict(self):
-        """Test _extract_error_code handles non-dict safely."""
-        mock_node = MockNode()
-        wrapper = InstrumentedNodeWrapper(mock_node, "test")
-
+        """Test extract_error_code handles non-dict safely."""
         # Should return None for non-dict inputs
-        assert wrapper._extract_error_code("string") is None
-        assert wrapper._extract_error_code(123) is None
-        assert wrapper._extract_error_code(None) is None
-        assert wrapper._extract_error_code([]) is None
+        assert extract_error_code("string") is None
+        assert extract_error_code(123) is None
+        assert extract_error_code(None) is None
+        assert extract_error_code([]) is None
 
     def test_extract_error_message_with_non_dict(self):
-        """Test _extract_error_message handles non-dict safely."""
-        mock_node = MockNode()
-        wrapper = InstrumentedNodeWrapper(mock_node, "test")
-
+        """Test extract_error_message handles non-dict safely."""
         # Should return None for non-dict inputs
-        assert wrapper._extract_error_message("string") is None
-        assert wrapper._extract_error_message(123) is None
-        assert wrapper._extract_error_message(None) is None
-        assert wrapper._extract_error_message([]) is None
+        assert extract_error_message("string") is None
+        assert extract_error_message(123) is None
+        assert extract_error_message(None) is None
+        assert extract_error_message([]) is None
 
     def test_http_binary_response_scenario(self):
         """Test realistic scenario: HTTP node returning binary response as string."""

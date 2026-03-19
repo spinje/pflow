@@ -259,9 +259,9 @@ class TestEndToEndCompilation:
 
         # The wrapping order is: TemplateAwareNodeWrapper -> NamespacedNodeWrapper -> InstrumentedNodeWrapper
         # So the outermost wrapper is InstrumentedNodeWrapper
-        from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-        from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
-        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+        from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
+        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
         assert isinstance(node, InstrumentedNodeWrapper)
 

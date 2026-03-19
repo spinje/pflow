@@ -20,11 +20,11 @@ from pflow.core.validation_utils import get_parameter_validation_error, is_valid
 from pflow.pocketflow import BaseNode, Flow
 from pflow.registry import Registry
 
-from .namespaced_wrapper import NamespacedNodeWrapper
-from .node_wrapper import TemplateAwareNodeWrapper
 from .template_resolver import TemplateResolver
 from .template_validation import ValidationWarning, extract_node_outputs, validate_workflow_templates
 from .workflow_validator import prepare_inputs, validate_ir_structure
+from .wrappers.namespaced_wrapper import NamespacedNodeWrapper
+from .wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -709,7 +709,7 @@ def _create_single_node(
     # NOT to namespace: shared["node_id"]["item"] = x
     batch_config = node_data.get("batch")
     if batch_config:
-        from pflow.runtime.batch_node import PflowBatchNode
+        from pflow.runtime.wrappers.batch_node import PflowBatchNode
 
         logger.debug(
             f"Wrapping node '{node_id}' for batch processing",
@@ -728,7 +728,7 @@ def _create_single_node(
     # - Metrics collection (if metrics_collector is provided)
     # - Trace collection (if trace_collector is provided)
     # The wrapper is lightweight and only adds overhead when features are actually used
-    from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
+    from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
 
     logger.debug(
         f"Wrapping node '{node_id}' for instrumentation",

@@ -222,7 +222,7 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 | Compiler (`runtime/compiler.py`) | validate_ir, validation_utils, SettingsManager | IR validation, param security, env loading |
 | Execution (`execution/`) | WorkflowValidator, OutputController, WorkflowManager | Validation phase, display, metadata updates |
 | Registry (`registry/`) | SettingsManager | Node filtering at load time |
-| Runtime (`runtime/instrumented_wrapper.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |
+| Runtime (`runtime/wrappers/instrumented_wrapper.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |
 | MCP Server (`mcp_server/`) | workflow_save_service, suggestion_utils, security_utils | Save ops, suggestions, error sanitization |
 
 ## Critical Issues

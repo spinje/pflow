@@ -9,8 +9,8 @@ Related bug: Shell node stderr not surfaced in error messages
 
 import pytest
 
-from pflow.runtime.batch_node import PflowBatchNode
-from pflow.runtime.error_context import (
+from pflow.runtime.wrappers.batch_node import PflowBatchNode
+from pflow.runtime.wrappers.error_context import (
     extract_node_ids_from_template,
     get_upstream_stderr,
 )

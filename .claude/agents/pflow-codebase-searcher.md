@@ -99,7 +99,7 @@ All node communication flows through the **shared store** using semantic keys. T
 
 **Node lifecycle**: All nodes inherit from `pocketflow.Node` (which extends `BaseNode` with retry logic). Lifecycle: `prep(shared)` → `exec(prep_result)` → `post(shared, prep_result, exec_result)`. Nodes return action strings (`"default"` for success, `"error"` for failure) to determine the next node in the flow.
 
-**Shared store**: Central communication hub. Nodes read inputs and write outputs using semantic keys. `runtime/namespaced_store.py` provides collision-safe namespacing via `runtime/namespaced_wrapper.py`.
+**Shared store**: Central communication hub. Nodes read inputs and write outputs using semantic keys. `runtime/wrappers/namespaced_store.py` provides collision-safe namespacing via `runtime/wrappers/namespaced_wrapper.py`.
 
 **Template variables**: `${variable}` syntax resolved at runtime from node inputs and shared store. `${step_id.output_key}` for cross-node references (e.g., `${read_code.content}` where `read_code` is the step's ID in the workflow). Supports dot-path traversal (`${step.nested.field}`) and array indices (`${results[0].field}`). Auto-parses JSON strings during nested access (Task 105). Type preservation for inline objects (Task 103).
 
@@ -203,7 +203,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | Skill management in one file | `core/workflow/skill_service.py` (logic) + `cli/skills.py` (CLI commands) |
 | Security in node code | `core/security_utils.py` (parameter masking, sensitive detection) |
 | Rerun command in CLI | `cli/rerun_display.py` (builds safe rerun commands, masking secrets) |
-| Batch as a node type | `runtime/batch_node.py` (wrapper around any node for list iteration) |
+| Batch as a node type | `runtime/wrappers/batch_node.py` (wrapper around any node for list iteration) |
 | Agent instructions in docs | `cli/resources/` (generated instruction text for AI agents) |
 | Design rationale/specs | `architecture/` subdirectories (not in code or tasks — see CLAUDE.md list above) |
 | User-facing documentation | `docs/` (Mintlify site, not `architecture/`) |
@@ -219,7 +219,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | **Two workflow validators** | `core/workflow/validator.py` (pre-execution, unified 5-layer) vs `runtime/workflow_validator.py` (used internally by compiler). |
 | **File nodes** | Not 1:1 type-to-file — `nodes/file/` has separate files: read_file, write_file, copy_file, move_file, delete_file. |
 | **Git vs GitHub** | `nodes/git/` (local git CLI operations) vs `nodes/github/` (GitHub API calls via HTTP). |
-| **Batch processing** | Not a node type — `runtime/batch_node.py` wraps any node for list iteration. |
+| **Batch processing** | Not a node type — `runtime/wrappers/batch_node.py` wraps any node for list iteration. |
 | **LLM node** | Uses `llm` library (Simon Willison's), not direct OpenAI/Anthropic API. Model selection via `core/llm_config.py`. |
 
 ## Conflict & Ambiguity Handling

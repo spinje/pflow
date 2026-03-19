@@ -7,7 +7,7 @@ from unittest.mock import ANY, Mock, patch
 import pytest
 
 from pflow.pocketflow import Node
-from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
+from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
 
 
 class SimpleTestNode(Node):

@@ -28,8 +28,8 @@ import platform
 
 import pytest
 
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 from src.pflow.nodes.shell.shell import ShellNode
-from src.pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
 
 # Size that reliably exceeds pipe buffer on all platforms
 # macOS: 16KB, Linux: 64KB - we use 20KB (just above macOS minimum)

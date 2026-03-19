@@ -8,18 +8,13 @@ Compilation and execution infrastructure. Transforms workflow IR into executable
 src/pflow/runtime/
 ├── __init__.py              # Exports: compile_ir_to_flow(), import_node_class(), CompilationError
 ├── compiler.py              # Main IR→Flow compiler (~1310 lines)
-├── batch_node.py            # Batch processing wrapper (sequential/parallel)
-├── instrumented_wrapper.py  # Metrics, tracing, caching, API error detection (~1249 lines)
-├── node_wrapper.py          # Template resolution wrapper (~1100 lines)
-├── namespaced_wrapper.py    # Collision prevention wrapper (~94 lines)
-├── namespaced_store.py      # Namespaced store proxy (~183 lines)
 ├── template_resolver.py     # Template variable resolution engine
+├── wrappers/                # Execution wrapper chain (see wrappers/CLAUDE.md)
 ├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
 ├── workflow_executor.py     # Nested workflow executor node
 ├── workflow_trace.py        # Trace collection with thread-safe LLM interception
 ├── workflow_validator.py    # IR validation and input preparation
-├── output_resolver.py       # Output declaration resolver
-└── error_context.py         # Upstream error context extraction
+└── output_resolver.py       # Output declaration resolver
 ```
 
 ## Compilation Pipeline
@@ -43,96 +38,7 @@ src/pflow/runtime/
 
 ## Wrapper Architecture
 
-### Application Order (CRITICAL)
-
-```python
-node = node_class()                              # 1. Base node
-node = TemplateAwareNodeWrapper(node, ...)       # 2. Template resolution (conditional)
-node = NamespacedNodeWrapper(node, ...)          # 3. Namespacing (if enabled)
-node = PflowBatchNode(node, ...)                 # 4. Batch processing (if batch config)
-node = InstrumentedNodeWrapper(node, ...)        # 5. Instrumentation (ALWAYS applied)
-```
-
-**Order constraints**:
-- Template wrapper only applied if params contain `${...}` templates
-- Batch wrapper only applied if node has `batch` config in IR
-- **Batch wrapper MUST be outside namespace** — injects item alias at root level
-- Instrumentation is ALWAYS outermost
-
-### _run() Interception Chain
-
-```
-InstrumentedNodeWrapper._run()
-  ├─ Check cache, setup callbacks
-  └─ Call: inner_node._run()
-       ↓
-  PflowBatchNode._run() [if batch configured]
-  ├─ For each item: create isolated context, execute inner node
-  └─ Capture LLM usage from each item context before discarding
-       ↓
-  NamespacedNodeWrapper._run()
-  └─ Call: inner_node._run(NamespacedSharedStore)
-       ↓
-  TemplateAwareNodeWrapper._run()
-  ├─ Resolve templates (including ${item} from batch)
-  └─ Call: inner_node._run()
-       ↓
-  ActualNode._run()
-```
-
-### set_params() Flow
-
-```
-InstrumentedNodeWrapper.set_params()
-  └─> NamespacedNodeWrapper (delegates via __getattr__)
-      └─> TemplateAwareNodeWrapper.set_params()
-          ├─ Separates template/static params
-          └─> ActualNode.set_params(static_only)
-```
-
-### InstrumentedNodeWrapper (`instrumented_wrapper.py`)
-
-Outermost wrapper. Provides:
-- **Checkpoint system**: MD5-based configuration caching (skip re-execution on resume)
-- **API warning detection**: 3-tier priority system with 73 validation + 20 resource patterns. **Unwraps MCP nested responses** (JSON string `result`, `data` field, HTTP `response`+`status_code`) before checking. **When error matches both validation and resource patterns, defaults to validation** (validation wins).
-- **LLM usage capture**: Token tracking and cost attribution
-- **Progress callbacks**: Real-time execution feedback via OutputInterface
-- **Cache hit tracking**: Records which nodes used cache in `shared["__cache_hits__"]`
-
-### NamespacedNodeWrapper (`namespaced_wrapper.py`)
-
-Automatic collision prevention:
-- Redirects writes to `shared[node_id][key]`
-- **Reads check both namespace and root level** (so nodes can read upstream data)
-- Special keys (`__*__`) bypass namespacing for framework coordination
-- Transparent to nodes — they don't know about namespacing
-
-### TemplateAwareNodeWrapper (`node_wrapper.py`)
-
-Template resolution at runtime:
-- Separates template vs static parameters at `set_params()` time
-- Resolves `${variable}` syntax during `_run()`
-- **Bidirectional type coercion**: (1) str→dict/list auto-parse when expected type is structured, (2) dict/list→str auto-serialize via `coerce_to_declared_type` when expected type is str. Both use registry interface metadata. This enables shell→MCP and MCP→shell patterns.
-- Partial resolution detection via set intersection (Task 85)
-- **Strict mode** (default): Template/type errors are fatal ValueError
-- **Permissive mode**: Warnings only, stores errors in `shared["__template_errors__"]`
-- **Params temporarily mutated**: `inner_node.params` is swapped to resolved params during `_run()`, restored in `finally` block. Critical for understanding parallel batch execution.
-
-### PflowBatchNode (`batch_node.py`)
-
-Batch processing wrapper. **Inherits from `Node`, not PocketFlow's `BatchNode`** — avoids `self.cur_retry` race condition in parallel mode by using local retry variables instead.
-
-- Sequential and parallel execution modes
-- Isolated item context (shallow copy of shared store per item)
-- Deep copies node chain for parallel mode (thread safety). **Collectors (metrics/trace) are NOT deep-copied** — shared across all batch copies.
-- Per-item retry logic with configurable wait
-- `fail_fast` or `continue` error handling modes. **fail_fast is best-effort for parallel**: already-running LLM/HTTP calls can't be interrupted.
-- **`items` can be an inline array** (not just a template reference) — resolved via `resolve_nested()`
-- **Auto-JSON parsing**: If items template resolves to a string, tries `json.loads()`. Enables shell→batch patterns.
-- **`__index__`**: 0-based index injected into each item's shared store — nodes can know which item they're processing
-- **`item` is a reserved field** in batch results: inner node output `item` key is silently overwritten with original batch input (warning logged). Potential data loss.
-
-**Critical — LLM cost tracking**: Batch initializes `__llm_calls__` in `prep()` and captures `llm_usage` from each item's isolated context via `_capture_item_llm_usage()`. Captures from both root (`item_shared["llm_usage"]`) and namespaced (`item_shared[node_id]["llm_usage"]`) locations. Without this, LLM costs are lost when item context is discarded.
+Multi-layer wrapper chain for template resolution, namespacing, batch processing, and instrumentation. See `wrappers/CLAUDE.md` for full details including application order, interception chain, and per-wrapper documentation.
 
 ## Template System
 
@@ -215,19 +121,9 @@ Downstream: `${process_title.result}`
 
 `populate_declared_outputs()` — maps namespaced outputs to root level based on workflow output declarations. Raises `OutputResolutionError` (from `core/user_errors.py`) for non-coalesce output sources that cannot be resolved (e.g., node didn't execute on the taken branch). Coalesce expressions (`??`) where all operands are absent are silently skipped — this is the expected pattern for branch-dependent outputs.
 
-### Error Context (`error_context.py`)
+### Error Context (`wrappers/error_context.py`)
 
-Extracts diagnostic context from upstream nodes when downstream fails. Surfaces stderr from shell nodes referenced in template variables.
-
-```
-Batch items must be an array, got str. Template '${extract.stdout}' resolved to: ''
-
-  ⚠️  Upstream node 'extract' stderr:
-     grep: invalid option -- P
-     usage: grep [-abcdDEFGHhIiJLlMmnOopqRSsUVvwXxZz] ...
-```
-
-Used by `batch_node.py` (batch item resolution errors) and `node_wrapper.py` (unresolved template errors).
+Extracts diagnostic context from upstream nodes when downstream fails. See `wrappers/CLAUDE.md`.
 
 ## Reserved Shared Store Keys (Canonical Reference)
 
@@ -316,9 +212,9 @@ Cache used when: node in `completed_nodes` AND config hash matches AND no error 
 
 Key runtime modules used outside `runtime/`:
 - **`TemplateResolver`** (`template_resolver.py`): Used by `cli/read_fields.py`, `execution/formatters/`, `mcp_server/services/` — not runtime-internal only.
-- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `node_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `runtime/workflow_validator.py`.
-- **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `node_wrapper.py`, `batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
-- **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `instrumented_wrapper.py` and `batch_node.py` for progress callback indentation depth.
+- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `wrappers/template_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `runtime/workflow_validator.py`.
+- **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `wrappers/template_wrapper.py`, `wrappers/batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
+- **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `wrappers/instrumented_wrapper.py` and `wrappers/batch_node.py` for progress callback indentation depth.
 
 ## Gotchas
 

@@ -9,7 +9,7 @@ Related bug: Shell node stderr not surfaced in error messages
 
 import pytest
 
-from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 
 class TestNodeWrapperUpstreamStderr:

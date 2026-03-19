@@ -79,7 +79,8 @@ from typing import Any
 from pflow.core.json_utils import try_parse_json
 from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 from pflow.pocketflow import Node
-from pflow.runtime.template_resolver import TemplateResolver
+
+from ..template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,7 @@ class PflowBatchNode(Node):
         """
         if isinstance(self.items_template, str):
             # Lazy import to keep error path lightweight - only loaded when errors occur
-            from pflow.runtime.error_context import get_upstream_stderr
+            from .error_context import get_upstream_stderr
 
             upstream_context = get_upstream_stderr(self.items_template, shared)
             if upstream_context:

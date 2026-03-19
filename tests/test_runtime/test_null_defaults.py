@@ -128,7 +128,7 @@ class TestNullDefaults:
         """
         from unittest.mock import MagicMock
 
-        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
         # Create a mock inner node
         mock_node = MagicMock()
@@ -180,7 +180,7 @@ class TestNullDefaults:
         """
         from unittest.mock import MagicMock
 
-        from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
         # Create a mock inner node
         mock_node = MagicMock()

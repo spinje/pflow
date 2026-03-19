@@ -13,10 +13,10 @@ import pytest
 from pflow.pocketflow import Node
 from pflow.registry.registry import Registry
 from pflow.runtime import compile_ir_to_flow
-from pflow.runtime.batch_node import PflowBatchNode
-from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
-from pflow.runtime.namespaced_wrapper import NamespacedNodeWrapper
-from pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.wrappers.batch_node import PflowBatchNode
+from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 
 class ValueNode(Node):

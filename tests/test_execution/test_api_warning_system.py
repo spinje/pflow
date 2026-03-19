@@ -4,7 +4,8 @@ import json
 from unittest.mock import Mock
 
 from pflow.execution.executor_service import WorkflowExecutorService
-from pflow.runtime.instrumented_wrapper import InstrumentedNodeWrapper
+from pflow.runtime.wrappers.api_warning_detector import detect_api_warning
+from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
 
 
 class TestCriticalAPIWarningScenarios:
@@ -37,8 +38,6 @@ class TestCriticalAPIWarningScenarios:
 
     def test_graphql_http_200_with_errors(self):
         """Test GraphQL returning HTTP 200 with errors (common GitHub API case)."""
-        wrapper = InstrumentedNodeWrapper(Mock(), "github-graphql")
-
         shared = {
             "github-graphql": {
                 "response": {"errors": [{"message": "Repository not found"}], "data": None},
@@ -46,18 +45,16 @@ class TestCriticalAPIWarningScenarios:
             }
         }
 
-        warning = wrapper._detect_api_warning(shared)
+        warning = detect_api_warning("github-graphql", shared)
         assert warning == "API error: Repository not found"
 
     def test_http_4xx_not_checked(self):
         """Test that HTTP 4xx/5xx are NOT checked (node already returns error)."""
-        wrapper = InstrumentedNodeWrapper(Mock(), "api-call")
-
         # HTTP node with 404 - should not trigger warning
         # because the node itself returns "error" action
         shared = {"api-call": {"response": {"message": "Not found"}, "status_code": 404}}
 
-        warning = wrapper._detect_api_warning(shared)
+        warning = detect_api_warning("api-call", shared)
         assert warning is None, "Should not check 4xx responses (node handles it)"
 
     def test_no_false_positive_on_null_error(self):
@@ -66,8 +63,6 @@ class TestCriticalAPIWarningScenarios:
         This was a real bug - MCP responses include 'error': null for successful
         calls, which triggered our pattern #8 incorrectly.
         """
-        wrapper = InstrumentedNodeWrapper(Mock(), "mcp-node")
-
         # Exact structure from real MCP success response
         mcp_success = {
             "successful": True,
@@ -77,19 +72,16 @@ class TestCriticalAPIWarningScenarios:
 
         shared = {"mcp-node": {"result": json.dumps(mcp_success)}}
 
-        warning = wrapper._detect_api_warning(shared)
+        warning = detect_api_warning("mcp-node", shared)
         assert warning is None, f"Should not detect warning for successful response with error:null, got: {warning}"
 
         # Also test direct dict with null error
         shared = {"api": {"success": True, "error": None, "data": {"result": "success"}}}
-        wrapper2 = InstrumentedNodeWrapper(Mock(), "api")
-        warning = wrapper2._detect_api_warning(shared)
+        warning = detect_api_warning("api", shared)
         assert warning is None, "Should not trigger on null error field"
 
     def test_common_api_patterns(self):
         """Test the most common real-world API error patterns."""
-        wrapper = InstrumentedNodeWrapper(Mock(), "api")
-
         # The new implementation is more conservative - it only blocks repair for clear resource errors
         # Validation errors are allowed through for repair attempts
         critical_patterns = [
@@ -113,7 +105,7 @@ class TestCriticalAPIWarningScenarios:
 
         for data, should_warn in critical_patterns:
             shared = {"api": data}
-            warning = wrapper._detect_api_warning(shared)
+            warning = detect_api_warning("api", shared)
 
             if should_warn:
                 assert warning is not None, f"Should detect error in: {data}"
@@ -127,14 +119,12 @@ class TestIntegrationWithExistingSystems:
 
     def test_checkpoint_compatibility(self):
         """Test that API warnings are detected and would affect checkpointing."""
-        wrapper = InstrumentedNodeWrapper(Mock(), "api-call")
-
         # Test that permission denied is detected as a resource error
         shared = {
             "api-call": {"ok": False, "error": "permission denied"},
         }
 
-        warning = wrapper._detect_api_warning(shared)
+        warning = detect_api_warning("api-call", shared)
 
         # Should detect the warning
         assert warning is not None, "Should detect permission denied as API error"
@@ -149,13 +139,11 @@ class TestIntegrationWithExistingSystems:
         When an API error is detected (e.g., channel_not_found), the
         warning should surface clearly in execution state.
         """
-        wrapper = InstrumentedNodeWrapper(Mock(), "api")
-
         shared = {
             "api": {"ok": False, "error": "channel_not_found"},
         }
 
-        warning = wrapper._detect_api_warning(shared)
+        warning = detect_api_warning("api", shared)
         assert warning is not None, "Should detect channel_not_found as API error"
 
 

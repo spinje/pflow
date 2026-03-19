@@ -1,7 +1,7 @@
 """Test shell node stdin parameter handling with template variables."""
 
+from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 from src.pflow.nodes.shell.shell import ShellNode
-from src.pflow.runtime.node_wrapper import TemplateAwareNodeWrapper
 
 
 class TestShellStdinParameterFallback:

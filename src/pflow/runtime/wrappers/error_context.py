@@ -11,7 +11,7 @@ node type that writes stderr to the shared store.
 import re
 from typing import Any
 
-from pflow.runtime.template_resolver import TemplateResolver
+from ..template_resolver import TemplateResolver
 
 
 def extract_node_ids_from_template(template: str) -> set[str]:

@@ -242,7 +242,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_keys_write_to_root(self):
         """Special (__*__) keys should be written to root, not namespaced."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -259,7 +259,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_multiple_special_keys_write_to_root(self):
         """Multiple special keys should all go to root."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -281,7 +281,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_regular_keys_still_namespaced(self):
         """Regular keys should still be namespaced after special key fix."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -302,7 +302,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_key_read_from_root(self):
         """Special keys should be read from root."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {
             "__execution__": {"root": "value"},
@@ -315,7 +315,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_key_contains_check(self):
         """Contains check should work for special keys at root."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {
             "__execution__": {"data": "value"},
@@ -330,7 +330,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_key_setdefault(self):
         """setdefault should work with special keys at root."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -348,7 +348,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_mixed_special_and_regular_keys(self):
         """Mix of special and regular keys should work correctly."""
-        from pflow.runtime.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
