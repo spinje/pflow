@@ -1500,7 +1500,7 @@ def _handle_workflow_error(
 
     # Save trace even on error
     if workflow_trace:
-        trace_file = workflow_trace.save_to_file()
+        trace_file = workflow_trace.save_to_file(llm_calls=shared_storage.get("__llm_calls__"))
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     ctx.exit(1)
@@ -1547,7 +1547,7 @@ def _handle_workflow_success(
 
     # Save trace if requested (AFTER handling output so JSON is included)
     if workflow_trace:
-        trace_file = workflow_trace.save_to_file()
+        trace_file = workflow_trace.save_to_file(llm_calls=shared_storage.get("__llm_calls__"))
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Only show success message if we didn't produce output
@@ -1790,7 +1790,7 @@ def _handle_workflow_exception(
 
     # Save trace on error if requested
     if workflow_trace:
-        trace_file = workflow_trace.save_to_file()
+        trace_file = workflow_trace.save_to_file(llm_calls=shared_storage.get("__llm_calls__"))
         _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     ctx.exit(1)

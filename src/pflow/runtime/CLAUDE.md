@@ -192,6 +192,7 @@ Downstream: `${process_title.result}`
 - **Max depth enforcement** via `_pflow_depth` (default 10)
 - **Relative paths resolve from parent workflow directory** via `_pflow_workflow_file`, not CWD
 - **Child input validation**: compares provided params against child's `## Inputs`, gives actionable error with "You provided X, Available inputs: Y"
+- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` tuple defines which `__dunder__` keys flow from parent to child storage in mapped mode (`__registry__`, `__llm_calls__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`). Execution-scoped keys (`__execution__`, `__cache_hits__`, `__template_errors__`) are deliberately NOT propagated — children get their own.
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
