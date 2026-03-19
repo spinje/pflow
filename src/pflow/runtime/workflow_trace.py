@@ -385,8 +385,13 @@ class WorkflowTraceCollector:
 
         return "success"
 
-    def save_to_file(self) -> Path:
+    def save_to_file(self, llm_calls: list[dict[str, Any]] | None = None) -> Path:
         """Save trace to JSON file in ~/.pflow/debug/.
+
+        Args:
+            llm_calls: Authoritative LLM call data from shared["__llm_calls__"].
+                When provided, llm_summary is built from this instead of scanning
+                trace events. This ensures sub-workflow LLM calls are counted.
 
         Returns:
             Path to the saved trace file
@@ -433,15 +438,26 @@ class WorkflowTraceCollector:
             "nodes": self.events,
         }
 
-        # Add summary of LLM calls if present
-        llm_events = [e for e in self.events if "llm_call" in e]
-        if llm_events:
-            total_tokens = sum(e["llm_call"].get("total_tokens", 0) for e in llm_events)
-            trace_data["llm_summary"] = {
-                "total_calls": len(llm_events),
-                "total_tokens": total_tokens,
-                "models_used": list({e["llm_call"].get("model", "unknown") for e in llm_events}),
-            }
+        # Add summary of LLM calls if present.
+        # Prefer authoritative __llm_calls__ (includes sub-workflow calls),
+        # fall back to scanning trace events (backward compat).
+        if llm_calls is not None:
+            if llm_calls:
+                total_tokens = sum(c.get("total_tokens", 0) for c in llm_calls)
+                trace_data["llm_summary"] = {
+                    "total_calls": len(llm_calls),
+                    "total_tokens": total_tokens,
+                    "models_used": list({c.get("model", "unknown") for c in llm_calls}),
+                }
+        else:
+            llm_events = [e for e in self.events if "llm_call" in e]
+            if llm_events:
+                total_tokens = sum(e["llm_call"].get("total_tokens", 0) for e in llm_events)
+                trace_data["llm_summary"] = {
+                    "total_calls": len(llm_events),
+                    "total_tokens": total_tokens,
+                    "models_used": list({e["llm_call"].get("model", "unknown") for e in llm_events}),
+                }
 
         # Add JSON output if it was generated (e.g., when --output-format json was used)
         if self.json_output is not None:

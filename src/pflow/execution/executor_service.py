@@ -180,7 +180,8 @@ class WorkflowExecutorService:
         # Note: stdin data is now routed to workflow inputs via stdin: true
         # in the workflow IR, handled by _validate_and_prepare_workflow_params
 
-        # Initialize metrics tracking
+        # Initialize cross-cutting accumulators
+        shared_store["__warnings__"] = {}
         if metrics_collector:
             shared_store["__llm_calls__"] = []
             metrics_collector.record_workflow_start()

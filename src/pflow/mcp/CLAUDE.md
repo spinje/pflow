@@ -39,7 +39,7 @@ mcp-servers.json   lists tools+schemas   registry entries         for stateful s
 | Pool creation | `execution/executor_service.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
 | Pool consumption | `nodes/mcp/node.py:prep()` → `pool.call_tool()` | Falls back to `asyncio.run()` if no pool (e.g., `pflow registry run`) |
 | Pool shutdown | `execution/executor_service.py` finally block | Always runs; safe to call multiple times |
-| Nested workflows | Do NOT propagate `__mcp_pool__` | Each gets its own pool from its own `executor_service` call |
+| Nested workflows | `__mcp_pool__` propagated from parent | Child workflows reuse parent's pool via `WorkflowExecutor._PROPAGATED_KEYS` (thread-safe, no shutdown risk) |
 
 ## Critical Details
 

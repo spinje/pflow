@@ -636,3 +636,103 @@ class TestWorkflowTraceCollector:
         # Should be parseable as ISO format
         parsed = datetime.fromisoformat(timestamp)
         assert isinstance(parsed, datetime)
+
+    def test_llm_summary_from_llm_calls_parameter(self, collector, temp_home):
+        """Test that llm_summary is built from llm_calls param when provided.
+
+        This ensures sub-workflow LLM calls (tracked in __llm_calls__ but not
+        in trace events) are included in the trace file's llm_summary.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            # Record a non-LLM node (no llm_call in trace events)
+            collector.record_node_execution(
+                node_id="workflow-node",
+                node_type="WorkflowExecutor",
+                duration_ms=500.0,
+                shared_before={},
+                shared_after={},
+                success=True,
+            )
+
+            # Provide authoritative llm_calls (e.g., from child workflows)
+            llm_calls = [
+                {
+                    "model": "gpt-4",
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "total_tokens": 150,
+                    "node_id": "parent-llm",
+                },
+                {
+                    "model": "gpt-4",
+                    "input_tokens": 200,
+                    "output_tokens": 100,
+                    "total_tokens": 300,
+                    "node_id": "child-llm",
+                },
+                {
+                    "model": "claude-sonnet",
+                    "input_tokens": 50,
+                    "output_tokens": 25,
+                    "total_tokens": 75,
+                    "node_id": "child-llm-2",
+                },
+            ]
+
+            filepath = collector.save_to_file(llm_calls=llm_calls)
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert "llm_summary" in trace_data
+            summary = trace_data["llm_summary"]
+            assert summary["total_calls"] == 3
+            assert summary["total_tokens"] == 525
+            assert set(summary["models_used"]) == {"gpt-4", "claude-sonnet"}
+
+    def test_llm_summary_fallback_to_events(self, collector, temp_home):
+        """Test backward compat: llm_summary from events when llm_calls not provided."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-node",
+                node_type="LLMNode",
+                duration_ms=1000.0,
+                shared_before={},
+                shared_after={"llm_usage": {"model": "gpt-4", "total_tokens": 200}},
+                success=True,
+            )
+
+            # No llm_calls param — should fall back to event scanning
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert "llm_summary" in trace_data
+            assert trace_data["llm_summary"]["total_calls"] == 1
+            assert trace_data["llm_summary"]["total_tokens"] == 200
+
+    def test_llm_summary_empty_llm_calls_means_no_calls(self, collector, temp_home):
+        """Test that empty llm_calls list is authoritative: zero calls, no summary.
+
+        An empty list means "we tracked LLM calls and there were none" — it should
+        NOT fall back to trace event scanning, even if events contain llm_call data.
+        """
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-node",
+                node_type="LLMNode",
+                duration_ms=1000.0,
+                shared_before={},
+                shared_after={"llm_usage": {"model": "gpt-4", "total_tokens": 100}},
+                success=True,
+            )
+
+            # Empty list is authoritative — no LLM calls happened
+            filepath = collector.save_to_file(llm_calls=[])
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            # Empty authoritative list = no llm_summary in trace
+            assert "llm_summary" not in trace_data

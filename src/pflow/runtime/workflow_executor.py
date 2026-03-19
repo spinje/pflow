@@ -60,6 +60,17 @@ class WorkflowExecutor(BaseNode):
         "__registry__",
     })
 
+    # Cross-cutting infrastructure keys propagated from parent to child storage.
+    # These are accumulators/resources that must flow through workflow boundaries,
+    # NOT execution-scoped state (__execution__, __cache_hits__, __template_errors__).
+    _PROPAGATED_KEYS = (
+        "__registry__",
+        "__llm_calls__",
+        "__progress_callback__",
+        "__mcp_pool__",
+        "__warnings__",
+    )
+
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         """Load the sub-workflow and prepare child inputs."""
         max_depth = self.params.get("max_depth", self.MAX_DEPTH_DEFAULT)
@@ -328,7 +339,8 @@ class WorkflowExecutor(BaseNode):
         child_storage[f"{self.RESERVED_KEY_PREFIX}stack"] = child_stack
         child_storage[f"{self.RESERVED_KEY_PREFIX}workflow_file"] = prep_res["workflow_path"]
 
-        if "__registry__" in parent_shared:
-            child_storage["__registry__"] = parent_shared["__registry__"]
+        for key in self._PROPAGATED_KEYS:
+            if key in parent_shared:
+                child_storage[key] = parent_shared[key]
 
         return child_storage
