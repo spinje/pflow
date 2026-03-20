@@ -251,7 +251,7 @@ def test_warns(caplog):
 
 # ✅ Explicitly set level and logger name
 def test_warns(caplog):
-    caplog.set_level("WARNING", logger="pflow.runtime.compiler")
+    caplog.set_level("WARNING", logger="pflow.runtime.compilation.compiler")
     do_something()
     assert "warning message" in caplog.text
 ```

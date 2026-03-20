@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from pflow.core.markdown_parser import parse_markdown
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 from tests.shared.registry_utils import ensure_test_registry
 
 

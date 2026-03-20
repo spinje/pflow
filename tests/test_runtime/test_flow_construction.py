@@ -14,7 +14,7 @@ import pytest
 
 from pflow.pocketflow import BaseNode, Flow
 from pflow.registry import Registry
-from pflow.runtime.compiler import (
+from pflow.runtime.compilation.compiler import (
     CompilationError,
     _get_start_node,
     _instantiate_nodes,

@@ -74,7 +74,7 @@ Service methods must return one type consistently. Never return dict from one br
 Registry stores `{"module": "path.to.file", "class_name": "NodeClass"}`. Don't try raw `importlib` — use the proven helper:
 
 ```python
-from pflow.runtime.compiler import import_node_class
+from pflow.runtime import import_node_class
 NodeClass = import_node_class(node_type, registry)
 ```
 

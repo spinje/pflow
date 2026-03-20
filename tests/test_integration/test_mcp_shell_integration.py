@@ -9,7 +9,7 @@ as stdin to shell commands.
 """
 
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 class TestMCPShellIntegration:

@@ -89,7 +89,7 @@ class WorkflowExecutorService:
             ExecutionResult with success status and execution details
         """
         from pflow.registry import Registry
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         start_time = time.time()
 
@@ -578,7 +578,7 @@ class WorkflowExecutorService:
         Returns:
             Dictionary with execution result details
         """
-        from pflow.runtime.compiler import CompilationError
+        from pflow.runtime import CompilationError
 
         # Re-raise certain exceptions
         if isinstance(exception, (CompilationError, RuntimeError)):

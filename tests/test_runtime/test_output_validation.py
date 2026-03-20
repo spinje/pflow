@@ -6,7 +6,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.ir_schema import ValidationError
-from pflow.runtime.compiler import _validate_outputs, compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
+from pflow.runtime.compilation.compile_validation import _validate_outputs
 
 
 class TestOutputValidation:
@@ -184,14 +185,14 @@ class TestOutputValidationIntegration:
         registry.get_nodes_metadata.return_value = {"test-node": {"interface": {"outputs": []}}}
 
         # Import the mock node class
-        with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+        with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
             mock_import.return_value = type("ExampleNode", (Mock,), {})
 
             # Should compile successfully now
             flow = compile_ir_to_flow(ir_dict, registry)
             assert flow is not None  # Compilation succeeded
 
-    @patch("pflow.runtime.compiler.import_node_class")
+    @patch("pflow.runtime.compilation.compiler.import_node_class")
     def test_compile_with_output_warnings(self, mock_import, caplog):
         """Test that compilation continues with warnings for untraceable outputs."""
         ir_dict = {

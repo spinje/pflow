@@ -483,7 +483,7 @@ class TestWrapperIntegration:
         - Node namespacing works
         """
         from pflow.registry import Registry
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -531,7 +531,7 @@ class TestWrapperIntegration:
         - Token counts accumulate properly
         """
         from pflow.registry import Registry
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "ir_version": "0.1.0",

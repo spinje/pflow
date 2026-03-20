@@ -219,7 +219,7 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 | Consumer | Uses from core | Purpose |
 |----------|---------------|---------|
 | CLI (`cli/main.py`) | shell_integration, WorkflowManager, OutputController, MetricsCollector, UserFriendlyError | Pipe support, saves, display, metrics, error formatting |
-| Compiler (`runtime/compiler.py`) | validate_ir, validation_utils, SettingsManager | IR validation, param security, env loading |
+| Compiler (`runtime/compilation/`) | validate_ir, validation_utils, SettingsManager | IR validation, param security, env loading |
 | Execution (`execution/`) | WorkflowValidator, OutputController, WorkflowManager | Validation phase, display, metadata updates |
 | Registry (`registry/`) | SettingsManager | Node filtering at load time |
 | Runtime (`runtime/wrappers/instrumented_wrapper.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |

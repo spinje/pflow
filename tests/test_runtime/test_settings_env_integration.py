@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from pflow.core.settings import SettingsManager
-from pflow.runtime.workflow_validator import prepare_inputs
+from pflow.runtime.compilation.ir_preparation import prepare_inputs
 
 
 @pytest.fixture

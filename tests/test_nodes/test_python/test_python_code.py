@@ -565,7 +565,7 @@ class TestWorkflowIntegration:
         ${source.echo} which must be resolved by the TemplateAwareNodeWrapper
         before the code node's prep() sees it as a native Python object.
         """
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
         from tests.shared.registry_utils import ensure_test_registry
 
         registry = ensure_test_registry()

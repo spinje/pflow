@@ -13,7 +13,7 @@ from pflow.core.param_coercion import coerce_to_declared_type
 from pflow.core.user_errors import MCPError
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.registry import Registry
-from pflow.runtime.compiler import _inject_special_parameters, import_node_class
+from pflow.runtime.compilation import import_node_class, inject_special_parameters
 
 
 def execute_single_node(
@@ -193,7 +193,7 @@ def _prepare_node_execution(
     node = node_class()
 
     # Inject special parameters (for MCP and workflow nodes)
-    enhanced_params = _inject_special_parameters(
+    enhanced_params = inject_special_parameters(
         resolved_node,
         resolved_node,
         execution_params,

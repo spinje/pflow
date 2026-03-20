@@ -121,7 +121,7 @@ Validation Pipeline (6 layers)
     └── 6. Unknown Params: Warns on unrecognized node params
     │
     ▼
-Compilation (runtime/compiler.py)
+Compilation (runtime/compilation/)
     │
     ├── IR → PocketFlow Flow object
     ├── Wrapper chain applied per node
@@ -527,9 +527,9 @@ Users simply specify `type: "workflow"` — they don't need to know about Workfl
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Compiler** | `runtime/compiler.py` | Transforms workflow IR → executable PocketFlow objects |
+| **Compiler** | `runtime/compilation/` | Transforms workflow IR → executable PocketFlow objects |
 | **WorkflowExecutor** | `runtime/workflow_executor.py` | Handles nested workflow execution |
-| **Wrappers** | `runtime/*_wrapper.py` | Add instrumentation, namespacing, templates |
+| **Wrappers** | `runtime/wrappers/` | Add instrumentation, namespacing, templates |
 | **TemplateResolver** | `runtime/template_resolver.py` | Resolves `${var}` syntax |
 
 ### When to Create What?

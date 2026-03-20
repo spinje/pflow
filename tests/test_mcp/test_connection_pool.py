@@ -561,7 +561,7 @@ class TestExecutorServicePoolLifecycle:
         # so we patch them at their source module.
         with (
             patch("pflow.registry.Registry"),
-            patch("pflow.runtime.compiler.compile_ir_to_flow", return_value=mock_flow),
+            patch("pflow.runtime.compile_ir_to_flow", return_value=mock_flow),
             patch("pflow.mcp.pool.MCPConnectionPool", return_value=mock_pool),
         ):
             service.execute_workflow(
@@ -591,7 +591,7 @@ class TestExecutorServicePoolLifecycle:
         with (
             patch("pflow.registry.Registry"),
             patch(
-                "pflow.runtime.compiler.compile_ir_to_flow",
+                "pflow.runtime.compile_ir_to_flow",
                 side_effect=ValueError("compilation failed"),
             ),
             patch("pflow.mcp.pool.MCPConnectionPool", return_value=mock_pool),

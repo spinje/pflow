@@ -11,7 +11,7 @@ from unittest.mock import patch
 from pflow.mcp import MCPServerManager
 from pflow.nodes.mcp.node import MCPNode
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 class TestMCPRealIntegration:

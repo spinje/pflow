@@ -1,7 +1,7 @@
 """Integration tests for automatic namespacing with templates."""
 
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 def test_namespacing_with_workflow_inputs(tmp_path):
@@ -46,7 +46,7 @@ def test_namespacing_with_workflow_inputs(tmp_path):
             return "default"
 
     # Mock import
-    import pflow.runtime.compiler as compiler_module
+    import pflow.runtime.compilation.compiler as compiler_module
 
     original_import = compiler_module.import_node_class
 
@@ -138,7 +138,7 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
             shared["result"] = exec_res
             return "default"
 
-    import pflow.runtime.compiler as compiler_module
+    import pflow.runtime.compilation.compiler as compiler_module
 
     original_import = compiler_module.import_node_class
 

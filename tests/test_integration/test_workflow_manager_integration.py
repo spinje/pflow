@@ -22,7 +22,7 @@ from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import Node
 from pflow.registry.context_builder import build_component_context
 from pflow.registry.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from tests.shared.markdown_utils import ir_to_markdown
 
@@ -304,7 +304,7 @@ class TestWorkflowExecutorIntegration:
             mock_module = MagicMock()
             mock_module.EchoTestNode = EchoTestNode
 
-            with patch("pflow.runtime.compiler.importlib.import_module", return_value=mock_module):
+            with patch("pflow.runtime.compilation.node_loader.importlib.import_module", return_value=mock_module):
                 executor = WorkflowExecutor()
                 executor.params = {
                     "workflow": workflow_name,
@@ -420,7 +420,7 @@ class TestFormatCompatibility:
             mock_module = MagicMock()
             mock_module.EchoTestNode = EchoTestNode
 
-            with patch("pflow.runtime.compiler.importlib.import_module", return_value=mock_module):
+            with patch("pflow.runtime.compilation.node_loader.importlib.import_module", return_value=mock_module):
                 executor = WorkflowExecutor()
                 executor.params = {
                     "workflow": "raw-ir-test",
@@ -508,7 +508,7 @@ def test_real_workflow_execution_with_errors(tmp_path):
     """Test workflow execution with nodes that can actually fail."""
     from pflow.core.workflow.manager import WorkflowManager
     from pflow.registry import Registry
-    from pflow.runtime.compiler import compile_ir_to_flow
+    from pflow.runtime import compile_ir_to_flow
 
     # Create a workflow that includes error conditions
     workflow_ir = {
@@ -599,7 +599,7 @@ def test_nested_workflow_with_real_nodes(tmp_path):
     """Test nested workflow execution with actual file operations."""
     from pflow.core.workflow.manager import WorkflowManager
     from pflow.registry import Registry
-    from pflow.runtime.compiler import compile_ir_to_flow
+    from pflow.runtime import compile_ir_to_flow
 
     workflow_manager = WorkflowManager(tmp_path / "workflows")
 

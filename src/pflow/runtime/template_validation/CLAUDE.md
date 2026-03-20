@@ -56,7 +56,7 @@ validator.py (orchestrator)
 
 | File | What it imports |
 |------|----------------|
-| `runtime/compiler.py` | `validate_workflow_templates`, `extract_node_outputs`, `ValidationWarning` |
+| `runtime/compilation/compile_validation.py` | `validate_workflow_templates`, `extract_node_outputs`, `ValidationWarning` |
 | `core/workflow/validator.py` | `validate_workflow_templates` (lazy) |
 | `execution/formatters/node_output_formatter.py` | `flatten_output_structure` |
 | `execution/executor_service.py` | `MAX_DISPLAYED_FIELDS` (lazy) |
@@ -88,7 +88,7 @@ node_outputs["item"] = {
 
 Passes use `is_batch_output` and `is_batch_item` to branch behavior. Workflow nodes get special handling — `validator.py` tries to resolve child workflow outputs at validation time via `_resolve_child_workflow_outputs()`.
 
-**Note:** `validator.py` has dual responsibility — it orchestrates validation passes AND builds the `node_outputs` dict (`extract_node_outputs`, also used by `compiler.py`). Agents looking for output-related code need to look here, not just in the passes.
+**Note:** `validator.py` has dual responsibility — it orchestrates validation passes AND builds the `node_outputs` dict (`extract_node_outputs`, also used by `compilation/compile_validation.py`). Agents looking for output-related code need to look here, not just in the passes.
 
 ## Key Behaviors
 

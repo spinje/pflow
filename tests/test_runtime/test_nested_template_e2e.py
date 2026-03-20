@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.workflow_executor import WorkflowExecutor
 
 

@@ -29,7 +29,7 @@ from pflow.core.shell_integration import (
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution import DisplayManager, ExecutionResult
-from pflow.runtime.compiler import _display_validation_warnings
+from pflow.runtime.compilation import display_validation_warnings
 
 # Import MCP CLI commands
 
@@ -1574,7 +1574,7 @@ def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
         verbose: Whether to show verbose output
     """
     from pflow.core.user_errors import UserFriendlyError
-    from pflow.runtime.compiler import CompilationError as CompilerCompilationError
+    from pflow.runtime import CompilationError as CompilerCompilationError
 
     if isinstance(e, UserFriendlyError):
         # Use the formatted user-friendly error
@@ -1908,7 +1908,7 @@ def _display_validation_results(
 
             # Display warnings if present (complex, CLI-specific)
             if warnings:
-                _display_validation_warnings(warnings)
+                display_validation_warnings(warnings)
         sys.exit(0)
     else:
         # Display validation errors
@@ -2083,7 +2083,7 @@ def execute_json_workflow(
         )
 
     except Exception as e:
-        from pflow.runtime.compiler import CompilationError
+        from pflow.runtime import CompilationError
 
         # Re-raise Click exceptions (Exit, Abort) - don't handle them
         if isinstance(e, click.exceptions.Exit):
@@ -2686,7 +2686,7 @@ def _validate_and_prepare_workflow_params(
     # Skip input validation if --validate-only (handled separately with dummy values)
     validate_only = ctx.obj.get("validate_only", False)
     if not validate_only:
-        from pflow.runtime.workflow_validator import prepare_inputs
+        from pflow.runtime.compilation import prepare_inputs
 
         settings_env = _load_settings_env()
         errors, defaults, env_param_names = prepare_inputs(workflow_ir, params, settings_env=settings_env)

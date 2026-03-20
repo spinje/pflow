@@ -61,7 +61,7 @@ Trace `from pflow.X import Y` to understand dependencies. Check `__init__.py` fo
 CLI (cli/main.py, main_wrapper.py)
   → Markdown Parsing (core/markdown_parser.py)
   → Validation (core/workflow/validator.py — 5-layer pipeline)
-  → Compilation (runtime/compiler.py — IR → PocketFlow Flow/Nodes)
+  → Compilation (runtime/compilation/ — IR → PocketFlow Flow/Nodes)
   → Execution (runtime/workflow_executor.py → execution/ layer for UX)
   → Nodes (nodes/*/*.py — prep/exec/post lifecycle)
 ```
@@ -78,7 +78,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | IR schema | `src/pflow/core/ir_schema.py` (Pydantic models) |
 | Unified validation | `src/pflow/core/workflow/validator.py` (orchestrates 5 layers) |
 | Data flow validation | `src/pflow/core/workflow/data_flow.py` |
-| Compilation | `src/pflow/runtime/compiler.py` (IR → PocketFlow Flow) |
+| Compilation | `src/pflow/runtime/compilation/compiler.py` (IR → PocketFlow Flow) |
 | Template resolution | `src/pflow/runtime/template_resolver.py` |
 | Template validation | `src/pflow/runtime/template_validator.py` |
 | Workflow execution | `src/pflow/runtime/workflow_executor.py` |
@@ -192,7 +192,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | Workflow parsing in `runtime/` | `core/markdown_parser.py` |
 | Single validation file | 5 layers across 4 files (see validation pipeline above) |
 | MCP in one directory | `mcp/` (client, using tools) vs `mcp_server/` (server, exposing tools) |
-| One workflow validator | Two: `core/workflow/validator.py` (pre-execution, 5-layer) vs `runtime/workflow_validator.py` (compiler-time) |
+| One workflow validator | Two: `core/workflow/validator.py` (pre-execution, 5-layer) vs `runtime/compilation/ir_preparation.py` (compiler-time) |
 | Display/UX logic in CLI | `execution/` layer (between CLI and runtime) |
 | Workflow save logic | `core/workflow/save_service.py` (shared by CLI and MCP server) |
 | Output formatting | `execution/formatters/` (return values, never print directly) |
@@ -216,7 +216,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | **Python node** | Executes user code in isolated namespace with safety restrictions, not a simple `exec()`. |
 | **Claude Code node** | Shells out to `claude` CLI binary, not an API call. |
 | **Execution layer** | `execution/` is display/orchestration between CLI and runtime — NOT where workflow execution logic lives (that's `runtime/`). |
-| **Two workflow validators** | `core/workflow/validator.py` (pre-execution, unified 5-layer) vs `runtime/workflow_validator.py` (used internally by compiler). |
+| **Two workflow validators** | `core/workflow/validator.py` (pre-execution, unified 5-layer) vs `runtime/compilation/ir_preparation.py` (used internally by compiler). |
 | **File nodes** | Not 1:1 type-to-file — `nodes/file/` has separate files: read_file, write_file, copy_file, move_file, delete_file. |
 | **Git vs GitHub** | `nodes/git/` (local git CLI operations) vs `nodes/github/` (GitHub API calls via HTTP). |
 | **Batch processing** | Not a node type — `runtime/wrappers/batch_node.py` wraps any node for list iteration. |

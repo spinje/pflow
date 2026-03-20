@@ -18,7 +18,7 @@ class TestRegistryRunMCP:
         with (
             patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
             patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
-            patch("pflow.runtime.compiler._parse_mcp_node_type") as mock_parse,
+            patch("pflow.runtime.compilation.mcp_resolution._parse_mcp_node_type") as mock_parse,
         ):
             # Configure mock registry
             mock_registry = MagicMock()

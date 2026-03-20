@@ -2,7 +2,7 @@
 
 from pflow.pocketflow import Node
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 class SimpleOutputNode(Node):
@@ -62,7 +62,7 @@ def test_namespacing_prevents_collisions(tmp_path):
     registry.save(nodes_data)
 
     # Mock the import to return our test classes
-    import pflow.runtime.compiler as compiler_module
+    import pflow.runtime.compilation.compiler as compiler_module
 
     original_import = compiler_module.import_node_class
 
@@ -136,7 +136,7 @@ def test_namespacing_enabled_by_default(tmp_path):
     registry.save(nodes_data)
 
     # Mock the import
-    import pflow.runtime.compiler as compiler_module
+    import pflow.runtime.compilation.compiler as compiler_module
 
     original_import = compiler_module.import_node_class
 
@@ -199,7 +199,7 @@ def test_namespacing_with_cli_inputs_via_template(tmp_path):
     registry.save(nodes_data)
 
     # Mock import
-    import pflow.runtime.compiler as compiler_module
+    import pflow.runtime.compilation.compiler as compiler_module
 
     original_import = compiler_module.import_node_class
 

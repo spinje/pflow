@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pflow.runtime.compiler import CompilationError, _create_single_node
+from pflow.runtime.compilation.compiler import CompilationError, _create_single_node
 
 
 class TestLLMModelInjection:
@@ -42,10 +42,10 @@ class TestLLMModelInjection:
         """Model specified in IR is used, not overridden."""
         node_data = {"id": "my-llm", "type": "llm", "params": {"model": "gpt-5.2", "prompt": "Hi"}}
 
-        with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
+        with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = "different-model"
 
-            with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
@@ -58,10 +58,10 @@ class TestLLMModelInjection:
         """Uses configured default when no model in IR."""
         node_data = {"id": "my-llm", "type": "llm", "params": {"prompt": "Hi"}}
 
-        with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
+        with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = "gpt-5.2"
 
-            with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
@@ -74,7 +74,7 @@ class TestLLMModelInjection:
         """Raises CompilationError when no model configured anywhere."""
         node_data = {"id": "my-llm", "type": "llm", "params": {"prompt": "Hi"}}
 
-        with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
+        with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = None  # Nothing configured
 
             with pytest.raises(CompilationError) as exc_info:
@@ -90,10 +90,10 @@ class TestLLMModelInjection:
         """Non-LLM nodes don't trigger model injection."""
         node_data = {"id": "reader", "type": "read-file", "params": {"path": "./test.txt"}}
 
-        with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
+        with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = "some-model"
 
-            with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
@@ -107,10 +107,10 @@ class TestLLMModelInjection:
         original_params = {"prompt": "Hi"}
         node_data = {"id": "my-llm", "type": "llm", "params": original_params}
 
-        with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
+        with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = "gpt-5.2"
 
-            with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+            with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
@@ -123,7 +123,7 @@ class TestLLMModelInjection:
         """Error message includes all four configuration methods."""
         node_data = {"id": "test-llm", "type": "llm", "params": {"prompt": "Test"}}
 
-        with patch("pflow.runtime.compiler.get_default_workflow_model") as mock_get:
+        with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = None
 
             with pytest.raises(CompilationError) as exc_info:

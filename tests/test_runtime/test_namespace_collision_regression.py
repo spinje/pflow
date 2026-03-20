@@ -15,7 +15,7 @@ import pytest
 
 from pflow.pocketflow import Node
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 # =============================================================================
 # Test Nodes (simulating real node behavior)
@@ -186,7 +186,7 @@ def mock_registry(tmp_path):
 @pytest.fixture
 def mock_import():
     """Context manager to mock node imports."""
-    import pflow.runtime.compiler as compiler_module
+    import pflow.runtime.compilation.compiler as compiler_module
 
     original_import = compiler_module.import_node_class
 
