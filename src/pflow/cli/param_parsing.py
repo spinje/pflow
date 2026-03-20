@@ -63,3 +63,36 @@ def parse_workflow_params(args: tuple[str, ...]) -> dict[str, Any]:
             # Use type inference for the value
             params[key] = infer_type(value)
     return params
+
+
+def format_param_value(value: Any) -> str:
+    """Convert a Python value to its CLI string representation.
+
+    This reverses the logic of infer_type() to produce a string that,
+    when parsed by the CLI, will result in the same Python value.
+
+    Args:
+        value: The Python value to convert
+
+    Returns:
+        The string representation for CLI usage (WITHOUT shell escaping)
+    """
+    if isinstance(value, bool):
+        # Booleans become lowercase strings
+        return str(value).lower()
+
+    elif isinstance(value, (int, float)):
+        # Numbers convert directly
+        return str(value)
+
+    elif isinstance(value, (list, dict)):
+        # JSON types need compact serialization
+        return json.dumps(value, separators=(",", ":"))
+
+    elif isinstance(value, str):
+        # Strings pass through as-is
+        return value
+
+    else:
+        # Fallback for other types
+        return str(value)

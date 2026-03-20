@@ -433,7 +433,7 @@ def run_node(
     )
 
 
-def _normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None:
+def normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None:
     """Normalize node ID to match registry format.
 
     Handles multiple input formats:
@@ -486,7 +486,7 @@ def _normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None
     return None
 
 
-def _validate_and_normalize_node_ids(
+def _validate_andnormalize_node_ids(
     node_ids: tuple[str, ...], available_nodes: set[str]
 ) -> tuple[list[str], dict[str, list[str]], list[str]]:
     """Validate and normalize node IDs.
@@ -503,7 +503,7 @@ def _validate_and_normalize_node_ids(
     ambiguous_nodes = {}
 
     for user_id in node_ids:
-        normalized = _normalize_node_id(user_id, available_nodes)
+        normalized = normalize_node_id(user_id, available_nodes)
         if normalized:
             normalized_ids.append(normalized)
         else:
@@ -569,7 +569,7 @@ def describe_nodes(node_ids: tuple[str, ...]) -> None:
     available_nodes = set(registry_metadata.keys())
 
     # Validate and normalize all node IDs
-    normalized_ids, ambiguous_nodes, invalid_nodes = _validate_and_normalize_node_ids(node_ids, available_nodes)
+    normalized_ids, ambiguous_nodes, invalid_nodes = _validate_andnormalize_node_ids(node_ids, available_nodes)
 
     # Handle any validation errors
     if ambiguous_nodes or invalid_nodes:

@@ -27,7 +27,7 @@ src/pflow/cli/
 ├── __init__.py              # Exports cli_main
 ├── main_wrapper.py          # Entry point router (pre-parses sys.argv)
 ├── main.py                  # Workflow command orchestration (~1570 lines)
-├── param_parsing.py         # Parameter parsing (infer_type, parse_workflow_params)
+├── param_parsing.py         # Parameter parsing (infer_type, parse_workflow_params, format_param_value)
 ├── workflow_resolution.py   # Workflow file/name resolution (resolve_workflow, is_likely_workflow_name)
 ├── mcp_sync.py              # MCP auto-discovery at startup (_auto_discover_mcp_servers)
 ├── workflow_output.py       # Output detection, display, formatting (26 functions)

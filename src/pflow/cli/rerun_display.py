@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import shlex
 from typing import Any
 
 import click
 
+from pflow.cli.param_parsing import format_param_value
 from pflow.core.security_utils import SENSITIVE_KEYS
 
 
@@ -26,39 +26,6 @@ def filter_user_params(params: dict[str, Any] | None) -> dict[str, Any] | None:
     # Filter out internal params
     user_params = {k: v for k, v in params.items() if not k.startswith("__")}
     return user_params if user_params else None
-
-
-def format_param_value(value: Any) -> str:
-    """Convert a Python value to its CLI string representation.
-
-    This reverses the logic of infer_type() to produce a string that,
-    when parsed by the CLI, will result in the same Python value.
-
-    Args:
-        value: The Python value to convert
-
-    Returns:
-        The string representation for CLI usage (WITHOUT shell escaping)
-    """
-    if isinstance(value, bool):
-        # Booleans become lowercase strings
-        return str(value).lower()
-
-    elif isinstance(value, (int, float)):
-        # Numbers convert directly
-        return str(value)
-
-    elif isinstance(value, (list, dict)):
-        # JSON types need compact serialization
-        return json.dumps(value, separators=(",", ":"))
-
-    elif isinstance(value, str):
-        # Strings pass through as-is
-        return value
-
-    else:
-        # Fallback for other types
-        return str(value)
 
 
 def format_rerun_command(workflow_name: str, params: dict[str, Any] | None) -> str:

@@ -1,17 +1,28 @@
-"""Wrapper to route between workflow and subcommands (MCP, Registry, Settings, Instructions, Workflow).
+"""Wrapper to route between workflow and subcommands.
 
 PROBLEM: Click groups with catch-all arguments don't work for subcommands.
 When @click.argument("workflow", nargs=-1) is on a @click.group(), it consumes
-ALL positional arguments including subcommand names like "mcp", "registry", "settings", or "instructions", preventing
-Click from recognizing them as subcommands.
+ALL positional arguments including subcommand names, preventing Click from
+recognizing them as subcommands.
 
-SOLUTION: Pre-parse sys.argv to detect known subcommands BEFORE Click processes arguments.
-If found, route directly to appropriate command group. Otherwise, run workflow command.
-This allows "pflow mcp list", "pflow registry list", "pflow settings show", "pflow instructions usage",
-and "pflow 'create a poem'" to all work correctly.
+SOLUTION: Pre-parse sys.argv to detect known subcommands BEFORE Click processes
+arguments. If found, route directly to appropriate command group. Otherwise, run
+workflow command.
 """
 
 import sys
+from typing import Any
+
+
+def _route_subcommand(name: str, handler: Any) -> None:
+    """Route to a subcommand by stripping its name from sys.argv."""
+    original_argv = sys.argv[:]
+    try:
+        idx = sys.argv.index(name)
+        sys.argv = [sys.argv[0], *sys.argv[idx + 1 :]]
+        handler()
+    finally:
+        sys.argv = original_argv
 
 
 def cli_main() -> None:
@@ -29,6 +40,7 @@ def cli_main() -> None:
     from .commands.read_fields import read_fields
     from .commands.registry import registry
     from .commands.settings import settings
+    from .commands.skills import skill
     from .commands.workflow import workflow
     from .main import workflow_command
 
@@ -39,80 +51,18 @@ def cli_main() -> None:
             first_arg = arg
             break
 
-    if first_arg == "mcp":
-        # Manually route to MCP group by manipulating sys.argv
-        # This bypasses Click's argument parsing which would consume "mcp" as workflow arg
-        original_argv = sys.argv[:]
-        try:
-            # Remove the first 'mcp' from arguments
-            mcp_index = sys.argv.index("mcp")
-            sys.argv = [sys.argv[0], *sys.argv[mcp_index + 1 :]]
-            mcp()
-        finally:
-            sys.argv = original_argv
+    # Routing table: subcommand name → handler
+    subcommand_routes: dict[str, Any] = {
+        "mcp": mcp,
+        "registry": registry,
+        "workflow": workflow,
+        "settings": settings,
+        "instructions": instructions,
+        "read-fields": read_fields,
+        "skill": skill,
+    }
 
-    elif first_arg == "registry":
-        # Route to Registry group
-        original_argv = sys.argv[:]
-        try:
-            registry_index = sys.argv.index("registry")
-            sys.argv = [sys.argv[0], *sys.argv[registry_index + 1 :]]
-            registry()
-        finally:
-            sys.argv = original_argv
-
-    elif first_arg == "workflow":
-        # Route to Workflow group
-        original_argv = sys.argv[:]
-        try:
-            workflow_index = sys.argv.index("workflow")
-            sys.argv = [sys.argv[0], *sys.argv[workflow_index + 1 :]]
-            workflow()
-        finally:
-            sys.argv = original_argv
-
-    elif first_arg == "settings":
-        # Route to Settings group
-        original_argv = sys.argv[:]
-        try:
-            settings_index = sys.argv.index("settings")
-            sys.argv = [sys.argv[0], *sys.argv[settings_index + 1 :]]
-            settings()
-        finally:
-            sys.argv = original_argv
-
-    elif first_arg == "instructions":
-        # Route to Instructions group
-        original_argv = sys.argv[:]
-        try:
-            instructions_index = sys.argv.index("instructions")
-            sys.argv = [sys.argv[0], *sys.argv[instructions_index + 1 :]]
-            instructions()
-        finally:
-            sys.argv = original_argv
-
-    elif first_arg == "read-fields":
-        # Route to read-fields command (Task 89)
-        original_argv = sys.argv[:]
-        try:
-            read_fields_index = sys.argv.index("read-fields")
-            sys.argv = [sys.argv[0], *sys.argv[read_fields_index + 1 :]]
-            read_fields()
-        finally:
-            sys.argv = original_argv
-
-    elif first_arg == "skill":
-        # Route to Skill group (Task 119)
-        from .commands.skills import skill
-
-        original_argv = sys.argv[:]
-        try:
-            skill_index = sys.argv.index("skill")
-            sys.argv = [sys.argv[0], *sys.argv[skill_index + 1 :]]
-            skill()
-        finally:
-            sys.argv = original_argv
-
+    if first_arg in subcommand_routes:
+        _route_subcommand(first_arg, subcommand_routes[first_arg])
     else:
-        # Run the workflow command (default behavior)
         workflow_command()

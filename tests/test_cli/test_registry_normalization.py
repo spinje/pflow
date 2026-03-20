@@ -16,7 +16,7 @@ Scenarios tested:
 
 from click.testing import CliRunner
 
-from pflow.cli.commands.registry import _normalize_node_id, registry
+from pflow.cli.commands.registry import normalize_node_id, registry
 
 
 class TestNodeIdNormalization:
@@ -26,10 +26,10 @@ class TestNodeIdNormalization:
         """Test exact match returns the input unchanged."""
         available = {"llm", "write-file", "mcp-slack-composio-SLACK_SEND_MESSAGE"}
 
-        assert _normalize_node_id("llm", available) == "llm"
-        assert _normalize_node_id("write-file", available) == "write-file"
+        assert normalize_node_id("llm", available) == "llm"
+        assert normalize_node_id("write-file", available) == "write-file"
         assert (
-            _normalize_node_id("mcp-slack-composio-SLACK_SEND_MESSAGE", available)
+            normalize_node_id("mcp-slack-composio-SLACK_SEND_MESSAGE", available)
             == "mcp-slack-composio-SLACK_SEND_MESSAGE"
         )
 
@@ -38,7 +38,7 @@ class TestNodeIdNormalization:
         available = {"mcp-server-TOOL_NAME"}
 
         # Short form with hyphens should convert to underscores
-        assert _normalize_node_id("TOOL-NAME", available) == "mcp-server-TOOL_NAME"
+        assert normalize_node_id("TOOL-NAME", available) == "mcp-server-TOOL_NAME"
 
     def test_full_mcp_format_with_hyphens(self):
         """Test full MCP format where tool name has hyphens."""
@@ -49,11 +49,11 @@ class TestNodeIdNormalization:
 
         # Full format with hyphens in tool name
         assert (
-            _normalize_node_id("mcp-slack-composio-SLACK-SEND-MESSAGE", available)
+            normalize_node_id("mcp-slack-composio-SLACK-SEND-MESSAGE", available)
             == "mcp-slack-composio-SLACK_SEND_MESSAGE"
         )
         assert (
-            _normalize_node_id("mcp-slack-composio-SLACK-FETCH-CONVERSATION-HISTORY", available)
+            normalize_node_id("mcp-slack-composio-SLACK-FETCH-CONVERSATION-HISTORY", available)
             == "mcp-slack-composio-SLACK_FETCH_CONVERSATION_HISTORY"
         )
 
@@ -65,9 +65,9 @@ class TestNodeIdNormalization:
         }
 
         # Short form with hyphens
-        assert _normalize_node_id("SLACK-SEND-MESSAGE", available) == "mcp-slack-composio-SLACK_SEND_MESSAGE"
+        assert normalize_node_id("SLACK-SEND-MESSAGE", available) == "mcp-slack-composio-SLACK_SEND_MESSAGE"
         # Short form with underscores
-        assert _normalize_node_id("SLACK_SEND_MESSAGE", available) == "mcp-slack-composio-SLACK_SEND_MESSAGE"
+        assert normalize_node_id("SLACK_SEND_MESSAGE", available) == "mcp-slack-composio-SLACK_SEND_MESSAGE"
 
     def test_ambiguous_short_form(self):
         """Test that ambiguous short forms return None."""
@@ -77,24 +77,24 @@ class TestNodeIdNormalization:
         }
 
         # Ambiguous - matches both
-        assert _normalize_node_id("SEND_MESSAGE", available) is None
-        assert _normalize_node_id("SEND-MESSAGE", available) is None
+        assert normalize_node_id("SEND_MESSAGE", available) is None
+        assert normalize_node_id("SEND-MESSAGE", available) is None
 
     def test_invalid_node_id(self):
         """Test that invalid node IDs return None."""
         available = {"llm", "write-file"}
 
-        assert _normalize_node_id("nonexistent-node", available) is None
-        assert _normalize_node_id("FAKE_MCP_TOOL", available) is None
+        assert normalize_node_id("nonexistent-node", available) is None
+        assert normalize_node_id("FAKE_MCP_TOOL", available) is None
 
     def test_core_nodes_backward_compatibility(self):
         """Test that core nodes still work without normalization."""
         available = {"llm", "shell", "write-file", "read-file"}
 
-        assert _normalize_node_id("llm", available) == "llm"
-        assert _normalize_node_id("shell", available) == "shell"
-        assert _normalize_node_id("write-file", available) == "write-file"
-        assert _normalize_node_id("read-file", available) == "read-file"
+        assert normalize_node_id("llm", available) == "llm"
+        assert normalize_node_id("shell", available) == "shell"
+        assert normalize_node_id("write-file", available) == "write-file"
+        assert normalize_node_id("read-file", available) == "read-file"
 
     def test_filesystem_mcp_tools(self):
         """Test that filesystem MCP tools work (regression test)."""
@@ -104,20 +104,20 @@ class TestNodeIdNormalization:
         }
 
         # Exact match
-        assert _normalize_node_id("mcp-filesystem-create_directory", available) == "mcp-filesystem-create_directory"
+        assert normalize_node_id("mcp-filesystem-create_directory", available) == "mcp-filesystem-create_directory"
         # Hyphen variant
-        assert _normalize_node_id("mcp-filesystem-create-directory", available) == "mcp-filesystem-create_directory"
+        assert normalize_node_id("mcp-filesystem-create-directory", available) == "mcp-filesystem-create_directory"
         # Short form
-        assert _normalize_node_id("create_directory", available) == "mcp-filesystem-create_directory"
-        assert _normalize_node_id("create-directory", available) == "mcp-filesystem-create_directory"
+        assert normalize_node_id("create_directory", available) == "mcp-filesystem-create_directory"
+        assert normalize_node_id("create-directory", available) == "mcp-filesystem-create_directory"
 
     def test_mixed_case_not_supported(self):
         """Test that mixed case is NOT normalized (case-sensitive)."""
         available = {"mcp-server-TOOL_NAME"}
 
         # Case sensitivity - these should not match
-        assert _normalize_node_id("tool_name", available) is None
-        assert _normalize_node_id("TOOL_name", available) is None
+        assert normalize_node_id("tool_name", available) is None
+        assert normalize_node_id("TOOL_name", available) is None
 
 
 class TestRegistryDescribeCommand:

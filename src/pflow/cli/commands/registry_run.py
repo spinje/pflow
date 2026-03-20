@@ -140,9 +140,9 @@ def _resolve_node_type(node_type: str, registry: Registry, verbose: bool) -> str
     available_nodes = set(nodes.keys())
 
     # Normalize node ID using existing logic (handles MCP variations)
-    from pflow.cli.commands.registry import _normalize_node_id
+    from pflow.cli.commands.registry import normalize_node_id
 
-    resolved_node = _normalize_node_id(node_type, available_nodes)
+    resolved_node = normalize_node_id(node_type, available_nodes)
 
     # Handle normalization results
     if not resolved_node:
