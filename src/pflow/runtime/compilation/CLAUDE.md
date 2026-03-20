@@ -30,7 +30,7 @@ The orchestrator. `compile_ir_to_flow()` is the main entry point: parse IR dict,
 - `compile_ir_to_flow()` — main pipeline. Monkey-patches `flow.run` for output resolution and visit count reset.
 - `inject_special_parameters()` — injects `__registry__` for workflow nodes, `__mcp_server__`/`__mcp_tool__` for MCP nodes. Delegates to `mcp_resolution` for MCP validation.
 - `_create_single_node()` — full node factory: import class, instantiate, apply wrapper chain (template -> namespace -> batch -> instrumentation), inject special params.
-- `_parse_ir_input()` — parses `inputs` section from IR.
+- `_parse_ir_input()` — parses IR from JSON string or passes through dict.
 
 **Non-obvious behaviors**:
 - LLM nodes without `model` get auto-injected default from `get_default_workflow_model()`.

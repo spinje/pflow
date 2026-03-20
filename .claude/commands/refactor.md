@@ -425,6 +425,7 @@ Hard-won knowledge from real refactors. These pass code review but fail in CI, o
 - Relative imports (`from ..module import X`) won't match absolute-path greps. Always search for both patterns.
 - **`from src.pflow.X` imports**: Some test files use `from src.pflow.module` instead of `from pflow.module`. Your `sed` patterns for `from pflow.X` won't match these. Always grep for BOTH `from pflow\.` AND `from src\.pflow\.` during consumer audits. This has tripped multiple agents.
 - **`make check` needs two runs** after relative import changes: ruff auto-fixes import ordering on the first run (exit code 1), then passes clean on the second. Don't panic at the first failure — re-run immediately.
+- **Logger name strings**: `logging.getLogger(__name__)` produces module-path strings. When a module moves, tests using `caplog.set_level("WARNING", logger="old.module.path")` silently stop capturing logs — no error, no test failure, just empty caplog. Grep for the old module path in logger arguments: `grep -rn "logger=.*old_module" tests/`. Also check CLAUDE.md files that advise logger names (e.g., testing gotchas sections).
 
 **Duplication traps:**
 - Same-name constants in different files (`MAX_DISPLAYED_FIELDS = 20` vs `= 500`) are DIFFERENT constants. Always grep project-wide before deciding where a constant lives.
@@ -443,6 +444,7 @@ Hard-won knowledge from real refactors. These pass code review but fail in CI, o
 **Naming traps:**
 - Name modules for what they contain, not where they came from. Utilities extracted from `template_validator.py` aren't necessarily "validation utils" — check whether they're all validation-specific.
 - Don't use aspirational names. A 2-function module doesn't need a grand name.
+- **Cross-project naming collisions**: When moving or creating files, check for name collisions across the ENTIRE project, not just within the target directory. Two files with similar names in different directories may have coexisted harmlessly, but restructuring can make the collision confusing (e.g., `workflow_validator.py` alongside `core/workflow/validator.py`). If you're already moving the file, renaming costs nothing extra — same consumer update operation.
 
 ## Reference: Anti-Patterns
 
