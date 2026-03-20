@@ -30,8 +30,8 @@ from unittest.mock import MagicMock, patch
 import click.testing
 import pytest
 
+from pflow.cli.commands.registry import registry
 from pflow.cli.main_wrapper import cli_main
-from pflow.cli.registry import registry
 from pflow.registry.registry import Registry
 
 
@@ -44,7 +44,7 @@ def runner():
 @pytest.fixture
 def mock_registry():
     """Create a mock Registry with test data."""
-    with patch("pflow.cli.registry.Registry") as MockRegistry:
+    with patch("pflow.cli.commands.registry.Registry") as MockRegistry:
         instance = MagicMock(spec=Registry)
         MockRegistry.return_value = instance
 
@@ -427,7 +427,7 @@ def test_scan_default_path(runner, mock_registry):
     # Mock the default path existence check
     default_path = Path.home() / ".pflow" / "nodes"
 
-    with patch("pflow.cli.registry.Path") as MockPath:
+    with patch("pflow.cli.commands.registry.Path") as MockPath:
         # Create a mock for the scan path that doesn't exist
         mock_scan_path = MagicMock()
         mock_scan_path.exists.return_value = False
@@ -520,7 +520,7 @@ def test_describe_shows_correct_node_type(runner, mock_registry):
 # --- Criterion 17: Corrupted registry.json returns empty dict ---
 def test_corrupted_registry_returns_empty_dict(runner):
     """Test that corrupted registry.json is handled gracefully."""
-    with patch("pflow.cli.registry.Registry") as MockRegistry:
+    with patch("pflow.cli.commands.registry.Registry") as MockRegistry:
         instance = MagicMock(spec=Registry)
         MockRegistry.return_value = instance
 
@@ -550,7 +550,7 @@ def test_main_wrapper_routes_registry_to_registry_group():
     """
     # Mock the registry function that's imported inside cli_main
     with (
-        patch("pflow.cli.registry.registry") as mock_registry_func,
+        patch("pflow.cli.commands.registry.registry") as mock_registry_func,
         patch.object(sys, "argv", ["pflow", "registry", "list"]),
     ):
         cli_main()
@@ -584,7 +584,7 @@ def test_main_wrapper_preserves_argv_after_registry():
     """
     original_argv = ["pflow", "registry", "list"]
 
-    with patch("pflow.cli.registry.registry"), patch.object(sys, "argv", original_argv.copy()):
+    with patch("pflow.cli.commands.registry.registry"), patch.object(sys, "argv", original_argv.copy()):
         cli_main()
 
         # Verify sys.argv is restored

@@ -7,7 +7,7 @@ The CLI supports direct execution:
 - `pflow workflow.pflow.md param=value` → Direct execution with params
 - If workflow not found → Shows error with suggestions
 
-Detection logic in `src/pflow/cli/main.py::is_likely_workflow_name()`:
+Detection logic in `src/pflow/cli/workflow_resolution.py::is_likely_workflow_name()`:
 - `my-workflow param=value` → Detected as workflow (has params)
 - `my-analyzer` → Detected as workflow (kebab-case)
 - `node1 => node2` → NOT workflow (has `=>` operator)

@@ -10,7 +10,7 @@ at pflow startup to automatically sync MCP servers. The tests focus on:
 
 from unittest.mock import Mock, call, patch
 
-from pflow.cli.main import _auto_discover_mcp_servers
+from pflow.cli.mcp_sync import _auto_discover_mcp_servers
 
 
 class TestAutoDiscovery:
@@ -29,7 +29,7 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
@@ -62,12 +62,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar") as mock_registrar_class,
-            patch("pflow.cli.main.click.echo") as mock_echo,
+            patch("pflow.cli.mcp_sync.click.echo") as mock_echo,
         ):
             # Configure manager to return servers
             mock_manager = mock_manager_class.return_value
@@ -126,12 +126,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar") as mock_registrar_class,
-            patch("pflow.cli.main.logger") as mock_logger,
+            patch("pflow.cli.mcp_sync.logger") as mock_logger,
         ):
             # Configure manager
             mock_manager = mock_manager_class.return_value
@@ -183,12 +183,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar"),
-            patch("pflow.cli.main.click.echo") as mock_echo,
+            patch("pflow.cli.mcp_sync.click.echo") as mock_echo,
         ):
             mock_manager = mock_manager_class.return_value
             mock_manager.list_servers.return_value = ["test-server"]
@@ -227,12 +227,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = False
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar"),
-            patch("pflow.cli.main.click.echo") as mock_echo,
+            patch("pflow.cli.mcp_sync.click.echo") as mock_echo,
         ):
             mock_manager = mock_manager_class.return_value
             mock_manager.list_servers.return_value = ["server1"]
@@ -260,9 +260,9 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager", side_effect=ImportError("MCP not installed")),
-            patch("pflow.cli.main.logger") as mock_logger,
+            patch("pflow.cli.mcp_sync.logger") as mock_logger,
         ):
             # Should not crash
             _auto_discover_mcp_servers(ctx, verbose=True)
@@ -281,9 +281,9 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
-            patch("pflow.cli.main.logger") as mock_logger,
+            patch("pflow.cli.mcp_sync.logger") as mock_logger,
         ):
             # Make manager crash
             mock_manager_class.side_effect = Exception("Unexpected error")
@@ -305,12 +305,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar") as mock_registrar_class,
-            patch("pflow.cli.main.click.echo") as mock_echo,
+            patch("pflow.cli.mcp_sync.click.echo") as mock_echo,
         ):
             mock_manager = mock_manager_class.return_value
             mock_manager.list_servers.return_value = ["empty-server"]
@@ -344,12 +344,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar") as mock_registrar_class,
-            patch("pflow.cli.main.click.echo") as mock_echo,
+            patch("pflow.cli.mcp_sync.click.echo") as mock_echo,
         ):
             mock_manager = mock_manager_class.return_value
             mock_manager.list_servers.return_value = ["empty", "github", "another-empty"]
@@ -395,12 +395,12 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
             patch("pflow.mcp.MCPRegistrar"),
-            patch("pflow.cli.main.click.echo") as mock_echo,
+            patch("pflow.cli.mcp_sync.click.echo") as mock_echo,
         ):
             mock_manager = mock_manager_class.return_value
             mock_manager.list_servers.return_value = ["failing-server", "working-server"]
@@ -447,7 +447,7 @@ class TestAutoDiscovery:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry") as mock_registry_class,
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,
@@ -515,7 +515,7 @@ class TestAutoDiscoveryIntegration:
         output_controller.is_interactive.return_value = True
 
         with (
-            patch("pflow.cli.main._get_output_controller", return_value=output_controller),
+            patch("pflow.cli.mcp_sync._get_output_controller", return_value=output_controller),
             patch("pflow.mcp.MCPServerManager") as mock_manager_class,
             patch("pflow.registry.Registry", return_value=registry),  # Use real registry
             patch("pflow.mcp.MCPDiscovery") as mock_discovery_class,

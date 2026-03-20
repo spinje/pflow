@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from pflow.cli.read_fields import read_fields
+from pflow.cli.commands.read_fields import read_fields
 from pflow.core.execution_cache import ExecutionCache
 
 

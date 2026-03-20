@@ -13,8 +13,8 @@ from unittest.mock import patch
 
 import click.testing
 
+from pflow.cli.commands.registry import registry as registry_cmd
 from pflow.cli.commands.workflow import workflow as workflow_cmd
-from pflow.cli.registry import registry as registry_cmd
 from pflow.core.workflow.discovery import WorkflowMatch
 from pflow.registry.discovery import ComponentSelection
 

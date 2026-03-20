@@ -73,7 +73,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | Area | Primary File(s) |
 |------|-----------------|
 | CLI entry | `src/pflow/cli/main.py`, `cli/main_wrapper.py` |
-| CLI subcommands | `cli/registry.py`, `cli/mcp.py`, `cli/skills.py`, `cli/commands/settings.py`, `cli/commands/workflow.py` |
+| CLI subcommands | `cli/commands/registry.py`, `cli/commands/mcp.py`, `cli/commands/skills.py`, `cli/commands/settings.py`, `cli/commands/workflow.py` |
 | Workflow parsing | `src/pflow/core/markdown_parser.py` (.pflow.md → IR dict) |
 | IR schema | `src/pflow/core/ir_schema.py` (Pydantic models) |
 | Unified validation | `src/pflow/core/workflow/validator.py` (orchestrates 5 layers) |
@@ -89,7 +89,7 @@ All node communication flows through the **shared store** using semantic keys. T
 | Workflow management | `src/pflow/core/workflow/manager.py` |
 | Workflow save | `src/pflow/core/workflow/save_service.py` (shared by CLI and MCP server) |
 | Settings | `src/pflow/core/settings.py` |
-| Skill management | `src/pflow/core/workflow/skill_service.py` (logic) + `cli/skills.py` (CLI) |
+| Skill management | `src/pflow/core/workflow/skill_service.py` (logic) + `cli/commands/skills.py` (CLI) |
 | MCP client (tools in workflows) | `src/pflow/mcp/` |
 | MCP server (pflow as tool) | `src/pflow/mcp_server/` (tools/, services/, utils/) |
 | LLM configuration | `src/pflow/core/llm_config.py` (uses Simon Willison's `llm` library) |
@@ -199,8 +199,8 @@ All node communication flows through the **shared store** using semantic keys. T
 | Error types in one file | Split: `core/exceptions.py` (internal) + `core/user_errors.py` (user-facing) |
 | Output routing in one place | `core/output_controller.py` + `execution/output_interface.py` + `cli/cli_output.py` |
 | LLM via direct API | `core/llm_config.py` — uses Simon Willison's `llm` library |
-| Registry CLI in one file | `cli/registry.py` (commands) + `cli/registry_run.py` (single node execution) |
-| Skill management in one file | `core/workflow/skill_service.py` (logic) + `cli/skills.py` (CLI commands) |
+| Registry CLI in one file | `cli/commands/registry.py` (commands) + `cli/commands/registry_run.py` (single node execution) |
+| Skill management in one file | `core/workflow/skill_service.py` (logic) + `cli/commands/skills.py` (CLI commands) |
 | Security in node code | `core/security_utils.py` (parameter masking, sensitive detection) |
 | Rerun command in CLI | `cli/rerun_display.py` (builds safe rerun commands, masking secrets) |
 | Batch as a node type | `runtime/wrappers/batch_node.py` (wrapper around any node for list iteration) |

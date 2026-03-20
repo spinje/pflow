@@ -3,7 +3,7 @@
 import click.testing
 import pytest
 
-from pflow.cli.mcp import (
+from pflow.cli.commands.mcp import (
     _add_from_json_string,
     _apply_http_timeouts,
     _is_json_string,

@@ -377,8 +377,6 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> Non
         manager: MCPServerManager instance
         registrar: MCPRegistrar instance
     """
-    import json
-
     from pflow.registry import Registry
 
     servers = manager.list_servers()
@@ -723,8 +721,6 @@ def serve(debug: bool) -> None:
     Note: This command is typically invoked by AI agents/clients,
     not directly by users.
     """
-    import sys
-
     try:
         from pflow.mcp_server.main import main as mcp_server_main
     except ImportError:

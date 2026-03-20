@@ -58,7 +58,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 | `runtime/compilation/` | Node class resolution, interface metadata, MCP validation, output validation | Default (filtered) |
 | `mcp/registrar.py` | Register/remove virtual MCP tool entries | **True** (safe) |
 | `cli/main.py` auto-sync | Clean old MCP entries before re-syncing | **True** (safe) |
-| `cli/registry.py` commands | List, search, describe, scan | Mixed — see known bugs |
+| `cli/commands/registry.py` commands | List, search, describe, scan | Mixed — see known bugs |
 | `core/workflow/validator.py` | Validate node types exist | Default (filtered) |
 | `mcp_server/services/` | Registry service for MCP server | Default (filtered) |
 | `registry/context_builder.py` | Node specs for discovery and planning | Default (filtered) |
@@ -73,7 +73,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 
 The safe pattern: always use `load(include_filtered=True)` before any `save()` call. The MCP registrar does this correctly.
 
-**Known footgun**: `cli/registry.py:_add_nodes_to_registry()` loads with default filtering and saves back — will delete denied nodes when user runs `pflow registry scan`.
+**Known footgun**: `cli/commands/registry.py:_add_nodes_to_registry()` loads with default filtering and saves back — will delete denied nodes when user runs `pflow registry scan`.
 
 ### Scanner Executes Code
 

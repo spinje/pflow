@@ -108,7 +108,7 @@ def usage_instructions() -> None:
     Examples:
         pflow instructions usage
     """
-    instructions_path = Path(__file__).parent / "resources" / "cli-basic-usage.md"
+    instructions_path = Path(__file__).parent.parent / "resources" / "cli-basic-usage.md"
 
     if not instructions_path.exists():
         click.echo(
@@ -156,7 +156,7 @@ def create_instructions(part: int | None) -> None:
         pflow instructions create --part 2  # Show Part 2 (~550 lines)
         pflow instructions create --part 3  # Show Part 3 (~550 lines)
     """
-    instructions_path = Path(__file__).parent / "resources" / "cli-agent-instructions.md"
+    instructions_path = Path(__file__).parent.parent / "resources" / "cli-agent-instructions.md"
 
     if not instructions_path.exists():
         click.echo(

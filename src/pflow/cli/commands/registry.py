@@ -25,165 +25,6 @@ def registry() -> None:
     pass
 
 
-def _extract_package_name(name: str, metadata: dict) -> str:
-    """Extract package/group name from node name.
-
-    Args:
-        name: Node name
-        metadata: Node metadata
-
-    Returns:
-        Package name for grouping
-    """
-    node_type = _get_node_type(name, metadata)
-
-    if node_type == "mcp":
-        # mcp-{server}-{tool} → server
-        # Use proper parsing that handles server names with hyphens
-        from pflow.mcp.manager import MCPServerManager
-        from pflow.mcp.utils import parse_mcp_node_name
-
-        try:
-            manager = MCPServerManager()
-            known_servers = manager.list_servers()
-            server_name, _ = parse_mcp_node_name(name, known_servers)
-            return server_name
-        except Exception:
-            # Fallback to naive parsing if something goes wrong
-            parts = name.split("-", 2)
-            return parts[1] if len(parts) > 1 else "unknown"
-
-    elif node_type == "core":
-        # Special handling for file operations
-        if name in ["read-file", "write-file", "copy-file", "move-file", "delete-file"]:
-            return "file"
-
-        # Standalone nodes (single-node packages)
-        if name in [
-            "llm",
-            "shell",
-            "mcp",
-            "echo",
-            "example",
-            "custom-name",
-            "no-docstring",
-            "retry-example",
-            "structured-example",
-        ]:
-            # For test nodes, group them
-            if name in ["echo", "example", "custom-name", "no-docstring", "retry-example", "structured-example"]:
-                return "test"
-            return name
-
-        # Extract prefix (git-, github-, etc.)
-        if "-" in name:
-            return name.split("-")[0]
-
-        return name
-
-    else:  # user nodes
-        return "user"
-
-
-def _format_node_name(name: str, metadata: dict, package: str) -> str:
-    """Format node name for display (remove redundant prefixes).
-
-    Args:
-        name: Full node name
-        metadata: Node metadata
-        package: Package name
-
-    Returns:
-        Formatted display name
-    """
-    node_type = _get_node_type(name, metadata)
-
-    if node_type == "mcp":
-        # Remove mcp-{server}- prefix and clean up underscores
-        prefix = f"mcp-{package}-"
-        if name.startswith(prefix):
-            tool_name = name[len(prefix) :]
-            # Remove redundant server prefix if present (e.g., slack_add_reaction → add_reaction)
-            if tool_name.startswith(f"{package}_"):
-                tool_name = tool_name[len(package) + 1 :]
-            # Convert underscores to hyphens for consistency
-            return tool_name.replace("_", "-")
-        return name
-
-    elif node_type == "core":
-        # For file operations, keep full name for clarity
-        if package == "file":
-            return name
-        # For standalone packages, just show the name
-        if package == name:
-            return name
-        # For test nodes, show full name
-        if package == "test":
-            return name
-        # For others, optionally remove package prefix
-        # But for git/github, keeping full name is clearer
-        return name
-
-    return name  # user nodes show full name
-
-
-def _group_nodes_by_package(nodes: dict) -> dict:
-    """Group nodes by their package/server.
-
-    Args:
-        nodes: All registry nodes
-
-    Returns:
-        Grouped nodes by type and package
-    """
-    grouped: dict[str, dict[str, list[tuple[str, dict]]]] = {"core": {}, "mcp": {}, "user": {}}
-
-    for name, metadata in nodes.items():
-        node_type = _get_node_type(name, metadata)
-        package = _extract_package_name(name, metadata)
-
-        if node_type not in grouped:
-            grouped[node_type] = {}
-
-        if package not in grouped[node_type]:
-            grouped[node_type][package] = []
-
-        grouped[node_type][package].append((name, metadata))
-
-    # Sort packages and nodes within packages
-    for node_type in grouped:
-        for package in grouped[node_type]:
-            grouped[node_type][package].sort(key=lambda x: x[0])
-        grouped[node_type] = dict(sorted(grouped[node_type].items()))
-
-    return grouped
-
-
-def _display_package_section(package_nodes: dict, section_type: str) -> None:
-    """Display a section of nodes grouped by package."""
-    for package, nodes in package_nodes.items():
-        count = len(nodes)
-        unit = ("node" if count == 1 else "nodes") if section_type == "core" else ("tool" if count == 1 else "tools")
-        click.echo(f"\n{package} ({count} {unit})")
-
-        for name, metadata in nodes:
-            display_name = _format_node_name(name, metadata, package)
-            desc = metadata.get("interface", {}).get("description", "")
-            # Use 75 chars for description
-            desc = desc[:72] + "..." if len(desc) > 75 else desc[:75]
-            click.echo(f"  {display_name:25} {desc}")
-
-
-def _display_user_nodes(user_nodes: dict) -> None:
-    """Display user nodes."""
-    for _package, package_nodes in user_nodes.items():
-        for name, metadata in package_nodes:
-            desc = metadata.get("interface", {}).get("description", "")
-            # Use 75 chars for description
-            desc = desc[:72] + "..." if len(desc) > 75 else desc[:75]
-            click.echo(f"  {name:25} {desc}")
-
-
 def _output_json_nodes(nodes: dict) -> None:
     """Output nodes in JSON format."""
     output = {
@@ -285,82 +126,6 @@ def _output_json_describe(node: str, metadata: dict) -> None:
         "interface": interface,
     }
     click.echo(json.dumps(output, indent=2))
-
-
-def _display_interface_section(items: list, section_name: str) -> None:
-    """Display a section of interface items (inputs/outputs/params)."""
-    if items:
-        click.echo(f"  {section_name}:")
-        for item in items:
-            key = item.get("key") or item.get("name", "?")
-            desc = f" - {item.get('description', '')}" if item.get("description") else ""
-            click.echo(f"    - {key}: {item.get('type', 'any')}{desc}")
-
-
-def _display_node_suggestions(similar: list) -> None:
-    """Display node name suggestions."""
-    if similar:
-        click.echo("\nDid you mean:")
-        for n in similar:
-            # Show cleaned names for MCP nodes
-            if n.startswith("mcp-"):
-                parts = n.split("-", 2)
-                if len(parts) >= 3:
-                    clean_name = parts[2].replace(f"{parts[1]}_", "").replace("_", "-")
-                    click.echo(f"  - {n} (or try: {parts[1]}-{clean_name})")
-                else:
-                    click.echo(f"  - {n}")
-            else:
-                click.echo(f"  - {n}")
-
-
-def _resolve_node_name(node: str, nodes: dict) -> str:
-    """Try to resolve a node name to its registry key.
-
-    Handles common variations like:
-    - slack-add-reaction -> mcp-slack-slack_add_reaction
-    - add-reaction -> mcp-slack-slack_add_reaction (if unique)
-    - filesystem-read-file -> mcp-filesystem-read_file
-    """
-    # Try exact match first
-    if node in nodes:
-        return node
-
-    # Try with underscores instead of hyphens
-    underscore_name = node.replace("-", "_")
-    if underscore_name in nodes:
-        return underscore_name
-
-    # For MCP-style names, try various patterns
-    if "-" in node:
-        parts = node.split("-", 1)
-        if len(parts) == 2:
-            server, tool = parts
-            tool_underscore = tool.replace("-", "_")
-
-            # Try mcp-{server}-{tool} patterns
-            variations = [
-                f"mcp-{server}-{tool}",
-                f"mcp-{server}-{tool_underscore}",
-                f"mcp-{server}-{server}_{tool}",
-                f"mcp-{server}-{server}_{tool_underscore}",
-            ]
-
-            for variant in variations:
-                if variant in nodes:
-                    return variant
-
-    # Try just the tool name if it's unique
-    tool_matches = []
-    for key in nodes:
-        if key.startswith("mcp-") and (node in key or underscore_name in key):
-            tool_matches.append(key)
-
-    if len(tool_matches) == 1:
-        return str(tool_matches[0])
-
-    # No match found
-    return node
 
 
 def _handle_nonexistent_path(scan_path: Path, path: Optional[str], output_json: bool) -> None:
@@ -657,7 +422,7 @@ def run_node(
 
     - Tool name only: SLACK_SEND_MESSAGE (if unique)
     """
-    from pflow.cli.registry_run import execute_single_node
+    from pflow.cli.commands.registry_run import execute_single_node
 
     execute_single_node(
         node_type=node_type,
@@ -668,7 +433,7 @@ def run_node(
     )
 
 
-def _normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None:
+def normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None:
     """Normalize node ID to match registry format.
 
     Handles multiple input formats:
@@ -721,7 +486,7 @@ def _normalize_node_id(user_input: str, available_nodes: set[str]) -> str | None
     return None
 
 
-def _validate_and_normalize_node_ids(
+def _validate_andnormalize_node_ids(
     node_ids: tuple[str, ...], available_nodes: set[str]
 ) -> tuple[list[str], dict[str, list[str]], list[str]]:
     """Validate and normalize node IDs.
@@ -738,7 +503,7 @@ def _validate_and_normalize_node_ids(
     ambiguous_nodes = {}
 
     for user_id in node_ids:
-        normalized = _normalize_node_id(user_id, available_nodes)
+        normalized = normalize_node_id(user_id, available_nodes)
         if normalized:
             normalized_ids.append(normalized)
         else:
@@ -804,7 +569,7 @@ def describe_nodes(node_ids: tuple[str, ...]) -> None:
     available_nodes = set(registry_metadata.keys())
 
     # Validate and normalize all node IDs
-    normalized_ids, ambiguous_nodes, invalid_nodes = _validate_and_normalize_node_ids(node_ids, available_nodes)
+    normalized_ids, ambiguous_nodes, invalid_nodes = _validate_andnormalize_node_ids(node_ids, available_nodes)
 
     # Handle any validation errors
     if ambiguous_nodes or invalid_nodes:

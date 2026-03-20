@@ -54,7 +54,7 @@ No cycles. `save_service → validator` and `save_service → skill_service` are
 |----------|------|
 | `cli/main.py` | `WorkflowManager`, `WorkflowValidator` |
 | `cli/commands/workflow.py` | `WorkflowManager`, save_service functions |
-| `cli/skills.py` | Most of skill_service |
+| `cli/commands/skills.py` | Most of skill_service |
 | `execution/` | `WorkflowManager`, `WorkflowValidator`, `WorkflowStatus` |
 | `runtime/` | `WorkflowManager` |
 | `mcp_server/` | `WorkflowManager`, `WorkflowValidator`, save_service functions |

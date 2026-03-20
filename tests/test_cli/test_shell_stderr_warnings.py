@@ -10,7 +10,8 @@ import json
 
 from click.testing import CliRunner
 
-from pflow.cli.main import _display_stderr_warnings, _format_node_status_line, main
+from pflow.cli.main import main
+from pflow.cli.workflow_output import _display_stderr_warnings, _format_node_status_line
 from tests.shared.markdown_utils import write_workflow_file
 
 
