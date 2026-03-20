@@ -130,12 +130,31 @@ Before presenting a recommendation, review it against everything else you've sai
 
 Once you know WHAT to refactor, understand it thoroughly before planning.
 
+### Dead code analysis FIRST
+
+Before proposing any structure, find and remove dead code. Dead functions change the scope — a file that looks like 821 lines might be 580 after removing 8 unused functions left behind by a formatter migration. Run dead code analysis on every file you're considering splitting.
+
+Use searcher subagents in parallel: "Is function X called anywhere in the codebase?" For each file being refactored, check every private function (`_name`) — these are the most likely candidates.
+
+**Why first**: Dead code inflates your line counts, complicates your call graph, and may create phantom dependencies that influence split boundaries. Removing it simplifies every subsequent step.
+
 ### Read the entire file yourself
 
 Do NOT rely on subagent summaries for the file being refactored. Read it line by line. Map:
 - Every function, class, constant, and module-level item
 - The internal call graph (which functions call which)
 - Dead code (defined but never called — verify with grep)
+
+### Build the internal call graph for large files
+
+For files over ~500 lines that you plan to split, map which internal functions call which other internal functions. Use a subagent: "For every function in file X, list which OTHER functions in the same file it calls, with line numbers."
+
+This catches:
+- **Cross-group dependencies**: Function A (proposed for file_x.py) calls function B (proposed for file_y.py) — you need an import between the new files
+- **Shared utilities**: A serialization helper called by both success and error paths — it must live in one file and be imported by the other
+- **Circular import risks**: If group A calls group B AND group B calls group A, you have a cycle. Resolve before planning.
+
+The call graph determines split boundaries. Without it, you're guessing.
 
 ### Audit all consumers
 
@@ -149,6 +168,20 @@ Categorize each consumer:
 - **Production code**: direct imports, lazy imports inside functions, **relative imports** (e.g., `from ..core.module import X`)
 - **Test code**: imports, `mock.patch()` string targets, docstring references
 - **Documentation**: CLAUDE.md references, comments
+
+### Mock.patch is a first-class consumer — sweep comprehensively
+
+`mock.patch("module.path.ClassName")` is a string. It won't fail at import time — it fails at **runtime** with confusing `AttributeError`. This makes mock.patch the #1 source of post-refactor surprises.
+
+Run this sweep ONCE at the start, not incrementally:
+```bash
+# Find ALL mock.patch targets for the module being refactored
+grep -rn "mock.patch.*<module_path>" tests/ --include="*.py"
+grep -rn "patch(\"<module_path>" tests/ --include="*.py"
+grep -rn "patch('<module_path>" tests/ --include="*.py"
+```
+
+Build a complete table: file, line, exact patch target string. Include this in the plan. Every string must be updated when the module moves — there is no tooling that catches these automatically.
 
 ### Check for existing analysis
 
@@ -169,6 +202,20 @@ Ask: "When this function changes, what other functions must change too?" Functio
 ### Dependency graph must be acyclic
 
 Draw the dependency graph between proposed files. If you find a cycle, the boundaries are wrong. Restructure until the graph is a DAG.
+
+### Framework objects resist extraction
+
+Functions that use a framework's context object (Click's `ctx`, Flask's `request`, Django's `self.request`) or module-level helpers that multiple groups depend on (like a `_log_trace()` utility) resist extraction. Moving them creates circular imports because:
+1. The extracted module imports the utility from the orchestrator
+2. The orchestrator imports the extracted functions
+3. Cycle.
+
+**Solutions in order of preference:**
+1. **Keep the function in the orchestrator** — if it calls `ctx.exit()` or uses framework state, it's orchestration, not a separate concern
+2. **Pass the dependency as a parameter** — change `_auto_discover(ctx)` to `_auto_discover(show_progress: bool)` to break the framework coupling
+3. **Duplicate small helpers** — if a utility is <15 lines and only needed to avoid a cycle, copy it. Document the duplication in CLAUDE.md. This is better than creating a `shared_utils.py` for one function.
+
+**How to detect**: After assigning functions to proposed files, check each cross-file call. If file A calls a function in the orchestrator AND the orchestrator imports from file A, you have a cycle. The function in the orchestrator must stay or the dependency must be broken.
 
 ### Naming conventions shift with visibility boundaries
 
@@ -254,7 +301,17 @@ Identify dead code found during the audit. Refactoring is the right time to remo
 
 ## Phase 5: Implement
 
-### Execution order
+### Layer large refactors
+
+When a refactor touches 10+ files or combines multiple types of changes (splits + moves + dead code), split into layers where each layer leaves the codebase in a passing state:
+
+1. **Layer by dependency**: Do extractions before moves. If you split a large file into several files (Layer 1) and then move files to a subdirectory (Layer 2), Layer 2's import paths depend on Layer 1 being complete.
+2. **Layer by blast radius**: Internal-only changes first (extractions from one file), then cross-module changes (moves that affect imports everywhere), then cosmetic cleanups (renames, DRY).
+3. **Commit between layers**: Each layer gets its own commit. If Layer 2 goes wrong, you can revert to Layer 1's clean state.
+
+**Why this matters**: If you do extractions and moves simultaneously and tests fail, you can't tell whether the failure is from a bad extraction or a broken move. Layering gives you bisectable history.
+
+### Execution order (within each layer)
 
 1. **Baseline**: `make test && make check` — record pass count
 2. **Create new files** in dependency order (leaves first): utils → leaf modules → orchestrator
@@ -374,6 +431,7 @@ Constants are easy to duplicate accidentally (defined in old location AND new lo
 - Write a focused subdirectory CLAUDE.md with the moved details
 - If test files moved, add source-to-test mapping and any non-obvious test patterns
 - Grep ALL other CLAUDE.md files for references to moved/renamed modules — stale references in other directories are easy to miss
+- **Document "what stays and why"** for large remainder files. If the original file is still 500+ lines after extraction, future agents will ask "why wasn't X extracted too?" Document the constraint (usually circular imports, framework coupling, or single-caller functions). Without this, agents will attempt further extraction and rediscover the constraint the hard way.
 
 ---
 
@@ -421,6 +479,7 @@ Hard-won knowledge from real refactors. These pass code review but fail in CI, o
 - Nested closures defined inside methods reference module-level names. When moving, verify these references still resolve.
 
 **File-move traps:**
+- **`Path(__file__)` breaks in subdirectories**: Files using `Path(__file__).parent / "resources"` to find sibling directories will break when moved to a subdirectory — `__file__.parent` now points one level deeper. Grep for `Path(__file__)` and `os.path.dirname(__file__)` in every file being moved. Fix: adjust `.parent` chain or use an absolute path anchored to the package root.
 - After `git mv`, the Edit tool can recreate deleted files at old paths if a subagent reads/writes to them. Always verify old files stay deleted after subagent work (`ls` the old paths).
 - Relative imports (`from ..module import X`) won't match absolute-path greps. Always search for both patterns.
 - **`from src.pflow.X` imports**: Some test files use `from src.pflow.module` instead of `from pflow.module`. Your `sed` patterns for `from pflow.X` won't match these. Always grep for BOTH `from pflow\.` AND `from src\.pflow\.` during consumer audits. This has tripped multiple agents.
