@@ -98,7 +98,7 @@ Lazy imports (break cycles):
 | Consumer | Symbols used |
 |----------|-------------|
 | `cli/main.py` | `display_validation_warnings`, `CompilationError` (as `CompilerCompilationError`), `prepare_inputs` |
-| `cli/registry_run.py` | `inject_special_parameters`, `import_node_class` |
+| `cli/commands/registry_run.py` | `inject_special_parameters`, `import_node_class` |
 | `execution/executor_service.py` | `compile_ir_to_flow`, `CompilationError` (via `runtime/__init__.py`) |
 | `mcp_server/services/execution_service.py` | `import_node_class`, `_parse_mcp_node_type` (lazy import, boundary violation) |
 

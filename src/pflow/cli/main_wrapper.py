@@ -24,13 +24,13 @@ def cli_main() -> None:
     configure_logging(verbose)
 
     # Import here to avoid circular imports
+    from .commands.instructions import instructions
+    from .commands.mcp import mcp
+    from .commands.read_fields import read_fields
+    from .commands.registry import registry
     from .commands.settings import settings
     from .commands.workflow import workflow
-    from .instructions import instructions
     from .main import workflow_command
-    from .mcp import mcp
-    from .read_fields import read_fields
-    from .registry import registry
 
     # Pre-parse to find first non-option argument before Click consumes it
     first_arg = None
@@ -103,7 +103,7 @@ def cli_main() -> None:
 
     elif first_arg == "skill":
         # Route to Skill group (Task 119)
-        from .skills import skill
+        from .commands.skills import skill
 
         original_argv = sys.argv[:]
         try:

@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import click.testing
 import pytest
 
-from pflow.cli.registry import registry
+from pflow.cli.commands.registry import registry
 from pflow.registry.registry import Registry
 
 
@@ -32,7 +32,7 @@ def runner():
 @pytest.fixture
 def mock_registry():
     """Create a mock Registry with test data."""
-    with patch("pflow.cli.registry_run.Registry") as MockRegistry:
+    with patch("pflow.cli.commands.registry_run.Registry") as MockRegistry:
         instance = MagicMock(spec=Registry)
         MockRegistry.return_value = instance
 
@@ -127,8 +127,8 @@ def test_basic_node_execution_with_temp_file(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         # Setup registry mock
         instance = MagicMock()
@@ -156,8 +156,8 @@ def test_node_execution_returns_exit_code_zero_on_success(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -174,8 +174,8 @@ def test_node_execution_returns_exit_code_one_on_failure(runner):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -202,8 +202,8 @@ def test_json_output_format_produces_valid_json(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -242,8 +242,8 @@ def test_json_output_bypasses_structure_formatting(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -286,7 +286,7 @@ def test_structure_mode_shows_flattened_paths(runner, mock_registry):
             shared["result"] = exec_res
             return "default"
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
+    with patch("pflow.cli.commands.registry_run.import_node_class") as mock_import:
         mock_import.return_value = ComplexOutputNode
 
         # Default is now "smart" mode which shows template paths with values
@@ -305,8 +305,8 @@ def test_text_mode_displays_human_readable_output(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -358,8 +358,8 @@ def test_parameter_type_inference_boolean(runner, mock_registry):
     }
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={"flag": True}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={"flag": True}),
     ):
         mock_import.return_value = BoolTestNode
 
@@ -399,8 +399,8 @@ def test_parameter_type_inference_integers(runner, mock_registry):
     }
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={"count": 42}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={"count": 42}),
     ):
         mock_import.return_value = IntTestNode
 
@@ -435,8 +435,8 @@ def test_parameter_type_inference_json(runner, mock_registry):
     }
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={"data": {"key": "value"}}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={"data": {"key": "value"}}),
     ):
         mock_import.return_value = JsonTestNode
 
@@ -487,8 +487,8 @@ def test_mcp_node_short_form_resolution(runner, mock_registry):
             return "default"
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters") as mock_inject,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters") as mock_inject,
     ):
         mock_import.return_value = MockMCPNode
         mock_inject.return_value = {"channel": "test", "text": "hello"}
@@ -516,7 +516,7 @@ def test_mcp_node_resolution_feedback_in_verbose_mode(runner, mock_registry):
             shared["result"] = exec_res
             return "default"
 
-    with patch("pflow.cli.registry_run.import_node_class") as mock_import:
+    with patch("pflow.cli.commands.registry_run.import_node_class") as mock_import:
         mock_import.return_value = MockMCPNode
 
         result = runner.invoke(registry, ["run", "SLACK_SEND_MESSAGE", "channel=test", "text=hello", "--verbose"])
@@ -593,8 +593,8 @@ def test_missing_required_parameter_shows_error(runner, mock_registry):
     }
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = StrictNode
 
@@ -641,8 +641,8 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
             return "default"
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = JsonStringNode
 
@@ -680,8 +680,8 @@ def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
     }
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = NestedArrayNode
 
@@ -721,8 +721,8 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
     }
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = DuplicateOutputNode
 
@@ -751,8 +751,8 @@ def test_node_execution_timing_is_displayed(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -774,8 +774,8 @@ def test_verbose_mode_shows_parameters(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}
@@ -812,8 +812,8 @@ def test_multiple_parameters_are_parsed_correctly(runner, tmp_path):
     from pflow.nodes.file.write_file import WriteFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"write-file": {}}
@@ -862,8 +862,8 @@ def test_registry_run_works_without_timeout(runner, tmp_path):
     from pflow.nodes.file.read_file import ReadFileNode
 
     with (
-        patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run.Registry") as MockRegistry,
+        patch("pflow.cli.commands.registry_run.import_node_class") as mock_import,
+        patch("pflow.cli.commands.registry_run.Registry") as MockRegistry,
     ):
         instance = MagicMock()
         instance.load.return_value = {"read-file": {}}

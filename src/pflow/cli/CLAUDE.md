@@ -26,20 +26,26 @@ Routing Decision (pre-parses sys.argv, first non-option arg)
 src/pflow/cli/
 ├── __init__.py              # Exports cli_main
 ├── main_wrapper.py          # Entry point router (pre-parses sys.argv)
-├── main.py                  # Core workflow execution (~3300 lines)
+├── main.py                  # Workflow command orchestration (~1570 lines)
+├── param_parsing.py         # Parameter parsing (infer_type, parse_workflow_params)
+├── workflow_resolution.py   # Workflow file/name resolution (resolve_workflow, is_likely_workflow_name)
+├── mcp_sync.py              # MCP auto-discovery at startup (_auto_discover_mcp_servers)
+├── workflow_output.py       # Output detection, display, formatting (26 functions)
+├── workflow_errors.py       # Error display and formatting (9 functions, imports from workflow_output)
 ├── cli_output.py            # OutputInterface implementation for Click
 ├── rerun_display.py         # Rerun command display with secret masking
 ├── discovery_errors.py      # Shared error handling for LLM discovery
-├── read_fields.py           # CLI command: retrieve fields from cached registry run results
 ├── logging_config.py        # CLI logging configuration
-├── mcp.py                   # MCP server management commands
-├── registry.py              # Node registry commands
-├── registry_run.py          # Single node execution (pflow registry run)
-├── skills.py                # Skill publishing commands (save/list/remove)
-├── instructions.py          # Agent instruction generation
 ├── resources/               # CLI resources (agent instruction markdown files)
 └── commands/
+    ├── __init__.py          # Package marker
+    ├── instructions.py      # Agent instruction generation
+    ├── mcp.py               # MCP server management commands
+    ├── read_fields.py       # Retrieve fields from cached registry run results
+    ├── registry.py          # Node registry commands (~586 lines)
+    ├── registry_run.py      # Single node execution (pflow registry run)
     ├── settings.py          # Settings management (nodes, env, LLM models, registry)
+    ├── skills.py            # Skill publishing commands (save/list/remove)
     └── workflow.py          # Saved workflow commands
 ```
 
@@ -48,13 +54,13 @@ src/pflow/cli/
 ### Startup Sequence
 
 ```
-workflow_command()
-    ↓ _setup_signals()
-    ↓ _inject_settings_env_vars()  ← injects API keys from pflow settings into os.environ
-    ↓ _initialize_context()
-    ↓ _auto_discover_mcp_servers() ← smart sync (skips if config unchanged)
-    ↓ _read_stdin_data()
-    ↓ _try_execute_named_workflow()
+workflow_command()                        (main.py)
+    ↓ _setup_signals()                    (main.py)
+    ↓ _inject_settings_env_vars()         (main.py) ← injects API keys into os.environ
+    ↓ _initialize_context()               (main.py)
+    ↓ _auto_discover_mcp_servers()        (mcp_sync.py) ← smart sync (skips if config unchanged)
+    ↓ _read_stdin_data()                  (main.py)
+    ↓ _try_execute_named_workflow()       (main.py) → resolve_workflow (workflow_resolution.py)
 ```
 
 The env injection step is critical — it makes API keys stored via `pflow settings set-env` available to the `llm` library and other tools that read `os.environ`. Skipped in test environment.
@@ -74,7 +80,7 @@ workflow (nargs=-1)    # Catch-all: file path, saved name, or natural language
 
 ### Workflow Name Detection
 
-`is_likely_workflow_name()` determines whether input is a file path or saved workflow name. Heuristics:
+`is_likely_workflow_name()` (in `workflow_resolution.py`) determines whether input is a file path or saved workflow name. Heuristics:
 - Has file extension (`.pflow.md`, `.json`, `.md`) or path separators → file path
 - Followed by `key=value` args → workflow name with params
 - Contains hyphens (kebab-case) → likely workflow name
@@ -105,7 +111,7 @@ Interactive detection rules are in `core/CLAUDE.md` (output_controller). CLI-spe
 
 ### Parameter Handling
 
-**Type inference** (`infer_type` function):
+**Type inference** (`infer_type` in `param_parsing.py`):
 - `"true"/"false"` → `True/False` (case-insensitive)
 - No decimal/scientific notation → `int`
 - Has decimal or `e` → `float`
@@ -136,7 +142,7 @@ JSON errors include structured execution state: per-node status (completed/faile
 
 ## Component Details
 
-### MCP Commands (mcp.py)
+### MCP Commands (commands/mcp.py)
 
 Subcommands: `add`, `list`, `sync`, `remove`, `tools`, `info`, `serve`.
 
@@ -146,7 +152,7 @@ Subcommands: `add`, `list`, `sync`, `remove`, `tools`, `info`, `serve`.
 
 **MCP connection pooling**: Server sessions are kept alive across workflow steps via `MCPConnectionPool` (shared store key `__mcp_pool__`). Pool is created by `executor_service.py` and shut down in its `finally` block.
 
-### Registry Commands (registry.py)
+### Registry Commands (commands/registry.py)
 
 Subcommands: `list` (with optional filter pattern), `describe`, `scan`, `discover` (LLM-powered), `run`.
 
@@ -161,7 +167,7 @@ Ambiguity detected → shows all matching full IDs with guidance.
 
 **Cross-module dependency**: `describe` uses `build_component_context()` from `pflow.registry.context_builder` to produce detailed node output.
 
-### Execution Caching Pipeline (registry_run.py + read_fields.py)
+### Execution Caching Pipeline (commands/registry_run.py + commands/read_fields.py)
 
 ```
 pflow registry run <node> params...
@@ -189,7 +195,7 @@ Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (L
 
 **Discovery commands use plain functions** — `discover_workflow()` from `core/workflow/discovery` and `discover_components()` from `registry/discovery`. Both return typed dataclasses (`WorkflowMatch`, `ComponentSelection`).
 
-### Skill Commands (skills.py)
+### Skill Commands (commands/skills.py)
 
 Subcommands: `save`, `list`, `remove`.
 
@@ -203,7 +209,7 @@ Skills are **symlinks** from tool-specific directories to saved workflows in `~/
 
 **Broken link detection**: `list` detects and reports broken symlinks with fix/remove guidance.
 
-### Instructions Commands (instructions.py)
+### Instructions Commands (commands/instructions.py)
 
 - `pflow instructions usage` — basic usage guide (~166 lines)
 - `pflow instructions create` — comprehensive workflow creation guide (~1650 lines)
@@ -239,8 +245,8 @@ LLM model resolution chain (genuinely hard to discover):
 
 CLI uses formatters from `execution/formatters/` for output consistency with MCP server:
 - `main.py`: `success_formatter`, `error_formatter`, `validation_formatter`
-- `registry.py`: `registry_list_formatter`, `registry_search_formatter`
-- `registry_run.py`: `node_output_formatter`, `registry_run_formatter`
+- `commands/registry.py`: `registry_list_formatter`, `registry_search_formatter`
+- `commands/registry_run.py`: `node_output_formatter`, `registry_run_formatter`
 - `commands/workflow.py`: `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`, `history_formatter`
 
 ## Validate-Only Mode

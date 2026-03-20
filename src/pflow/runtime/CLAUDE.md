@@ -208,7 +208,7 @@ Cache used when: node in `completed_nodes` AND config hash matches AND no error 
 ## Cross-Module Dependencies
 
 Key runtime modules used outside `runtime/`:
-- **`TemplateResolver`** (`template_resolver.py`): Used by `cli/read_fields.py`, `execution/formatters/`, `mcp_server/services/` — not runtime-internal only.
+- **`TemplateResolver`** (`template_resolver.py`): Used by `cli/commands/read_fields.py`, `execution/formatters/`, `mcp_server/services/` — not runtime-internal only.
 - **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `wrappers/template_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `compilation/ir_preparation.py`.
 - **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `wrappers/template_wrapper.py`, `wrappers/batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
 - **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `wrappers/instrumented_wrapper.py` and `wrappers/batch_node.py` for progress callback indentation depth.

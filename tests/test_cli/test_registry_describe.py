@@ -18,7 +18,7 @@ Test Coverage:
 import click.testing
 import pytest
 
-from pflow.cli.registry import registry
+from pflow.cli.commands.registry import registry
 
 
 @pytest.fixture

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-from pflow.cli.main import infer_type, parse_workflow_params
+from pflow.cli.param_parsing import infer_type, parse_workflow_params
 from pflow.cli.rerun_display import (
     display_rerun_commands,
     format_param_value,

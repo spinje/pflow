@@ -5,16 +5,16 @@ from unittest.mock import MagicMock, patch
 
 from click.testing import CliRunner
 
-from pflow.cli.skills import skill
+from pflow.cli.commands.skills import skill
 
 
 class TestSkillSaveCommand:
     """Tests for 'pflow skill save' command."""
 
-    @patch("pflow.cli.skills.create_skill_symlink")
-    @patch("pflow.cli.skills.enrich_workflow")
-    @patch("pflow.cli.skills.find_skill_for_workflow")
-    @patch("pflow.cli.skills.WorkflowManager")
+    @patch("pflow.cli.commands.skills.create_skill_symlink")
+    @patch("pflow.cli.commands.skills.enrich_workflow")
+    @patch("pflow.cli.commands.skills.find_skill_for_workflow")
+    @patch("pflow.cli.commands.skills.WorkflowManager")
     def test_skill_save_creates_symlink(
         self,
         mock_wm_cls: MagicMock,
@@ -59,7 +59,7 @@ class TestSkillSaveCommand:
         assert create_kwargs["scope"] == "project"
         assert create_kwargs["target"] == "claude"
 
-    @patch("pflow.cli.skills.WorkflowManager")
+    @patch("pflow.cli.commands.skills.WorkflowManager")
     def test_skill_save_workflow_not_found(self, mock_wm_cls: MagicMock) -> None:
         """Test error message when workflow doesn't exist."""
         mock_wm = MagicMock()
@@ -75,10 +75,10 @@ class TestSkillSaveCommand:
         assert "Save it first with: pflow workflow save" in result.output
         assert "nonexistent-workflow" in result.output
 
-    @patch("pflow.cli.skills.create_skill_symlink")
-    @patch("pflow.cli.skills.enrich_workflow")
-    @patch("pflow.cli.skills.find_skill_for_workflow")
-    @patch("pflow.cli.skills.WorkflowManager")
+    @patch("pflow.cli.commands.skills.create_skill_symlink")
+    @patch("pflow.cli.commands.skills.enrich_workflow")
+    @patch("pflow.cli.commands.skills.find_skill_for_workflow")
+    @patch("pflow.cli.commands.skills.WorkflowManager")
     def test_skill_save_updates_existing(
         self,
         mock_wm_cls: MagicMock,
@@ -124,10 +124,10 @@ class TestSkillSaveCommand:
         # Verify NO new symlink was created (skill already exists)
         mock_create.assert_not_called()
 
-    @patch("pflow.cli.skills.create_skill_symlink")
-    @patch("pflow.cli.skills.enrich_workflow")
-    @patch("pflow.cli.skills.find_skill_for_workflow")
-    @patch("pflow.cli.skills.WorkflowManager")
+    @patch("pflow.cli.commands.skills.create_skill_symlink")
+    @patch("pflow.cli.commands.skills.enrich_workflow")
+    @patch("pflow.cli.commands.skills.find_skill_for_workflow")
+    @patch("pflow.cli.commands.skills.WorkflowManager")
     def test_skill_save_personal_scope(
         self,
         mock_wm_cls: MagicMock,
@@ -161,10 +161,10 @@ class TestSkillSaveCommand:
         create_kwargs = mock_create.call_args[1]
         assert create_kwargs["scope"] == "personal"
 
-    @patch("pflow.cli.skills.create_skill_symlink")
-    @patch("pflow.cli.skills.enrich_workflow")
-    @patch("pflow.cli.skills.find_skill_for_workflow")
-    @patch("pflow.cli.skills.WorkflowManager")
+    @patch("pflow.cli.commands.skills.create_skill_symlink")
+    @patch("pflow.cli.commands.skills.enrich_workflow")
+    @patch("pflow.cli.commands.skills.find_skill_for_workflow")
+    @patch("pflow.cli.commands.skills.WorkflowManager")
     def test_skill_save_multiple_targets(
         self,
         mock_wm_cls: MagicMock,
@@ -207,7 +207,7 @@ class TestSkillSaveCommand:
 class TestSkillListCommand:
     """Tests for 'pflow skill list' command."""
 
-    @patch("pflow.cli.skills.find_pflow_skills")
+    @patch("pflow.cli.commands.skills.find_pflow_skills")
     def test_skill_list_shows_skills(self, mock_find: MagicMock) -> None:
         """Test listing skills shows all pflow-managed skills grouped by workflow."""
         from pflow.core.workflow.skill_service import SkillInfo
@@ -258,7 +258,7 @@ class TestSkillListCommand:
         assert "To restore: pflow workflow save <file> --name missing --force" in result.output
         assert "To remove:  pflow skill remove missing --copilot" in result.output
 
-    @patch("pflow.cli.skills.find_pflow_skills")
+    @patch("pflow.cli.commands.skills.find_pflow_skills")
     def test_skill_list_empty(self, mock_find: MagicMock) -> None:
         """Test list command with no skills shows helpful message."""
         mock_find.return_value = []
@@ -274,7 +274,7 @@ class TestSkillListCommand:
 class TestSkillRemoveCommand:
     """Tests for 'pflow skill remove' command."""
 
-    @patch("pflow.cli.skills.remove_skill_service")
+    @patch("pflow.cli.commands.skills.remove_skill_service")
     def test_skill_remove_deletes(self, mock_remove: MagicMock) -> None:
         """Test successful skill removal."""
         mock_remove.return_value = True
@@ -290,7 +290,7 @@ class TestSkillRemoveCommand:
         # Verify service was called with correct scope and default target
         mock_remove.assert_called_once_with("test-workflow", "project", "claude")
 
-    @patch("pflow.cli.skills.remove_skill_service")
+    @patch("pflow.cli.commands.skills.remove_skill_service")
     def test_skill_remove_not_found(self, mock_remove: MagicMock) -> None:
         """Test error message when skill doesn't exist."""
         mock_remove.return_value = False
@@ -302,7 +302,7 @@ class TestSkillRemoveCommand:
         assert result.exit_code == 1
         assert "Skill 'nonexistent-skill' not found" in result.output
 
-    @patch("pflow.cli.skills.remove_skill_service")
+    @patch("pflow.cli.commands.skills.remove_skill_service")
     def test_skill_remove_personal_scope(self, mock_remove: MagicMock) -> None:
         """Test removing skill from personal scope with --personal flag."""
         mock_remove.return_value = True
@@ -318,7 +318,7 @@ class TestSkillRemoveCommand:
         # Verify correct scope was passed
         mock_remove.assert_called_once_with("my-skill", "personal", "claude")
 
-    @patch("pflow.cli.skills.remove_skill_service")
+    @patch("pflow.cli.commands.skills.remove_skill_service")
     def test_skill_remove_multiple_targets(self, mock_remove: MagicMock) -> None:
         """Test removing skill from multiple targets."""
         mock_remove.return_value = True

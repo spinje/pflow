@@ -175,7 +175,7 @@ class TestNestedWorkflowCLI:
             mock_wm_class.return_value = wm
 
             # Also patch the WorkflowManager used in CLI setup
-            with patch("pflow.cli.main.WorkflowManager", return_value=wm):
+            with patch("pflow.cli.workflow_resolution.WorkflowManager", return_value=wm):
                 result = invoke_cli(["test-saved-nested", "title=saved"])
 
         assert result.exit_code == 0, (

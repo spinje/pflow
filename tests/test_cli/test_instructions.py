@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from pflow.cli.instructions import create_instructions, instructions, usage_instructions
+from pflow.cli.commands.instructions import create_instructions, instructions, usage_instructions
 
 
 @pytest.fixture

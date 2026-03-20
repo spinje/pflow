@@ -16,7 +16,7 @@ Scenarios tested:
 
 from click.testing import CliRunner
 
-from pflow.cli.registry import _normalize_node_id, registry
+from pflow.cli.commands.registry import _normalize_node_id, registry
 
 
 class TestNodeIdNormalization:

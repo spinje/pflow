@@ -13,7 +13,8 @@ from unittest.mock import MagicMock, patch
 
 import click.testing
 
-from pflow.cli.main import find_similar_workflows, main, resolve_workflow
+from pflow.cli.main import main
+from pflow.cli.workflow_resolution import find_similar_workflows, resolve_workflow
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 
@@ -169,7 +170,7 @@ class TestWorkflowResolutionCLI:
         """Test running a saved workflow by name."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {
@@ -194,7 +195,7 @@ class TestWorkflowResolutionCLI:
         """Test running workflow with .pflow.md extension strips it."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
@@ -235,16 +236,17 @@ class TestWorkflowResolutionCLI:
         """Test that helpful suggestions are shown when workflow not found."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
-            mock_wm = MockWM.return_value
-            mock_wm.exists.return_value = False
-            mock_wm.list_all.return_value = [
-                {"name": "text-analyzer"},
-                {"name": "text-summary"},
-                {"name": "analyze-data"},
-            ]
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+            with patch("pflow.cli.main.WorkflowManager", MockWM):
+                mock_wm = MockWM.return_value
+                mock_wm.exists.return_value = False
+                mock_wm.list_all.return_value = [
+                    {"name": "text-analyzer"},
+                    {"name": "text-summary"},
+                    {"name": "analyze-data"},
+                ]
 
-            result = runner.invoke(main, ["text-analyz"])
+                result = runner.invoke(main, ["text-analyz"])
 
             assert result.exit_code == 1
             assert "Workflow 'text-analyz' not found" in result.output
@@ -255,12 +257,13 @@ class TestWorkflowResolutionCLI:
         """Test message when no similar workflows found."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
-            mock_wm = MockWM.return_value
-            mock_wm.exists.return_value = False
-            mock_wm.list_all.return_value = []
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+            with patch("pflow.cli.main.WorkflowManager", MockWM):
+                mock_wm = MockWM.return_value
+                mock_wm.exists.return_value = False
+                mock_wm.list_all.return_value = []
 
-            result = runner.invoke(main, ["unknown-workflow"])
+                result = runner.invoke(main, ["unknown-workflow"])
 
             assert result.exit_code == 1
             assert "Workflow 'unknown-workflow' not found" in result.output
@@ -270,7 +273,7 @@ class TestWorkflowResolutionCLI:
         """Test passing parameters to a named workflow - simplified test."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "process-data"
             mock_wm.load_ir.return_value = {
@@ -299,7 +302,7 @@ class TestWorkflowResolutionCLI:
         """Test that parameters are validated using prepare_inputs."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "process-data"
             mock_wm.load_ir.return_value = {
@@ -324,7 +327,7 @@ class TestWorkflowResolutionCLI:
         """Test that default values are applied for optional parameters - simplified."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "analyze"
             mock_wm.load_ir.return_value = {
@@ -353,7 +356,7 @@ class TestWorkflowResolutionCLI:
         """Test that verbose mode shows what's happening."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
@@ -391,7 +394,7 @@ class TestWorkflowResolutionCLI:
         """Test that parameter types are correctly inferred."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
@@ -441,7 +444,7 @@ class TestWorkflowResolutionCLI:
         """Test that --output-format json works with named workflows - simplified."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {
@@ -458,7 +461,7 @@ class TestWorkflowResolutionCLI:
         """Test that natural language shows invalid input guidance when workflow not found."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = []
@@ -475,7 +478,7 @@ class TestIsLikelyWorkflowName:
 
     def test_single_word_not_workflow_name(self):
         """Test that single words without params aren't treated as workflow names."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert not is_likely_workflow_name("analyze", ())
         assert not is_likely_workflow_name("process", ())
@@ -483,13 +486,13 @@ class TestIsLikelyWorkflowName:
 
     def test_single_word_with_params_is_workflow_name(self):
         """Single word with params is treated as a workflow target (planner allowed)."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert is_likely_workflow_name("analyze", ("input=data.csv",))
 
     def test_kebab_case_is_workflow_name(self):
         """Test that kebab-case names are recognized as workflow names."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert is_likely_workflow_name("my-workflow", ())
         assert is_likely_workflow_name("process-data", ())
@@ -497,14 +500,14 @@ class TestIsLikelyWorkflowName:
 
     def test_text_with_spaces_not_workflow_name(self):
         """Test that text with spaces is never a workflow name."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert not is_likely_workflow_name("analyze this text", ())
         assert not is_likely_workflow_name("process my data", ("param=value",))
 
     def test_file_paths_are_workflow_names(self):
         """Test that file paths are recognized as workflow references."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert is_likely_workflow_name("./workflow.pflow.md", ())
         assert is_likely_workflow_name("../workflows/test.pflow.md", ())
@@ -516,14 +519,14 @@ class TestIsLikelyWorkflowName:
 
     def test_with_parameters_is_workflow_name(self):
         """Test that arguments with parameters suggest workflow name."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert is_likely_workflow_name("process", ("input=data.txt", "output=result.json"))
         assert is_likely_workflow_name("workflow", ("key=value",))
 
     def test_cli_syntax_not_workflow_name(self):
         """Test that CLI syntax isn't mistaken for workflow name."""
-        from pflow.cli.main import is_likely_workflow_name
+        from pflow.cli.workflow_resolution import is_likely_workflow_name
 
         assert not is_likely_workflow_name("node1", ("=>", "node2"))
         assert not is_likely_workflow_name("read-file", ("--verbose",))
@@ -601,7 +604,7 @@ class TestEdgeCases:
         """Test parameters with = in the value are handled correctly."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.main.WorkflowManager") as MockWM:
+        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}

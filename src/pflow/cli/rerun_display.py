@@ -121,31 +121,3 @@ def display_rerun_commands(workflow_name: str, params: dict[str, Any] | None) ->
 
     click.echo("\n📖 Learn more:")
     click.echo(f"  $ pflow workflow describe {workflow_name}")
-
-
-def display_file_rerun_commands(
-    file_path: str,
-    params: dict[str, Any] | None,
-    show_save_tip: bool = False,
-    suggested_name: str | None = None,
-) -> None:
-    """Display rerun commands for file-based workflows.
-
-    Args:
-        file_path: Path to the workflow file
-        params: Execution parameters (None or empty dict for no params)
-        show_save_tip: Whether to show tip about saving as named workflow
-        suggested_name: Suggested name for saving (used in save tip)
-    """
-    # Build the rerun command with file path
-    rerun_command = format_rerun_command(str(file_path), params)
-
-    # Display rerun command
-    click.echo("\n✨ Run again with:")
-    click.echo(f"  $ {rerun_command}")
-
-    # Optionally show save tip
-    if show_save_tip:
-        save_name = suggested_name or "my-workflow"
-        click.echo("\n💡 Save as named workflow for easier access:")
-        click.echo(f"  $ pflow workflow save {file_path} --name {save_name}")

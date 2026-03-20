@@ -3,7 +3,9 @@
 import click
 import click.testing
 
-from pflow.cli.main import _display_cost_summary, infer_type, is_likely_workflow_name, parse_workflow_params
+from pflow.cli.param_parsing import infer_type, parse_workflow_params
+from pflow.cli.workflow_output import _display_cost_summary
+from pflow.cli.workflow_resolution import is_likely_workflow_name
 
 
 class TestInferType:
