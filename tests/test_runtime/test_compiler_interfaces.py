@@ -11,7 +11,7 @@ import pytest
 
 from pflow.core.ir_schema import ValidationError
 from pflow.pocketflow import BaseNode
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 class MockNode(BaseNode):
@@ -91,7 +91,7 @@ def registry_with_nodes():
 @pytest.fixture
 def mock_node_import():
     """Mock the import_node_class function."""
-    with patch("pflow.runtime.compiler.import_node_class") as mock_import:
+    with patch("pflow.runtime.compilation.compiler.import_node_class") as mock_import:
         mock_import.return_value = MockNode
         yield mock_import
 
@@ -283,7 +283,7 @@ class TestCompilerInterfaces:
 
         # Ensure caplog captures WARNING level logs from the compiler module
         # This is necessary because earlier tests may have modified logger configuration
-        caplog.set_level("WARNING", logger="pflow.runtime.compiler")
+        caplog.set_level("WARNING", logger="pflow.runtime.compilation.compiler")
 
         # Should compile successfully but log warning
         flow = compile_ir_to_flow(ir, registry_with_nodes)

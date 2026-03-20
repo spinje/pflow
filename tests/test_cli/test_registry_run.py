@@ -359,7 +359,7 @@ def test_parameter_type_inference_boolean(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={"flag": True}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={"flag": True}),
     ):
         mock_import.return_value = BoolTestNode
 
@@ -400,7 +400,7 @@ def test_parameter_type_inference_integers(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={"count": 42}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={"count": 42}),
     ):
         mock_import.return_value = IntTestNode
 
@@ -436,7 +436,7 @@ def test_parameter_type_inference_json(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={"data": {"key": "value"}}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={"data": {"key": "value"}}),
     ):
         mock_import.return_value = JsonTestNode
 
@@ -488,7 +488,7 @@ def test_mcp_node_short_form_resolution(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters") as mock_inject,
+        patch("pflow.cli.registry_run.inject_special_parameters") as mock_inject,
     ):
         mock_import.return_value = MockMCPNode
         mock_inject.return_value = {"channel": "test", "text": "hello"}
@@ -594,7 +594,7 @@ def test_missing_required_parameter_shows_error(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = StrictNode
 
@@ -642,7 +642,7 @@ def test_structure_mode_parses_json_strings(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = JsonStringNode
 
@@ -681,7 +681,7 @@ def test_structure_mode_shows_nested_array_notation(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = NestedArrayNode
 
@@ -722,7 +722,7 @@ def test_structure_mode_deduplicates_identical_outputs(runner, mock_registry):
 
     with (
         patch("pflow.cli.registry_run.import_node_class") as mock_import,
-        patch("pflow.cli.registry_run._inject_special_parameters", return_value={}),
+        patch("pflow.cli.registry_run.inject_special_parameters", return_value={}),
     ):
         mock_import.return_value = DuplicateOutputNode
 

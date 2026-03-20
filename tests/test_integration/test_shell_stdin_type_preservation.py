@@ -17,7 +17,7 @@ After the fix:
 import json
 
 from pflow.registry.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 class TestShellStdinTypePreservation:

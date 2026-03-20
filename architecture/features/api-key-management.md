@@ -673,8 +673,8 @@ pflow workflow --param api_key=sk-override-value
 ### Implementation Files
 - `src/pflow/core/settings.py` - SettingsManager implementation
 - `src/pflow/cli/commands/settings.py` - CLI commands
-- `src/pflow/runtime/workflow_validator.py` - Input validation
-- `src/pflow/runtime/compiler.py` - Settings loading
+- `src/pflow/runtime/compilation/ir_preparation.py` - Input validation
+- `src/pflow/runtime/compilation/compile_validation.py` - Settings loading
 
 ### Standards Reference
 - AWS CLI Configuration: https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-files.html

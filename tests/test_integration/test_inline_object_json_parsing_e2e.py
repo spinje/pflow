@@ -6,7 +6,7 @@ which is then auto-parsed when used in an inline object for another node's stdin
 
 import pytest
 
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 from tests.shared.registry_utils import ensure_test_registry
 
 

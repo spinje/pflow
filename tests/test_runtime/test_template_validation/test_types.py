@@ -1070,7 +1070,7 @@ class TestShellCommandValidationTiming:
         This tests the full compilation path to ensure the error is caught early.
         """
         from pflow.registry.registry import Registry
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "inputs": {"data": {"type": "object", "required": True}},
@@ -1103,7 +1103,7 @@ class TestShellCommandValidationTiming:
     def test_list_in_shell_command_fails_at_compile_time(self):
         """List in shell command should fail during compilation, not runtime."""
         from pflow.registry.registry import Registry
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
@@ -1141,7 +1141,7 @@ class TestShellCommandValidationTiming:
         This is why validation should always be enabled for user-facing workflows.
         """
         from pflow.registry.registry import Registry
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "inputs": {"data": {"type": "object", "required": True}},

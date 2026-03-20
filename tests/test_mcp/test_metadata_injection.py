@@ -8,7 +8,7 @@ to avoid redundancy while maintaining comprehensive coverage.
 
 from unittest.mock import MagicMock, patch
 
-from pflow.runtime.compiler import _inject_special_parameters
+from pflow.runtime.compilation.compiler import inject_special_parameters
 
 
 class TestMetadataInjectionRealBugs:
@@ -26,7 +26,7 @@ class TestMetadataInjectionRealBugs:
             mock_manager.list_servers.return_value = ["github"]
             mock_manager_class.return_value = mock_manager
 
-            params = _inject_special_parameters(
+            params = inject_special_parameters(
                 node_type="mcp-github-list_repositories", node_id="test", params={"per_page": 30}, registry=None
             )
 
@@ -46,7 +46,7 @@ class TestMetadataInjectionRealBugs:
             mock_manager.list_servers.return_value = ["slack"]
             mock_manager_class.return_value = mock_manager
 
-            params = _inject_special_parameters(
+            params = inject_special_parameters(
                 node_type="mcp-slack-get-channel-history-with-threads", node_id="test", params={}, registry=None
             )
 
@@ -66,7 +66,7 @@ class TestMetadataInjectionRealBugs:
             mock_manager.list_servers.return_value = ["github"]
             mock_manager_class.return_value = mock_manager
 
-            params = _inject_special_parameters(
+            params = inject_special_parameters(
                 node_type="mcp-github-list-issues",
                 node_id="test",
                 params={
@@ -95,12 +95,12 @@ class TestMetadataInjectionRealBugs:
         downstream errors. Better to not inject at all.
         """
         # Just "mcp-" without server
-        params = _inject_special_parameters(node_type="mcp-", node_id="test", params={"key": "value"}, registry=None)
+        params = inject_special_parameters(node_type="mcp-", node_id="test", params={"key": "value"}, registry=None)
         assert "__mcp_server__" not in params
         assert "__mcp_tool__" not in params
 
         # Just "mcp-server" without tool
-        params = _inject_special_parameters(
+        params = inject_special_parameters(
             node_type="mcp-server", node_id="test", params={"key": "value"}, registry=None
         )
         assert "__mcp_server__" not in params
@@ -123,7 +123,7 @@ class TestMetadataInjectionRealBugs:
             mock_manager.list_servers.return_value = ["github"]
             mock_manager_class.return_value = mock_manager
 
-            params = _inject_special_parameters(
+            params = inject_special_parameters(
                 node_type="mcp-github-create-issue",
                 node_id="test",
                 params={
@@ -147,7 +147,7 @@ class TestMetadataInjectionRealBugs:
         mock_registry = MagicMock()
 
         # Workflow node should get registry
-        params = _inject_special_parameters(
+        params = inject_special_parameters(
             node_type="workflow", node_id="test", params={"workflow_name": "test"}, registry=mock_registry
         )
         assert params["__registry__"] == mock_registry
@@ -160,7 +160,7 @@ class TestMetadataInjectionRealBugs:
             mock_manager.list_servers.return_value = ["test"]
             mock_manager_class.return_value = mock_manager
 
-            params = _inject_special_parameters(
+            params = inject_special_parameters(
                 node_type="mcp-test-tool", node_id="test", params={}, registry=mock_registry
             )
             assert "__registry__" not in params
@@ -178,7 +178,7 @@ class TestMetadataInjectionInWorkflow:
         This actually caught a bug where all nodes got the same metadata!
         """
         from pflow.pocketflow import BaseNode
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "name": "multi-mcp",
@@ -219,7 +219,7 @@ class TestMetadataInjectionInWorkflow:
             mock_manager.list_servers.return_value = ["github", "slack", "filesystem"]
             mock_manager_class.return_value = mock_manager
 
-            with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+            with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
                 mock_module = MagicMock()
                 mock_module.CapturingNode = CapturingNode
                 mock_import.return_value = mock_module
@@ -259,7 +259,7 @@ class TestMetadataInjectionEdgeCases:
             mock_manager.list_servers.return_value = ["test"]
             mock_manager_class.return_value = mock_manager
 
-            result = _inject_special_parameters(
+            result = inject_special_parameters(
                 node_type="mcp-test-tool", node_id="test", params=original_params, registry=None
             )
 
@@ -282,17 +282,17 @@ class TestMetadataInjectionEdgeCases:
         or inject empty strings as metadata.
         """
         # Just "mcp" without any dashes
-        params = _inject_special_parameters(node_type="mcp", node_id="test", params={"data": "value"}, registry=None)
+        params = inject_special_parameters(node_type="mcp", node_id="test", params={"data": "value"}, registry=None)
         assert "__mcp_server__" not in params
         assert "__mcp_tool__" not in params
         assert params["data"] == "value"
 
         # "mcp-" with trailing dash
-        params = _inject_special_parameters(node_type="mcp-", node_id="test", params={}, registry=None)
+        params = inject_special_parameters(node_type="mcp-", node_id="test", params={}, registry=None)
         assert "__mcp_server__" not in params
         assert "__mcp_tool__" not in params
 
         # "mcp-server" without tool (only 2 parts)
-        params = _inject_special_parameters(node_type="mcp-server", node_id="test", params={}, registry=None)
+        params = inject_special_parameters(node_type="mcp-server", node_id="test", params={}, registry=None)
         assert "__mcp_server__" not in params
         assert "__mcp_tool__" not in params

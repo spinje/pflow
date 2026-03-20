@@ -1,8 +1,8 @@
-"""Workflow validation functions for pflow runtime.
+"""IR structure validation and input preparation for the compilation pipeline.
 
-This module contains validation functions extracted from the compiler to improve
-code organization and separation of concerns. These functions validate workflow
-IR structure and prepare inputs with defaults.
+Validates the basic shape of workflow IR dicts (nodes/edges arrays) and
+prepares inputs by resolving values from CLI args, environment variables,
+settings.env, and workflow defaults — with type coercion.
 
 Key functions:
 - validate_ir_structure: Validates basic IR structure (nodes, edges arrays)

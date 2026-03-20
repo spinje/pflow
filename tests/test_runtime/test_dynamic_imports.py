@@ -6,7 +6,7 @@ import pytest
 
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime.compiler import CompilationError, import_node_class
+from pflow.runtime import CompilationError, import_node_class
 
 
 class MockValidNode(BaseNode):
@@ -35,7 +35,7 @@ def test_import_node_class_success():
     }
 
     # Mock the import process
-    with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+    with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.ExampleNode = MockValidNode
         mock_import.return_value = mock_module
@@ -79,7 +79,7 @@ def test_import_node_class_module_not_found():
     }
 
     # Mock import failure
-    with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+    with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
         mock_import.side_effect = ImportError("No module named 'non.existent.module'")
 
         # Call the function and expect CompilationError
@@ -107,7 +107,7 @@ def test_import_node_class_class_not_found():
     }
 
     # Mock successful import but missing class
-    with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+    with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
         mock_module = Mock(spec=[])  # Module without the expected class
         mock_import.return_value = mock_module
 
@@ -136,7 +136,7 @@ def test_import_node_class_invalid_inheritance():
     }
 
     # Mock import with invalid node class
-    with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+    with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.InvalidNode = MockInvalidNode
         mock_import.return_value = mock_module
@@ -166,7 +166,7 @@ def test_import_node_class_not_a_class():
     }
 
     # Mock import with non-class attribute
-    with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+    with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.NotAClass = "I am a string, not a class"
         mock_import.return_value = mock_module
@@ -196,7 +196,7 @@ def test_import_node_class_with_logging(caplog):
     }
 
     # Mock successful import
-    with patch("pflow.runtime.compiler.importlib.import_module") as mock_import:
+    with patch("pflow.runtime.compilation.node_loader.importlib.import_module") as mock_import:
         mock_module = Mock()
         mock_module.ExampleNode = MockValidNode
         mock_import.return_value = mock_module

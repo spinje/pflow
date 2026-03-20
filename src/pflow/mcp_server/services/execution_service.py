@@ -17,7 +17,7 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.null_output import NullOutput
 from pflow.execution.workflow_execution import execute_workflow
 from pflow.registry import Registry
-from pflow.runtime.compiler import import_node_class
+from pflow.runtime import import_node_class
 
 from ..utils.resolver import resolve_workflow
 from ..utils.validation import (
@@ -494,7 +494,7 @@ class ExecutionService(BaseService):
         # (normally injected by compiler during workflow compilation)
         if node_type.startswith("mcp-"):
             # Import the parser function (same logic as compiler uses)
-            from pflow.runtime.compiler import _parse_mcp_node_type
+            from pflow.runtime.compilation.mcp_resolution import _parse_mcp_node_type
 
             # Parse node type to extract server and tool names
             # This will raise CompilationError if format is invalid or server not found

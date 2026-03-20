@@ -55,7 +55,7 @@ Enhanced format supports nested structures for dict/list outputs. See `nodes/CLA
 
 | Consumer | Usage | `include_filtered` |
 |----------|-------|-------------------|
-| `runtime/compiler.py` | Node class resolution, interface metadata, MCP validation, output validation | Default (filtered) |
+| `runtime/compilation/` | Node class resolution, interface metadata, MCP validation, output validation | Default (filtered) |
 | `mcp/registrar.py` | Register/remove virtual MCP tool entries | **True** (safe) |
 | `cli/main.py` auto-sync | Clean old MCP entries before re-syncing | **True** (safe) |
 | `cli/registry.py` commands | List, search, describe, scan | Mixed — see known bugs |

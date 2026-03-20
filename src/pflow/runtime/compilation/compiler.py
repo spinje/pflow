@@ -1,36 +1,33 @@
 """IR to PocketFlow compiler for pflow workflows.
 
-This module provides the foundation for compiling JSON IR representations
-into executable pocketflow.Flow objects. The current implementation provides
-the infrastructure (error handling, validation, logging) with actual
-compilation logic to be added in future subtasks.
+This module is the core orchestrator of the compilation pipeline: it parses IR,
+delegates validation, instantiates nodes with wrapper chains, wires edges, and
+builds the executable PocketFlow Flow object.
+
+Supporting concerns are in sibling modules:
+- compile_validation.py — pre-compilation validation orchestration
+- mcp_resolution.py — MCP node type parsing and error suggestions
+- node_loader.py — dynamic node class importing
+- ir_preparation.py — IR structure validation and input preparation
 """
 
-import importlib
-import importlib.util
 import json
 import logging
-import sys
-from typing import Any, Optional, Union, cast
+from typing import Any, Optional, Union
 
-from pflow.core.ir_schema import ValidationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
-from pflow.core.suggestion_utils import find_similar_items
-from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.pocketflow import BaseNode, Flow
 from pflow.registry import Registry
 
-from .template_resolver import TemplateResolver
-from .template_validation import ValidationWarning, extract_node_outputs, validate_workflow_templates
-from .workflow_validator import prepare_inputs, validate_ir_structure
-from .wrappers.namespaced_wrapper import NamespacedNodeWrapper
-from .wrappers.template_wrapper import TemplateAwareNodeWrapper
+from ..template_resolver import TemplateResolver
+from ..wrappers.namespaced_wrapper import NamespacedNodeWrapper
+from ..wrappers.template_wrapper import TemplateAwareNodeWrapper
+from .compile_validation import _validate_workflow
+from .mcp_resolution import _check_registry_for_mcp, _create_mcp_error_suggestion, _parse_mcp_node_type
+from .node_loader import import_node_class
 
 # Set up module logger
 logger = logging.getLogger(__name__)
-
-# Display limits for warning output
-MAX_DISPLAYED_WARNINGS_PER_NODE = 10  # Limit to avoid overwhelming terminal output
 
 
 class CompilationError(Exception):
@@ -86,60 +83,6 @@ class CompilationError(Exception):
         super().__init__("\n".join(parts))
 
 
-def _display_validation_warnings(warnings: list[ValidationWarning]) -> None:
-    """Display validation warnings in a user-friendly format.
-
-    Warnings are grouped by node for cleaner output and displayed to stderr
-    so they don't interfere with JSON output mode.
-
-    Args:
-        warnings: List of validation warnings to display
-    """
-    # Group warnings by node for cleaner output
-    by_node: dict[str, list[ValidationWarning]] = {}
-    for w in warnings:
-        if w.node_id not in by_node:
-            by_node[w.node_id] = []
-        by_node[w.node_id].append(w)
-
-    # Display grouped warnings
-    print(file=sys.stderr)  # Blank line for separation
-    print(f"Note: {len(warnings)} template(s) use runtime validation:", file=sys.stderr)
-    print(file=sys.stderr)
-
-    for node_id, node_warnings in by_node.items():
-        # Show node context once
-        first = node_warnings[0]
-
-        # Format node type (shorten MCP types)
-        node_type_display = first.node_type
-        if node_type_display.startswith("mcp-"):
-            # Remove 'mcp-' prefix and replace first '-composio-' with '/'
-            node_type_display = node_type_display[4:]  # Remove 'mcp-'
-            if "-composio-" in node_type_display:
-                node_type_display = node_type_display.replace("-composio-", "/", 1)
-
-        print(f"  Node '{node_id}' ({node_type_display}):", file=sys.stderr)
-        print(f"    Output type: {first.output_type} (structure unknown at validation time)", file=sys.stderr)
-        print(file=sys.stderr)
-
-        # Show each template (limit to avoid overwhelming)
-        display_count = min(len(node_warnings), MAX_DISPLAYED_WARNINGS_PER_NODE)
-        for w in node_warnings[:display_count]:
-            print(f"    • {w.template}", file=sys.stderr)
-            print(f"      Accessing: {w.output_key}.{w.nested_path}", file=sys.stderr)
-            print(file=sys.stderr)
-
-        if len(node_warnings) > MAX_DISPLAYED_WARNINGS_PER_NODE:
-            remaining = len(node_warnings) - MAX_DISPLAYED_WARNINGS_PER_NODE
-            print(f"    ... and {remaining} more template(s)", file=sys.stderr)
-            print(file=sys.stderr)
-
-    print("  These templates will be validated during workflow execution.", file=sys.stderr)
-    print("  If the nested paths don't exist, the workflow will fail at runtime.", file=sys.stderr)
-    print(file=sys.stderr)
-
-
 def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
     """Parse IR from string or pass through dict.
 
@@ -158,143 +101,6 @@ def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
 
     logger.debug("IR provided as dictionary", extra={"phase": "parsing"})
     return ir_json
-
-
-def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
-    """Import and validate a node class from registry metadata.
-
-    This function dynamically imports a node class based on the metadata
-    stored in the registry. It performs validation to ensure the imported
-    class properly inherits from BaseNode.
-
-    Args:
-        node_type: The node type identifier (e.g., "read-file", "llm")
-        registry: Registry instance containing node metadata
-
-    Returns:
-        The node class (not instance) ready for instantiation
-
-    Raises:
-        CompilationError: With specific error context for various failure modes:
-            - node_type not found in registry (phase: "node_resolution")
-            - Module import failure (phase: "node_import")
-            - Class not found in module (phase: "node_import")
-            - Class doesn't inherit from BaseNode (phase: "node_validation")
-    """
-    # Special handling for workflow execution
-    if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
-        from pflow.runtime.workflow_executor import WorkflowExecutor
-
-        return WorkflowExecutor
-
-    logger.debug("Looking up node in registry", extra={"phase": "node_resolution", "node_type": node_type})
-
-    # Step 1: Load registry and check if node exists
-    nodes = registry.load()
-    if node_type not in nodes:
-        available_nodes = list(nodes.keys())
-        raise CompilationError(
-            f"Node type '{node_type}' not found in registry",
-            phase="node_resolution",
-            node_type=node_type,
-            details={"available_nodes": available_nodes},
-            suggestion=f"Available node types: {', '.join(sorted(available_nodes))}",
-        )
-
-    node_metadata = nodes[node_type]
-    module_path = node_metadata["module"]
-    class_name = node_metadata["class_name"]
-
-    logger.debug(
-        "Found node metadata",
-        extra={
-            "phase": "node_resolution",
-            "node_type": node_type,
-            "module_path": module_path,
-            "class_name": class_name,
-        },
-    )
-
-    # Step 2: Import the module
-    logger.debug("Importing module", extra={"phase": "node_import", "module_path": module_path})
-
-    # Check if this is a user node that needs special import handling
-    node_type_info = node_metadata.get("type", "core")
-    file_path = node_metadata.get("file_path", "")
-
-    if node_type_info == "user" and file_path and file_path != "virtual://mcp":
-        # User node: Import directly from file path
-        logger.debug(f"Importing user node from file: {file_path}")
-        try:
-            spec = importlib.util.spec_from_file_location(module_path, file_path)
-            if spec and spec.loader:
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-            else:
-                raise ImportError(f"Could not load spec from {file_path}")
-        except Exception as e:
-            raise CompilationError(
-                f"Failed to import user node from '{file_path}'",
-                phase="node_import",
-                node_type=node_type,
-                details={"file_path": file_path, "import_error": str(e)},
-                suggestion=f"Ensure the file '{file_path}' exists and contains valid Python code",
-            ) from e
-    else:
-        # Core/MCP node: Use standard import
-        try:
-            module = importlib.import_module(module_path)
-        except ImportError as e:
-            raise CompilationError(
-                f"Failed to import module '{module_path}'",
-                phase="node_import",
-                node_type=node_type,
-                details={"module_path": module_path, "import_error": str(e)},
-                suggestion=f"Ensure the module '{module_path}' exists and is on the Python path",
-            ) from e
-
-    # Step 3: Get the class from the module
-    logger.debug("Extracting class from module", extra={"phase": "node_import", "class_name": class_name})
-    try:
-        node_class = getattr(module, class_name)
-    except AttributeError:
-        raise CompilationError(
-            f"Class '{class_name}' not found in module '{module_path}'",
-            phase="node_import",
-            node_type=node_type,
-            details={"module_path": module_path, "class_name": class_name},
-            suggestion=f"Check that '{class_name}' is defined in '{module_path}'",
-        ) from None
-
-    # Step 4: Validate inheritance from BaseNode
-    logger.debug("Validating node inheritance", extra={"phase": "node_validation", "class_name": class_name})
-    try:
-        if not issubclass(node_class, BaseNode):
-            # Get the actual base classes for better error message
-            base_classes = [base.__name__ for base in node_class.__bases__]
-            raise CompilationError(
-                f"Class '{class_name}' does not inherit from BaseNode",
-                phase="node_validation",
-                node_type=node_type,
-                details={"class_name": class_name, "actual_bases": base_classes},
-                suggestion=f"Ensure '{class_name}' inherits from pocketflow.BaseNode or pocketflow.Node",
-            )
-    except TypeError:
-        # Handle case where node_class is not actually a class
-        raise CompilationError(
-            f"'{class_name}' is not a class",
-            phase="node_validation",
-            node_type=node_type,
-            details={"class_name": class_name, "actual_type": type(node_class).__name__},
-            suggestion=f"Ensure '{class_name}' is a class definition, not an instance or function",
-        ) from None
-
-    logger.debug(
-        "Node class imported successfully",
-        extra={"phase": "node_validation", "node_type": node_type, "class_name": class_name},
-    )
-
-    return cast(type[BaseNode], node_class)
 
 
 def _apply_template_wrapping(
@@ -348,160 +154,7 @@ def _apply_template_wrapping(
     return node_instance
 
 
-def _check_registry_for_mcp(
-    registry: Registry,
-) -> tuple[bool, list[str]]:
-    """Check if registry supports MCP validation.
-
-    Args:
-        registry: Registry instance to check
-
-    Returns:
-        Tuple of (should_validate, available_nodes)
-    """
-    try:
-        # Try to get nodes from registry
-        if hasattr(registry, "load"):
-            nodes = registry.load()
-            if nodes and isinstance(nodes, dict):
-                available_nodes = list(nodes.keys())
-                # Only validate if we have a real registry with actual nodes
-                # Don't validate for test/mock registries
-                return len(available_nodes) > 0, available_nodes
-    except Exception:
-        # If registry doesn't support load() or fails, skip validation
-        # This happens in tests with mock registries
-        logger.debug(
-            "Registry does not support MCP validation",
-            extra={"phase": "node_resolution"},
-        )
-
-    return False, []
-
-
-def _create_mcp_error_suggestion(
-    node_type: str,
-    mcp_nodes: list[str],
-) -> str:
-    """Create helpful error suggestion for missing MCP node.
-
-    Args:
-        node_type: The MCP node type that wasn't found
-        mcp_nodes: List of available MCP nodes
-
-    Returns:
-        Suggestion string for the error
-    """
-    if not mcp_nodes:
-        # No MCP tools registered at all
-        return (
-            "No MCP tools are registered. You need to sync them first.\n\n"
-            "Steps to enable MCP tools:\n"
-            "  1. Check configured servers: pflow mcp list\n"
-            "  2. Sync tools: pflow mcp sync --all\n"
-            "  3. Verify registration: pflow registry list | grep mcp\n"
-            "  4. Run your workflow again"
-        )
-
-    # MCP tools exist but not this one - suggest alternatives
-    similar = find_similar_items(node_type, mcp_nodes, max_results=3, method="fuzzy", cutoff=0.4)
-
-    if similar:
-        suggestion_parts = [f"MCP tool '{node_type}' not found.\n\nDid you mean one of these?"]
-        for s in similar:
-            # Extract tool name for display
-            tool_parts = s.split("-", 2)
-            if len(tool_parts) >= 3:
-                suggestion_parts.append(f"  • {s} ({tool_parts[1]} server: {tool_parts[2]})")
-            else:
-                suggestion_parts.append(f"  • {s}")
-        return "\n".join(suggestion_parts)
-
-    # No similar tools found - list available servers
-    servers = set()
-    for node in mcp_nodes:
-        node_parts = node.split("-", 2)
-        if len(node_parts) >= 2:
-            servers.add(node_parts[1])
-
-    return (
-        f"MCP tool '{node_type}' not found.\n\n"
-        f"Available MCP servers: {', '.join(sorted(servers))}\n"
-        f"Total MCP tools: {len(mcp_nodes)}\n\n"
-        f"Use 'pflow registry list' to see all available MCP tools."
-    )
-
-
-def _parse_mcp_node_type(node_type: str) -> tuple[str, str]:
-    """Parse an MCP node type into server and tool names.
-
-    Handles server names that contain dashes by checking against known MCP servers.
-    Format: mcp-<server-name>-<tool-name>
-
-    Args:
-        node_type: Full node type like "mcp-local-test-echo"
-
-    Returns:
-        Tuple of (server_name, tool_name)
-
-    Raises:
-        CompilationError: If the server cannot be determined unambiguously
-    """
-    parts = node_type.split("-")
-
-    if len(parts) < 3:
-        raise CompilationError(
-            f"Invalid MCP node type format: {node_type}",
-            phase="node_resolution",
-            suggestion="MCP node types must be in format: mcp-<server>-<tool>",
-        )
-
-    try:
-        from pflow.mcp.manager import MCPServerManager
-
-        manager = MCPServerManager()
-        servers = manager.list_servers()
-    except Exception as e:
-        # If we can't load servers, we can't parse reliably
-        raise CompilationError(
-            f"Failed to load MCP servers for parsing: {e}",
-            phase="node_resolution",
-            node_type=node_type,
-            suggestion="Check MCP server configuration",
-        ) from e
-
-    # Try progressively longer server names to find the longest match
-    # This ensures we get "test-with-dashes" instead of "test"
-    best_match = None
-    best_match_length = 0
-
-    for i in range(2, len(parts) + 1):
-        possible_server = "-".join(parts[1:i])
-        # Keep track of the longest matching server name
-        if possible_server in servers and i - 1 > best_match_length:
-            best_match = (possible_server, "-".join(parts[i:]) if i < len(parts) else "")
-            best_match_length = i - 1
-
-    if best_match:
-        server_name, tool_name = best_match
-        if not tool_name:
-            raise CompilationError(
-                f"Invalid MCP node type: {node_type} - no tool name after server '{server_name}'",
-                phase="node_resolution",
-                suggestion=f"Format should be: mcp-{server_name}-<tool-name>",
-            )
-        return server_name, tool_name
-
-    # No matching server found
-    raise CompilationError(
-        f"MCP server not found for node type: {node_type}",
-        phase="node_resolution",
-        node_type=node_type,
-        suggestion=f"Could not find MCP server from: {parts[1]}. Available servers: {', '.join(sorted(servers))}",
-    )
-
-
-def _inject_special_parameters(
+def inject_special_parameters(
     node_type: str,
     node_id: str,
     params: dict[str, Any],
@@ -742,7 +395,7 @@ def _create_single_node(
     node_instance = InstrumentedNodeWrapper(node_instance, node_id, metrics_collector, trace_collector)
 
     # Inject special parameters for workflow and MCP nodes
-    params = _inject_special_parameters(node_type, node_id, params, registry)
+    params = inject_special_parameters(node_type, node_id, params, registry)
 
     # Set parameters (wrapper will separate template vs static)
     if params:
@@ -943,245 +596,6 @@ def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
     )
 
     return nodes[start_node_id]
-
-
-def _load_settings_env() -> dict[str, str]:
-    """Load settings.env for workflow input population.
-
-    Returns empty dict on any error (non-fatal).
-
-    Returns:
-        Dictionary of environment variables from settings.env
-    """
-    try:
-        from pflow.core.settings import SettingsManager
-
-        manager = SettingsManager()
-        settings = manager.load()
-        return settings.env
-    except Exception as e:
-        logger.warning(f"Failed to load settings.env: {e}")
-        return {}
-
-
-def _raise_input_validation_errors(errors: list[tuple[str, str, str]]) -> None:
-    """Raise ValidationError with formatted input error messages.
-
-    Args:
-        errors: List of (message, path, suggestion) tuples from prepare_inputs
-
-    Raises:
-        ValidationError: Always raises with formatted error message
-    """
-    if len(errors) == 1:
-        # Single error - keep current behavior for backward compatibility
-        message, path, suggestion = errors[0]
-        raise ValidationError(message, path=path, suggestion=suggestion)
-
-    # Multiple errors - aggregate them for better UX
-    error_lines = []
-    for msg, path, _ in errors:  # Ignore individual suggestions
-        # Extract just the input name from path like "inputs.api_key"
-        input_name = path.split(".")[-1] if "." in path else path
-        error_lines.append(f"  • '{input_name}' - {msg}")
-
-    combined_message = f"Found {len(errors)} input validation errors:\n" + "\n".join(error_lines)
-    raise ValidationError(
-        message=combined_message,
-        path="inputs",
-        suggestion="Fix all validation errors above before compiling the workflow",
-    )
-
-
-def _get_template_resolution_mode(ir_dict: dict[str, Any]) -> str:
-    """Get and validate template resolution mode from IR or settings.
-
-    Args:
-        ir_dict: The workflow IR dictionary
-
-    Returns:
-        Validated template resolution mode ('strict' or 'permissive')
-
-    Raises:
-        CompilationError: If mode value is invalid
-    """
-    template_resolution_mode = ir_dict.get("template_resolution_mode")
-    if template_resolution_mode is None:
-        # Load from global settings if not specified in workflow
-        from pflow.core.settings import SettingsManager
-
-        settings = SettingsManager().load()
-        template_resolution_mode = settings.runtime.template_resolution_mode
-
-    # Validate mode value
-    if template_resolution_mode not in ["strict", "permissive"]:
-        raise CompilationError(
-            message=f"Invalid template_resolution_mode: {template_resolution_mode}",
-            phase="validation",
-            details={"valid_modes": ["strict", "permissive"], "provided": template_resolution_mode},
-        )
-
-    return template_resolution_mode
-
-
-def _validate_workflow(
-    ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
-) -> dict[str, Any]:
-    """Validate workflow IR and prepare parameters.
-
-    This function consolidates all validation steps to reduce complexity
-    in the main compile_ir_to_flow function.
-
-    Args:
-        ir_dict: The workflow IR dictionary
-        registry: Registry instance for node metadata lookup
-        initial_params: Initial parameters for the workflow
-        validate_templates: Whether to validate template variables
-
-    Returns:
-        Updated initial_params with defaults applied
-
-    Raises:
-        CompilationError: If structure validation fails
-        ValidationError: If input/output validation fails
-        ValueError: If template validation fails
-    """
-    # Step 2: Validate structure
-    try:
-        validate_ir_structure(ir_dict)
-    except CompilationError:
-        logger.debug("IR validation failed", extra={"phase": "validation"}, exc_info=True)
-        raise
-
-    # Step 2.5: Get and validate template resolution mode
-    template_resolution_mode = _get_template_resolution_mode(ir_dict)
-
-    # Store in initial_params for access during node creation
-    initial_params["__template_resolution_mode__"] = template_resolution_mode
-
-    logger.debug(
-        f"Template resolution mode: {template_resolution_mode}",
-        extra={"phase": "validation", "mode": template_resolution_mode},
-    )
-
-    # Step 3: Validate inputs and apply defaults
-    try:
-        # Load settings.env once per compilation
-        settings_env = _load_settings_env()
-
-        # Pass settings_env to prepare_inputs
-        errors, defaults, env_param_names = prepare_inputs(ir_dict, initial_params, settings_env=settings_env)
-        if errors:
-            _raise_input_validation_errors(errors)
-        initial_params.update(defaults)  # Explicit mutation
-
-        # Store env param names as internal param (for sanitization at metadata storage time)
-        if env_param_names:
-            initial_params["__env_param_names__"] = list(env_param_names)
-    except ValidationError:
-        logger.debug("Input validation failed", extra={"phase": "input_validation"}, exc_info=True)
-        raise
-
-    # Step 4: Validate outputs
-    try:
-        _validate_outputs(ir_dict, registry)
-    except ValidationError:
-        logger.debug("Output validation failed", extra={"phase": "output_validation"}, exc_info=True)
-        raise
-
-    # Step 5: Validate templates if requested
-    if validate_templates:
-        logger.debug("Validating template variables", extra={"phase": "template_validation"})
-        template_errors, template_warnings = validate_workflow_templates(ir_dict, initial_params, registry)
-
-        # Display warnings if present (non-blocking)
-        if template_warnings:
-            _display_validation_warnings(template_warnings)
-
-        # Fail only on errors
-        if template_errors:
-            error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in template_errors)
-            logger.error(
-                "Template validation failed",
-                extra={"phase": "template_validation", "error_count": len(template_errors), "errors": template_errors},
-            )
-            raise ValueError(error_msg)
-
-    return initial_params
-
-
-def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
-    """Validate declared workflow outputs can be produced by nodes.
-
-    This function validates that declared outputs CAN be produced by nodes in the workflow.
-    Since nodes may write dynamic keys at runtime, this only issues warnings, not errors.
-
-    Args:
-        workflow_ir: The workflow IR dictionary containing output declarations
-        registry: Registry instance for accessing node metadata
-
-    Raises:
-        ValidationError: If output names are invalid identifiers
-    """
-    # Extract output declarations (backward compatible with workflows without outputs)
-    outputs = workflow_ir.get("outputs", {})
-
-    # If no outputs declared, nothing to validate
-    if not outputs:
-        logger.debug("No outputs declared for workflow", extra={"phase": "output_validation"})
-        return
-
-    logger.debug(
-        "Validating workflow outputs", extra={"phase": "output_validation", "declared_outputs": list(outputs.keys())}
-    )
-
-    # First validate all output names are valid Python identifiers
-    for output_name, _output_spec in outputs.items():
-        if not is_valid_parameter_name(output_name):
-            error_msg = get_parameter_validation_error(output_name, "output")
-            raise ValidationError(
-                message=error_msg,
-                path=f"outputs.{output_name}",
-                suggestion="Avoid shell special characters like $, |, >, <, &, ;",
-            )
-
-    # Get all possible outputs from nodes in the workflow
-    all_node_outputs = extract_node_outputs(workflow_ir, registry)
-
-    logger.debug(
-        f"Found {len(all_node_outputs)} possible outputs from nodes",
-        extra={"phase": "output_validation", "available_outputs": sorted(all_node_outputs.keys())},
-    )
-
-    # Validate each declared output can be produced
-    for output_name, output_spec in outputs.items():
-        # If output has a 'source' field, it will be resolved from that expression
-        if isinstance(output_spec, dict) and "source" in output_spec:
-            logger.debug(
-                f"Output '{output_name}' uses source expression: {output_spec['source']}",
-                extra={"phase": "output_validation", "output": output_name},
-            )
-            continue  # Skip validation for outputs with source field
-
-        # Check if output can be traced to any node
-        if output_name not in all_node_outputs:
-            # Issue warning, not error, since nodes may write dynamic keys
-            logger.warning(
-                f"Declared output '{output_name}' cannot be traced to any node in the workflow. "
-                f"This may be fine if nodes write dynamic keys.",
-                extra={
-                    "phase": "output_validation",
-                    "output": output_name,
-                    "available_outputs": sorted(all_node_outputs.keys()),
-                },
-            )
-        else:
-            logger.debug(
-                f"Output '{output_name}' can be produced by workflow nodes",
-                extra={"phase": "output_validation", "output": output_name},
-            )
-
-    logger.debug("Output validation complete", extra={"phase": "output_validation"})
 
 
 def compile_ir_to_flow(

@@ -9,7 +9,7 @@ silently coerced to int by CLI's infer_type() before the workflow's
 declared type: string was consulted.
 """
 
-from pflow.runtime.workflow_validator import prepare_inputs
+from pflow.runtime.compilation.ir_preparation import prepare_inputs
 
 
 class TestPrepareInputsTypeCoercion:

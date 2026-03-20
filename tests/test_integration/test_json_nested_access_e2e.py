@@ -10,7 +10,7 @@ JSON auto-parsing at runtime), so validation is enabled by default.
 import pytest
 
 from pflow.registry import Registry
-from pflow.runtime.compiler import compile_ir_to_flow
+from pflow.runtime import compile_ir_to_flow
 
 
 @pytest.fixture

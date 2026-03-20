@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from pflow.runtime import compile_ir_to_flow
-from pflow.runtime.compiler import CompilationError, _parse_ir_input
-from pflow.runtime.workflow_validator import validate_ir_structure
+from pflow.runtime.compilation.compiler import CompilationError, _parse_ir_input
+from pflow.runtime.compilation.ir_preparation import validate_ir_structure
 
 
 class TestCompilationError:
@@ -368,11 +368,13 @@ class TestCompilerLogging:
 
     def test_compilation_error_no_error_log(self, caplog):
         """Compilation failures should log at DEBUG, not ERROR level."""
-        caplog.set_level("DEBUG", logger="pflow.runtime.compiler")
+        caplog.set_level("DEBUG", logger="pflow.runtime.compilation.compiler")
         registry = MagicMock()
 
         with pytest.raises(CompilationError):
             compile_ir_to_flow({"nodes": [], "edges": []}, registry)
 
-        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR and r.name == "pflow.runtime.compiler"]
+        error_records = [
+            r for r in caplog.records if r.levelno >= logging.ERROR and r.name == "pflow.runtime.compilation.compiler"
+        ]
         assert len(error_records) == 0, f"Unexpected ERROR log from compiler: {[r.message for r in error_records]}"

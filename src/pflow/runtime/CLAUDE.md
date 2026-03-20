@@ -7,34 +7,31 @@ Compilation and execution infrastructure. Transforms workflow IR into executable
 ```
 src/pflow/runtime/
 ├── __init__.py              # Exports: compile_ir_to_flow(), import_node_class(), CompilationError
-├── compiler.py              # Main IR→Flow compiler (~1310 lines)
+├── compilation/             # IR→Flow compiler package (see compilation/CLAUDE.md)
 ├── template_resolver.py     # Template variable resolution engine
 ├── wrappers/                # Execution wrapper chain (see wrappers/CLAUDE.md)
 ├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
 ├── workflow_executor.py     # Nested workflow executor node
 ├── workflow_trace.py        # Trace collection with thread-safe LLM interception
-├── workflow_validator.py    # IR validation and input preparation
 └── output_resolver.py       # Output declaration resolver
 ```
 
 ## Compilation Pipeline
 
+The `compilation/` package transforms workflow IR into executable PocketFlow Flow objects. See `compilation/CLAUDE.md` for full details including function-level documentation, call graph, and non-obvious behaviors.
+
 `compile_ir_to_flow()` is the main entry point (called by `execution/executor_service.py` and internally by `workflow_executor.py` for nested workflows):
 
 1. Parse IR dict
-2. Validate structure, inputs, outputs
-3. Instantiate nodes with registry lookup
-4. Apply wrapper chain (template → namespace → batch → instrumentation)
-5. Wire nodes using edges
-6. Create Flow object with start node
+2. Validate structure, inputs, outputs (`ir_preparation.py`)
+3. Instantiate nodes with registry lookup (`node_loader.py`)
+4. Resolve MCP node types (`mcp_resolution.py`)
+5. Apply wrapper chain (template → namespace → batch → instrumentation)
+6. Run template validation (`compile_validation.py`)
+7. Wire nodes using edges
+8. Create Flow object with start node
 
 **CompilationError** fields: `phase`, `node_id`, `node_type`, `details`, `suggestion` — provides structured context for debugging.
-
-**Non-obvious compiler behaviors**:
-- **LLM default model injection**: LLM nodes without `model` param get auto-injected default from `get_default_workflow_model()`. Fails with helpful message if no model configured anywhere.
-- **Source line threading**: `_source_lines` from markdown parser are threaded into params as `_<key>_source_line` — enables nodes to reference `.pflow.md` line numbers in errors.
-- **Flow.run monkey-patching**: When workflow declares outputs, compiler wraps `flow.run` to call `populate_declared_outputs()` after successful execution. Output resolution raises `OutputResolutionError` for non-coalesce failures; coalesce (`??`) expressions with all-absent operands are silently skipped.
-- **Template resolution mode**: Can come from IR `template_resolution_mode` field OR global settings fallback. Stored in `initial_params["__template_resolution_mode__"]`.
 
 ## Wrapper Architecture
 
@@ -108,9 +105,9 @@ Downstream: `${process_title.result}`
 - Repair tracking with attempt numbers, errors, workflow diffs
 - Mutation analysis: added/removed/modified keys
 
-### Validation Utilities (`workflow_validator.py`)
+### IR Preparation (`compilation/ir_preparation.py`)
 
-**Warning**: Two `workflow_validator.py` files exist — `runtime/workflow_validator.py` (compiler-time, used here) and `core/workflow/validator.py` (pre-execution unified pipeline, 7+ external consumers). Don't confuse them.
+**Warning**: Two validation files exist — `compilation/ir_preparation.py` (compiler-time, used here) and `core/workflow/validator.py` (pre-execution unified pipeline, 7+ external consumers). Don't confuse them.
 
 - `validate_ir_structure()` — basic IR validation
 - `prepare_inputs()` — input validation, defaults, and **type coercion** (converts CLI string values to declared types)
@@ -212,7 +209,7 @@ Cache used when: node in `completed_nodes` AND config hash matches AND no error 
 
 Key runtime modules used outside `runtime/`:
 - **`TemplateResolver`** (`template_resolver.py`): Used by `cli/read_fields.py`, `execution/formatters/`, `mcp_server/services/` — not runtime-internal only.
-- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `wrappers/template_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `runtime/workflow_validator.py`.
+- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `wrappers/template_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `compilation/ir_preparation.py`.
 - **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `wrappers/template_wrapper.py`, `wrappers/batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
 - **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `wrappers/instrumented_wrapper.py` and `wrappers/batch_node.py` for progress callback indentation depth.
 

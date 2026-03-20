@@ -269,7 +269,7 @@ class TestValidationRuntimeConsistency:
         1. The pattern is accepted by validation (implicit - compilation succeeds)
         2. Runtime resolves and parses the JSON correctly
         """
-        from pflow.runtime.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_ir_to_flow
         from tests.shared.registry_utils import ensure_test_registry
 
         registry = ensure_test_registry()
