@@ -91,7 +91,6 @@ def _create_json_error_output(
             cache_hits = shared_storage.get("__cache_hits__", [])
 
             # Get node timings if available
-            node_timings = {}
             workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
             node_timings = workflow_metrics.get("node_timings", {})
 
