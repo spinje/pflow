@@ -212,6 +212,11 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "description": "Markdown source line offsets for code block params (injected by parser)",
                         "additionalProperties": {"type": "integer"},
                     },
+                    "_source_files": {
+                        "type": "object",
+                        "description": "Maps param names to source file paths (injected by file resolver)",
+                        "additionalProperties": {"type": "string"},
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,

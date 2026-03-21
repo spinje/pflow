@@ -112,6 +112,10 @@ class WorkflowExecutor(BaseNode):
         storage_mode = prep_res["storage_mode"]
         parent_shared = prep_res.get("parent_shared", {})
 
+        # Ensure child workflow can resolve file references relative to its own location
+        if workflow_path and workflow_path != "<inline>":
+            child_params["_pflow_workflow_file"] = str(Path(workflow_path).resolve())
+
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
         # Get registry (injected by compiler)

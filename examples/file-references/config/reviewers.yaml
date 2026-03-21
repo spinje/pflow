@@ -1,0 +1,6 @@
+items:
+  - focus: quality
+    prompt: Check this text for quality issues.
+  - focus: style
+    prompt: Check this text for style issues.
+parallel: true

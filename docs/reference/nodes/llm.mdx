@@ -14,7 +14,7 @@ The LLM node calls AI models using [Simon Willison's llm library](https://llm.da
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `prompt` | str | Yes | - | Text prompt to send to the model |
+| `prompt` | str | Yes | - | Text prompt, or path to an external file (e.g., `./prompts/system.md`) |
 | `model` | str | No | See below | Model identifier |
 | `system` | str | No | - | System prompt for behavior guidance |
 | `temperature` | float | No | `1.0` | Sampling temperature (0.0-2.0) |
@@ -238,6 +238,19 @@ Analyze the contents of a user-provided image.
 - prompt: Describe the main elements in this image
 - model: gpt-5.2
 - images: ["${file_path}"]
+````
+
+### External prompt file
+
+For long or reusable prompts, reference an external file instead of inlining. The file path is relative to the workflow file. Template variables (`${var}`) inside the file are resolved normally.
+
+````markdown
+### analyze
+
+Analyze source code for issues.
+
+- type: llm
+- prompt: ./prompts/code-review.md
 ````
 
 ## Error handling

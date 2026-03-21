@@ -14,7 +14,7 @@ The shell node runs commands with pipes, redirects, and standard shell features.
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `command` | str | Yes | - | Shell command to execute |
+| `command` | str | Yes | - | Shell command, or path to an external script file (e.g., `./scripts/build.sh`) |
 | `stdin` | any | No | - | Input data for the command |
 | `cwd` | str | No | Current dir | Working directory |
 | `env` | dict | No | `{}` | Additional environment variables |
@@ -240,6 +240,19 @@ Remove temporary log files.
 ```shell command
 rm -f temp/*.log
 ```
+````
+
+### External script file
+
+For multi-line scripts, reference an external file. The file content is read and used as the command. Path is relative to the workflow file.
+
+````markdown
+### deploy
+
+Run the deployment script.
+
+- type: shell
+- command: ./scripts/deploy.sh
 ````
 
 ## Error handling

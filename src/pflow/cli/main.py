@@ -636,11 +636,37 @@ def _handle_validate_only_mode(
     # Note: Normalization already happened in _try_load_workflow_from_file()
     # No need to normalize again here
 
+    # Resolve external file references before validation
+    _resolve_file_refs_or_exit(ctx, ir_data, output_format)
+
     # Perform static validation
     errors, warnings = _perform_validation(ir_data, output_format)
 
     # Display results and exit
     _display_validation_results(errors, warnings, output_format)
+
+
+def _resolve_file_refs_or_exit(
+    ctx: click.Context,
+    ir_data: dict[str, Any],
+    output_format: str,
+) -> None:
+    """Resolve external file references in workflow IR before validation/execution."""
+    import yaml
+
+    from pflow.core.file_resolver import resolve_file_references
+
+    source_file = ctx.obj.get("source_file_path")
+    if source_file:
+        base_dir = Path(source_file).resolve().parent
+        try:
+            resolve_file_references(ir_data, base_dir)
+        except (FileNotFoundError, yaml.YAMLError) as e:
+            if output_format == "json":
+                click.echo(json.dumps({"success": False, "error": str(e)}))
+            else:
+                click.echo(f"✗ {e}", err=True)
+            ctx.exit(1)
 
 
 def _validate_before_execution(
@@ -736,6 +762,7 @@ def execute_json_workflow(
         ctx, ir_data, output_format, verbose, execution_params, seeded_llm_calls, cache_chunks
     )
 
+    _resolve_file_refs_or_exit(ctx, ir_data, output_format)
     _validate_before_execution(ctx, ir_data, enhanced_params, output_format, verbose)
 
     # Show execution starting

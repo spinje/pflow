@@ -536,6 +536,7 @@ Description of this output.
 - Use `-` for parameters, `*` for documentation bullets.
 - Code blocks require a tag: `shell command`, `python code`, `prompt`, `yaml batch`, `yaml output_schema`
 - Batch config: inline `- batch:` for simple cases, `yaml batch` code block for complex arrays
+- Any code block parameter can reference an external file instead: `- prompt: ./prompts/system.md`, `- code: ./scripts/transform.py`. Paths are relative to the workflow file. Use for long prompts or reusable scripts.
 
 **Nesting backticks:** Use 4+ backticks when content contains ```:
 
