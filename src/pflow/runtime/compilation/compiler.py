@@ -646,6 +646,20 @@ def compile_ir_to_flow(
         logger.debug("JSON parsing failed", extra={"phase": "parsing"}, exc_info=True)
         raise
 
+    # Step 1b: Resolve external file references before validation
+    from pflow.core.file_resolver import get_base_dir, resolve_file_references
+
+    base_dir = get_base_dir(initial_params)
+    try:
+        resolve_file_references(ir_dict, base_dir)
+    except FileNotFoundError as e:
+        raise CompilationError(
+            message=str(e),
+            phase="file_resolution",
+            details={"error": str(e)},
+            suggestion="Check that the file path is correct and relative to the workflow file.",
+        ) from e
+
     # Steps 2-5: Validate workflow and prepare parameters
     initial_params = _validate_workflow(ir_dict, registry, initial_params, validate)
 

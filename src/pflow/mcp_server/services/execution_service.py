@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 def _resolve_and_validate_workflow(
     workflow: Any, parameters: dict[str, Any] | None
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any]]:
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any], str]:
     """Resolve workflow to IR and validate parameters.
 
     Args:
@@ -39,11 +39,11 @@ def _resolve_and_validate_workflow(
         parameters: Execution parameters
 
     Returns:
-        Tuple of (workflow_ir, error_response, validated_parameters)
+        Tuple of (workflow_ir, error_response, validated_parameters, source)
         If error_response is not None, workflow_ir will be None
     """
     # Resolve workflow to IR
-    workflow_ir, error, _source = resolve_workflow(workflow)
+    workflow_ir, error, source = resolve_workflow(workflow)
     if error or workflow_ir is None:
         return (
             None,
@@ -55,6 +55,7 @@ def _resolve_and_validate_workflow(
                 },
             },
             {},
+            source or "",
         )
 
     # Normalize the workflow IR
@@ -75,9 +76,10 @@ def _resolve_and_validate_workflow(
                     },
                 },
                 {},
+                source,
             )
 
-    return workflow_ir, None, validated_params
+    return workflow_ir, None, validated_params, source
 
 
 def _build_workflow_metadata(
@@ -200,6 +202,35 @@ def _format_error_result(
     }
 
 
+def _inject_workflow_file_path(params: dict[str, Any], source: str, workflow: Any) -> None:
+    """Set _pflow_workflow_file in params for file reference resolution."""
+    if source == "file":
+        params["_pflow_workflow_file"] = str(Path(str(workflow)).resolve())
+    elif source == "library":
+        wm = WorkflowManager()
+        params["_pflow_workflow_file"] = wm.get_path(str(workflow))
+
+
+def _check_inline_file_references(workflow_ir: dict[str, Any], source: str) -> None:
+    """Raise ValueError if inline workflow contains file references.
+
+    File references require a file path to resolve from, which inline
+    workflows don't have.
+    """
+    if source not in ("content", "direct"):
+        return
+    from pflow.core.file_resolver import has_file_references
+
+    file_refs = has_file_references(workflow_ir)
+    if file_refs:
+        examples = ", ".join(file_refs[:3])
+        raise ValueError(
+            f"Workflow contains file references ({examples}) but was provided as inline content. "
+            f"File references require a workflow file path to resolve relative paths from. "
+            f"Save the workflow to a file and reference it by path or saved name."
+        )
+
+
 class ExecutionService(BaseService):
     """Service for workflow execution and related operations.
 
@@ -230,7 +261,7 @@ class ExecutionService(BaseService):
             RuntimeError: If execution fails
         """
         # Resolve and validate workflow
-        workflow_ir, error_response, validated_params = _resolve_and_validate_workflow(workflow, parameters)
+        workflow_ir, error_response, validated_params, source = _resolve_and_validate_workflow(workflow, parameters)
         if error_response or workflow_ir is None:
             # Extract error message and raise
             error_msg = (
@@ -238,13 +269,16 @@ class ExecutionService(BaseService):
             )
             raise ValueError(error_msg)
 
+        # Check for file references in inline workflows (no file path to resolve from)
+        _check_inline_file_references(workflow_ir, source)
+
         # Setup execution environment
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         trace_path = Path.home() / ".pflow" / "debug" / f"workflow-trace-{timestamp}.json"
 
         try:
-            # Get source info for metadata
-            _, _, source = resolve_workflow(workflow)
+            # Set workflow file path for file reference resolution
+            _inject_workflow_file_path(validated_params, source, workflow)
 
             # Create fresh instances
             workflow_manager = WorkflowManager()
@@ -316,12 +350,29 @@ class ExecutionService(BaseService):
             Formatted text with validation results (same as CLI output)
         """
         # Resolve workflow to IR
-        workflow_ir, error, _source = resolve_workflow(workflow)
+        workflow_ir, error, source = resolve_workflow(workflow)
         if error or workflow_ir is None:
             return f"✗ Workflow not found: {error or 'Unknown error'}"
 
         # Normalize the workflow IR (mypy now knows workflow_ir is not None)
         normalize_ir(workflow_ir)  # Modifies in-place
+
+        # Check for file references in inline workflows (no file path to resolve from)
+        try:
+            _check_inline_file_references(workflow_ir, source)
+        except ValueError as e:
+            return f"✗ {e}"
+
+        # Resolve external file references before validation
+        from pflow.core.file_resolver import resolve_file_references
+
+        if source == "file":
+            base_dir = Path(str(workflow)).resolve().parent
+            resolve_file_references(workflow_ir, base_dir)
+        elif source == "library":
+            wm = WorkflowManager()
+            base_dir = Path(wm.get_path(str(workflow))).parent
+            resolve_file_references(workflow_ir, base_dir)
 
         # Generate dummy parameters for validation
         inputs = workflow_ir.get("inputs", {})

@@ -27,6 +27,7 @@ src/pflow/core/
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
 ├── execution_cache.py       # Two-phase execution cache for registry run
+├── file_resolver.py         # External file reference detection and resolution
 ├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
 │   ├── __init__.py          # Re-exports public API
 │   ├── manager.py           # Workflow lifecycle (save/load/list/delete)
@@ -191,6 +192,18 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 Two-phase execution pattern for AI agents: (1) execute node → return structure-only + `execution_id`, (2) read specific fields → retrieve from `~/.pflow/cache/registry-run/`. TTL: 24h stored but **not enforced** in MVP.
 
 **Binary encoding convention**: `{"__type": "base64", "data": "..."}` — used project-wide for binary data in JSON. Sensitive params auto-masked before caching.
+
+### file_resolver.py
+
+Detects file path references in node params and batch items, reads the files, and substitutes their content into the IR before compilation. Called by `compile_ir_to_flow()` and validate-only paths.
+
+**Detection heuristic**: starts with `./` or `../`, or contains `/` with recognized extension (.md, .txt, .py, .sh, .yaml, .yml, .json). Must not contain `${`, newlines, or `://` (URLs excluded).
+
+**YAML-parsed params**: batch, output_schema, headers — file content is `yaml.safe_load()`'d. All other params get raw text content.
+
+**Batch handling**: `node["batch"]` is at the node top level (NOT in params). If it's a string file reference, reads and YAML-parses. If it's a dict with inline items, walks items for file references in their values.
+
+**Provenance**: Records original file paths in `node["_source_files"]` dict for error attribution.
 
 ### param_coercion.py
 

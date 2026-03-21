@@ -343,14 +343,83 @@ def create_template_error(
     if enable_namespacing and "." in template:
         node_ids = get_node_ids(workflow_ir)
         if base_var in node_ids:
-            return _create_node_reference_error(base_var, parts, template, workflow_ir, node_outputs, registry)
+            error = _create_node_reference_error(base_var, parts, template, workflow_ir, node_outputs, registry)
+            return _append_source_file_hint(error, template, workflow_ir)
 
     # Handle path templates (with dots)
     if "." in template:
-        return _create_path_template_error(template, base_var, available_params, workflow_ir)
+        error = _create_path_template_error(template, base_var, available_params, workflow_ir)
+        return _append_source_file_hint(error, template, workflow_ir)
 
     # Handle simple templates
-    return _create_simple_template_error(template, workflow_ir)
+    error = _create_simple_template_error(template, workflow_ir)
+    return _append_source_file_hint(error, template, workflow_ir)
+
+
+# ---------------------------------------------------------------------------
+# Source file provenance helpers
+# ---------------------------------------------------------------------------
+
+
+def _find_template_source_file(template: str, workflow_ir: dict[str, Any]) -> Optional[str]:
+    """Find the external source file for a template variable, if any.
+
+    Scans all nodes to find which node's param contains this template,
+    then checks that node's _source_files for the param's origin.
+
+    Returns the original file path (e.g., './prompts/foo.md') or None.
+    """
+    search_pattern = f"${{{template}}}"
+    for node in workflow_ir.get("nodes", []):
+        if not isinstance(node, dict):
+            continue
+        source_files = node.get("_source_files", {})
+        if not source_files:
+            continue
+        result = _search_params_for_source(search_pattern, node, source_files)
+        if result:
+            return result
+        result = _search_batch_items_for_source(search_pattern, node, source_files)
+        if result:
+            return result
+    return None
+
+
+def _search_params_for_source(search_pattern: str, node: dict[str, Any], source_files: dict[str, str]) -> Optional[str]:
+    """Check node params for a template pattern and return its source file."""
+    for param_name, param_value in node.get("params", {}).items():
+        if isinstance(param_value, str) and search_pattern in param_value and param_name in source_files:
+            return source_files[param_name]
+    return None
+
+
+def _search_batch_items_for_source(
+    search_pattern: str, node: dict[str, Any], source_files: dict[str, str]
+) -> Optional[str]:
+    """Check batch items for a template pattern and return its source file."""
+    batch = node.get("batch")
+    if not isinstance(batch, dict):
+        return None
+    items = batch.get("items")
+    if not isinstance(items, list):
+        return None
+    for i, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        for key, value in item.items():
+            if isinstance(value, str) and search_pattern in value:
+                provenance_key = f"batch.items[{i}].{key}"
+                if provenance_key in source_files:
+                    return source_files[provenance_key]
+    return None
+
+
+def _append_source_file_hint(error: str, template: str, workflow_ir: dict[str, Any]) -> str:
+    """Append source file hint to error message if the template came from an external file."""
+    source_file = _find_template_source_file(template, workflow_ir)
+    if source_file:
+        error += f"\n  Loaded from file: {source_file}"
+    return error
 
 
 # ---------------------------------------------------------------------------
