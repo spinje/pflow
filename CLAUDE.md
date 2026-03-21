@@ -193,17 +193,19 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 38: Conditional Branching in Workflows
 - ✅ Task 59: Nested Workflows
 - ✅ Task 128: Branch Convergence for Conditional Workflows
+- ✅ Task 129: External File References for Code Block Parameters
 
 ### Planned Features (in order of priority)
 
-**v0.10.0**
+**Next**
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 108: Smart Trace Debug Output
+- Task 130: Workflow Bundling on Save
 
-**v0.10.1 - Bug Fixes:**
+**Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
 
-**v0.11.0**
+**v0.12.0**
 - Task 46: Workflow Export to Zero-Dependency Code
 - Task 75: Execution Preview in Validation
 - Task 94: Display Available LLM Models
@@ -212,7 +214,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 118: Code and Shell Linting
 - Task 121: Workflow Testability
 
-**v0.12.0 - Performance:**
+**v0.13.0 - Performance:**
 - Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
