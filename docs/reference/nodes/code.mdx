@@ -14,7 +14,7 @@ The code node runs Python in-process with direct access to input data as native 
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
-| `code` | str | Yes | - | Python code with type-annotated inputs and a `result` variable |
+| `code` | str | Yes | - | Python code (or path to `.py` file, e.g., `./scripts/transform.py`) with type-annotated inputs and a `result` variable |
 | `inputs` | dict | No | `{}` | Variable name to value mapping (template variables go here) |
 | `timeout` | int | No | `30` | Maximum execution time in seconds |
 | `requires` | list | No | `[]` | Package dependencies (documentation-only, not enforced) |
@@ -234,6 +234,21 @@ result: list = [d.isoformat() for d in parsed]
 <Tip>
   **You're in control.** Your agent asks before running workflows, and you can open any `.pflow.md` file to see exactly what code will run. To disable this node entirely: `pflow settings deny code`.
 </Tip>
+
+### External code file
+
+For larger scripts, reference an external Python file. The file is read and used as the code block. Path is relative to the workflow file.
+
+````markdown
+### transform
+
+Transform data using external script.
+
+- type: code
+- code: ./scripts/transform.py
+- inputs:
+    data: ${fetch.response}
+````
 
 ## Error handling
 

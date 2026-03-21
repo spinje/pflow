@@ -482,3 +482,23 @@ Save the workflow to a file and reference it by path or saved name.
 ### Test Value Assessment
 
 After implementation, we evaluated whether any high-value tests were missing — specifically tests that could catch real bugs, not coverage optimization. Conclusion: the changes are narrow and well-covered. The riskiest change (4-tuple return from `_resolve_and_validate_workflow`) is covered by 350 existing MCP/validation tests. The provenance lookup (`_find_template_source_file`) has a graceful degradation mode — worst case is a missing hint, not wrong behavior. No additional tests warranted.
+
+## Phase 8 — PR Review Fixes
+
+PR #134 received automated code review from Claude. 8 findings evaluated:
+
+- **2 disputed**: `ctx.exit(1)` not stopping execution (wrong — Click's `ctx.exit()` raises `SystemExit`), `get_path()` returning None (wrong — always returns `str`).
+- **3 confirmed**: `yaml.YAMLError` not caught in CLI/compiler/MCP error handlers. Fixed by adding `yaml.YAMLError` to except clauses alongside `FileNotFoundError` in `_resolve_file_refs_or_exit`, `compile_ir_to_flow`, and MCP `validate_workflow`.
+- **2 confirmed (minor)**: `./` prefix always-match behavior documented in `is_file_reference` docstring. Redundant `normalize_ir` import removed from integration test.
+- **1 positive**: Test and documentation quality praised.
+
+GitHub issue created: #133. PR: #134. Manual test plan executed by subagent: 11/11 pass.
+
+## Phase 9 — Documentation Updates
+
+Minimal docs updates for user-facing documentation and agent instructions:
+
+- **`docs/reference/nodes/llm.mdx`** — Updated `prompt` param description to mention file paths. Added "External prompt file" example.
+- **`docs/reference/nodes/shell.mdx`** — Updated `command` param description. Added "External script file" example.
+- **`docs/reference/nodes/code.mdx`** — Updated `code` param description. Added "External code file" example.
+- **`src/pflow/cli/resources/cli-agent-instructions.md`** — Added one line to syntax reference: agents now know `- prompt: ./path` works as an alternative to code blocks.
