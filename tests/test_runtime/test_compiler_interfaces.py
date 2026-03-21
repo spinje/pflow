@@ -37,7 +37,7 @@ def registry_with_nodes():
             "class_name": "ReadFile",
             "metadata": {
                 "interface": {
-                    "inputs": [{"key": "path", "type": "string", "description": "File path to read"}],
+                    "inputs": [{"key": "file_path", "type": "string", "description": "File path to read"}],
                     "outputs": [{"key": "content", "type": "string", "description": "File content"}],
                 }
             },
@@ -49,7 +49,7 @@ def registry_with_nodes():
                 "interface": {
                     "inputs": [
                         {"key": "content", "type": "string", "description": "Content to write"},
-                        {"key": "path", "type": "string", "description": "File path"},
+                        {"key": "file_path", "type": "string", "description": "File path"},
                     ],
                     "outputs": [],
                 }
@@ -106,7 +106,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"file_path": {"description": "Path to the input file", "required": True, "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "${file_path}"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "${file_path}"}}],
             "edges": [],
         }
 
@@ -121,7 +121,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"file_path": {"description": "Path to the input file", "required": True, "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "${file_path}"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "${file_path}"}}],
             "edges": [],
         }
 
@@ -264,7 +264,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "outputs": {"content": {"description": "File content read from disk", "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "test.txt"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
             "edges": [],
         }
 
@@ -277,7 +277,7 @@ class TestCompilerInterfaces:
         ir = {
             "ir_version": "0.1.0",
             "outputs": {"dynamic_key": {"description": "A dynamically generated key", "type": "string"}},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "test.txt"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
             "edges": [],
         }
 
@@ -399,7 +399,7 @@ class TestCompilerInterfaces:
         """Test that workflows without inputs/outputs sections compile normally."""
         ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "test.txt"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
             "edges": [],
         }
 
@@ -413,7 +413,7 @@ class TestCompilerInterfaces:
             "ir_version": "0.1.0",
             "inputs": {},
             "outputs": {},
-            "nodes": [{"id": "reader", "type": "read-file", "params": {"path": "test.txt"}}],
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_path": "test.txt"}}],
             "edges": [],
         }
 
@@ -436,9 +436,13 @@ class TestCompilerInterfaces:
                 "result": {"description": "Transform result", "type": "any"},
             },
             "nodes": [
-                {"id": "reader", "type": "read-file", "params": {"path": "${input_file}"}},
+                {"id": "reader", "type": "read-file", "params": {"file_path": "${input_file}"}},
                 {"id": "processor", "type": "transform", "params": {"data": "{{content}}"}},
-                {"id": "writer", "type": "write-file", "params": {"path": "${output_file}", "content": "{{result}}"}},
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {"file_path": "${output_file}", "content": "{{result}}"},
+                },
             ],
             "edges": [{"from": "reader", "to": "processor"}, {"from": "processor", "to": "writer"}],
         }
@@ -483,7 +487,7 @@ class TestCompilerInterfaces:
                 {
                     "id": "reader",
                     "type": "read-file",
-                    "params": {"path": "${prefix}${suffix}"},  # Concatenated template
+                    "params": {"file_path": "${prefix}${suffix}"},  # Concatenated template
                 }
             ],
             "edges": [],
@@ -541,7 +545,7 @@ class TestCompilerInterfaces:
             "inputs": {
                 "config_path": {"description": "Path to configuration file", "required": True, "type": "string"}
             },
-            "nodes": [{"id": "loader", "type": "read-file", "params": {"path": "${config_path}"}}],
+            "nodes": [{"id": "loader", "type": "read-file", "params": {"file_path": "${config_path}"}}],
             "edges": [],
         }
 

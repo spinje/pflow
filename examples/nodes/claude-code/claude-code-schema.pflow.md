@@ -20,14 +20,14 @@ Path to the Python file to review.
 Read the Python source file for review.
 
 - type: read-file
-- path: ${input.file_path}
+- file_path: ${input.file_path}
 
 ### review
 
 Review the code for quality, security issues, and best practices.
 
 - type: claude-code
-- task: "Review this Python code for quality, security issues, and best practices:\n\n${read_code.content}"
+- prompt: "Review this Python code for quality, security issues, and best practices:\n\n${read_code.content}"
 - max_turns: 2
 
 ```yaml output_schema
@@ -56,7 +56,7 @@ refactored_code:
 Save the review report as a markdown file.
 
 - type: write-file
-- path: ${input.file_path}.review.md
+- file_path: ${input.file_path}.review.md
 
 ```text content
 # Code Review Report
@@ -87,5 +87,5 @@ ${review.result.refactored_code}
 Save the improved code to a separate file.
 
 - type: write-file
-- path: ${input.file_path}.improved.py
+- file_path: ${input.file_path}.improved.py
 - content: ${review.result.refactored_code}

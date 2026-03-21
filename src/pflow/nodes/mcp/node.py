@@ -150,7 +150,7 @@ class MCPNode(Node):
         # - GitHub servers (no paths at all)
         # - Slack servers (channel IDs instead of paths)
         # - Any future MCP server without code changes
-        tool_args = {k: v for k, v in self.params.items() if not k.startswith("__")}
+        tool_args = {k: v for k, v in self.params.items() if not k.startswith("__") and k != "timeout"}
 
         # Get optional timeout from params (validate as positive integer seconds)
         timeout_param = self.params.get("timeout", 30)

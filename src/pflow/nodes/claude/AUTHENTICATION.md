@@ -78,8 +78,8 @@ Both authentication methods work identically in workflows:
       "id": "claude",
       "type": "claude-code",
       "params": {
-        "task": "Write a function to parse JSON",
-        "working_directory": "./src"
+        "prompt": "Write a function to parse JSON",
+        "cwd": "./src"
       }
     }
   ]

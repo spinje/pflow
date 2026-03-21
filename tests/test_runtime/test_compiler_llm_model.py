@@ -88,7 +88,7 @@ class TestLLMModelInjection:
 
     def test_non_llm_nodes_not_affected(self, mock_read_file_registry):
         """Non-LLM nodes don't trigger model injection."""
-        node_data = {"id": "reader", "type": "read-file", "params": {"path": "./test.txt"}}
+        node_data = {"id": "reader", "type": "read-file", "params": {"file_path": "./test.txt"}}
 
         with patch("pflow.runtime.compilation.compiler.get_default_workflow_model") as mock_get:
             mock_get.return_value = "some-model"

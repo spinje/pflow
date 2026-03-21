@@ -10,7 +10,7 @@ and report execution cost and duration.
 Generate a Python Fibonacci function using Claude Code.
 
 - type: claude-code
-- task: Write a Python function that calculates the nth Fibonacci number using dynamic programming. Include proper error handling, type hints, and a docstring explaining the algorithm.
+- prompt: Write a Python function that calculates the nth Fibonacci number using dynamic programming. Include proper error handling, type hints, and a docstring explaining the algorithm.
 - max_turns: 1
 
 ### save
@@ -18,7 +18,7 @@ Generate a Python Fibonacci function using Claude Code.
 Save the generated code to a file.
 
 - type: write-file
-- path: fibonacci.py
+- file_path: fibonacci.py
 - content: ${generate.result}
 
 ### report

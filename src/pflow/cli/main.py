@@ -714,7 +714,7 @@ def _validate_before_execution(
             # Note: Not including metrics since validation fails before execution starts
             click.echo(json.dumps(error_output, indent=2 if verbose else None))
         else:
-            click.echo(format_validation_failure(errors, warnings), err=True)
+            click.echo(format_validation_failure(errors), err=True)
         ctx.exit(1)
 
     # Warnings are non-blocking, just display them in verbose mode

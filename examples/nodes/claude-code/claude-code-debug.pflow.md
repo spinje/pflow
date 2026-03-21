@@ -35,7 +35,7 @@ Full stack trace if available.
 Analyze the error and provide structured debugging assistance.
 
 - type: claude-code
-- task: "Analyze this error and provide debugging assistance:\n\nError message:\n${input.error_message}\n\nCode context (if available):\n${input.code_context}\n\nStack trace (if available):\n${input.stack_trace}"
+- prompt: "Analyze this error and provide debugging assistance:\n\nError message:\n${input.error_message}\n\nCode context (if available):\n${input.code_context}\n\nStack trace (if available):\n${input.stack_trace}"
 - max_turns: 2
 - system_prompt: You are an expert debugger. Be concise but thorough. Focus on practical solutions.
 

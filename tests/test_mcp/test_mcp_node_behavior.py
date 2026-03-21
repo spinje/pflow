@@ -108,6 +108,36 @@ class TestMCPNodeAsyncBridge:
             # Should use custom timeout
             assert node._timeout == 60
 
+    def test_timeout_not_forwarded_as_tool_argument(self):
+        """timeout is execution config, not a tool argument — must not leak to MCP servers.
+
+        Pre-existing bug fixed alongside issue #100/#132: MCPNode used to forward
+        ALL non-__ params to the server, including timeout. Strict MCP servers
+        would reject the unexpected field.
+        """
+        node = MCPNode()
+        node.set_params({
+            "__mcp_server__": "test",
+            "__mcp_tool__": "test_tool",
+            "timeout": 60,
+            "title": "My Issue",
+            "body": "Description",
+        })
+
+        with patch.object(node, "_load_server_config") as mock_config:
+            mock_config.return_value = {"command": "test"}
+            prep_res = node.prep({})
+
+            # timeout should be used for execution config
+            assert node._timeout == 60
+
+            # timeout must NOT be in the arguments sent to the MCP server
+            assert "timeout" not in prep_res["arguments"]
+
+            # other user params should still be forwarded
+            assert prep_res["arguments"]["title"] == "My Issue"
+            assert prep_res["arguments"]["body"] == "Description"
+
 
 class TestMCPResultExtraction:
     """Test extraction of results from various MCP response formats."""
