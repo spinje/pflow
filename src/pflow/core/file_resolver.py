@@ -118,6 +118,8 @@ def resolve_file_references(ir_dict: dict[str, Any], base_dir: Path) -> dict[str
 
         # A. Resolve file references in node params
         params = node.get("params", {})
+        if not isinstance(params, dict):
+            continue
         for key, value in list(params.items()):
             if key not in FILE_RESOLVABLE_PARAMS:
                 continue
@@ -200,14 +202,6 @@ def _read_file(
         FileNotFoundError: If file doesn't exist
     """
     resolved_path = (base_dir / file_ref).resolve()
-    resolved_base = base_dir.resolve()
-
-    if not resolved_path.is_relative_to(resolved_base):
-        raise FileNotFoundError(
-            f"File reference in node '{node_id}', param '{param_name}' escapes workflow directory: {file_ref}\n"
-            f"  Resolved to: {resolved_path}\n"
-            f"  Must be within: {resolved_base}"
-        )
 
     if not resolved_path.is_file():
         raise FileNotFoundError(
@@ -235,8 +229,10 @@ def has_file_references(ir_dict: dict[str, Any]) -> list[str]:
     return found
 
 
-def _collect_param_file_refs(params: dict[str, Any], found: list[str]) -> None:
+def _collect_param_file_refs(params: Any, found: list[str]) -> None:
     """Collect file references from node params."""
+    if not isinstance(params, dict):
+        return
     for key, value in params.items():
         if key in FILE_RESOLVABLE_PARAMS and is_file_reference(value):
             found.append(value)

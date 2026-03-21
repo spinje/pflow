@@ -283,24 +283,35 @@ class TestResolveFileReferences:
         assert ir["nodes"][0]["params"]["prompt"] == "content"
         assert ir["nodes"][0]["_source_files"] == {"prompt": "./p.md"}
 
-    def test_path_traversal_blocked(self, tmp_path: Path) -> None:
-        """Path traversal attempts are blocked."""
-        ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "../../../etc/passwd"}}])
+    def test_parent_directory_reference(self, tmp_path: Path) -> None:
+        """../path references resolve to sibling directories (common repo layout)."""
+        # Layout: project/workflows/main.pflow.md referencing ../prompts/shared.md
+        workflows_dir = tmp_path / "workflows"
+        prompts_dir = tmp_path / "prompts"
+        workflows_dir.mkdir()
+        prompts_dir.mkdir()
+        (prompts_dir / "shared.md").write_text("shared prompt content")
 
-        with pytest.raises(FileNotFoundError, match="escapes workflow directory"):
-            resolve_file_references(ir, tmp_path)
+        ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "../prompts/shared.md"}}])
+        resolve_file_references(ir, workflows_dir)
 
-    def test_path_traversal_dot_dot_in_middle(self, tmp_path: Path) -> None:
-        """Paths that resolve outside base_dir via .. segments are blocked."""
-        # Create a file outside the base_dir
-        parent = tmp_path / "project"
-        parent.mkdir()
-        (tmp_path / "secret.md").write_text("secret")
+        assert ir["nodes"][0]["params"]["prompt"] == "shared prompt content"
 
-        ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "../secret.md"}}])
+    def test_parent_directory_not_found(self, tmp_path: Path) -> None:
+        """../path that doesn't exist raises FileNotFoundError."""
+        child = tmp_path / "child"
+        child.mkdir()
 
-        with pytest.raises(FileNotFoundError, match="escapes workflow directory"):
-            resolve_file_references(ir, parent)
+        ir = _make_ir([{"id": "n1", "type": "llm", "params": {"prompt": "../nonexistent.md"}}])
+
+        with pytest.raises(FileNotFoundError, match="not found"):
+            resolve_file_references(ir, child)
+
+    def test_malformed_params_string(self, tmp_path: Path) -> None:
+        """Malformed IR with params as string doesn't crash."""
+        ir: dict[str, Any] = {"nodes": [{"id": "n1", "type": "llm", "params": "oops"}], "edges": []}
+        # Should not raise AttributeError — just skip the malformed node
+        resolve_file_references(ir, tmp_path)
 
     def test_empty_ir(self, tmp_path: Path) -> None:
         """Empty nodes list doesn't error."""
@@ -439,6 +450,11 @@ class TestHasFileReferences:
 
     def test_empty_ir(self) -> None:
         assert has_file_references({"nodes": []}) == []
+
+    def test_malformed_params_string(self) -> None:
+        """Malformed IR with params as string doesn't crash."""
+        ir: dict[str, Any] = {"nodes": [{"id": "n1", "type": "llm", "params": "oops"}], "edges": []}
+        assert has_file_references(ir) == []
 
 
 # ---------------------------------------------------------------------------

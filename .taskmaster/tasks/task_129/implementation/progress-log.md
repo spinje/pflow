@@ -502,3 +502,13 @@ Minimal docs updates for user-facing documentation and agent instructions:
 - **`docs/reference/nodes/shell.mdx`** — Updated `command` param description. Added "External script file" example.
 - **`docs/reference/nodes/code.mdx`** — Updated `code` param description. Added "External code file" example.
 - **`src/pflow/cli/resources/cli-agent-instructions.md`** — Added one line to syntax reference: agents now know `- prompt: ./path` works as an alternative to code blocks.
+
+## Phase 10 — Final PR Review Fixes
+
+Third review (`scratchpads/task-129-pr-review-2026-03-21.md`) found 3 issues, 2 confirmed, 1 disputed:
+
+**Fix: Removed path containment check.** The `is_relative_to()` check in `_read_file()` rejected `../` paths, contradicting both `is_file_reference()` (which accepts `../`) and existing workflow ref behavior (no containment). Blocked legitimate layouts like `workflows/main.pflow.md` referencing `../prompts/shared.md`. Removed — pflow is a local CLI tool, users have full file system access. Tests rewritten from "traversal blocked" to "parent directory reference works."
+
+**Fix: Guard non-dict params.** Malformed IR with `"params": "oops"` crashed with `AttributeError` before schema validation. Added `isinstance(params, dict)` guards in `resolve_file_references()` and `_collect_param_file_refs()`.
+
+**Disputed: Spaces in file paths.** Reviewer noted `./my prompt.md` is silently ignored. Accepted limitation — the space check prevents shell commands matching (20 test failures without it). Paths with spaces in developer projects are rare. Documented in docstring.
