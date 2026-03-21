@@ -162,13 +162,17 @@ class TestNestedWorkflowCLI:
 
         wm = WorkflowManager(workflows_dir=workflows_dir)
 
-        # Save child workflow into the workflows dir
-        child_file = workflows_dir / "child-upper.pflow.md"
-        child_file.write_text(CHILD_WORKFLOW)
-
         # Save parent workflow that references child with relative path
         parent_content = _make_parent_workflow("./child-upper.pflow.md")
         wm.save("test-saved-nested", parent_content)
+
+        # Place child workflow inside the saved parent's folder so the
+        # relative reference (./child-upper.pflow.md) resolves correctly.
+        # With folder-based storage the parent lives at
+        # workflows/{name}/{name}.pflow.md, so siblings must be in that folder.
+        saved_dir = workflows_dir / "test-saved-nested"
+        child_file = saved_dir / "child-upper.pflow.md"
+        child_file.write_text(CHILD_WORKFLOW)
 
         # Patch WorkflowManager to use our tmp workflows dir
         with patch("pflow.core.workflow.manager.WorkflowManager") as mock_wm_class:

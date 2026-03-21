@@ -80,7 +80,7 @@ class TestParameterSanitization:
         )
 
         # Load workflow frontmatter and verify sanitization
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -125,7 +125,7 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -153,7 +153,7 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         assert frontmatter["last_execution_params"] == {}
@@ -196,7 +196,7 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -235,7 +235,7 @@ class TestParameterSanitization:
         )
 
         # Load and verify
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -258,7 +258,7 @@ class TestParameterSanitization:
         _save_test_workflow(workflow_manager, workflow_name)
 
         # Get initial frontmatter — freshly saved file has no execution fields
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         initial_frontmatter = _read_frontmatter(workflow_file)
 
         # Verify no execution fields exist yet
@@ -283,7 +283,7 @@ class TestParameterSanitization:
         workflow_name = "count-test"
         _save_test_workflow(workflow_manager, workflow_name)
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
 
         # First execution
         executor_service._update_workflow_metadata(
@@ -343,7 +343,7 @@ class TestEnvParameterSanitization:
         )
 
         # Load and verify ALL env params are redacted
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -371,7 +371,7 @@ class TestEnvParameterSanitization:
             duration=0.8,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -397,7 +397,7 @@ class TestEnvParameterSanitization:
             duration=0.9,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -424,7 +424,7 @@ class TestEnvParameterSanitization:
             duration=1.1,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -450,7 +450,7 @@ class TestEnvParameterSanitization:
             duration=0.7,
         )
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         last_params = frontmatter["last_execution_params"]
@@ -474,7 +474,7 @@ class TestDurationTracking:
         )
 
         # Load and verify duration is stored (rounded to 2 decimal places)
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         assert "last_execution_duration_seconds" in frontmatter
@@ -494,7 +494,7 @@ class TestDurationTracking:
         )
 
         # Verify duration field was NOT added
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
         frontmatter = _read_frontmatter(workflow_file)
 
         assert "last_execution_duration_seconds" not in frontmatter
@@ -504,7 +504,7 @@ class TestDurationTracking:
         workflow_name = "duration-update-test"
         _save_test_workflow(workflow_manager, workflow_name)
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
 
         # First execution
         executor_service._update_workflow_metadata(
@@ -531,7 +531,7 @@ class TestDurationTracking:
         workflow_name = "avg-duration-test"
         _save_test_workflow(workflow_manager, workflow_name)
 
-        workflow_file = temp_workflow_dir / f"{workflow_name}.pflow.md"
+        workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
 
         # First execution: 1.0s
         executor_service._update_workflow_metadata(

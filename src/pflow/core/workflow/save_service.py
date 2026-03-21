@@ -249,27 +249,117 @@ def load_and_validate_workflow(
     raise ValueError(f"Workflow not found: {source} (not a file or saved workflow)")
 
 
+def _discover_and_bundle_deps(
+    name: str, markdown_content: str, source_path: Path
+) -> tuple[Optional[list[tuple[str, Path]]], list[str]]:
+    """Discover file dependencies and compute bundle-relative paths.
+
+    Args:
+        name: Workflow name (for error messages)
+        markdown_content: Workflow markdown content to parse
+        source_path: Path to the source workflow file
+
+    Returns:
+        Tuple of (dependencies_for_save, bundled_file_display_list)
+
+    Raises:
+        WorkflowValidationError: If dependency discovery fails on missing files
+    """
+    from pflow.core.workflow.dependency_discovery import discover_dependencies
+
+    try:
+        result = parse_markdown(markdown_content)
+        parent_base = source_path.parent.resolve()
+        deps = discover_dependencies(result.ir, parent_base)
+        if not deps:
+            return None, []
+
+        # Compute bundle-relative paths from the parent workflow's directory,
+        # not from whichever sub-workflow discovered the dependency.
+        # This ensures files from nested sub-workflows land at the correct
+        # relative position so all references resolve from the bundle root.
+        dep_tuples: list[tuple[str, Path]] = []
+        for dep in deps:
+            try:
+                rel = str(dep.absolute_path.relative_to(parent_base))
+            except ValueError:
+                raise WorkflowValidationError(
+                    f"Cannot bundle dependency '{dep.relative_path}' "
+                    f"(node '{dep.source_node_id}', param '{dep.source_param}'): "
+                    f"file is outside the workflow's directory.\n"
+                    f"  Resolved to: {dep.absolute_path}\n"
+                    f"  Workflow dir: {parent_base}\n"
+                    f"Move the file into the workflow's directory tree, "
+                    f"or use an absolute path (which won't be bundled)."
+                ) from None
+            dep_tuples.append((rel, dep.absolute_path))
+        return dep_tuples, [rel for rel, _ in dep_tuples]
+
+    except WorkflowValidationError:
+        raise
+    except (FileNotFoundError, ValueError) as e:
+        raise WorkflowValidationError(f"Dependency discovery failed for '{name}': {e}") from e
+    except Exception as e:
+        raise WorkflowValidationError(
+            f"Unexpected error during dependency discovery for '{name}': {e}\n"
+            "If this is a bug, please report it. "
+            "To save without bundling, remove file references from the workflow."
+        ) from e
+
+
+def _reject_unbundleable_file_refs(name: str, markdown_content: str) -> None:
+    """Reject saves of workflows with file references when no source path is available.
+
+    Without a source path, file references can't be bundled, producing a broken
+    saved workflow. Fail early with an actionable error message.
+    """
+    from pflow.core.file_resolver import has_file_references, is_workflow_file_reference
+
+    try:
+        result = parse_markdown(markdown_content)
+        file_refs = has_file_references(result.ir)
+        # Also check for sub-workflow file refs (not in FILE_RESOLVABLE_PARAMS)
+        for node in result.ir.get("nodes", []):
+            wf_ref = node.get("params", {}).get("workflow", "")
+            if isinstance(wf_ref, str) and is_workflow_file_reference(wf_ref):
+                file_refs.append(wf_ref)
+        if file_refs:
+            refs_display = ", ".join(file_refs[:3])
+            raise WorkflowValidationError(
+                f"Workflow '{name}' contains file references ({refs_display}) "
+                f"but no source file path was provided for dependency bundling.\n"
+                f"Save from a file path instead of raw content, "
+                f"or inline the referenced content directly in the workflow."
+            )
+    except WorkflowValidationError:
+        raise
+    except Exception as e:
+        logger.debug(f"File reference check skipped for '{name}': {e}")
+
+
 def save_workflow_with_options(
     name: str,
     markdown_content: str,
     *,
     force: bool = False,
     metadata: Optional[dict[str, Any]] = None,
-) -> Path:
-    """Save workflow to library with existence checks and overwrite handling.
+    source_path: Optional[Path] = None,
+) -> tuple[Path, list[str]]:
+    """Save workflow to library with existence checks, dependency bundling, and overwrite handling.
 
-    The caller must have already validated the markdown content (parsed and
-    validated the IR). This function handles existence checks, overwrite logic,
-    and delegates to WorkflowManager.save() which prepends frontmatter.
+    When source_path is provided, discovers file dependencies (sub-workflows,
+    prompts, scripts) and bundles them into the saved workflow folder.
 
     Args:
         name: Workflow name (must be validated first using validate_workflow_name)
         markdown_content: Original .pflow.md content string (pre-validated by caller)
         force: If True, overwrite existing workflow by deleting it first
         metadata: Optional metadata dict (keywords, capabilities, use cases)
+        source_path: Optional path to the source workflow file. When provided,
+            dependency discovery runs and files are bundled into the saved folder.
 
     Returns:
-        Path to saved workflow file
+        Tuple of (path_to_saved_entry_point, list_of_bundled_relative_paths)
 
     Raises:
         FileExistsError: If workflow exists and force=False
@@ -291,9 +381,18 @@ def save_workflow_with_options(
         except Exception as e:
             raise WorkflowValidationError(f"Failed to delete existing workflow '{name}': {e}") from e
 
+    # Discover dependencies if source path is provided
+    dependencies: Optional[list[tuple[str, Path]]] = None
+    bundled_files: list[str] = []
+
+    if source_path is not None:
+        dependencies, bundled_files = _discover_and_bundle_deps(name, markdown_content, source_path)
+    else:
+        _reject_unbundleable_file_refs(name, markdown_content)
+
     # Save workflow
     try:
-        saved_path = manager.save(name, markdown_content, metadata)
+        saved_path = manager.save(name, markdown_content, metadata, dependencies)
         logger.info(f"Saved workflow '{name}' to {saved_path}")
     except Exception as e:
         raise WorkflowValidationError(f"Failed to save workflow '{name}': {e}") from e
@@ -306,7 +405,7 @@ def save_workflow_with_options(
     except Exception:
         logger.warning(f"Failed to re-enrich skill for '{name}'", exc_info=True)
 
-    return Path(saved_path)
+    return Path(saved_path), bundled_files
 
 
 def generate_workflow_metadata(

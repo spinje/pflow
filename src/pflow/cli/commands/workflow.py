@@ -2,6 +2,7 @@
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -271,7 +272,13 @@ def _load_and_parse_workflow(file_path: str) -> tuple[dict[str, Any], str, str |
         sys.exit(1)
 
 
-def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[str, Any] | None, force: bool) -> str:
+def _save_with_overwrite_check(
+    name: str,
+    markdown_content: str,
+    metadata: dict[str, Any] | None,
+    force: bool,
+    source_path: Path | None = None,
+) -> tuple[str, list[str]]:
     """Save workflow to library with overwrite handling.
 
     Args:
@@ -279,9 +286,10 @@ def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[
         markdown_content: Original markdown content to save
         metadata: Optional metadata
         force: Whether to overwrite existing workflow
+        source_path: Optional source file path for dependency discovery
 
     Returns:
-        Path to saved workflow file
+        Tuple of (saved_path, bundled_files_list)
 
     Raises:
         SystemExit: If workflow exists and force=False, or save fails
@@ -290,17 +298,18 @@ def _save_with_overwrite_check(name: str, markdown_content: str, metadata: dict[
     from pflow.core.workflow.save_service import save_workflow_with_options
 
     try:
-        saved_path = save_workflow_with_options(
+        saved_path, bundled_files = save_workflow_with_options(
             name=name,
             markdown_content=markdown_content,
             force=force,
             metadata=metadata,
+            source_path=source_path,
         )
 
         if force:
             click.echo(f"✓ Overwritten existing workflow '{name}'")
 
-        return str(saved_path)
+        return str(saved_path), bundled_files
 
     except FileExistsError as e:
         click.echo(f"Error: {e}", err=True)
@@ -368,7 +377,9 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) ->
     metadata = None
 
     # Save workflow (passes markdown content, not IR)
-    saved_path = _save_with_overwrite_check(name, markdown_content, metadata, force)
+    saved_path, bundled_files = _save_with_overwrite_check(
+        name, markdown_content, metadata, force, source_path=Path(file_path)
+    )
 
     # Delete draft if requested
     _delete_draft_if_requested(file_path, delete_draft)
@@ -381,5 +392,6 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) ->
         saved_path=saved_path,
         workflow_ir=validated_ir,
         metadata=metadata,
+        bundled_files=bundled_files,
     )
     click.echo(success_message)

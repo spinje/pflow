@@ -8,7 +8,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from pflow.core.ir_schema import normalize_ir
 from pflow.core.metrics import MetricsCollector
@@ -474,8 +474,15 @@ class ExecutionService(BaseService):
         except (ValueError, WorkflowValidationError) as e:
             raise ValueError(f"Invalid workflow: {e}") from e
 
+        # Determine source path for dependency discovery (file-based saves only)
+        source_path: Optional[Path] = None
+        if "\n" not in workflow:
+            candidate = Path(workflow).expanduser()
+            if candidate.exists():
+                source_path = candidate
+
         # Save and format result
-        return cls._save_and_format_result(name, markdown_content, result.ir, force)
+        return cls._save_and_format_result(name, markdown_content, result.ir, force, source_path)
 
     @classmethod
     def _save_and_format_result(
@@ -484,6 +491,7 @@ class ExecutionService(BaseService):
         markdown_content: str,
         workflow_ir: dict[str, Any],
         force: bool,
+        source_path: Optional[Path] = None,
     ) -> str:
         """Save workflow and format success message.
 
@@ -492,6 +500,7 @@ class ExecutionService(BaseService):
             markdown_content: Original markdown content (preserved for save)
             workflow_ir: Parsed workflow IR (used for display formatting)
             force: Whether to overwrite existing workflow
+            source_path: Optional source file path for dependency discovery
 
         Returns:
             Formatted success message
@@ -505,10 +514,11 @@ class ExecutionService(BaseService):
         from pflow.execution.formatters.workflow_save_formatter import format_save_success
 
         try:
-            saved_path = save_workflow_with_options(
+            saved_path, bundled_files = save_workflow_with_options(
                 name=name,
                 markdown_content=markdown_content,
                 force=force,
+                source_path=source_path,
             )
 
             success_message = format_save_success(
@@ -516,6 +526,7 @@ class ExecutionService(BaseService):
                 saved_path=str(saved_path),
                 workflow_ir=workflow_ir,
                 metadata=None,
+                bundled_files=bundled_files,
             )
 
             return success_message

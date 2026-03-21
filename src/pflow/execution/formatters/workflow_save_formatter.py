@@ -24,11 +24,13 @@ def format_save_success(
     saved_path: str,
     workflow_ir: dict[str, Any],
     metadata: dict[str, Any] | None = None,
+    bundled_files: list[str] | None = None,
 ) -> str:
     """Format workflow save success message.
 
     Creates a comprehensive success message showing:
     - Save confirmation with location
+    - Bundled dependency files (if any)
     - Execution hint with parameter placeholders
     - Optional parameters list
     - Discovery keywords (if metadata provided)
@@ -39,6 +41,7 @@ def format_save_success(
         saved_path: Path where workflow was saved
         workflow_ir: Workflow IR dict with inputs/outputs
         metadata: Optional metadata dict with keywords
+        bundled_files: Optional list of relative paths of bundled dependency files
 
     Returns:
         Formatted success message string
@@ -64,6 +67,13 @@ def format_save_success(
         f"✓ Saved workflow '{name}' to library",
         f"  Location: {saved_path}",
     ]
+
+    # Show bundled dependency files
+    if bundled_files:
+        count = len(bundled_files)
+        lines.append(f"  Bundled {count} {'file' if count == 1 else 'files'}:")
+        for f in bundled_files:
+            lines.append(f"    {f}")
 
     # Add execution hint with parameter information
     execution_hint = format_execution_hint(name, workflow_ir)

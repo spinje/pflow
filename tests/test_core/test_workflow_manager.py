@@ -79,7 +79,7 @@ class TestWorkflowManager:
 
         # Verify file was created
         assert Path(path).exists()
-        assert path == str(workflow_manager.workflows_dir / f"{name}.pflow.md")
+        assert path == str(workflow_manager.workflows_dir / name / f"{name}.pflow.md")
 
         # Read and parse frontmatter
         content = Path(path).read_text()
@@ -236,7 +236,7 @@ class TestWorkflowManager:
     def test_get_path(self, workflow_manager):
         """Test getting absolute path for a workflow."""
         name = "path-test"
-        expected_path = str((workflow_manager.workflows_dir / f"{name}.pflow.md").resolve())
+        expected_path = str((workflow_manager.workflows_dir / name / f"{name}.pflow.md").resolve())
 
         assert workflow_manager.get_path(name) == expected_path
 
@@ -276,8 +276,10 @@ class TestWorkflowManager:
         markdown_content = ir_to_markdown(sample_ir)
         workflow_manager.save("valid", markdown_content)
 
-        # Create an invalid .pflow.md file
-        invalid_path = workflow_manager.workflows_dir / "invalid.pflow.md"
+        # Create an invalid workflow directory with invalid entry point
+        invalid_dir = workflow_manager.workflows_dir / "invalid"
+        invalid_dir.mkdir()
+        invalid_path = invalid_dir / "invalid.pflow.md"
         with open(invalid_path, "w") as f:
             f.write("not valid markdown workflow")
 
@@ -352,9 +354,9 @@ class TestWorkflowManager:
         # No file should exist after failure
         assert not readonly_manager.exists(name)
 
-        # No temp files should remain after failure
-        temp_files = list(readonly_subdir.glob(f".{name}.*.tmp"))
-        assert len(temp_files) == 0
+        # No temp directories should remain after failure
+        temp_dirs = list(readonly_subdir.glob(f".{name}.*.tmp"))
+        assert len(temp_dirs) == 0
 
         # Restore permissions for cleanup
         readonly_subdir.chmod(stat.S_IRWXU)
@@ -426,8 +428,10 @@ class TestWorkflowManager:
         """Test handling of corrupted workflow files."""
         import logging
 
-        # Create a corrupted .pflow.md file
-        corrupted_file = workflow_manager.workflows_dir / "corrupted.pflow.md"
+        # Create a corrupted workflow directory with corrupted entry point
+        corrupted_dir = workflow_manager.workflows_dir / "corrupted"
+        corrupted_dir.mkdir()
+        corrupted_file = corrupted_dir / "corrupted.pflow.md"
         corrupted_file.write_text("# Corrupted\n\n## Steps\n\n### node1\n\nthis is not valid markdown workflow")
 
         # list_all should skip it with warning
@@ -535,9 +539,9 @@ class TestWorkflowManager:
         # No file should exist after failure
         assert not workflow_manager.exists(name)
 
-        # No temp files should remain after failure
-        temp_files = list(workflow_manager.workflows_dir.glob(f".{name}.*.tmp"))
-        assert len(temp_files) == 0
+        # No temp directories should remain after failure
+        temp_dirs = list(workflow_manager.workflows_dir.glob(f".{name}.*.tmp"))
+        assert len(temp_dirs) == 0
 
         # Verify that a valid workflow can still be saved successfully
         markdown_content = ir_to_markdown(ir)
@@ -582,7 +586,7 @@ class TestWorkflowManager:
         workflow_manager.save("my-workflow", markdown_content)
 
         # Now manually add 'name' to frontmatter (simulating skill enrichment)
-        workflow_path = temp_workflows_dir / "my-workflow.pflow.md"
+        workflow_path = temp_workflows_dir / "my-workflow" / "my-workflow.pflow.md"
         content = workflow_path.read_text(encoding="utf-8")
 
         # Parse and update frontmatter
@@ -612,7 +616,7 @@ class TestWorkflowManager:
         workflow_manager.save("listed-workflow", markdown_content)
 
         # Add 'name' to frontmatter
-        workflow_path = temp_workflows_dir / "listed-workflow.pflow.md"
+        workflow_path = temp_workflows_dir / "listed-workflow" / "listed-workflow.pflow.md"
         content = workflow_path.read_text(encoding="utf-8")
 
         lines = content.splitlines(keepends=True)
@@ -642,3 +646,28 @@ class TestWorkflowManager:
         # Load should return filename-derived name (the default behavior)
         loaded = workflow_manager.load("normal-workflow")
         assert loaded["name"] == "normal-workflow"  # Fallback to filename
+
+    def test_save_recovers_from_ghost_directory(self, workflow_manager, sample_ir):
+        """Ghost directory (dir without entry point) is cleaned up on save.
+
+        If a previous save crashed after creating the directory but before
+        writing the entry point, the ghost dir would permanently block saves.
+        Regression: exists() returns False (no entry point), so force-save
+        doesn't try to delete it, but os.rename fails because dir exists.
+        """
+        # Create a ghost directory (dir exists, no entry point inside)
+        ghost_dir = workflow_manager.workflows_dir / "ghost-workflow"
+        ghost_dir.mkdir()
+
+        # exists() should return False (no entry point)
+        assert not workflow_manager.exists("ghost-workflow")
+
+        # Save should succeed by cleaning up the ghost directory
+        markdown_content = ir_to_markdown(sample_ir, title="Ghost Recovery")
+        path = workflow_manager.save("ghost-workflow", markdown_content)
+
+        # Verify workflow was saved correctly
+        assert workflow_manager.exists("ghost-workflow")
+        loaded = workflow_manager.load("ghost-workflow")
+        assert loaded["ir"]["nodes"][0]["id"] == "node1"
+        assert "ghost-workflow.pflow.md" in path
