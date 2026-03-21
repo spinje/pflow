@@ -126,8 +126,6 @@ A step.
         resolve_file_references(ir, tmp_path)
 
         # Normalize to add ir_version etc. for schema validation
-        from pflow.core.ir_schema import normalize_ir
-
         normalize_ir(ir)
 
         # Should not raise — _source_files is in schema

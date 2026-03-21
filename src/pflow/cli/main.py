@@ -652,6 +652,8 @@ def _resolve_file_refs_or_exit(
     output_format: str,
 ) -> None:
     """Resolve external file references in workflow IR before validation/execution."""
+    import yaml
+
     from pflow.core.file_resolver import resolve_file_references
 
     source_file = ctx.obj.get("source_file_path")
@@ -659,7 +661,7 @@ def _resolve_file_refs_or_exit(
         base_dir = Path(source_file).resolve().parent
         try:
             resolve_file_references(ir_data, base_dir)
-        except FileNotFoundError as e:
+        except (FileNotFoundError, yaml.YAMLError) as e:
             if output_format == "json":
                 click.echo(json.dumps({"success": False, "error": str(e)}))
             else:

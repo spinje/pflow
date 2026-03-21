@@ -647,12 +647,14 @@ def compile_ir_to_flow(
         raise
 
     # Step 1b: Resolve external file references before validation
+    import yaml
+
     from pflow.core.file_resolver import get_base_dir, resolve_file_references
 
     base_dir = get_base_dir(initial_params)
     try:
         resolve_file_references(ir_dict, base_dir)
-    except FileNotFoundError as e:
+    except (FileNotFoundError, yaml.YAMLError) as e:
         raise CompilationError(
             message=str(e),
             phase="file_resolution",

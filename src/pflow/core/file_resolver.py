@@ -49,8 +49,8 @@ def is_file_reference(value: Any) -> bool:
     """Detect whether a parameter value is a file path reference.
 
     A value is treated as a file reference if it:
-    - Is a non-empty string without newlines or template variables
-    - Starts with './' or '../', OR
+    - Is a non-empty string without newlines, spaces, or template variables
+    - Starts with './' or '../' (always matches regardless of extension), OR
     - Contains '/' and ends with a recognized file extension
 
     Args:

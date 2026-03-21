@@ -364,15 +364,20 @@ class ExecutionService(BaseService):
             return f"✗ {e}"
 
         # Resolve external file references before validation
+        import yaml
+
         from pflow.core.file_resolver import resolve_file_references
 
-        if source == "file":
-            base_dir = Path(str(workflow)).resolve().parent
-            resolve_file_references(workflow_ir, base_dir)
-        elif source == "library":
-            wm = WorkflowManager()
-            base_dir = Path(wm.get_path(str(workflow))).parent
-            resolve_file_references(workflow_ir, base_dir)
+        try:
+            if source == "file":
+                base_dir = Path(str(workflow)).resolve().parent
+                resolve_file_references(workflow_ir, base_dir)
+            elif source == "library":
+                wm = WorkflowManager()
+                base_dir = Path(wm.get_path(str(workflow))).parent
+                resolve_file_references(workflow_ir, base_dir)
+        except (FileNotFoundError, yaml.YAMLError) as e:
+            return f"✗ File reference error: {e}"
 
         # Generate dummy parameters for validation
         inputs = workflow_ir.get("inputs", {})
