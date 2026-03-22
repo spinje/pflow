@@ -307,6 +307,36 @@ def _discover_and_bundle_deps(
         ) from e
 
 
+def _reject_unbundleable_file_refs(name: str, markdown_content: str) -> None:
+    """Reject saves of workflows with file references when no source path is available.
+
+    Without a source path, file references can't be bundled, producing a broken
+    saved workflow. Fail early with an actionable error message.
+    """
+    from pflow.core.file_resolver import has_file_references, is_workflow_file_reference
+
+    try:
+        result = parse_markdown(markdown_content)
+        file_refs = has_file_references(result.ir)
+        # Also check for sub-workflow file refs (not in FILE_RESOLVABLE_PARAMS)
+        for node in result.ir.get("nodes", []):
+            wf_ref = node.get("params", {}).get("workflow", "")
+            if isinstance(wf_ref, str) and is_workflow_file_reference(wf_ref):
+                file_refs.append(wf_ref)
+        if file_refs:
+            refs_display = ", ".join(file_refs[:3])
+            raise WorkflowValidationError(
+                f"Workflow '{name}' contains file references ({refs_display}) "
+                f"but no source file path was provided for dependency bundling.\n"
+                f"Save from a file path instead of raw content, "
+                f"or inline the referenced content directly in the workflow."
+            )
+    except WorkflowValidationError:
+        raise
+    except Exception as e:
+        logger.debug(f"File reference check skipped for '{name}': {e}")
+
+
 def save_workflow_with_options(
     name: str,
     markdown_content: str,
@@ -358,24 +388,7 @@ def save_workflow_with_options(
     if source_path is not None:
         dependencies, bundled_files = _discover_and_bundle_deps(name, markdown_content, source_path)
     else:
-        # No source path — check if workflow has file references that can't be bundled
-        from pflow.core.file_resolver import has_file_references
-
-        try:
-            result = parse_markdown(markdown_content)
-            file_refs = has_file_references(result.ir)
-            if file_refs:
-                refs_display = ", ".join(file_refs[:3])
-                raise WorkflowValidationError(
-                    f"Workflow '{name}' contains file references ({refs_display}) "
-                    f"but no source file path was provided for dependency bundling.\n"
-                    f"Save from a file path instead of raw content, "
-                    f"or inline the referenced content directly in the workflow."
-                )
-        except WorkflowValidationError:
-            raise
-        except Exception as e:
-            logger.debug(f"File reference check skipped for '{name}': {e}")
+        _reject_unbundleable_file_refs(name, markdown_content)
 
     # Save workflow
     try:

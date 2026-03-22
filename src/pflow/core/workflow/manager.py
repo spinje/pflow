@@ -58,6 +58,33 @@ class WorkflowManager:
         """Return the entry point file: workflows_dir / name / {name}.pflow.md."""
         return self.workflows_dir / name / f"{name}.pflow.md"
 
+    def _copy_dependencies(self, temp_dir: str, dependencies: Optional[list[tuple[str, Path]]]) -> None:
+        """Copy dependency files into the temp bundle directory."""
+        if not dependencies:
+            return
+        temp_dir_resolved = Path(temp_dir).resolve()
+        for rel_path, source_path in dependencies:
+            dest_path = (Path(temp_dir) / rel_path).resolve()
+            if not dest_path.is_relative_to(temp_dir_resolved):
+                raise WorkflowValidationError(f"Dependency path '{rel_path}' would escape the bundle directory")
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(source_path), str(dest_path))
+
+    def _atomic_rename(self, name: str, temp_dir: str, target_dir: Path) -> None:
+        """Atomically move temp dir to target, cleaning up ghost directories."""
+        if target_dir.exists():
+            if self._entry_point(name).exists():
+                raise WorkflowExistsError(f"Workflow '{name}' already exists")
+            # Ghost directory (no entry point) — clean up
+            logger.warning(f"Removing ghost directory for '{name}' (no entry point found)")
+            shutil.rmtree(target_dir)
+        try:
+            os.rename(temp_dir, target_dir)
+        except (FileExistsError, OSError):
+            if target_dir.exists():
+                raise WorkflowExistsError(f"Workflow '{name}' already exists") from None
+            raise
+
     def _validate_workflow_name(self, name: str) -> None:
         """Validate workflow name format.
 
@@ -199,27 +226,8 @@ class WorkflowManager:
             entry_point = Path(temp_dir) / f"{name}.pflow.md"
             entry_point.write_text(file_content, encoding="utf-8")
 
-            # Copy dependency files preserving relative structure
-            if dependencies:
-                temp_dir_resolved = Path(temp_dir).resolve()
-                for rel_path, source_path in dependencies:
-                    dest_path = (Path(temp_dir) / rel_path).resolve()
-                    # Defense-in-depth: ensure deps can't escape the bundle
-                    if not dest_path.is_relative_to(temp_dir_resolved):
-                        raise WorkflowValidationError(f"Dependency path '{rel_path}' would escape the bundle directory")
-                    dest_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(str(source_path), str(dest_path))
-
-            # Atomic move — pre-check + os.rename for defense-in-depth
-            if target_dir.exists():
-                raise WorkflowExistsError(f"Workflow '{name}' already exists")
-            try:
-                os.rename(temp_dir, target_dir)
-            except (FileExistsError, OSError):
-                # Race condition: directory created between pre-check and rename
-                if target_dir.exists():
-                    raise WorkflowExistsError(f"Workflow '{name}' already exists") from None
-                raise
+            self._copy_dependencies(temp_dir, dependencies)
+            self._atomic_rename(name, temp_dir, target_dir)
 
             logger.info(f"Saved workflow '{name}' to {target_dir}")
             return str(self._entry_point(name))
@@ -470,6 +478,4 @@ class WorkflowManager:
         except WorkflowNotFoundError:
             raise
         except Exception as e:
-            if isinstance(e, WorkflowNotFoundError):
-                raise
             raise WorkflowValidationError(f"Failed to update workflow metadata: {e}") from e

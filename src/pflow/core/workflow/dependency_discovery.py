@@ -13,7 +13,7 @@ from typing import Any, Optional
 import yaml
 
 from pflow.core.file_resolver import FILE_RESOLVABLE_PARAMS, is_file_reference, is_workflow_file_reference
-from pflow.core.markdown_parser import parse_markdown
+from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +113,7 @@ def _collect_sub_workflow_deps(
         child_result = parse_markdown(child_content)
         child_deps = discover_dependencies(child_result.ir, resolved.parent, seen)
         deps.extend(child_deps)
-    except Exception as e:
-        if isinstance(e, (FileNotFoundError, ValueError)):
-            raise
+    except MarkdownParseError as e:
         logger.warning(f"Failed to parse sub-workflow {workflow_ref}: {e}")
 
 
@@ -173,21 +171,20 @@ def _collect_batch_deps(
             batch_content = resolved.read_text(encoding="utf-8")
             batch_data = yaml.safe_load(batch_content)
             if isinstance(batch_data, dict):
-                _collect_batch_item_deps(batch_data, base_dir, node_id, base_dir, deps)
+                _collect_batch_item_deps(batch_data, base_dir, node_id, deps)
         except yaml.YAMLError:
             logger.warning(f"Failed to parse batch YAML {batch} in node '{node_id}'")
         return
 
     # Batch is a dict with inline items
     if isinstance(batch, dict):
-        _collect_batch_item_deps(batch, base_dir, node_id, base_dir, deps)
+        _collect_batch_item_deps(batch, base_dir, node_id, deps)
 
 
 def _collect_batch_item_deps(
     batch_data: dict[str, Any],
-    workflow_base_dir: Path,
+    base_dir: Path,
     node_id: str,
-    file_base_dir: Path,
     deps: list[Dependency],
 ) -> None:
     """Scan batch items for file references."""
@@ -202,8 +199,8 @@ def _collect_batch_item_deps(
                 continue
             if not is_file_reference(value):
                 continue
-            resolved = (file_base_dir / value).resolve()
-            _require_file_exists(resolved, value, node_id, f"batch.items[{i}].{key}", workflow_base_dir)
+            resolved = (base_dir / value).resolve()
+            _require_file_exists(resolved, value, node_id, f"batch.items[{i}].{key}", base_dir)
             deps.append(
                 Dependency(
                     relative_path=value,
