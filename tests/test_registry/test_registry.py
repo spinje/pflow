@@ -8,6 +8,7 @@ REFACTOR HISTORY:
 - 2024-01-30: Added more integration tests and real workflow scenarios
 """
 
+import json
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
@@ -530,7 +531,7 @@ class TestRegistryVersionRefresh:
         """Registry with a stale version should be detected as outdated.
 
         We save a registry with _save_with_metadata (which stamps the current
-        version), load it, then patch pflow.__version__ to a newer value so
+        version), load it, then patch get_version to return a newer value so
         the comparison sees a mismatch.
         """
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -552,10 +553,8 @@ class TestRegistryVersionRefresh:
             nodes = registry2._load_from_file()
             assert registry2._registry_version is not None
 
-            # Patch pflow.__version__ to a different value.
-            # pflow doesn't define __version__ directly (it uses importlib.metadata),
-            # so we need create=True to temporarily add the attribute.
-            with patch("pflow.__version__", "99.99.99", create=True):
+            # Patch _get_version on the Registry class directly
+            with patch.object(Registry, "_get_version", return_value="99.99.99"):
                 assert registry2._core_nodes_outdated(nodes) is True
 
     def test_refresh_preserves_user_nodes(self):
@@ -605,3 +604,89 @@ class TestRegistryVersionRefresh:
             # Core nodes should be present (from real auto-discovery)
             core_nodes = {name: data for name, data in refreshed.items() if data.get("type") == "core"}
             assert len(core_nodes) > 0, "Refresh should have discovered core nodes"
+
+
+class TestRegistryFormatConsistency:
+    """Regression tests for issue #142: save() must preserve structured format."""
+
+    def test_save_preserves_version_after_save_with_metadata(self):
+        """Bug 1 regression: save() after _save_with_metadata() must not destroy version tracking."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            # Step 1: Write structured format (simulates _auto_discover_core_nodes)
+            test_nodes = {
+                "shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode", "type": "core"},
+            }
+            registry._save_with_metadata(test_nodes)
+
+            # Step 2: Call save() (simulates MCP sync overwriting)
+            updated_nodes = dict(test_nodes)
+            updated_nodes["mcp-tool"] = {"module": "pflow.nodes.mcp.mcp", "class_name": "McpNode", "type": "mcp"}
+            registry.save(updated_nodes)
+
+            # Step 3: Verify structured format is preserved
+            raw = json.loads(registry_path.read_text())
+            assert "nodes" in raw, "save() must write structured format with 'nodes' key"
+            assert "version" in raw, "save() must preserve version in structured format"
+
+            # Step 4: Verify _load_from_file() can read the version
+            registry2 = Registry(registry_path)
+            nodes = registry2._load_from_file()
+            assert registry2._registry_version is not None, "_registry_version must be populated after save()"
+            assert "shell" in nodes
+            assert "mcp-tool" in nodes
+
+    def test_save_preserves_metadata(self):
+        """save() must preserve the metadata field (used by MCP sync caching)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            # Write initial nodes
+            registry._save_with_metadata({"shell": {"module": "m", "class_name": "C", "type": "core"}})
+
+            # Set metadata (MCP sync hash)
+            registry.set_metadata("mcp_config_hash", "abc123")
+
+            # Call save() with updated nodes
+            registry.save({"shell": {"module": "m", "class_name": "C", "type": "core"}})
+
+            # Metadata must survive
+            assert registry.get_metadata("mcp_config_hash") == "abc123"
+
+    def test_get_set_metadata_roundtrip(self):
+        """get_metadata/set_metadata must work on structured format."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+            registry = Registry(registry_path)
+
+            # set_metadata on empty file creates structured format
+            registry.set_metadata("key1", "value1")
+            assert registry.get_metadata("key1") == "value1"
+            assert registry.get_metadata("nonexistent", "default") == "default"
+
+            # Verify file is structured
+            raw = json.loads(registry_path.read_text())
+            assert "nodes" in raw
+            assert "metadata" in raw
+            assert raw["metadata"]["key1"] == "value1"
+
+    def test_legacy_flat_format_metadata_stripped(self):
+        """Legacy __metadata__ in flat format must not leak as a phantom node."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            registry_path = Path(tmpdir) / "registry.json"
+
+            # Write legacy flat format with __metadata__
+            flat_data = {
+                "shell": {"module": "m", "class_name": "C", "type": "core"},
+                "__metadata__": {"mcp_config_hash": "old"},
+            }
+            registry_path.write_text(json.dumps(flat_data))
+
+            registry = Registry(registry_path)
+            nodes = registry._load_from_file()
+
+            assert "__metadata__" not in nodes, "__metadata__ must be stripped from flat format"
+            assert "shell" in nodes

@@ -25,7 +25,7 @@ def test_registry_load_respects_settings(tmp_path):
     from pflow.registry import Registry
 
     # Use the current pflow version to prevent version-based refresh
-    current_version = getattr(pflow, "__version__", "0.0.1")
+    current_version = pflow.get_version()
 
     # Create a test registry file with various node types
     registry_data = {
