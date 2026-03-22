@@ -1078,3 +1078,70 @@ class TestTimeout:
 
             assert action == "default"
             assert shared["response"] == "Fast response"
+
+    def test_timeout_not_retried(self):
+        """Timed-out LLM call must NOT trigger PocketFlow retries.
+
+        exec() returns an error dict on timeout instead of raising, which
+        prevents PocketFlow's retry loop from re-executing. This is critical
+        because the orphan thread from the timed-out call is still running
+        model.prompt() — retrying would create duplicate in-flight API calls.
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_model = Mock()
+
+            def slow_prompt(*args, **kwargs):
+                time.sleep(1)
+                return Mock()
+
+            mock_model.prompt.side_effect = slow_prompt
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(max_retries=3, wait=0)
+            node.set_params({"prompt": "Test", "timeout": 0.05})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "error"
+            assert "timed out" in shared["error"]
+            # Key assertion: prompt must be called exactly once.
+            # If timeout were retriable, this would be 3.
+            assert mock_model.prompt.call_count == 1
+
+    def test_timeout_string_coerced(self):
+        """String timeout value is coerced to float."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": "60"})
+        shared: dict = {}
+
+        prep_res = node.prep(shared)
+
+        assert prep_res["timeout"] == 60.0
+
+    def test_timeout_zero_rejected(self):
+        """Zero timeout raises ValueError during prep."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": 0})
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="positive"):
+            node.prep(shared)
+
+    def test_timeout_negative_rejected(self):
+        """Negative timeout raises ValueError during prep."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": -5})
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="positive"):
+            node.prep(shared)
+
+    def test_timeout_invalid_string_rejected(self):
+        """Non-numeric string timeout raises ValueError during prep."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": "abc"})
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="positive number"):
+            node.prep(shared)

@@ -151,6 +151,17 @@ class LLMNode(Node):
         """Initialize the LLM node with retry support."""
         super().__init__(max_retries=max_retries, wait=wait)
 
+    def _validate_timeout(self) -> float:
+        """Extract and validate the timeout parameter."""
+        timeout = self.params.get("timeout", 120)
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            raise ValueError(f"Timeout must be a positive number, got {timeout!r}") from None
+        if timeout <= 0:
+            raise ValueError(f"Timeout must be a positive number, got {timeout}")
+        return timeout
+
     @staticmethod
     def _strip_code_block(response: str) -> str:
         """Strip markdown code block fences from LLM responses.
@@ -254,7 +265,7 @@ class LLMNode(Node):
             "reasoning_effort": reasoning_effort,
             "reasoning_max_tokens": self.params.get("reasoning_max_tokens"),
             "model_options": self.params.get("model_options", {}),
-            "timeout": self.params.get("timeout", 120),
+            "timeout": self._validate_timeout(),
         }
 
     def _call_llm(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -325,7 +336,21 @@ class LLMNode(Node):
                 f"LLM call timed out after {timeout}s, orphan thread may continue running",
                 extra={"model": prep_res["model"], "timeout": timeout},
             )
-            raise TimeoutError(f"LLM call timed out after {timeout}s (model: {prep_res['model']})") from None
+            # Return error dict instead of raising — prevents PocketFlow retry.
+            # Retrying timeouts is harmful: the orphan thread from this attempt
+            # is still running model.prompt(), so retry would create duplicate
+            # in-flight API calls (wasting money and adding rate-limit pressure).
+            return {
+                "response": "",
+                "error": (
+                    f"LLM call timed out after {timeout}s. "
+                    f"Model: {prep_res['model']}. "
+                    f"Increase timeout or check API connectivity."
+                ),
+                "model": prep_res["model"],
+                "usage": {},
+                "status": "error",
+            }
         finally:
             pool.shutdown(wait=False, cancel_futures=True)
 
