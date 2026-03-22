@@ -12,6 +12,14 @@ while real errors write to stderr.
 Known limitation (Task 110 future work): Commands that fail silently
 (exit 1, no stderr) like `grep foo | false` will incorrectly succeed.
 This requires PIPESTATUS capture to fix properly.
+
+History: These tests failed intermittently under pytest-xdist (-n 4) with
+``ValueError: I/O operation on closed file`` in Click's CliRunner. Root cause
+was the Python code node's ``_execute_code`` using ``redirect_stdout``/
+``redirect_stderr`` in a ThreadPoolExecutor thread — not thread-safe. Zombie
+threads from timeout tests would restore stale ``sys.stdout``/``sys.stderr``
+values, closing CliRunner's output buffers via ``TextIOWrapper.__del__``.
+Fixed in #138 with a guarded restore in ``python_code.py``.
 """
 
 import json

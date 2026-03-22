@@ -238,6 +238,7 @@ You can write this in a node's docstring:
 2. **Returning error tuples** - Return only success values
 3. **Forgetting exec_fallback()** - Needed for error messages
 4. **Not testing retries** - Always verify retry behavior
+5. **Using `redirect_stdout`/`redirect_stderr` in threads** — These modify global `sys.stdout`/`sys.stderr` and are [explicitly not thread-safe](https://docs.python.org/3/library/contextlib.html#contextlib.redirect_stdout). The Python code node runs user code in a `ThreadPoolExecutor` thread with `pool.shutdown(wait=False)`, creating zombie threads on timeout. If a zombie thread's `redirect_stdout.__exit__` fires after the main thread has moved on, it restores a stale `sys.stdout`, corrupting whatever is running at that point (e.g. Click's `CliRunner` in tests). The fix uses a guarded manual restore: only restore if `sys.stdout is stdout_buf` (i.e. no one else has replaced it). See `python_code.py:_execute_code` and issue #138.
 
 ## References
 
