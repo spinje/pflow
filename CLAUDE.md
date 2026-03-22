@@ -194,13 +194,13 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 59: Nested Workflows
 - ✅ Task 128: Branch Convergence for Conditional Workflows
 - ✅ Task 129: External File References for Code Block Parameters
+- ✅ Task 130: Workflow Bundling on Save
 
 ### Planned Features (in order of priority)
 
 **Next**
 - Task 125: Human-in-the-Loop Approval Gates
 - Task 108: Smart Trace Debug Output
-- Task 130: Workflow Bundling on Save
 
 **Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
