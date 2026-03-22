@@ -68,7 +68,28 @@ class WorkflowManager:
             if not dest_path.is_relative_to(temp_dir_resolved):
                 raise WorkflowValidationError(f"Dependency path '{rel_path}' would escape the bundle directory")
             dest_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(source_path), str(dest_path))
+            shutil.copy2(source_path, dest_path)
+
+    @staticmethod
+    def _build_metadata_dict(name: str, result: Any, fm: dict[str, Any]) -> dict[str, Any]:
+        """Build flat metadata dict from parse result and frontmatter."""
+        return {
+            "name": fm.get("name", name),
+            "description": result.description or "",
+            "ir": result.ir,
+            "created_at": fm.get("created_at"),
+            "updated_at": fm.get("updated_at"),
+            "version": fm.get("version"),
+            "execution_count": fm.get("execution_count", 0),
+            "last_execution_timestamp": fm.get("last_execution_timestamp"),
+            "last_execution_success": fm.get("last_execution_success"),
+            "last_execution_duration_seconds": fm.get("last_execution_duration_seconds"),
+            "average_execution_duration_seconds": fm.get("average_execution_duration_seconds"),
+            "last_execution_params": fm.get("last_execution_params"),
+            "search_keywords": fm.get("search_keywords"),
+            "capabilities": fm.get("capabilities"),
+            "typical_use_cases": fm.get("typical_use_cases"),
+        }
 
     def _atomic_rename(self, name: str, temp_dir: str, target_dir: Path) -> None:
         """Atomically move temp dir to target, cleaning up ghost directories."""
@@ -80,7 +101,7 @@ class WorkflowManager:
             shutil.rmtree(target_dir)
         try:
             os.rename(temp_dir, target_dir)
-        except (FileExistsError, OSError):
+        except OSError:
             if target_dir.exists():
                 raise WorkflowExistsError(f"Workflow '{name}' already exists") from None
             raise
@@ -268,29 +289,8 @@ class WorkflowManager:
         try:
             content = file_path.read_text(encoding="utf-8")
             result = parse_markdown(content)
-
-            # Build flat metadata structure from frontmatter
             fm = result.metadata or {}
-            loaded: dict[str, Any] = {
-                "name": fm.get("name", name),
-                "description": result.description or "",
-                "ir": result.ir,
-                "created_at": fm.get("created_at"),
-                "updated_at": fm.get("updated_at"),
-                "version": fm.get("version"),
-                # Execution tracking (was in rich_metadata, now flat)
-                "execution_count": fm.get("execution_count", 0),
-                "last_execution_timestamp": fm.get("last_execution_timestamp"),
-                "last_execution_success": fm.get("last_execution_success"),
-                "last_execution_duration_seconds": fm.get("last_execution_duration_seconds"),
-                "average_execution_duration_seconds": fm.get("average_execution_duration_seconds"),
-                "last_execution_params": fm.get("last_execution_params"),
-                # Discovery metadata (was in rich_metadata, now flat)
-                "search_keywords": fm.get("search_keywords"),
-                "capabilities": fm.get("capabilities"),
-                "typical_use_cases": fm.get("typical_use_cases"),
-            }
-
+            loaded = self._build_metadata_dict(name, result, fm)
             logger.debug(f"Loaded workflow '{name}' from {file_path}")
             return loaded
 
@@ -352,25 +352,7 @@ class WorkflowManager:
                 content = entry_point.read_text(encoding="utf-8")
                 result = parse_markdown(content)
                 fm = result.metadata or {}
-
-                workflow_meta: dict[str, Any] = {
-                    "name": fm.get("name", name),
-                    "description": result.description or "",
-                    "ir": result.ir,
-                    "created_at": fm.get("created_at"),
-                    "updated_at": fm.get("updated_at"),
-                    "version": fm.get("version"),
-                    "execution_count": fm.get("execution_count", 0),
-                    "last_execution_timestamp": fm.get("last_execution_timestamp"),
-                    "last_execution_success": fm.get("last_execution_success"),
-                    "last_execution_duration_seconds": fm.get("last_execution_duration_seconds"),
-                    "average_execution_duration_seconds": fm.get("average_execution_duration_seconds"),
-                    "last_execution_params": fm.get("last_execution_params"),
-                    "search_keywords": fm.get("search_keywords"),
-                    "capabilities": fm.get("capabilities"),
-                    "typical_use_cases": fm.get("typical_use_cases"),
-                }
-                workflows.append(workflow_meta)
+                workflows.append(self._build_metadata_dict(name, result, fm))
             except Exception as e:
                 logger.warning(f"Failed to load workflow from {entry_point}: {e}")
                 continue

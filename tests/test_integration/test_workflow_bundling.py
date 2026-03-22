@@ -45,10 +45,20 @@ def _discover_and_save(
 ) -> Path:
     """Helper: discover deps from IR, then save with bundling.
 
+    Uses the same relative_to() path computation as the production code
+    in save_service.py:_discover_and_bundle_deps().
+
     Returns the bundle directory (workflows_dir / name).
     """
-    deps = discover_dependencies(ir, base_dir)
-    dependencies = [(dep.relative_path, dep.absolute_path) for dep in deps]
+    parent_base = base_dir.resolve()
+    deps = discover_dependencies(ir, parent_base)
+    dependencies: list[tuple[str, Path]] = []
+    for dep in deps:
+        try:
+            rel = str(dep.absolute_path.relative_to(parent_base))
+        except ValueError:
+            rel = dep.relative_path
+        dependencies.append((rel, dep.absolute_path))
     wm.save(name, markdown, dependencies=dependencies)
     return wm.workflows_dir / name
 

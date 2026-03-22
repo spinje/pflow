@@ -8,7 +8,7 @@ the workflow for it to work as a self-contained bundle.
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 
@@ -26,7 +26,7 @@ class Dependency:
     absolute_path: Path  # Resolved absolute path on disk
     source_node_id: str  # Node that references this file
     source_param: str  # Param name (e.g., "prompt", "workflow", "batch")
-    dep_type: str  # "file_ref" or "sub_workflow"
+    dep_type: Literal["file_ref", "sub_workflow"]
 
 
 def discover_dependencies(
