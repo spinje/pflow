@@ -193,7 +193,7 @@ class TestUnknownParamErrorsIntegration:
         # Unknown params should be errors, not warnings
         unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
         assert len(unknown_errors) >= 1
-        assert "Note" in unknown_errors[0]
+        assert "'Note'" in unknown_errors[0]
 
     def test_no_errors_for_valid_workflow(self, registry: Registry) -> None:
         """A valid workflow should produce no unknown param errors."""

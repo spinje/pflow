@@ -220,7 +220,8 @@ class MCPRegistrar:
         if "inputSchema" in tool:
             params = self.discovery.convert_to_pflow_params(tool["inputSchema"])
 
-        # Add pflow-level MCPNode params (not part of tool's inputSchema)
+        # Add pflow-level MCPNode params (not part of tool's inputSchema).
+        # MCPNode.prep() strips timeout from tool_args before calling the server.
         params.append({
             "key": "timeout",
             "type": "int",
