@@ -2620,22 +2620,10 @@ class TestBatchIndexInjection:
 
 
 class TestBatchPostErrorRouting:
-    """Tests that post() returns 'error' when continue mode had failures."""
+    """Tests that post() returns 'default' and pushes warnings in continue mode."""
 
-    def test_all_success_returns_default(self):
-        """No errors in continue mode returns 'default'."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        action = batch.post(shared, items, results)
-
-        assert action == "default"
-
-    def test_exception_errors_returns_error(self):
-        """Item exceptions in continue mode returns 'error'."""
+    def test_continue_mode_returns_default_with_errors(self):
+        """continue mode with item errors still returns 'default'."""
         inner = MockInnerNode("test_node", behavior="error_on_index")
         inner.error_index = 1
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
@@ -2645,48 +2633,207 @@ class TestBatchPostErrorRouting:
         results = batch._exec(items)
         action = batch.post(shared, items, results)
 
-        assert action == "error"
-        assert shared["test_node"]["error_count"] == 1
+        assert action == "default"
 
-    def test_error_in_result_returns_error(self):
-        """Error key in result dict in continue mode returns 'error'."""
-        inner = MockInnerNode("test_node", behavior="error_in_result")
+    def test_continue_mode_pushes_warning(self):
+        """continue mode with errors pushes a warning to shared['__warnings__']."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert "test_node" in shared["__warnings__"]
+        assert "error" in shared["__warnings__"]["test_node"]
+
+    def test_continue_no_errors_no_warning(self):
+        """continue mode with all items succeeding does not create __warnings__."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert "__warnings__" not in shared
+
+    def test_continue_mode_initializes_warnings_dict(self):
+        """continue mode with errors creates __warnings__ when not present."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
         inner.error_index = 0
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
 
-        shared = {"data": ["will_fail", "ok"]}
+        shared = {"data": ["a", "b"]}
+        assert "__warnings__" not in shared
+
         items = batch.prep(shared)
         results = batch._exec(items)
-        action = batch.post(shared, items, results)
+        batch.post(shared, items, results)
 
-        assert action == "error"
+        assert "__warnings__" in shared
+        assert "test_node" in shared["__warnings__"]
 
-    def test_fail_fast_no_error_returns_default(self):
-        """fail_fast with no errors returns 'default' (unchanged behavior)."""
-        inner = MockInnerNode("test_node")
+    def test_fail_fast_still_raises(self):
+        """fail_fast mode raises on first error (unchanged behavior)."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
 
-        shared = {"data": ["a", "b"]}
+        shared = {"data": ["a", "b", "c"]}
         items = batch.prep(shared)
-        results = batch._exec(items)
-        action = batch.post(shared, items, results)
 
-        assert action == "default"
+        with pytest.raises(ValueError, match="Intentional error on item 1"):
+            batch._exec(items)
 
-    def test_parallel_errors_returns_error(self):
-        """Parallel batch with errors in continue mode returns 'error'."""
-        inner = MockInnerNode("test_node", behavior="error_on_index")
-        inner.error_index = 0
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "error_handling": "continue", "parallel": True, "max_concurrent": 2},
+
+class TestBatchLLMOutputSchemaIntegration:
+    """Integration test: batch + real LLMNode + output_schema + JSONDecodeError + continue.
+
+    Exercises the full wrapper chain (LLMNode -> TemplateAwareNodeWrapper ->
+    NamespacedNodeWrapper -> PflowBatchNode) with a mocked LLM model that
+    returns valid JSON for 2 items and invalid JSON for 1 item.
+
+    Verifies that:
+    - Fix A: batch post() returns "default" (not "error") with continue mode
+    - Fix A: shared["__warnings__"] captures degraded status
+    - Fix B: JSONDecodeError is caught gracefully, preserving raw response
+    - Fix B: usage metrics are captured for ALL items including the failed one
+    """
+
+    def test_batch_llm_output_schema_json_decode_error_continue(self, monkeypatch):
+        """Batch LLM with output_schema handles JSON parse failure gracefully in continue mode."""
+        from unittest.mock import Mock
+
+        from pflow.nodes.llm.llm import LLMNode
+        from pflow.runtime.wrappers.batch_node import PflowBatchNode
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
+        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+
+        # -- Mock LLM model that returns different responses based on prompt content --
+        def mock_prompt(prompt, **kwargs):
+            response = Mock()
+            usage = Mock()
+            usage.input = 10
+            usage.output = 5
+            usage.details = {}
+
+            if "item 0" in prompt:
+                response.text = Mock(return_value='{"score": 5, "note": "good"}')
+            elif "item 1" in prompt:
+                response.text = Mock(return_value="not valid json {broken")
+            elif "item 2" in prompt:
+                response.text = Mock(return_value='{"score": 8, "note": "great"}')
+            else:
+                response.text = Mock(return_value='{"score": 0, "note": "unknown"}')
+
+            response.usage = Mock(return_value=usage)
+            return response
+
+        mock_model = Mock()
+        mock_model.prompt = Mock(side_effect=mock_prompt)
+        # LLMNode reads model.Options.model_fields for reasoning param mapping
+        mock_model.Options = Mock()
+        mock_model.Options.model_fields = {}
+
+        import pflow.nodes.llm.llm as llm_module
+
+        monkeypatch.setattr(llm_module.llm, "get_model", Mock(return_value=mock_model))
+
+        # -- Build the wrapper chain: LLMNode -> Template -> Namespace -> Batch --
+        node_id = "score_items"
+
+        llm_node = LLMNode(max_retries=1, wait=0)
+
+        template_wrapper = TemplateAwareNodeWrapper(
+            inner_node=llm_node,
+            node_id=node_id,
+        )
+        template_wrapper.set_params({
+            "prompt": "${item.prompt}",
+            "output_schema": {
+                "type": "object",
+                "properties": {
+                    "score": {"type": "number"},
+                    "note": {"type": "string"},
+                },
+            },
+        })
+
+        namespace_wrapper = NamespacedNodeWrapper(
+            inner_node=template_wrapper,
+            node_id=node_id,
         )
 
-        shared = {"data": ["fail", "ok", "ok"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        action = batch.post(shared, items, results)
+        batch_config = {
+            "items": [
+                {"prompt": "Score item 0: Hello world"},
+                {"prompt": "Score item 1: Bad text"},
+                {"prompt": "Score item 2: Nice text"},
+            ],
+            "error_handling": "continue",
+        }
 
-        assert action == "error"
-        assert shared["test_node"]["error_count"] >= 1
+        batch_node = PflowBatchNode(
+            inner_node=namespace_wrapper,
+            node_id=node_id,
+            batch_config=batch_config,
+        )
+
+        # -- Execute through the full lifecycle --
+        shared: dict = {}
+        action = batch_node._run(shared)
+
+        # -- Assertions --
+        # 1. Batch post() returns "default" (not "error") — Fix A
+        assert action == "default", f"Expected 'default' action but got '{action}'"
+
+        # 2. Warnings captured for degraded status — Fix A
+        assert "__warnings__" in shared, "Expected __warnings__ in shared store"
+        assert node_id in shared["__warnings__"]
+        warning_msg = shared["__warnings__"][node_id]
+        assert "1 error" in warning_msg, f"Warning should mention error count: {warning_msg}"
+
+        # 3. Results list has 3 entries
+        batch_output = shared[node_id]
+        results = batch_output["results"]
+        assert len(results) == 3, f"Expected 3 results but got {len(results)}"
+
+        # 4. Items 0 and 2 have parsed dict responses (successful JSON parse)
+        item_0 = results[0]
+        assert isinstance(item_0["response"], dict), f"Item 0 response should be dict, got {type(item_0['response'])}"
+        assert item_0["response"]["score"] == 5
+        assert item_0["response"]["note"] == "good"
+        assert "error" not in item_0
+
+        item_2 = results[2]
+        assert isinstance(item_2["response"], dict), f"Item 2 response should be dict, got {type(item_2['response'])}"
+        assert item_2["response"]["score"] == 8
+        assert item_2["response"]["note"] == "great"
+        assert "error" not in item_2
+
+        # 5. Item 1 has error with "JSON parse failed" and raw text preserved — Fix B
+        item_1 = results[1]
+        assert "error" in item_1, "Item 1 should have 'error' key"
+        assert "json parse failed" in item_1["error"].lower(), (
+            f"Error should mention JSON parse failure: {item_1['error']}"
+        )
+        assert "response" in item_1, "Item 1 should preserve raw response"
+        assert item_1["response"] == "not valid json {broken", (
+            f"Item 1 raw response should be preserved: {item_1['response']}"
+        )
+
+        # 6. Counts are correct
+        assert batch_output["error_count"] == 1
+        assert batch_output["success_count"] == 2
+
+        # 7. Usage metrics captured for all items including the failed one — Fix B
+        llm_calls = shared.get("__llm_calls__", [])
+        assert len(llm_calls) == 3, f"Expected 3 LLM usage entries (including failed item), got {len(llm_calls)}"
+        for call in llm_calls:
+            assert call["node_id"] == node_id
+            assert "input_tokens" in call
+            assert "output_tokens" in call

@@ -1,7 +1,10 @@
 """General-purpose LLM node for text processing."""
 
 import json
+import logging
 import sys
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Any, Optional
 
@@ -13,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 import llm
 
 from pflow.pocketflow import Node
+
+logger = logging.getLogger(__name__)
 
 # OpenRouter-style effort-to-token-budget ratios
 EFFORT_RATIOS: dict[str, float] = {
@@ -123,7 +128,8 @@ class LLMNode(Node):
     - Params: reasoning_effort: str  # Reasoning depth: xhigh/high/medium/low/minimal/none (optional, mapped to provider-specific params)
     - Params: reasoning_max_tokens: int  # Direct reasoning token budget, mutually exclusive with reasoning_effort (optional)
     - Params: model_options: dict  # Additional provider-specific model options passed as kwargs (optional, overrides reasoning params if keys overlap)
-    - Writes: shared["response"]: str|dict  # Text (str), or parsed JSON (dict) when output_schema is set
+    - Writes: shared["response"]: str|dict  # Text (str), parsed JSON (dict) when output_schema is set, or raw text on parse failure
+    - Writes: shared["error"]: str  # Error message if LLM call or JSON parsing failed
     - Writes: shared["llm_usage"]: dict  # Token usage metrics (empty dict {} if unavailable)
         - model: str  # Model identifier used
         - input_tokens: int  # Number of input tokens consumed
@@ -135,7 +141,8 @@ class LLMNode(Node):
     - Params: model: str  # Model to use (optional - always use smart default unless user requests specific model)
     - Params: temperature: float  # Sampling temperature (default: 1.0)
     - Params: max_tokens: int  # Max response tokens (optional)
-    - Actions: default (always)
+    - Params: timeout: int  # Execution timeout in seconds for LLM API call (default: 120)
+    - Actions: default (success), error (failure)
     """
 
     name = "llm"  # CRITICAL: Required for registry discovery
@@ -143,6 +150,17 @@ class LLMNode(Node):
     def __init__(self, max_retries: int = 3, wait: float = 1.0):
         """Initialize the LLM node with retry support."""
         super().__init__(max_retries=max_retries, wait=wait)
+
+    def _validate_timeout(self) -> float:
+        """Extract and validate the timeout parameter."""
+        timeout = self.params.get("timeout", 120)
+        try:
+            timeout = float(timeout)
+        except (TypeError, ValueError):
+            raise ValueError(f"Timeout must be a positive number, got {timeout!r}") from None
+        if timeout <= 0:
+            raise ValueError(f"Timeout must be a positive number, got {timeout}")
+        return timeout
 
     @staticmethod
     def _strip_code_block(response: str) -> str:
@@ -247,30 +265,26 @@ class LLMNode(Node):
             "reasoning_effort": reasoning_effort,
             "reasoning_max_tokens": self.params.get("reasoning_max_tokens"),
             "model_options": self.params.get("model_options", {}),
+            "timeout": self._validate_timeout(),
         }
 
-    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
-        """Execute LLM call - NO try/except blocks! Let exceptions bubble up."""
-        # Use llm library directly - NO try/except! Let exceptions bubble up
+    def _call_llm(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Execute the actual LLM API call. Extracted for timeout wrapping."""
         model = llm.get_model(prep_res["model"])
 
         kwargs = {"stream": False, "temperature": prep_res["temperature"]}
 
-        # Only add optional parameters if not None
         if prep_res["system"] is not None:
             kwargs["system"] = prep_res["system"]
         if prep_res["max_tokens"] is not None:
             kwargs["max_tokens"] = prep_res["max_tokens"]
 
-        # Add attachments if present
         if prep_res["attachments"]:
             kwargs["attachments"] = prep_res["attachments"]
 
-        # Add output schema for structured output
         if prep_res["output_schema"] is not None:
             kwargs["schema"] = prep_res["output_schema"]
 
-        # Map unified reasoning params to provider-specific options
         reasoning_kwargs = _map_reasoning_options(
             model,
             prep_res.get("reasoning_effort"),
@@ -279,7 +293,6 @@ class LLMNode(Node):
         )
         kwargs.update(reasoning_kwargs)
 
-        # Apply any additional provider-specific model options (escape hatch)
         kwargs.update(prep_res.get("model_options") or {})
 
         # PATTERN EXCEPTION: try/except in exec() is normally an anti-pattern (prevents
@@ -297,18 +310,49 @@ class LLMNode(Node):
                 "status": "error",
             }
 
-        # CRITICAL: Force evaluation with text()
         text = response.text()
-
-        # Capture usage data (may return None)
         usage_obj = response.usage()
 
         return {
             "response": text,
-            "usage": usage_obj,  # Pass raw object or None
+            "usage": usage_obj,
             "model": prep_res["model"],
             "has_schema": prep_res["output_schema"] is not None,
         }
+
+    def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
+        """Execute LLM call with timeout protection."""
+        timeout = prep_res.get("timeout", 120)
+
+        # IMPORTANT: Do NOT use `with ThreadPoolExecutor` — its __exit__ calls
+        # shutdown(wait=True) which blocks until the thread finishes, defeating
+        # the timeout for stuck API calls (same pattern as python_code.py).
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(self._call_llm, prep_res)
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeoutError:
+            logger.warning(
+                f"LLM call timed out after {timeout}s, orphan thread may continue running",
+                extra={"model": prep_res["model"], "timeout": timeout},
+            )
+            # Return error dict instead of raising — prevents PocketFlow retry.
+            # Retrying timeouts is harmful: the orphan thread from this attempt
+            # is still running model.prompt(), so retry would create duplicate
+            # in-flight API calls (wasting money and adding rate-limit pressure).
+            return {
+                "response": "",
+                "error": (
+                    f"LLM call timed out after {timeout}s. "
+                    f"Model: {prep_res['model']}. "
+                    f"Increase timeout or check API connectivity."
+                ),
+                "model": prep_res["model"],
+                "usage": {},
+                "status": "error",
+            }
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def post(self, shared: dict[str, Any], prep_res: dict[str, Any], exec_res: dict[str, Any]) -> str:
         """Store results in shared store."""
@@ -321,16 +365,8 @@ class LLMNode(Node):
 
         raw_response = exec_res["response"]
 
-        if exec_res["has_schema"]:
-            # Structured output: parse JSON to dict for direct downstream
-            # access via ${node.response.field}. Constrained decoding should
-            # guarantee valid JSON; if not, the exception propagates up.
-            shared["response"] = json.loads(raw_response)
-        else:
-            # Unstructured output: strip code block fences (LLM transport artifact), keep as string
-            shared["response"] = self._strip_code_block(raw_response)
-
-        # Store usage metrics matching spec structure exactly
+        # Store usage metrics BEFORE response parsing — ensures usage is
+        # captured even if output_schema JSON parsing fails below
         usage_obj = exec_res.get("usage")
         if usage_obj:
             # Handle both object (with .input attribute) and dict (with ["input"] key)
@@ -366,15 +402,35 @@ class LLMNode(Node):
             # Empty dict per spec when usage unavailable
             shared["llm_usage"] = {}
 
-        return "default"  # Always return "default"
+        # Parse response — schema mode or plain text
+        if exec_res["has_schema"]:
+            try:
+                shared["response"] = json.loads(raw_response)
+            except json.JSONDecodeError as e:
+                # Preserve raw response for downstream fallback parsing
+                shared["response"] = raw_response
+                shared["error"] = f"Structured output JSON parse failed: {e}"
+                return "error"
+        else:
+            # Unstructured output: strip code block fences (LLM transport artifact), keep as string
+            shared["response"] = self._strip_code_block(raw_response)
+
+        return "default"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
         """Handle errors after all retries exhausted."""
-        # Enhanced error messages
         error_msg = str(exc)
         exc_type = type(exc).__name__
 
-        if exc_type == "UnknownModelError" or "UnknownModelError" in error_msg or "Unknown model" in error_msg:
+        # Timeout check first — isinstance is more reliable than string matching
+        if isinstance(exc, (TimeoutError, FuturesTimeoutError)):
+            timeout = prep_res.get("timeout", 120)
+            error_detail = (
+                f"LLM call timed out after {timeout}s. "
+                f"Model: {prep_res['model']}. "
+                f"Increase timeout or check API connectivity."
+            )
+        elif exc_type == "UnknownModelError" or "UnknownModelError" in error_msg or "Unknown model" in error_msg:
             # Try to suggest a working model based on configured API keys
             from pflow.core.llm_config import get_default_llm_model
 

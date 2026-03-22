@@ -1,6 +1,6 @@
 """Tests for the LLM node covering all 22 criteria from the specification."""
 
-import json
+import time
 from typing import ClassVar
 from unittest.mock import Mock, patch
 
@@ -927,12 +927,12 @@ class TestStructuredOutput:
 
             assert action == "default"
 
-    def test_malformed_json_with_schema_raises(self):
-        """If structured output returns invalid JSON, exception propagates.
+    def test_malformed_json_with_schema_soft_error(self):
+        """Malformed JSON with output_schema returns error action, preserves raw text.
 
-        json.loads() is in post(), not exec(), so PocketFlow does NOT retry —
-        the exception crashes the node. This is correct: constrained decoding
-        should prevent this; if it happens, something is fundamentally broken.
+        When output_schema is set and json.loads() fails, post() returns "error"
+        instead of raising. The raw response text is preserved in shared["response"]
+        for downstream fallback parsing.
         """
         with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
             mock_response = Mock()
@@ -947,5 +947,201 @@ class TestStructuredOutput:
             node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
             shared: dict = {}
 
-            with pytest.raises(json.JSONDecodeError):
-                node.run(shared)
+            action = node.run(shared)
+
+            assert action == "error"
+            assert shared["response"] == "not valid json"
+            assert "JSON parse failed" in shared["error"]
+
+    def test_malformed_json_preserves_usage(self):
+        """Usage metrics are captured even when output_schema JSON parsing fails.
+
+        Usage extraction was moved above response parsing in post(), so
+        shared["llm_usage"] is populated regardless of parse success.
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = "not valid json at all"
+
+            mock_usage = Mock()
+            mock_usage.input = 200
+            mock_usage.output = 75
+            mock_usage.details = {}
+            mock_response.usage.return_value = mock_usage
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0)
+            node.set_params({"prompt": "Extract", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "error"
+            assert shared["response"] == "not valid json at all"
+            assert "error" in shared
+            # Usage must be captured even on parse failure
+            assert shared["llm_usage"]["input_tokens"] == 200
+            assert shared["llm_usage"]["output_tokens"] == 75
+            assert shared["llm_usage"]["total_tokens"] == 275
+
+    def test_valid_json_with_schema_unchanged(self):
+        """Regression: valid JSON with output_schema still parses to dict, no error."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = '{"score": 5}'
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0)
+            node.set_params({"prompt": "Rate it", "output_schema": self.SIMPLE_SCHEMA})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "default"
+            assert shared["response"] == {"score": 5}
+            assert isinstance(shared["response"], dict)
+            assert "error" not in shared
+
+
+class TestTimeout:
+    """Tests for LLM node timeout parameter (default 120s, configurable)."""
+
+    def test_timeout_default_is_120(self):
+        """Default timeout is 120 seconds when not specified in params."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test prompt"})
+        shared: dict = {}
+
+        prep_res = node.prep(shared)
+
+        assert prep_res["timeout"] == 120
+
+    def test_timeout_custom_value(self):
+        """Custom timeout value is passed through from params."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test prompt", "timeout": 60})
+        shared: dict = {}
+
+        prep_res = node.prep(shared)
+
+        assert prep_res["timeout"] == 60
+
+    def test_timeout_raises_timeout_error(self):
+        """LLM call exceeding timeout returns error action via exec_fallback.
+
+        exec() wraps _call_llm in ThreadPoolExecutor with future.result(timeout=N).
+        On timeout, raises TimeoutError which PocketFlow retries, then exec_fallback
+        catches it and returns an error dict processed by post().
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_model = Mock()
+
+            def slow_prompt(*args, **kwargs):
+                time.sleep(1)
+                return Mock()
+
+            mock_model.prompt.side_effect = slow_prompt
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0, max_retries=1)
+            node.set_params({"prompt": "Test", "timeout": 0.05})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "error"
+            assert "timed out" in shared["error"]
+
+    def test_normal_execution_within_timeout(self):
+        """LLM call completing within timeout succeeds normally."""
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_response = Mock()
+            mock_response.text.return_value = "Fast response"
+            mock_response.usage.return_value = None
+
+            mock_model = Mock()
+            mock_model.prompt.return_value = mock_response
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(wait=0)
+            node.set_params({"prompt": "Test", "timeout": 10})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "default"
+            assert shared["response"] == "Fast response"
+
+    def test_timeout_not_retried(self):
+        """Timed-out LLM call must NOT trigger PocketFlow retries.
+
+        exec() returns an error dict on timeout instead of raising, which
+        prevents PocketFlow's retry loop from re-executing. This is critical
+        because the orphan thread from the timed-out call is still running
+        model.prompt() — retrying would create duplicate in-flight API calls.
+        """
+        with patch("pflow.nodes.llm.llm.llm.get_model") as mock_get_model:
+            mock_model = Mock()
+
+            def slow_prompt(*args, **kwargs):
+                time.sleep(1)
+                return Mock()
+
+            mock_model.prompt.side_effect = slow_prompt
+            mock_get_model.return_value = mock_model
+
+            node = LLMNode(max_retries=3, wait=0)
+            node.set_params({"prompt": "Test", "timeout": 0.05})
+            shared: dict = {}
+
+            action = node.run(shared)
+
+            assert action == "error"
+            assert "timed out" in shared["error"]
+            # Key assertion: prompt must be called exactly once.
+            # If timeout were retriable, this would be 3.
+            assert mock_model.prompt.call_count == 1
+
+    def test_timeout_string_coerced(self):
+        """String timeout value is coerced to float."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": "60"})
+        shared: dict = {}
+
+        prep_res = node.prep(shared)
+
+        assert prep_res["timeout"] == 60.0
+
+    def test_timeout_zero_rejected(self):
+        """Zero timeout raises ValueError during prep."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": 0})
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="positive"):
+            node.prep(shared)
+
+    def test_timeout_negative_rejected(self):
+        """Negative timeout raises ValueError during prep."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": -5})
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="positive"):
+            node.prep(shared)
+
+    def test_timeout_invalid_string_rejected(self):
+        """Non-numeric string timeout raises ValueError during prep."""
+        node = LLMNode(wait=0)
+        node.set_params({"prompt": "Test", "timeout": "abc"})
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="positive number"):
+            node.prep(shared)

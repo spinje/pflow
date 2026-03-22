@@ -811,8 +811,9 @@ class PflowBatchNode(Node):
             exec_res: List of results from _exec()
 
         Returns:
-            Action string for flow control: "error" if continue mode had
-            failures, "default" otherwise
+            Action string "default" for normal flow. When continue mode
+            had item failures, a warning is pushed to shared["__warnings__"]
+            to trigger DEGRADED status in the executor.
         """
         # Count successes: non-None results without error keys
         success_count = sum(1 for r in exec_res if r is not None and not self._extract_error(r))
@@ -855,8 +856,14 @@ class PflowBatchNode(Node):
             },
         )
 
-        # Route to on-error edge when continue mode had item failures
+        # In continue mode with errors: push warning for DEGRADED status
+        # but return "default" so the workflow continues
         if self.error_handling == "continue" and self._errors:
-            return "error"
+            error_summary = (
+                f"Batch '{self.node_id}' completed with {len(self._errors)} error(s) out of {len(exec_res)} items"
+            )
+            if "__warnings__" not in shared:
+                shared["__warnings__"] = {}
+            shared["__warnings__"][self.node_id] = error_summary
 
         return "default"
