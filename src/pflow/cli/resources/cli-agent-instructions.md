@@ -1698,6 +1698,30 @@ parallel: true
 ````
 Each runs independently: `${parallel-tasks.results[0].response}`, `${parallel-tasks.results[0].item}` (original input)
 
+**Per-item configuration** — vary node params (model, temperature, reasoning_effort) per item:
+````markdown
+### compare-configs
+
+Compare quality across different settings.
+
+- type: llm
+- model: ${item.model}
+- reasoning_effort: ${item.effort}
+- prompt: "Analyze: ${item.data}"
+
+```yaml batch
+items:
+  - data: ${report}
+    model: claude-opus-4-5
+    effort: high
+  - data: ${report}
+    model: gpt-5.2
+    effort: medium
+parallel: true
+```
+````
+Any `${item.field}` template works in any param — not just prompt/command.
+
 **Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate:
 ```
 ${previous.results[${__index__}]}     # Access by position

@@ -341,6 +341,33 @@ Summarize each document with retries and error tolerance.
     error_handling: continue
 ```
 
+### Per-item configuration
+
+````markdown
+### compare
+
+Compare quality across model configurations.
+
+- type: llm
+- model: ${config.model}
+- reasoning_effort: ${config.effort}
+- prompt: "Analyze this data: ${config.data}"
+
+```yaml batch
+items:
+  - data: ${report}
+    model: claude-opus-4-5
+    effort: high
+  - data: ${report}
+    model: gpt-5.2
+    effort: medium
+as: config
+parallel: true
+```
+````
+
+Each item can override any node parameter through template variables — not just the prompt. Here `model` and `reasoning_effort` change per item while the prompt template stays the same.
+
 ## How your agent chooses settings
 
 **For LLM calls**, your agent typically:
