@@ -13,7 +13,7 @@ wheels = [
 
 [[package]]
 name = "anthropic"
-version = "0.75.0"
+version = "0.86.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -25,9 +25,9 @@ dependencies = [
     { name = "sniffio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/1f/08e95f4b7e2d35205ae5dcbb4ae97e7d477fc521c275c02609e2931ece2d/anthropic-0.75.0.tar.gz", hash = "sha256:e8607422f4ab616db2ea5baacc215dd5f028da99ce2f022e33c7c535b29f3dfb", size = 439565, upload-time = "2025-11-24T20:41:45.28Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/37/7a/8b390dc47945d3169875d342847431e5f7d5fa716b2e37494d57cfc1db10/anthropic-0.86.0.tar.gz", hash = "sha256:60023a7e879aa4fbb1fed99d487fe407b2ebf6569603e5047cfe304cebdaa0e5", size = 583820, upload-time = "2026-03-18T18:43:08.017Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/60/1c/1cd02b7ae64302a6e06724bf80a96401d5313708651d277b1458504a1730/anthropic-0.75.0-py3-none-any.whl", hash = "sha256:ea8317271b6c15d80225a9f3c670152746e88805a7a61e14d4a374577164965b", size = 388164, upload-time = "2025-11-24T20:41:43.587Z" },
+    { url = "https://files.pythonhosted.org/packages/63/5f/67db29c6e5d16c8c9c4652d3efb934d89cb750cad201539141781d8eae14/anthropic-0.86.0-py3-none-any.whl", hash = "sha256:9d2bbd339446acce98858c5627d33056efe01f70435b22b63546fe7edae0cd57", size = 469400, upload-time = "2026-03-18T18:43:06.526Z" },
 ]
 
 [[package]]
@@ -773,7 +773,7 @@ wheels = [
 
 [[package]]
 name = "llm"
-version = "0.28"
+version = "0.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -791,37 +791,37 @@ dependencies = [
     { name = "sqlite-migrate" },
     { name = "sqlite-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cb/91/5071c6e0e7eabbf3a95870a4b2ec0fc585e0d4d57532d305d08d6595f8a3/llm-0.28.tar.gz", hash = "sha256:e3d8bcc0f016fae8aeca1d702491a1891523702983459cb66afec99d74cabfc1", size = 85022, upload-time = "2025-12-12T20:05:30.448Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/5a/c882d099a623f9d9d10a2718a6179aca87e541d3f60939e751d565efda87/llm-0.29.tar.gz", hash = "sha256:75256631dc8bb990253f46be315ba43f21c0350ac47b09f673024191ebcf93cc", size = 85171, upload-time = "2026-03-17T19:26:00.868Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/9f/b22de67c44c8fdac517889feb6f45a90cbc2783f71c70ea9e2614e815126/llm-0.28-py3-none-any.whl", hash = "sha256:7d70c22f2dbfe47123a67328eea9c25add8f0a3c6a439f7d452219edf2e4dd76", size = 82559, upload-time = "2025-12-12T20:05:29.173Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/44/d51026c16c03e8cfbb8a50a1bf1ffcdf660fd4d74614bfc9c15627b7b390/llm-0.29-py3-none-any.whl", hash = "sha256:f04726019ce9d7ef264412c585eb286dd61621f5164ee284cecfda09b6e22f95", size = 82705, upload-time = "2026-03-17T19:25:59.501Z" },
 ]
 
 [[package]]
 name = "llm-anthropic"
-version = "0.23"
+version = "0.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anthropic" },
     { name = "json-schema-to-pydantic" },
     { name = "llm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/36/b5/e2a6e38f9aafd068065f14ae1183021544220840a2669571a593f08af65c/llm_anthropic-0.23.tar.gz", hash = "sha256:9d77af370921d921ef7657bb8ba035c6c01797f247b42d378678fddaf0c9f320", size = 18734, upload-time = "2025-11-25T05:21:18.464Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/0e/d6/03d723b225bd90781a5e1f15856babe871aae193d2f5fb3ccd8ef0071740/llm_anthropic-0.24.tar.gz", hash = "sha256:f8380c9cb2dbd663bd2d0b0c67eba770f4d619b47145eac524b6cdf683073b29", size = 19781, upload-time = "2026-02-17T23:52:15.584Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/86/8d/8c36199e2c4a9d57db16f446a6ec26ad8f96abca691ee157133bba0977d7/llm_anthropic-0.23-py3-none-any.whl", hash = "sha256:8c933eb4126f4e3d39fea275470d97bd2297ceaf93bbf9781104b3dba6e872bf", size = 16108, upload-time = "2025-11-25T05:21:17.376Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/6f/2facc60a2ae0a2c9ae0ed5e748b5e51519de5163eae1ae91d53822fd3871/llm_anthropic-0.24-py3-none-any.whl", hash = "sha256:9d443ad10df715e8c1c51424bd410a92021c9aedb71d8ded764f2990bc47f9ed", size = 16533, upload-time = "2026-02-17T23:52:14.137Z" },
 ]
 
 [[package]]
 name = "llm-gemini"
-version = "0.28.1"
+version = "0.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
     { name = "ijson" },
     { name = "llm" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/02/9a/444ad61e5e7fcdae837582960e93345af1f40603e9f1a78a8aa185016441/llm_gemini-0.28.1.tar.gz", hash = "sha256:98d18f6ba6b62ef96e3d7893bcdee4a414cfdd4bf87b3407d06f05cc04d8a67b", size = 22809, upload-time = "2025-12-18T17:58:19.33Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/23/5760b0b48161beec559cae9e6d0bbbab8bd70539cbea6056d7997d10ea94/llm_gemini-0.29.tar.gz", hash = "sha256:3f1f7da7f3765d5c3422ff208e9a1996c401e86fca4fb7b9fbd3bfdc372aea18", size = 23322, upload-time = "2026-02-19T17:58:31.567Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/a2/5bf3209ccc37e171ae24a67cb9da2f66f17ba633ab6682738d4383c183ae/llm_gemini-0.28.1-py3-none-any.whl", hash = "sha256:adda8251e7425e97052001631e7f3582c46069ecde5cf43f345f2b44cf83b17f", size = 17611, upload-time = "2025-12-18T17:58:18.334Z" },
+    { url = "https://files.pythonhosted.org/packages/90/3e/8767bb9541b5f54d2758c14ba03e866a6fa9702dfd4e366be247b9a04315/llm_gemini-0.29-py3-none-any.whl", hash = "sha256:5058d541d47442c614025ef793abb74fca53aacec17c235fcd55a5b139680edc", size = 17789, upload-time = "2026-02-19T17:58:29.777Z" },
 ]
 
 [[package]]
@@ -1014,9 +1014,9 @@ requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.1.17" },
     { name = "click" },
     { name = "jsonschema", specifier = ">=4.20.0" },
-    { name = "llm", specifier = ">=0.28" },
-    { name = "llm-anthropic", specifier = "==0.23" },
-    { name = "llm-gemini", specifier = ">=0.28.1" },
+    { name = "llm", specifier = ">=0.29" },
+    { name = "llm-anthropic", specifier = "==0.24" },
+    { name = "llm-gemini", specifier = ">=0.29" },
     { name = "mcp", extras = ["cli"], specifier = ">=1.17.0" },
     { name = "pydantic" },
     { name = "pyyaml", specifier = ">=6.0.0" },
