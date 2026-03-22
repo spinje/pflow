@@ -457,8 +457,8 @@ class TestErrorHandling:
         # Save valid workflow
         workflow_manager.save("corrupt-test", sample_markdown)
 
-        # Corrupt the file
-        workflow_path = workflow_manager.workflows_dir / "corrupt-test.pflow.md"
+        # Corrupt the file (inside the workflow folder)
+        workflow_path = workflow_manager.workflows_dir / "corrupt-test" / "corrupt-test.pflow.md"
         with open(workflow_path, "w") as f:
             f.write("This is not valid pflow markdown - no headings at all")
 
@@ -476,9 +476,9 @@ class TestAtomicOperations:
 
     def test_atomic_save_on_failure(self, workflow_manager, sample_markdown):
         """Test that failed saves don't leave partial files."""
-        # Mock a failure during file writing
+        # Mock a failure during file writing (Path.write_text bypasses builtins.open)
         with (
-            patch("builtins.open", side_effect=OSError("Write failed")),
+            patch("pathlib.Path.write_text", side_effect=OSError("Write failed")),
             pytest.raises((WorkflowValidationError, OSError)),
         ):
             workflow_manager.save("atomic-test", sample_markdown)

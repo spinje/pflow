@@ -784,11 +784,12 @@ class TestReEnrichment:
         assert "## Usage" in content_before
         assert "name: my-workflow" in content_before
 
-        # Simulate workflow save --force by overwriting the file
+        # Simulate workflow save --force by deleting folder and re-saving
         # (This is what happens when save_workflow_with_options deletes + saves)
         wm_new = WorkflowManager(workflows_dir=workflows_dir)
-        workflow_path.unlink()
+        wm_new.delete("my-workflow")
         wm_new.save("my-workflow", SAMPLE_WORKFLOW_NO_INPUTS)
+        workflow_path = Path(wm_new.get_path("my-workflow"))
 
         # Verify enrichment is gone
         content_after_save = workflow_path.read_text(encoding="utf-8")

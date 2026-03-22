@@ -61,8 +61,8 @@ class TestWorkflowSaveIntegration:
         markdown_content = ir_to_markdown(sample_workflow)
         wm.save("test-workflow", markdown_content)
 
-        # Verify actual file was created as .pflow.md
-        workflow_file = workflows_dir / "test-workflow.pflow.md"
+        # Verify actual file was created as .pflow.md (inside folder)
+        workflow_file = workflows_dir / "test-workflow" / "test-workflow.pflow.md"
         assert workflow_file.exists()
 
         # Verify file content structure — should have YAML frontmatter
@@ -104,9 +104,9 @@ class TestWorkflowSaveIntegration:
         original = wm.load("existing-workflow")
         assert original["description"] == "Original description"
 
-        # Verify only one workflow exists with that name
-        all_files = list(workflows_dir.glob("existing-workflow*.pflow.md"))
-        assert len(all_files) == 1
+        # Verify only one workflow directory exists with that name
+        all_dirs = [d for d in workflows_dir.iterdir() if d.is_dir() and d.name.startswith("existing-workflow")]
+        assert len(all_dirs) == 1
 
     def test_end_to_end_workflow_execution_with_save_prompt(self, tmp_path):
         """Test complete end-to-end: execute workflow -> verify saved file.
@@ -154,8 +154,8 @@ class TestWorkflowSaveIntegration:
         saved_workflow = wm.load("integration-test")
         assert saved_workflow["name"] == "integration-test"
 
-        # Verify actual file exists on filesystem as .pflow.md
-        saved_file = workflows_dir / "integration-test.pflow.md"
+        # Verify actual file exists on filesystem as .pflow.md (inside folder)
+        saved_file = workflows_dir / "integration-test" / "integration-test.pflow.md"
         assert saved_file.exists()
 
         # Verify the complete integration: execution created one file, save created another
@@ -187,7 +187,7 @@ class TestWorkflowSaveIntegration:
 
             # Verify no workflow was created due to permission error
             try:
-                workflow_exists = (workflows_dir / "test-workflow.pflow.md").exists()
+                workflow_exists = (workflows_dir / "test-workflow").is_dir()
                 assert not workflow_exists
             except PermissionError:
                 # Permission error during exists() check is expected
@@ -219,5 +219,5 @@ class TestWorkflowSaveUIBehavior:
 
         # Verify only the pre-created workflow exists
         assert wm.exists("existing")
-        saved_workflows = list(workflows_dir.glob("*.pflow.md"))
+        saved_workflows = [d for d in workflows_dir.iterdir() if d.is_dir() and not d.name.startswith(".")]
         assert len(saved_workflows) == 1

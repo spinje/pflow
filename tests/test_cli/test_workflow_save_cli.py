@@ -49,8 +49,8 @@ class TestWorkflowSaveCLI:
         assert result.exit_code == 0, f"Command failed: {result.output}"
         assert "Saved workflow 'my-workflow'" in result.output
 
-        # Verify file exists (now .pflow.md with frontmatter)
-        saved_file = home_pflow / "my-workflow.pflow.md"
+        # Verify file exists (now .pflow.md with frontmatter, in folder)
+        saved_file = home_pflow / "my-workflow" / "my-workflow.pflow.md"
         assert saved_file.exists(), "Workflow file should be created"
 
         content = saved_file.read_text()
@@ -80,7 +80,7 @@ class TestWorkflowSaveCLI:
         assert result.exit_code == 0, f"Command failed: {result.output}"
 
         # Verify file was saved
-        saved_file = home_pflow / "test-workflow.pflow.md"
+        saved_file = home_pflow / "test-workflow" / "test-workflow.pflow.md"
         assert saved_file.exists()
 
     def test_workflow_save_rejects_invalid_workflow(self, runner: click.testing.CliRunner, tmp_path: Any) -> None:
@@ -102,7 +102,7 @@ class TestWorkflowSaveCLI:
         assert result.exit_code != 0, "Should reject invalid workflow"
 
         # Should NOT create file
-        saved_file = home_pflow / "bad-workflow.pflow.md"
+        saved_file = home_pflow / "bad-workflow" / "bad-workflow.pflow.md"
         assert not saved_file.exists(), "Invalid workflow should not be saved"
 
     def test_workflow_save_validates_name_format(
@@ -192,7 +192,7 @@ class TestWorkflowSaveCLI:
         assert not draft.exists(), "Draft should be deleted after successful save"
 
         # Saved file should exist
-        saved_file = home_pflow / "saved-workflow.pflow.md"
+        saved_file = home_pflow / "saved-workflow" / "saved-workflow.pflow.md"
         assert saved_file.exists()
 
     def test_workflow_save_delete_draft_safety(
@@ -253,7 +253,7 @@ class TestWorkflowSaveCLI:
         assert result.exit_code == 0, f"Command failed: {result.output}"
 
         # Verify overwrite happened — saved file should contain new node
-        existing = home_pflow / "my-workflow.pflow.md"
+        existing = home_pflow / "my-workflow" / "my-workflow.pflow.md"
         content = existing.read_text()
         assert "### new" in content
 

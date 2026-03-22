@@ -1,8 +1,12 @@
 """Workflow lifecycle management.
 
-Workflows are stored as .pflow.md files with YAML frontmatter for system
-metadata (timestamps, execution stats). The markdown body is preserved
-exactly as the author wrote it — save/load never modifies content.
+Workflows are stored as folders in ~/.pflow/workflows/{name}/ with the
+entry point at {name}/{name}.pflow.md. This folder-based structure allows
+bundling file dependencies (sub-workflows, prompts, scripts) alongside the
+workflow so it remains self-contained when saved.
+
+YAML frontmatter stores system metadata (timestamps, execution stats).
+The markdown body is preserved exactly as the author wrote it.
 
 Frontmatter is additive: prepended on save, split on load/update.
 The parser extracts the IR dict and description from the markdown body.
@@ -10,6 +14,7 @@ The parser extracts the IR dict and description from the markdown body.
 
 import logging
 import os
+import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,8 +31,8 @@ logger = logging.getLogger(__name__)
 class WorkflowManager:
     """Manages workflow lifecycle: save, load, list, delete.
 
-    Workflows are stored in ~/.pflow/workflows/ as .pflow.md files
-    with YAML frontmatter for system metadata.
+    Workflows are stored in ~/.pflow/workflows/ as folders, each containing
+    an entry point .pflow.md file and any bundled dependencies.
     """
 
     def __init__(self, workflows_dir: Optional[Path] = None):
@@ -45,20 +50,13 @@ class WorkflowManager:
         self.workflows_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"WorkflowManager initialized with directory: {self.workflows_dir}")
 
-    @staticmethod
-    def _name_from_path(file_path: Path) -> str:
-        """Derive workflow name from file path, handling .pflow.md double extension.
+    def _workflow_dir(self, name: str) -> Path:
+        """Return the directory for a workflow: workflows_dir / name."""
+        return self.workflows_dir / name
 
-        Args:
-            file_path: Path to a .pflow.md workflow file
-
-        Returns:
-            Workflow name (e.g. "my-workflow" from "my-workflow.pflow.md")
-        """
-        name = file_path.stem
-        if name.endswith(".pflow"):
-            name = name[:-6]
-        return name
+    def _entry_point(self, name: str) -> Path:
+        """Return the entry point file: workflows_dir / name / {name}.pflow.md."""
+        return self.workflows_dir / name / f"{name}.pflow.md"
 
     def _validate_workflow_name(self, name: str) -> None:
         """Validate workflow name format.
@@ -161,51 +159,28 @@ class WorkflowManager:
         # No closing --- found
         return {}, content
 
-    def _perform_atomic_save(self, file_path: Path, temp_path: str) -> None:
-        """Perform atomic file save operation.
-
-        Args:
-            file_path: Target file path
-            temp_path: Temporary file path
-
-        Raises:
-            WorkflowExistsError: If workflow already exists
-            OSError: For other OS-level errors
-        """
-        try:
-            # Create hard link to temp file with target name
-            # This will fail with EEXIST if target already exists
-            os.link(temp_path, file_path)
-            # If successful, remove the temp file
-            os.unlink(temp_path)
-        except FileExistsError:
-            # Clean up temp file and raise our custom error
-            os.unlink(temp_path)
-            raise WorkflowExistsError(f"Workflow '{self._name_from_path(file_path)}' already exists") from None
-        except OSError:
-            # Handle other OS errors (disk full, permission denied, etc.)
-            # Clean up temp file and re-raise
-            Path(temp_path).unlink(missing_ok=True)
-            raise
-
     def save(
         self,
         name: str,
         markdown_content: str,
         metadata: Optional[dict[str, Any]] = None,
+        dependencies: Optional[list[tuple[str, Path]]] = None,
     ) -> str:
-        """Save a workflow as .pflow.md with frontmatter.
+        """Save a workflow as a folder with entry point and dependencies.
 
-        The caller must have already validated the markdown content.
-        This method prepends frontmatter and writes atomically.
+        Creates workflows_dir/{name}/{name}.pflow.md with frontmatter prepended.
+        Optionally copies dependency files into the folder preserving relative paths.
+        The entire operation is atomic via temp dir + os.rename().
 
         Args:
             name: Workflow name (kebab-case, max 50 chars)
             markdown_content: Raw markdown workflow content (no frontmatter)
             metadata: Optional flat metadata fields (keywords, capabilities, etc.)
+            dependencies: Optional list of (relative_path_in_bundle, source_absolute_path)
+                tuples. Each file is copied into the workflow folder.
 
         Returns:
-            Absolute path of saved file
+            Absolute path of saved entry point file
 
         Raises:
             WorkflowExistsError: If workflow already exists
@@ -216,22 +191,46 @@ class WorkflowManager:
         frontmatter = self._build_frontmatter(metadata)
         file_content = self._serialize_with_frontmatter(frontmatter, markdown_content)
 
-        file_path = self.workflows_dir / f"{name}.pflow.md"
-        temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
+        target_dir = self._workflow_dir(name)
+        temp_dir = tempfile.mkdtemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
 
         try:
-            with open(temp_fd, "w", encoding="utf-8") as f:
-                f.write(file_content)
+            # Write entry point file
+            entry_point = Path(temp_dir) / f"{name}.pflow.md"
+            entry_point.write_text(file_content, encoding="utf-8")
 
-            self._perform_atomic_save(file_path, temp_path)
+            # Copy dependency files preserving relative structure
+            if dependencies:
+                temp_dir_resolved = Path(temp_dir).resolve()
+                for rel_path, source_path in dependencies:
+                    dest_path = (Path(temp_dir) / rel_path).resolve()
+                    # Defense-in-depth: ensure deps can't escape the bundle
+                    if not dest_path.is_relative_to(temp_dir_resolved):
+                        raise WorkflowValidationError(f"Dependency path '{rel_path}' would escape the bundle directory")
+                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(str(source_path), str(dest_path))
 
-            logger.info(f"Saved workflow '{name}' to {file_path}")
-            return str(file_path)
+            # Atomic move — pre-check + os.rename for defense-in-depth
+            if target_dir.exists():
+                raise WorkflowExistsError(f"Workflow '{name}' already exists")
+            try:
+                os.rename(temp_dir, target_dir)
+            except (FileExistsError, OSError):
+                # Race condition: directory created between pre-check and rename
+                if target_dir.exists():
+                    raise WorkflowExistsError(f"Workflow '{name}' already exists") from None
+                raise
+
+            logger.info(f"Saved workflow '{name}' to {target_dir}")
+            return str(self._entry_point(name))
 
         except WorkflowExistsError:
+            shutil.rmtree(temp_dir, ignore_errors=True)
             raise
         except Exception as e:
-            Path(temp_path).unlink(missing_ok=True)
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            if isinstance(e, WorkflowValidationError):
+                raise
             raise WorkflowValidationError(f"Failed to save workflow: {e}") from e
 
     def load(self, name: str) -> dict[str, Any]:
@@ -253,7 +252,7 @@ class WorkflowManager:
         Raises:
             WorkflowNotFoundError: If workflow doesn't exist
         """
-        file_path = self.workflows_dir / f"{name}.pflow.md"
+        file_path = self._entry_point(name)
 
         if not file_path.exists():
             raise WorkflowNotFoundError(f"Workflow '{name}' not found")
@@ -310,28 +309,39 @@ class WorkflowManager:
         return metadata["ir"]  # type: ignore[no-any-return]
 
     def get_path(self, name: str) -> str:
-        """Get absolute path for a workflow file.
+        """Get absolute path for a workflow's entry point file.
 
         Args:
             name: Workflow name
 
         Returns:
-            Absolute expanded path for workflow file
+            Absolute path to the entry point file inside the workflow folder
         """
-        return str((self.workflows_dir / f"{name}.pflow.md").resolve())
+        return str(self._entry_point(name).resolve())
 
     def list_all(self) -> list[dict[str, Any]]:
         """List all workflows in the directory.
 
         Returns:
-            List of workflow metadata dicts (flat structure)
+            List of workflow metadata dicts (flat structure), sorted by name
         """
-        workflows = []
+        workflows: list[dict[str, Any]] = []
 
-        for file_path in self.workflows_dir.glob("*.pflow.md"):
+        if not self.workflows_dir.exists():
+            return workflows
+
+        for workflow_dir in sorted(self.workflows_dir.iterdir()):
+            if not workflow_dir.is_dir() or workflow_dir.name.startswith("."):
+                continue
+
+            name = workflow_dir.name
+            entry_point = workflow_dir / f"{name}.pflow.md"
+            if not entry_point.exists():
+                logger.warning(f"Workflow dir '{name}' missing entry point {name}.pflow.md, skipping")
+                continue
+
             try:
-                name = self._name_from_path(file_path)
-                content = file_path.read_text(encoding="utf-8")
+                content = entry_point.read_text(encoding="utf-8")
                 result = parse_markdown(content)
                 fm = result.metadata or {}
 
@@ -354,16 +364,13 @@ class WorkflowManager:
                 }
                 workflows.append(workflow_meta)
             except Exception as e:
-                logger.warning(f"Failed to load workflow from {file_path}: {e}")
+                logger.warning(f"Failed to load workflow from {entry_point}: {e}")
                 continue
-
-        # Sort by name for consistent ordering
-        workflows.sort(key=lambda w: w.get("name", ""))
 
         return workflows
 
     def exists(self, name: str) -> bool:
-        """Check if a workflow exists.
+        """Check if a workflow exists (directory with valid entry point).
 
         Args:
             name: Workflow name
@@ -371,11 +378,10 @@ class WorkflowManager:
         Returns:
             True if workflow exists, False otherwise
         """
-        file_path = self.workflows_dir / f"{name}.pflow.md"
-        return file_path.exists()
+        return self._entry_point(name).exists()
 
     def delete(self, name: str) -> None:
-        """Delete a workflow.
+        """Delete a workflow and its entire folder.
 
         Args:
             name: Workflow name
@@ -383,13 +389,13 @@ class WorkflowManager:
         Raises:
             WorkflowNotFoundError: If workflow doesn't exist
         """
-        file_path = self.workflows_dir / f"{name}.pflow.md"
+        workflow_dir = self._workflow_dir(name)
 
-        if not file_path.exists():
+        if not workflow_dir.is_dir():
             raise WorkflowNotFoundError(f"Workflow '{name}' not found")
 
         try:
-            file_path.unlink()
+            shutil.rmtree(workflow_dir)
             logger.info(f"Deleted workflow '{name}'")
         except Exception as e:
             raise WorkflowValidationError(f"Failed to delete workflow '{name}': {e}") from e
@@ -411,7 +417,7 @@ class WorkflowManager:
             WorkflowNotFoundError: If workflow doesn't exist
             WorkflowValidationError: If update fails
         """
-        file_path = self.workflows_dir / f"{name}.pflow.md"
+        file_path = self._entry_point(name)
 
         if not file_path.exists():
             raise WorkflowNotFoundError(f"Workflow '{name}' not found")
@@ -447,7 +453,8 @@ class WorkflowManager:
             # Reassemble and write atomically
             new_content = self._serialize_with_frontmatter(frontmatter, body)
 
-            temp_fd, temp_path = tempfile.mkstemp(dir=self.workflows_dir, prefix=f".{name}.", suffix=".tmp")
+            # Use workflow dir for temp file so os.replace stays on same filesystem
+            temp_fd, temp_path = tempfile.mkstemp(dir=self._workflow_dir(name), prefix=f".{name}.", suffix=".tmp")
 
             try:
                 with os.fdopen(temp_fd, "w", encoding="utf-8") as f:

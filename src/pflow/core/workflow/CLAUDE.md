@@ -6,17 +6,18 @@ Workflow lifecycle management: save, load, validate, discover, publish.
 
 ```
 core/workflow/
-├── __init__.py         # Re-exports all public symbols
-├── manager.py          # WorkflowManager: save/load/list/delete workflows
-├── save_service.py     # Shared save operations for CLI + MCP
-├── validator.py        # Unified 7-step validation orchestrator
-├── data_flow.py        # Execution order (topological sort) and dependency validation
-├── status.py           # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
-├── skill_service.py    # Publish workflows as AI agent skills (symlinks)
-├── context.py          # Build workflow context for discovery (build_workflows_context)
-├── discovery.py        # LLM-powered workflow discovery (discover_workflow → WorkflowMatch)
+├── __init__.py              # Re-exports all public symbols
+├── manager.py               # WorkflowManager: save/load/list/delete workflows (folder-based)
+├── save_service.py          # Shared save operations for CLI + MCP (with dependency bundling)
+├── dependency_discovery.py  # Recursive file dependency scanner for bundling
+├── validator.py             # Unified 7-step validation orchestrator
+├── data_flow.py             # Execution order (topological sort) and dependency validation
+├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
+├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
+├── context.py               # Build workflow context for discovery (build_workflows_context)
+├── discovery.py             # LLM-powered workflow discovery (discover_workflow → WorkflowMatch)
 ├── prompts/
-│   └── discovery.md    # Workflow discovery prompt template
+│   └── discovery.md         # Workflow discovery prompt template
 └── CLAUDE.md
 ```
 
@@ -24,9 +25,10 @@ core/workflow/
 
 ```
 save_service.py
-  ├── manager.py         (top-level import)
-  ├── validator.py       (lazy import in _validate_and_normalize_ir())
-  └── skill_service.py   (lazy import in save_workflow_with_options())
+  ├── manager.py              (top-level import)
+  ├── validator.py            (lazy import in _validate_and_normalize_ir())
+  ├── dependency_discovery.py (lazy import in _discover_and_bundle_deps())
+  └── skill_service.py        (lazy import in save_workflow_with_options())
 
 validator.py
   └── data_flow.py       (lazy import in _validate_data_flow())
@@ -43,6 +45,7 @@ No cycles. `save_service → validator` and `save_service → skill_service` are
 |------|-------------|
 | `manager.py` | `WorkflowManager` |
 | `save_service.py` | `load_and_validate_workflow`, `save_workflow_with_options`, `validate_workflow_name`, `delete_draft_safely`, `generate_workflow_metadata` |
+| `dependency_discovery.py` | `Dependency`, `discover_dependencies` |
 | `validator.py` | `WorkflowValidator` (static `.validate()` method) |
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
 | `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
@@ -65,31 +68,25 @@ Import from specific modules: `from pflow.core.workflow.manager import WorkflowM
 
 ### manager.py
 
-**Storage format**: `.pflow.md` files with YAML frontmatter for system metadata, stored at `~/.pflow/workflows/`:
-```markdown
----
-created_at: "2026-01-14T15:43:57.425006+00:00"
-updated_at: "2026-01-14T22:03:06.823530+00:00"
-version: "1.0.0"
-execution_count: 5
-last_execution_success: true
-last_execution_params:
-  repo: "owner/repo"
----
-
-# Fix GitHub Issues
-
-Fixes GitHub issues automatically.
-
-## Steps
-...
+**Storage format**: Folder-based at `~/.pflow/workflows/{name}/{name}.pflow.md`. Each workflow is a directory containing its entry point and any bundled file dependencies (sub-workflows, prompts, scripts):
+```
+~/.pflow/workflows/
+└── my-workflow/
+    ├── my-workflow.pflow.md      # entry point (with YAML frontmatter)
+    ├── prompts/
+    │   └── system.md             # bundled file dependency
+    └── sub-task.pflow.md         # bundled sub-workflow
 ```
 
+The entry point has YAML frontmatter for system metadata (timestamps, execution stats). The markdown body is preserved exactly as the author wrote it.
+
 - Metadata is flat (no `rich_metadata` wrapper)
-- Workflow `name` derived from filename (`my-workflow.pflow.md` → `my-workflow`)
+- Workflow `name` is the directory name
 - `description` extracted from H1 prose during `load()`, not stored separately in metadata
 - `load()` returns flat metadata dict with parsed IR; `load_ir()` returns just the IR dict (for execution)
-- Atomic operations: `os.link()` for creates, `os.replace()` for updates (prevents race conditions — discovered in Task 24)
+- Atomic operations: `tempfile.mkdtemp()` + `os.rename()` for creates, `os.replace()` for metadata updates
+- Path helpers: `_workflow_dir(name)` returns dir, `_entry_point(name)` returns entry point file
+- `save()` accepts optional `dependencies: list[tuple[str, Path]]` for bundling files into the folder
 
 ### validator.py
 

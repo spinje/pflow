@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.file_resolver import is_workflow_file_reference
 from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import BaseNode
@@ -184,7 +185,7 @@ class WorkflowExecutor(BaseNode):
     @staticmethod
     def _is_file_reference(value: str) -> bool:
         """Determine if a workflow param value is a file path or saved name."""
-        return "/" in value or "\\" in value or value.endswith(".pflow.md") or value.startswith(".")
+        return is_workflow_file_reference(value)
 
     def _extract_child_inputs(self) -> dict[str, Any]:
         """Extract child workflow inputs from params (everything not reserved)."""

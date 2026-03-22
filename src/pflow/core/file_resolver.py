@@ -91,6 +91,22 @@ def is_file_reference(value: Any) -> bool:
     return False
 
 
+def is_workflow_file_reference(value: str) -> bool:
+    """Detect if a workflow param value is a file path (vs. a saved workflow name).
+
+    Used by WorkflowExecutor and dependency discovery to distinguish
+    `- workflow: ./sub.pflow.md` (file reference) from
+    `- workflow: my-helper` (saved workflow name).
+
+    Args:
+        value: The workflow parameter value to check
+
+    Returns:
+        True if the value looks like a file path
+    """
+    return "/" in value or "\\" in value or value.endswith(".pflow.md") or value.startswith(".")
+
+
 def resolve_file_references(ir_dict: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     """Resolve file references in workflow IR, modifying it in place.
 
