@@ -238,6 +238,7 @@ You can write this in a node's docstring:
 2. **Returning error tuples** - Return only success values
 3. **Forgetting exec_fallback()** - Needed for error messages
 4. **Not testing retries** - Always verify retry behavior
+5. **Using `redirect_stdout`/`redirect_stderr` in threads** — Not thread-safe; zombie threads corrupt streams. See `python_code.py:_execute_code` docstring and issue #138 for details.
 
 ## References
 
