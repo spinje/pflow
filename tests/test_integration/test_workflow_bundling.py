@@ -559,7 +559,7 @@ class TestFileReferencesResolveFromBundle:
         workflow_path.write_text(markdown)
 
         # Act: save via service layer (uses isolate_pflow_config temp dir)
-        saved_path, bundled_files = save_workflow_with_options(
+        _saved_path, _bundled_files = save_workflow_with_options(
             name="script-resolve",
             markdown_content=markdown,
             source_path=workflow_path,
@@ -572,3 +572,121 @@ class TestFileReferencesResolveFromBundle:
         resolve_file_references(loaded_ir, base_dir)
 
         assert loaded_ir["nodes"][0]["params"]["command"] == "#!/bin/bash\necho setup"
+
+
+class TestRawContentSaveGuard:
+    """Verify that raw-content saves (no source path) are rejected when they contain file refs."""
+
+    def test_raw_content_with_sub_workflow_ref_rejected(self) -> None:
+        """MCP-style save of raw markdown with sub-workflow file ref is rejected.
+
+        Regression: has_file_references() only checked FILE_RESOLVABLE_PARAMS,
+        missing workflow params. A workflow with only sub-workflow file refs
+        would silently save without bundling, producing a broken workflow.
+        """
+        from pflow.core.exceptions import WorkflowValidationError
+
+        ir: dict[str, Any] = {
+            "nodes": [
+                {
+                    "id": "run-sub",
+                    "type": "workflow",
+                    "params": {"workflow": "./sub.pflow.md"},
+                }
+            ],
+            "edges": [],
+        }
+        markdown = ir_to_markdown(ir, title="Sub-Workflow Only")
+
+        with pytest.raises(WorkflowValidationError, match="file references"):
+            save_workflow_with_options(
+                name="sub-only-test",
+                markdown_content=markdown,
+                # No source_path — simulates MCP raw-content save
+            )
+
+    def test_raw_content_with_prompt_file_ref_rejected(self) -> None:
+        """MCP-style save of raw markdown with prompt file ref is rejected."""
+        from pflow.core.exceptions import WorkflowValidationError
+
+        ir: dict[str, Any] = {
+            "nodes": [
+                {
+                    "id": "ask",
+                    "type": "llm",
+                    "params": {"prompt": "./prompts/foo.md"},
+                }
+            ],
+            "edges": [],
+        }
+        markdown = ir_to_markdown(ir, title="Prompt Ref Only")
+
+        with pytest.raises(WorkflowValidationError, match="file references"):
+            save_workflow_with_options(
+                name="prompt-only-test",
+                markdown_content=markdown,
+            )
+
+    def test_raw_content_without_file_refs_succeeds(self) -> None:
+        """MCP-style save of raw markdown WITHOUT file refs succeeds normally."""
+        ir: dict[str, Any] = {
+            "nodes": [
+                {
+                    "id": "greet",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                }
+            ],
+            "edges": [],
+        }
+        markdown = ir_to_markdown(ir, title="No Refs")
+
+        saved_path, bundled = save_workflow_with_options(
+            name="no-refs-test",
+            markdown_content=markdown,
+        )
+        assert saved_path.exists()
+        assert bundled == []
+
+
+class TestSubWorkflowParseErrorPropagation:
+    """Verify that non-parse errors during sub-workflow scanning propagate instead of being swallowed."""
+
+    def test_permission_error_propagates(self, project_dir: Path, workflows_dir: Path) -> None:
+        """PermissionError reading a sub-workflow aborts discovery, not silent skip.
+
+        Regression: broad except Exception swallowed PermissionError, producing
+        a bundle where the sub-workflow file existed but its own dependencies
+        were missing — causing confusing runtime errors.
+        """
+        # Create a sub-workflow file
+        sub_path = project_dir / "sub.pflow.md"
+        sub_path.write_text(
+            ir_to_markdown(
+                {"nodes": [{"id": "s", "type": "shell", "params": {"command": "echo"}}], "edges": []},
+            )
+        )
+
+        parent_ir: dict[str, Any] = {
+            "nodes": [
+                {
+                    "id": "run-sub",
+                    "type": "workflow",
+                    "params": {"workflow": "./sub.pflow.md"},
+                }
+            ],
+            "edges": [],
+        }
+
+        # Make the sub-workflow unreadable after discovery finds it
+        from unittest.mock import patch
+
+        original_read = Path.read_text
+
+        def failing_read(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self.name == "sub.pflow.md" and "project" in str(self):
+                raise PermissionError(f"Permission denied: {self}")
+            return original_read(self, *args, **kwargs)
+
+        with patch.object(Path, "read_text", failing_read), pytest.raises(PermissionError, match="Permission denied"):
+            discover_dependencies(parent_ir, project_dir)

@@ -320,8 +320,44 @@ Received a thorough code review (11 findings). Evaluated each against actual cod
 - `test_dependency_discovery.py`: Updated import from `_is_sub_workflow_file_ref` to `is_workflow_file_reference`
 - `test_skill_service.py`: Fixed `test_re_enrich_restores_usage_section_after_resave` — was deleting just the file, not the directory. Changed to use `wm.delete()` + re-derive `workflow_path`.
 
-### Final result:
+### Final result after first review:
 - **4220 tests pass**
+- **`make check` clean**
+
+---
+
+## Second Code Review — PR #137 Comment + Scratchpads Review
+
+Received two convergent reviews (PR comment + scratchpads file). Both identified the same core issues. After implementing the first review's fixes, these reviews found remaining gaps.
+
+### Fixes applied (commit: `fix: address code review findings`):
+
+1. **`has_file_references()` misses sub-workflow refs** — The raw-content save guard only checked `FILE_RESOLVABLE_PARAMS`, missing `- workflow: ./sub.pflow.md`. Added sub-workflow file ref scanning to `_reject_unbundleable_file_refs()`.
+
+2. **Ghost directory deadlock** — `exists()` checks entry point file, but `save()` pre-check used `target_dir.exists()` (directory). A ghost dir (no entry point) caused an unrecoverable deadlock. Fixed `_atomic_rename()` to clean up ghost directories instead of raising.
+
+3. **Silent sub-workflow parse error swallowing** — `except Exception` in `_collect_sub_workflow_deps` swallowed `PermissionError`, `UnicodeDecodeError` etc. Changed to only swallow `MarkdownParseError`.
+
+4. **`_collect_batch_item_deps` redundant params** — Collapsed `workflow_base_dir` and `file_base_dir` into single `base_dir` (both were always the same value after the batch base_dir fix).
+
+5. **Dead code in `update_metadata`** — Removed unreachable `isinstance(e, WorkflowNotFoundError)` check.
+
+### Additional cleanups (commit: `refactor: address remaining review findings`):
+
+Reviewed the 7 deferred items honestly. Some deferrals were lazy — I was already in those files. Fixed:
+
+6. **Duplicated metadata dict in `load()`/`list_all()`** — Extracted `_build_metadata_dict()` helper. Was copying 15 identical lines between two methods.
+
+7. **`dep_type` as `Literal["file_ref", "sub_workflow"]`** — One-line change, zero risk, catches typos at type-check time.
+
+8. **Test helper mismatches production path** — `_discover_and_save()` used `dep.relative_path` directly instead of `dep.absolute_path.relative_to(parent_base)`. Aligned with production code.
+
+9. **Unnecessary `str()` wrappers** — `shutil.copy2` accepts `os.PathLike` since Python 3.6.
+
+10. **Redundant `except (FileExistsError, OSError)`** — `FileExistsError` is a subclass of `OSError`. Simplified to `except OSError`.
+
+### Final result:
+- **4222 tests pass**
 - **`make check` clean**
 
 ---

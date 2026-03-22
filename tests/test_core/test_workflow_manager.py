@@ -646,3 +646,28 @@ class TestWorkflowManager:
         # Load should return filename-derived name (the default behavior)
         loaded = workflow_manager.load("normal-workflow")
         assert loaded["name"] == "normal-workflow"  # Fallback to filename
+
+    def test_save_recovers_from_ghost_directory(self, workflow_manager, sample_ir):
+        """Ghost directory (dir without entry point) is cleaned up on save.
+
+        If a previous save crashed after creating the directory but before
+        writing the entry point, the ghost dir would permanently block saves.
+        Regression: exists() returns False (no entry point), so force-save
+        doesn't try to delete it, but os.rename fails because dir exists.
+        """
+        # Create a ghost directory (dir exists, no entry point inside)
+        ghost_dir = workflow_manager.workflows_dir / "ghost-workflow"
+        ghost_dir.mkdir()
+
+        # exists() should return False (no entry point)
+        assert not workflow_manager.exists("ghost-workflow")
+
+        # Save should succeed by cleaning up the ghost directory
+        markdown_content = ir_to_markdown(sample_ir, title="Ghost Recovery")
+        path = workflow_manager.save("ghost-workflow", markdown_content)
+
+        # Verify workflow was saved correctly
+        assert workflow_manager.exists("ghost-workflow")
+        loaded = workflow_manager.load("ghost-workflow")
+        assert loaded["ir"]["nodes"][0]["id"] == "node1"
+        assert "ghost-workflow.pflow.md" in path
