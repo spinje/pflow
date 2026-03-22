@@ -34,14 +34,14 @@ def mock_registry():
             "interface": {
                 "inputs": [],
                 "outputs": [{"key": "content", "type": "string"}],
-                "parameters": [{"key": "path", "type": "string", "required": True}],
+                "parameters": [{"key": "file_path", "type": "string", "required": True}],
             }
         },
         "write-file": {
             "interface": {
                 "inputs": [{"key": "content", "type": "string"}],
                 "outputs": [],
-                "parameters": [{"key": "path", "type": "string", "required": True}],
+                "parameters": [{"key": "file_path", "type": "string", "required": True}],
             }
         },
         "transform": {
@@ -98,12 +98,12 @@ def test_unused_input_single_unused(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${input_path}"},  # Uses input_path
+                "params": {"file_path": "${input_path}"},  # Uses input_path
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": output_path},  # Doesn't use unused_param
+                "params": {"file_path": output_path},  # Doesn't use unused_param
             },
         ],
     }
@@ -130,12 +130,12 @@ def test_all_inputs_used(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${input_path}"},  # Uses input_path
+                "params": {"file_path": "${input_path}"},  # Uses input_path
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": "${output_path}"},  # Uses output_path
+                "params": {"file_path": "${output_path}"},  # Uses output_path
             },
         ],
     }
@@ -158,7 +158,7 @@ def test_empty_inputs_field(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": hardcoded},
+                "params": {"file_path": hardcoded},
             }
         ],
     }
@@ -172,7 +172,7 @@ def test_empty_inputs_field(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": hardcoded},
+                "params": {"file_path": hardcoded},
             }
         ]
     }
@@ -194,12 +194,12 @@ def test_input_used_in_nested_path(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${config.input_file}"},  # Uses config with nested path
+                "params": {"file_path": "${config.input_file}"},  # Uses config with nested path
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": "${api_settings.endpoint.url}"},  # Uses api_settings with nested path
+                "params": {"file_path": "${api_settings.endpoint.url}"},  # Uses api_settings with nested path
             },
         ],
     }
@@ -228,7 +228,7 @@ def test_multiple_unused_inputs(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${used_param}"},  # Only uses used_param
+                "params": {"file_path": "${used_param}"},  # Only uses used_param
             }
         ],
     }
@@ -264,12 +264,12 @@ def test_node_output_not_flagged_as_unused_input(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${input_file}"},  # Uses the input
+                "params": {"file_path": "${input_file}"},  # Uses the input
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": output_path},
+                "params": {"file_path": output_path},
             },
         ],
     }
@@ -292,17 +292,17 @@ def test_input_used_multiple_times(mock_registry, tmp_path):
             {
                 "id": "reader1",
                 "type": "read-file",
-                "params": {"path": "${base_path}/file1.txt"},  # First use
+                "params": {"file_path": "${base_path}/file1.txt"},  # First use
             },
             {
                 "id": "reader2",
                 "type": "read-file",
-                "params": {"path": "${base_path}/file2.txt"},  # Second use
+                "params": {"file_path": "${base_path}/file2.txt"},  # Second use
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": "${base_path}/output.txt"},  # Third use
+                "params": {"file_path": "${base_path}/output.txt"},  # Third use
             },
         ],
     }
@@ -328,12 +328,12 @@ def test_mixed_used_and_unused_inputs(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${used1}"},
+                "params": {"file_path": "${used1}"},
             },
             {
                 "id": "writer",
                 "type": "write-file",
-                "params": {"path": "${used2}"},
+                "params": {"file_path": "${used2}"},
             },
         ],
     }
@@ -361,7 +361,7 @@ def test_input_only_used_in_concatenation(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": base + "/${prefix}-file-${suffix}.txt"},  # Both used in concatenation
+                "params": {"file_path": base + "/${prefix}-file-${suffix}.txt"},  # Both used in concatenation
             }
         ],
     }
@@ -385,7 +385,7 @@ def test_unused_input_with_missing_required_input(mock_registry):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${required_path}"},  # Uses required_path
+                "params": {"file_path": "${required_path}"},  # Uses required_path
             }
         ],
     }
@@ -414,7 +414,7 @@ def test_case_sensitivity_in_unused_detection(mock_registry, tmp_path):
             {
                 "id": "reader",
                 "type": "read-file",
-                "params": {"path": "${MyInput}"},  # Uses MyInput (camel case)
+                "params": {"file_path": "${MyInput}"},  # Uses MyInput (camel case)
             }
         ],
     }

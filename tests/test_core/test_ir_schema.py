@@ -53,7 +53,7 @@ class TestValidIR:
                     "id": "reader",
                     "type": "read-file",
                     "purpose": "Read input text file with UTF-8 encoding",
-                    "params": {"path": "input.txt", "encoding": "utf-8"},
+                    "params": {"file_path": "input.txt", "encoding": "utf-8"},
                 }
             ],
         }
@@ -131,7 +131,7 @@ class TestValidIR:
                     "id": "writer",
                     "type": "write-file",
                     "purpose": "Write template-based content to file",
-                    "params": {"path": "${output_path}", "content": "Result: ${result}"},
+                    "params": {"file_path": "${output_path}", "content": "Result: ${result}"},
                 }
             ],
         }

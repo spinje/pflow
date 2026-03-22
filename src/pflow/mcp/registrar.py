@@ -220,6 +220,14 @@ class MCPRegistrar:
         if "inputSchema" in tool:
             params = self.discovery.convert_to_pflow_params(tool["inputSchema"])
 
+        # Add pflow-level MCPNode params (not part of tool's inputSchema)
+        params.append({
+            "key": "timeout",
+            "type": "int",
+            "required": False,
+            "description": "Timeout in seconds for tool execution (default: 30)",
+        })
+
         # Create outputs if available
         outputs = []
         if "outputSchema" in tool:

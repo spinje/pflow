@@ -50,7 +50,7 @@ testing_suggestions:
   description: Suggested test scenarios
 ```
 
-- task: Analyze these git changes and commit history to understand what was implemented
+- prompt: Analyze these git changes and commit history to understand what was implemented
 
 ### generate_pr
 
@@ -59,7 +59,7 @@ Generate a comprehensive pull request description based on the analysis.
 - type: claude-code
 - max_turns: 2
 - system_prompt: You are a senior developer writing clear, professional PR descriptions. Use markdown formatting and be concise but thorough.
-- task: Generate a comprehensive pull request description based on this analysis
+- prompt: Generate a comprehensive pull request description based on this analysis
 
 ```yaml context
 analysis: ${analyze_changes.result}
@@ -83,7 +83,7 @@ checklist:
 Save the generated PR description to a template file.
 
 - type: write-file
-- path: .github/pull_request_template.md
+- file_path: .github/pull_request_template.md
 - content: "# ${generate_pr.result.title}\n\n${generate_pr.result.description}\n\n## Checklist\n${generate_pr.result.checklist}\n\n---\n**Type of change:** ${analyze_changes.result.type_of_change}\n**Breaking changes:** ${analyze_changes.result.breaking_changes}\n**Components affected:** ${analyze_changes.result.components_affected}\n\n## Testing\n${analyze_changes.result.testing_suggestions}"
 
 ### cost_report

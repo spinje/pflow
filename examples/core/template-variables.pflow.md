@@ -31,8 +31,8 @@ Copy the input file to the backup directory with a custom name.
 Demonstrates template variables in path construction.
 
 - type: copy-file
-- source: ${input_file}
-- destination: ${backup_dir}/${backup_name}
+- source_path: ${input_file}
+- dest_path: ${backup_dir}/${backup_name}
 
 ### writer
 

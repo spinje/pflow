@@ -21,7 +21,8 @@ via the shared store.
 Create a backup copy of the input file before any processing.
 
 - type: copy-file
-- destination: backup.txt
+- source_path: input.txt
+- dest_path: backup.txt
 
 ### writer
 

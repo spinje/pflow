@@ -17,8 +17,8 @@ Read the migration manifest describing which files to move.
 Back up the destination directory before overwriting anything.
 
 - type: copy-file
-- source: ${destination_dir}
-- destination: ${backup_dir}/${timestamp_destination}
+- source_path: ${destination_dir}
+- dest_path: ${backup_dir}/${timestamp_destination}
 
 ### process_files
 
@@ -31,16 +31,16 @@ Process the file list from the manifest.
 Copy each new file to the destination directory.
 
 - type: copy-file
-- source: ${source_dir}/${current_file}
-- destination: ${destination_dir}/${current_file}
+- source_path: ${source_dir}/${current_file}
+- dest_path: ${destination_dir}/${current_file}
 
 ### move_old_files
 
 Move superseded files to the archive directory.
 
 - type: move-file
-- source: ${destination_dir}/${old_file}
-- destination: ${archive_dir}/${old_file}
+- source_path: ${destination_dir}/${old_file}
+- dest_path: ${archive_dir}/${old_file}
 
 ### cleanup_temp
 

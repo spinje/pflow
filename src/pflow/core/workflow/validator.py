@@ -8,6 +8,7 @@ import logging
 from typing import Any, Optional
 
 from pflow.registry import Registry
+from pflow.runtime.template_validation import ValidationWarning
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ class WorkflowValidator:
         extracted_params: Optional[dict[str, Any]] = None,
         registry: Optional[Registry] = None,
         skip_node_types: bool = False,
-    ) -> tuple[list[str], list[Any]]:
+    ) -> tuple[list[str], list[ValidationWarning]]:
         """Run complete workflow validation.
 
         Performs multiple validation checks:
@@ -36,7 +37,7 @@ class WorkflowValidator:
         4. Template validation - Variable resolution
         5. Node type validation - Registry verification
         6. Output source validation - Output node references
-        7. Unknown param warnings - Flags params not in node interface
+        7. Unknown param errors - Rejects params not in node interface
 
         Args:
             workflow_ir: Workflow to validate
@@ -49,8 +50,8 @@ class WorkflowValidator:
             - errors: List of validation errors that prevent execution
             - warnings: List of ValidationWarning objects for runtime-validated templates
         """
-        errors = []
-        warnings = []
+        errors: list[str] = []
+        warnings: list[ValidationWarning] = []
 
         # 1. Structural validation (ALWAYS run)
         struct_errors = WorkflowValidator._validate_structure(workflow_ir)
@@ -86,11 +87,11 @@ class WorkflowValidator:
         errors.extend(output_errors)
         warnings.extend(output_warnings)
 
-        # 7. Unknown param warnings
+        # 7. Unknown param errors
         # Only run if registry available (need interface metadata for param keys)
         if registry is not None:
-            unknown_param_warnings = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
-            warnings.extend(unknown_param_warnings)
+            unknown_param_errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
+            errors.extend(unknown_param_errors)
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
@@ -438,7 +439,7 @@ class WorkflowValidator:
         return "\n".join(lines)
 
     # =========================================================================
-    # Unknown Param Warnings (Step 7)
+    # Unknown Param Errors (Step 7)
     # =========================================================================
 
     @staticmethod
@@ -457,31 +458,30 @@ class WorkflowValidator:
     def _validate_unknown_params(
         workflow_ir: dict[str, Any],
         registry: Registry,
-    ) -> list[Any]:
-        """Warn about parameters not recognized by the node's interface.
+    ) -> list[str]:
+        """Validate that node parameters are recognized by the node's interface.
 
         Compares each node's params keys against the known params from registry
-        interface metadata. Unknown params produce warnings (not errors) since
-        they don't break execution but may indicate typos or documentation
-        bullets accidentally parsed as params.
+        interface metadata. Unknown params produce errors since they indicate
+        typos or documentation bullets accidentally parsed as params.
 
         Args:
             workflow_ir: Workflow to validate
             registry: Node registry for interface metadata
 
         Returns:
-            List of warning strings for unknown parameters
+            List of error strings for unknown parameters
         """
         from pflow.core.suggestion_utils import find_similar_items
 
-        warning_list: list[Any] = []
+        error_list: list[str] = []
 
         try:
             node_types = {node.get("type") for node in workflow_ir.get("nodes", []) if node.get("type")}
             nodes_metadata = registry.get_nodes_metadata(node_types) if node_types else {}
         except Exception as e:
             logger.debug(f"Could not load registry metadata for unknown param validation: {e}")
-            return warning_list
+            return error_list
 
         for node in workflow_ir.get("nodes", []):
             node_id = node.get("id", "unknown")
@@ -499,11 +499,13 @@ class WorkflowValidator:
 
             for param_key in params:
                 if param_key not in known_keys:
+                    valid_params = ", ".join(sorted(known_keys))
                     msg = f"Node '{node_id}' ({node_type}): unknown parameter '{param_key}'."
                     similar = find_similar_items(param_key, sorted(known_keys), max_results=2, method="fuzzy")
                     if similar:
                         suggestions = ", ".join(f"'{s}'" for s in similar)
                         msg += f" Did you mean {suggestions}?"
-                    warning_list.append(msg)
+                    msg += f" Valid parameters: {valid_params}"
+                    error_list.append(msg)
 
-        return warning_list
+        return error_list

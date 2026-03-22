@@ -17,8 +17,8 @@ Read the source content file for processing.
 Create a timestamped backup of the original file before any processing.
 
 - type: copy-file
-- source: ${source_dir}/${source_file}
-- destination: backups/${timestamp_}${source_file}
+- source_path: ${source_dir}/${source_file}
+- dest_path: backups/${timestamp_}${source_file}
 
 ### process_content
 
@@ -57,5 +57,5 @@ Retry processing if validation found issues.
 Move the processed file to the date-organized archive.
 
 - type: move-file
-- source: processed/${output_file}
-- destination: archive/${date}/${output_file}
+- source_path: processed/${output_file}
+- dest_path: archive/${date}/${output_file}

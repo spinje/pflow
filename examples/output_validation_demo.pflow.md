@@ -10,7 +10,7 @@ including a dynamic result that cannot be statically traced.
 Read the input text file for processing.
 
 - type: read-file
-- path: input.txt
+- file_path: input.txt
 
 ### process
 

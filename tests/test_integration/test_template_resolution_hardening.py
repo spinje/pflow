@@ -63,8 +63,7 @@ class TestIssue95Prevention:
                     "id": "external-api-call",
                     "type": "shell",
                     "params": {
-                        "command": "echo",
-                        "args": ["Sending to production: ${empty-producer.nonexistent_field}"],
+                        "command": "echo 'Sending to production: ${empty-producer.nonexistent_field}'",
                     },
                 },
             ],
@@ -103,14 +102,13 @@ class TestIssue95Prevention:
                 {
                     "id": "empty-echo",
                     "type": "shell",
-                    "params": {"command": "echo", "args": []},  # Empty stdout
+                    "params": {"command": "echo"},  # Empty stdout
                 },
                 {
                     "id": "consumer",
                     "type": "shell",
                     "params": {
-                        "command": "echo",
-                        "args": ["Result: ${empty-echo.stdout}"],  # Should work (stdout exists but is empty)
+                        "command": "echo 'Result: ${empty-echo.stdout}'",  # Should work (stdout exists but is empty)
                     },
                 },
             ],
@@ -149,9 +147,7 @@ class TestIssue95Prevention:
                     "id": "api-call",
                     "type": "shell",
                     "params": {
-                        "command": "echo",
-                        # Try to access a field that doesn't exist
-                        "args": ["Sending to Slack: ${produces-nothing.nonexistent_field}"],
+                        "command": "echo 'Sending to Slack: ${produces-nothing.nonexistent_field}'",
                     },
                 },
             ],
@@ -186,7 +182,7 @@ class TestIssue95Prevention:
                 {
                     "id": "will-fail",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${this_variable_does_not_exist}"]},
+                    "params": {"command": "echo '${this_variable_does_not_exist}'"},
                 }
             ],
             "edges": [],
@@ -230,12 +226,12 @@ class TestTriStateStatus:
                 {
                     "id": "producer",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["data"]},
+                    "params": {"command": "echo data"},
                 },
                 {
                     "id": "consumer",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["Got: ${producer.stdout}"]},
+                    "params": {"command": "echo 'Got: ${producer.stdout}'"},
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
@@ -271,7 +267,7 @@ class TestTriStateStatus:
                 {
                     "id": "node-with-missing-template",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["Value: ${missing_variable}"]},
+                    "params": {"command": "echo 'Value: ${missing_variable}'"},
                 }
             ],
             "edges": [],
@@ -301,7 +297,7 @@ class TestTriStateStatus:
                 {
                     "id": "node-with-error",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing}"]},
+                    "params": {"command": "echo '${missing}'"},
                 }
             ],
             "edges": [],
@@ -347,7 +343,7 @@ class TestConfigurationHierarchy:
                 {
                     "id": "test",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing}"]},
+                    "params": {"command": "echo '${missing}'"},
                 }
             ],
             "edges": [],
@@ -372,7 +368,7 @@ class TestConfigurationHierarchy:
                 {
                     "id": "test",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing}"]},
+                    "params": {"command": "echo '${missing}'"},
                 }
             ],
             "edges": [],
@@ -409,12 +405,12 @@ class TestMultipleTemplateErrors:
                 {
                     "id": "node1",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing1}"]},
+                    "params": {"command": "echo '${missing1}'"},
                 },
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing2}"]},
+                    "params": {"command": "echo '${missing2}'"},
                 },
             ],
             "edges": [{"from": "node1", "to": "node2", "action": "default"}],
@@ -445,12 +441,12 @@ class TestMultipleTemplateErrors:
                 {
                     "id": "node1",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing1}"]},
+                    "params": {"command": "echo '${missing1}'"},
                 },
                 {
                     "id": "node2",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["${missing2}"]},
+                    "params": {"command": "echo '${missing2}'"},
                 },
             ],
             "edges": [{"from": "node1", "to": "node2", "action": "default"}],
@@ -495,15 +491,12 @@ class TestEnhancedErrorMessages:
                 {
                     "id": "producer",
                     "type": "shell",
-                    "params": {"command": "echo", "args": ["data"]},
+                    "params": {"command": "echo data"},
                 },
                 {
                     "id": "consumer",
                     "type": "shell",
-                    "params": {
-                        "command": "echo",
-                        "args": ["${producer.wrong_field}"],  # Wrong field on producer
-                    },
+                    "params": {"command": "echo '${producer.wrong_field}'"},
                 },
             ],
             "edges": [{"from": "producer", "to": "consumer", "action": "default"}],
