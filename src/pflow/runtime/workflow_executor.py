@@ -139,6 +139,20 @@ class WorkflowExecutor(BaseNode):
 
         try:
             result = sub_flow.run(child_storage)
+
+            # Detect sub-workflow failure via action string (not just exceptions).
+            # When a child node returns "error" and the flow has no error successor,
+            # sub_flow.run() returns "error" without raising. We must treat this as
+            # a failure so batch error_handling can detect it via _extract_error().
+            if isinstance(result, str) and result.startswith("error"):
+                error_msg = self._extract_child_error(child_storage, workflow_path)
+                return {
+                    "success": False,
+                    "error": error_msg,
+                    "workflow_path": workflow_path,
+                    "child_storage": child_storage,
+                }
+
             return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
         except Exception as e:
             return {
@@ -186,6 +200,22 @@ class WorkflowExecutor(BaseNode):
     def _is_file_reference(value: str) -> bool:
         """Determine if a workflow param value is a file path or saved name."""
         return is_workflow_file_reference(value)
+
+    @staticmethod
+    def _extract_child_error(child_storage: dict[str, Any], workflow_path: str) -> str:
+        """Extract a meaningful error message from child storage after sub-workflow failure.
+
+        When a sub-workflow's Flow returns "error" action (not an exception), the actual
+        error message is namespaced under the failed node's ID in child_storage.
+        """
+        failed_node = child_storage.get("__execution__", {}).get("failed_node")
+        if failed_node:
+            node_data = child_storage.get(failed_node)
+            if isinstance(node_data, dict):
+                error = node_data.get("error")
+                if error:
+                    return f"Sub-workflow failed at {workflow_path}: {error}"
+        return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:
         """Extract child workflow inputs from params (everything not reserved)."""
