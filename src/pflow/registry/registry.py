@@ -75,7 +75,8 @@ class Registry:
             if isinstance(data, dict) and "nodes" in data:
                 return data
             return {}
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Could not read registry wrapper: {e}")
             return {}
 
     def load(self, include_filtered: bool = False) -> dict[str, dict[str, Any]]:
@@ -127,6 +128,13 @@ class Registry:
         Returns:
             Dictionary mapping node names to metadata, or empty dict on error
         """
+        # Try structured format first (delegates to _read_wrapper)
+        wrapper = self._read_wrapper()
+        if wrapper:
+            self._registry_version = wrapper.get("version")
+            return wrapper.get("nodes", {})  # type: ignore[no-any-return]
+
+        # Fall through to legacy flat format handling
         if not self.registry_path.exists():
             logger.debug(f"Registry file not found at {self.registry_path}")
             return {}
@@ -138,13 +146,6 @@ class Registry:
                 return {}
 
             data = json.loads(content)
-
-            # Handle new format with metadata
-            if isinstance(data, dict) and "nodes" in data:
-                self._registry_version = data.get("version")
-                return data["nodes"]  # type: ignore[no-any-return]
-
-            # Handle old format (direct node dict)
             data.pop("__metadata__", None)  # Strip legacy metadata from node dict
             return data  # type: ignore[no-any-return]
 
@@ -231,10 +232,13 @@ class Registry:
             wrapper["last_core_scan"] = datetime.now().isoformat()
 
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.registry_path, "w") as f:
-            json.dump(wrapper, f, indent=2, sort_keys=True)
-
-        logger.debug(f"Updated metadata key '{key}' in registry")
+        try:
+            with open(self.registry_path, "w") as f:
+                json.dump(wrapper, f, indent=2, sort_keys=True)
+            logger.debug(f"Updated metadata key '{key}' in registry")
+        except Exception:
+            logger.exception("Failed to update registry metadata")
+            raise
 
     def update_from_scanner(self, scan_results: list[dict[str, Any]]) -> None:
         """Update registry with scanner results.

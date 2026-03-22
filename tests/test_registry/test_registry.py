@@ -553,8 +553,8 @@ class TestRegistryVersionRefresh:
             nodes = registry2._load_from_file()
             assert registry2._registry_version is not None
 
-            # Patch get_version to return a different value
-            with patch("pflow.get_version", return_value="99.99.99"):
+            # Patch _get_version on the Registry class directly
+            with patch.object(Registry, "_get_version", return_value="99.99.99"):
                 assert registry2._core_nodes_outdated(nodes) is True
 
     def test_refresh_preserves_user_nodes(self):
