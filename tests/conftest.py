@@ -341,7 +341,7 @@ def prepared_subprocess_env(tmp_path_factory, precomputed_core_registry_nodes):
     # Write precomputed registry file directly
     registry_path = home / ".pflow" / "registry.json"
     registry_data = {
-        "version": getattr(_pflow, "__version__", "0.0.1"),
+        "version": _pflow.get_version(),
         "last_core_scan": datetime.now().isoformat(),
         "nodes": precomputed_core_registry_nodes,
     }

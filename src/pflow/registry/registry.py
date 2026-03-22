@@ -52,6 +52,32 @@ class Registry:
             self._settings_manager = SettingsManager()
         return self._settings_manager
 
+    @staticmethod
+    def _get_version() -> str:
+        """Get current pflow version from package metadata."""
+        from pflow import get_version
+
+        return get_version()
+
+    def _read_wrapper(self) -> dict[str, Any]:
+        """Read the raw registry file and return the full structured wrapper dict.
+
+        Returns the top-level dict if it's in structured format (has "nodes" key),
+        or empty dict if missing, flat format, or corrupt.
+        """
+        if not self.registry_path.exists():
+            return {}
+        try:
+            content = self.registry_path.read_text()
+            if not content.strip():
+                return {}
+            data = json.loads(content)
+            if isinstance(data, dict) and "nodes" in data:
+                return data
+            return {}
+        except Exception:
+            return {}
+
     def load(self, include_filtered: bool = False) -> dict[str, dict[str, Any]]:
         """Load registry from JSON file, auto-discovering core nodes if needed.
 
@@ -119,6 +145,7 @@ class Registry:
                 return data["nodes"]  # type: ignore[no-any-return]
 
             # Handle old format (direct node dict)
+            data.pop("__metadata__", None)  # Strip legacy metadata from node dict
             return data  # type: ignore[no-any-return]
 
         except json.JSONDecodeError as e:
@@ -129,10 +156,11 @@ class Registry:
             return {}
 
     def save(self, nodes: dict[str, dict[str, Any]]) -> None:
-        """Save nodes dictionary to registry JSON file.
+        """Save nodes dictionary to registry JSON file in structured format.
 
-        Creates parent directory if it doesn't exist.
-        Pretty-prints JSON with indent=2 for readability.
+        Always writes the structured wrapper format: {version, last_core_scan,
+        metadata, nodes}. Preserves existing version/timestamp/metadata from
+        the wrapper if present.
 
         IMPORTANT: This saves ALL nodes to the registry (unfiltered).
         Filtering is applied at load time based on settings.
@@ -141,31 +169,24 @@ class Registry:
             nodes: Dictionary mapping node names to metadata
 
         Note:
-            This completely replaces the existing registry file.
+            This completely replaces the nodes in the registry file.
             Manual edits will be lost on save.
         """
-        # Ensure parent directory exists
         self.registry_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Preserve metadata if it exists
-        metadata = {}
-        if self.registry_path.exists():
-            try:
-                with open(self.registry_path) as f:
-                    existing_data = json.load(f)
-                    metadata = existing_data.get("__metadata__", {})
-            except Exception as e:
-                logger.debug(f"Could not read existing metadata, starting fresh: {e}")
+        # Preserve existing wrapper metadata (version, timestamps, metadata)
+        existing = self._read_wrapper()
 
-        # Create structure with metadata
-        registry_data = dict(nodes)
-        if metadata:
-            registry_data["__metadata__"] = metadata
+        data = {
+            "version": existing.get("version", self._get_version()),
+            "last_core_scan": existing.get("last_core_scan", datetime.now().isoformat()),
+            "metadata": existing.get("metadata", {}),
+            "nodes": nodes,
+        }
 
-        # Write JSON with pretty formatting
         try:
-            content = json.dumps(registry_data, indent=2, sort_keys=True)
-            self.registry_path.write_text(content)
+            with open(self.registry_path, "w") as f:
+                json.dump(data, f, indent=2, sort_keys=True)
             logger.info(f"Saved {len(nodes)} nodes to registry")
         except Exception:
             logger.exception("Failed to save registry")
@@ -174,6 +195,8 @@ class Registry:
     def get_metadata(self, key: str, default: Any = None) -> Any:
         """Get metadata value from registry.
 
+        Reads directly from the structured wrapper's metadata field.
+
         Args:
             key: The metadata key to retrieve
             default: Default value if key not found
@@ -181,44 +204,37 @@ class Registry:
         Returns:
             The metadata value or default if not found
         """
-        config = self.load()
-        metadata = config.get("__metadata__", {})
-        return metadata.get(key, default)
+        wrapper = self._read_wrapper()
+        return wrapper.get("metadata", {}).get(key, default)
 
     def set_metadata(self, key: str, value: Any) -> None:
         """Set metadata value in registry.
+
+        Updates the structured wrapper's metadata field directly.
 
         Args:
             key: The metadata key to set
             value: The value to store
         """
-        config = self.load(include_filtered=True)
-        if "__metadata__" not in config:
-            config["__metadata__"] = {}
-        config["__metadata__"][key] = value
+        wrapper = self._read_wrapper()
 
-        # Extract nodes and metadata separately for save
-        metadata = config.pop("__metadata__", {})
-        nodes = config  # Everything else is nodes
+        if "metadata" not in wrapper:
+            wrapper["metadata"] = {}
+        wrapper["metadata"][key] = value
 
-        # Save nodes, but first update the metadata directly
-        # We need to handle this specially since save() only takes nodes
-        if self.registry_path.exists():
-            # Read existing registry to preserve structure
-            with open(self.registry_path) as f:
-                existing = json.load(f)
-                existing["__metadata__"] = metadata
-                # Write back with updated metadata
-                content = json.dumps(existing, indent=2, sort_keys=True)
-                self.registry_path.write_text(content)
-                logger.debug(f"Updated metadata key '{key}' in registry")
-        else:
-            # No existing registry, create new with metadata
-            registry_data = dict(nodes)
-            registry_data["__metadata__"] = metadata
-            content = json.dumps(registry_data, indent=2, sort_keys=True)
-            self.registry_path.write_text(content)
-            logger.debug(f"Created registry with metadata key '{key}'")
+        # Ensure required wrapper fields exist
+        if "nodes" not in wrapper:
+            wrapper["nodes"] = {}
+        if "version" not in wrapper:
+            wrapper["version"] = self._get_version()
+        if "last_core_scan" not in wrapper:
+            wrapper["last_core_scan"] = datetime.now().isoformat()
+
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.registry_path, "w") as f:
+            json.dump(wrapper, f, indent=2, sort_keys=True)
+
+        logger.debug(f"Updated metadata key '{key}' in registry")
 
     def update_from_scanner(self, scan_results: list[dict[str, Any]]) -> None:
         """Update registry with scanner results.
@@ -324,16 +340,23 @@ class Registry:
         self._save_with_metadata(registry_nodes)
 
     def _save_with_metadata(self, nodes: dict[str, dict[str, Any]]) -> None:
-        """Save nodes with metadata like version and timestamps."""
-        import pflow
+        """Save nodes with updated version and timestamp.
+
+        Unlike save(), this always updates the version and last_core_scan fields
+        to reflect the current pflow version and time.
+        """
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Preserve existing metadata (MCP sync hashes, etc.)
+        existing = self._read_wrapper()
 
         data = {
-            "version": getattr(pflow, "__version__", "0.0.1"),
+            "version": self._get_version(),
             "last_core_scan": datetime.now().isoformat(),
+            "metadata": existing.get("metadata", {}),
             "nodes": nodes,
         }
 
-        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.registry_path, "w") as f:
             json.dump(data, f, indent=2, sort_keys=True)
 
@@ -344,9 +367,7 @@ class Registry:
         if not self._registry_version:
             return False
 
-        import pflow
-
-        current_version = getattr(pflow, "__version__", "0.0.1")
+        current_version = self._get_version()
         if self._registry_version != current_version:
             logger.info(
                 f"Registry version {self._registry_version} differs from "
