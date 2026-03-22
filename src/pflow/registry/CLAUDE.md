@@ -83,27 +83,19 @@ The safe pattern: always use `load(include_filtered=True)` before any `save()` c
 
 On pflow version change, `load()` detects the mismatch via the stored `version` field and re-scans core nodes. User and MCP nodes are preserved through the refresh.
 
-## Known Bugs — Registry Format Inconsistency
+### Registry File Format
 
-Two save methods write **incompatible formats**:
+All writes use a unified structured format:
+```json
+{
+  "version": "0.10.0",
+  "last_core_scan": "2026-03-22T...",
+  "metadata": {"mcp_config_hash": "..."},
+  "nodes": {"shell": {...}, "llm": {...}}
+}
+```
 
-| Method | Format | Called by |
-|--------|--------|----------|
-| `save(nodes)` | Flat: `{node1: ..., __metadata__: {...}}` | MCP registrar, CLI auto-sync cleanup |
-| `_save_with_metadata(nodes)` | Structured: `{version: ..., nodes: {node1: ...}}` | Auto-discovery, CLI registry scan |
-
-`_load_from_file()` detects format by checking for a `"nodes"` key. This causes:
-
-1. **`get_metadata()` silently fails** on structured format — returns default because `data["nodes"]` has no `__metadata__` key. Result: MCP auto-sync cache never works, re-syncing every run (~500ms waste).
-
-2. **`set_metadata()` writes orphaned data** — adds `__metadata__` at top level of structured file, but `_load_from_file()` only returns `data["nodes"]`, so the metadata is never readable.
-
-3. **`save()` destroys structured format** — overwrites `{version: ..., nodes: ...}` with flat dict, permanently losing version tracking until next `_save_with_metadata()` call.
-
-4. **`__metadata__` leaks as fake node** in flat format — appears as phantom "user" node under "custom" package in `pflow registry list`. No guards anywhere in the display chain (settings filter passes it through via wildcard `*` allow).
-
-5. **Format flip-flops** between flat and structured depending on which code path writes last. Typical sequence: auto-discover (structured) → MCP sync calls `save()` (flat) → `set_metadata()` works (flat) → version upgrade triggers refresh (structured again, metadata lost).
-
-**Self-healing quirk**: After first MCP sync converts to flat format, the sync cache works correctly on subsequent runs. It only breaks again on pflow version upgrades.
-
-**Root cause**: Two save methods that should have been unified into one format. Fix would be to standardize on the structured format for all writes.
+- `save()` preserves existing version/timestamp/metadata, only replaces nodes
+- `_save_with_metadata()` updates version and timestamp (used after core node discovery)
+- `get_metadata()`/`set_metadata()` read/write the `metadata` field directly
+- `_load_from_file()` still handles legacy flat format (`{node1: ..., node2: ...}`) for backward compatibility, stripping any `__metadata__` keys
