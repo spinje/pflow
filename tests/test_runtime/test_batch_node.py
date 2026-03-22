@@ -2837,3 +2837,227 @@ class TestBatchLLMOutputSchemaIntegration:
             assert call["node_id"] == node_id
             assert "input_tokens" in call
             assert "output_tokens" in call
+
+
+class TestBatchActionFallbackErrorDetection:
+    """Tests for fallback error detection via action string from inner node's _run().
+
+    When inner_node._run() returns an action string starting with "error" but the
+    result dict has no "error" key, the batch node should detect this as an error.
+    This catches cases where a wrapper chain swallows the error key (e.g., a
+    sub-workflow with no outputs) but the action string still signals failure.
+    """
+
+    class ErrorActionNode:
+        """Node that returns 'error' action but writes no error key to result.
+
+        Simulates a wrapper chain that swallows the error key from shared store.
+        Includes pickle support for parallel (deep-copy) execution paths.
+        """
+
+        def __init__(self, node_id: str):
+            self.node_id = node_id
+
+        def _run(self, shared: dict) -> str:
+            shared[self.node_id] = {"response": "partial output"}
+            return "error"
+
+        def __getstate__(self) -> dict:
+            return self.__dict__.copy()
+
+        def __setstate__(self, state: dict) -> None:
+            self.__dict__.update(state)
+
+    def test_exec_single_detects_error_via_action_string(self):
+        """When _run() returns 'error' but result dict has no error key, error is recorded."""
+        inner = self.ErrorActionNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared: dict = {"data": ["a", "b"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # Both items should be detected as errors via action string fallback.
+        # error_count comes from self._errors which IS populated by the fallback.
+        assert shared["test_node"]["error_count"] == 2
+        assert len(shared["test_node"]["errors"]) == 2
+
+        # The error message should be the generic fallback
+        for error_info in shared["test_node"]["errors"]:
+            assert error_info["error"] == "Node returned error action"
+
+        # Results should still contain the partial output (not None) — the result
+        # dict is preserved even when the action-string fallback detects an error.
+        for result in results:
+            assert result is not None
+            assert result["response"] == "partial output"
+
+    def test_exec_single_prefers_extract_error_over_action(self):
+        """When both _extract_error finds an error AND action is 'error', _extract_error message wins."""
+
+        class ErrorBothPathsNode:
+            """Node that returns 'error' action AND writes error key to result."""
+
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                shared[self.node_id] = {"error": "Specific error from node", "response": "data"}
+                return "error"
+
+        inner = ErrorBothPathsNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared: dict = {"data": ["a"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # Error should come from _extract_error, not the fallback
+        assert shared["test_node"]["error_count"] == 1
+        assert shared["test_node"]["errors"][0]["error"] == "Specific error from node"
+
+    def test_exec_single_no_error_when_default_action(self):
+        """When _run() returns 'default' and no error in result, item succeeds."""
+        inner = MockInnerNode("test_node")  # MockInnerNode returns "default"
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared: dict = {"data": ["a", "b"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert shared["test_node"]["error_count"] == 0
+        assert shared["test_node"]["success_count"] == 2
+        assert shared["test_node"]["errors"] is None
+
+    def test_exec_single_no_error_when_none_action(self):
+        """When _run() returns None, item succeeds (no false positive)."""
+
+        class NoneActionNode:
+            """Node that returns None from _run() (some nodes may do this)."""
+
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> None:
+                shared[self.node_id] = {"response": "ok"}
+                return None
+
+        inner = NoneActionNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared: dict = {"data": ["a"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert shared["test_node"]["error_count"] == 0
+        assert shared["test_node"]["success_count"] == 1
+        assert shared["test_node"]["errors"] is None
+
+    def test_exec_single_with_node_detects_error_via_action(self):
+        """Parallel path: _exec_single_with_node detects error via action string fallback."""
+        inner = self.ErrorActionNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "error_handling": "continue"})
+
+        shared: dict = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        # All items should be detected as errors via action string fallback.
+        # error_count comes from self._errors which IS populated by the fallback.
+        assert shared["test_node"]["error_count"] == 3
+        assert len(shared["test_node"]["errors"]) == 3
+
+        for error_info in shared["test_node"]["errors"]:
+            assert error_info["error"] == "Node returned error action"
+
+        # Results should still contain partial output (not None)
+        for result in results:
+            assert result is not None
+            assert result["response"] == "partial output"
+
+    def test_exec_single_fail_fast_raises_on_action_error(self):
+        """fail_fast mode raises RuntimeError when action-string fallback detects error.
+
+        This is the key behavioral guarantee: before the fix, the error action was
+        silently discarded and the item was treated as success. Now it raises.
+        """
+        inner = self.ErrorActionNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
+
+        shared: dict = {"data": ["a"]}
+        items = batch.prep(shared)
+
+        # fail_fast wraps action-string errors in RuntimeError (no original exception)
+        with pytest.raises(RuntimeError, match="Node returned error action"):
+            batch._exec(items)
+
+
+class TestBatchSubWorkflowErrorPropagationIntegration:
+    """Integration test: batch → workflow node → failing child workflow.
+
+    Exercises the REAL propagation chain (compile_ir_to_flow → wrapper chain →
+    WorkflowExecutor → NamespacedStore → batch _extract_error) with no mocking
+    of the error path. This is the exact scenario that was silently failing
+    before the fix: a child workflow returning "error" action was wrapped as
+    success, and the batch counted it as a succeeded item with empty output.
+    """
+
+    def test_batch_workflow_child_error_detected_as_batch_error(self):
+        """A batch calling a sub-workflow where the child fails should report errors, not success."""
+        from pflow.registry.registry import Registry
+        from pflow.runtime import compile_ir_to_flow
+
+        registry = Registry()  # Pre-populated by isolate_pflow_config autouse fixture
+
+        # Child workflow: a shell node that fails with exit 1.
+        # ShellNode.post() returns "error" action (not an exception) — this is the
+        # exact code path that was silently swallowed before the fix.
+        child_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fail",
+                    "type": "shell",
+                    "params": {"command": "exit 1"},
+                    "purpose": "Shell node that always fails with non-zero exit code",
+                }
+            ],
+            "edges": [],
+        }
+
+        # Parent workflow: batch calls the child workflow via inline workflow_ir
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch-call",
+                    "type": "workflow",
+                    "params": {
+                        "workflow_ir": child_ir,
+                    },
+                    "batch": {
+                        "items": ["a", "b"],
+                        "error_handling": "continue",
+                    },
+                    "purpose": "Batch calling a sub-workflow that always fails",
+                }
+            ],
+            "edges": [],
+        }
+
+        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        shared: dict = {}
+        flow.run(shared)
+
+        # The batch should detect both items as errors — NOT silent success.
+        batch_result = shared.get("batch-call", {})
+        assert batch_result.get("error_count") == 2, (
+            f"Expected 2 errors but got {batch_result.get('error_count')}. Batch result: {batch_result}"
+        )
+        assert batch_result.get("count") == 2
+        assert len(batch_result.get("errors", [])) == 2

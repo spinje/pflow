@@ -395,8 +395,8 @@ class PflowBatchNode(Node):
                 item_shared[self.item_alias] = item
                 item_shared["__index__"] = idx  # 0-based batch item index
 
-                # Execute inner node
-                self.inner_node._run(item_shared)
+                # Execute inner node — capture action string for fallback error detection
+                action = self.inner_node._run(item_shared)
 
                 # Capture LLM usage from item context before it's discarded
                 self._capture_item_llm_usage(item_shared, idx)
@@ -418,6 +418,18 @@ class PflowBatchNode(Node):
 
                 # Check for error in result dict
                 error_msg = self._extract_error(result)
+
+                # Fallback: detect error via action string when nothing in result dict.
+                # Nodes signal errors by returning "error" action from post(), which
+                # should also write shared["error"]. But if a wrapper chain swallows the
+                # error key (e.g., sub-workflow with no outputs), the action is our last signal.
+                if not error_msg and isinstance(action, str) and action.startswith("error"):
+                    error_msg = "Node returned error action"
+                    logger.debug(
+                        f"Batch item {idx}: detected error via action string '{action}' (no error key in result dict)",
+                        extra={"node_id": self.node_id, "item_index": idx},
+                    )
+
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
                     # Error in result dict - no exception to preserve
@@ -475,8 +487,8 @@ class PflowBatchNode(Node):
                 # This ensures partial writes from failed attempts don't persist
                 item_shared[self.node_id] = {}
 
-                # Execute the thread-local node copy
-                thread_node._run(item_shared)
+                # Execute the thread-local node copy — capture action for fallback error detection
+                action = thread_node._run(item_shared)
 
                 # Capture LLM usage from item context before it's discarded
                 # Note: self._capture_item_llm_usage appends to self._shared["__llm_calls__"]
@@ -500,6 +512,15 @@ class PflowBatchNode(Node):
 
                 # Check for error in result dict
                 error_msg = self._extract_error(result)
+
+                # Fallback: detect error via action string (mirrors _exec_single)
+                if not error_msg and isinstance(action, str) and action.startswith("error"):
+                    error_msg = "Node returned error action"
+                    logger.debug(
+                        f"Batch item {idx}: detected error via action string '{action}' (no error key in result dict)",
+                        extra={"node_id": self.node_id, "item_index": idx},
+                    )
+
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
                     return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)

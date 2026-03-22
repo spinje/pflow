@@ -1,5 +1,7 @@
 """Unit tests for WorkflowExecutor."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from pflow.runtime.workflow_executor import WorkflowExecutor
@@ -129,3 +131,142 @@ class TestWorkflowExecutor:
         # Test invalid mode — should raise ValueError
         with pytest.raises(ValueError, match="Invalid storage_mode"):
             node._create_child_storage(parent_shared, "isolated", prep_res)
+
+
+class TestExecErrorActionDetection:
+    """Tests for exec() detecting error action strings from sub-workflow runs.
+
+    When sub_flow.run() returns an "error" action string (not an exception),
+    exec() must return {"success": False} instead of wrapping it as success.
+    """
+
+    def _make_prep_res(
+        self,
+        workflow_path: str = "child.pflow.md",
+        child_params: dict | None = None,
+        storage_mode: str = "mapped",
+    ) -> dict:
+        """Build a minimal prep_res dict for exec()."""
+        return {
+            "workflow_ir": {"nodes": [{"id": "step1", "type": "shell"}]},
+            "workflow_path": workflow_path,
+            "workflow_source": "ref:child.pflow.md",
+            "child_params": child_params or {},
+            "storage_mode": storage_mode,
+            "current_depth": 0,
+            "execution_stack": [],
+            "parent_shared": {},
+        }
+
+    @patch("pflow.runtime.workflow_executor.Registry")
+    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
+    def test_exec_detects_error_action_from_sub_flow(self, mock_compile, mock_registry):
+        """When sub_flow.run() returns 'error', exec() should return success=False."""
+        mock_flow = MagicMock()
+        mock_flow.run.return_value = "error"
+        mock_compile.return_value = mock_flow
+
+        node = WorkflowExecutor()
+        node.set_params({"workflow_ir": {"nodes": []}})
+
+        prep_res = self._make_prep_res()
+        result = node.exec(prep_res)
+
+        assert result["success"] is False
+        assert "error" in result
+        assert "child.pflow.md" in result["error"]
+        assert result["workflow_path"] == "child.pflow.md"
+        assert "child_storage" in result
+
+    @patch("pflow.runtime.workflow_executor.Registry")
+    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
+    def test_exec_extracts_error_from_child_storage(self, mock_compile, mock_registry):
+        """When sub_flow.run() returns 'error' and child_storage has execution tracking
+        with a failed_node and namespaced error, the error message should include it."""
+        # Set up a flow that populates child_storage with error info, then returns "error"
+        child_storage_state = {
+            "__execution__": {"failed_node": "step1"},
+            "step1": {"error": "Connection refused on port 8080"},
+        }
+
+        def fake_run(storage):
+            storage.update(child_storage_state)
+            return "error"
+
+        mock_flow = MagicMock()
+        mock_flow.run.side_effect = fake_run
+        mock_compile.return_value = mock_flow
+
+        node = WorkflowExecutor()
+        node.set_params({"workflow_ir": {"nodes": []}})
+
+        prep_res = self._make_prep_res()
+        result = node.exec(prep_res)
+
+        assert result["success"] is False
+        assert "Connection refused on port 8080" in result["error"]
+        assert "child.pflow.md" in result["error"]
+
+    @patch("pflow.runtime.workflow_executor.Registry")
+    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
+    def test_exec_success_when_default_action(self, mock_compile, mock_registry):
+        """When sub_flow.run() returns 'default', exec() should return success=True."""
+        mock_flow = MagicMock()
+        mock_flow.run.return_value = "default"
+        mock_compile.return_value = mock_flow
+
+        node = WorkflowExecutor()
+        node.set_params({"workflow_ir": {"nodes": []}})
+
+        prep_res = self._make_prep_res()
+        result = node.exec(prep_res)
+
+        assert result["success"] is True
+        assert result["result"] == "default"
+
+    @patch("pflow.runtime.workflow_executor.Registry")
+    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
+    def test_exec_success_when_none_action(self, mock_compile, mock_registry):
+        """When sub_flow.run() returns None, exec() should return success=True."""
+        mock_flow = MagicMock()
+        mock_flow.run.return_value = None
+        mock_compile.return_value = mock_flow
+
+        node = WorkflowExecutor()
+        node.set_params({"workflow_ir": {"nodes": []}})
+
+        prep_res = self._make_prep_res()
+        result = node.exec(prep_res)
+
+        assert result["success"] is True
+        assert result["result"] is None
+
+    def test_extract_child_error_with_failed_node(self):
+        """When __execution__['failed_node'] exists and has an error, include it in the message."""
+        child_storage = {
+            "__execution__": {"failed_node": "api_call"},
+            "api_call": {"error": "HTTP 503 Service Unavailable"},
+        }
+        msg = WorkflowExecutor._extract_child_error(child_storage, "deploy.pflow.md")
+
+        assert "HTTP 503 Service Unavailable" in msg
+        assert "deploy.pflow.md" in msg
+
+    def test_extract_child_error_without_failed_node(self):
+        """When __execution__ has no failed_node, return generic fallback message."""
+        child_storage: dict = {"__execution__": {}}
+        msg = WorkflowExecutor._extract_child_error(child_storage, "deploy.pflow.md")
+
+        assert "returned error action" in msg
+        assert "deploy.pflow.md" in msg
+
+    def test_extract_child_error_with_failed_node_no_error_key(self):
+        """When failed_node exists but its data has no 'error' key, return fallback message."""
+        child_storage = {
+            "__execution__": {"failed_node": "step1"},
+            "step1": {"stdout": "some output", "exit_code": 1},
+        }
+        msg = WorkflowExecutor._extract_child_error(child_storage, "build.pflow.md")
+
+        assert "returned error action" in msg
+        assert "build.pflow.md" in msg
