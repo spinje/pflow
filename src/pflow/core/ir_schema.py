@@ -173,6 +173,11 @@ BATCH_CONFIG_SCHEMA: dict[str, Any] = {
             "default": 0,
             "description": "Seconds to wait between retries (default: 0)",
         },
+        "timeout": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Per-item timeout in seconds (reserved for future use)",
+        },
     },
     "required": ["items"],
     "additionalProperties": False,
