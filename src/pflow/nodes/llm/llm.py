@@ -1,6 +1,7 @@
 """General-purpose LLM node for text processing."""
 
 import json
+import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
@@ -15,6 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 import llm
 
 from pflow.pocketflow import Node
+
+logger = logging.getLogger(__name__)
 
 # OpenRouter-style effort-to-token-budget ratios
 EFFORT_RATIOS: dict[str, float] = {
@@ -318,6 +321,10 @@ class LLMNode(Node):
         try:
             return future.result(timeout=timeout)
         except FuturesTimeoutError:
+            logger.warning(
+                f"LLM call timed out after {timeout}s, orphan thread may continue running",
+                extra={"model": prep_res["model"], "timeout": timeout},
+            )
             raise TimeoutError(f"LLM call timed out after {timeout}s (model: {prep_res['model']})") from None
         finally:
             pool.shutdown(wait=False, cancel_futures=True)

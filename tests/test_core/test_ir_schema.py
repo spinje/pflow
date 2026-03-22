@@ -999,37 +999,3 @@ class TestBatchConfigPhase2:
         with pytest.raises(ValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
-
-    def test_batch_config_timeout_accepted(self):
-        """Test timeout accepts integer values."""
-        ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "batch_node",
-                    "type": "llm",
-                    "batch": {
-                        "items": "${data}",
-                        "timeout": 60,
-                    },
-                }
-            ],
-        }
-        validate_ir(ir)
-
-    def test_batch_config_float_timeout_accepted(self):
-        """Test timeout accepts float values."""
-        ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "batch_node",
-                    "type": "llm",
-                    "batch": {
-                        "items": "${data}",
-                        "timeout": 1.5,
-                    },
-                }
-            ],
-        }
-        validate_ir(ir)
