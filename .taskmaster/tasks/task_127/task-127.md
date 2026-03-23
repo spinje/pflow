@@ -5,8 +5,10 @@
 Keep MCP server processes alive for the duration of a workflow run so that stateful MCP servers (like Playwright) preserve state between steps. Currently each MCP node spawns a fresh server subprocess, making multi-step MCP interactions impossible.
 
 ## Status
+done
 
-not started
+## Completed
+2026-03-13
 
 ## Priority
 

@@ -5,7 +5,6 @@
 Research and design integration between pflow and OpenClaw. Explore whether pflow can serve as a workflow authoring layer that agents create on-the-fly, potentially replacing or complementing Lobster's pre-defined pipeline model.
 
 ## Status
-
 not started
 
 ## Priority

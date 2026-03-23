@@ -1,6 +1,7 @@
 # Task 116: Windows Compatibility
 
-## Status: Research, Deferred
+## Status
+not started
 
 ## Priority: Low (pflow is Unix-first)
 

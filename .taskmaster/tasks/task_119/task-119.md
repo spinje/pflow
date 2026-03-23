@@ -5,8 +5,10 @@
 A `pflow skill` command group that publishes saved workflows as Claude Code skills. Enriches the saved workflow file (frontmatter + `## Usage` section) and creates a symlink from the Claude Code skills directory. Skills auto-update when the saved workflow changes because the symlink points to the canonical copy.
 
 ## Status
+done
 
-not started
+## Completed
+2026-02-05
 
 ## Priority
 

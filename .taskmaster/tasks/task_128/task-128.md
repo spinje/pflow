@@ -5,8 +5,10 @@
 Add first-class support for branch convergence — the ability for a downstream node to reference the output of "whichever branch ran" after conditional branching. Without this, conditional branching (Task 38) is severely limited: every convergence point requires 2-3 workaround nodes, and workflows with 3+ branches balloon in complexity.
 
 ## Status
+done
 
-in progress
+## Completed
+2026-03-15
 
 ## Priority
 

@@ -1,11 +1,14 @@
 # Task 107: Implement Markdown Workflow Format
 
+## Status
+done
+
+## Completed
+2026-02-04
+
 ## Description
 
 Replace JSON as the workflow file format with markdown (`.pflow.md`). The markdown format compiles to the same in-memory dict (IR) that JSON currently produces — all existing validation, compilation, and execution is reused unchanged. The format uses standard markdown structure (headings, code blocks, bullet-point properties) optimized for LLM authoring, with inline documentation that makes workflows self-explaining.
-
-## Status
-not started
 
 ## Priority
 high

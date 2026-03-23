@@ -5,7 +5,6 @@
 Add OAuth 2.1 authentication for remote MCP HTTP servers, leveraging the MCP Python SDK's built-in `OAuthClientProvider`. This lets users connect to OAuth-protected servers (Supabase, GitHub MCP, etc.) without manually creating access tokens — the same way Claude Code, Cursor, and Cline handle it.
 
 ## Status
-
 not started
 
 ## Priority

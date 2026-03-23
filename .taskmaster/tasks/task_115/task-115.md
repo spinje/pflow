@@ -1,11 +1,14 @@
 # Task 115: Automatic Stdin Routing for Unix-First Piping
 
+## Status
+done
+
+## Completed
+2026-01-23
+
 ## Description
 
 Enable Unix-style piping into workflows by routing stdin to workflow inputs marked with `"stdin": true`. This makes `cat data.json | pflow transform.json | pflow analyze.json` work with explicit workflow configuration.
-
-## Status
-not started
 
 ## Priority
 

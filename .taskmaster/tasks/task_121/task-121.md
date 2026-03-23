@@ -5,7 +5,6 @@
 Enable users and agents to write automated, repeatable tests for `.pflow.md` workflows. Workflows have declared inputs and outputs, and nodes communicate through a shared store — this architecture naturally supports mocking at the node level and asserting on workflow outputs. Without testability, modifying and re-publishing workflows is reckless rather than confident.
 
 ## Status
-
 not started
 
 ## Priority

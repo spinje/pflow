@@ -5,7 +5,6 @@
 Make ALL CLI error paths respect `--output-format json` with a unified error structure. Currently, ~72% of error-related functions output plain text even when JSON is requested, and the errors that do output JSON use inconsistent structures.
 
 ## Status
-
 not started
 
 ## Priority

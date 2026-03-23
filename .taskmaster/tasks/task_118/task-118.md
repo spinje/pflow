@@ -5,7 +5,6 @@
 Add full linting support for code blocks in markdown workflows (ruff for Python, shellcheck for shell) and refactor the shell node to inject template variables as bash variables instead of inline string replacement. This makes both Python and shell blocks genuinely lintable with standard tooling.
 
 ## Status
-
 not started
 
 ## Priority

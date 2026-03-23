@@ -5,7 +5,6 @@
 Add strict validation in `prepare_inputs()` that fails fast when CLI-provided values cannot be coerced to their declared types, giving users immediate actionable feedback instead of deferring errors to downstream code nodes.
 
 ## Status
-
 not started
 
 ## Priority

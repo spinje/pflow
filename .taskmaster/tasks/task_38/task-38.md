@@ -1,5 +1,11 @@
 # Task 38: Conditional Branching in Workflows
 
+## Status
+done
+
+## Completed
+2026-03-14
+
 ## Overview
 
 Add conditional branching to `.pflow.md` workflows. Python code nodes can set `next` to dynamically route execution. Any node can use `- next:` for static routing and `- on-error:` for error handling. PocketFlow and the compiler already support action-based transitions — the work is in the markdown format, parser, and python code node.
@@ -257,10 +263,6 @@ Final step
 5. Invalid targets caught at parse time with helpful error messages
 6. Loop guard prevents infinite execution
 7. `make test` and `make check` pass
-
-## Status
-
-complete — implemented and merged
 
 ## Dependencies
 

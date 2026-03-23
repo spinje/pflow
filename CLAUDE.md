@@ -195,6 +195,8 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 128: Branch Convergence for Conditional Workflows
 - ✅ Task 129: External File References for Code Block Parameters
 - ✅ Task 130: Workflow Bundling on Save
+- ✅ Task 66: Structured Output for LLM Node
+- ✅ Task 92: Remove Planning Module and Repair System
 
 ### Planned Features (in order of priority)
 
@@ -221,7 +223,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 106: Workflow Iteration Cache
 
 **v1.0.0 - Security & Sandboxing:**
-- Task 66: Structured Output for LLM Node
 - Task 126: Structured Output for Claude Code Node
 - Task 87: Sandboxed Execution Runtime
 - Task 91: Export as MCP Server Packages

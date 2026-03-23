@@ -5,7 +5,6 @@
 Add a proper way to install and manage third-party Python packages for code nodes, without requiring users to understand `uv tool` vs `pipx` internals or risk losing existing extras.
 
 ## Status
-
 not started
 
 ## Priority

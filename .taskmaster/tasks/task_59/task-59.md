@@ -1,7 +1,10 @@
 # Task 59: Nested Workflows — Polish and Ship
 
 ## Status
-in progress
+done
+
+## Completed
+2026-03-14
 
 ## Dependencies
 - Task 20: Implement Nested Workflow Execution (DONE — built WorkflowExecutor)

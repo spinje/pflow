@@ -5,8 +5,10 @@
 Change `pflow workflow save` to package workflows and all their file dependencies (sub-workflows, external prompt files, code files) into a self-contained folder. Fixes an existing bug where saved workflows with sub-workflow references break, and supports the new file references from Task 129.
 
 ## Status
+done
 
-not started
+## Completed
+2026-03-22
 
 ## Priority
 

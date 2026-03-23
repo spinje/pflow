@@ -5,8 +5,10 @@
 Allow any code-block parameter (prompt, code, command, batch, output_schema, etc.) to reference an external file instead of inline content. The system auto-detects file paths, reads the file, and substitutes the content as if it were inline — before compilation and validation, so template variables inside external files are validated normally.
 
 ## Status
+done
 
-not started
+## Completed
+2026-03-21
 
 ## Priority
 

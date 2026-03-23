@@ -5,7 +5,6 @@
 Add pause/resume capability to pflow workflows so execution halts at designated steps for human approval before continuing. Makes pflow trustworthy for workflows that take real-world actions (send messages, create PRs, deploy, delete).
 
 ## Status
-
 not started
 
 ## Priority
