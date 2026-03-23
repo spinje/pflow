@@ -99,11 +99,12 @@ Downstream: `${process_title.result}`
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
-- **Thread-safe LLM interception**: Reference counting + thread-local collectors
-- **Configurable limits**: 5 env vars (`PFLOW_TRACE_*_MAX`)
-- **Multi-source prompt capture**: Interceptor → `__llm_calls__` → shared store
-- Repair tracking with attempt numbers, errors, workflow diffs
-- Mutation analysis: added/removed/modified keys
+- **Format 2.0.0**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events` (no `shared_before`/`shared_after` snapshots, no value truncation)
+- **Thread-safe LLM interception**: Reference counting + per-thread collector lookup for top-level workflows. Child collectors skip interception (`enable_llm_interception=False`) — prompts captured via `template_resolutions` instead.
+- **Prompt capture**: Interceptor (ground truth for top-level) → `node_output["prompt"]` fallback. Child workflow prompts in `template_resolutions["prompt"]["resolved"]`.
+- **Batch item tracing**: Per-item events collected via `_batch_trace` shared-store accumulator (GIL-safe for parallel), sanitized by `_sanitize_batch_items()`.
+- **Sub-workflow tracing**: Child collectors created by `WorkflowExecutor`, events embedded in parent trace as `sub_workflow_events`.
+- Mutation analysis: key-level added/removed (no value-change detection — requires full snapshots removed in 2.0.0)
 
 ### IR Preparation (`compilation/ir_preparation.py`)
 

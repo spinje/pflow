@@ -2325,11 +2325,10 @@ class TestBatchMetadata:
         assert metadata["retry_wait"] == 1.5
 
     def test_batch_metadata_captured_in_trace(self):
-        """batch_metadata is captured in workflow traces via shared_after.
+        """batch_metadata is captured in workflow traces via node_output.
 
-        This simulates what InstrumentedNodeWrapper does: it captures dict(shared)
-        after node execution and passes it to WorkflowTraceCollector.record_node_execution().
-        The batch_metadata should appear in the trace's shared_after field.
+        Format 2.0.0: InstrumentedNodeWrapper passes node_output (the node's
+        namespace from shared store) to WorkflowTraceCollector.record_node_execution().
         """
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
@@ -2344,36 +2343,32 @@ class TestBatchMetadata:
         collector = WorkflowTraceCollector(workflow_name="test-batch")
         shared = {"data": ["a", "b", "c"]}
 
-        # Capture shared_before (like InstrumentedNodeWrapper does)
-        shared_before = dict(shared)
-
         # Execute batch node
         items = batch.prep(shared)
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Capture shared_after (like InstrumentedNodeWrapper does)
-        shared_after = dict(shared)
+        # Extract node_output (like InstrumentedNodeWrapper does in format 2.0.0)
+        node_output = dict(shared.get("batch_node", {}))
 
         # Record trace event (simulating InstrumentedNodeWrapper._record_trace)
         collector.record_node_execution(
             node_id="batch_node",
             node_type="ShellNode",  # Inner node type, not PflowBatchNode
             duration_ms=100.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output=node_output,
         )
 
         # Verify batch_metadata appears in trace
         assert len(collector.events) == 1
         event = collector.events[0]
 
-        # The batch_metadata should be in shared_after under the node's namespace
-        assert "batch_node" in event["shared_after"]
-        assert "batch_metadata" in event["shared_after"]["batch_node"]
+        # batch_metadata should be in node_output
+        assert "node_output" in event
+        assert "batch_metadata" in event["node_output"]
 
-        metadata = event["shared_after"]["batch_node"]["batch_metadata"]
+        metadata = event["node_output"]["batch_metadata"]
         assert metadata["parallel"] is True
         assert metadata["max_concurrent"] == 3
         assert metadata["execution_mode"] == "parallel"

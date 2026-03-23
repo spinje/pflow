@@ -71,6 +71,7 @@ class TemplateAwareNodeWrapper:
         self.optional_input_keys = optional_input_keys or set()  # Branch convergence
         self.template_params: dict[str, Any] = {}  # Params containing templates
         self.static_params: dict[str, Any] = {}  # Params without templates
+        self.last_resolutions: dict[str, Any] = {}  # Template resolutions for trace capture
 
         # Build type cache for performance (one-time cost)
         self._expected_types = self._build_type_cache()
@@ -639,6 +640,11 @@ class TemplateAwareNodeWrapper:
                     extra={"node_id": self.node_id, "param": key},
                 )
 
+        # Store resolutions for trace capture (read by InstrumentedNodeWrapper)
+        self.last_resolutions = {
+            key: {"template": self.template_params[key], "resolved": resolved_params[key]} for key in resolved_params
+        }
+
         # Temporarily update inner node params with resolved values
         original_params = self.inner_node.params
         merged_params = {**self.static_params, **resolved_params}
@@ -684,7 +690,14 @@ class TemplateAwareNodeWrapper:
             value: Value to set
         """
         # Define proxy's own attributes
-        wrapper_attrs = {"inner_node", "node_id", "initial_params", "template_params", "static_params"}
+        wrapper_attrs = {
+            "inner_node",
+            "node_id",
+            "initial_params",
+            "template_params",
+            "static_params",
+            "last_resolutions",
+        }
 
         if name in wrapper_attrs:
             # Set on wrapper itself

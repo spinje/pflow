@@ -213,12 +213,6 @@ def _handle_compilation_error(
     else:
         _format_compilation_error_text(error, verbose)
 
-    # Save trace if requested
-    if workflow_trace:
-        trace_path = workflow_trace.save_to_file()
-        if trace_path and verbose and output_format != "json":
-            click.echo(f"cli: Trace saved to {trace_path}", err=True)
-
     ctx.exit(1)
 
 
@@ -241,11 +235,6 @@ def _handle_workflow_error(
     else:
         # Text mode: Show detailed rich error context
         _display_text_error_details(result, verbose=verbose)
-
-    # Save trace even on error
-    if workflow_trace:
-        trace_file = workflow_trace.save_to_file(llm_calls=shared_storage.get("__llm_calls__"))
-        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     ctx.exit(1)
 
@@ -288,11 +277,6 @@ def _handle_workflow_success(
         status=status,
         warnings=result_warnings,
     )
-
-    # Save trace if requested (AFTER handling output so JSON is included)
-    if workflow_trace:
-        trace_file = workflow_trace.save_to_file(llm_calls=shared_storage.get("__llm_calls__"))
-        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     # Only show success message if we didn't produce output
     # Use status from result if available
@@ -481,11 +465,6 @@ def _handle_workflow_exception(
                 # Fallback to generic error message
                 click.echo(f"cli: Workflow execution failed - {e}", err=True)
                 click.echo("cli: This may indicate a bug in the workflow or nodes", err=True)
-
-    # Save trace on error if requested
-    if workflow_trace:
-        trace_file = workflow_trace.save_to_file(llm_calls=shared_storage.get("__llm_calls__"))
-        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
 
     ctx.exit(1)
 
@@ -723,6 +702,28 @@ def _validate_before_execution(
             click.echo(f"⚠️  {warning}", err=True)
 
 
+def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> None:
+    """Save trace to file and generate report if requested.
+
+    Called from the finally block — survives Ctrl+C (SystemExit triggers finally).
+    """
+    if not workflow_trace:
+        return
+    try:
+        trace_file = workflow_trace.save_to_file()
+        if trace_file:
+            _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
+            report = ctx.obj.get("report")
+            if report:
+                from pflow.core.trace_report import generate_report
+
+                report_dir = generate_report(trace_file, report)
+                if report_dir:
+                    _echo_trace(ctx, f"📋 Execution report: {report_dir}")
+    except Exception as trace_err:
+        logger.error(f"Failed to save trace: {trace_err}", exc_info=True)
+
+
 def execute_json_workflow(
     ctx: click.Context,
     ir_data: dict[str, Any],
@@ -826,6 +827,7 @@ def execute_json_workflow(
         )
 
     finally:
+        _save_trace_and_report(ctx, workflow_trace)
         _cleanup_workflow_resources(workflow_trace, stdin_data, verbose)
 
 
@@ -1442,7 +1444,9 @@ def _handle_invalid_workflow_input(ctx: click.Context, workflow: tuple[str, ...]
 # NOTE: This MUST be @click.command, not @click.group with catch-all argument.
 # Click groups consume ALL positional args when using @click.argument("workflow", nargs=-1),
 # preventing subcommands from being recognized. The wrapper (main_wrapper.py) handles routing.
-@click.command(context_settings={"allow_interspersed_args": False})
+# allow_interspersed_args=True: flags like --report work after the workflow path.
+# Safe because workflow params use key=value syntax (no -- prefix), not Click-style options.
+@click.command(context_settings={"allow_interspersed_args": True})
 @click.pass_context
 @click.option("--version", is_flag=True, help="Show the pflow version")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed execution output")
@@ -1459,6 +1463,19 @@ def _handle_invalid_workflow_input(ctx: click.Context, workflow: tuple[str, ...]
     is_flag=True,
     help="Disable workflow execution trace saving (enabled by default)",
 )
+@click.option(
+    "--report",
+    "report_flag",
+    is_flag=True,
+    default=False,
+    help="Generate execution report (directory of .md files) in ~/.pflow/reports/",
+)
+@click.option(
+    "--report-dir",
+    "report_dir",
+    default=None,
+    help="Custom output directory for execution report (implies --report)",
+)
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
@@ -1469,6 +1486,8 @@ def workflow_command(
     output_format: str,
     print_flag: bool,
     no_trace: bool,
+    report_flag: bool,
+    report_dir: str | None,
     validate_only: bool,
     workflow: tuple[str, ...],
 ) -> None:
@@ -1544,7 +1563,9 @@ def workflow_command(
         _inject_settings_env_vars()
 
         # Initialize context with configuration
-        trace_enabled = not no_trace
+        # --report / --report-dir implies tracing (can't generate report without a trace)
+        report_enabled = report_flag or report_dir is not None
+        trace_enabled = not no_trace or report_enabled
         _initialize_context(
             ctx,
             verbose,
@@ -1554,6 +1575,7 @@ def workflow_command(
             trace_enabled,
             validate_only,
         )
+        ctx.obj["report"] = report_dir or ("auto" if report_enabled else None)
 
         # Auto-discover and sync MCP servers
         # Only show MCP output if verbose AND not in print mode or JSON output

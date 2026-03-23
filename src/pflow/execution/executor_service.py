@@ -95,6 +95,12 @@ class WorkflowExecutorService:
 
         # Initialize shared store and registry
         shared_store = self._initialize_shared_store(shared_store, execution_params, stdin_data, metrics_collector)
+
+        # Store trace collector reference for sub-workflow propagation
+        # (picked up by _PROPAGATED_KEYS in WorkflowExecutor._create_child_storage)
+        if trace_collector:
+            shared_store["_trace_collector"] = trace_collector
+
         registry = Registry()
 
         try:

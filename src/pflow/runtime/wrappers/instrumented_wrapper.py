@@ -206,7 +206,7 @@ class InstrumentedNodeWrapper:
         shared: dict[str, Any],
         warning_msg: str,
         start_time: float,
-        shared_before: Optional[dict[str, Any]],
+        shared_keys_before: Optional[set[str]],
         callback: Optional[Any],
     ) -> str:
         """Handle API warning detection.
@@ -215,7 +215,7 @@ class InstrumentedNodeWrapper:
             shared: The shared store
             warning_msg: Warning message
             start_time: Start time for duration calculation
-            shared_before: Shared state before execution
+            shared_keys_before: Keys in shared store before execution
             callback: Progress callback
 
         Returns:
@@ -246,8 +246,8 @@ class InstrumentedNodeWrapper:
             with contextlib.suppress(Exception):
                 callback(self.node_id, "node_warning", warning_msg, depth)
 
-        # Record trace
-        self._record_trace(duration_ms, shared_before, dict(shared), success=False)
+        # Record trace with warning message as error context
+        self._record_trace(duration_ms, shared, shared_keys_before, success=False, error=warning_msg)
 
         logger.info(f"Node {self.node_id} detected API warning: {warning_msg}")
         return "error"  # Stop workflow but checkpoint is saved
@@ -385,11 +385,51 @@ class InstrumentedNodeWrapper:
                     f"Consider using a stronger model like 'gpt-5', 'claude-4-sonnet' or 'gemini-2.5-pro', and adding clearer JSON instructions."
                 )
 
+    def _find_template_wrapper(self) -> Any:
+        """Traverse wrapper chain to find TemplateAwareNodeWrapper.
+
+        Returns:
+            The template wrapper if found, None otherwise
+        """
+        current = self.inner_node
+        while current:
+            # Check by attribute presence (avoids import)
+            if hasattr(current, "last_resolutions"):
+                return current
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            else:
+                break
+        return None
+
+    def _find_batch_or_workflow_node(self) -> tuple[str | None, Any]:
+        """Traverse wrapper chain to find PflowBatchNode or WorkflowExecutor.
+
+        Returns:
+            Tuple of (type_name, node) or (None, None)
+        """
+        current = self.inner_node
+        while current:
+            cls_name = type(current).__name__
+            if cls_name == "PflowBatchNode":
+                return ("batch", current)
+            if cls_name == "WorkflowExecutor":
+                return ("workflow", current)
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            else:
+                break
+        return (None, None)
+
     def _record_trace(
         self,
         duration_ms: float,
-        shared_before: dict[str, Any] | None,
-        shared_after: dict[str, Any],
+        shared: dict[str, Any],
+        shared_keys_before: set[str] | None,
         success: bool,
         error: str | None = None,
     ) -> None:
@@ -397,29 +437,61 @@ class InstrumentedNodeWrapper:
 
         Args:
             duration_ms: Execution duration in milliseconds
-            shared_before: Shared store state before execution
-            shared_after: Shared store state after execution
+            shared: Current shared store (after execution)
+            shared_keys_before: Keys in shared store before execution
             success: Whether execution succeeded
             error: Error message if execution failed
         """
         if not self.trace:
             return
 
-        # TODO: Capture template resolutions if they were logged
-        template_resolutions: dict[str, Any] = {}
-
-        # Get the actual node class, not wrapper class
         actual_node_class = self._get_actual_node_class()
+
+        # Get template resolutions from wrapper chain
+        template_wrapper = self._find_template_wrapper()
+        template_resolutions = template_wrapper.last_resolutions if template_wrapper else {}
+
+        # Get node params (original, before resolution)
+        node_params = self._get_node_params() or {}
+
+        # Get node output (just this node's namespace, not full store)
+        node_output = shared.get(self.node_id)
+        if isinstance(node_output, dict):
+            node_output = dict(node_output)  # shallow copy
+        elif node_output is not None:
+            node_output = {"value": node_output}
+        else:
+            node_output = {}
+
+        # Compute mutations from key sets
+        shared_keys_after = set(shared.keys())
+        mutations = {
+            "added": sorted(shared_keys_after - shared_keys_before) if shared_keys_before is not None else [],
+            "removed": sorted(shared_keys_before - shared_keys_after) if shared_keys_before is not None else [],
+            "modified": [],  # Can't detect value changes without full snapshot — acceptable tradeoff
+        }
+
+        # Check for nested trace data (batch items, sub-workflow events)
+        batch_or_wf_type, batch_or_wf_node = self._find_batch_or_workflow_node()
+        batch_items = None
+        sub_workflow_events = None
+        if batch_or_wf_type == "batch" and hasattr(batch_or_wf_node, "_trace_items"):
+            batch_items = batch_or_wf_node._trace_items
+        elif batch_or_wf_type == "workflow" and hasattr(batch_or_wf_node, "_child_trace_events"):
+            sub_workflow_events = batch_or_wf_node._child_trace_events
 
         self.trace.record_node_execution(
             node_id=self.node_id,
             node_type=actual_node_class.__name__,
             duration_ms=duration_ms,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=success,
             error=error,
+            node_params=node_params,
             template_resolutions=template_resolutions,
+            node_output=node_output,
+            mutations=mutations,
+            batch_items=batch_items,
+            sub_workflow_events=sub_workflow_events,
         )
 
     def _compute_node_config(self) -> dict[str, Any]:
@@ -635,6 +707,8 @@ class InstrumentedNodeWrapper:
         """
         # Capture state before execution (for tracing and prompt capture)
         start_time = time.perf_counter()
+        shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else None
+        # Keep a shallow copy for LLM prompt lookup (used by _capture_llm_usage, _validate_llm_json_output)
         shared_before = dict(shared) if (self.trace or self.metrics) else None
 
         # Set up LLM interception if needed
@@ -679,7 +753,7 @@ class InstrumentedNodeWrapper:
             # Check for API warning patterns (execution succeeded but returned error data)
             warning_msg = detect_api_warning(self.node_id, shared)
             if warning_msg:
-                return self._handle_api_warning(shared, warning_msg, start_time, shared_before, callback)
+                return self._handle_api_warning(shared, warning_msg, start_time, shared_keys_before, callback)
 
             # Cache successful results
             self._cache_result_if_successful(shared, result)
@@ -700,7 +774,7 @@ class InstrumentedNodeWrapper:
             # Record trace if collector present
             # Node returning "error" action is a failure, regardless of API warning detection
             trace_success = result != "error"
-            self._record_trace(duration_ms, shared_before, dict(shared), success=trace_success)
+            self._record_trace(duration_ms, shared, shared_keys_before, success=trace_success)
 
             # Call progress callback for node complete if present
             self._call_completion_callback(shared, callback, result, duration_ms)
@@ -715,7 +789,7 @@ class InstrumentedNodeWrapper:
                 self.metrics.record_node_execution(self.node_id, duration_ms)
 
             # Record trace with error
-            self._record_trace(duration_ms, shared_before, dict(shared), success=False, error=str(e))
+            self._record_trace(duration_ms, shared, shared_keys_before, success=False, error=str(e))
 
             # Record failure in checkpoint
             shared["__execution__"]["failed_node"] = self.node_id

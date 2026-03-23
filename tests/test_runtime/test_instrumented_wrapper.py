@@ -2,7 +2,7 @@
 
 import copy
 from typing import Any
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -389,8 +389,10 @@ class TestErrorHandling:
         assert call_kwargs["node_type"] == "ErrorNode"
         assert not call_kwargs["success"]
         assert call_kwargs["error"] == "Test error"
-        # shared_before is captured before __llm_calls__ is added
-        assert call_kwargs["shared_before"] == {"initial": "state"}
+        # Format 2.0.0: no shared_before/shared_after, uses node_output/mutations instead
+        assert "shared_before" not in call_kwargs
+        assert "node_output" in call_kwargs
+        assert "mutations" in call_kwargs
 
     def test_exception_propagated(self):
         """Test that exceptions are re-raised after recording metrics."""
@@ -445,24 +447,13 @@ class TestCollectorIntegration:
         assert call_kwargs["node_id"] == "test_node"
         assert call_kwargs["node_type"] == "SimpleTestNode"
         assert isinstance(call_kwargs["duration_ms"], float)
-        assert call_kwargs["shared_before"] == {"input": "data"}
-        # shared_after will include __llm_calls__ list and __execution__ checkpoint added by wrapper
-        expected_shared = {
-            "input": "data",
-            "test_output": "executed",
-            "__llm_calls__": [],
-            "__cache_hits__": [],
-            "__execution__": {
-                "completed_nodes": ["test_node"],
-                "node_actions": {"test_node": "test_result"},
-                "node_hashes": {"test_node": ANY},  # Hash value depends on config
-                "failed_node": None,
-                "node_visit_counts": {"test_node": 1},
-            },
-        }
-        assert call_kwargs["shared_after"] == expected_shared
-        # Verify that a hash was computed
-        assert isinstance(call_kwargs["shared_after"]["__execution__"]["node_hashes"]["test_node"], str)
+        # Format 2.0.0: no shared_before/shared_after
+        assert "shared_before" not in call_kwargs
+        assert "shared_after" not in call_kwargs
+        # node_output is the node's namespace from shared store
+        assert "node_output" in call_kwargs
+        # mutations computed from key sets
+        assert "mutations" in call_kwargs
         assert call_kwargs["success"]
         assert call_kwargs["error"] is None
         assert call_kwargs["template_resolutions"] == {}

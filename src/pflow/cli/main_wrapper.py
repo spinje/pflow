@@ -41,6 +41,7 @@ def cli_main() -> None:
     from .commands.registry import registry
     from .commands.settings import settings
     from .commands.skills import skill
+    from .commands.trace import trace
     from .commands.workflow import workflow
     from .main import workflow_command
 
@@ -60,6 +61,7 @@ def cli_main() -> None:
         "instructions": instructions,
         "read-fields": read_fields,
         "skill": skill,
+        "trace": trace,
     }
 
     if first_arg in subcommand_routes:

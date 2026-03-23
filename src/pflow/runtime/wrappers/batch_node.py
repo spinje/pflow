@@ -251,6 +251,11 @@ class PflowBatchNode(Node):
         if "__llm_calls__" not in shared:
             shared["__llm_calls__"] = []
 
+        # Initialize batch trace accumulator (same pattern as __llm_calls__)
+        if "_batch_trace" not in shared:
+            shared["_batch_trace"] = {}
+        shared["_batch_trace"][self.node_id] = []
+
         # Handle inline array vs template reference
         if isinstance(self.items_template, list):
             # Inline array - resolve templates inside each element
@@ -369,6 +374,81 @@ class PflowBatchNode(Node):
             if isinstance(llm_calls, list):
                 llm_calls.append(llm_call_data)
 
+    @staticmethod
+    def _find_in_chain(node_chain: Any, attr_name: str) -> Any:
+        """Traverse wrapper chain to find a node with the given attribute set.
+
+        Returns:
+            The attribute value if found, None otherwise
+        """
+        current = node_chain
+        while current:
+            value = getattr(current, attr_name, None)
+            if value:
+                return value
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            else:
+                break
+        return None
+
+    def _capture_item_trace(
+        self,
+        item_shared: dict[str, Any],
+        idx: int,
+        item: Any,
+        duration_ms: float | None,
+        error: dict[str, Any] | None,
+        node_chain: Any = None,
+    ) -> None:
+        """Capture per-item trace event, following __llm_calls__ pattern.
+
+        Args:
+            item_shared: The isolated shared store for this batch item
+            idx: Item index
+            item: Original batch item value
+            duration_ms: Execution duration in milliseconds
+            error: Error info dict if item failed
+            node_chain: Node chain to traverse for template resolutions (for parallel: deep-copied chain)
+        """
+        trace_list = self._shared.get("_batch_trace", {}).get(self.node_id)
+        if trace_list is None:
+            return
+
+        item_event: dict[str, Any] = {
+            "index": idx,
+            "item": item,
+            "success": error is None,
+            "duration_ms": round(duration_ms, 2) if duration_ms else 0,
+        }
+        if error:
+            item_event["error"] = error.get("error", str(error))
+
+        # Capture item's node output
+        node_output = item_shared.get(self.node_id)
+        if isinstance(node_output, dict):
+            item_event["node_output"] = dict(node_output)
+
+        # Capture template resolutions and child events from wrapper chain
+        chain = node_chain or self.inner_node
+        resolutions = self._find_in_chain(chain, "last_resolutions")
+        if resolutions:
+            item_event["template_resolutions"] = resolutions
+        child_events = self._find_in_chain(chain, "_child_trace_events")
+        if child_events is not None:
+            item_event["events"] = child_events
+
+        # LLM data from item output
+        if isinstance(node_output, dict):
+            for src_key, dst_key in [("llm_usage", "llm_call"), ("response", "llm_response"), ("prompt", "llm_prompt")]:
+                value = node_output.get(src_key)
+                if isinstance(value, dict if src_key == "llm_usage" else str):
+                    item_event[dst_key] = value
+
+        trace_list.append(item_event)  # GIL-protected for parallel
+
     def _exec_single(self, idx: int, item: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None, float]:
         """Execute single item with thread-safe retry logic.
 
@@ -386,6 +466,7 @@ class PflowBatchNode(Node):
         """
         start_time = time.perf_counter()
         last_exception: Exception | None = None
+        item_shared: dict[str, Any] = {}  # Initialized here for retries-exhausted trace capture
 
         for retry in range(self.max_retries):
             try:
@@ -432,9 +513,13 @@ class PflowBatchNode(Node):
 
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
-                    # Error in result dict - no exception to preserve
-                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)
+                    error_info = {"index": idx, "item": item, "error": error_msg, "exception": None}
+                    self._capture_item_trace(
+                        item_shared, idx, item, duration_ms, error_info, node_chain=self.inner_node
+                    )
+                    return (result, error_info, duration_ms)
 
+                self._capture_item_trace(item_shared, idx, item, duration_ms, None, node_chain=self.inner_node)
                 return (result, None, duration_ms)
 
             except Exception as e:
@@ -455,11 +540,9 @@ class PflowBatchNode(Node):
 
         # All retries exhausted - store the original exception for fail_fast re-raise
         duration_ms = (time.perf_counter() - start_time) * 1000
-        return (
-            None,
-            {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception},
-            duration_ms,
-        )
+        error_info = {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception}
+        self._capture_item_trace(item_shared, idx, item, duration_ms, error_info, node_chain=self.inner_node)
+        return (None, error_info, duration_ms)
 
     def _exec_single_with_node(
         self, idx: int, item: Any, item_shared: dict[str, Any], thread_node: Any
@@ -523,8 +606,11 @@ class PflowBatchNode(Node):
 
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
-                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)
+                    error_info = {"index": idx, "item": item, "error": error_msg, "exception": None}
+                    self._capture_item_trace(item_shared, idx, item, duration_ms, error_info, node_chain=thread_node)
+                    return (result, error_info, duration_ms)
 
+                self._capture_item_trace(item_shared, idx, item, duration_ms, None, node_chain=thread_node)
                 return (result, None, duration_ms)
 
             except Exception as e:
@@ -544,11 +630,9 @@ class PflowBatchNode(Node):
                 break
 
         duration_ms = (time.perf_counter() - start_time) * 1000
-        return (
-            None,
-            {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception},
-            duration_ms,
-        )
+        error_info = {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception}
+        self._capture_item_trace(item_shared, idx, item, duration_ms, error_info, node_chain=thread_node)
+        return (None, error_info, duration_ms)
 
     def _exec_sequential(self, items: list[Any]) -> list[dict[str, Any] | None]:
         """Execute items sequentially using _exec_single.
@@ -866,6 +950,11 @@ class PflowBatchNode(Node):
                 "timing": timing_stats,
             },
         }
+
+        # Store batch trace items for InstrumentedNodeWrapper to read
+        batch_trace = shared.get("_batch_trace", {}).get(self.node_id, [])
+        if batch_trace:
+            self._trace_items = batch_trace
 
         logger.debug(
             f"Batch node '{self.node_id}' completed: {success_count}/{len(exec_res)} successful",

@@ -359,9 +359,11 @@ class TestTraceGeneration:
                 for event in trace_data["nodes"]:
                     assert "node_id" in event
                     assert "duration_ms" in event
-                    assert "shared_before" in event
-                    assert "shared_after" in event
+                    # Format 2.0.0: focused fields replace shared_before/shared_after
+                    assert "shared_before" not in event
+                    assert "shared_after" not in event
                     assert "mutations" in event
+                    assert "node_output" in event
                     assert event["success"] is True
 
         finally:
