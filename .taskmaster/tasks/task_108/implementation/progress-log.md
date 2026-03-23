@@ -1121,7 +1121,7 @@ Phase 1 shows WHAT happened — one file per node with rendered prompts, respons
 
 | File | Lines | Changes |
 |------|-------|---------|
-| `src/pflow/core/trace_report.py` | +270 | 10 new functions: `_compute_event_cost`, `_format_cost`, `_collect_errors`, `_suggest_template_fixes`, `_check_path_against_upstream`, `_build_output_lookup`, `_detect_anomalies`, `_check_event_anomaly`, `_append_error_section`, `_append_warning_section`, `_append_batch_item_warnings`. Updated `_build_summary` (cost in header, error/warning sections), `_format_pipeline_table` (Cost column), `_build_node_summary` (Cost column, container cost, batch item warnings). |
+| `src/pflow/core/trace_report.py` | +270 | 11 new functions: `_compute_event_cost`, `_format_cost`, `_collect_errors`, `_suggest_template_fixes`, `_check_path_against_upstream`, `_build_output_lookup`, `_detect_anomalies`, `_check_event_anomaly`, `_append_error_section`, `_append_warning_section`, `_append_batch_item_warnings`. Updated `_build_summary` (cost in header, error/warning sections), `_format_pipeline_table` (Cost column), `_build_node_summary` (Cost column, container cost, batch item warnings). |
 | `src/pflow/runtime/workflow_trace.py` | +10 | `_collect_llm_summary()` now accumulates and returns `total_cost_usd`. |
 | `src/pflow/runtime/wrappers/template_wrapper.py` | +12 | `self.last_resolutions` set before each `raise` in the resolution loop (2 error paths). Type annotation added for `resolved_params`. |
 
@@ -1242,4 +1242,31 @@ If ANY link breaks, `template_resolutions` silently becomes `{}` — the report 
 
 ---
 
-*Phase 2 complete. `summary.md` is now actionable — errors, suggestions, warnings, and cost data surface without opening individual node files.*
+### Code Review Fixes
+
+Two independent reviews (narrative + line-verified) produced 9 deduplicated findings. 7 confirmed, 2 disputed.
+
+**Findings evaluated**: 9 unique (11 raw across both reviews, with overlaps W1≡F, W2≡G, W3≡H, S1≡A).
+
+**Disputed findings and reasoning**:
+- *W2/G — Rebuild output lookup per failed event*: `_suggest_template_fixes` calls `_build_output_lookup` for each failed event. Workflows rarely have >1 failed node (strict mode stops on first failure), and the lookup iterates a handful of events. Adding an `output_lookup` parameter changes the API and test callsites for zero practical benefit.
+- *S3 — Test for `cost_usd: None`*: The `or 0.0` guard is self-evident Python. Testing it tests the language, not our logic.
+- *S4 — Use `_format_cost` for container cost*: The manual `f"- Cost: ${cost:.4f}"` is equivalent given the `if is not None` guard. Not worth a change.
+
+**Fixes applied (7)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | `if cost:` → `if cost is not None and cost > 0:` — truthiness bug where `$0.0000` total cost was silently skipped in header (inconsistent with pipeline table which shows `$0.0000` via `_format_cost`) | `trace_report.py:320-322` |
+| 2 | Extracted `all_events = trace.get("nodes", [])` once before pipeline table loop — eliminated duplicate `.get()` call | `trace_report.py:335,346` |
+| 3 | `if not output or output == {}:` → `if not output:` — redundant clause (`not {}` is already `True`) in 2 locations | `trace_report.py:185,497` |
+| 4 | Updated `_collect_llm_summary` docstring Returns to include `total_cost_usd` — drift from Phase 2 addition | `workflow_trace.py:282` |
+| 5 | Fixed progress log function count: "10 new functions" → "11 new functions" (missed `_append_batch_item_warnings`) | `progress-log.md` |
+| 6 | Added D9 invariant comment to `_compute_event_cost` — documents that batch items have `llm_call` XOR `events` (same invariant documented in `workflow_trace.py` but missing from `trace_report.py`) | `trace_report.py:36-37` |
+| 7 | Replaced misleading comment on `_build_output_lookup` with docstring explaining WHY depth is limited — pflow templates are scoped, so a node can only reference outputs from its own workflow level; sub-workflow internal nodes are invisible to parent-scope templates | `trace_report.py:150-158` |
+
+4346 tests pass, `make check` clean.
+
+---
+
+*Phase 2 complete with review fixes. `summary.md` is now actionable — errors, suggestions, warnings, and cost data surface without opening individual node files.*
