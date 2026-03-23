@@ -267,17 +267,17 @@ class TestSpecialKeysBypassNamespacing:
         # Write multiple special keys
         proxy["__execution__"] = {"completed": []}
         proxy["__warnings__"] = {"node1": "warning"}
-        proxy["__llm_calls__"] = []
+        proxy["__cache_hits__"] = []
 
         # All should be at root
         assert "__execution__" in shared
         assert "__warnings__" in shared
-        assert "__llm_calls__" in shared
+        assert "__cache_hits__" in shared
 
         # None should be in namespace
         assert "__execution__" not in shared["test-node"]
         assert "__warnings__" not in shared["test-node"]
-        assert "__llm_calls__" not in shared["test-node"]
+        assert "__cache_hits__" not in shared["test-node"]
 
     def test_regular_keys_still_namespaced(self):
         """Regular keys should still be namespaced after special key fix."""
@@ -356,12 +356,12 @@ class TestSpecialKeysBypassNamespacing:
         # Write mixed keys
         proxy["__execution__"] = {"special": "root"}
         proxy["output"] = {"regular": "namespaced"}
-        proxy["__llm_calls__"] = []
+        proxy["__cache_hits__"] = []
         proxy["result"] = "data"
 
         # Special keys at root
         assert shared["__execution__"] == {"special": "root"}
-        assert shared["__llm_calls__"] == []
+        assert shared["__cache_hits__"] == []
 
         # Regular keys in namespace
         assert shared["test-node"]["output"] == {"regular": "namespaced"}
@@ -369,4 +369,4 @@ class TestSpecialKeysBypassNamespacing:
 
         # Special keys NOT in namespace
         assert "__execution__" not in shared["test-node"]
-        assert "__llm_calls__" not in shared["test-node"]
+        assert "__cache_hits__" not in shared["test-node"]

@@ -96,10 +96,17 @@ class WorkflowExecutorService:
         # Initialize shared store and registry
         shared_store = self._initialize_shared_store(shared_store, execution_params, stdin_data, metrics_collector)
 
+        # Always create a trace collector if none provided.
+        # Cost tracking via collect_llm_calls() needs it regardless of --no-trace.
+        # The --no-trace flag only skips the file save, not collection.
+        if trace_collector is None:
+            from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+            trace_collector = WorkflowTraceCollector(workflow_name or "workflow")
+
         # Store trace collector reference for sub-workflow propagation
         # (picked up by _PROPAGATED_KEYS in WorkflowExecutor._create_child_storage)
-        if trace_collector:
-            shared_store["_trace_collector"] = trace_collector
+        shared_store["_trace_collector"] = trace_collector
 
         registry = Registry()
 
@@ -189,7 +196,6 @@ class WorkflowExecutorService:
         # Initialize cross-cutting accumulators
         shared_store["__warnings__"] = {}
         if metrics_collector:
-            shared_store["__llm_calls__"] = []
             metrics_collector.record_workflow_start()
 
         # Add progress callback
@@ -659,7 +665,8 @@ class WorkflowExecutorService:
         """
         metrics_summary = None
         if metrics_collector:
-            llm_calls = shared_store.get("__llm_calls__", [])
+            trace = shared_store.get("_trace_collector") if shared_store else None
+            llm_calls = trace.collect_llm_calls() if trace else []
             metrics_summary = metrics_collector.get_summary(llm_calls)
 
         warnings = self._extract_warnings(shared_store)

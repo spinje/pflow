@@ -40,6 +40,7 @@ def trace_report(trace_path: str | None, output_path: str | None) -> None:
 
     report_dir = generate_report(trace_path, output_path or "auto")
     if report_dir:
+        click.echo(str(report_dir))  # stdout — pipeable for scripting
         click.echo(f"Report generated: {report_dir}", err=True)
     else:
         click.echo(

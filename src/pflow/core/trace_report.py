@@ -115,10 +115,14 @@ def _build_summary(trace: dict[str, Any], source_path: str = "N/A") -> str:
     lines.append(f"- Nodes: {trace.get('nodes_executed', 0)}")
 
     llm = trace.get("llm_summary")
-    if llm:
+    if llm and llm.get("total_calls", 0) > 0:
         lines.append(f"- LLM calls: {llm.get('total_calls', 0)}")
-        lines.append(f"- Tokens: {llm.get('total_tokens', 0):,}")
-        lines.append(f"- Models: {', '.join(llm.get('models_used', []))}")
+        tokens = llm.get("total_tokens", 0)
+        if tokens:
+            lines.append(f"- Tokens: {tokens:,}")
+        models = llm.get("models_used", [])
+        if models:
+            lines.append(f"- Models: {', '.join(models)}")
 
     lines.append(f"- Generated: {trace.get('end_time', '')}")
     lines.append("")
@@ -132,7 +136,7 @@ def _build_summary(trace: dict[str, Any], source_path: str = "N/A") -> str:
         node_id = event.get("node_id", "?")
         node_type = event.get("node_type", "?")
         duration = event.get("duration_ms", 0)
-        status = "ok" if event.get("success") else "FAILED"
+        status = "ok" if event.get("success") else "**FAILED**"
         lines.append(f"| {i} | {node_id} | {node_type} | {duration:.0f}ms | {status} |")
 
     lines.append("")
@@ -144,7 +148,10 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
     """Append metadata lines for a node event."""
     lines.append(f"- Type: {event.get('node_type', 'unknown')}")
     lines.append(f"- Time: {event.get('duration_ms', 0):.0f}ms")
-    lines.append(f"- Status: {'success' if event.get('success') else 'failed'}")
+    status = "success" if event.get("success") else "failed"
+    if event.get("cached"):
+        status += " [cached]"
+    lines.append(f"- Status: {status}")
 
     llm_call = event.get("llm_call")
     if llm_call:
@@ -161,6 +168,23 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
         lines.append(f"- Error: {error}")
 
 
+def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> None:
+    """Append a pipeline summary table for a list of node events."""
+    if not events:
+        return
+    lines.append("## Pipeline")
+    lines.append("")
+    lines.append("| # | Node | Type | Time | Status |")
+    lines.append("|---|------|------|------|--------|")
+    for i, event in enumerate(events, 1):
+        node_id = event.get("node_id", "?")
+        node_type = event.get("node_type", "?")
+        duration = event.get("duration_ms", 0)
+        status = "ok" if event.get("success") else "**FAILED**"
+        lines.append(f"| {i} | {node_id} | {node_type} | {duration:.0f}ms | {status} |")
+    lines.append("")
+
+
 def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
     """Append response/output sections for a node event."""
     if event.get("llm_response"):
@@ -171,7 +195,7 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
     elif event.get("node_output"):
         output = event["node_output"]
         for key, heading in [("stdout", "## stdout"), ("stderr", "## stderr")]:
-            if key in output:
+            if key in output and str(output[key]).strip():
                 lines.extend([heading, "", f"```\n{output[key]}\n```", ""])
         if "result" in output:
             lines.append("## Result")
@@ -243,8 +267,12 @@ def _build_node_summary(event: dict[str, Any]) -> str:
         for item in batch_items:
             idx = item.get("index", "?")
             dur = item.get("duration_ms", 0)
-            status = "ok" if item.get("success") else "FAILED"
+            status = "ok" if item.get("success") else "**FAILED**"
             lines.append(f"| {idx} | {dur:.0f}ms | {status} |")
+        lines.append("")
+
+    sub_events = event.get("sub_workflow_events", [])
+    _format_pipeline_table(sub_events, lines)
 
     return "\n".join(lines)
 
@@ -268,31 +296,17 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
         lines.append(f"- Error: {error}")
     lines.append("")
 
-    # Show rendered prompt if available
+    # Show rendered prompt/command (same logic as _build_node_file)
     resolutions = item.get("template_resolutions", {})
     if "prompt" in resolutions:
-        lines.append("## Prompt")
-        lines.append("")
-        lines.append(str(resolutions["prompt"].get("resolved", "")))
-        lines.append("")
+        lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])
     elif item.get("llm_prompt"):
-        lines.append("## Prompt")
-        lines.append("")
-        lines.append(item["llm_prompt"])
-        lines.append("")
+        lines.extend(["## Prompt", "", item["llm_prompt"], ""])
 
-    if item.get("llm_response"):
-        lines.append("## Response")
-        lines.append("")
-        lines.append(item["llm_response"])
-        lines.append("")
+    if "command" in resolutions:
+        lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])
 
-    node_output = item.get("node_output", {})
-    if node_output and not item.get("llm_response"):
-        lines.append("## Output")
-        lines.append("")
-        lines.append(f"```json\n{json.dumps(node_output, indent=2, default=str)}\n```")
-        lines.append("")
+    _format_node_output(item, lines)
 
     return "\n".join(lines)
 
@@ -304,4 +318,8 @@ def _build_batch_item_summary(item: dict[str, Any]) -> str:
     lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
     lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
     lines.append("")
+
+    child_events = item.get("events", [])
+    _format_pipeline_table(child_events, lines)
+
     return "\n".join(lines)

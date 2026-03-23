@@ -134,7 +134,7 @@ class TestWorkflowTraceCollector:
         assert filtered_value == "<binary data: 19 bytes>"
 
     def test_sanitize_for_json_system_keys(self, collector):
-        """Test that __dunder__ keys are filtered except __llm_calls__ and __metrics__."""
+        """Test that __dunder__ keys are filtered except __metrics__."""
         collector.record_node_execution(
             node_id="node-6",
             node_type="SystemKeyNode",
@@ -150,7 +150,7 @@ class TestWorkflowTraceCollector:
 
         filtered_output = collector.events[0]["node_output"]
         assert "__private__" not in filtered_output
-        assert "__llm_calls__" in filtered_output
+        assert "__llm_calls__" not in filtered_output  # No longer in allowlist
         assert "__metrics__" in filtered_output
         assert filtered_output["normal_key"] == "keep_this"
 
@@ -750,3 +750,179 @@ class TestWorkflowTraceCollector:
         assert "batch_items" not in event
         assert "sub_workflow_events" not in event
         assert "error" not in event
+
+
+class TestCollectLLMCalls:
+    """Tests for collect_llm_calls() — single source of truth for LLM cost data."""
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test-workflow")
+
+    def test_collect_llm_calls_empty(self, collector):
+        """No events → empty list."""
+        assert collector.collect_llm_calls() == []
+
+    def test_collect_llm_calls_no_llm_events(self, collector):
+        """Events without llm_call → empty list."""
+        collector.record_node_execution(node_id="shell-1", node_type="ShellNode", duration_ms=10.0, success=True)
+        assert collector.collect_llm_calls() == []
+
+    def test_collect_llm_calls_top_level(self, collector):
+        """Top-level event with llm_call is collected."""
+        collector.record_node_execution(
+            node_id="llm-1",
+            node_type="LLMNode",
+            duration_ms=500.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "input_tokens": 100, "output_tokens": 50}},
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["model"] == "gpt-4o"
+        assert calls[0]["node_id"] == "llm-1"
+        assert calls[0]["duration_ms"] == 500.0
+
+    def test_collect_llm_calls_batch_items(self, collector):
+        """LLM calls in batch items are collected."""
+        collector.record_node_execution(
+            node_id="batch-llm",
+            node_type="PflowBatchNode",
+            duration_ms=1000.0,
+            success=True,
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "m1", "input_tokens": 10, "output_tokens": 5},
+                },
+                {"index": 1, "item": "b", "success": True, "duration_ms": 100},  # no llm_call
+                {
+                    "index": 2,
+                    "item": "c",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "m1", "input_tokens": 20, "output_tokens": 10},
+                },
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 2
+        assert calls[0]["batch_item_index"] == 0
+        assert calls[1]["batch_item_index"] == 2
+
+    def test_collect_llm_calls_sub_workflow(self, collector):
+        """LLM calls in sub-workflow events are collected."""
+        collector.record_node_execution(
+            node_id="wf-1",
+            node_type="WorkflowExecutor",
+            duration_ms=2000.0,
+            success=True,
+            sub_workflow_events=[
+                {
+                    "node_id": "child-llm",
+                    "node_type": "LLMNode",
+                    "duration_ms": 300.0,
+                    "success": True,
+                    "llm_call": {"model": "claude-sonnet", "input_tokens": 200, "output_tokens": 100},
+                },
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["model"] == "claude-sonnet"
+        assert calls[0]["node_id"] == "child-llm"
+
+    def test_collect_llm_calls_nested(self, collector):
+        """LLM calls from multiple levels are flattened."""
+        collector.record_node_execution(
+            node_id="top-llm",
+            node_type="LLMNode",
+            duration_ms=100.0,
+            success=True,
+            node_output={"llm_usage": {"model": "top-model", "input_tokens": 10, "output_tokens": 5}},
+        )
+        collector.record_node_execution(
+            node_id="batch-wf",
+            node_type="PflowBatchNode",
+            duration_ms=500.0,
+            success=True,
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "x",
+                    "success": True,
+                    "duration_ms": 200,
+                    "events": [
+                        {
+                            "node_id": "nested-llm",
+                            "node_type": "LLMNode",
+                            "duration_ms": 150.0,
+                            "success": True,
+                            "llm_call": {"model": "nested-model", "input_tokens": 30, "output_tokens": 15},
+                        }
+                    ],
+                }
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 2
+        models = {c["model"] for c in calls}
+        assert models == {"top-model", "nested-model"}
+
+
+class TestCachedNodeEvent:
+    """D5: Verify cached=True flag appears in trace events."""
+
+    def test_cached_flag_in_event(self) -> None:
+        collector = WorkflowTraceCollector("test")
+        collector.record_node_execution(
+            node_id="cached-step",
+            node_type="ShellNode",
+            duration_ms=0.0,
+            success=True,
+            cached=True,
+        )
+        assert len(collector.events) == 1
+        assert collector.events[0]["cached"] is True
+
+    def test_non_cached_has_no_flag(self) -> None:
+        collector = WorkflowTraceCollector("test")
+        collector.record_node_execution(
+            node_id="normal-step",
+            node_type="ShellNode",
+            duration_ms=100.0,
+            success=True,
+        )
+        assert "cached" not in collector.events[0]
+
+
+class TestThreadLocalCurrentNode:
+    """D1: Verify _current_node uses thread-local storage."""
+
+    def test_current_node_is_thread_local(self) -> None:
+        """Setting current_node in one thread doesn't affect another."""
+        import threading
+
+        results: dict[str, str | None] = {}
+
+        def thread_fn(node_name: str) -> None:
+            WorkflowTraceCollector._thread_local.current_node = node_name
+            # Small sleep to let other thread also set its value
+            import time
+
+            time.sleep(0.01)
+            results[node_name] = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
+
+        t1 = threading.Thread(target=thread_fn, args=("node-A",))
+        t2 = threading.Thread(target=thread_fn, args=("node-B",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        # Each thread should see its own value, not the other's
+        assert results["node-A"] == "node-A"
+        assert results["node-B"] == "node-B"

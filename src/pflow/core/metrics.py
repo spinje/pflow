@@ -41,7 +41,7 @@ class MetricsCollector:
         Entries missing cost_usd are enriched here as a fallback.
 
         Args:
-            llm_calls: List of LLM call data from shared["__llm_calls__"]
+            llm_calls: List of LLM call data from trace.collect_llm_calls()
 
         Returns:
             Dict with total_cost_usd and pricing availability info
@@ -200,7 +200,7 @@ class MetricsCollector:
         """Generate metrics summary for JSON output.
 
         Args:
-            llm_calls: List of LLM call data from shared["__llm_calls__"]
+            llm_calls: List of LLM call data from trace.collect_llm_calls()
 
         Returns:
             Dictionary with top-level metrics and detailed breakdown

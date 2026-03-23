@@ -66,7 +66,6 @@ class WorkflowExecutor(BaseNode):
     # NOT execution-scoped state (__execution__, __cache_hits__, __template_errors__).
     _PROPAGATED_KEYS = (
         "__registry__",
-        "__llm_calls__",
         "__progress_callback__",
         "__mcp_pool__",
         "__warnings__",

@@ -58,7 +58,8 @@ def format_execution_success(
 
     # Add metrics from collector
     if metrics_collector:
-        llm_calls = shared_storage.get("__llm_calls__", [])
+        trace = shared_storage.get("_trace_collector") if shared_storage else None
+        llm_calls = trace.collect_llm_calls() if trace else []
         metrics_summary = metrics_collector.get_summary(llm_calls)
 
         # Add top-level metrics (CLI structure)

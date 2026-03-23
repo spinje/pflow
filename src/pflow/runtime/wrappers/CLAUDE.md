@@ -133,7 +133,7 @@ Batch processing wrapper. **Inherits from `Node`, not PocketFlow's `BatchNode`**
 - **`__index__`**: 0-based index injected into each item's shared store
 - **`item` is a reserved field** in batch results: inner node output `item` key is silently overwritten with original batch input (warning logged).
 
-**Critical — LLM cost tracking**: Batch initializes `__llm_calls__` in `prep()` and captures `llm_usage` from each item's isolated context via `_capture_item_llm_usage()`. Captures from both root and namespaced locations. Without this, LLM costs are lost when item context is discarded.
+**LLM cost tracking**: Batch captures `llm_usage` from each item's node output in `_capture_item_trace()`, enriching it with cost via `enrich_llm_usage_with_cost()`. The trace collector's `collect_llm_calls()` method walks batch item events to aggregate costs.
 
 ## Error Context (`error_context.py`)
 

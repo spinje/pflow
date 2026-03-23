@@ -139,7 +139,6 @@ def _prepare_execution_environment(
     output_format: str,
     verbose: bool,
     execution_params: dict[str, Any] | None,
-    seeded_llm_calls: list[dict[str, Any]] | None,
     cache_chunks: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, Any, Any, dict[str, Any], bool]:
     """Prepare the execution environment for workflow execution.
@@ -166,19 +165,16 @@ def _prepare_execution_environment(
     # Create display manager
     display = DisplayManager(output=cli_output)
 
-    # Get workflow trace if requested
-    workflow_trace = None
-    if ctx.obj.get("trace", False):
-        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+    # Always create trace collector — cost tracking needs it regardless of --no-trace.
+    # The --no-trace flag only skips the file save (gated in _save_trace_and_report).
+    from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
-        workflow_trace = WorkflowTraceCollector(ctx.obj.get("workflow_name", "workflow"))
-        ctx.obj["workflow_trace"] = workflow_trace
+    workflow_trace = WorkflowTraceCollector(ctx.obj.get("workflow_name", "workflow"))
+    ctx.obj["workflow_trace"] = workflow_trace
 
-    # Prepare execution params with verbose flag and LLM calls
+    # Prepare execution params with verbose flag
     enhanced_params = execution_params or {}
     enhanced_params["__verbose__"] = effective_verbose
-    if seeded_llm_calls:
-        enhanced_params["__llm_calls__"] = seeded_llm_calls
     if cache_chunks:
         enhanced_params["__cache_chunks__"] = cache_chunks
 
@@ -706,8 +702,11 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
     """Save trace to file and generate report if requested.
 
     Called from the finally block — survives Ctrl+C (SystemExit triggers finally).
+    Only saves to file when --trace is enabled (the collector always exists for cost tracking).
     """
     if not workflow_trace:
+        return
+    if not ctx.obj.get("trace", False):
         return
     try:
         trace_file = workflow_trace.save_to_file()
@@ -730,7 +729,6 @@ def execute_json_workflow(
     stdin_data: str | StdinData | None = None,
     output_key: str | None = None,
     execution_params: dict[str, Any] | None = None,
-    seeded_llm_calls: list[dict[str, Any]] | None = None,
     output_format: str = "text",
     metrics_collector: Any | None = None,
     cache_chunks: list[dict[str, Any]] | None = None,
@@ -760,7 +758,7 @@ def execute_json_workflow(
 
     # Prepare execution environment
     cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
-        ctx, ir_data, output_format, verbose, execution_params, seeded_llm_calls, cache_chunks
+        ctx, ir_data, output_format, verbose, execution_params, cache_chunks
     )
 
     _resolve_file_refs_or_exit(ctx, ir_data, output_format)
@@ -1312,7 +1310,7 @@ def _handle_named_workflow(
     metrics_collector = _setup_workflow_execution(ctx, first_arg, source, output_format)
 
     # Execute workflow
-    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, None, output_format, metrics_collector)
+    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, output_format, metrics_collector)
     return True
 
 

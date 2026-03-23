@@ -194,3 +194,303 @@ class TestBatchNodeTraceEvents:
             # Per-item node output captured from isolated item context
             assert "node_output" in item_trace
             assert item_trace["node_output"]["result"] == f"processed-{expected_item}"
+
+
+class TemplatedItemNode(Node):
+    """Batch node with template param: reads item, uses template command."""
+
+    def prep(self, shared: dict[str, Any]) -> str:
+        return self.params.get("command", "")
+
+    def exec(self, prep_res: str) -> str:
+        return f"ran: {prep_res}"
+
+    def post(self, shared: dict[str, Any], prep_res: str, exec_res: str) -> str:
+        shared["stdout"] = exec_res
+        return "default"
+
+
+class FailingNode(Node):
+    """Node that fails on certain inputs."""
+
+    def prep(self, shared: dict[str, Any]) -> Any:
+        return shared.get("item")
+
+    def exec(self, prep_res: Any) -> str:
+        if prep_res == "bad":
+            raise ValueError("Item processing failed: bad input")
+        return f"ok-{prep_res}"
+
+    def post(self, shared: dict[str, Any], prep_res: Any, exec_res: str) -> str:
+        shared["result"] = exec_res
+        return "default"
+
+
+class TestTraceToReportFormatCompatibility:
+    """Verify the trace collector's output is readable by the report generator.
+
+    Both sides have unit tests with synthetic data. This test catches format
+    drift: if a field name changes in _record_trace() but not in the report
+    generator (or vice versa), reports silently produce empty content.
+
+    Uses a real wrapper chain → real trace → real report generation.
+    """
+
+    def test_batch_trace_produces_valid_report(self, tmp_path: "Any") -> None:
+        """Run a batch through real wrappers, save trace, generate report,
+        verify the report has real content from execution."""
+        import json
+
+        node_id = "processor"
+        inner_node = ItemProcessorNode()
+
+        namespace_wrapper = NamespacedNodeWrapper(
+            inner_node=inner_node,
+            node_id=node_id,
+        )
+
+        batch_node = PflowBatchNode(
+            inner_node=namespace_wrapper,
+            node_id=node_id,
+            batch_config={"items": "${data}"},
+        )
+
+        collector = WorkflowTraceCollector("format-compat-test")
+        collector.enable_llm_interception = False
+
+        instrumented = InstrumentedNodeWrapper(
+            inner_node=batch_node,
+            node_id=node_id,
+            trace_collector=collector,
+        )
+
+        shared: dict[str, Any] = {"data": ["alpha", "beta"]}
+        instrumented._run(shared)
+
+        # Build trace dict from REAL collector data (same structure as save_to_file)
+        trace_data = {
+            "format_version": "2.0.0",
+            "execution_id": collector.execution_id,
+            "workflow_name": collector.workflow_name,
+            "start_time": collector.start_time.isoformat(),
+            "end_time": collector.start_time.isoformat(),
+            "duration_ms": 100.0,
+            "final_status": "success",
+            "nodes_executed": len(collector.events),
+            "nodes_failed": 0,
+            "nodes": collector.events,  # The REAL events from execution
+        }
+        trace_path = tmp_path / "trace.json"
+        trace_path.write_text(json.dumps(trace_data, default=str))
+
+        # Generate report from the real trace
+        from pflow.core.trace_report import generate_report
+
+        report_dir = generate_report(str(trace_path), str(tmp_path / "report"))
+
+        assert report_dir is not None, "Report generation failed on real trace data"
+        assert (report_dir / "summary.md").exists()
+
+        # Batch node should create a directory (not a flat file)
+        batch_dir = report_dir / "01-processor"
+        assert batch_dir.is_dir(), "Batch node should produce a directory, not a file"
+        assert (batch_dir / "summary.md").exists()
+        assert (batch_dir / "item-0.md").exists()
+        assert (batch_dir / "item-1.md").exists()
+
+        # Verify REAL execution data appears in the report (not empty/placeholder)
+        item0_md = (batch_dir / "item-0.md").read_text()
+        assert "processed-alpha" in item0_md, (
+            "Report item file doesn't contain real node output — "
+            "trace format may have diverged from report generator expectations"
+        )
+
+        item1_md = (batch_dir / "item-1.md").read_text()
+        assert "processed-beta" in item1_md
+
+        # Summary should reference the batch
+        summary_md = (report_dir / "summary.md").read_text()
+        assert "processor" in summary_md
+
+
+class TestParallelBatchTraceCapture:
+    """D2: Verify parallel batch items capture template_resolutions correctly.
+
+    The parallel path deep-copies the node chain per thread. Each copy's
+    TemplateAwareNodeWrapper must independently store last_resolutions
+    that are read back before the thread returns.
+    """
+
+    def test_parallel_batch_captures_per_item_template_resolutions(self) -> None:
+        node_id = "greeter"
+        inner_node = TemplatedItemNode()
+
+        template_wrapper = TemplateAwareNodeWrapper(
+            inner_node=inner_node,
+            node_id=node_id,
+        )
+
+        namespace_wrapper = NamespacedNodeWrapper(
+            inner_node=template_wrapper,
+            node_id=node_id,
+        )
+
+        batch_node = PflowBatchNode(
+            inner_node=namespace_wrapper,
+            node_id=node_id,
+            batch_config={"items": "${data}", "parallel": True},
+        )
+
+        collector = WorkflowTraceCollector("test-parallel-batch")
+        collector.enable_llm_interception = False
+
+        instrumented = InstrumentedNodeWrapper(
+            inner_node=batch_node,
+            node_id=node_id,
+            trace_collector=collector,
+        )
+
+        instrumented.set_params({"command": "echo ${item}", "__node_id__": node_id})
+
+        shared: dict[str, Any] = {"data": ["alice", "bob"]}
+        instrumented._run(shared)
+
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        assert "batch_items" in event
+        batch_items = event["batch_items"]
+        assert len(batch_items) == 2
+
+        for i, name in enumerate(["alice", "bob"]):
+            item = batch_items[i]
+            assert item["success"] is True
+            # Template resolutions captured from deep-copied chain
+            resolutions = item.get("template_resolutions", {})
+            assert "command" in resolutions, (
+                f"Item {i}: template_resolutions missing 'command' — "
+                "deep-copied TemplateAwareNodeWrapper may not preserve last_resolutions"
+            )
+            assert resolutions["command"]["resolved"] == f"echo {name}"
+
+
+class TestFailedBatchItemsInTrace:
+    """D4: Verify failed batch items appear with error data in trace."""
+
+    def test_failed_item_has_error_in_trace(self) -> None:
+        node_id = "processor"
+        inner_node = FailingNode()
+
+        namespace_wrapper = NamespacedNodeWrapper(
+            inner_node=inner_node,
+            node_id=node_id,
+        )
+
+        batch_node = PflowBatchNode(
+            inner_node=namespace_wrapper,
+            node_id=node_id,
+            batch_config={"items": "${data}", "error_handling": "continue"},
+        )
+
+        collector = WorkflowTraceCollector("test-failed-batch")
+        collector.enable_llm_interception = False
+
+        instrumented = InstrumentedNodeWrapper(
+            inner_node=batch_node,
+            node_id=node_id,
+            trace_collector=collector,
+        )
+
+        shared: dict[str, Any] = {"data": ["good", "bad", "good"]}
+        instrumented._run(shared)
+
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        batch_items = event["batch_items"]
+        assert len(batch_items) == 3
+
+        # Item 0: success
+        assert batch_items[0]["success"] is True
+        assert batch_items[0]["item"] == "good"
+
+        # Item 1: failure
+        assert batch_items[1]["success"] is False
+        assert batch_items[1]["item"] == "bad"
+        assert "error" in batch_items[1]
+        assert "bad input" in batch_items[1]["error"]
+
+        # Item 2: success
+        assert batch_items[2]["success"] is True
+
+
+class TestSubWorkflowTraceTree:
+    """D3: Verify sub-workflow internal nodes appear as sub_workflow_events.
+
+    Uses compile_ir_to_flow to build a real parent workflow with a child
+    sub-workflow. The child's nodes should appear nested in the parent's
+    trace event under sub_workflow_events.
+    """
+
+    def test_sub_workflow_events_in_parent_trace(self, tmp_path: "Any") -> None:
+        from tests.shared.markdown_utils import write_workflow_file
+
+        # Create child workflow: single shell node
+        child_ir = {
+            "nodes": [
+                {
+                    "id": "inner-step",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                    "purpose": "Simple inner step for sub-workflow test",
+                },
+            ],
+        }
+        child_path = tmp_path / "child.pflow.md"
+        write_workflow_file(child_ir, child_path)
+
+        # Create parent workflow: calls child sub-workflow
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "call-child",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path)},
+                    "purpose": "Call child sub-workflow for trace test",
+                },
+            ],
+            "edges": [],
+        }
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_ir_to_flow
+
+        collector = WorkflowTraceCollector("test-sub-workflow")
+        collector.enable_llm_interception = False
+
+        registry = Registry()
+        flow = compile_ir_to_flow(
+            ir_json=parent_ir,
+            registry=registry,
+            validate=False,
+            trace_collector=collector,
+        )
+
+        shared: dict[str, Any] = {"_trace_collector": collector}
+        flow.run(shared)
+
+        # Parent trace should have one event (call-child)
+        assert len(collector.events) >= 1
+        parent_event = collector.events[0]
+        assert parent_event["node_id"] == "call-child"
+
+        # That event should contain sub_workflow_events from the child
+        sub_events = parent_event.get("sub_workflow_events")
+        assert sub_events is not None, (
+            "sub_workflow_events missing — child trace collector may not be created "
+            "or _child_trace_events may not be read by InstrumentedNodeWrapper"
+        )
+        assert len(sub_events) >= 1
+
+        # Child's inner-step should be present
+        child_node_ids = [e["node_id"] for e in sub_events]
+        assert "inner-step" in child_node_ids

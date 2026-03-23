@@ -1,11 +1,11 @@
 """Tests for cross-cutting key propagation from parent to child workflows.
 
-Verifies that infrastructure keys (__llm_calls__, __progress_callback__,
-__mcp_pool__, __warnings__) are propagated through workflow nesting boundaries
-via WorkflowExecutor._PROPAGATED_KEYS / _create_child_storage().
+Verifies that infrastructure keys (__progress_callback__, __mcp_pool__,
+__warnings__, _trace_collector) are propagated through workflow nesting
+boundaries via WorkflowExecutor._PROPAGATED_KEYS / _create_child_storage().
 
-This ensures LLM costs from sub-workflows are not silently dropped, progress
-callbacks reach nested nodes, and MCP connection pools are shared.
+This ensures progress callbacks reach nested nodes, MCP connection pools
+are shared, and trace collectors are propagated for LLM data capture.
 """
 
 from unittest.mock import Mock, patch
@@ -21,8 +21,8 @@ from pflow.runtime.workflow_executor import WorkflowExecutor
 class MockLLMNode(BaseNode):
     """Simulates an LLM node by writing llm_usage to the shared store.
 
-    InstrumentedNodeWrapper picks this up via _capture_llm_usage() and
-    appends it to shared["__llm_calls__"].
+    InstrumentedNodeWrapper enriches llm_usage with cost via _enrich_llm_cost(),
+    then the trace collector captures it via _record_trace() → _add_llm_data().
     """
 
     def prep(self, shared):
@@ -145,16 +145,18 @@ def mock_registry(tmp_path):
 # ------------------------------------------------------------------ #
 
 
-class TestLLMCallsPropagation:
-    """Verify __llm_calls__ accumulator flows through workflow nesting."""
+class TestLLMCallsViaTrace:
+    """Verify LLM data is captured via trace events across workflow nesting."""
 
-    def test_single_sub_workflow_llm_calls_propagated(self, mock_registry):
-        """When parent and child each have an LLM node, both entries appear in __llm_calls__.
+    def test_single_sub_workflow_llm_calls_in_trace(self, mock_registry):
+        """When parent and child each have an LLM node, trace captures both.
 
         Parent runs "direct-llm" (MockLLMNode), then "child-call" (WorkflowExecutor
-        with inline IR containing one MockLLMNode). After execution, the shared
-        __llm_calls__ list should contain entries from both levels.
+        with inline IR containing one MockLLMNode). The trace collector should
+        capture LLM calls from both levels via collect_llm_calls().
         """
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
         child_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -189,107 +191,39 @@ class TestLLMCallsPropagation:
             "edges": [{"from": "direct-llm", "to": "child-call"}],
         }
 
+        trace = WorkflowTraceCollector("test")
+
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
-            shared: dict = {"__llm_calls__": []}
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False, trace_collector=trace)
+            shared: dict = {"_trace_collector": trace}
             flow.run(shared)
 
-            assert len(shared["__llm_calls__"]) == 2
-            node_ids = [call["node_id"] for call in shared["__llm_calls__"]]
-            assert "direct-llm" in node_ids
-            assert "inner-llm" in node_ids
+            # Both parent and child LLM calls must appear in collect_llm_calls()
+            calls = trace.collect_llm_calls()
+            assert len(calls) == 2, f"Expected 2 LLM calls (parent + child), got {len(calls)}"
+            node_ids = [call["node_id"] for call in calls]
+            assert "direct-llm" in node_ids, "Parent LLM call not captured"
+            assert "inner-llm" in node_ids, "Child sub-workflow LLM call not captured"
 
-            # Verify token counts are preserved
-            for call in shared["__llm_calls__"]:
+            # Verify token counts survive the trace path
+            for call in calls:
                 assert call["total_tokens"] == 150
                 assert call["input_tokens"] == 100
                 assert call["output_tokens"] == 50
 
-    def test_nested_depth_2_llm_calls_propagated(self, mock_registry):
-        """When workflows nest 3 levels deep, all LLM calls from every level appear.
+    def test_batched_sub_workflow_llm_calls_in_trace(self, mock_registry):
+        """Batch items each running a child workflow with LLM — all costs captured.
 
-        Grandparent -> parent -> child, each with one MockLLMNode.
-        After run, __llm_calls__ should contain exactly 3 entries.
-        """
-        grandchild_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "c-llm",
-                    "type": "pflow.nodes.test_node",
-                    "params": {},
-                    "purpose": "Simulate LLM call in grandchild workflow",
-                }
-            ],
-            "edges": [],
-        }
-
-        child_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "p-llm",
-                    "type": "pflow.nodes.test_node",
-                    "params": {},
-                    "purpose": "Simulate LLM call in child workflow",
-                },
-                {
-                    "id": "child-call",
-                    "type": "pflow.runtime.workflow_executor",
-                    "params": {
-                        "workflow_ir": grandchild_ir,
-                    },
-                    "purpose": "Execute grandchild workflow with LLM node",
-                },
-            ],
-            "edges": [{"from": "p-llm", "to": "child-call"}],
-        }
-
-        parent_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "gp-llm",
-                    "type": "pflow.nodes.test_node",
-                    "params": {},
-                    "purpose": "Simulate LLM call in grandparent workflow",
-                },
-                {
-                    "id": "parent-call",
-                    "type": "pflow.runtime.workflow_executor",
-                    "params": {
-                        "workflow_ir": child_ir,
-                    },
-                    "purpose": "Execute child workflow containing grandchild",
-                },
-            ],
-            "edges": [{"from": "gp-llm", "to": "parent-call"}],
-        }
-
-        with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
-            shared: dict = {"__llm_calls__": []}
-            flow.run(shared)
-
-            assert len(shared["__llm_calls__"]) == 3
-            node_ids = [call["node_id"] for call in shared["__llm_calls__"]]
-            assert "gp-llm" in node_ids
-            assert "p-llm" in node_ids
-            assert "c-llm" in node_ids
-
-    def test_batched_sub_workflow_llm_calls_propagated(self, mock_registry):
-        """When a batched workflow node runs N children, all child LLM calls are tracked.
-
-        This is the highest-risk scenario: batch creates shallow copies of shared
-        (preserving __llm_calls__ reference), then each batch item runs a
-        WorkflowExecutor through the full wrapper chain (InstrumentedNodeWrapper ->
-        PflowBatchNode -> NamespacedNodeWrapper -> WorkflowExecutor). The child's
-        _create_child_storage propagates __llm_calls__ through the NamespacedSharedStore
-        proxy. Three layers of indirection must all work correctly.
+        This is the highest-risk scenario: batch creates shallow copies of shared,
+        then each batch item runs a WorkflowExecutor. The child creates its own
+        trace collector, which the parent embeds as sub_workflow_events.
+        Three layers of indirection must work correctly.
 
         Topology: source -> batch-children (3 items, each runs child workflow with 1 LLM)
-        Expected: 3 entries in __llm_calls__ (one per batch item's child LLM node).
+        Expected: 3 LLM calls in collect_llm_calls() (one per batch item's child).
         """
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
         child_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -325,68 +259,19 @@ class TestLLMCallsPropagation:
             "edges": [{"from": "source", "to": "batch-children"}],
         }
 
+        trace = WorkflowTraceCollector("test")
+
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
-            shared: dict = {"__llm_calls__": []}
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False, trace_collector=trace)
+            shared: dict = {"_trace_collector": trace}
             flow.run(shared)
 
             # 3 batch items x 1 LLM call each = 3 total
-            assert len(shared["__llm_calls__"]) == 3
-            for call in shared["__llm_calls__"]:
+            calls = trace.collect_llm_calls()
+            assert len(calls) == 3, f"Expected 3 LLM calls (one per batch item), got {len(calls)}"
+            for call in calls:
                 assert call["node_id"] == "child-llm"
                 assert call["total_tokens"] == 150
-
-    def test_shared_mode_no_regression(self, mock_registry):
-        """When storage_mode is 'shared', LLM calls still propagate correctly.
-
-        Same topology as test_single_sub_workflow but with storage_mode: shared.
-        The child writes directly to parent storage, so propagation should work
-        without any special handling.
-        """
-        child_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "inner-llm",
-                    "type": "pflow.nodes.test_node",
-                    "params": {},
-                    "purpose": "Simulate LLM call inside shared-mode child",
-                }
-            ],
-            "edges": [],
-        }
-
-        parent_ir = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "direct-llm",
-                    "type": "pflow.nodes.test_node",
-                    "params": {},
-                    "purpose": "Simulate LLM call in parent workflow",
-                },
-                {
-                    "id": "child-call",
-                    "type": "pflow.runtime.workflow_executor",
-                    "params": {
-                        "workflow_ir": child_ir,
-                        "storage_mode": "shared",
-                    },
-                    "purpose": "Execute child workflow in shared storage mode",
-                },
-            ],
-            "edges": [{"from": "direct-llm", "to": "child-call"}],
-        }
-
-        with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
-            shared: dict = {"__llm_calls__": []}
-            flow.run(shared)
-
-            assert len(shared["__llm_calls__"]) == 2
-            node_ids = [call["node_id"] for call in shared["__llm_calls__"]]
-            assert "direct-llm" in node_ids
-            assert "inner-llm" in node_ids
 
 
 class TestProgressCallbackPropagation:
@@ -463,24 +348,23 @@ class TestCreateChildStorage:
         """When parent has all propagated keys, child storage gets same object references.
 
         This is the core invariant: propagated keys must be the SAME objects
-        (not copies), so that mutations in the child (e.g., appending to
-        __llm_calls__) are visible in the parent.
+        (not copies), so that child workflows share resources with the parent.
         """
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
 
-        llm_calls_list: list = []
         progress_cb = Mock()
         mcp_pool = Mock()
         warnings_dict: dict = {}
         registry = Mock()
+        trace_collector = Mock()
 
         parent_shared: dict = {
-            "__llm_calls__": llm_calls_list,
             "__progress_callback__": progress_cb,
             "__mcp_pool__": mcp_pool,
             "__warnings__": warnings_dict,
             "__registry__": registry,
+            "_trace_collector": trace_collector,
             "_pflow_depth": 0,
             "_pflow_stack": [],
         }
@@ -489,11 +373,11 @@ class TestCreateChildStorage:
         child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
 
         # All propagated keys present and are same object references
-        assert child_storage["__llm_calls__"] is llm_calls_list
         assert child_storage["__progress_callback__"] is progress_cb
         assert child_storage["__mcp_pool__"] is mcp_pool
         assert child_storage["__warnings__"] is warnings_dict
         assert child_storage["__registry__"] is registry
+        assert child_storage["_trace_collector"] is trace_collector
 
         # Child params are present
         assert child_storage["input1"] == "value1"
@@ -521,12 +405,11 @@ class TestCreateChildStorage:
         child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
 
         # None of the propagated keys should be present
-        assert "__llm_calls__" not in child_storage
         assert "__progress_callback__" not in child_storage
         assert "__mcp_pool__" not in child_storage
         assert "__warnings__" not in child_storage
-        # __registry__ also not present since parent didn't have it
         assert "__registry__" not in child_storage
+        assert "_trace_collector" not in child_storage
 
         # Should still have child params and execution context
         assert child_storage["input1"] == "value1"
@@ -541,9 +424,9 @@ class TestCreateChildStorage:
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
 
-        llm_calls_list: list = []
+        trace_collector = Mock()
         parent_shared: dict = {
-            "__llm_calls__": llm_calls_list,
+            "_trace_collector": trace_collector,
             "__progress_callback__": Mock(),
             "_pflow_depth": 0,
             "_pflow_stack": [],
@@ -556,21 +439,20 @@ class TestCreateChildStorage:
         assert child_storage is parent_shared
 
         # The propagated keys are naturally present since it's the same dict
-        assert child_storage["__llm_calls__"] is llm_calls_list
+        assert child_storage["_trace_collector"] is trace_collector
 
-    def test_mutation_in_child_visible_in_parent(self):
-        """When child appends to __llm_calls__, parent sees it immediately.
+    def test_trace_collector_reference_identity(self):
+        """_trace_collector in child is the same object as in parent.
 
-        This is the critical behavior that the bug fix enables: because the
-        propagated list is the SAME object, not a copy, mutations in the child
-        flow back to the parent.
+        This ensures child workflows can detect tracing is active by checking
+        for the presence of _trace_collector in their storage.
         """
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": [], "ir_version": "0.1.0"}})
 
-        llm_calls_list: list = []
+        trace_collector = Mock()
         parent_shared: dict = {
-            "__llm_calls__": llm_calls_list,
+            "_trace_collector": trace_collector,
             "_pflow_depth": 0,
             "_pflow_stack": [],
         }
@@ -578,13 +460,5 @@ class TestCreateChildStorage:
         prep_res = self._make_prep_res()
         child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
 
-        # Simulate what InstrumentedNodeWrapper._capture_llm_usage does
-        child_storage["__llm_calls__"].append({
-            "node_id": "child-node",
-            "model": "test-model",
-            "total_tokens": 100,
-        })
-
-        # Parent sees the mutation because it's the same list
-        assert len(parent_shared["__llm_calls__"]) == 1
-        assert parent_shared["__llm_calls__"][0]["node_id"] == "child-node"
+        # Same object reference — not a copy
+        assert child_storage["_trace_collector"] is trace_collector

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.pocketflow import Node
+from pflow.runtime.workflow_trace import WorkflowTraceCollector
 from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
 
 
@@ -231,102 +232,125 @@ class TestTimingCapture:
         metrics.record_node_execution.assert_called_once_with("test_id", 250.0)
 
 
-class TestLLMUsageAccumulation:
-    """Test LLM usage tracking and accumulation."""
+class TestLLMUsageTracking:
+    """Test LLM usage tracking via trace collector.
 
-    def test_llm_usage_accumulation(self):
-        """Test that LLM usage is accumulated in shared store."""
-        node = LLMSimulatorNode()
-        wrapper = InstrumentedNodeWrapper(node, "llm_node_1", None, None)
+    After the removal of __llm_calls__ accumulator, LLM usage is tracked via the
+    WorkflowTraceCollector. The wrapper enriches llm_usage with cost_usd in-place
+    in shared store, and _record_trace() passes node_output to the trace collector
+    which captures llm_usage as llm_call in the event.
+    """
 
-        shared = {}
+    @staticmethod
+    def _make_namespaced_llm_node(node_id: str, usage_data: dict[str, Any]) -> type:
+        """Create an LLM node class that writes output under its namespace.
+
+        In a real workflow, the namespace wrapper writes node output under
+        shared[node_id]. These test nodes simulate that behavior directly.
+        """
+
+        class NamespacedLLMNode(Node):
+            def _run(self, shared: dict[str, Any]) -> str:
+                shared[node_id] = {"llm_usage": dict(usage_data), "result": "LLM output"}
+                # Also write at root level (as nodes do before namespacing moves it)
+                shared["llm_usage"] = shared[node_id]["llm_usage"]
+                return "done"
+
+        return NamespacedLLMNode
+
+    def test_llm_usage_captured_in_trace(self):
+        """Test that LLM usage is captured as llm_call in the trace event."""
+        trace = WorkflowTraceCollector("test")
+        usage_data = {
+            "model": "gpt-4",
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+        }
+        node_cls = self._make_namespaced_llm_node("llm_node_1", usage_data)
+        wrapper = InstrumentedNodeWrapper(node_cls(), "llm_node_1", None, trace)
+
+        shared: dict[str, Any] = {}
         wrapper._run(shared)
 
-        # Check that __llm_calls__ list was created and populated
-        assert "__llm_calls__" in shared
-        assert len(shared["__llm_calls__"]) == 1
+        # Trace collector should have one event with llm_call data
+        assert len(trace.events) == 1
+        event = trace.events[0]
+        assert "llm_call" in event
+        assert event["llm_call"]["model"] == "gpt-4"
+        assert event["llm_call"]["prompt_tokens"] == 100
+        assert event["llm_call"]["completion_tokens"] == 50
+        assert event["llm_call"]["total_tokens"] == 150
+        assert event["node_id"] == "llm_node_1"
 
-        llm_call = shared["__llm_calls__"][0]
-        assert llm_call["model"] == "gpt-4"
-        assert llm_call["prompt_tokens"] == 100
-        assert llm_call["completion_tokens"] == 50
-        assert llm_call["total_tokens"] == 150
-        assert llm_call["node_id"] == "llm_node_1"
-        assert "duration_ms" in llm_call
+    def test_multiple_llm_calls_captured_in_trace(self):
+        """Test that multiple LLM calls produce separate trace events."""
+        trace = WorkflowTraceCollector("test")
+        usage_data = {
+            "model": "gpt-4",
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+        }
 
-    def test_multiple_llm_calls_accumulation(self):
-        """Test that multiple LLM calls are accumulated correctly."""
-        node1 = LLMSimulatorNode()
-        wrapper1 = InstrumentedNodeWrapper(node1, "llm_node_1", None, None)
+        node1_cls = self._make_namespaced_llm_node("llm_node_1", usage_data)
+        wrapper1 = InstrumentedNodeWrapper(node1_cls(), "llm_node_1", None, trace)
 
-        node2 = LLMSimulatorNode()
-        wrapper2 = InstrumentedNodeWrapper(node2, "llm_node_2", None, None)
+        node2_cls = self._make_namespaced_llm_node("llm_node_2", usage_data)
+        wrapper2 = InstrumentedNodeWrapper(node2_cls(), "llm_node_2", None, trace)
 
-        shared = {}
-
-        # First LLM call
+        shared: dict[str, Any] = {}
         wrapper1._run(shared)
-        # Second LLM call
         wrapper2._run(shared)
 
-        # Check that both calls were accumulated
-        assert len(shared["__llm_calls__"]) == 2
-        assert shared["__llm_calls__"][0]["node_id"] == "llm_node_1"
-        assert shared["__llm_calls__"][1]["node_id"] == "llm_node_2"
+        # Both calls should be captured as separate trace events
+        assert len(trace.events) == 2
+        assert trace.events[0]["node_id"] == "llm_node_1"
+        assert trace.events[1]["node_id"] == "llm_node_2"
+        assert "llm_call" in trace.events[0]
+        assert "llm_call" in trace.events[1]
 
-    def test_preserves_existing_llm_calls(self):
-        """Test that existing __llm_calls__ list is preserved."""
-        node = LLMSimulatorNode()
-        wrapper = InstrumentedNodeWrapper(node, "new_llm", None, None)
+    def test_non_llm_node_trace_has_no_llm_call(self):
+        """Test that non-LLM nodes produce trace events without llm_call."""
+        trace = WorkflowTraceCollector("test")
+        node = SimpleTestNode()
+        wrapper = InstrumentedNodeWrapper(node, "regular_node", None, trace)
 
-        # Pre-existing LLM calls
-        shared = {"__llm_calls__": [{"node_id": "old_llm", "model": "gpt-3.5", "total_tokens": 75}]}
-
+        shared: dict[str, Any] = {}
         wrapper._run(shared)
 
-        # Check that old call is preserved and new one is added
-        assert len(shared["__llm_calls__"]) == 2
-        assert shared["__llm_calls__"][0]["node_id"] == "old_llm"
-        assert shared["__llm_calls__"][1]["node_id"] == "new_llm"
+        # Trace event should exist but without llm_call
+        assert len(trace.events) == 1
+        assert "llm_call" not in trace.events[0]
+        assert trace.events[0]["node_id"] == "regular_node"
 
-    def test_no_llm_usage_no_accumulation(self):
-        """Test that nodes without LLM usage don't add to __llm_calls__."""
-        node = SimpleTestNode()  # This node doesn't set llm_usage
-        wrapper = InstrumentedNodeWrapper(node, "regular_node", None, None)
-
-        shared = {}
-        wrapper._run(shared)
-
-        # __llm_calls__ should be created but empty
-        assert "__llm_calls__" in shared
-        assert len(shared["__llm_calls__"]) == 0
-
-    def _make_llm_cost_wrapper(self):
+    def _make_llm_cost_wrapper(self, trace: WorkflowTraceCollector | None = None) -> InstrumentedNodeWrapper:
         """Create an InstrumentedNodeWrapper around a node that writes standard llm_usage."""
+        node_id = "llm_cost"
 
         class LLMNodeWithStandardTokenKeys(Node):
             """Node simulating LLM usage with input_tokens/output_tokens keys."""
 
-            def _run(self, shared):
-                shared["llm_usage"] = {
+            def _run(self, shared: dict[str, Any]) -> str:
+                usage = {
                     "model": "gpt-4",
                     "input_tokens": 1000,
                     "output_tokens": 500,
                 }
+                shared[node_id] = {"llm_usage": usage}
+                shared["llm_usage"] = usage
                 return "done"
 
-        return InstrumentedNodeWrapper(LLMNodeWithStandardTokenKeys(), "llm_cost", None, None)
+        return InstrumentedNodeWrapper(LLMNodeWithStandardTokenKeys(), node_id, None, trace)
 
     def test_llm_usage_enriched_with_cost_in_shared_store(self):
         """After execution, shared store's llm_usage dict should have cost_usd added.
 
         Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
-        The LLMSimulatorNode uses prompt_tokens/completion_tokens (OpenAI-style) which are
-        different keys, so we need a node that uses the correct key names for this test.
         """
         wrapper = self._make_llm_cost_wrapper()
 
-        shared = {}
+        shared: dict[str, Any] = {}
         wrapper._run(shared)
 
         # The original llm_usage in shared store should be enriched in-place
@@ -337,20 +361,23 @@ class TestLLMUsageAccumulation:
         assert isinstance(shared["llm_usage"]["cost_usd"], float)
         assert shared["llm_usage"]["cost_usd"] == 0.06
 
-    def test_llm_calls_accumulator_has_cost_usd(self):
-        """The __llm_calls__ accumulator entries should also contain cost_usd."""
-        wrapper = self._make_llm_cost_wrapper()
+    def test_trace_event_has_cost_usd(self):
+        """The trace event's llm_call should contain cost_usd from enrichment."""
+        trace = WorkflowTraceCollector("test")
+        wrapper = self._make_llm_cost_wrapper(trace)
 
-        shared = {}
+        shared: dict[str, Any] = {}
         wrapper._run(shared)
 
-        assert len(shared["__llm_calls__"]) == 1
-        llm_call = shared["__llm_calls__"][0]
-        assert "cost_usd" in llm_call
-        assert isinstance(llm_call["cost_usd"], float)
-        assert llm_call["cost_usd"] == 0.06
-        # The accumulator entry should have the same cost as the shared store entry
-        assert llm_call["cost_usd"] == shared["llm_usage"]["cost_usd"]
+        # Trace event should have llm_call with cost
+        assert len(trace.events) == 1
+        event = trace.events[0]
+        assert "llm_call" in event
+        assert "cost_usd" in event["llm_call"]
+        assert isinstance(event["llm_call"]["cost_usd"], float)
+        assert event["llm_call"]["cost_usd"] == 0.06
+        # The trace cost should match the shared store cost
+        assert event["llm_call"]["cost_usd"] == shared["llm_usage"]["cost_usd"]
 
 
 class TestErrorHandling:
@@ -676,44 +703,55 @@ class TestEdgeCases:
         node = SimpleTestNode()
         wrapper = InstrumentedNodeWrapper(node, "test_node")
 
-        shared = {}
+        shared: dict[str, Any] = {}
         result = wrapper._run(shared)
 
         assert result == "test_result"
-        assert "__llm_calls__" in shared
+        # __llm_calls__ is no longer initialized by the wrapper
+        assert "__llm_calls__" not in shared
         assert shared["test_output"] == "executed"
 
-    def test_llm_usage_overwrite(self):
-        """Test that each LLM call's usage is captured separately."""
+    def test_llm_usage_overwrite_captured_in_trace(self):
+        """Test that each LLM call's usage is captured separately in trace events.
+
+        When two nodes both write llm_usage to the shared store (overwriting each
+        other), both should still be captured as separate trace events because the
+        trace collector records each node's execution independently.
+        """
+        trace = WorkflowTraceCollector("test")
 
         class OverwritingLLMNode(Node):
-            def __init__(self, usage_data):
+            def __init__(self, node_id: str, usage_data: dict[str, Any]):
+                self._node_id = node_id
                 self.usage_data = usage_data
 
-            def _run(self, shared):
+            def _run(self, shared: dict[str, Any]) -> str:
+                # Write under namespace (simulating namespace wrapper)
+                shared[self._node_id] = {"llm_usage": dict(self.usage_data)}
+                # Also write at root level (would be overwritten by next node)
                 shared["llm_usage"] = self.usage_data
                 return "done"
 
         # First call sets one usage
-        node1 = OverwritingLLMNode({"model": "gpt-3.5", "tokens": 100})
-        wrapper1 = InstrumentedNodeWrapper(node1, "llm1")
+        node1 = OverwritingLLMNode("llm1", {"model": "gpt-3.5", "tokens": 100})
+        wrapper1 = InstrumentedNodeWrapper(node1, "llm1", None, trace)
 
-        # Second call overwrites with different usage
-        node2 = OverwritingLLMNode({"model": "gpt-4", "tokens": 200})
-        wrapper2 = InstrumentedNodeWrapper(node2, "llm2")
+        # Second call overwrites root llm_usage with different data
+        node2 = OverwritingLLMNode("llm2", {"model": "gpt-4", "tokens": 200})
+        wrapper2 = InstrumentedNodeWrapper(node2, "llm2", None, trace)
 
-        shared = {}
+        shared: dict[str, Any] = {}
         wrapper1._run(shared)
         wrapper2._run(shared)
 
-        # Both usages should be captured despite overwriting
-        assert len(shared["__llm_calls__"]) == 2
-        assert shared["__llm_calls__"][0]["model"] == "gpt-3.5"
-        assert shared["__llm_calls__"][0]["tokens"] == 100
-        assert shared["__llm_calls__"][0]["node_id"] == "llm1"
-        assert shared["__llm_calls__"][1]["model"] == "gpt-4"
-        assert shared["__llm_calls__"][1]["tokens"] == 200
-        assert shared["__llm_calls__"][1]["node_id"] == "llm2"
+        # Both usages should be captured in separate trace events
+        assert len(trace.events) == 2
+        assert trace.events[0]["llm_call"]["model"] == "gpt-3.5"
+        assert trace.events[0]["llm_call"]["tokens"] == 100
+        assert trace.events[0]["node_id"] == "llm1"
+        assert trace.events[1]["llm_call"]["model"] == "gpt-4"
+        assert trace.events[1]["llm_call"]["tokens"] == 200
+        assert trace.events[1]["node_id"] == "llm2"
 
         # The last usage should still be in shared (not removed)
         assert shared["llm_usage"]["model"] == "gpt-4"

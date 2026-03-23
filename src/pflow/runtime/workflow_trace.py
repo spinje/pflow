@@ -33,6 +33,7 @@ class WorkflowTraceCollector:
     _llm_interception_count: ClassVar[int] = 0
     _original_get_model: ClassVar[Optional[Callable[..., Any]]] = None
     _active_collectors: ClassVar[dict[int, "WorkflowTraceCollector"]] = {}  # thread_id -> collector
+    _thread_local: ClassVar[threading.local] = threading.local()  # per-thread current_node
 
     def __init__(self, workflow_name: str = "workflow"):
         """Initialize the trace collector.
@@ -46,7 +47,6 @@ class WorkflowTraceCollector:
         self.events: list[dict[str, Any]] = []
         self.llm_prompts: dict[str, str] = {}  # Store prompts by node_id
         self._llm_interceptor_installed = False
-        self._current_node: Optional[str] = None
         self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
         self.enable_llm_interception = True  # Set False for child collectors
 
@@ -63,6 +63,7 @@ class WorkflowTraceCollector:
         mutations: Optional[dict[str, list[str]]] = None,
         batch_items: Optional[list[dict[str, Any]]] = None,
         sub_workflow_events: Optional[list[dict[str, Any]]] = None,
+        cached: bool = False,
     ) -> None:
         """Record detailed node execution data.
 
@@ -78,6 +79,7 @@ class WorkflowTraceCollector:
             mutations: Key-level changes to shared store (added/removed/modified)
             batch_items: Per-item trace events for batch nodes
             sub_workflow_events: Child workflow trace events for nested workflows
+            cached: Whether this node used cached results (skipped execution)
         """
         event: dict[str, Any] = {
             "node_id": node_id,
@@ -87,6 +89,8 @@ class WorkflowTraceCollector:
             "timestamp": datetime.now().isoformat(),
         }
 
+        if cached:
+            event["cached"] = True
         if error:
             event["error"] = error
         if node_params:
@@ -140,10 +144,62 @@ class WorkflowTraceCollector:
         if isinstance(response, str):
             event["llm_response"] = response  # No truncation
 
+    def collect_llm_calls(self) -> list[dict[str, Any]]:
+        """Walk event tree recursively and return flat list of llm_call dicts.
+
+        Collects from top-level events, batch_items, and sub_workflow_events.
+
+        Returns:
+            Flat list of llm_call dicts (each containing model, tokens, cost, etc.)
+        """
+        return self._collect_llm_calls_from_events(self.events)
+
+    def _collect_llm_calls_from_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Recursively collect llm_call dicts from tree-structured events.
+
+        NOTE: Keep tree traversal in sync with _collect_llm_summary() — same structure.
+
+        Invariant: batch items have EITHER llm_call (leaf items — direct LLM execution)
+        OR events (sub-workflow items — containing their own llm_call entries), never both.
+        LLM nodes produce llm_call; WorkflowExecutor nodes produce events. If both were
+        present, this method would double-count. Verified by construction in _capture_item_trace.
+
+        Args:
+            events: List of trace events (may contain nested batch_items/sub_workflow_events)
+
+        Returns:
+            Flat list of llm_call dicts
+        """
+        calls: list[dict[str, Any]] = []
+
+        for event in events:
+            if "llm_call" in event:
+                call = dict(event["llm_call"])
+                call["node_id"] = event.get("node_id", "unknown")
+                call["duration_ms"] = event.get("duration_ms", 0)
+                calls.append(call)
+
+            # Recurse into batch items
+            for item in event.get("batch_items", []):
+                if "llm_call" in item:
+                    call = dict(item["llm_call"])
+                    call["node_id"] = event.get("node_id", "unknown")
+                    call["batch_item_index"] = item.get("index", 0)
+                    calls.append(call)
+                # Recurse into nested events within batch items (sub-workflow)
+                calls.extend(self._collect_llm_calls_from_events(item.get("events", [])))
+
+            # Recurse into sub-workflow events
+            sub_events = event.get("sub_workflow_events", [])
+            if sub_events:
+                calls.extend(self._collect_llm_calls_from_events(sub_events))
+
+        return calls
+
     def _sanitize_for_json(self, data: Any) -> Any:
         """Make data JSON-serializable. No truncation — just hygiene.
 
-        Filters internal keys (__ prefixed except __llm_calls__/__metrics__)
+        Filters internal keys (__ prefixed except __metrics__)
         and replaces binary data with a placeholder.
 
         Args:
@@ -156,7 +212,7 @@ class WorkflowTraceCollector:
             result = {}
             for key, value in data.items():
                 # Skip internal keys
-                if isinstance(key, str) and key.startswith("__") and key not in ("__llm_calls__", "__metrics__"):
+                if isinstance(key, str) and key.startswith("__") and key not in ("__metrics__",):
                     continue
                 if key in ("_trace_collector", "_debug_context", "_batch_trace"):
                     continue
@@ -215,6 +271,9 @@ class WorkflowTraceCollector:
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.
+
+        NOTE: Keep tree traversal in sync with _collect_llm_calls_from_events() — same structure.
+        See that method's docstring for the batch item llm_call/events mutual exclusivity invariant.
 
         Args:
             events: List of trace events (may contain nested batch_items/sub_workflow_events)
@@ -332,8 +391,8 @@ class WorkflowTraceCollector:
 
         import llm
 
-        # Store current node for prompt capture
-        self._current_node = node_id
+        # Store current node for prompt capture (thread-local to avoid race in parallel batch)
+        WorkflowTraceCollector._thread_local.current_node = node_id
 
         with WorkflowTraceCollector._llm_lock:
             # Register this collector for the current thread
@@ -358,11 +417,10 @@ class WorkflowTraceCollector:
                         thread_id = threading.current_thread().ident
                         if thread_id and thread_id in WorkflowTraceCollector._active_collectors:
                             collector = WorkflowTraceCollector._active_collectors[thread_id]
-                            if collector._current_node:
-                                collector.llm_prompts[collector._current_node] = prompt_text
-                                logger.debug(
-                                    f"Captured prompt for node {collector._current_node} in thread {thread_id}"
-                                )
+                            current_node = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
+                            if current_node:
+                                collector.llm_prompts[current_node] = prompt_text
+                                logger.debug(f"Captured prompt for node {current_node} in thread {thread_id}")
 
                         # Call original prompt method
                         return original_prompt(prompt_text, **prompt_kwargs)

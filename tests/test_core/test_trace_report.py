@@ -216,6 +216,34 @@ class TestBuildSummary:
         assert "gpt-4" in md
         assert "claude" in md
 
+    def test_empty_llm_summary_omitted(self) -> None:
+        """LLM summary with zero calls should not render models/tokens lines."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 0,
+                "total_tokens": 0,
+                "models_used": [],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "LLM calls" not in md
+        assert "Tokens" not in md
+        assert "Models" not in md
+
+    def test_llm_summary_without_tokens(self) -> None:
+        """LLM summary with calls but zero tokens should omit tokens line."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 1,
+                "total_tokens": 0,
+                "models_used": ["gpt-4"],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "- LLM calls: 1" in md
+        assert "Tokens" not in md
+        assert "- Models: gpt-4" in md
+
     def test_pipeline_table(self) -> None:
         trace = _make_trace(
             nodes=[
@@ -225,7 +253,7 @@ class TestBuildSummary:
         )
         md = _build_summary(trace, source_path="/home/user/.pflow/debug/trace.json")
         assert "| 1 | fetch | ShellNode | 200ms | ok |" in md
-        assert "| 2 | process | LLMNode | 500ms | FAILED |" in md
+        assert "| 2 | process | LLMNode | 500ms | **FAILED** |" in md
 
 
 # --- _build_node_file() ---
@@ -239,6 +267,12 @@ class TestBuildNodeFile:
         assert "- Type: ShellNode" in md
         assert "- Time: 42ms" in md
         assert "- Status: success" in md
+
+    def test_cached_node_shows_cached_status(self) -> None:
+        event = _make_event(node_id="cached-node", cached=True, duration_ms=0)
+        md = _build_node_file(event)
+        assert "- Status: success [cached]" in md
+        assert "- Time: 0ms" in md
 
     def test_failed_node_shows_error(self) -> None:
         event = _make_event(success=False, error="Connection refused")
@@ -307,6 +341,22 @@ class TestBuildNodeFile:
         assert "## stderr" in md
         assert "warning line" in md
 
+    def test_empty_stderr_omitted(self) -> None:
+        """Empty stderr should not produce a section."""
+        event = _make_event(node_output={"stdout": "output line", "stderr": ""})
+        md = _build_node_file(event)
+        assert "## stdout" in md
+        assert "output line" in md
+        assert "## stderr" not in md
+
+    def test_empty_stdout_omitted(self) -> None:
+        """Empty stdout should not produce a section."""
+        event = _make_event(node_output={"stdout": "", "stderr": "error msg"})
+        md = _build_node_file(event)
+        assert "## stdout" not in md
+        assert "## stderr" in md
+        assert "error msg" in md
+
     def test_structured_result(self) -> None:
         event = _make_event(node_output={"result": {"key": "value", "count": 3}})
         md = _build_node_file(event)
@@ -343,7 +393,22 @@ class TestBuildNodeSummary:
         assert "# batch-process" in md
         assert "- Items: 3 (2/3 succeeded)" in md
         assert "| 0 | 50ms | ok |" in md
-        assert "| 1 | 30ms | FAILED |" in md
+        assert "| 1 | 30ms | **FAILED** |" in md
+
+    def test_sub_workflow_summary_has_pipeline_table(self) -> None:
+        """Sub-workflow node summary should include a pipeline table of child nodes."""
+        event = _make_event(
+            node_id="process-title",
+            node_type="WorkflowExecutor",
+            sub_workflow_events=[
+                _make_event(node_id="step-1", node_type="ShellNode", duration_ms=10),
+                _make_event(node_id="step-2", node_type="LLMNode", duration_ms=500, success=False),
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "## Pipeline" in md
+        assert "| 1 | step-1 | ShellNode | 10ms | ok |" in md
+        assert "| 2 | step-2 | LLMNode | 500ms | **FAILED** |" in md
 
 
 # --- _build_batch_item_file() ---
@@ -400,8 +465,36 @@ class TestBuildBatchItemFile:
             "node_output": {"result": "transformed-data"},
         }
         md = _build_batch_item_file(item, parent)
-        assert "## Output" in md
+        assert "## Result" in md
         assert "transformed-data" in md
+
+    def test_item_with_shell_output(self) -> None:
+        """Shell batch items should show structured stdout/stderr, not raw JSON."""
+        parent = _make_event(node_id="greet")
+        item = {
+            "index": 0,
+            "item": {"name": "Alice"},
+            "success": True,
+            "duration_ms": 5,
+            "template_resolutions": {
+                "command": {"template": 'echo "Hello, ${user.name}"', "resolved": 'echo "Hello, Alice"'},
+            },
+            "node_output": {
+                "stdout": "Hello, Alice",
+                "stderr": "",
+                "exit_code": 0,
+                "command": 'echo "Hello, Alice"',
+            },
+        }
+        md = _build_batch_item_file(item, parent)
+        assert "## Command" in md
+        assert 'echo "Hello, Alice"' in md
+        assert "## stdout" in md
+        assert "Hello, Alice" in md
+        # Empty stderr should be omitted
+        assert "## stderr" not in md
+        # Should NOT show raw JSON dump
+        assert "exit_code" not in md
 
     def test_failed_item(self) -> None:
         parent = _make_event(node_id="fetch")
@@ -427,3 +520,19 @@ class TestBuildBatchItemSummary:
         assert "# Item 3" in md
         assert "- Time: 1500ms" in md
         assert "- Status: success" in md
+
+    def test_with_pipeline_table(self) -> None:
+        """Batch item with sub-workflow events should show a pipeline table."""
+        item = {
+            "index": 0,
+            "success": True,
+            "duration_ms": 2000,
+            "events": [
+                _make_event(node_id="write-lyrics", node_type="LLMNode", duration_ms=800),
+                _make_event(node_id="review", node_type="LLMNode", duration_ms=600),
+            ],
+        }
+        md = _build_batch_item_summary(item)
+        assert "## Pipeline" in md
+        assert "| 1 | write-lyrics | LLMNode | 800ms | ok |" in md
+        assert "| 2 | review | LLMNode | 600ms | ok |" in md

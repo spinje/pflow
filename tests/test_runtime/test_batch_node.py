@@ -320,31 +320,33 @@ class TestIsolatedContext:
         assert "item" not in shared  # Alias was only in isolated copies
 
     def test_special_keys_shared_across_items(self):
-        """Special keys like __llm_calls__ are shared (shallow copy behavior)."""
+        """Special dunder keys are shared across items via shallow copy behavior."""
 
-        class LLMTrackingNode:
-            """Node that appends to __llm_calls__."""
+        class TrackingNode:
+            """Node that appends to a shared mutable list."""
 
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
             def _run(self, shared: dict) -> str:
-                # Append to __llm_calls__ (should be the SAME list across items)
-                if "__llm_calls__" not in shared:
-                    shared["__llm_calls__"] = []
-                shared["__llm_calls__"].append({"model": "test", "tokens": 100})
+                # Append to __warnings__ (should be the SAME dict across items
+                # due to shallow copy)
+                if "__warnings__" not in shared:
+                    shared["__warnings__"] = {}
+                item = shared.get("item", "unknown")
+                shared["__warnings__"][f"warn_{item}"] = f"warning for {item}"
                 shared[self.node_id] = {"response": "ok"}
                 return "default"
 
-        inner = LLMTrackingNode("test_node")
+        inner = TrackingNode("test_node")
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
 
-        shared = {"data": ["a", "b", "c"], "__llm_calls__": []}
+        shared = {"data": ["a", "b", "c"], "__warnings__": {}}
         items = batch.prep(shared)
         batch._exec(items)
 
-        # All 3 items should have appended to the SAME list
-        assert len(shared["__llm_calls__"]) == 3
+        # All 3 items should have written to the SAME dict (shallow copy shares it)
+        assert len(shared["__warnings__"]) == 3
 
 
 class TestErrorHandling:
@@ -1767,90 +1769,90 @@ class TestParallelRetry:
 class TestParallelThreadSafety:
     """Tests for thread safety in parallel execution."""
 
-    def test_llm_calls_accumulated(self):
-        """__llm_calls__ list accumulates from all parallel items."""
+    def test_llm_trace_accumulated_parallel(self):
+        """_batch_trace accumulates trace items from all parallel items."""
 
         class LLMTrackingNode:
-            """Node that appends to __llm_calls__."""
+            """Node that writes llm_usage to node output."""
 
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
-                # Simulate LLM call tracking
-                if "__llm_calls__" in shared:
-                    shared["__llm_calls__"].append({"model": "test", "item": item})
                 time.sleep(0.01)  # Ensure overlap
-                shared[self.node_id] = {"response": item}
+                shared[self.node_id] = {
+                    "response": item,
+                    "llm_usage": {"model": "test", "input_tokens": 10, "output_tokens": 5},
+                }
                 return "default"
 
         inner = LLMTrackingNode("test_node")
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
 
-        shared = {"data": ["a", "b", "c", "d", "e"], "__llm_calls__": []}
+        shared: dict = {"data": ["a", "b", "c", "d", "e"]}
         items = batch.prep(shared)
         batch._exec(items)
 
-        # All 5 items should have tracked their LLM calls
-        assert len(shared["__llm_calls__"]) == 5
-        tracked_items = {call["item"] for call in shared["__llm_calls__"]}
+        # All 5 items should have trace entries with llm_call data
+        trace_items = shared["_batch_trace"]["test_node"]
+        assert len(trace_items) == 5
+        tracked_items = {entry["item"] for entry in trace_items}
         assert tracked_items == {"a", "b", "c", "d", "e"}
+        # Each trace item should have llm_call captured from node output
+        for entry in trace_items:
+            assert "llm_call" in entry
+            assert entry["llm_call"]["model"] == "test"
 
     def test_batch_captures_inner_node_llm_usage_sequential(self):
-        """LLM usage from inner nodes is captured in sequential mode.
+        """LLM usage from inner nodes is captured via _batch_trace in sequential mode.
 
-        This tests the fix for the bug where llm_usage written by inner LLM nodes
-        to item_shared was lost when the context was discarded. The batch node
-        should capture this data and append it to __llm_calls__.
+        _capture_item_trace reads llm_usage from node_output (shared[node_id])
+        and records it as the llm_call field in each trace item.
         """
 
         class MockLLMNode:
-            """Mock node that simulates real LLM node behavior.
-
-            Real LLM nodes write llm_usage to shared store, expecting
-            InstrumentedNodeWrapper to capture it. In batch mode, this data
-            was previously lost because the isolated item_shared context
-            was discarded after execution.
-            """
+            """Mock node that writes llm_usage to node output namespace."""
 
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
-                # Simulates what real LLM node does - writes llm_usage
-                shared["llm_usage"] = {
-                    "model": "test-model",
-                    "input_tokens": 100,
-                    "output_tokens": 50,
-                    "total_tokens": 150,
+                shared[self.node_id] = {
+                    "response": f"processed: {item}",
+                    "llm_usage": {
+                        "model": "test-model",
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "total_tokens": 150,
+                    },
                 }
-                shared[self.node_id] = {"response": f"processed: {item}"}
                 return "default"
 
         inner = MockLLMNode("test_node")
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
 
-        shared = {"data": ["a", "b", "c"]}
+        shared: dict = {"data": ["a", "b", "c"]}
         items = batch.prep(shared)
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Should have captured 3 LLM calls
-        assert "__llm_calls__" in shared
-        assert len(shared["__llm_calls__"]) == 3
+        # Should have 3 trace items with llm_call data
+        trace_items = shared["_batch_trace"]["test_node"]
+        assert len(trace_items) == 3
 
-        # Verify each call has correct data
-        for i, call in enumerate(shared["__llm_calls__"]):
-            assert call["model"] == "test-model"
-            assert call["input_tokens"] == 100
-            assert call["output_tokens"] == 50
-            assert call["node_id"] == "test_node"
-            assert call["batch_item_index"] == i
+        # Verify each trace item has correct LLM data
+        for i, entry in enumerate(trace_items):
+            assert entry["index"] == i
+            assert entry["success"] is True
+            assert "llm_call" in entry
+            assert entry["llm_call"]["model"] == "test-model"
+            assert entry["llm_call"]["input_tokens"] == 100
+            assert entry["llm_call"]["output_tokens"] == 50
 
     def test_batch_captures_inner_node_llm_usage_parallel(self):
-        """LLM usage from inner nodes is captured in parallel mode.
+        """LLM usage from inner nodes is captured via _batch_trace in parallel mode.
 
         Same as sequential test but verifies thread-safe capture in parallel mode.
         """
@@ -1862,12 +1864,14 @@ class TestParallelThreadSafety:
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
                 time.sleep(0.01)  # Ensure some overlap
-                shared["llm_usage"] = {
-                    "model": "parallel-model",
-                    "input_tokens": 200,
-                    "output_tokens": 100,
+                shared[self.node_id] = {
+                    "response": f"processed: {item}",
+                    "llm_usage": {
+                        "model": "parallel-model",
+                        "input_tokens": 200,
+                        "output_tokens": 100,
+                    },
                 }
-                shared[self.node_id] = {"response": f"processed: {item}"}
                 return "default"
 
         inner = MockLLMNode("test_node")
@@ -1877,28 +1881,28 @@ class TestParallelThreadSafety:
             {"items": "${data}", "parallel": True, "max_concurrent": 5},
         )
 
-        shared = {"data": ["x", "y", "z", "w", "v"]}
+        shared: dict = {"data": ["x", "y", "z", "w", "v"]}
         items = batch.prep(shared)
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Should have captured 5 LLM calls
-        assert "__llm_calls__" in shared
-        assert len(shared["__llm_calls__"]) == 5
+        # Should have 5 trace items with llm_call data
+        trace_items = shared["_batch_trace"]["test_node"]
+        assert len(trace_items) == 5
 
-        # All calls should have correct model
-        assert all(call["model"] == "parallel-model" for call in shared["__llm_calls__"])
-        assert all(call["node_id"] == "test_node" for call in shared["__llm_calls__"])
+        # All trace items should have correct model
+        assert all(entry["llm_call"]["model"] == "parallel-model" for entry in trace_items)
 
         # Verify all indices are captured (order may vary in parallel)
-        indices = {call["batch_item_index"] for call in shared["__llm_calls__"]}
+        indices = {entry["index"] for entry in trace_items}
         assert indices == {0, 1, 2, 3, 4}
 
     def test_batch_captures_namespaced_llm_usage(self):
-        """LLM usage is captured from namespaced location.
+        """LLM usage is captured from namespaced node output via _batch_trace.
 
         When inner node uses namespacing, llm_usage is written to
-        shared[node_id]["llm_usage"]. The batch node should capture this too.
+        shared[node_id]["llm_usage"]. _capture_item_trace reads from
+        node_output (= shared[node_id]) and records llm_call in the trace.
         """
 
         class NamespacedMockLLMNode:
@@ -1921,21 +1925,22 @@ class TestParallelThreadSafety:
         inner = NamespacedMockLLMNode("test_node")
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
 
-        shared = {"data": [1, 2]}
+        shared: dict = {"data": [1, 2]}
         items = batch.prep(shared)
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Should have captured 2 LLM calls from namespaced location
-        assert len(shared["__llm_calls__"]) == 2
-        assert all(call["model"] == "namespaced-model" for call in shared["__llm_calls__"])
+        # Should have 2 trace items with llm_call from namespaced location
+        trace_items = shared["_batch_trace"]["test_node"]
+        assert len(trace_items) == 2
+        assert all(entry["llm_call"]["model"] == "namespaced-model" for entry in trace_items)
 
-    def test_batch_initializes_llm_calls_list(self):
-        """Batch node initializes __llm_calls__ if not present.
+    def test_batch_initializes_batch_trace(self):
+        """Batch node initializes _batch_trace in prep().
 
-        Critical for the fix: if __llm_calls__ doesn't exist before batch starts,
-        the shallow copy won't share the list reference. The batch node must
-        initialize it in prep() to ensure captures work correctly.
+        prep() must create shared["_batch_trace"][node_id] as an empty list
+        so that _capture_item_trace can append per-item trace events during
+        execution.
         """
 
         class MockLLMNode:
@@ -1943,33 +1948,37 @@ class TestParallelThreadSafety:
                 self.node_id = node_id
 
             def _run(self, shared: dict) -> str:
-                shared["llm_usage"] = {"model": "test", "input_tokens": 10, "output_tokens": 5}
-                shared[self.node_id] = {"response": "ok"}
+                shared[self.node_id] = {
+                    "response": "ok",
+                    "llm_usage": {"model": "test", "input_tokens": 10, "output_tokens": 5},
+                }
                 return "default"
 
         inner = MockLLMNode("test_node")
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
 
-        # Start WITHOUT __llm_calls__ - batch should initialize it
-        shared = {"data": ["a", "b"]}
-        assert "__llm_calls__" not in shared
+        # Start without _batch_trace — batch should initialize it
+        shared: dict = {"data": ["a", "b"]}
+        assert "_batch_trace" not in shared
 
         items = batch.prep(shared)
-        # After prep, __llm_calls__ should exist
-        assert "__llm_calls__" in shared
-        assert isinstance(shared["__llm_calls__"], list)
+        # After prep, _batch_trace should exist with node's trace list
+        assert "_batch_trace" in shared
+        assert "test_node" in shared["_batch_trace"]
+        assert isinstance(shared["_batch_trace"]["test_node"], list)
 
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # And captures should have worked
-        assert len(shared["__llm_calls__"]) == 2
+        # Trace items should have been captured
+        assert len(shared["_batch_trace"]["test_node"]) == 2
 
     def test_batch_no_llm_usage_no_crash(self):
         """Batch node handles inner nodes that don't write llm_usage.
 
-        Non-LLM nodes don't write llm_usage. The capture logic should
-        gracefully handle this case without errors.
+        Non-LLM nodes don't write llm_usage. The trace capture logic should
+        gracefully handle this case without errors — trace items exist but
+        without llm_call data.
         """
 
         class NonLLMNode:
@@ -1984,79 +1993,25 @@ class TestParallelThreadSafety:
         inner = NonLLMNode("test_node")
         batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
 
-        shared = {"data": ["a", "b", "c"]}
+        shared: dict = {"data": ["a", "b", "c"]}
         items = batch.prep(shared)
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # __llm_calls__ should exist but be empty
-        assert "__llm_calls__" in shared
-        assert len(shared["__llm_calls__"]) == 0
+        # Trace items should exist but without llm_call data
+        trace_items = shared["_batch_trace"]["test_node"]
+        assert len(trace_items) == 3
+        for entry in trace_items:
+            assert "llm_call" not in entry
 
         # Results should still work
         assert len(shared["test_node"]["results"]) == 3
 
-    def test_multiple_batch_nodes_share_llm_calls_list(self):
-        """Multiple batch nodes in same workflow append to same __llm_calls__ list.
+    def test_batch_trace_llm_call_contains_fields_for_cost_calculation(self):
+        """Trace llm_call records contain all fields needed for cost calculation.
 
-        Simulates a workflow with two batch nodes running sequentially.
-        Both should append their LLM usage to the shared __llm_calls__ list.
-        """
-
-        class MockLLMNode:
-            def __init__(self, node_id: str, model: str):
-                self.node_id = node_id
-                self.model = model
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get("item")
-                shared["llm_usage"] = {
-                    "model": self.model,
-                    "input_tokens": 100,
-                    "output_tokens": 50,
-                }
-                shared[self.node_id] = {"response": f"processed: {item}"}
-                return "default"
-
-        # First batch node
-        inner1 = MockLLMNode("summarize", "model-a")
-        batch1 = PflowBatchNode(inner1, "summarize", {"items": "${docs}", "parallel": False})
-
-        # Second batch node
-        inner2 = MockLLMNode("translate", "model-b")
-        batch2 = PflowBatchNode(inner2, "translate", {"items": "${docs}", "parallel": False})
-
-        # Shared store with items
-        shared = {"docs": ["doc1", "doc2"]}
-
-        # Execute first batch
-        items1 = batch1.prep(shared)
-        results1 = batch1._exec(items1)
-        batch1.post(shared, items1, results1)
-
-        # Execute second batch (same shared store)
-        items2 = batch2.prep(shared)
-        results2 = batch2._exec(items2)
-        batch2.post(shared, items2, results2)
-
-        # Should have 4 LLM calls total (2 from each batch)
-        assert len(shared["__llm_calls__"]) == 4
-
-        # First 2 calls from batch1
-        assert shared["__llm_calls__"][0]["node_id"] == "summarize"
-        assert shared["__llm_calls__"][0]["model"] == "model-a"
-        assert shared["__llm_calls__"][1]["node_id"] == "summarize"
-
-        # Last 2 calls from batch2
-        assert shared["__llm_calls__"][2]["node_id"] == "translate"
-        assert shared["__llm_calls__"][2]["model"] == "model-b"
-        assert shared["__llm_calls__"][3]["node_id"] == "translate"
-
-    def test_llm_calls_contain_all_required_fields_for_metrics(self):
-        """LLM call records contain all fields needed for cost calculation.
-
-        The MetricsCollector and trace system expect specific fields
-        to calculate costs and display usage. Verify all are present.
+        _capture_item_trace calls enrich_llm_usage_with_cost() which adds
+        cost_usd. Verify the original fields are preserved and cost is enriched.
         """
 
         class MockLLMNodeWithFullUsage:
@@ -2065,51 +2020,53 @@ class TestParallelThreadSafety:
 
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
-                # Simulates full LLM usage data as written by real LLM node
-                shared["llm_usage"] = {
-                    "model": "anthropic/claude-sonnet-4-0",
-                    "input_tokens": 500,
-                    "output_tokens": 150,
-                    "total_tokens": 650,
-                    "cache_creation_input_tokens": 100,
-                    "cache_read_input_tokens": 50,
-                    "total_cost_usd": 0.0123,
+                shared[self.node_id] = {
+                    "response": f"processed: {item}",
+                    "llm_usage": {
+                        "model": "anthropic/claude-sonnet-4-0",
+                        "input_tokens": 500,
+                        "output_tokens": 150,
+                        "total_tokens": 650,
+                        "cache_creation_input_tokens": 100,
+                        "cache_read_input_tokens": 50,
+                        "total_cost_usd": 0.0123,
+                    },
                 }
-                shared[self.node_id] = {"response": f"processed: {item}"}
                 return "default"
 
         inner = MockLLMNodeWithFullUsage("summarize")
         batch = PflowBatchNode(inner, "summarize", {"items": "${items}", "parallel": False})
 
-        shared = {"items": ["doc1", "doc2", "doc3"]}
+        shared: dict = {"items": ["doc1", "doc2", "doc3"]}
         items = batch.prep(shared)
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Verify all 3 calls captured
-        assert len(shared["__llm_calls__"]) == 3
+        # Verify all 3 trace items have llm_call data
+        trace_items = shared["_batch_trace"]["summarize"]
+        assert len(trace_items) == 3
 
-        # Verify each call has all required fields
-        for i, call in enumerate(shared["__llm_calls__"]):
-            # Original LLM usage fields (for MetricsCollector)
-            assert call["model"] == "anthropic/claude-sonnet-4-0"
-            assert call["input_tokens"] == 500
-            assert call["output_tokens"] == 150
-            assert call["total_tokens"] == 650
-            assert call["cache_creation_input_tokens"] == 100
-            assert call["cache_read_input_tokens"] == 50
-            assert call["total_cost_usd"] == 0.0123
+        for i, entry in enumerate(trace_items):
+            llm_call = entry["llm_call"]
+            # Original LLM usage fields preserved
+            assert llm_call["model"] == "anthropic/claude-sonnet-4-0"
+            assert llm_call["input_tokens"] == 500
+            assert llm_call["output_tokens"] == 150
+            assert llm_call["total_tokens"] == 650
+            assert llm_call["cache_creation_input_tokens"] == 100
+            assert llm_call["cache_read_input_tokens"] == 50
+            assert llm_call["total_cost_usd"] == 0.0123
+            # enrich_llm_usage_with_cost adds cost_usd from total_cost_usd
+            assert llm_call["cost_usd"] == 0.0123
+            # Trace item has index for ordering
+            assert entry["index"] == i
 
-            # Batch context fields (added by _capture_item_llm_usage)
-            assert call["node_id"] == "summarize"
-            assert call["batch_item_index"] == i
+        # Verify total cost can be aggregated from trace items
+        total_cost = sum(entry["llm_call"]["cost_usd"] for entry in trace_items)
+        assert total_cost == pytest.approx(0.0123 * 3)
 
-        # Verify total cost would be correctly calculated
-        total_cost = sum(call["total_cost_usd"] for call in shared["__llm_calls__"])
-        assert total_cost == 0.0123 * 3  # 0.0369
-
-        total_tokens = sum(call["total_tokens"] for call in shared["__llm_calls__"])
-        assert total_tokens == 650 * 3  # 1950
+        total_tokens = sum(entry["llm_call"]["total_tokens"] for entry in trace_items)
+        assert total_tokens == 650 * 3
 
     def test_no_race_on_results_array(self):
         """Results array is not corrupted by parallel writes."""
@@ -2826,12 +2783,13 @@ class TestBatchLLMOutputSchemaIntegration:
         assert batch_output["success_count"] == 2
 
         # 7. Usage metrics captured for all items including the failed one — Fix B
-        llm_calls = shared.get("__llm_calls__", [])
-        assert len(llm_calls) == 3, f"Expected 3 LLM usage entries (including failed item), got {len(llm_calls)}"
-        for call in llm_calls:
-            assert call["node_id"] == node_id
-            assert "input_tokens" in call
-            assert "output_tokens" in call
+        # LLM usage is now captured via _batch_trace, not __llm_calls__
+        trace_items = shared.get("_batch_trace", {}).get(node_id, [])
+        assert len(trace_items) == 3, f"Expected 3 trace entries (including failed item), got {len(trace_items)}"
+        for entry in trace_items:
+            assert "llm_call" in entry, f"Trace entry should have llm_call: {entry}"
+            assert "input_tokens" in entry["llm_call"]
+            assert "output_tokens" in entry["llm_call"]
 
 
 class TestBatchActionFallbackErrorDetection:
