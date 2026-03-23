@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import re
 import threading
 import uuid
@@ -12,23 +11,21 @@ from typing import Any, Callable, ClassVar, Optional
 
 logger = logging.getLogger(__name__)
 
-# Configurable truncation limits (can be overridden via environment variables)
-# Using debugging-friendly defaults that capture more information
-TRACE_PROMPT_MAX_LENGTH = int(os.environ.get("PFLOW_TRACE_PROMPT_MAX", "50000"))  # 50K chars for full prompts
-TRACE_RESPONSE_MAX_LENGTH = int(os.environ.get("PFLOW_TRACE_RESPONSE_MAX", "20000"))  # 20K chars for full responses
-TRACE_SHARED_STORE_MAX_LENGTH = int(os.environ.get("PFLOW_TRACE_STORE_MAX", "10000"))  # 10K chars for store values
-TRACE_DICT_MAX_SIZE = int(os.environ.get("PFLOW_TRACE_DICT_MAX", "50000"))  # 50K chars for complex dicts
-TRACE_LLM_CALLS_MAX = int(os.environ.get("PFLOW_TRACE_LLM_CALLS_MAX", "100"))  # Track up to 100 LLM calls
-
-# Trace format version for future compatibility
-TRACE_FORMAT_VERSION = "1.2.0"  # Updated for tri-state status support
+# Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
+TRACE_FORMAT_VERSION = "2.0.0"
 
 
 class WorkflowTraceCollector:
     """Collects detailed execution traces for workflow debugging.
 
-    Captures node execution data, shared store mutations, template resolutions,
+    Captures node execution data, template resolutions, per-node outputs,
     and LLM interactions. Saves traces to ~/.pflow/debug/ for analysis.
+
+    Format 2.0.0 changes:
+    - Removed shared_before/shared_after (O(n²) full-store snapshots)
+    - Added node_params, template_resolutions, node_output per event
+    - Tree-structured: batch_items and sub_workflow_events are nested
+    - No value truncation (only internal key filtering and binary replacement)
     """
 
     # Class-level attributes for thread-safe LLM interception
@@ -36,6 +33,7 @@ class WorkflowTraceCollector:
     _llm_interception_count: ClassVar[int] = 0
     _original_get_model: ClassVar[Optional[Callable[..., Any]]] = None
     _active_collectors: ClassVar[dict[int, "WorkflowTraceCollector"]] = {}  # thread_id -> collector
+    _thread_local: ClassVar[threading.local] = threading.local()  # per-thread current_node
 
     def __init__(self, workflow_name: str = "workflow"):
         """Initialize the trace collector.
@@ -49,19 +47,23 @@ class WorkflowTraceCollector:
         self.events: list[dict[str, Any]] = []
         self.llm_prompts: dict[str, str] = {}  # Store prompts by node_id
         self._llm_interceptor_installed = False
-        self._current_node: Optional[str] = None
         self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
+        self.enable_llm_interception = True  # Set False for child collectors
 
     def record_node_execution(
         self,
         node_id: str,
         node_type: str,
         duration_ms: float,
-        shared_before: dict[str, Any],
-        shared_after: dict[str, Any],
         success: bool,
         error: Optional[str] = None,
+        node_params: Optional[dict[str, Any]] = None,
         template_resolutions: Optional[dict[str, Any]] = None,
+        node_output: Optional[dict[str, Any]] = None,
+        mutations: Optional[dict[str, list[str]]] = None,
+        batch_items: Optional[list[dict[str, Any]]] = None,
+        sub_workflow_events: Optional[list[dict[str, Any]]] = None,
+        cached: bool = False,
     ) -> None:
         """Record detailed node execution data.
 
@@ -69,297 +71,179 @@ class WorkflowTraceCollector:
             node_id: Unique identifier for the node
             node_type: Type/class name of the node
             duration_ms: Execution duration in milliseconds
-            shared_before: Shared store state before execution
-            shared_after: Shared store state after execution
             success: Whether the node executed successfully
             error: Error message if execution failed
+            node_params: Original node parameters (before template resolution)
             template_resolutions: Template variables resolved during execution
+            node_output: This node's output from the shared store (namespaced)
+            mutations: Key-level changes to shared store (added/removed/modified)
+            batch_items: Per-item trace events for batch nodes
+            sub_workflow_events: Child workflow trace events for nested workflows
+            cached: Whether this node used cached results (skipped execution)
         """
-        # Build base event
-        event = self._build_base_event(node_id, node_type, duration_ms, success, shared_before, shared_after)
-
-        # Add optional fields
-        if error:
-            event["error"] = error
-        if template_resolutions:
-            event["template_resolutions"] = template_resolutions
-
-        # Add LLM-specific data if present
-        self._add_llm_data(event, node_id, shared_after)
-
-        self.events.append(event)
-
-    def _build_base_event(
-        self,
-        node_id: str,
-        node_type: str,
-        duration_ms: float,
-        success: bool,
-        shared_before: dict[str, Any],
-        shared_after: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Build the base event dictionary with core fields.
-
-        Args:
-            node_id: Unique identifier for the node
-            node_type: Type/class name of the node
-            duration_ms: Execution duration in milliseconds
-            success: Whether the node executed successfully
-            shared_before: Shared store state before execution
-            shared_after: Shared store state after execution
-
-        Returns:
-            Base event dictionary
-        """
-        return {
+        event: dict[str, Any] = {
             "node_id": node_id,
             "node_type": node_type,
             "duration_ms": round(duration_ms, 2),
             "success": success,
-            "shared_before": self._filter_shared(shared_before),
-            "shared_after": self._filter_shared(shared_after),
-            "mutations": self._calculate_mutations(shared_before, shared_after),
             "timestamp": datetime.now().isoformat(),
         }
+
+        if cached:
+            event["cached"] = True
+        if error:
+            event["error"] = error
+        if node_params:
+            event["node_params"] = self._sanitize_for_json(node_params)
+        if template_resolutions:
+            event["template_resolutions"] = self._sanitize_for_json(template_resolutions)
+        if node_output:
+            event["node_output"] = self._sanitize_for_json(node_output)
+        if mutations:
+            event["mutations"] = mutations
+        if batch_items:
+            event["batch_items"] = self._sanitize_batch_items(batch_items)
+        if sub_workflow_events:
+            event["sub_workflow_events"] = sub_workflow_events  # Already sanitized by child collector
+
+        # Add LLM-specific data if present
+        self._add_llm_data(event, node_id, node_output or {})
+
+        self.events.append(event)
 
     def _add_llm_data(
         self,
         event: dict[str, Any],
         node_id: str,
-        shared_after: dict[str, Any],
+        node_output: dict[str, Any],
     ) -> None:
         """Add LLM usage and response data to the event if present.
 
         Args:
             event: Event dictionary to update
-            node_id: Node ID for namespaced lookup
-            shared_after: Shared store state after execution
+            node_id: Node ID for prompt lookup
+            node_output: This node's output from the shared store
         """
-        # Extract LLM usage (includes model in the dict)
-        llm_usage = self._extract_llm_usage(node_id, shared_after)
-        if llm_usage:
+        # Look for llm_usage directly in node_output
+        llm_usage = node_output.get("llm_usage") if isinstance(node_output, dict) else None
+        if isinstance(llm_usage, dict):
             event["llm_call"] = llm_usage
 
-            # Find and add the prompt if available
-            prompt = self._find_llm_prompt(node_id, event, shared_after)
-            if prompt:
-                self._add_truncated_field(event, "llm_prompt", prompt, TRACE_PROMPT_MAX_LENGTH)
-
-        # Extract and add LLM response if available
-        response = self._extract_llm_response(node_id, shared_after)
-        if response:
-            self._add_truncated_field(event, "llm_response", response, TRACE_RESPONSE_MAX_LENGTH)
-
-    def _find_llm_prompt(
-        self,
-        node_id: str,
-        event: dict[str, Any],
-        shared_after: dict[str, Any],
-    ) -> Optional[str]:
-        """Find LLM prompt from various sources.
-
-        Tries multiple locations in order:
-        1. Intercepted LLM prompts
-        2. __llm_calls__ data in shared_after
-        3. shared_before (both root and namespaced)
-
-        Args:
-            node_id: Node ID for lookup
-            event: Event dictionary containing shared_before
-            shared_after: Shared store state after execution
-
-        Returns:
-            Prompt string if found, None otherwise
-        """
-        # Try intercepted prompts first
+        # Look for prompt via interception first, then node_output.
+        # Note: child collectors (enable_llm_interception=False) won't have intercepted prompts.
+        # For those, the prompt is in template_resolutions["prompt"]["resolved"] (not llm_prompt).
+        # The LLM node does NOT write "prompt" to shared, so node_output fallback rarely fires.
         prompt = self.llm_prompts.get(node_id)
-        if prompt:
-            return prompt
+        if not prompt and isinstance(node_output, dict):
+            prompt = node_output.get("prompt")
+        if isinstance(prompt, str):
+            event["llm_prompt"] = prompt  # No truncation
 
-        # Try __llm_calls__ data
-        prompt = self._find_prompt_in_llm_calls(node_id, shared_after)
-        if prompt:
-            return prompt
+        # Look for response in node_output
+        response = node_output.get("response") if isinstance(node_output, dict) else None
+        if isinstance(response, str):
+            event["llm_response"] = response  # No truncation
 
-        # Try shared_before
-        return self._find_prompt_in_shared_before(node_id, event)
+    def collect_llm_calls(self) -> list[dict[str, Any]]:
+        """Walk event tree recursively and return flat list of llm_call dicts.
 
-    def _find_prompt_in_llm_calls(self, node_id: str, shared_after: dict[str, Any]) -> Optional[str]:
-        """Find prompt in __llm_calls__ data.
-
-        Args:
-            node_id: Node ID to match
-            shared_after: Shared store state after execution
+        Collects from top-level events, batch_items, and sub_workflow_events.
 
         Returns:
-            Prompt if found, None otherwise
+            Flat list of llm_call dicts (each containing model, tokens, cost, etc.)
         """
-        llm_calls = shared_after.get("__llm_calls__", [])
-        for call in llm_calls:
-            if call.get("node_id") == node_id and "prompt" in call:
-                prompt = call["prompt"]
-                return prompt if isinstance(prompt, str) else None
-        return None
+        return self._collect_llm_calls_from_events(self.events)
 
-    def _find_prompt_in_shared_before(self, node_id: str, event: dict[str, Any]) -> Optional[str]:
-        """Find prompt in shared_before data.
+    def _collect_llm_calls_from_events(self, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Recursively collect llm_call dicts from tree-structured events.
+
+        NOTE: Keep tree traversal in sync with _collect_llm_summary() — same structure.
+
+        Invariant: batch items have EITHER llm_call (leaf items — direct LLM execution)
+        OR events (sub-workflow items — containing their own llm_call entries), never both.
+        LLM nodes produce llm_call; WorkflowExecutor nodes produce events. If both were
+        present, this method would double-count. Verified by construction in _capture_item_trace.
 
         Args:
-            node_id: Node ID for namespaced lookup
-            event: Event dictionary containing shared_before
+            events: List of trace events (may contain nested batch_items/sub_workflow_events)
 
         Returns:
-            Prompt if found, None otherwise
+            Flat list of llm_call dicts
         """
-        shared_before = event.get("shared_before", {})
+        calls: list[dict[str, Any]] = []
 
-        # Check root level first
-        if "prompt" in shared_before:
-            prompt = shared_before["prompt"]
-            return prompt if isinstance(prompt, str) else None
+        for event in events:
+            if "llm_call" in event:
+                call = dict(event["llm_call"])
+                call["node_id"] = event.get("node_id", "unknown")
+                call["duration_ms"] = event.get("duration_ms", 0)
+                calls.append(call)
 
-        # Check namespaced location
-        if node_id in shared_before and isinstance(shared_before[node_id], dict):
-            prompt = shared_before[node_id].get("prompt")
-            return prompt if isinstance(prompt, str) else None
+            # Recurse into batch items
+            for item in event.get("batch_items", []):
+                if "llm_call" in item:
+                    call = dict(item["llm_call"])
+                    call["node_id"] = event.get("node_id", "unknown")
+                    call["batch_item_index"] = item.get("index", 0)
+                    calls.append(call)
+                # Recurse into nested events within batch items (sub-workflow)
+                calls.extend(self._collect_llm_calls_from_events(item.get("events", [])))
 
-        return None
+            # Recurse into sub-workflow events
+            sub_events = event.get("sub_workflow_events", [])
+            if sub_events:
+                calls.extend(self._collect_llm_calls_from_events(sub_events))
 
-    def _add_truncated_field(self, event: dict[str, Any], field_name: str, value: str, max_length: int) -> None:
-        """Add a field to the event, truncating if necessary.
+        return calls
+
+    def _sanitize_for_json(self, data: Any) -> Any:
+        """Make data JSON-serializable. No truncation — just hygiene.
+
+        Filters internal keys (__ prefixed except __metrics__)
+        and replaces binary data with a placeholder.
 
         Args:
-            event: Event dictionary to update
-            field_name: Base field name (e.g., "llm_prompt")
-            value: Value to add
-            max_length: Maximum length before truncation
+            data: Data to sanitize
+
+        Returns:
+            Sanitized data suitable for JSON serialization
         """
-        if isinstance(value, str) and len(value) > max_length:
-            event[f"{field_name}_truncated"] = value[:max_length] + "... [truncated]"
+        if isinstance(data, dict):
+            result = {}
+            for key, value in data.items():
+                # Skip internal keys
+                if isinstance(key, str) and key.startswith("__") and key not in ("__metrics__",):
+                    continue
+                if key in ("_trace_collector", "_debug_context", "_batch_trace"):
+                    continue
+                result[key] = self._sanitize_for_json(value)
+            return result
+        elif isinstance(data, bytes):
+            return f"<binary data: {len(data)} bytes>"
+        elif isinstance(data, (list, tuple)):
+            return [self._sanitize_for_json(item) for item in data]
         else:
-            event[field_name] = value
+            return data
 
-    def _extract_llm_usage(self, node_id: str, shared_after: dict[str, Any]) -> Optional[dict[str, Any]]:
-        """Extract LLM usage data from shared store.
-
-        Checks both root level (for non-namespaced) and namespaced location.
-
-        Args:
-            node_id: Node ID for namespaced lookup
-            shared_after: Shared store state after execution
-
-        Returns:
-            LLM usage data if found, None otherwise
-        """
-        if "llm_usage" in shared_after:
-            usage = shared_after["llm_usage"]
-            if isinstance(usage, dict):
-                return usage
-        elif node_id in shared_after and isinstance(shared_after[node_id], dict):
-            namespaced_usage = shared_after[node_id].get("llm_usage")
-            if isinstance(namespaced_usage, dict):
-                return namespaced_usage
-        return None
-
-    def _extract_llm_response(self, node_id: str, shared_after: dict[str, Any]) -> Optional[str]:
-        """Extract LLM response from shared store.
-
-        Checks both root level and namespaced location.
-
-        Args:
-            node_id: Node ID for namespaced lookup
-            shared_after: Shared store state after execution
-
-        Returns:
-            LLM response string if found, None otherwise
-        """
-        if "response" in shared_after:
-            response = shared_after["response"]
-            if isinstance(response, str):
-                return response
-        elif node_id in shared_after and isinstance(shared_after[node_id], dict):
-            namespaced_response = shared_after[node_id].get("response")
-            if isinstance(namespaced_response, str):
-                return namespaced_response
-        return None
-
-    def _filter_shared(self, shared: dict[str, Any]) -> dict[str, Any]:
-        """Filter sensitive or large data from shared store.
-
-        Args:
-            shared: The shared store to filter
-
-        Returns:
-            Filtered version suitable for trace files
-        """
-        filtered: dict[str, Any] = {}
-
-        for key, value in shared.items():
-            # Skip system keys except our tracking keys
-            if key.startswith("__") and key not in ["__llm_calls__", "__metrics__"]:
-                continue
-
-            # Skip internal trace/debug keys
-            if key in ["_trace_collector", "_debug_context"]:
-                continue
-
-            # Handle different value types
-            if isinstance(value, str):
-                # Truncate large strings
-                if len(value) > TRACE_SHARED_STORE_MAX_LENGTH:
-                    filtered[key] = value[:TRACE_SHARED_STORE_MAX_LENGTH] + "... [truncated]"
-                else:
-                    filtered[key] = value
-            elif isinstance(value, bytes):
-                # Don't include binary data
-                filtered[key] = f"<binary data: {len(value)} bytes>"
-            elif isinstance(value, list) and key == "__llm_calls__":
-                # Include LLM calls but limit size
-                filtered[key] = value[:TRACE_LLM_CALLS_MAX] if len(value) > TRACE_LLM_CALLS_MAX else value
-            elif isinstance(value, dict):
-                # Recursively filter nested dicts (for namespaced data)
-                if len(str(value)) > TRACE_DICT_MAX_SIZE:
-                    filtered[key] = "<large dict truncated>"
-                else:
-                    filtered[key] = value
-            else:
-                # Include other types as-is
-                filtered[key] = value
-
-        return filtered
-
-    def _calculate_mutations(self, before: dict[str, Any], after: dict[str, Any]) -> dict[str, list[str]]:
-        """Calculate what changed in shared store.
-
-        Args:
-            before: Shared store before execution
-            after: Shared store after execution
-
-        Returns:
-            Dictionary with added, removed, and modified keys
-        """
-        before_keys = set(before.keys())
-        after_keys = set(after.keys())
-
-        added = sorted(after_keys - before_keys)
-        removed = sorted(before_keys - after_keys)
-
-        # Check for modified values
-        modified = []
-        for key in before_keys & after_keys:
-            try:
-                if before[key] != after[key]:
-                    modified.append(key)
-            except Exception:
-                # Handle unhashable types
-                if str(before[key]) != str(after[key]):
-                    modified.append(key)
-
-        return {
-            "added": added,
-            "removed": removed,
-            "modified": sorted(modified),
-        }
+    def _sanitize_batch_items(self, batch_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sanitize batch item trace data. Items are built by _capture_item_trace
+        which doesn't sanitize node_output — we do it here at the collector level."""
+        sanitized = []
+        for item in batch_items:
+            clean_item = dict(item)
+            if "node_output" in clean_item:
+                clean_item["node_output"] = self._sanitize_for_json(clean_item["node_output"])
+            if "template_resolutions" in clean_item:
+                clean_item["template_resolutions"] = self._sanitize_for_json(clean_item["template_resolutions"])
+            # Recurse into nested events (sub-workflow batch items)
+            if "events" in clean_item:
+                # Child events from sub-workflow collectors are already sanitized,
+                # but events from _capture_item_trace may not be
+                clean_item["events"] = [
+                    self._sanitize_for_json(e) if isinstance(e, dict) else e for e in clean_item["events"]
+                ]
+            sanitized.append(clean_item)
+        return sanitized
 
     def set_json_output(self, json_output: dict[str, Any]) -> None:
         """Store the JSON output that was sent to stdout.
@@ -370,28 +254,76 @@ class WorkflowTraceCollector:
         self.json_output = json_output
 
     def _determine_trace_status(self) -> str:
-        """Determine tri-state status from execution events.
+        """Determine status from execution events.
 
         Returns:
-            Status string: "success", "degraded", or "failed"
+            Status string: "success" or "failed"
         """
-        failed = [e for e in self.events if not e.get("success", True)]
-        if failed:
-            return "failed"
+        failed = any(not e.get("success", True) for e in self.events)
+        return "failed" if failed else "success"
 
-        warned = [e for e in self.events if e.get("warning")]
-        if warned:
-            return "degraded"
+    def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
+        """Recursively collect LLM call data from tree-structured events.
 
-        return "success"
-
-    def save_to_file(self, llm_calls: list[dict[str, Any]] | None = None) -> Path:
-        """Save trace to JSON file in ~/.pflow/debug/.
+        NOTE: Keep tree traversal in sync with _collect_llm_calls_from_events() — same structure.
+        See that method's docstring for the batch item llm_call/events mutual exclusivity invariant.
 
         Args:
-            llm_calls: Authoritative LLM call data from shared["__llm_calls__"].
-                When provided, llm_summary is built from this instead of scanning
-                trace events. This ensures sub-workflow LLM calls are counted.
+            events: List of trace events (may contain nested batch_items/sub_workflow_events)
+
+        Returns:
+            Summary dict with total_calls, total_tokens, total_cost_usd, models_used
+        """
+        total_calls = 0
+        total_tokens = 0
+        total_cost = 0.0
+        models: set[str] = set()
+
+        for event in events:
+            if "llm_call" in event:
+                total_calls += 1
+                total_tokens += event["llm_call"].get("total_tokens", 0)
+                total_cost += event["llm_call"].get("cost_usd", 0) or 0
+                model = event["llm_call"].get("model")
+                if model:
+                    models.add(model)
+
+            # Recurse into batch items
+            # Invariant: items have llm_call XOR events, never both (see _collect_llm_calls_from_events)
+            for item in event.get("batch_items", []):
+                # Leaf item with direct LLM call
+                if "llm_call" in item:
+                    total_calls += 1
+                    total_tokens += item["llm_call"].get("total_tokens", 0)
+                    total_cost += item["llm_call"].get("cost_usd", 0) or 0
+                    model = item["llm_call"].get("model")
+                    if model:
+                        models.add(model)
+                # Sub-workflow item with nested events
+                sub = self._collect_llm_summary(item.get("events", []))
+                total_calls += sub.get("total_calls", 0)
+                total_tokens += sub.get("total_tokens", 0)
+                total_cost += sub.get("total_cost_usd", 0)
+                models.update(sub.get("models_used", []))
+
+            # Recurse into sub-workflow events
+            sub_events = event.get("sub_workflow_events", [])
+            if sub_events:
+                sub = self._collect_llm_summary(sub_events)
+                total_calls += sub.get("total_calls", 0)
+                total_tokens += sub.get("total_tokens", 0)
+                total_cost += sub.get("total_cost_usd", 0)
+                models.update(sub.get("models_used", []))
+
+        return {
+            "total_calls": total_calls,
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost,
+            "models_used": sorted(models),
+        }
+
+    def save_to_file(self) -> Path:
+        """Save trace to JSON file in ~/.pflow/debug/.
 
         Returns:
             Path to the saved trace file
@@ -404,7 +336,7 @@ class WorkflowTraceCollector:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
         # Sanitize workflow name for filename (keep only alphanumeric and hyphens, limit length)
-        safe_name = re.sub(r"[^a-zA-Z0-9-]", "-", self.workflow_name)[:30]
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", self.workflow_name)[:30]
         # Remove multiple consecutive hyphens and strip leading/trailing hyphens
         safe_name = re.sub(r"-+", "-", safe_name).strip("-")
 
@@ -425,7 +357,7 @@ class WorkflowTraceCollector:
         failed_nodes = [e for e in self.events if not e.get("success", True)]
 
         # Prepare trace data with format version
-        trace_data = {
+        trace_data: dict[str, Any] = {
             "format_version": TRACE_FORMAT_VERSION,
             "execution_id": self.execution_id,
             "workflow_name": self.workflow_name,
@@ -438,26 +370,10 @@ class WorkflowTraceCollector:
             "nodes": self.events,
         }
 
-        # Add summary of LLM calls if present.
-        # Prefer authoritative __llm_calls__ (includes sub-workflow calls),
-        # fall back to scanning trace events (backward compat).
-        if llm_calls is not None:
-            if llm_calls:
-                total_tokens = sum(c.get("total_tokens", 0) for c in llm_calls)
-                trace_data["llm_summary"] = {
-                    "total_calls": len(llm_calls),
-                    "total_tokens": total_tokens,
-                    "models_used": list({c.get("model", "unknown") for c in llm_calls}),
-                }
-        else:
-            llm_events = [e for e in self.events if "llm_call" in e]
-            if llm_events:
-                total_tokens = sum(e["llm_call"].get("total_tokens", 0) for e in llm_events)
-                trace_data["llm_summary"] = {
-                    "total_calls": len(llm_events),
-                    "total_tokens": total_tokens,
-                    "models_used": list({e["llm_call"].get("model", "unknown") for e in llm_events}),
-                }
+        # Add LLM summary by recursively scanning tree-structured events
+        llm_summary = self._collect_llm_summary(self.events)
+        if llm_summary["total_calls"] > 0:
+            trace_data["llm_summary"] = llm_summary
 
         # Add JSON output if it was generated (e.g., when --output-format json was used)
         if self.json_output is not None:
@@ -475,10 +391,13 @@ class WorkflowTraceCollector:
         Args:
             node_id: The node that will make LLM calls
         """
+        if not self.enable_llm_interception:
+            return
+
         import llm
 
-        # Store current node for prompt capture
-        self._current_node = node_id
+        # Store current node for prompt capture (thread-local to avoid race in parallel batch)
+        WorkflowTraceCollector._thread_local.current_node = node_id
 
         with WorkflowTraceCollector._llm_lock:
             # Register this collector for the current thread
@@ -503,11 +422,10 @@ class WorkflowTraceCollector:
                         thread_id = threading.current_thread().ident
                         if thread_id and thread_id in WorkflowTraceCollector._active_collectors:
                             collector = WorkflowTraceCollector._active_collectors[thread_id]
-                            if collector._current_node:
-                                collector.llm_prompts[collector._current_node] = prompt_text
-                                logger.debug(
-                                    f"Captured prompt for node {collector._current_node} in thread {thread_id}"
-                                )
+                            current_node = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
+                            if current_node:
+                                collector.llm_prompts[current_node] = prompt_text
+                                logger.debug(f"Captured prompt for node {current_node} in thread {thread_id}")
 
                         # Call original prompt method
                         return original_prompt(prompt_text, **prompt_kwargs)

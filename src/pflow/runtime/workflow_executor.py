@@ -66,10 +66,11 @@ class WorkflowExecutor(BaseNode):
     # NOT execution-scoped state (__execution__, __cache_hits__, __template_errors__).
     _PROPAGATED_KEYS = (
         "__registry__",
-        "__llm_calls__",
         "__progress_callback__",
         "__mcp_pool__",
         "__warnings__",
+        "_trace_collector",  # Propagated so grandchild+ workflows detect tracing is active.
+        # Points to the PARENT collector (not child) — used only as truthiness check in exec().
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -124,12 +125,22 @@ class WorkflowExecutor(BaseNode):
         if registry is not None and not isinstance(registry, Registry):
             registry = None
 
+        # Create child trace collector for sub-workflow visibility
+        parent_trace = parent_shared.get("_trace_collector")
+        child_trace = None
+        if parent_trace:
+            from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
+            child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
+            child_trace.enable_llm_interception = False  # Prompts captured via template_resolutions
+
         try:
             sub_flow = compile_ir_to_flow(
                 workflow_ir,
                 registry=registry,  # type: ignore[arg-type]
                 initial_params=child_params,
                 validate=True,
+                trace_collector=child_trace,
             )
         except Exception as e:
             return {"success": False, "error": f"Failed to compile sub-workflow: {e!s}", "workflow_path": workflow_path}
@@ -137,8 +148,15 @@ class WorkflowExecutor(BaseNode):
         # Create child storage
         child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)
 
+        # Initialize _child_trace_events (will be populated after sub-flow runs)
+        self._child_trace_events: list[dict[str, Any]] | None = None
+
         try:
             result = sub_flow.run(child_storage)
+
+            # Store child trace events for parent InstrumentedNodeWrapper to embed
+            if child_trace and child_trace.events:
+                self._child_trace_events = child_trace.events
 
             # Detect sub-workflow failure via action string (not just exceptions).
             # When a child node returns "error" and the flow has no error successor,
@@ -155,6 +173,9 @@ class WorkflowExecutor(BaseNode):
 
             return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
         except Exception as e:
+            # Still capture child trace events on failure
+            if child_trace and child_trace.events:
+                self._child_trace_events = child_trace.events
             return {
                 "success": False,
                 "error": f"Sub-workflow execution failed: {e!s}",

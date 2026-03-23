@@ -406,8 +406,8 @@ class TestBatchExecutionIntegration:
         assert "results" in shared["batch"]
         assert shared["batch"]["count"] == 2
 
-    def test_batch_llm_calls_accumulate(self, test_registry):
-        """__llm_calls__ tracking list is preserved (shallow copy behavior)."""
+    def test_batch_trace_initialized(self, test_registry):
+        """Batch trace is captured and cleaned up after execution."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -426,12 +426,12 @@ class TestBatchExecutionIntegration:
         }
 
         flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
-        shared: dict[str, Any] = {"__llm_calls__": []}  # Initialize tracking list
+        shared: dict[str, Any] = {}
         flow.run(shared)
 
-        # The list should still exist and be the same reference
-        assert "__llm_calls__" in shared
-        assert isinstance(shared["__llm_calls__"], list)
+        # After execution, _batch_trace is cleaned up from shared store
+        # (data transferred to batch node's _trace_items, consumed by InstrumentedNodeWrapper)
+        assert "_batch_trace" not in shared
 
 
 class TestBatchEdgeCases:

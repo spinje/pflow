@@ -1,4 +1,4 @@
-"""Comprehensive unit tests for WorkflowTraceCollector."""
+"""Comprehensive unit tests for WorkflowTraceCollector (trace format 2.0.0)."""
 
 import json
 import uuid
@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from src.pflow.runtime.workflow_trace import WorkflowTraceCollector
+from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
 
 class TestWorkflowTraceCollector:
@@ -36,16 +36,12 @@ class TestWorkflowTraceCollector:
 
     def test_record_node_execution_success(self, collector):
         """Test recording a successful node execution."""
-        shared_before = {"input": "test"}
-        shared_after = {"input": "test", "output": "result"}
-
         collector.record_node_execution(
             node_id="node-1",
             node_type="TestNode",
             duration_ms=123.456,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={"output": "result"},
         )
 
         assert len(collector.events) == 1
@@ -59,21 +55,17 @@ class TestWorkflowTraceCollector:
         assert "timestamp" in event
         assert "error" not in event
 
-        # Verify shared store data
-        assert event["shared_before"] == {"input": "test"}
-        assert event["shared_after"] == {"input": "test", "output": "result"}
+        # Verify node_output is stored (no shared_before/shared_after)
+        assert event["node_output"] == {"output": "result"}
+        assert "shared_before" not in event
+        assert "shared_after" not in event
 
     def test_record_node_execution_failure(self, collector):
         """Test recording a failed node execution."""
-        shared_before = {"input": "test"}
-        shared_after = {"input": "test"}
-
         collector.record_node_execution(
             node_id="node-2",
             node_type="FailingNode",
             duration_ms=50.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=False,
             error="Division by zero",
         )
@@ -83,135 +75,121 @@ class TestWorkflowTraceCollector:
         assert event["error"] == "Division by zero"
 
     def test_mutation_calculation(self, collector):
-        """Test that mutations between shared states are calculated correctly."""
-        shared_before = {
-            "keep": "unchanged",
-            "modify": "old_value",
-            "remove": "will_be_removed",
-        }
-        shared_after = {
-            "keep": "unchanged",
-            "modify": "new_value",
-            "added": "new_key",
+        """Test that mutations are stored when provided directly.
+
+        In format 2.0.0, mutations are computed by InstrumentedNodeWrapper
+        and passed to record_node_execution, not calculated by the collector.
+        """
+        mutations = {
+            "added": ["added"],
+            "removed": ["remove"],
+            "modified": ["modify"],
         }
 
         collector.record_node_execution(
             node_id="node-3",
             node_type="MutationNode",
             duration_ms=10.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            mutations=mutations,
         )
 
-        mutations = collector.events[0]["mutations"]
-        assert mutations["added"] == ["added"]
-        assert mutations["removed"] == ["remove"]
-        assert mutations["modified"] == ["modify"]
+        recorded_mutations = collector.events[0]["mutations"]
+        assert recorded_mutations["added"] == ["added"]
+        assert recorded_mutations["removed"] == ["remove"]
+        assert recorded_mutations["modified"] == ["modify"]
 
-    def test_shared_store_filtering_large_strings(self, collector):
-        """Test that large strings in shared store are truncated."""
+    def test_sanitize_for_json_no_truncation(self, collector):
+        """Test that large strings are NOT truncated in format 2.0.0.
+
+        Unlike format 1.x, there is no string length truncation.
+        Sanitization only filters internal keys and replaces binary data.
+        """
         large_string = "x" * 11000  # String longer than 10000 chars
-        shared_before = {}
-        shared_after = {"large_data": large_string}
 
         collector.record_node_execution(
             node_id="node-4",
             node_type="LargeDataNode",
             duration_ms=5.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={"large_data": large_string},
         )
 
-        filtered_value = collector.events[0]["shared_after"]["large_data"]
-        assert filtered_value.endswith("... [truncated]")
-        assert len(filtered_value) == 10000 + len("... [truncated]")
+        # In 2.0.0, no truncation — the full string is preserved
+        output_value = collector.events[0]["node_output"]["large_data"]
+        assert output_value == large_string
+        assert len(output_value) == 11000
 
-    def test_shared_store_filtering_binary_data(self, collector):
-        """Test that binary data is replaced with placeholder."""
-        shared_before = {}
-        shared_after = {"binary": b"some binary content"}
-
+    def test_sanitize_for_json_binary_data(self, collector):
+        """Test that binary data is replaced with a placeholder."""
         collector.record_node_execution(
             node_id="node-5",
             node_type="BinaryNode",
             duration_ms=5.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={"binary": b"some binary content"},
         )
 
-        filtered_value = collector.events[0]["shared_after"]["binary"]
+        filtered_value = collector.events[0]["node_output"]["binary"]
         assert filtered_value == "<binary data: 19 bytes>"
 
-    def test_shared_store_filtering_system_keys(self, collector):
-        """Test that system keys are filtered except allowed ones."""
-        shared_before = {}
-        shared_after = {
-            "__private__": "should_be_filtered",
-            "__llm_calls__": ["call1", "call2"],
-            "__metrics__": {"key": "value"},
-            "normal_key": "keep_this",
-        }
-
+    def test_sanitize_for_json_system_keys(self, collector):
+        """Test that __dunder__ keys are filtered except __metrics__."""
         collector.record_node_execution(
             node_id="node-6",
             node_type="SystemKeyNode",
             duration_ms=5.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={
+                "__private__": "should_be_filtered",
+                "__llm_calls__": ["call1", "call2"],
+                "__metrics__": {"key": "value"},
+                "normal_key": "keep_this",
+            },
         )
 
-        filtered_after = collector.events[0]["shared_after"]
-        assert "__private__" not in filtered_after
-        assert "__llm_calls__" in filtered_after
-        assert "__metrics__" in filtered_after
-        assert filtered_after["normal_key"] == "keep_this"
+        filtered_output = collector.events[0]["node_output"]
+        assert "__private__" not in filtered_output
+        assert "__llm_calls__" not in filtered_output  # No longer in allowlist
+        assert "__metrics__" in filtered_output
+        assert filtered_output["normal_key"] == "keep_this"
 
-    def test_shared_store_filtering_internal_keys(self, collector):
+    def test_sanitize_for_json_internal_keys(self, collector):
         """Test that internal trace/debug keys are filtered."""
-        shared_before = {}
-        shared_after = {
-            "_trace_collector": "internal",
-            "_debug_context": "internal",
-            "user_data": "keep_this",
-        }
-
         collector.record_node_execution(
             node_id="node-7",
             node_type="InternalKeyNode",
             duration_ms=5.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={
+                "_trace_collector": "internal",
+                "_debug_context": "internal",
+                "_batch_trace": "internal",
+                "user_data": "keep_this",
+            },
         )
 
-        filtered_after = collector.events[0]["shared_after"]
-        assert "_trace_collector" not in filtered_after
-        assert "_debug_context" not in filtered_after
-        assert filtered_after["user_data"] == "keep_this"
+        filtered_output = collector.events[0]["node_output"]
+        assert "_trace_collector" not in filtered_output
+        assert "_debug_context" not in filtered_output
+        assert "_batch_trace" not in filtered_output
+        assert filtered_output["user_data"] == "keep_this"
 
     def test_llm_call_capture(self, collector):
-        """Test that LLM usage data is captured from shared_after."""
-        shared_before = {}
-        shared_after = {
-            "llm_usage": {
-                "model": "gpt-4",
-                "total_tokens": 150,
-                "prompt_tokens": 100,
-                "completion_tokens": 50,
-            }
-        }
-
+        """Test that LLM usage data is captured from node_output."""
         collector.record_node_execution(
             node_id="node-8",
             node_type="LLMNode",
             duration_ms=1000.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={
+                "llm_usage": {
+                    "model": "gpt-4",
+                    "total_tokens": 150,
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                }
+            },
         )
 
         event = collector.events[0]
@@ -220,40 +198,38 @@ class TestWorkflowTraceCollector:
         assert event["llm_call"]["total_tokens"] == 150
 
     def test_llm_response_capture(self, collector):
-        """Test that LLM responses are captured and truncated if too long."""
-        # Test short response
-        shared_before = {}
-        shared_after = {"response": "Short LLM response"}
+        """Test that LLM responses are captured from node_output without truncation.
 
+        In format 2.0.0, there is no response truncation — both short and long
+        responses are stored as-is.
+        """
+        # Test short response
         collector.record_node_execution(
             node_id="node-9a",
             node_type="LLMNode",
             duration_ms=100.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=True,
+            node_output={"response": "Short LLM response"},
         )
 
         event = collector.events[0]
         assert event["llm_response"] == "Short LLM response"
 
-        # Test long response (should be truncated)
-        long_response = "x" * 21000  # Longer than 20000 chars
-        shared_after_long = {"response": long_response}
-
+        # Test long response — NOT truncated in 2.0.0
+        long_response = "x" * 21000
         collector.record_node_execution(
             node_id="node-9b",
             node_type="LLMNode",
             duration_ms=100.0,
-            shared_before={},
-            shared_after=shared_after_long,
             success=True,
+            node_output={"response": long_response},
         )
 
         event = collector.events[1]
-        assert "llm_response_truncated" in event
-        assert event["llm_response_truncated"].endswith("... [truncated]")
-        assert len(event["llm_response_truncated"]) == 20000 + len("... [truncated]")
+        assert event["llm_response"] == long_response
+        assert len(event["llm_response"]) == 21000
+        # No truncated variant should exist
+        assert "llm_response_truncated" not in event
 
     def test_template_resolutions_parameter(self, collector):
         """Test that template_resolutions are stored when provided."""
@@ -266,8 +242,6 @@ class TestWorkflowTraceCollector:
             node_id="node-10",
             node_type="TemplateNode",
             duration_ms=10.0,
-            shared_before={},
-            shared_after={"result": "done"},
             success=True,
             template_resolutions=template_resolutions,
         )
@@ -280,7 +254,7 @@ class TestWorkflowTraceCollector:
         """Test that trace files are saved with correct filename format."""
         with (
             patch("pathlib.Path.home", return_value=temp_home),
-            patch("src.pflow.runtime.workflow_trace.datetime") as mock_datetime,
+            patch("pflow.runtime.workflow_trace.datetime") as mock_datetime,
         ):
             # Set up mock datetime
             mock_now = Mock()
@@ -308,9 +282,8 @@ class TestWorkflowTraceCollector:
                 node_id="node-11",
                 node_type="TestNode",
                 duration_ms=100.0,
-                shared_before={},
-                shared_after={"result": "success"},
                 success=True,
+                node_output={"result": "success"},
             )
 
             filepath = collector.save_to_file()
@@ -332,17 +305,14 @@ class TestWorkflowTraceCollector:
                 node_id="success-node",
                 node_type="SuccessNode",
                 duration_ms=100.0,
-                shared_before={},
-                shared_after={"status": "ok"},
                 success=True,
+                node_output={"status": "ok"},
             )
 
             collector.record_node_execution(
                 node_id="fail-node",
                 node_type="FailNode",
                 duration_ms=50.0,
-                shared_before={"status": "ok"},
-                shared_after={"status": "ok"},
                 success=False,
                 error="Something went wrong",
             )
@@ -359,6 +329,9 @@ class TestWorkflowTraceCollector:
             assert "start_time" in trace_data
             assert "end_time" in trace_data
             assert "duration_ms" in trace_data
+
+            # Verify format version
+            assert trace_data["format_version"] == "2.0.0"
 
             # Verify node counts
             assert trace_data["nodes_executed"] == 2
@@ -402,8 +375,6 @@ class TestWorkflowTraceCollector:
                     node_id=f"node-{i}",
                     node_type="TestNode",
                     duration_ms=10.0,
-                    shared_before={},
-                    shared_after={},
                     success=True,
                 )
 
@@ -423,8 +394,6 @@ class TestWorkflowTraceCollector:
                 node_id="node-1",
                 node_type="TestNode",
                 duration_ms=10.0,
-                shared_before={},
-                shared_after={},
                 success=True,
             )
 
@@ -432,8 +401,6 @@ class TestWorkflowTraceCollector:
                 node_id="node-2",
                 node_type="TestNode",
                 duration_ms=10.0,
-                shared_before={},
-                shared_after={},
                 success=False,
                 error="Failed",
             )
@@ -447,35 +414,37 @@ class TestWorkflowTraceCollector:
             assert trace_data["nodes_failed"] == 1
 
     def test_llm_summary_in_trace(self, collector, temp_home):
-        """Test that LLM summary is included when LLM calls are present."""
+        """Test that LLM summary is included when LLM calls are present in events.
+
+        In format 2.0.0, llm_summary is built by _collect_llm_summary() which
+        recursively scans events for llm_call data — not from a separate parameter.
+        """
         with patch("pathlib.Path.home", return_value=temp_home):
-            # Add nodes with LLM calls
+            # Add nodes with LLM calls via node_output
             collector.record_node_execution(
                 node_id="llm-1",
                 node_type="LLMNode",
                 duration_ms=1000.0,
-                shared_before={},
-                shared_after={
+                success=True,
+                node_output={
                     "llm_usage": {
                         "model": "gpt-4",
                         "total_tokens": 100,
                     }
                 },
-                success=True,
             )
 
             collector.record_node_execution(
                 node_id="llm-2",
                 node_type="LLMNode",
                 duration_ms=1500.0,
-                shared_before={},
-                shared_after={
+                success=True,
+                node_output={
                     "llm_usage": {
                         "model": "gpt-3.5-turbo",
                         "total_tokens": 50,
                     }
                 },
-                success=True,
             )
 
             # Add non-LLM node
@@ -483,8 +452,6 @@ class TestWorkflowTraceCollector:
                 node_id="normal",
                 node_type="NormalNode",
                 duration_ms=10.0,
-                shared_before={},
-                shared_after={},
                 success=True,
             )
 
@@ -507,8 +474,6 @@ class TestWorkflowTraceCollector:
                 node_id="node-1",
                 node_type="NormalNode",
                 duration_ms=10.0,
-                shared_before={},
-                shared_after={},
                 success=True,
             )
 
@@ -518,78 +483,6 @@ class TestWorkflowTraceCollector:
                 trace_data = json.load(f)
 
             assert "llm_summary" not in trace_data
-
-    def test_large_dict_truncation(self, collector):
-        """Test that large dicts in shared store are truncated."""
-        # Create a large dict
-        large_dict = {f"key_{i}": f"value_{i}" * 100 for i in range(100)}
-        assert len(str(large_dict)) > 5000
-
-        shared_before = {}
-        shared_after = {"large_nested": large_dict}
-
-        collector.record_node_execution(
-            node_id="node-12",
-            node_type="LargeDictNode",
-            duration_ms=5.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
-            success=True,
-        )
-
-        filtered_value = collector.events[0]["shared_after"]["large_nested"]
-        assert filtered_value == "<large dict truncated>"
-
-    def test_llm_calls_list_truncation(self, collector):
-        """Test that __llm_calls__ list is truncated to 100 items."""
-        # Create a list with more than 100 items
-        llm_calls = [f"call_{i}" for i in range(150)]
-
-        shared_before = {}
-        shared_after = {"__llm_calls__": llm_calls}
-
-        collector.record_node_execution(
-            node_id="node-13",
-            node_type="ManyLLMCallsNode",
-            duration_ms=5.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
-            success=True,
-        )
-
-        filtered_calls = collector.events[0]["shared_after"]["__llm_calls__"]
-        assert len(filtered_calls) == 100
-        assert filtered_calls == [f"call_{i}" for i in range(100)]
-
-    def test_unhashable_type_mutation_detection(self, collector):
-        """Test mutation detection with unhashable types like lists."""
-        shared_before = {
-            "list_unchanged": [1, 2, 3],
-            "list_modified": [1, 2, 3],
-            "dict_unchanged": {"a": 1},
-            "dict_modified": {"a": 1},
-        }
-        shared_after = {
-            "list_unchanged": [1, 2, 3],
-            "list_modified": [1, 2, 4],  # Changed
-            "dict_unchanged": {"a": 1},
-            "dict_modified": {"a": 2},  # Changed
-        }
-
-        collector.record_node_execution(
-            node_id="node-14",
-            node_type="UnhashableNode",
-            duration_ms=10.0,
-            shared_before=shared_before,
-            shared_after=shared_after,
-            success=True,
-        )
-
-        mutations = collector.events[0]["mutations"]
-        assert "list_modified" in mutations["modified"]
-        assert "dict_modified" in mutations["modified"]
-        assert "list_unchanged" not in mutations["modified"]
-        assert "dict_unchanged" not in mutations["modified"]
 
     def test_directory_creation(self, temp_home):
         """Test that ~/.pflow/debug/ directory is created if it doesn't exist."""
@@ -610,9 +503,8 @@ class TestWorkflowTraceCollector:
                 node_id=f"node-{i}",
                 node_type=f"Node{i}",
                 duration_ms=float(i * 10),
-                shared_before={},
-                shared_after={f"result_{i}": i},
                 success=True,
+                node_output={f"result_{i}": i},
             )
 
         assert len(collector.events) == 5
@@ -627,8 +519,6 @@ class TestWorkflowTraceCollector:
             node_id="node-15",
             node_type="TimestampNode",
             duration_ms=10.0,
-            shared_before={},
-            shared_after={},
             success=True,
         )
 
@@ -637,49 +527,54 @@ class TestWorkflowTraceCollector:
         parsed = datetime.fromisoformat(timestamp)
         assert isinstance(parsed, datetime)
 
-    def test_llm_summary_from_llm_calls_parameter(self, collector, temp_home):
-        """Test that llm_summary is built from llm_calls param when provided.
+    def test_llm_summary_from_events(self, collector, temp_home):
+        """Test that llm_summary is built by scanning events for llm_call data.
 
-        This ensures sub-workflow LLM calls (tracked in __llm_calls__ but not
-        in trace events) are included in the trace file's llm_summary.
+        In format 2.0.0, save_to_file() uses _collect_llm_summary() which
+        recursively scans tree-structured events — there is no llm_calls parameter.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
-            # Record a non-LLM node (no llm_call in trace events)
+            # Record events with LLM data in node_output
             collector.record_node_execution(
-                node_id="workflow-node",
-                node_type="WorkflowExecutor",
+                node_id="parent-llm",
+                node_type="LLMNode",
                 duration_ms=500.0,
-                shared_before={},
-                shared_after={},
                 success=True,
+                node_output={
+                    "llm_usage": {
+                        "model": "gpt-4",
+                        "total_tokens": 150,
+                    }
+                },
             )
 
-            # Provide authoritative llm_calls (e.g., from child workflows)
-            llm_calls = [
-                {
-                    "model": "gpt-4",
-                    "input_tokens": 100,
-                    "output_tokens": 50,
-                    "total_tokens": 150,
-                    "node_id": "parent-llm",
+            collector.record_node_execution(
+                node_id="child-llm",
+                node_type="LLMNode",
+                duration_ms=300.0,
+                success=True,
+                node_output={
+                    "llm_usage": {
+                        "model": "gpt-4",
+                        "total_tokens": 300,
+                    }
                 },
-                {
-                    "model": "gpt-4",
-                    "input_tokens": 200,
-                    "output_tokens": 100,
-                    "total_tokens": 300,
-                    "node_id": "child-llm",
-                },
-                {
-                    "model": "claude-sonnet",
-                    "input_tokens": 50,
-                    "output_tokens": 25,
-                    "total_tokens": 75,
-                    "node_id": "child-llm-2",
-                },
-            ]
+            )
 
-            filepath = collector.save_to_file(llm_calls=llm_calls)
+            collector.record_node_execution(
+                node_id="child-llm-2",
+                node_type="LLMNode",
+                duration_ms=200.0,
+                success=True,
+                node_output={
+                    "llm_usage": {
+                        "model": "claude-sonnet",
+                        "total_tokens": 75,
+                    }
+                },
+            )
+
+            filepath = collector.save_to_file()
 
             with open(filepath) as f:
                 trace_data = json.load(f)
@@ -690,19 +585,23 @@ class TestWorkflowTraceCollector:
             assert summary["total_tokens"] == 525
             assert set(summary["models_used"]) == {"gpt-4", "claude-sonnet"}
 
-    def test_llm_summary_fallback_to_events(self, collector, temp_home):
-        """Test backward compat: llm_summary from events when llm_calls not provided."""
+    def test_llm_summary_scans_events_only(self, collector, temp_home):
+        """Test that llm_summary is built from events (the only path in 2.0.0).
+
+        save_to_file() no longer takes a llm_calls parameter. LLM data
+        is extracted from llm_call fields in events via _collect_llm_summary().
+        """
         with patch("pathlib.Path.home", return_value=temp_home):
             collector.record_node_execution(
                 node_id="llm-node",
                 node_type="LLMNode",
                 duration_ms=1000.0,
-                shared_before={},
-                shared_after={"llm_usage": {"model": "gpt-4", "total_tokens": 200}},
                 success=True,
+                node_output={
+                    "llm_usage": {"model": "gpt-4", "total_tokens": 200},
+                },
             )
 
-            # No llm_calls param — should fall back to event scanning
             filepath = collector.save_to_file()
 
             with open(filepath) as f:
@@ -712,27 +611,350 @@ class TestWorkflowTraceCollector:
             assert trace_data["llm_summary"]["total_calls"] == 1
             assert trace_data["llm_summary"]["total_tokens"] == 200
 
-    def test_llm_summary_empty_llm_calls_means_no_calls(self, collector, temp_home):
-        """Test that empty llm_calls list is authoritative: zero calls, no summary.
+    def test_no_llm_summary_when_events_have_no_llm_data(self, collector, temp_home):
+        """Test that no llm_summary is generated when events lack llm_call data.
 
-        An empty list means "we tracked LLM calls and there were none" — it should
-        NOT fall back to trace event scanning, even if events contain llm_call data.
+        Even if events exist, if none contain llm_call, no summary should appear.
         """
         with patch("pathlib.Path.home", return_value=temp_home):
+            # Node with output but no LLM data
             collector.record_node_execution(
-                node_id="llm-node",
-                node_type="LLMNode",
-                duration_ms=1000.0,
-                shared_before={},
-                shared_after={"llm_usage": {"model": "gpt-4", "total_tokens": 100}},
+                node_id="shell-node",
+                node_type="ShellNode",
+                duration_ms=100.0,
                 success=True,
+                node_output={"stdout": "hello world"},
             )
 
-            # Empty list is authoritative — no LLM calls happened
-            filepath = collector.save_to_file(llm_calls=[])
+            filepath = collector.save_to_file()
 
             with open(filepath) as f:
                 trace_data = json.load(f)
 
-            # Empty authoritative list = no llm_summary in trace
             assert "llm_summary" not in trace_data
+
+    def test_node_params_stored(self, collector):
+        """Test that node_params are stored in the event when provided."""
+        params = {"file_path": "/home/user/test.txt", "encoding": "utf-8"}
+
+        collector.record_node_execution(
+            node_id="read-node",
+            node_type="ReadFileNode",
+            duration_ms=5.0,
+            success=True,
+            node_params=params,
+        )
+
+        event = collector.events[0]
+        assert "node_params" in event
+        assert event["node_params"] == params
+
+    def test_batch_items_stored(self, collector):
+        """Test that batch_items are stored in the event when provided."""
+        batch_items = [
+            {"node_id": "item-0", "success": True, "duration_ms": 5.0},
+            {"node_id": "item-1", "success": True, "duration_ms": 3.0},
+        ]
+
+        collector.record_node_execution(
+            node_id="batch-node",
+            node_type="BatchNode",
+            duration_ms=10.0,
+            success=True,
+            batch_items=batch_items,
+        )
+
+        event = collector.events[0]
+        assert "batch_items" in event
+        assert len(event["batch_items"]) == 2
+
+    def test_sub_workflow_events_stored(self, collector):
+        """Test that sub_workflow_events are stored in the event when provided."""
+        sub_events = [
+            {"node_id": "child-1", "node_type": "ShellNode", "success": True, "duration_ms": 10.0},
+            {"node_id": "child-2", "node_type": "ShellNode", "success": True, "duration_ms": 20.0},
+        ]
+
+        collector.record_node_execution(
+            node_id="workflow-node",
+            node_type="WorkflowExecutor",
+            duration_ms=50.0,
+            success=True,
+            sub_workflow_events=sub_events,
+        )
+
+        event = collector.events[0]
+        assert "sub_workflow_events" in event
+        assert len(event["sub_workflow_events"]) == 2
+
+    def test_llm_summary_recurses_into_sub_workflow_events(self, collector, temp_home):
+        """Test that _collect_llm_summary recurses into sub_workflow_events."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            # Top-level LLM call
+            collector.record_node_execution(
+                node_id="top-llm",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "gpt-4", "total_tokens": 100},
+                },
+            )
+
+            # Nested workflow node with LLM calls in sub-events
+            collector.record_node_execution(
+                node_id="workflow-node",
+                node_type="WorkflowExecutor",
+                duration_ms=200.0,
+                success=True,
+                sub_workflow_events=[
+                    {
+                        "node_id": "child-llm",
+                        "llm_call": {"model": "claude-sonnet", "total_tokens": 75},
+                    },
+                ],
+            )
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_calls"] == 2
+            assert summary["total_tokens"] == 175
+            assert set(summary["models_used"]) == {"gpt-4", "claude-sonnet"}
+
+    def test_llm_summary_includes_cost(self, collector, temp_home):
+        """Test that _collect_llm_summary accumulates total_cost_usd from llm_call events."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-1",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "gpt-4", "total_tokens": 100, "cost_usd": 0.05},
+                },
+            )
+            collector.record_node_execution(
+                node_id="llm-2",
+                node_type="LLMNode",
+                duration_ms=50.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "claude", "total_tokens": 50, "cost_usd": 0.03},
+                },
+            )
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_calls"] == 2
+            assert summary["total_tokens"] == 150
+            assert summary["total_cost_usd"] == pytest.approx(0.08)
+
+    def test_enable_llm_interception_attribute(self, collector):
+        """Test that enable_llm_interception defaults to True."""
+        assert collector.enable_llm_interception is True
+
+        # Can be set to False (e.g., for child collectors)
+        collector.enable_llm_interception = False
+        assert collector.enable_llm_interception is False
+
+    def test_optional_fields_omitted_when_none(self, collector):
+        """Test that optional fields (node_params, mutations, etc.) are omitted when not provided."""
+        collector.record_node_execution(
+            node_id="minimal-node",
+            node_type="TestNode",
+            duration_ms=5.0,
+            success=True,
+        )
+
+        event = collector.events[0]
+        assert "node_params" not in event
+        assert "template_resolutions" not in event
+        assert "node_output" not in event
+        assert "mutations" not in event
+        assert "batch_items" not in event
+        assert "sub_workflow_events" not in event
+        assert "error" not in event
+
+
+class TestCollectLLMCalls:
+    """Tests for collect_llm_calls() — single source of truth for LLM cost data."""
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test-workflow")
+
+    def test_collect_llm_calls_empty(self, collector):
+        """No events → empty list."""
+        assert collector.collect_llm_calls() == []
+
+    def test_collect_llm_calls_no_llm_events(self, collector):
+        """Events without llm_call → empty list."""
+        collector.record_node_execution(node_id="shell-1", node_type="ShellNode", duration_ms=10.0, success=True)
+        assert collector.collect_llm_calls() == []
+
+    def test_collect_llm_calls_top_level(self, collector):
+        """Top-level event with llm_call is collected."""
+        collector.record_node_execution(
+            node_id="llm-1",
+            node_type="LLMNode",
+            duration_ms=500.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "input_tokens": 100, "output_tokens": 50}},
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["model"] == "gpt-4o"
+        assert calls[0]["node_id"] == "llm-1"
+        assert calls[0]["duration_ms"] == 500.0
+
+    def test_collect_llm_calls_batch_items(self, collector):
+        """LLM calls in batch items are collected."""
+        collector.record_node_execution(
+            node_id="batch-llm",
+            node_type="PflowBatchNode",
+            duration_ms=1000.0,
+            success=True,
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "m1", "input_tokens": 10, "output_tokens": 5},
+                },
+                {"index": 1, "item": "b", "success": True, "duration_ms": 100},  # no llm_call
+                {
+                    "index": 2,
+                    "item": "c",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "m1", "input_tokens": 20, "output_tokens": 10},
+                },
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 2
+        assert calls[0]["batch_item_index"] == 0
+        assert calls[1]["batch_item_index"] == 2
+
+    def test_collect_llm_calls_sub_workflow(self, collector):
+        """LLM calls in sub-workflow events are collected."""
+        collector.record_node_execution(
+            node_id="wf-1",
+            node_type="WorkflowExecutor",
+            duration_ms=2000.0,
+            success=True,
+            sub_workflow_events=[
+                {
+                    "node_id": "child-llm",
+                    "node_type": "LLMNode",
+                    "duration_ms": 300.0,
+                    "success": True,
+                    "llm_call": {"model": "claude-sonnet", "input_tokens": 200, "output_tokens": 100},
+                },
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["model"] == "claude-sonnet"
+        assert calls[0]["node_id"] == "child-llm"
+
+    def test_collect_llm_calls_nested(self, collector):
+        """LLM calls from multiple levels are flattened."""
+        collector.record_node_execution(
+            node_id="top-llm",
+            node_type="LLMNode",
+            duration_ms=100.0,
+            success=True,
+            node_output={"llm_usage": {"model": "top-model", "input_tokens": 10, "output_tokens": 5}},
+        )
+        collector.record_node_execution(
+            node_id="batch-wf",
+            node_type="PflowBatchNode",
+            duration_ms=500.0,
+            success=True,
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "x",
+                    "success": True,
+                    "duration_ms": 200,
+                    "events": [
+                        {
+                            "node_id": "nested-llm",
+                            "node_type": "LLMNode",
+                            "duration_ms": 150.0,
+                            "success": True,
+                            "llm_call": {"model": "nested-model", "input_tokens": 30, "output_tokens": 15},
+                        }
+                    ],
+                }
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 2
+        models = {c["model"] for c in calls}
+        assert models == {"top-model", "nested-model"}
+
+
+class TestCachedNodeEvent:
+    """D5: Verify cached=True flag appears in trace events."""
+
+    def test_cached_flag_in_event(self) -> None:
+        collector = WorkflowTraceCollector("test")
+        collector.record_node_execution(
+            node_id="cached-step",
+            node_type="ShellNode",
+            duration_ms=0.0,
+            success=True,
+            cached=True,
+        )
+        assert len(collector.events) == 1
+        assert collector.events[0]["cached"] is True
+
+    def test_non_cached_has_no_flag(self) -> None:
+        collector = WorkflowTraceCollector("test")
+        collector.record_node_execution(
+            node_id="normal-step",
+            node_type="ShellNode",
+            duration_ms=100.0,
+            success=True,
+        )
+        assert "cached" not in collector.events[0]
+
+
+class TestThreadLocalCurrentNode:
+    """D1: Verify _current_node uses thread-local storage."""
+
+    def test_current_node_is_thread_local(self) -> None:
+        """Setting current_node in one thread doesn't affect another."""
+        import threading
+
+        results: dict[str, str | None] = {}
+
+        def thread_fn(node_name: str) -> None:
+            WorkflowTraceCollector._thread_local.current_node = node_name
+            # Small sleep to let other thread also set its value
+            import time
+
+            time.sleep(0.01)
+            results[node_name] = getattr(WorkflowTraceCollector._thread_local, "current_node", None)
+
+        t1 = threading.Thread(target=thread_fn, args=("node-A",))
+        t2 = threading.Thread(target=thread_fn, args=("node-B",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        # Each thread should see its own value, not the other's
+        assert results["node-A"] == "node-A"
+        assert results["node-B"] == "node-B"

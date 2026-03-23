@@ -1,5 +1,7 @@
 """Tests for the pflow CLI."""
 
+from pathlib import Path
+
 import click.testing
 
 from pflow.cli.main import main
@@ -42,3 +44,35 @@ def test_no_arguments():
     # With no arguments, it should show an error
     assert result.exit_code != 0
     assert "No workflow" in result.output
+
+
+def test_report_flag_generates_report(tmp_path: Path):
+    """Test that --report flag generates an execution report directory."""
+    # Create a minimal workflow
+    workflow = tmp_path / "test.pflow.md"
+    workflow.write_text("# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- command: echo hi\n")
+    report_dir = tmp_path / "report"
+
+    runner = click.testing.CliRunner()
+    result = runner.invoke(main, [str(workflow), "--report-dir", str(report_dir)])
+
+    assert result.exit_code == 0, f"Workflow failed: {result.output}"
+    assert report_dir.exists(), "Report directory not created"
+    assert (report_dir / "summary.md").exists(), "summary.md not created"
+    # Verify the node file exists
+    node_files = list(report_dir.glob("*-hello.md"))
+    assert len(node_files) == 1, f"Expected 1 node file, got {node_files}"
+
+
+def test_report_flag_overrides_no_trace(tmp_path: Path):
+    """Test that --report overrides --no-trace (report requires trace data)."""
+    workflow = tmp_path / "test.pflow.md"
+    workflow.write_text("# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- command: echo hi\n")
+    report_dir = tmp_path / "report"
+
+    runner = click.testing.CliRunner()
+    result = runner.invoke(main, [str(workflow), "--report-dir", str(report_dir), "--no-trace"])
+
+    assert result.exit_code == 0, f"Workflow failed: {result.output}"
+    assert report_dir.exists(), "Report not generated despite --report overriding --no-trace"
+    assert (report_dir / "summary.md").exists()

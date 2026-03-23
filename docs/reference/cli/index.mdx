@@ -248,13 +248,31 @@ pflow --validate-only my-saved-workflow
 
 Agents use this to check workflows before running them — pflow catches template errors, type mismatches, and missing inputs during validation, so problems surface immediately instead of after step 5 fails. Exit code 0 means valid.
 
-## Traces
+## Traces and reports
 
 By default, pflow saves execution traces to `~/.pflow/debug/`:
 
 - **Workflow traces**: `workflow-trace-{name}-{timestamp}.json`
 
-Disable traces with `--no-trace` for faster execution.
+Generate a structured execution report (one markdown file per node):
+
+```bash
+# During execution
+pflow my-workflow --report
+
+# Custom output directory
+pflow my-workflow --report-dir ./my-report/
+
+# From an existing trace (most recent)
+pflow trace report
+
+# From a specific trace
+pflow trace report ~/.pflow/debug/workflow-trace-my-workflow-20260323-160000.json
+```
+
+Reports include rendered prompts, responses, cost data, error summaries with fix suggestions, and anomaly warnings.
+
+Disable traces with `--no-trace` for faster execution (the `--report` flag overrides `--no-trace`).
 
 ## Instructions command
 

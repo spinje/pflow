@@ -71,6 +71,7 @@ class TemplateAwareNodeWrapper:
         self.optional_input_keys = optional_input_keys or set()  # Branch convergence
         self.template_params: dict[str, Any] = {}  # Params containing templates
         self.static_params: dict[str, Any] = {}  # Params without templates
+        self.last_resolutions: dict[str, Any] = {}  # Template resolutions for trace capture
 
         # Build type cache for performance (one-time cost)
         self._expected_types = self._build_type_cache()
@@ -517,7 +518,7 @@ class TemplateAwareNodeWrapper:
         context = self._build_resolution_context(shared)
 
         # Resolve all template parameters
-        resolved_params = {}
+        resolved_params: dict[str, Any] = {}
         for key, template in self.template_params.items():
             resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
 
@@ -569,6 +570,12 @@ class TemplateAwareNodeWrapper:
                         from .error_context import get_upstream_stderr
 
                         upstream_context = get_upstream_stderr(str(template), context)
+                        # Store resolutions for trace capture before raising
+                        # (on error: contains all params resolved so far)
+                        self.last_resolutions = {
+                            k: {"template": self.template_params[k], "resolved": resolved_params[k]}
+                            for k in resolved_params
+                        }
                         if upstream_context:
                             raise ValueError(str(e) + upstream_context) from None
                         raise
@@ -613,6 +620,12 @@ class TemplateAwareNodeWrapper:
                     upstream_context = get_upstream_stderr(str(template), context)
                     if upstream_context:
                         error_msg += upstream_context
+                    # Store resolutions for trace capture before raising
+                    # (on error: contains all params resolved so far, including this one's literal ${...})
+                    self.last_resolutions = {
+                        k: {"template": self.template_params[k], "resolved": resolved_params[k]}
+                        for k in resolved_params
+                    }
                     # Make template errors fatal so execution stops with a clear error
                     raise ValueError(error_msg)
                 else:
@@ -638,6 +651,11 @@ class TemplateAwareNodeWrapper:
                     f"Resolved param '{key}': '{template}' -> '{resolved_value}'",
                     extra={"node_id": self.node_id, "param": key},
                 )
+
+        # Store resolutions for trace capture (read by InstrumentedNodeWrapper)
+        self.last_resolutions = {
+            key: {"template": self.template_params[key], "resolved": resolved_params[key]} for key in resolved_params
+        }
 
         # Temporarily update inner node params with resolved values
         original_params = self.inner_node.params
@@ -684,7 +702,14 @@ class TemplateAwareNodeWrapper:
             value: Value to set
         """
         # Define proxy's own attributes
-        wrapper_attrs = {"inner_node", "node_id", "initial_params", "template_params", "static_params"}
+        wrapper_attrs = {
+            "inner_node",
+            "node_id",
+            "initial_params",
+            "template_params",
+            "static_params",
+            "last_resolutions",
+        }
 
         if name in wrapper_attrs:
             # Set on wrapper itself

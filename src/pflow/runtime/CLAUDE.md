@@ -95,15 +95,16 @@ Downstream: `${process_title.result}`
 - **Max depth enforcement** via `_pflow_depth` (default 10)
 - **Relative paths resolve from parent workflow directory** via `_pflow_workflow_file`, not CWD
 - **Child input validation**: compares provided params against child's `## Inputs`, gives actionable error with "You provided X, Available inputs: Y"
-- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` tuple defines which `__dunder__` keys flow from parent to child storage in mapped mode (`__registry__`, `__llm_calls__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`). Execution-scoped keys (`__execution__`, `__cache_hits__`, `__template_errors__`) are deliberately NOT propagated — children get their own.
+- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` tuple defines which keys flow from parent to child storage in mapped mode (`__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`). Execution-scoped keys (`__execution__`, `__cache_hits__`, `__template_errors__`) are deliberately NOT propagated — children get their own.
 
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
-- **Thread-safe LLM interception**: Reference counting + thread-local collectors
-- **Configurable limits**: 5 env vars (`PFLOW_TRACE_*_MAX`)
-- **Multi-source prompt capture**: Interceptor → `__llm_calls__` → shared store
-- Repair tracking with attempt numbers, errors, workflow diffs
-- Mutation analysis: added/removed/modified keys
+- **Format 2.0.0**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events` (no `shared_before`/`shared_after` snapshots, no value truncation)
+- **Thread-safe LLM interception**: Reference counting + per-thread collector lookup for top-level workflows. Child collectors skip interception (`enable_llm_interception=False`) — prompts captured via `template_resolutions` instead.
+- **Prompt capture**: Interceptor (ground truth for top-level) → `node_output["prompt"]` fallback. Child workflow prompts in `template_resolutions["prompt"]["resolved"]`.
+- **Batch item tracing**: Per-item events collected via `_batch_trace` shared-store accumulator (GIL-safe for parallel), sanitized by `_sanitize_batch_items()`.
+- **Sub-workflow tracing**: Child collectors created by `WorkflowExecutor`, events embedded in parent trace as `sub_workflow_events`.
+- Mutation analysis: key-level added/removed (no value-change detection — requires full snapshots removed in 2.0.0)
 
 ### IR Preparation (`compilation/ir_preparation.py`)
 
@@ -135,7 +136,7 @@ shared["__execution__"] = {
 }
 
 # System keys
-shared["__llm_calls__"] = []              # LLM usage tracking (initialize as empty list!)
+shared["_trace_collector"] = trace_collector  # WorkflowTraceCollector instance (always created, even with --no-trace)
 shared["__progress_callback__"] = func    # Progress updates from OutputInterface
 shared["__warnings__"] = {}               # Node warnings → triggers DEGRADED status
 shared["__cache_hits__"] = []             # Nodes that used cached results

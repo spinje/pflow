@@ -359,9 +359,11 @@ class TestTraceGeneration:
                 for event in trace_data["nodes"]:
                     assert "node_id" in event
                     assert "duration_ms" in event
-                    assert "shared_before" in event
-                    assert "shared_after" in event
+                    # Format 2.0.0: focused fields replace shared_before/shared_after
+                    assert "shared_before" not in event
+                    assert "shared_after" not in event
                     assert "mutations" in event
+                    assert "node_output" in event
                     assert event["success"] is True
 
         finally:
@@ -583,12 +585,15 @@ class TestWrapperIntegration:
             mock_model.prompt = prompt_func
             return mock_model
 
+        from pflow.runtime.workflow_trace import WorkflowTraceCollector
+
         registry = Registry()
         metrics = MetricsCollector()
+        trace = WorkflowTraceCollector("test")
 
         with patch("llm.get_model", mock_get_model_with_responses):
-            flow = compile_ir_to_flow(workflow_ir, registry, metrics_collector=metrics)
-            shared = {}
+            flow = compile_ir_to_flow(workflow_ir, registry, metrics_collector=metrics, trace_collector=trace)
+            shared = {"_trace_collector": trace}
             flow.run(shared)
 
         # Test behavior: All three LLM nodes executed
@@ -597,37 +602,26 @@ class TestWrapperIntegration:
         assert "llm3" in metrics.workflow_nodes
 
         # Test behavior: Verify LLM outputs are in namespaced locations
-        assert "llm1" in shared
-        assert "response" in shared["llm1"]
         assert shared["llm1"]["response"] == "Response 1"
-
-        assert "llm2" in shared
-        assert "response" in shared["llm2"]
         assert shared["llm2"]["response"] == "Response 2"
-
-        assert "llm3" in shared
-        assert "response" in shared["llm3"]
         assert shared["llm3"]["response"] == "Response 3"
 
-        # Test behavior: LLM usage was tracked in each namespace
-        # The InstrumentedNodeWrapper should accumulate these
-        llm_calls = shared.get("__llm_calls__", [])
+        # CRITICAL: Verify the complete cost chain works end-to-end.
+        # This is the path that produces "Cost: $X.XXXX" in CLI output:
+        # LLM node → _enrich_llm_cost → trace event → collect_llm_calls() → get_summary()
+        # If any link breaks, costs silently become $0.00.
+        llm_calls = trace.collect_llm_calls()
+        assert len(llm_calls) == 3, f"Expected 3 LLM calls from trace, got {len(llm_calls)}"
 
-        # If llm_calls are tracked, verify token counts
-        if llm_calls:
-            # We expect 3 calls with increasing token counts
-            assert len(llm_calls) >= 3, f"Expected at least 3 LLM calls, got {len(llm_calls)}"
+        # Each call should have token counts from mock responses
+        total_input = sum(c.get("input_tokens", 0) for c in llm_calls)
+        total_output = sum(c.get("output_tokens", 0) for c in llm_calls)
+        assert total_input == 10 + 20 + 30, f"Expected 60 input tokens, got {total_input}"
+        assert total_output == 5 + 10 + 15, f"Expected 30 output tokens, got {total_output}"
 
-            # Calculate total cost to verify it's positive
-            cost_data = metrics.calculate_costs(llm_calls)
-            assert cost_data["pricing_available"] is True
-            assert cost_data["total_cost_usd"] > 0, "Total cost should be positive"
-        else:
-            # Even if __llm_calls__ isn't populated, we can verify nodes executed
-            # by checking that all three nodes have timing data
-            assert metrics.workflow_nodes["llm1"] > 0
-            assert metrics.workflow_nodes["llm2"] > 0
-            assert metrics.workflow_nodes["llm3"] > 0
+        # Cost should be calculated and positive (gpt-4o-mini has pricing)
+        summary = metrics.get_summary(llm_calls)
+        assert summary["total_cost_usd"] > 0, "Cost chain broken: total_cost_usd is 0"
 
 
 class TestCLIFlags:

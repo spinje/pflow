@@ -108,105 +108,28 @@ class InstrumentedNodeWrapper:
         """Delegate - operator for flow connections."""
         return self.inner_node - action_str
 
-    def _capture_llm_usage(
-        self, shared: dict[str, Any], shared_before: dict[str, Any] | None, duration_ms: float
-    ) -> None:
-        """Capture and record LLM usage data with defensive validation.
+    def _enrich_llm_cost(self, shared: dict[str, Any]) -> None:
+        """Enrich llm_usage with cost_usd before trace records it.
+
+        Checks both root level (non-namespaced) and namespaced location.
 
         Args:
             shared: Current shared store
-            shared_before: Shared store state before execution
-            duration_ms: Execution duration in milliseconds
         """
-        # Validate shared has __llm_calls__ list
-        if "__llm_calls__" not in shared:
-            logger.warning(f"Node {self.node_id}: __llm_calls__ list not initialized, creating it")
-            shared["__llm_calls__"] = []
-
-        if not isinstance(shared["__llm_calls__"], list):
-            logger.error(f"Node {self.node_id}: __llm_calls__ is not a list: {type(shared['__llm_calls__']).__name__}")
-            return
-
-        # Check both root level (for non-namespaced) and namespaced location
         llm_usage = None
-
-        # First check root level (for nodes without namespacing)
         if "llm_usage" in shared:
             llm_usage = shared["llm_usage"]
-        # Then check namespaced location (when namespacing is enabled)
         elif self.node_id in shared and isinstance(shared[self.node_id], dict):
             llm_usage = shared[self.node_id].get("llm_usage")
-
-        if not llm_usage:
-            return
-
-        # Validate llm_usage structure before using
-        if not isinstance(llm_usage, dict):
-            logger.warning(f"Node {self.node_id}: llm_usage is not a dict: {type(llm_usage).__name__}")
-            return
-
-        # Enrich with cost (mutates in-place, so shared store gets it too)
-        enrich_llm_usage_with_cost(llm_usage)
-
-        # Create a copy and add metadata - defensive copy in case it's modified elsewhere
-        try:
-            llm_call_data = llm_usage.copy()
-        except Exception:
-            logger.exception(f"Node {self.node_id}: Failed to copy llm_usage")
-            return
-
-        llm_call_data["node_id"] = self.node_id
-        llm_call_data["duration_ms"] = duration_ms
-
-        # Intelligently capture the prompt
-        llm_prompt = self._find_llm_prompt(shared_before)
-
-        # Add prompt to LLM call data if found
-        if llm_prompt:
-            llm_call_data["prompt"] = llm_prompt
-
-        # Append to accumulator list with error handling
-        try:
-            shared["__llm_calls__"].append(llm_call_data)
-            logger.debug(f"Node {self.node_id}: Captured LLM usage with {llm_call_data.get('total_tokens', 0)} tokens")
-        except Exception:
-            logger.exception(f"Node {self.node_id}: Failed to append LLM usage data")
-
-    def _find_llm_prompt(self, shared_before: dict[str, Any] | None) -> str | None:
-        """Find the LLM prompt from various sources.
-
-        Args:
-            shared_before: Shared store state before execution
-
-        Returns:
-            The LLM prompt if found, None otherwise
-        """
-        llm_prompt = None
-
-        # 1. Check if prompt was in shared_before (non-namespaced)
-        if shared_before and "prompt" in shared_before:
-            llm_prompt = shared_before["prompt"]
-
-        # 2. Check if prompt was in namespaced shared_before
-        if not llm_prompt and shared_before and self.node_id in shared_before:
-            ns_data = shared_before[self.node_id]
-            if isinstance(ns_data, dict) and "prompt" in ns_data:
-                llm_prompt = ns_data["prompt"]
-
-        # 3. Check node params (most likely for workflow nodes)
-        if not llm_prompt:
-            node_params = self._get_node_params()
-            if node_params and "prompt" in node_params:
-                llm_prompt = node_params["prompt"]
-
-        return llm_prompt
+        if isinstance(llm_usage, dict):
+            enrich_llm_usage_with_cost(llm_usage)
 
     def _handle_api_warning(
         self,
         shared: dict[str, Any],
         warning_msg: str,
         start_time: float,
-        shared_before: Optional[dict[str, Any]],
+        shared_keys_before: Optional[set[str]],
         callback: Optional[Any],
     ) -> str:
         """Handle API warning detection.
@@ -215,7 +138,7 @@ class InstrumentedNodeWrapper:
             shared: The shared store
             warning_msg: Warning message
             start_time: Start time for duration calculation
-            shared_before: Shared state before execution
+            shared_keys_before: Keys in shared store before execution
             callback: Progress callback
 
         Returns:
@@ -246,8 +169,8 @@ class InstrumentedNodeWrapper:
             with contextlib.suppress(Exception):
                 callback(self.node_id, "node_warning", warning_msg, depth)
 
-        # Record trace
-        self._record_trace(duration_ms, shared_before, dict(shared), success=False)
+        # Record trace with warning message as error context
+        self._record_trace(duration_ms, shared, shared_keys_before, success=False, error=warning_msg)
 
         logger.info(f"Node {self.node_id} detected API warning: {warning_msg}")
         return "error"  # Stop workflow but checkpoint is saved
@@ -334,92 +257,136 @@ class InstrumentedNodeWrapper:
                 batch_success_count=batch_success_count,
             )
 
-    def _validate_llm_json_output(self, shared_before: dict[str, Any] | None, shared_after: dict[str, Any]) -> None:
-        """Validate LLM JSON output and warn about potential issues.
+    def _find_template_wrapper(self) -> Any:
+        """Traverse wrapper chain to find TemplateAwareNodeWrapper.
 
-        Args:
-            shared_before: Shared store before node execution
-            shared_after: Shared store after node execution
+        Returns:
+            The template wrapper if found, None otherwise
         """
-        # Only validate if this looks like an LLM node
-        if not shared_before:
-            return
+        current = self.inner_node
+        while current:
+            # Check by attribute presence (avoids import)
+            if hasattr(current, "last_resolutions"):
+                return current
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            elif hasattr(current, "_wrapped"):
+                current = current._wrapped
+            else:
+                break
+        return None
 
-        # Check if this node had a prompt (indicating it's likely an LLM node)
-        prompt = self._find_llm_prompt(shared_before)
-        if not prompt:
-            return
+    def _find_batch_or_workflow_node(self) -> tuple[str | None, Any]:
+        """Traverse wrapper chain to find PflowBatchNode or WorkflowExecutor.
 
-        # Check if JSON was likely expected based on prompt content
-        prompt_lower = prompt.lower()
-        expects_json = "json" in prompt_lower
-
-        if not expects_json:
-            return
-
-        # Check if response exists and is a string (not parsed JSON)
-        response = shared_after.get("response")
-
-        # Also check namespaced response
-        if not response and self.node_id in shared_after:
-            ns_data = shared_after[self.node_id]
-            if isinstance(ns_data, dict):
-                response = ns_data.get("response")
-
-        # If response is a string and JSON was expected, likely parsing failed
-        if isinstance(response, str) and expects_json:
-            # Check if it looks like it should be JSON
-            trimmed = response.strip()
-            if not (trimmed.startswith("{") or trimmed.startswith("[")):
-                # Get model info if available
-                model = "unknown"
-                if "llm_usage" in shared_after:
-                    usage = shared_after["llm_usage"]
-                    if isinstance(usage, dict):
-                        model = usage.get("model", "unknown")
-
-                logger.warning(
-                    f"Node '{self.node_id}' with model '{model}' may have failed to generate valid JSON. "
-                    f"Prompt requested JSON but response appears to be plain text. "
-                    f"Response starts with: {response[:100]}... "
-                    f"Consider using a stronger model like 'gpt-5', 'claude-4-sonnet' or 'gemini-2.5-pro', and adding clearer JSON instructions."
-                )
+        Returns:
+            Tuple of (type_name, node) or (None, None)
+        """
+        current = self.inner_node
+        while current:
+            cls_name = type(current).__name__
+            if cls_name == "PflowBatchNode":
+                return ("batch", current)
+            if cls_name == "WorkflowExecutor":
+                return ("workflow", current)
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            elif hasattr(current, "_wrapped"):
+                current = current._wrapped
+            else:
+                break
+        return (None, None)
 
     def _record_trace(
         self,
         duration_ms: float,
-        shared_before: dict[str, Any] | None,
-        shared_after: dict[str, Any],
+        shared: dict[str, Any],
+        shared_keys_before: set[str] | None,
         success: bool,
         error: str | None = None,
+        cached: bool = False,
     ) -> None:
         """Record execution trace if collector is present.
 
         Args:
             duration_ms: Execution duration in milliseconds
-            shared_before: Shared store state before execution
-            shared_after: Shared store state after execution
+            shared: Current shared store (after execution)
+            shared_keys_before: Keys in shared store before execution
             success: Whether execution succeeded
             error: Error message if execution failed
+            cached: Whether this node used cached results
         """
         if not self.trace:
             return
 
-        # TODO: Capture template resolutions if they were logged
-        template_resolutions: dict[str, Any] = {}
-
-        # Get the actual node class, not wrapper class
         actual_node_class = self._get_actual_node_class()
+
+        # Get template resolutions from wrapper chain
+        template_wrapper = self._find_template_wrapper()
+        template_resolutions = template_wrapper.last_resolutions if template_wrapper else {}
+
+        # Get node params (original, before resolution)
+        node_params = self._get_node_params() or {}
+
+        # Get node output (just this node's namespace, not full store)
+        node_output = shared.get(self.node_id)
+        if isinstance(node_output, dict):
+            node_output = dict(node_output)  # shallow copy
+        elif node_output is not None:
+            node_output = {"value": node_output}
+        else:
+            node_output = {}
+
+        # Compute mutations from key sets (filter system/internal keys)
+        shared_keys_after = set(shared.keys())
+        added = shared_keys_after - shared_keys_before if shared_keys_before is not None else set()
+        removed = shared_keys_before - shared_keys_after if shared_keys_before is not None else set()
+        mutations = {
+            "added": sorted(
+                k
+                for k in added
+                if not k.startswith("__")
+                and not k.startswith("_pflow")
+                and not k.startswith("_trace")
+                and not k.startswith("_batch")
+            ),
+            "removed": sorted(
+                k
+                for k in removed
+                if not k.startswith("__")
+                and not k.startswith("_pflow")
+                and not k.startswith("_trace")
+                and not k.startswith("_batch")
+            ),
+            "modified": [],  # Can't detect value changes without full snapshot — acceptable tradeoff
+        }
+
+        # Check for nested trace data (batch items, sub-workflow events)
+        batch_or_wf_type, batch_or_wf_node = self._find_batch_or_workflow_node()
+        batch_items = None
+        sub_workflow_events = None
+        if batch_or_wf_type == "batch" and hasattr(batch_or_wf_node, "_trace_items"):
+            batch_items = batch_or_wf_node._trace_items
+        elif batch_or_wf_type == "workflow" and hasattr(batch_or_wf_node, "_child_trace_events"):
+            sub_workflow_events = batch_or_wf_node._child_trace_events
 
         self.trace.record_node_execution(
             node_id=self.node_id,
             node_type=actual_node_class.__name__,
             duration_ms=duration_ms,
-            shared_before=shared_before,
-            shared_after=shared_after,
             success=success,
             error=error,
+            node_params=node_params,
             template_resolutions=template_resolutions,
+            node_output=node_output,
+            mutations=mutations,
+            batch_items=batch_items,
+            sub_workflow_events=sub_workflow_events,
+            cached=cached,
         )
 
     def _compute_node_config(self) -> dict[str, Any]:
@@ -536,10 +503,6 @@ class InstrumentedNodeWrapper:
         Args:
             shared: The shared store for inter-node communication
         """
-        # Initialize LLM calls accumulation list if needed
-        if "__llm_calls__" not in shared:
-            shared["__llm_calls__"] = []
-
         # Initialize checkpoint structure if not present
         if "__execution__" not in shared:
             shared["__execution__"] = {
@@ -598,12 +561,15 @@ class InstrumentedNodeWrapper:
         shared["__execution__"]["node_actions"].pop(self.node_id, None)
         shared["__execution__"]["node_hashes"].pop(self.node_id, None)
 
-    def _handle_cached_execution(self, shared: dict[str, Any], cached_action: Any) -> Any:
+    def _handle_cached_execution(
+        self, shared: dict[str, Any], cached_action: Any, shared_keys_before: set[str] | None
+    ) -> Any:
         """Handle cached node execution.
 
         Args:
             shared: The shared store for inter-node communication
             cached_action: The cached action result
+            shared_keys_before: Keys in shared store before execution (for trace)
 
         Returns:
             The cached action result
@@ -612,6 +578,9 @@ class InstrumentedNodeWrapper:
         if "__cache_hits__" not in shared:
             shared["__cache_hits__"] = []
         shared["__cache_hits__"].append(self.node_id)
+
+        # Record trace event for cached node (so reports show it)
+        self._record_trace(0.0, shared, shared_keys_before, success=(cached_action != "error"), cached=True)
 
         # Call progress callback for cached node (same format as normal execution)
         callback = shared.get("__progress_callback__")
@@ -633,9 +602,9 @@ class InstrumentedNodeWrapper:
         Returns:
             The result from the inner node execution
         """
-        # Capture state before execution (for tracing and prompt capture)
+        # Capture state before execution (for tracing)
         start_time = time.perf_counter()
-        shared_before = dict(shared) if (self.trace or self.metrics) else None
+        shared_keys_before = set(shared.keys()) if (self.trace or self.metrics) else None
 
         # Set up LLM interception if needed
         self._setup_llm_interception()
@@ -662,7 +631,7 @@ class InstrumentedNodeWrapper:
         # Check cache validity
         is_cached, cached_action = self._check_cache_validity(shared)
         if is_cached:
-            return self._handle_cached_execution(shared, cached_action)
+            return self._handle_cached_execution(shared, cached_action, shared_keys_before)
 
         # Call progress callback for node start if present
         callback = shared.get("__progress_callback__")
@@ -679,7 +648,7 @@ class InstrumentedNodeWrapper:
             # Check for API warning patterns (execution succeeded but returned error data)
             warning_msg = detect_api_warning(self.node_id, shared)
             if warning_msg:
-                return self._handle_api_warning(shared, warning_msg, start_time, shared_before, callback)
+                return self._handle_api_warning(shared, warning_msg, start_time, shared_keys_before, callback)
 
             # Cache successful results
             self._cache_result_if_successful(shared, result)
@@ -691,16 +660,13 @@ class InstrumentedNodeWrapper:
             if self.metrics:
                 self.metrics.record_node_execution(self.node_id, duration_ms)
 
-            # Capture LLM usage if present
-            self._capture_llm_usage(shared, shared_before, duration_ms)
-
-            # Validate LLM JSON output if applicable
-            self._validate_llm_json_output(shared_before, shared)
+            # Enrich LLM usage with cost before trace records it
+            self._enrich_llm_cost(shared)
 
             # Record trace if collector present
             # Node returning "error" action is a failure, regardless of API warning detection
             trace_success = result != "error"
-            self._record_trace(duration_ms, shared_before, dict(shared), success=trace_success)
+            self._record_trace(duration_ms, shared, shared_keys_before, success=trace_success)
 
             # Call progress callback for node complete if present
             self._call_completion_callback(shared, callback, result, duration_ms)
@@ -714,8 +680,11 @@ class InstrumentedNodeWrapper:
             if self.metrics:
                 self.metrics.record_node_execution(self.node_id, duration_ms)
 
+            # Enrich LLM usage with cost before trace records it
+            self._enrich_llm_cost(shared)
+
             # Record trace with error
-            self._record_trace(duration_ms, shared_before, dict(shared), success=False, error=str(e))
+            self._record_trace(duration_ms, shared, shared_keys_before, success=False, error=str(e))
 
             # Record failure in checkpoint
             shared["__execution__"]["failed_node"] = self.node_id

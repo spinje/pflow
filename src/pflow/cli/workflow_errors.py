@@ -70,7 +70,8 @@ def _create_json_error_output(
     # Add metrics if available
     if metrics_collector:
         metrics_collector.record_workflow_end()
-        llm_calls = shared_storage.get("__llm_calls__", []) if shared_storage else []
+        trace = shared_storage.get("_trace_collector") if shared_storage else None
+        llm_calls = trace.collect_llm_calls() if trace else []
         metrics_summary = metrics_collector.get_summary(llm_calls)
 
         # Add top-level metrics (matching success structure)

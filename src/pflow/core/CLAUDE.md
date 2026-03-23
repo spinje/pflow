@@ -128,7 +128,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### metrics.py
 
-**Metrics flow**: LLM calls accumulate in `shared["__llm_calls__"]` → `MetricsCollector` aggregates costs using `calculate_llm_cost()`. Initialize `shared["__llm_calls__"]` as empty list for tracking to work.
+**Metrics flow**: LLM usage is captured via trace events (WorkflowTraceCollector). Consumers call `trace.collect_llm_calls()` to get a flat list, then `MetricsCollector.get_summary(llm_calls)` aggregates costs.
 
 ### output_controller.py
 

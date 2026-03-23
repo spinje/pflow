@@ -61,18 +61,6 @@ pflow registry list git
 pflow registry list github
 ```
 
-## Workflow trace analysis
-
-Workflow tracing is available for debugging executions:
-
-```bash
-uv run pflow my-workflow
-uv run python scripts/analyze-trace/analyze.py ~/.pflow/debug/workflow-trace-*.json
-```
-
-<Note>
-  If you're building workflows interactively, using an agent (Claude Code, Cursor, etc.) is still the recommended path. The trace tools are mainly for debugging and inspection.
-</Note>
 
 ## Feedback
 

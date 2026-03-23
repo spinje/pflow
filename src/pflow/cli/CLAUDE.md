@@ -157,7 +157,7 @@ Note: The MCP server has its own independent `resolve_workflow` in `mcp_server/u
 
 **Reverse conversion** (`format_param_value`): Converts Python values back to CLI strings. Co-located with `infer_type` because they are inverses — `format_param_value(infer_type(s)) == s` for round-trippable values.
 
-**Internal parameters**: `__` prefixed params are system-internal, filtered from display by `filter_user_params()` (in `rerun_display.py`). Includes `__verbose__`, `__llm_calls__`.
+**Internal parameters**: `__` prefixed params are system-internal, filtered from display by `filter_user_params()` (in `rerun_display.py`). Includes `__verbose__`.
 
 **Sensitive parameter masking**: 15 predefined sensitive keys auto-masked as `<REDACTED>` in rerun display. Shell injection protection via `shlex.quote()`.
 

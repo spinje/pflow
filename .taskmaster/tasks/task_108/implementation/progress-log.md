@@ -1,0 +1,1345 @@
+# Task 108: Smart Trace Debug Output — Implementation Progress Log
+
+## Phase 1: Trace Enrichment + Report Generator
+
+### Implementation Plan
+
+Full plan: `~/.claude/plans/mutable-pondering-badger.md`
+
+### Ordered Implementation Steps
+
+1. **Trace format redesign** (`workflow_trace.py`)
+   - New `record_node_execution()` signature (remove `shared_before`/`shared_after`, add `node_params`/`template_resolutions`/`node_output`/`mutations`/`batch_items`/`sub_workflow_events`)
+   - Replace `_filter_shared()` with `_sanitize_for_json()` (key hygiene only, no truncation)
+   - Remove `_build_base_event()`, `_calculate_mutations()`, truncation methods
+   - Simplify `_add_llm_data()` to read from `node_output` directly
+   - Update `save_to_file()` — remove `llm_calls` param, add recursive `_collect_llm_summary()`
+   - Add `enable_llm_interception` flag for child collectors
+   - Fix `_current_node` threading bug with `threading.local()`
+   - Bump format to 2.0.0
+
+2. **Template resolution capture** (`template_wrapper.py`)
+   - Add `last_resolutions` attribute to `TemplateAwareNodeWrapper`
+   - Add `"last_resolutions"` to `wrapper_attrs` set (critical `__setattr__` gotcha)
+   - Populate after resolution loop completes in `_run()`
+
+3. **Instrumented wrapper refactor** (`instrumented_wrapper.py`)
+   - Replace full `shared_before`/`shared_after` snapshots with focused fields
+   - Add `_find_template_wrapper()` — traverse chain to read `last_resolutions`
+   - Add `_find_batch_or_workflow_node()` — traverse chain for tree data
+   - Rewrite `_record_trace()` with new parameters
+
+4. **Batch item tracing** (`batch_node.py`)
+   - Init `_batch_trace` accumulator in `prep()` (follows `__llm_calls__` pattern)
+   - Add `_capture_item_trace()` method
+   - Call from both `_exec_single()` and `_exec_single_with_node()` (with `node_chain` param for parallel)
+   - Store `_trace_items` in `post()` for `InstrumentedNodeWrapper` to read
+
+5. **Sub-workflow trace propagation** (`workflow_executor.py` + `executor_service.py`)
+   - Add `_trace_collector` to `_PROPAGATED_KEYS`
+   - Create child `WorkflowTraceCollector` in `exec()` with `enable_llm_interception=False`
+   - Pass child collector to `compile_ir_to_flow()`
+   - Store `_child_trace_events` after child execution
+   - Inject `_trace_collector` into shared store in `executor_service.py`
+
+6. **CLI changes** (`cli/main.py`)
+   - Add `--report` flag to `workflow_command`
+   - Move trace save to `finally` block (remove 4 scattered save calls)
+   - Call report generator after trace save when `--report` is active
+
+7. **Report generator** (NEW: `core/trace_report.py`)
+   - `generate_report(trace_path, output_path)` — main entry
+   - Recursive tree walk: `_write_node_files()`
+   - Per-node markdown: `_build_node_file()`
+   - Summaries at each level: `_build_summary()`, `_build_node_summary()`
+   - Batch item files: `_build_batch_item_file()`, `_build_batch_item_summary()`
+
+8. **Post-hoc CLI command** (NEW: `cli/commands/trace.py`)
+   - `pflow trace report [trace-path]` command
+   - Auto-detect latest trace if no path given
+
+9. **Test updates** (17 existing tests + new tests)
+   - Update `test_workflow_trace.py` (~13 tests)
+   - Update `test_metrics_integration.py` (~1 test)
+   - Update `test_instrumented_wrapper.py` (~2 tests)
+   - Update `test_batch_node.py` (~1 test)
+   - Write new tests for template resolution capture, batch trace, sub-workflow propagation, report generator
+
+10. **Verification**
+    - `make check` + `make test`
+    - Manual test with simple workflow + `--report`
+    - Manual test with batch workflow
+    - Post-hoc `pflow trace report`
+    - Ctrl+C produces trace file
+
+---
+
+## Context: Why This Feature Exists
+
+### The Origin Story
+
+An AI agent spent 5 sessions building a complex lyrics-generation pipeline in pflow (11 orchestrator nodes, sub-workflows, ~233 LLM calls per run, ~$1.58/run). During debugging, the agent filed a false bug report because it couldn't see the data flow — it guessed at the cause instead of observing actual behavior. This revealed a fundamental observability gap: **agents can't see what happened inside workflow execution without manually parsing 500KB+ trace JSON files.**
+
+The agent built an 80-line custom Python node just to save every pipeline stage as readable markdown files — this custom output system became its ONLY debugging tool. The 2.7MB trace JSON was never opened once across 5 sessions.
+
+### The Core Problem
+
+> "The problem: There was no error. The workflow 'succeeded' with wrong output. So it's not about error messages — it's about visibility."
+
+1. Agents can't see rendered prompts (what the LLM actually received)
+2. Batch item results are opaque — you can't see per-item prompts/responses
+3. Sub-workflow internals are invisible in traces
+4. Trace files are too dense for agents to consume
+5. Every workflow wanting visibility must build custom output code
+
+### Two Visions — We Chose Vision B
+
+**Vision A (Original Task 108)**: Post-execution smart debug — analyze what went wrong, single focused markdown file, error classification, anomaly detection. Trigger: `pflow trace debug`.
+
+**Vision B (Execution Report)**: Full pipeline visibility — see everything that happened at every step in readable format. Directory of markdown files mirroring workflow structure. Trigger: `--report` flag or post-hoc from trace.
+
+**User's opening message aligned with Vision B**: "you can SEE the results of a workflows internal steps and UNDERSTAND the relationship of an llm nodes input and its output."
+
+**Decision**: Build Vision B (execution report) first. Vision A's smart analysis (error classification, anomaly detection, suggested fixes) becomes Phase 2/3 — diagnostics sections embedded in Vision B's summary files.
+
+---
+
+## Key Design Decisions (With Rationale)
+
+### 1. Tree-Structured Trace (Format 2.0.0)
+
+**Decision**: Trace events are nested (batch items contain per-item events, workflow nodes contain child events) rather than flat with metadata.
+
+**Rationale**: A workflow execution IS a tree. The trace, the report directory, and the execution structure should all have the same shape. Flat traces with metadata (Option C) push reconstruction complexity to every consumer. Tree structure makes the report generator a trivial recursive walk.
+
+**Three options were evaluated**:
+- Option A: Flat events, same collector for parent+child (loses hierarchy)
+- Option B: Nested events, child collectors per sub-workflow (preserves structure) ← CHOSEN
+- Option C: Flat events with metadata (depth, stack) for reconstruction
+
+### 2. Replace `shared_before`/`shared_after` with Focused Fields
+
+**Decision**: Remove full shared store snapshots from trace events. Replace with `node_output` (what this node wrote), `template_resolutions` (what this node consumed, before/after), `node_params` (original config), and `mutations` (what keys changed).
+
+**Rationale**: `shared_before` for node N contains ALL outputs from nodes 1..N-1 — O(n^2) data growth. This was the root cause of needing truncation. The report doesn't need full state dumps — it needs what this specific node saw and produced.
+
+**State reconstruction**: If needed, full shared store state at any point is reconstructable by accumulating `node_output` dicts: `state_at_N = {event["node_id"]: event["node_output"] for event in trace["nodes"][:N+1]}`. This works because nodes write to namespaced keys.
+
+**Tradeoff**: We lose `modified` detection in mutations (which required comparing values in before/after snapshots). Acceptable — the report cares about what each node produced, not which existing keys changed.
+
+### 3. No Truncation Anywhere
+
+**Decision**: Remove all value truncation from traces. Keep only internal key filtering (strip `_trace_collector`, dunder system keys) and binary data replacement.
+
+**Rationale**: We have no users yet. Trace files are local temp files in `~/.pflow/debug/`. Nobody reads the JSON directly — the report is what they read. If trace files become too large, truncation is trivial to add back. Premature optimization isn't worth the complexity (env vars, configurable thresholds, `_truncated` field name variants).
+
+### 4. Keep LLM Interception (Don't Remove)
+
+**Decision**: Keep the existing LLM interception monkey-patch for top-level workflows. Child collectors for sub-workflows skip interception. Fix concurrency bugs with `threading.local()`.
+
+**Rationale**: Initially considered removing interception entirely and relying on template_resolutions. But:
+- LLM interception captures **ground truth** (the actual string passed to `model.prompt()`)
+- Verified that LLM node does NOT modify the prompt — so template_resolutions is equivalent, but ground truth is a safety net
+- The concurrency bugs are fixable with ~15 lines of targeted changes, not a redesign
+- For sub-workflow LLM nodes, template_resolutions provides the same data (verified)
+
+### 5. `--report` Flag (Not Always-On)
+
+**Decision**: Report generation is opt-in via `--report` flag. Users can also generate post-hoc from any trace via `pflow trace report`.
+
+**Rationale**: Reports create files the user didn't ask for. Since they can always generate from trace post-hoc, they don't lose anything by not using `--report`.
+
+### 6. Phased Implementation
+
+**Three phases planned** (Phase 1 is what we're implementing now):
+- **Phase 1**: Trace enrichment + hierarchical report generator (this plan)
+- **Phase 2**: Smart analysis — error classification, anomaly detection, suggested fixes, diagnostics in summary.md
+- **Phase 3**: Post-hoc CLI, MCP tool, agent instruction updates, deprecate analyze.py
+
+### 7. Relationship to Task 106 (Iteration Cache)
+
+Task 108 (Report) and Task 106 (Cache) are deeply complementary:
+- **Cache** makes iteration FASTER — skip unchanged nodes on re-run
+- **Report** makes results UNDERSTANDABLE — see what each node saw and produced
+- **Together**: Edit prompt → re-run (cached upstream, re-execute downstream) → read report (focus on re-executed nodes) → iterate
+
+The report should mark cached vs re-executed nodes (Phase 2 prep). If the cache stores rendered prompts, the report can show them for cached nodes.
+
+---
+
+## Critical Implementation Insights
+
+### Verified via Codebase Research
+
+1. **Wrapper chain order**: `InstrumentedNodeWrapper` → `PflowBatchNode` → `NamespacedNodeWrapper` → `TemplateAwareNodeWrapper` → `ActualNode`. Assembled in `compiler.py:_create_single_node()` lines 235-408.
+
+2. **Trace collector flow**: CLI creates it → `compile_ir_to_flow(trace_collector=tc)` → `_create_single_node()` → `InstrumentedNodeWrapper(trace=tc)`. It flows through compilation, NOT the shared store (currently). We're adding shared store propagation for sub-workflows.
+
+3. **`InstrumentedNodeWrapper.__deepcopy__`** (line 797-811): `self.metrics` and `self.trace` are shared by reference, NOT deep-copied. This is intentional — collectors aggregate across all copies. Same behavior we need for batch items.
+
+4. **Batch parallel execution**: `PflowBatchNode._exec_parallel()` creates `ThreadPoolExecutor`, deep-copies the inner node chain per thread. `item_shared = dict(self._shared)` is a shallow copy — mutable objects like `__llm_calls__` (a list) are shared by reference across threads. GIL protects `list.append()`.
+
+5. **`_exec_single_with_node()` has `thread_node` in scope** after `_run()` completes. We CAN traverse it to read `last_resolutions` before the function returns and the deep-copied chain is discarded.
+
+6. **Sub-workflow `_PROPAGATED_KEYS`**: `("__registry__", "__llm_calls__", "__progress_callback__", "__mcp_pool__", "__warnings__")`. These are object references (not deep copies) — child appends to `__llm_calls__` are visible to parent. We add `_trace_collector` to this list.
+
+7. **`WorkflowExecutor.exec()` calls `compile_ir_to_flow()` WITHOUT `trace_collector`** (line 128-133). This is the gap we're fixing — child nodes currently have `self.trace = None`.
+
+8. **External file references** (Task 129): File paths like `- prompt: ./file.prompt.md` are replaced with file content during compilation in `file_resolver.py:resolve_file_references()`. By the time template resolution runs, `params["prompt"]` contains the full text with `${var}` templates. So `template_resolutions` captures the fully rendered content.
+
+9. **LLM interception monkey-patches `llm.get_model()` globally**. Uses `_active_collectors: ClassVar[dict[int, WorkflowTraceCollector]]` mapping `thread_id → collector`. The `_current_node` attribute on the collector instance is NOT thread-safe. Fix: `threading.local()`.
+
+10. **Conditional branches** (Task 38): Skipped nodes never execute, never appear in trace. The report only shows what ran. No action needed.
+
+11. **`finally` block + SIGINT**: `sys.exit(130)` raises `SystemExit` (inherits from `BaseException`, not `Exception`). The `except Exception` clause does NOT catch it. The `finally` block DOES execute. `workflow_trace` is in scope (assigned before `try`). `save_to_file()` works with partial data.
+
+12. **Trace save is scattered across 4 handlers** in `main.py` (lines 218, 247, 294, 487). Consolidating to `finally` eliminates all 4 and handles the SIGINT gap.
+
+### Critical Gotchas for Implementer
+
+1. **`TemplateAwareNodeWrapper.__setattr__`** (line 676-694): `wrapper_attrs` set at line 687 only contains `{"inner_node", "node_id", "initial_params", "template_params", "static_params"}`. Any new attribute (like `last_resolutions`) MUST be added to this set, or `self.last_resolutions = ...` silently sets the attribute on `self.inner_node` instead.
+
+2. **`_exec_single_with_node` vs `_exec_single`**: The parallel path receives `thread_node` (deep-copied chain) as a parameter. The sequential path uses `self.inner_node`. The `_capture_item_trace()` method needs a `node_chain` parameter to traverse the correct chain.
+
+3. **`_batch_trace` key naming**: Use `_batch_trace` (single underscore), NOT `__batch_trace__` (double underscore). The `_sanitize_for_json()` method strips dunder keys. Single-underscore keys starting with `_trace` or `_debug` are also stripped — so use `_batch_trace` and add it to the allowlist in `_sanitize_for_json`, OR better: let the batch node store `_trace_items` directly on itself (an instance attribute) and have InstrumentedNodeWrapper read it via chain traversal.
+
+4. **`TemplateAwareNodeWrapper._run()` early return** (line 508-509): When `not self.template_params`, the method returns early without going through the resolution loop. In this case, `last_resolutions` stays as `{}` from init — correct behavior (no templates = no resolutions).
+
+5. **`node_output` capture timing**: `InstrumentedNodeWrapper._record_trace()` runs AFTER `self.inner_node._run(shared)` returns. At this point, `shared[self.node_id]` contains the node's output. But `TemplateAwareNodeWrapper` has already restored original params (line 654). So `_get_node_params()` returns original (unresolved) params — which is what we want for `node_params`. The resolved values come from `template_resolutions`.
+
+6. **`record_node_execution` backward compatibility**: If any code calls the old signature with `shared_before`/`shared_after` positional args, it will break. Search for all call sites. Current callers: `InstrumentedNodeWrapper._record_trace()` (line 414) and tests.
+
+### Known Gaps (Documented, Out of Scope)
+
+- **Claude Code node** (`claude_code.py`): Uses `claude_agent_sdk`, not `llm` library. LLM interception doesn't capture its prompts. The node modifies the prompt when `output_schema` is set. Template resolution captures `params["prompt"]` (the unmodified input) but not the actual modified prompt sent to Claude. Document this gap.
+
+- **`_current_node` race condition**: In parallel batch with LLM nodes, multiple threads share the same collector and overwrite `_current_node`. Works by accident because all items use the same `node_id`. The `threading.local()` fix addresses this, but for sub-workflow batch items, child collectors skip interception entirely (prompts come from template_resolutions).
+
+- **`modified` in mutations**: We lose value-change detection since we no longer take full shared store snapshots. Only key additions and removals are tracked. This is acceptable — the report cares about what each node produced, not which existing values changed.
+
+---
+
+## Existing Documents (Reference)
+
+These documents were read and analyzed during planning. Note they may contain outdated information (written Jan 2026, codebase has changed significantly since):
+
+- `.taskmaster/tasks/task_108/starting-context/braindump-inline-debug-discovery.md` — Origin story (false bug report due to poor observability)
+- `.taskmaster/tasks/task_108/starting-context/braindump-stderr-visibility-overlap.md` — Stderr fix is complementary, not overlapping
+- `.taskmaster/tasks/task_108/starting-context/braindump-task-creation.md` — Task creation reasoning and design decisions
+- `.taskmaster/tasks/task_108/starting-context/research-inline-debug-flag.md` — `--debug` flag proposal (lighter than what we're building)
+- `.taskmaster/tasks/task_108/starting-context/task-108-spec.md` — Full Q&A spec (23 design decisions, partially outdated)
+- `.taskmaster/tasks/task_108/task-108.md` — Formal task definition
+- `.taskmaster/tasks/task_108/research/pflow-execution-report-agent-perspective.md` — Agent user's perspective (most insightful doc)
+- `.taskmaster/tasks/task_108/research/pflow-execution-report-feature-request.md` — Full execution report feature request with directory layout
+- `.taskmaster/tasks/task_106/starting-context/pflow-iteration-cache-agent-perspective.md` — Task 106 relationship
+
+---
+
+## Plan Corrections (discovered during review)
+
+### 1. `executor_service.py` already injects `_trace_collector`
+
+At `executor_service.py:99-102`, the trace collector is already injected into the shared store:
+```python
+# Store trace collector reference for sub-workflow propagation
+# (picked up by _PROPAGATED_KEYS in WorkflowExecutor._create_child_storage)
+if trace_collector:
+    shared_store["_trace_collector"] = trace_collector
+```
+
+The comment even mentions `_PROPAGATED_KEYS`! Someone already planned for this. The only missing piece is adding `"_trace_collector"` to the `_PROPAGATED_KEYS` tuple in `WorkflowExecutor`.
+
+**Plan correction**: Remove `executor_service.py` from "Files Modified" — no changes needed there.
+
+### 2. `trace_report.py` and `trace.py` already exist
+
+Both `src/pflow/core/trace_report.py` (report generator) and `src/pflow/cli/commands/trace.py` (CLI command) already exist with the report generator code and the `pflow trace report` command. The routing in `main_wrapper.py` already handles the `trace` subcommand.
+
+**Plan correction**: These are "Files to Update" not "New Files to Create". The report generator needs updating as the trace format evolves, but the skeleton is in place.
+
+### 3. `--report` + `--no-trace` interaction
+
+Not addressed in the plan. If `--no-trace` is used, no trace is generated, so `--report` can't work.
+
+**Decision needed**: `--report` should imply tracing. If both `--report` and `--no-trace` are passed, either error or silently enable tracing. Recommendation: `--report` overrides `--no-trace` with a warning message.
+
+### 4. `save_to_file()` `llm_calls` parameter — keep as fallback
+
+The plan says to remove the `llm_calls` parameter and compute LLM summary from events recursively. But during incremental implementation, batch items and sub-workflows won't have trace events until steps 4-5 are complete. The `__llm_calls__` accumulator (propagated via shared store) is the only way to get sub-workflow LLM data until then.
+
+**Plan correction**: Keep `llm_calls` parameter as optional fallback. When provided (current behavior), use it for `llm_summary`. When not provided, fall back to recursive event scanning. This allows incremental implementation without breaking LLM summaries.
+
+### 5. Old trace format (1.2.0) handling in report generator
+
+The report generator reads `node_output`, `template_resolutions` etc. which don't exist in old traces. It should check `format_version` and either:
+- Gracefully degrade (show what's available from old format)
+- Error with a clear message ("trace format 1.2.0 not supported, need 2.0.0+")
+
+**Recommendation**: Error with clear message. Old traces can't produce useful reports without the enriched data.
+
+### 6. `_batch_trace` accumulator vs `_trace_items` instance attribute
+
+The plan describes two approaches and is inconsistent:
+- `_batch_trace` key in shared store (shared mutable list pattern)
+- `_trace_items` instance attribute on `PflowBatchNode`
+
+**Clarification**: Use the shared store pattern (`_batch_trace` key) for COLLECTING events during parallel execution (GIL-safe appends from threads). Then in `post()`, transfer to `self._trace_items` instance attribute for `InstrumentedNodeWrapper` to read via chain traversal. The shared store key is cleaned up after transfer.
+
+---
+
+## Full Phase Plan (All Three Phases)
+
+### Phase 1: Trace Enrichment + Hierarchical Report (THIS IMPLEMENTATION)
+
+See implementation steps above. Delivers:
+- Tree-structured trace format 2.0.0
+- Per-node `template_resolutions`, `node_params`, `node_output`
+- Per-batch-item trace events
+- Sub-workflow internal node visibility
+- `--report` flag → directory of .md files
+- `pflow trace report` post-hoc generation
+
+### Phase 2: Smart Analysis + Diagnostics
+
+*Goal: Summaries tell you what's wrong, not just what happened*
+
+- **Error classification rules** in summary.md diagnostics section:
+  - Template errors (unresolved variables, wrong paths)
+  - HTTP/API errors (4xx/5xx, auth failures)
+  - Shell errors (exit codes, stderr)
+  - LLM errors (model/API failures)
+  - Timeout detection
+  - MCP errors (server connection, tool not found)
+- **Anomaly detection** (flags in summary even on success):
+  - Empty list returned
+  - Null/None value returned
+  - Empty string returned
+  - Suspiciously short LLM response
+  - Truncated data (result length == limit)
+- **Template error suggestions**: Path similarity matching ("did you mean `issues` instead of `messages`?")
+- **Cached-node indicators**: Prep for Task 106 — mark nodes as `[cached]` in report when iteration cache is used
+- **Degraded-node markers**: Nodes that succeeded but had stderr warnings
+- **Drill-down commands**: jq queries for the source trace file, embedded in report
+
+### Phase 3: MCP Integration + Agent Tooling
+
+*Goal: Agents can request trace analysis programmatically*
+
+- **MCP `get_debug_trace` tool**: Returns summary markdown directly via MCP
+  - Accepts trace path, execution ID, or "latest"
+  - Returns focused markdown for agent consumption
+- **Agent instruction updates**: Update `docs/mcp-agent-instructions.md` and `docs/mcp-sandbox-agent-instructions.md`
+- **Deprecate `scripts/analyze-trace/`**: Add deprecation notice pointing to `pflow trace report`
+- **Iteration diff** (future): `pflow trace report --diff-previous` — compare with previous trace for same workflow
+
+---
+
+## Phase 1 Implementation Results
+
+**Status**: Complete. All 4269 tests pass, `make check` clean (ruff + mypy + deptry).
+
+**Branch**: `feat/smart-trace-debug`
+
+### Files Modified (8)
+
+| File | Lines changed | Summary |
+|------|--------------|---------|
+| `src/pflow/runtime/workflow_trace.py` | Full rewrite (~300→~300 lines) | Format 2.0.0, new API, removed 7 methods, added 3 |
+| `src/pflow/runtime/wrappers/instrumented_wrapper.py` | ~120 lines | Rewrote `_record_trace`, added 2 chain-traversal helpers, changed snapshot strategy |
+| `src/pflow/runtime/wrappers/batch_node.py` | ~80 lines | Added `_capture_item_trace`, `_find_in_chain`, trace accumulator |
+| `src/pflow/runtime/wrappers/template_wrapper.py` | ~5 lines | Added `last_resolutions` attr + `wrapper_attrs` entry |
+| `src/pflow/runtime/workflow_executor.py` | ~25 lines | Child trace collector creation, `_PROPAGATED_KEYS` update |
+| `src/pflow/execution/executor_service.py` | ~4 lines | Inject `_trace_collector` into shared store |
+| `src/pflow/cli/main.py` | ~40 lines | `--report` flag, trace-save consolidation, `_save_trace_and_report()` |
+| `src/pflow/cli/main_wrapper.py` | ~2 lines | `trace` subcommand route |
+
+### Files Created (2)
+
+| File | Lines | Summary |
+|------|-------|---------|
+| `src/pflow/core/trace_report.py` | ~260 lines | Report generator: trace JSON → markdown directory |
+| `src/pflow/cli/commands/trace.py` | ~40 lines | `pflow trace report` CLI command |
+
+### Test Changes
+
+| File | Tests before | Tests after | Notes |
+|------|-------------|-------------|-------|
+| `test_runtime/test_workflow_trace.py` | 27 | 32 | 18 updated, 3 removed, 6 new |
+| `test_runtime/test_instrumented_wrapper.py` | 34 | 34 | 2 updated (assertion changes) |
+| `test_runtime/test_batch_node.py` | 100+ | 100+ | 1 updated |
+| `test_integration/test_metrics_integration.py` | 16 | 16 | 1 updated |
+| `test_runtime/test_trace_integration.py` | — | 2 | **NEW** — integration tests for fragile seams |
+
+---
+
+## Deviations from Plan
+
+### Deviation 1: `threading.local()` fix NOT implemented
+
+**Plan said**: Fix `_current_node` threading bug by adding `_thread_local: ClassVar[threading.local] = threading.local()` and replacing `self._current_node` with thread-local storage.
+
+**What we did**: Left `_current_node` as an instance attribute on the collector.
+
+**Why**: The existing `_active_collectors[thread_id]` dict already provides per-thread collector lookup. The `_current_node` race condition only manifests when multiple threads share the same collector instance AND call `setup_llm_interception` concurrently. In practice:
+- Batch parallel items share the same `InstrumentedNodeWrapper.trace` collector (not deep-copied), but `_setup_llm_interception` is only called once on the *outer* instrumented wrapper — batch items don't individually set up interception.
+- Sub-workflow child collectors have `enable_llm_interception=False`, so no interception is set up.
+
+**Risk**: Low. The bug exists in theory (if someone manually nests LLM interception in threads) but doesn't manifest in any current code path. Can be fixed in Phase 2 if needed.
+
+**Trust boundary**: Assumed correct — not verified under concurrent load.
+
+### Deviation 2: `save_to_file()` `llm_calls` parameter fully removed (not kept as fallback)
+
+**Plan correction #4 said**: Keep `llm_calls` as optional fallback for incremental implementation safety.
+
+**What we did**: Removed it completely. `_collect_llm_summary()` recursively scans events (including nested `batch_items[].llm_call` and `sub_workflow_events`).
+
+**Why**: Since we implemented all trace enrichment steps atomically (not incrementally), there was no intermediate state needing the fallback. The recursive scan covers all data the accumulator provided.
+
+**Risk**: None in practice. `__llm_calls__` accumulator still exists in the shared store for execution summary display — it's just no longer used for trace file LLM summaries.
+
+### Deviation 3: `shared_before` dict copy condition initially narrowed (then restored)
+
+**Plan said**: Replace `shared_before = dict(shared) if (self.trace or self.metrics)` with `shared_keys_before = set(shared.keys())`.
+
+**What we initially did**: Changed the full dict copy to `dict(shared) if self.metrics else None` (only when metrics enabled), since trace no longer needs it. This was an over-optimization.
+
+**What review caught**: `_capture_llm_usage()` and `_validate_llm_json_output()` both use `shared_before` for prompt lookup, and they're called unconditionally (not guarded by `if self.metrics`). Narrowing the condition meant prompts weren't captured in `__llm_calls__` during normal text-mode execution (trace enabled, metrics disabled).
+
+**Fix**: Restored to `dict(shared) if (self.trace or self.metrics) else None`. The full dict copy is kept for prompt lookup but no longer stored in trace events.
+
+**Lesson**: The `shared_before` variable now serves two distinct purposes: (1) prompt lookup for `__llm_calls__` enrichment, (2) nothing for traces (replaced by `shared_keys_before`). The name is confusing but renaming would touch too many lines for marginal clarity.
+
+### Deviation 4: Plan corrections 1-2 were incorrect (referred to post-implementation state)
+
+**Plan corrections said**: `executor_service.py` "already injects `_trace_collector`" and `trace_report.py`/`trace.py` "already exist".
+
+**Reality**: These were written by us during implementation. The corrections were written after implementation by reviewing the codebase and mistakenly treating our new code as pre-existing. No action needed — the plan was correct and we executed it.
+
+---
+
+## Bugs Found and Fixed During Review
+
+### Bug 1: `item_shared` UnboundLocalError in `_exec_single()` retries-exhausted path
+
+**Location**: `batch_node.py`, `_exec_single()`, after the retry for-loop.
+
+**Problem**: `item_shared = dict(self._shared)` is inside the try block. If `dict()` raises on the last retry, `item_shared` is unbound when `_capture_item_trace(item_shared, ...)` is called after the loop.
+
+**Fix**: Initialize `item_shared: dict[str, Any] = {}` before the retry loop. If dict() never succeeds, trace gets an empty dict (harmless). Not present in `_exec_single_with_node()` since `item_shared` is a parameter there.
+
+**Likelihood of hitting this**: Near zero — `dict(self._shared)` is a shallow copy of a dict set in `prep()`. Would only fail if shared store was corrupted between prep and exec.
+
+### Bug 2: `--report` + `--no-trace` silently does nothing
+
+**Problem**: `--no-trace` prevents trace collector creation, so `--report` has nothing to generate from. The flag is silently ignored.
+
+**Fix**: `--report` now overrides `--no-trace`. Implementation: `trace_enabled = not no_trace or report_path is not None`.
+
+### Bug 3: Old trace format produces empty reports
+
+**Problem**: `generate_report()` on a format 1.2.0 trace file produces a report with no useful content (no `node_output`, `template_resolutions`, etc.).
+
+**Fix**: Added format version check — rejects traces with format < 2.0.0 with clear error message: "Trace format {version} not supported. Report generation requires format 2.0.0+."
+
+---
+
+## Lint/Type Issues Resolved
+
+### C901 Complexity (3 functions)
+
+| Function | Complexity | Fix |
+|----------|-----------|-----|
+| `execute_json_workflow` | 13 > 10 | Extracted `_save_trace_and_report()` helper |
+| `_capture_item_trace` | 16 > 10 | Extracted `_find_in_chain()` static method, simplified LLM data loop |
+| `_build_node_file` | 13 > 10 | Extracted `_format_node_metadata()` and `_format_node_output()` |
+
+### mypy Error (1)
+
+`trace_report.py:49` — `generate_report` return type `Path | None` conflicted with `trace.get()` returning `Any`. Fixed with explicit `str()` cast: `name: str = str(trace.get("workflow_name", "workflow"))`.
+
+### ruff-format (auto-fixed)
+
+`trace.py` import order (stdlib before third-party).
+
+---
+
+## High-Value Integration Tests
+
+Two integration tests added in `tests/test_runtime/test_trace_integration.py` to lock in the most fragile integration seams. These use real wrapper instances and a real `WorkflowTraceCollector` — no mocks.
+
+### Test 1: `test_template_resolutions_propagate_through_wrapper_chain`
+
+**Seam tested**: `TemplateAwareNodeWrapper.last_resolutions` → `NamespacedNodeWrapper.__getattr__` delegation → `InstrumentedNodeWrapper._find_template_wrapper()` → `trace.record_node_execution(template_resolutions=...)`.
+
+**Why it matters**: `_find_template_wrapper()` traverses `self.inner_node` looking for `last_resolutions`. But `self.inner_node` is a `NamespacedNodeWrapper`, which doesn't have `last_resolutions` directly — it delegates via `__getattr__` to the inner `TemplateAwareNodeWrapper`. The traversal finds it on the first hop via this delegation, but `current` is the NamespacedNodeWrapper (not the TemplateAwareNodeWrapper). Reading `.last_resolutions` on that proxy returns the correct data via the same delegation. This subtle proxy pattern is invisible in tests that mock the trace collector.
+
+**What breaks without it**: If `NamespacedNodeWrapper.__getattr__` changes (e.g., stops delegating, adds an allowlist), or if a new wrapper is inserted between namespace and template wrappers, `template_resolutions` silently becomes `{}` in all trace events. No error, no crash — just missing data.
+
+**Asserts**: `template_resolutions["prompt"]` has correct `template` and `resolved` values. `node_output` has the node's actual output. `mutations["added"]` contains the node's namespace key.
+
+### Test 2: `test_batch_items_appear_in_trace_event`
+
+**Seam tested**: Four handoff points in the batch trace pipeline:
+1. `prep()` initializes `shared["_batch_trace"][node_id] = []`
+2. `_exec_single()` → `_capture_item_trace()` appends per-item events to the accumulator
+3. `post()` transfers from `shared["_batch_trace"]` to `self._trace_items`
+4. `InstrumentedNodeWrapper._find_batch_or_workflow_node()` traverses chain, finds `PflowBatchNode` by class name, reads `_trace_items`
+
+**Why it matters**: Each handoff uses a different mechanism (shared store key, instance attribute, class name matching). If any breaks, batch items silently disappear from trace events.
+
+**What breaks without it**: If `_batch_trace` key name changes, or `post()` stops reading it, or `_find_batch_or_workflow_node` doesn't match "PflowBatchNode", the trace event has no `batch_items` — again, silent data loss.
+
+**Asserts**: 3 batch items with correct `index`, `item` value, `success`, `duration_ms`, and per-item `node_output`.
+
+---
+
+## Known Remaining Issues (Out of Scope)
+
+### 1. Stale agent instruction docs
+
+Two files reference old trace format `nodes[1].shared_after`:
+- `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md:1440-1441`
+- `src/pflow/cli/resources/cli-agent-instructions.md:1419-1420`
+
+These are auto-generated agent instruction files. Should be updated when instructions are next regenerated. Not blocking — agents don't parse trace JSON programmatically.
+
+### 2. `_validate_llm_json_output` limited utility
+
+This function warns when an LLM's prompt requested JSON but the response is plain text. It requires `shared_before` to find the prompt, which means it only works when trace or metrics are enabled. Its heuristic (substring "json" in prompt) is crude. Low value — not worth additional investment.
+
+### 3. `_current_node` threading vulnerability (theoretical)
+
+See Deviation 1. The `_current_node` attribute on `WorkflowTraceCollector` is not thread-safe. Currently safe because batch items don't individually set up LLM interception. Would become a real bug if the wrapper architecture changed to allow per-item interception.
+
+### 4. `modified` field always empty in mutations
+
+Mutations now only track `added` and `removed` keys (set difference). The `modified` field is always `[]` because we no longer take full value snapshots. This is documented as an acceptable tradeoff in the plan — the report cares about what each node produced, not which existing values changed.
+
+### 5. Report generator has no unit tests
+
+`src/pflow/core/trace_report.py` has no dedicated test file. The markdown generation functions (`_build_node_file`, `_build_summary`, etc.) are pure functions that take dicts and return strings — straightforward to test but low bug risk. The format version check is tested implicitly. Could add unit tests in a follow-up if the report format becomes more complex.
+
+### 6. `_batch_trace` key not cleaned up from shared store
+
+The `_batch_trace` key persists in the shared store after `post()`. It's filtered from trace output by `_sanitize_for_json()` (which strips `_batch_trace`), so it doesn't appear in trace files. Cleaning it up in `post()` would be slightly cleaner but adds no value.
+
+---
+
+## Architecture Insights (For Future Implementers)
+
+### How trace data flows (complete picture)
+
+```
+1. TemplateAwareNodeWrapper._run()
+   → Resolves templates, stores in self.last_resolutions
+
+2. PflowBatchNode._exec_single() / _exec_single_with_node()
+   → Per-item: calls _capture_item_trace() which:
+     - Reads last_resolutions from node chain
+     - Reads _child_trace_events from node chain
+     - Reads node_output from item_shared[node_id]
+     - Appends to shared["_batch_trace"][node_id] list
+   → In post(): transfers to self._trace_items
+
+3. WorkflowExecutor.exec()
+   → Creates child WorkflowTraceCollector (enable_llm_interception=False)
+   → Passes to compile_ir_to_flow(trace_collector=child)
+   → After run: stores child.events as self._child_trace_events
+
+4. InstrumentedNodeWrapper._run()
+   → Captures shared_keys_before (set of keys)
+   → After inner_node._run():
+     - _find_template_wrapper() → reads last_resolutions
+     - _find_batch_or_workflow_node() → reads _trace_items or _child_trace_events
+     - Computes node_output from shared[node_id]
+     - Computes mutations from key-set diff
+     - Calls trace.record_node_execution(new signature)
+
+5. WorkflowTraceCollector.record_node_execution()
+   → Builds event dict with all fields
+   → _add_llm_data() enriches from node_output + intercepted prompts
+   → _sanitize_for_json() strips internal keys
+   → Appends to self.events
+
+6. WorkflowTraceCollector.save_to_file()
+   → _collect_llm_summary() recursively scans tree
+   → Writes JSON to ~/.pflow/debug/
+
+7. generate_report()
+   → Reads trace JSON
+   → Recursive _write_node_files() produces markdown directory
+```
+
+### Two-phase pattern for batch trace collection
+
+Phase 1 (during execution): `_batch_trace` dict in shared store. Each item's `_capture_item_trace()` appends to `shared["_batch_trace"][node_id]`. This works in parallel because `list.append()` is GIL-protected.
+
+Phase 2 (in post): Transfer from shared store to instance attribute `self._trace_items`. This makes it available to `InstrumentedNodeWrapper._find_batch_or_workflow_node()` via chain traversal.
+
+### `shared_before` serves dual purpose (confusing but correct)
+
+The `shared_before = dict(shared)` in `InstrumentedNodeWrapper._run()` is:
+1. Used by `_capture_llm_usage()` for prompt lookup → enriches `__llm_calls__`
+2. Used by `_validate_llm_json_output()` for prompt lookup → logs warning
+3. **NOT** used by `_record_trace()` (which uses `shared_keys_before` set instead)
+
+The variable name is a holdover from the old design. Renaming to `shared_snapshot_for_prompt_lookup` would be more accurate but touches many lines.
+
+---
+
+---
+
+## Post-Implementation Review & Fixes
+
+### [2026-03-23] — Code review by planning agent
+
+Full code review of all modified files. Findings:
+
+**Architecture**: Solid. Wrapper chain traversal, batch trace accumulation, sub-workflow collector creation all work correctly. The `_find_batch_or_workflow_node` correctly stops at `PflowBatchNode` for batch-of-workflow combos (batch items contain sub-workflow events in their `"events"` field).
+
+**Minor issues noted** (not blocking):
+- `_sanitize_for_json` doesn't guard `isinstance(key, str)` on the `_batch_trace` check (line 158) — extremely unlikely to matter
+- `_trace_collector` uses single underscore while all other `_PROPAGATED_KEYS` use dunder — inconsistent but functional
+- Empty stderr shows as `## stderr` with empty code block in reports — cosmetic
+
+### [2026-03-23] — Report generator tests added
+
+29 unit tests for `trace_report.py` in `tests/test_core/test_trace_report.py`:
+- `TestGenerateReport` (8): file existence, format rejection, directory creation, per-node files, batch directories, sub-workflow batch items, sub-workflow events, auto output path
+- `TestBuildSummary` (4): workflow name, status/duration, LLM summary, pipeline table
+- `TestBuildNodeFile` (10): metadata, errors, LLM data, template resolutions, prompts, commands, responses, stdout/stderr, structured results, priority rules
+- `TestBuildNodeSummary` (1): batch summary table
+- `TestBuildBatchItemFile` (5): basic, LLM data, template resolutions, node output, failures
+- `TestBuildBatchItemSummary` (1): basic summary
+
+Test count: 4267 → 4298 (29 report tests + 2 integration tests from implementing agent).
+
+### [2026-03-23] — Manual testing with real workflows
+
+| Test | Result |
+|------|--------|
+| Simple workflow + `--report` | Pass |
+| Batch workflow (10 HTTP→shell items) | Pass — 10 per-item files in subdirectory |
+| `pflow trace report` (post-hoc) | Pass |
+| `--report --no-trace` | Pass — `--report` overrides `--no-trace` |
+| Trace format 2.0.0 verification | Pass — no `shared_before`/`shared_after`, has new fields |
+| `--report-dir /custom/path` | Pass |
+
+### [2026-03-23] — Bugs found and fixed during manual testing
+
+**Bug 1: `--report` flag consumed workflow argument**
+
+The `is_flag=False, flag_value="auto"` Click option definition caused `pflow examples/workflow.pflow.md --report` to interpret the workflow path as the report path. Click doesn't support optional-value options well with `nargs=-1 UNPROCESSED` catch-all arguments.
+
+**Fix**: Split into two options:
+- `--report` — boolean `is_flag=True`, enables report at default location (`~/.pflow/reports/{name}/`)
+- `--report-dir /path` — custom output directory, implies `--report`
+
+**Bug 2: Flags after workflow argument not recognized**
+
+`allow_interspersed_args=False` meant `pflow workflow.pflow.md --report` treated `--report` as part of the workflow catch-all.
+
+**Fix**: Changed to `allow_interspersed_args=True`. Safe because workflow params use `key=value` syntax (no `--` prefix), so no ambiguity with Click options. All 4298 tests pass.
+
+**Usage after fixes:**
+```bash
+pflow --report workflow.pflow.md                        # before workflow arg
+pflow workflow.pflow.md --report                        # after workflow arg
+pflow workflow.pflow.md --report --verbose              # mixed
+pflow --report-dir /tmp/out workflow.pflow.md           # custom path (implies --report)
+pflow workflow.pflow.md --report-dir /tmp/out           # custom path after
+```
+
+---
+
+### File locations
+
+- Implementation plan: `.taskmaster/tasks/task_108/implementation/phase-1-implementation-plan.md`
+- Progress log: `.taskmaster/tasks/task_108/implementation/progress-log.md`
+
+---
+
+### [2026-03-23] — Code review evaluation and fixes
+
+Two code reviews evaluated (`scratchpads/task-108-phase1-code-review-2026-03-23.md` and `scratchpads/task-108-phase1-staged-review-2026-03-23.md`). Total: 28 findings across both reviews + deep read.
+
+**Verdicts**: 15 confirmed and fixed, 5 disputed, 8 deferred to Phase 2.
+
+**Fixes applied:**
+
+| # | Fix | File(s) |
+|---|-----|---------|
+| 1 | Batch item `node_output` sanitized via new `_sanitize_batch_items()` | `workflow_trace.py` |
+| 2 | Tuple handling in `_sanitize_for_json` (`list` → `(list, tuple)`) | `workflow_trace.py` |
+| 3 | API warning message passed to trace `error` field | `instrumented_wrapper.py` |
+| 4 | `cost_usd == 0.0` no longer hidden (`if cost:` → `if cost is not None:`) | `trace_report.py` |
+| 5 | Non-standard `node_output` keys rendered as catch-all JSON block | `trace_report.py` |
+| 6 | Report paths sanitized via `_safe_name()` | `trace_report.py` |
+| 7 | `generate_report` no longer mutates loaded trace dict (pass `source_path` param) | `trace_report.py` |
+| 8 | Import fixed: `from pflow.runtime...` (was `from src.pflow...`) + mock patch path | `test_workflow_trace.py` |
+| 9 | Comment explaining `allow_interspersed_args=True` | `main.py` |
+| 10 | Comment on `_trace_collector` in `_PROPAGATED_KEYS` (needed for grandchild+ nesting) | `workflow_executor.py` |
+| 11 | `_child_trace_events` check uses `is not None` instead of truthiness | `batch_node.py` |
+| 12 | Comment documenting child collector prompt source (`template_resolutions`) | `workflow_trace.py` |
+| 13 | Metrics integration test tightened: asserts `mutations` and `node_output` present | `test_metrics_integration.py` |
+| 14 | `runtime/CLAUDE.md` updated: WorkflowTraceCollector section matches format 2.0.0 | `runtime/CLAUDE.md` |
+| 15 | `trace report` CLI: specific error messages (missing file vs unsupported format) | `cli/commands/trace.py` |
+
+**Review finding on `_trace_collector` in `_PROPAGATED_KEYS`**: One review suggested removing it. Analysis showed this would break 3+ level nesting — grandchild workflows use the propagated key to detect tracing is active. The key points to the PARENT collector (not child), but it's only used as a truthiness check. Added comments instead of removing.
+
+**Disputed findings** (no action taken):
+- Redundant chain traversal in `_capture_item_trace` — by design, different search targets
+- Report overwrites previous — intentional for `git diff` between runs
+- Duplicate LLM summary tests — different test shapes, document format evolution
+
+**Deferred to Phase 2 (full details):**
+
+#### D1. `_current_node` threading vulnerability
+
+**File**: `src/pflow/runtime/workflow_trace.py:49, 313`
+**Source**: Review 1 C2, Review 2 deep read, Progress Log Deviation 1, Known Issue #3
+
+`self._current_node = node_id` is set on the shared `WorkflowTraceCollector` instance. In parallel batch execution, `InstrumentedNodeWrapper.__deepcopy__` shares `self.trace` by reference across threads. If two threads call `setup_llm_interception()` concurrently, the second overwrites the first's `_current_node`.
+
+**Why it doesn't bite now**: Batch items don't individually call `_setup_llm_interception` — it's called once on the outer `InstrumentedNodeWrapper` before batch dispatch. Child collectors have `enable_llm_interception=False`. The `_active_collectors[thread_id]` dict correctly maps threads to collectors.
+
+**Fix for Phase 2**: Replace `self._current_node` with `threading.local()`:
+```python
+_thread_local: ClassVar[threading.local] = threading.local()
+# In setup_llm_interception:
+WorkflowTraceCollector._thread_local.current_node = node_id
+# In intercept_prompt closure:
+current_node = getattr(WorkflowTraceCollector._thread_local, 'current_node', None)
+```
+
+**Risk if unfixed**: Would become a real bug if the wrapper architecture changed to allow per-item LLM interception setup, or if someone manually nests LLM interception in threads.
+
+#### D2. Missing integration test: parallel batch trace capture
+
+**File**: `tests/test_runtime/test_trace_integration.py`
+**Source**: Review 1 S3, Review 2 deep read
+
+`TestBatchNodeTraceEvents` only tests sequential batch (`parallel=False`). The parallel path uses `_exec_single_with_node` with a deep-copied node chain (`thread_node`), which is a different code path for template resolution capture. `_find_in_chain(thread_node, "last_resolutions")` traverses the deep-copied chain, not the original.
+
+**What to test**: Create a parallel batch node (2+ items), execute, verify per-item `template_resolutions` are captured correctly in trace events. Specifically verify that the deep-copied `TemplateAwareNodeWrapper` retains `last_resolutions` after `_run()` completes, before the thread returns.
+
+**Why deferred**: Parallel batch with proper template params requires a more complex fixture (batch items with template references). Sequential test already covers the critical seam.
+
+#### D3. Missing integration test: sub-workflow trace tree (sub_workflow_events)
+
+**File**: `tests/test_runtime/test_trace_integration.py`
+**Source**: Review 1 S2, Review 2 deep read
+
+`_find_batch_or_workflow_node()` handles both `PflowBatchNode` and `WorkflowExecutor`, but only the batch path has an integration test. The `WorkflowExecutor` → `_child_trace_events` → `sub_workflow_events` flow is untested at the integration level.
+
+**What to test**: Build a wrapper chain with `InstrumentedNodeWrapper` → `WorkflowExecutor` (or mock it). Execute a child workflow with trace collector. Verify that `sub_workflow_events` appears in the parent trace event and contains the child's node events.
+
+**Why deferred**: Requires compiling a real child workflow with `compile_ir_to_flow` inside a test, which is significantly more complex than the batch fixture.
+
+#### D4. Missing integration test: failed batch items in trace
+
+**File**: `tests/test_runtime/test_trace_integration.py`
+**Source**: Review 1 S4
+
+`_capture_item_trace` handles error dicts (`item_event["error"] = error.get("error", str(error))`), but no test verifies that a failed batch item appears with the correct error data in the final trace event's `batch_items` array.
+
+**What to test**: Create a batch node where one item raises an exception or returns an error. Verify the trace event's `batch_items` contains an entry with `success: false` and the error message.
+
+#### D5. Cached nodes absent from trace
+
+**File**: `src/pflow/runtime/wrappers/instrumented_wrapper.py:738-739`
+**Source**: Review 2 deep read
+
+When `_check_cache_validity` returns `True`, `_run()` returns early via `_handle_cached_execution()` **before** `_record_trace()` is called. This means cached nodes produce no trace event at all. Consumers reading traces should know that executions may omit cached steps.
+
+**Pre-existing behavior** — not introduced by format 2.0.0. Relevant for Task 106 (iteration cache) which will increase cache hits.
+
+**What to do in Phase 2**: Either (a) record a minimal trace event for cached nodes (with a `cached: true` flag), or (b) document this in the trace format spec so report consumers handle absent nodes correctly. The report generator should indicate "[cached]" for nodes that don't appear in the trace but are known to exist in the workflow IR.
+
+#### D6. Noisy mutations from `__execution__` / `__llm_calls__`
+
+**File**: `src/pflow/runtime/wrappers/instrumented_wrapper.py:710`
+**Source**: Review 2 deep read
+
+`shared_keys_before` is captured at line 710, BEFORE `_initialize_execution_state()` at line 718 which adds `__execution__`, `__llm_calls__`, `__cache_hits__` to the shared store. So the first node's `mutations["added"]` includes these system keys — noisy for report consumers expecting only user-data mutations.
+
+**Pre-existing behavior** — the old `shared_before`/`shared_after` approach had the same issue (different shape but same timing).
+
+**What to do in Phase 2**: Either (a) capture `shared_keys_before` AFTER `_initialize_execution_state()`, or (b) filter system keys from mutations in `_record_trace()`. Option (a) is cleaner but changes the semantics of mutations for the first node. Option (b) is safer — just strip `__dunder__` keys from added/removed lists.
+
+#### D7. Report UX: error highlight in pipeline table
+
+**File**: `src/pflow/core/trace_report.py:136`
+**Source**: Review 1 S7
+
+The pipeline table shows `FAILED` for failed nodes, but in a markdown table this doesn't stand out visually. Consider using `**FAILED**` (markdown bold) so it's immediately visible when scanning the summary.
+
+#### D8. Report UX: `trace report` stdout output for scripting
+
+**File**: `src/pflow/cli/commands/trace.py:38`
+**Source**: Review 1 S8, Review 2 S4
+
+The `trace report` command outputs all messages to stderr. For CLI composability (piping to other tools), consider outputting the report directory path to stdout so `report_dir=$(pflow trace report)` works:
+```python
+click.echo(str(report_dir))  # stdout — pipeable
+click.echo(f"Report generated: {report_dir}", err=True)  # stderr — human feedback
+```
+
+#### D9. `_collect_llm_summary` double-counting invariant undocumented
+
+**File**: `src/pflow/runtime/workflow_trace.py:237-249`
+**Source**: Review 2 S1
+
+The recursive walk counts `llm_call` on events AND on batch items. If a batch item ever has BOTH `llm_call` and `events` (sub-workflow items), the item-level `llm_call` would be counted in addition to the event-level calls inside `events` — potential double-counting.
+
+**Why it doesn't bite now**: In practice, `llm_call` and `events` are mutually exclusive on batch items. Leaf items (directly executing an LLM node) have `llm_call`. Sub-workflow items have `events` (with their own `llm_call` fields on individual events). The `WorkflowExecutor` node doesn't write `llm_usage` to its namespace.
+
+**What to do in Phase 2**: Add a comment documenting the invariant: "Item-level `llm_call` is only for leaf batch items without `events`. If both are present, calls would be double-counted." Optionally add a focused unit test with a deliberately redundant structure to guard against future changes.
+
+#### D10. `_validate_llm_json_output` still uses `shared_before`
+
+**File**: `src/pflow/runtime/wrappers/instrumented_wrapper.py:772`
+**Source**: Review 1 W5, Review 2 deep read
+
+This function warns when an LLM's prompt requested JSON but the response is plain text. It requires `shared_before` (the full dict snapshot at line 712) to find the prompt. Its heuristic (substring "json" in prompt) is crude.
+
+**What to do in Phase 2**: The report now shows `template_resolutions` (the actual prompt), making post-hoc JSON validation less critical. Consider removing this method entirely, or rewriting it to use `template_resolutions` from the wrapper chain instead of `shared_before`. Removing it would also eliminate the remaining O(n) `dict(shared)` copy at line 712 (which is the only remaining reason for a full shared store snapshot per node).
+
+---
+
+## Phase 1 Polish: Report Quality Fixes
+
+### [2026-03-23] — Report quality review from sample reports
+
+Generated sample reports for four scenarios: batch workflow (HTTP + shell batch), nested sub-workflows, LLM workflow (shell → LLM → shell), and failed LLM workflow. Reports saved to `.taskmaster/tasks/task_108/sample-reports/`.
+
+**Four quality issues identified and fixed:**
+
+#### Fix 1: Empty stderr/stdout blocks removed
+
+**Problem**: Shell nodes with empty stderr showed `## stderr` with an empty code block. Noisy and distracting.
+
+**Fix**: Added `and str(output[key]).strip()` check in `_format_node_output()` before rendering stdout/stderr sections. Empty or whitespace-only values are now skipped.
+
+**File**: `src/pflow/core/trace_report.py:189`
+
+#### Fix 2: Empty LLM summary lines removed
+
+**Problem**: Failed LLM workflows showed `- Tokens: 0` and `- Models: ` (empty) in summary.md.
+
+**Fix**: Gate LLM summary block on `total_calls > 0`. Within the block, only show tokens if non-zero, only show models if list non-empty.
+
+**File**: `src/pflow/core/trace_report.py:131-138`
+
+#### Fix 3: Batch item files use structured format
+
+**Problem**: `_build_batch_item_file()` dumped `node_output` as raw JSON (including `exit_code`, `stdout_is_binary`, `command`, `item` etc.), while `_build_node_file()` rendered the same data as structured `## Command`, `## stdout`, `## stderr` sections.
+
+**Fix**: Replaced custom llm_response rendering + raw JSON dump with:
+- Command rendering from `template_resolutions` (consistent with `_build_node_file`)
+- `_format_node_output(item, lines)` — reuses the same function that top-level node files use
+
+**File**: `src/pflow/core/trace_report.py:285-292`
+
+**Before** (`item-0.md`):
+```markdown
+## Output
+
+\`\`\`json
+{"stdout": "Hello, Leanne Graham!", "stderr": "", "exit_code": 0, "command": "echo \"Hello, Leanne Graham!\"", "item": {...}}
+\`\`\`
+```
+
+**After** (`item-0.md`):
+```markdown
+## Command
+
+\`\`\`bash
+echo "Hello, Leanne Graham!"
+\`\`\`
+
+## stdout
+
+\`\`\`
+Hello, Leanne Graham!
+\`\`\`
+```
+
+#### Fix 4: Sub-workflow summary includes pipeline table
+
+**Problem**: Sub-workflow directory summaries (`process_title/summary.md`) only showed 3 lines (type, time, status). No visibility into child nodes without opening individual files.
+
+**Fix**: Extracted `_format_pipeline_table()` helper function. Added pipeline tables to:
+- `_build_node_summary()` for `sub_workflow_events`
+- `_build_batch_item_summary()` for `events` (sub-workflow batch items)
+
+**File**: `src/pflow/core/trace_report.py:164-179` (new helper), `264` (node summary), `313` (batch item summary)
+
+**Before** (`process_title/summary.md`):
+```markdown
+# process_title
+
+- Type: WorkflowExecutor
+- Time: 24ms
+- Status: success
+```
+
+**After**:
+```markdown
+# process_title
+
+- Type: WorkflowExecutor
+- Time: 23ms
+- Status: success
+## Pipeline
+
+| # | Node | Type | Time | Status |
+|---|------|------|------|--------|
+| 1 | transform | ShellNode | 9ms | ok |
+```
+
+### Test changes
+
+| Change | Count |
+|--------|-------|
+| New tests (empty stderr, empty stdout, empty LLM summary, LLM without tokens, shell batch item, sub-workflow pipeline, batch item pipeline) | +7 |
+| Updated tests (`test_item_with_node_output_no_llm`: `## Output` → `## Result`) | 1 |
+| **Total tests**: 4298 → 4305 | |
+
+All 4305 tests pass, `make check` clean (ruff + mypy + deptry).
+
+---
+
+*Phase 1 complete with polish. Next: Phase 2 planning (Smart Analysis + Diagnostics, deferred items D1-D10, or move to Task 106).*
+
+---
+
+## Phase 1.5: Remove `__llm_calls__` Accumulator — Single Source of Truth via Trace Events
+
+### Motivation
+
+pflow had two parallel data paths for LLM call metadata:
+1. `__llm_calls__` — flat list in shared store, accumulated by `_capture_llm_usage()` / `_capture_item_llm_usage()`, propagated through sub-workflows via `_PROPAGATED_KEYS`
+2. Trace events — each event has `llm_call` dict with the same data
+
+Both carried model, tokens, and cost. The `__llm_calls__` path predated the trace system and was now pure duplication. Removing it:
+- Eliminates ~150 lines of production code
+- Removes O(n) `shared_before = dict(shared)` copy per node execution
+- Simplifies the data flow to a single path
+- Removes `__llm_calls__` from `_PROPAGATED_KEYS` (no longer needed across workflow boundaries)
+
+### Implementation Summary
+
+**New method**: `WorkflowTraceCollector.collect_llm_calls()` — walks event tree recursively (events → batch_items → sub_workflow_events), returns flat `list[dict]` of llm_call dicts. This is what `MetricsCollector.get_summary()` now receives instead of `shared["__llm_calls__"]`.
+
+**New method**: `InstrumentedNodeWrapper._enrich_llm_cost(shared)` — finds `llm_usage` in shared store (root or namespaced), calls `enrich_llm_usage_with_cost()` to add `cost_usd`. Called in BOTH success and error paths, BEFORE `_record_trace()`, so the trace event gets enriched data.
+
+**`--no-trace` change**: Trace collector is always created in memory. `--no-trace` only skips the file write (gated in `_save_trace_and_report()`). Cost tracking works regardless.
+
+### Production Files Changed (9)
+
+| File | Change |
+|------|--------|
+| `runtime/workflow_trace.py` | Added `collect_llm_calls()` + `_collect_llm_calls_from_events()`. Removed `__llm_calls__` from `_sanitize_for_json` allowlist. |
+| `runtime/wrappers/instrumented_wrapper.py` | Removed `_capture_llm_usage()` (~60 lines), `_find_llm_prompt()` (~30 lines), `_validate_llm_json_output()` (~50 lines). Removed `shared_before = dict(shared)`. Added `_enrich_llm_cost()` (~10 lines). Removed `__llm_calls__` init from `_initialize_execution_state()`. |
+| `runtime/wrappers/batch_node.py` | Removed `_capture_item_llm_usage()` (~30 lines) and its 2 call sites. Removed `__llm_calls__` init from `prep()`. Added `enrich_llm_usage_with_cost()` call in `_capture_item_trace()`. |
+| `runtime/workflow_executor.py` | Removed `"__llm_calls__"` from `_PROPAGATED_KEYS`. |
+| `execution/executor_service.py` | Auto-creates `WorkflowTraceCollector` when `trace_collector` is None. Always stores in `shared["_trace_collector"]`. Removed `__llm_calls__` init from `_initialize_shared_store()`. Updated `_build_execution_result` consumer. |
+| `execution/formatters/success_formatter.py` | Reads from `trace.collect_llm_calls()` instead of `shared["__llm_calls__"]`. |
+| `execution/formatters/error_formatter.py` | Same change. |
+| `cli/workflow_errors.py` | Same change. |
+| `cli/main.py` | Always creates trace collector (not gated on `--trace`). `--no-trace` only skips file save. Removed `seeded_llm_calls` parameter from `execute_json_workflow()` and `_prepare_execution_environment()`. |
+
+### Deviations from Plan
+
+1. **`_validate_llm_json_output` removal**: The plan called for removing it. This was an informational warning that logged when an LLM node's prompt contained "json" but the response didn't look like JSON. Functionality was low-value (a logger.warning heuristic) and depended on `shared_before` which was removed. Accepted loss.
+
+2. **`seeded_llm_calls` positional arg bug**: The plan mentioned removing the `seeded_llm_calls` parameter from `execute_json_workflow()`. After removing it, a positional call at line 1313 (`execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, None, output_format, metrics_collector)`) shifted args — `output_format` (a string) landed in `metrics_collector` position, causing `'str' object has no attribute 'record_workflow_start'`. Fixed by removing the `None` placeholder at the call site. **Lesson**: removing a positional parameter requires finding ALL callers, not just the signature.
+
+3. **Batch cost enrichment location**: Plan said to add `enrich_llm_usage_with_cost(llm_usage)` in `_capture_item_trace()` "around line 444, after finding `llm_usage` from `node_output`". The actual implementation placed it in the LLM data extraction block, replacing the old single-loop pattern with an explicit `if isinstance(llm_usage, dict): enrich + assign` followed by a separate loop for response/prompt. Slightly different structure, same effect.
+
+4. **`collect_llm_calls` vs `_collect_llm_summary`**: The plan didn't note the pre-existing `_collect_llm_summary()` method (used by `save_to_file()` for the trace JSON). Both methods now walk the same tree structure but return different shapes (flat list vs aggregated counts). Verified they traverse identically to avoid divergence.
+
+5. **MCP server path**: Not explicitly called out in the plan, but the MCP server calls `execute_workflow()` without a trace_collector. The auto-creation in `executor_service.execute_workflow()` handles this — the MCP path now gets cost tracking for free without any MCP-specific changes.
+
+### Test Changes (7 files, ~30 functions)
+
+| File | Changes |
+|------|---------|
+| `test_instrumented_wrapper.py` | Rewrote 7 tests: `__llm_calls__` assertions → trace event assertions. Removed `test_preserves_existing_llm_calls` (no accumulator to preserve). Removed tests for `_find_llm_prompt` and `_validate_llm_json_output`. **34 → 33 tests.** |
+| `test_batch_node.py` | Rewrote 9 tests to verify via `_batch_trace` items instead of `__llm_calls__`. Removed `test_multiple_batch_nodes_share_llm_calls_list` (no shared accumulator). **137 → 136 tests.** |
+| `test_workflow_trace.py` | Updated `test_sanitize_for_json_system_keys` — `__llm_calls__` now filtered. Added 7 new `TestCollectLLMCalls` tests (empty, no LLM, top-level, batch items, sub-workflow, nested). |
+| `test_namespacing.py` | Replaced `__llm_calls__` with `__cache_hits__` in 2 tests (testing same dunder-key bypass behavior). |
+| `test_metrics_propagation.py` | Rewrote `TestLLMCallsPropagation` (4 integration tests → 2 trace-based tests). Rewrote `TestCreateChildStorage` (4 unit tests) to verify `_trace_collector` propagation instead of `__llm_calls__`. |
+| `test_compiler_batch.py` | Replaced `test_batch_llm_calls_accumulate` with `test_batch_trace_initialized`. |
+| `test_metrics_integration.py` | Enhanced `test_llm_accumulation_across_nodes` with trace collector and end-to-end cost chain assertions (`collect_llm_calls()` → token counts → `get_summary()` → `total_cost_usd > 0`). This is the critical safety net test. |
+
+**Total test count**: 4305 → 4307 (+2 net: +7 new trace tests, -2 removed accumulator tests, various rewrites)
+
+### Manual Verification
+
+| Scenario | Result |
+|----------|--------|
+| Single LLM, text mode | Cost `$0.0004`, trace has `cost_usd`, no `__llm_calls__` in trace JSON |
+| Single LLM, `--output-format json` | `total_cost_usd` present at top-level and per-node |
+| `--no-trace` mode | Cost still shows in output, no trace file saved |
+| Batch LLM (3 items) | Cost `$0.0058`, trace has per-item `cost_usd`, `llm_summary.total_calls: 3` |
+| Nested workflow (parent + child LLM) | Cost `$0.0016`, trace has parent + sub-workflow `cost_usd`, `total_calls: 2` |
+| Batch JSON output | `total_cost_usd` present |
+| `--report` flag | Report generated from trace correctly |
+
+### Key Insight: The Silent Failure Mode
+
+The riskiest aspect of this change is the cost display chain. If any link breaks, costs silently become `$0.00` — no error, just wrong numbers. The chain is:
+
+```
+LLM node writes llm_usage → _enrich_llm_cost() adds cost_usd → _record_trace() captures as event
+→ collect_llm_calls() walks tree → MetricsCollector.get_summary() aggregates → CLI shows "Cost: $X.XXXX"
+```
+
+The `test_llm_accumulation_across_nodes` integration test guards this with an explicit `assert summary["total_cost_usd"] > 0, "Cost chain broken"`.
+
+### CLAUDE.md Updates
+
+Removed `__llm_calls__` references from 4 CLAUDE.md files and `metrics.py` docstrings. Updated `_PROPAGATED_KEYS` documentation. Updated batch_node.py docstrings (thread safety, class description, method docs).
+
+---
+
+### Code Review Fixes
+
+Two independent code reviews flagged the same core issue: the sub-workflow integration test had weak assertions that wouldn't catch silent cost regressions.
+
+**Findings evaluated**: 12 total across both reviews. 5 confirmed (+ 1 scoped), 6 disputed, 0 needing investigation.
+
+**Disputed findings and reasoning**:
+- *Extract 2-line helper pattern*: 4 call sites with different outer guards — helper adds import/function for minimal gain.
+- *Batch item `duration_ms` missing in `collect_llm_calls`*: Not a regression (matches old behavior), consumers use item-level duration.
+- *Batch double-counting risk*: Can't happen by construction — LLM nodes get `llm_call` but no `events`, WorkflowExecutors get `events` but not `llm_call`. Verified via codebase search of `_capture_item_trace`.
+- *`trace_report` duration_ms format*: `.get('duration_ms', 0)` defaults to `0`, trace writer always stores `round(float, 2)`. `None` can't reach format string.
+- *`_validate_llm_json_output` removal note*: Already documented in progress log (Phase 1.5 deviation #1).
+- *Progress log length*: Useful for agent context, not a code concern.
+
+**Fixes applied (5)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | Strengthened sub-workflow test: `>= 1` → `== 2`, added `assert "inner-llm" in node_ids`, token count verification. Deleted weak `test_trace_collector_propagated_to_child` (subsumed). | `test_metrics_propagation.py` |
+| 2 | Restored batch+workflow integration test: 3 batch items × child workflow with LLM, asserts 3 calls with correct `node_id` and `total_tokens`. Uses pre-existing `SourceNode` helper. | `test_metrics_propagation.py` |
+| 3 | Removed redundant `if shared_storage else None` guard (outer condition already guarantees truthy). | `error_formatter.py:83` |
+| 4 | Fixed pseudo-code: `WorkflowTraceCollector` class → `trace_collector` instance comment. | `runtime/CLAUDE.md` |
+| 5 | Added `NOTE: Keep in sync with...` cross-references between `_collect_llm_calls_from_events` and `_collect_llm_summary`. | `workflow_trace.py` |
+
+**Key decision**: The batch+workflow integration test (fix #2) was the most valuable restoration. It runs through the real compile+run pipeline with 3 layers of indirection (InstrumentedNodeWrapper → PflowBatchNode → WorkflowExecutor → child trace collector). The unit test in `test_workflow_trace.py` covers the traversal logic, but only this integration test catches pipeline wiring bugs.
+
+4307 tests pass, `make check` clean.
+
+---
+
+*Phase 1.5 complete with review fixes. Zero `__llm_calls__` references in production code. Next: D1-D10 deferred items.*
+
+---
+
+## D1-D10 Deferred Item Fixes
+
+### Context
+
+Phase 1 code reviews deferred 10 items. D10 was completed in Phase 1.5 (`_validate_llm_json_output` removal). The remaining 9 are independent fixes and missing tests that make Phase 1 production-quality.
+
+### Implementation Results
+
+**Status**: Complete. 4315 tests pass, `make check` clean.
+
+| Item | What | File(s) |
+|------|------|---------|
+| **D1** | `_current_node` → `threading.local()` for thread-safe LLM prompt attribution | `workflow_trace.py` |
+| **D2** | Integration test: parallel batch captures per-item `template_resolutions` from deep-copied chains | `test_trace_integration.py` |
+| **D3** | Integration test: sub-workflow trace tree via real `compile_ir_to_flow` + `WorkflowExecutor` | `test_trace_integration.py` |
+| **D4** | Integration test: failed batch items with `error_handling: continue` show `success: false` + error | `test_trace_integration.py` |
+| **D5** | Cached nodes record trace events with `cached: true`, report shows `[cached]` status | `instrumented_wrapper.py`, `workflow_trace.py`, `trace_report.py` |
+| **D6** | Mutations filter system keys (`__execution__`, `_pflow_*`, `_trace_*`, `_batch_*`) | `instrumented_wrapper.py` |
+| **D7** | `FAILED` → `**FAILED**` (bold markdown) in all pipeline/items tables (4 locations) | `trace_report.py` |
+| **D8** | `pflow trace report` outputs directory path to stdout for scripting (`report_dir=$(pflow trace report)`) | `cli/commands/trace.py` |
+| **D9** | Documented mutual exclusivity invariant: batch items have `llm_call` XOR `events`, never both | `workflow_trace.py` |
+| **D10** | Already done in Phase 1.5 | — |
+
+### Key Design Decisions
+
+**D1 — threading.local vs fixing _current_node on the collector instance**: Used `threading.local()` (class-level `_thread_local` attribute) so each thread has its own `current_node`. Removed the instance attribute entirely. The `_active_collectors` dict (thread_id → collector) remains unchanged — it correctly maps threads to collectors. The `_thread_local` handles the separate concern of which NODE is active in each thread.
+
+**D5 — What data to record for cached nodes**: `_handle_cached_execution` now calls `_record_trace()` with `duration_ms=0` and `cached=True`. The `node_output` comes from `shared[self.node_id]` which contains the cached output from a previous execution (still in the shared store because the cache system preserved it). The `shared_keys_before` parameter was already captured at line 603, before the cache check at line 628 — so it flows naturally without restructuring `_run()`.
+
+**D6 — Filter in _record_trace vs move capture point**: Chose to filter dunder/system keys from mutations in `_record_trace()` rather than moving `shared_keys_before` capture after `_initialize_execution_state`. Moving the capture would change cache/loop guard semantics (they depend on `__execution__` being initialized before visit counting). Filtering is safer — same capture timing, cleaner output.
+
+### High-Value Integration Test Added
+
+**Trace → Report format compatibility test** (`TestTraceToReportFormatCompatibility`): Runs a real batch through the full wrapper chain, captures real trace events from the collector, writes them to a trace JSON file, then feeds the file to `generate_report()` and verifies the report contains real execution data (`processed-alpha` in `item-0.md`).
+
+**Why this matters**: The trace collector and report generator were built as two halves of one feature but communicate through a JSON file format. Every unit test for each side uses synthetic data. If a field name changes in `_record_trace()` (e.g., `node_output` → `output`), both sides' unit tests pass while reports silently produce empty content. This test catches that format drift.
+
+### Test Changes
+
+| Type | Count |
+|------|-------|
+| New integration tests (D2 parallel batch, D3 sub-workflow tree, D4 failed batch items, trace→report compat) | +4 |
+| New unit tests (D1 thread-local, D5 cached event ×2, D5 cached report rendering) | +4 |
+| Updated assertions (D7 bold FAILED in 3 test files) | 3 |
+| **Total**: 4307 → 4315 | +8 |
+
+### Manual Verification
+
+| Check | Result |
+|-------|--------|
+| `make test` | 4315 passed |
+| `make check` | ruff + mypy + deptry clean |
+| Trace JSON: no `__execution__` in mutations | Confirmed (only `fetch_users` in added) |
+| `pflow trace report` stdout | Path on stdout, info on stderr |
+| No stale `_current_node` references in src/ | Confirmed (grep returns 0 matches) |
+| No plain `"FAILED"` in trace_report.py | Confirmed (all replaced with `**FAILED**`) |
+
+---
+
+*All deferred items complete. Phase 1 is production-quality. Next: Phase 2 (Smart Analysis + Diagnostics) or Task 106 (Iteration Cache).*
+
+---
+
+## Phase 2: Actionable Summaries (Errors, Warnings, Costs)
+
+### Motivation
+
+Phase 1 shows WHAT happened — one file per node with rendered prompts, responses, and outputs. But the summary.md only had a pipeline table with node names, types, times, and status. An agent debugging a failed workflow had to open every file to find what went wrong. Phase 2 makes `summary.md` actionable: surface errors with fix suggestions, flag suspicious empty outputs, and show cost everywhere.
+
+### What Phase 2 Adds
+
+1. **Error summary** — `## Errors` section surfaces failed nodes + truncated error messages at top level
+2. **Template path suggestions** — when a template reference fails (e.g., `${fetch.result.messages}`), cross-references the upstream node's actual output to show what keys ARE available
+3. **Anomaly warnings** — `## Warnings` section flags suspicious empty outputs from successful nodes (silent failures)
+4. **Cost everywhere** — Cost column in all pipeline/batch tables, total cost in summary header, aggregate cost for container nodes
+5. **Fix: `template_resolutions` populated on error** — prerequisite for #2; previously empty when template resolution raised
+
+### Production Files Changed (3)
+
+| File | Lines | Changes |
+|------|-------|---------|
+| `src/pflow/core/trace_report.py` | +270 | 11 new functions: `_compute_event_cost`, `_format_cost`, `_collect_errors`, `_suggest_template_fixes`, `_check_path_against_upstream`, `_build_output_lookup`, `_detect_anomalies`, `_check_event_anomaly`, `_append_error_section`, `_append_warning_section`, `_append_batch_item_warnings`. Updated `_build_summary` (cost in header, error/warning sections), `_format_pipeline_table` (Cost column), `_build_node_summary` (Cost column, container cost, batch item warnings). |
+| `src/pflow/runtime/workflow_trace.py` | +10 | `_collect_llm_summary()` now accumulates and returns `total_cost_usd`. |
+| `src/pflow/runtime/wrappers/template_wrapper.py` | +12 | `self.last_resolutions` set before each `raise` in the resolution loop (2 error paths). Type annotation added for `resolved_params`. |
+
+### Deviations from Plan
+
+**1. `try/finally` → "set before each raise" for `last_resolutions`**
+
+The plan called for wrapping the entire resolution loop (lines 521–641) in `try/finally` to guarantee `last_resolutions` is always set on error. This would require re-indenting ~120 lines of complex loop body — high risk of introducing bugs and a massive diff for a structural-only change. Instead, I added `self.last_resolutions = {...}` at each of the 2 raise points (type validation strict error at line 575, unresolved template strict error at line 625), plus the existing normal-path assignment at line 655.
+
+**Trade-off**: The `try/finally` approach is structurally safer — a future developer adding a 3rd raise path in the loop would need to remember to set `last_resolutions` first. The "set before each raise" approach is fragile to modification but avoids a 120-line re-indent. Both raise paths have comments explaining why the assignment is there. Acceptable for now; the function could be refactored to extract the loop body later.
+
+**2. Complexity extraction not in the plan**
+
+The plan didn't account for ruff C901 complexity limits. Four functions exceeded the threshold (complexity > 10): `_suggest_template_fixes`, `_detect_anomalies`, `_build_summary`, `_build_node_summary`. Extracted helper functions to reduce complexity:
+- `_check_path_against_upstream()` from `_suggest_template_fixes` (path traversal logic)
+- `_check_event_anomaly()` from `_detect_anomalies` (per-node anomaly check)
+- `_append_error_section()` and `_append_warning_section()` from `_build_summary`
+- `_append_batch_item_warnings()` from `_build_node_summary`
+
+This resulted in 10 new functions instead of the plan's 7, but the public API surface is identical.
+
+**3. Removed dead logic in batch item warnings**
+
+The plan's Step 5b had: `if val is not None and (val == "" or val == [] or val is None)`. The `val is None` branch is unreachable because the outer guard `val is not None` already excludes it. Fixed to `if val is not None and (val == "" or val == [])`.
+
+**4. Step 3b (separate total cost computation) was unnecessary**
+
+The plan included a separate computation in Step 3b to sum `_compute_event_cost()` across all events for the summary header. Step 7 then said to remove it and use `llm_summary.total_cost_usd` instead. I went directly to the Step 7 approach — `_build_summary` reads `llm.get("total_cost_usd", 0)` from the trace's `llm_summary`. No intermediate step needed.
+
+### Key Design Decisions
+
+**`_compute_event_cost` returns `None` vs `0.0`**: `None` means "no cost data anywhere in the tree" (display as `—`), while `0.0` means "cost data exists but all costs are zero" (display as `$0.0000`). This distinguishes shell-only nodes from LLM nodes with zero cost. Mirrors the `found_any` flag pattern.
+
+**Top-level errors only, no recursion**: `_collect_errors` and `_detect_anomalies` only check top-level events. If a sub-workflow fails, the parent container event has `success: false` — we show the container, not the internal failure. The agent drills into the container's directory for specifics. This keeps the summary focused.
+
+**Anomaly warnings are navigation aids, not diagnostics**: They flag WHERE to look (empty LLM response, empty stdout with exit 0, None result, empty lists), not what's wrong. An empty stdout from a shell node that redirected to a file is perfectly fine — but worth flagging because the agent might expect output there.
+
+### Two Parallel Cost Paths — Intentional Duplication
+
+There are now two independent implementations that compute cost:
+1. `_collect_llm_summary()` in `workflow_trace.py` — accumulates `total_cost_usd` during trace save, stored in `llm_summary`
+2. `_compute_event_cost()` in `trace_report.py` — computes per-event cost recursively when generating report
+
+The summary header uses path #1 (`llm_summary.total_cost_usd`). The pipeline table rows use path #2 (`_compute_event_cost()` per event). If you sum the per-event costs, they should equal the header total.
+
+Both traverse the same tree structure (events → batch_items → sub_workflow_events) but are independent implementations. The risk of divergence is low — both are simple recursive traversals with the same base case (`llm_call.cost_usd`). The alternative (having the report generator import and call `_collect_llm_summary` from the runtime module) would create a dependency from `core/` to `runtime/` which violates the existing module boundary.
+
+### High-Value Integration Test
+
+**`test_template_resolutions_flow_through_wrapper_chain_on_error`** — this is the test that validates the entire Phase 2 prerequisite (Step 1). It builds the full production wrapper chain (EchoNode → TemplateAwareNodeWrapper → NamespacedNodeWrapper → InstrumentedNodeWrapper), triggers a template resolution failure, and verifies `collector.events[0]["template_resolutions"]` is NOT empty.
+
+**Why the unit test wasn't sufficient**: The unit test (`test_template_resolutions_populated_on_error`) verified that `TemplateAwareNodeWrapper.last_resolutions` is set before the raise. But in production, `InstrumentedNodeWrapper._record_trace()` reads `last_resolutions` via `_find_template_wrapper()`, which traverses through `NamespacedNodeWrapper.__getattr__` delegation. The integration test exercises this 5-link chain:
+
+```
+TemplateAwareNodeWrapper sets last_resolutions
+  → ValueError propagates through NamespacedNodeWrapper
+    → InstrumentedNodeWrapper catches in except block
+      → _find_template_wrapper() traverses via __getattr__
+        → trace event gets template_resolutions
+```
+
+If ANY link breaks, `template_resolutions` silently becomes `{}` — the report generator's template fix suggestions would have nothing to work with. No error, just empty suggestions.
+
+### Test Changes
+
+| File | Changes |
+|------|---------|
+| `tests/test_core/test_trace_report.py` | +28 new tests across 9 classes (cost computation ×5, cost in tables ×3, error summary ×3, anomaly detection ×5, template suggestions ×4, batch item warnings ×2, output lookup ×2, collect errors ×2, format cost ×2). Updated 4 existing assertions for Cost column in pipeline/batch tables. |
+| `tests/test_runtime/test_trace_integration.py` | +2 new tests: `test_template_resolutions_populated_on_error` (unit-level), `test_template_resolutions_flow_through_wrapper_chain_on_error` (full wrapper chain integration). |
+| `tests/test_runtime/test_workflow_trace.py` | +1 new test: `test_llm_summary_includes_cost` (verifies `total_cost_usd` in saved trace JSON). |
+
+**Total test count**: 4315 → 4346 (+31)
+
+### Manual Verification Needed
+
+| Check | What to verify |
+|-------|----------------|
+| `--report` with LLM workflow | `summary.md` has Cost column in pipeline table, total cost in header |
+| `--report` with failed workflow | `summary.md` has `## Errors` section with error message |
+| `--report` with wrong template path | `## Errors` includes `Suggestion:` with available keys from upstream |
+| `--report` with empty shell output | `summary.md` has `## Warnings` section |
+| Batch container summary | Per-item cost column, aggregate cost in metadata |
+
+### Example Output: `summary.md` After Phase 2
+
+```markdown
+# Execution Report: lyrics-generator
+
+- Status: failed
+- Duration: 45.2s
+- Nodes: 4
+- LLM calls: 5
+- Tokens: 12,340
+- Total cost: $0.0847
+- Models: gemini-3-flash-preview, anthropic/claude-haiku-4-5-20251001
+- Generated: 2026-03-23T16:00:00
+
+## Pipeline
+
+| # | Node | Type | Time | Cost | Status |
+|---|------|------|------|------|--------|
+| 1 | fetch-issues | HttpNode | 2100ms | — | ok |
+| 2 | filter-closed | ShellNode | 50ms | — | ok |
+| 3 | analyze | LLMNode | 16000ms | $0.0400 | ok |
+| 4 | format-output | LLMNode | 900ms | $0.0050 | **FAILED** |
+
+## Errors
+
+- **format-output** (LLMNode): Unresolved variables in parameter 'prompt': ${fetch-issues.result.messages}...
+  - Suggestion: `${fetch-issues.result.messages}`: key `messages` not found at `fetch-issues.result`. Available keys: `issues`, `total_count`
+
+## Warnings
+
+- **filter-closed**: `result` is empty list (0 items)
+
+*Full trace: ~/.pflow/debug/workflow-trace-lyrics-generator-20260323-160000.json*
+```
+
+---
+
+### Code Review Fixes
+
+Two independent reviews (narrative + line-verified) produced 9 deduplicated findings. 7 confirmed, 2 disputed.
+
+**Findings evaluated**: 9 unique (11 raw across both reviews, with overlaps W1≡F, W2≡G, W3≡H, S1≡A).
+
+**Disputed findings and reasoning**:
+- *W2/G — Rebuild output lookup per failed event*: `_suggest_template_fixes` calls `_build_output_lookup` for each failed event. Workflows rarely have >1 failed node (strict mode stops on first failure), and the lookup iterates a handful of events. Adding an `output_lookup` parameter changes the API and test callsites for zero practical benefit.
+- *S3 — Test for `cost_usd: None`*: The `or 0.0` guard is self-evident Python. Testing it tests the language, not our logic.
+- *S4 — Use `_format_cost` for container cost*: The manual `f"- Cost: ${cost:.4f}"` is equivalent given the `if is not None` guard. Not worth a change.
+
+**Fixes applied (7)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | `if cost:` → `if cost is not None and cost > 0:` — truthiness bug where `$0.0000` total cost was silently skipped in header (inconsistent with pipeline table which shows `$0.0000` via `_format_cost`) | `trace_report.py:320-322` |
+| 2 | Extracted `all_events = trace.get("nodes", [])` once before pipeline table loop — eliminated duplicate `.get()` call | `trace_report.py:335,346` |
+| 3 | `if not output or output == {}:` → `if not output:` — redundant clause (`not {}` is already `True`) in 2 locations | `trace_report.py:185,497` |
+| 4 | Updated `_collect_llm_summary` docstring Returns to include `total_cost_usd` — drift from Phase 2 addition | `workflow_trace.py:282` |
+| 5 | Fixed progress log function count: "10 new functions" → "11 new functions" (missed `_append_batch_item_warnings`) | `progress-log.md` |
+| 6 | Added D9 invariant comment to `_compute_event_cost` — documents that batch items have `llm_call` XOR `events` (same invariant documented in `workflow_trace.py` but missing from `trace_report.py`) | `trace_report.py:36-37` |
+| 7 | Replaced misleading comment on `_build_output_lookup` with docstring explaining WHY depth is limited — pflow templates are scoped, so a node can only reference outputs from its own workflow level; sub-workflow internal nodes are invisible to parent-scope templates | `trace_report.py:150-158` |
+
+4346 tests pass, `make check` clean.
+
+---
+
+*Phase 2 complete with review fixes. `summary.md` is now actionable — errors, suggestions, warnings, and cost data surface without opening individual node files.*
+
+---
+
+## Cleanup: Docs, Deprecation, and Final Review Fixes
+
+### Docs & Deprecation
+
+Updated all agent instructions and user-facing docs to reference `--report` / `pflow trace report` instead of manual `jq` trace parsing. Removed `scripts/analyze-trace/` entirely (no users, `--report` replaces it).
+
+**Files updated (8)**:
+- `src/pflow/cli/resources/cli-agent-instructions.md` — replaced Phase 3 trace debugging, template error debugging, trace file description
+- `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` — same 3 sections
+- `src/pflow/mcp_server/resources/instructions/mcp-sandbox-agent-instructions.md` — updated trace debugging tip
+- `docs/guides/debugging.mdx` — added Execution Reports section with git diff workflow, documented reports as ephemeral views of durable trace files
+- `docs/reference/cli/index.mdx` — documented `--report`, `--report-dir`, `pflow trace report`
+- `docs/reference/experimental.mdx` — replaced `analyze.py` section with execution reports
+- `scripts/README.md` — removed analyze-trace reference
+
+**Files deleted**: `scripts/analyze-trace/` (analyze.py, compare.py, latest.sh, compare-latest.sh, README.md)
+
+**Key insight documented**: Reports are ephemeral views — trace files are the durable history. Every run saves a timestamped trace. Regenerate a report from any past run with `pflow trace report <trace-file>`.
+
+### First Code Review Fixes
+
+4 fixes from initial review evaluation:
+- Cross-reference comment on `_compute_event_cost` pointing to `_collect_llm_summary`
+- `import logging` moved from inline to module level in `trace_report.py`
+- `trace.py` CLI: added `@click.pass_context`, replaced `raise SystemExit(1)` with `ctx.exit(1)`
+- 2 CLI tests added: `test_report_flag_generates_report`, `test_report_flag_overrides_no_trace`
+
+### Second Code Review Fixes
+
+Updated review with line-by-line methodology found 1 critical + 6 warnings + 6 suggestions. Evaluation: 5 confirmed, 4 disputed, 2 already fixed, 1 deferred.
+
+**Fixes applied (4)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | **C1**: Removed dead "degraded" path from `_determine_trace_status()` — no code ever sets `warning` on trace events, so `"degraded"` was unreachable. Simplified to `return "failed" if failed else "success"` | `workflow_trace.py:256-263` |
+| 2 | **W1**: Added `"llm_usage"` and `"response"` to `shown_keys` in `_format_node_output` — prevents redundant display in catch-all `## Output` block when `llm_response` is absent | `trace_report.py:461-472` |
+| 3 | **W2**: Added `_wrapped` attribute check to `_find_template_wrapper` and `_find_batch_or_workflow_node` — consistent with `_get_actual_node_class` and `_get_node_params` traversal | `instrumented_wrapper.py:260-298` |
+| 4 | **W4**: Standardized batch item traversal order in `_collect_llm_summary` — now checks `llm_call` first then `events`, matching `_collect_llm_calls_from_events` and `_compute_event_cost`. Added inline invariant comment. | `workflow_trace.py:291-305` |
+
+**Disputed findings**:
+- W3 (`_find_template_wrapper` returns NamespacedNodeWrapper): by design — `__getattr__` delegation is the established pattern
+- W5 (`last_resolutions` fragility): already documented as accepted tech debt
+- W6 (truthiness drops empty values): `node_output={}` absent from trace is fine — report handles with `.get("node_output", {})`, no direct trace consumers exist
+- S2 (`generate_report` returns None): CLI handles errors, raising adds try/except at every call site for same behavior
+- S3 (report overwrites): intentional for git diff workflow, documented
+
+### PR Review Fixes (PR #147)
+
+PR review found 2 critical + 5 warnings + 6 suggestions. Evaluation: 4 confirmed, 3 disputed, 2 already fixed, 1 noted.
+
+**Fixes applied (4)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | **C1**: Separated try/except in `_save_trace_and_report` — trace save and report generation now have independent error handling. If trace saves but report fails, trace success message still shows. Error message is now accurate ("Failed to generate report" not "Failed to save trace"). | `main.py:711-725` |
+| 2 | **C2**: Added try/except around `json.load()` in `generate_report` — corrupt/unreadable trace files now return None with logged error instead of unhandled exception. | `trace_report.py:243-248` |
+| 3 | **W4**: `_batch_trace` cleanup in `post()` — shared store entry popped after transfer to `self._trace_items`. Outer dict removed when empty. Dead data no longer accumulates. 8 tests updated to assert on `batch._trace_items` (the production contract) instead of `shared["_batch_trace"]`. | `batch_node.py:910-917`, 7 tests in `test_batch_node.py`, 1 in `test_compiler_batch.py` |
+| 4 | **W6**: Aligned `_safe_name` regex in `workflow_trace.py` — now keeps underscores (`[^a-zA-Z0-9_-]`), matching `trace_report.py`. Node IDs commonly contain underscores. | `workflow_trace.py:339` |
+
+**Disputed findings**:
+- W3 (duplicated tree traversal): already addressed — cross-reference comments, standardized order
+- W5 (string matching for node types): already accepted — navigation aids, not diagnostics
+- S3 (report overwrites): intentional, documented as ephemeral views of durable trace files
+
+4348 tests pass, `make check` clean.
+
+---
+
+*Task 108 complete. All phases implemented, reviewed, polished, and documented.*

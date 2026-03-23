@@ -65,7 +65,7 @@ Thread Safety:
     - Sequential mode: Single-threaded, no concerns
     - Parallel mode:
       - Each thread gets deep copy of node chain (isolates TemplateAwareNodeWrapper)
-      - Shallow copy of shared store (shares __llm_calls__ list, GIL-protected)
+      - Shallow copy of shared store (shares _batch_trace dict, GIL-protected)
       - Local retry counter (avoids self.cur_retry race condition)
 """
 
@@ -90,7 +90,7 @@ class PflowBatchNode(Node):
 
     This class wraps any pflow node to process multiple items. Each item gets an
     isolated shallow copy of the shared store, ensuring items don't pollute each
-    other while preserving references to mutable tracking objects like `__llm_calls__`.
+    other while preserving references to mutable tracking objects like `_batch_trace`.
 
     Inherits from Node directly (not BatchNode) to avoid the `self.cur_retry` race
     condition in parallel execution. Implements thread-safe retry with local variables.
@@ -244,12 +244,10 @@ class PflowBatchNode(Node):
         # Store shared reference for use in _exec methods
         self._shared = shared
 
-        # Ensure __llm_calls__ exists before batch execution starts.
-        # This is critical: shallow copy in item contexts will share this list reference,
-        # allowing _capture_item_llm_usage to append LLM usage data that persists
-        # after each item's context is discarded.
-        if "__llm_calls__" not in shared:
-            shared["__llm_calls__"] = []
+        # Initialize batch trace accumulator
+        if "_batch_trace" not in shared:
+            shared["_batch_trace"] = {}
+        shared["_batch_trace"][self.node_id] = []
 
         # Handle inline array vs template reference
         if isinstance(self.items_template, list):
@@ -335,39 +333,85 @@ class PflowBatchNode(Node):
                 return base_error + upstream_context
         return base_error
 
-    def _capture_item_llm_usage(self, item_shared: dict[str, Any], idx: int) -> None:
-        """Capture llm_usage from item context and append to shared __llm_calls__.
+    @staticmethod
+    def _find_in_chain(node_chain: Any, attr_name: str) -> Any:
+        """Traverse wrapper chain to find a node with the given attribute set.
 
-        When batch executes an inner LLM node, the node writes llm_usage to the
-        item's isolated context. This method captures that data before the context
-        is discarded, appending it to the shared __llm_calls__ list for cost tracking.
+        Returns:
+            The attribute value if found, None otherwise
+        """
+        current = node_chain
+        while current:
+            value = getattr(current, attr_name, None)
+            if value:
+                return value
+            if hasattr(current, "inner_node"):
+                current = current.inner_node
+            elif hasattr(current, "_inner_node"):
+                current = current._inner_node
+            else:
+                break
+        return None
+
+    def _capture_item_trace(
+        self,
+        item_shared: dict[str, Any],
+        idx: int,
+        item: Any,
+        duration_ms: float | None,
+        error: dict[str, Any] | None,
+        node_chain: Any = None,
+    ) -> None:
+        """Capture per-item trace event for batch item tracing.
 
         Args:
             item_shared: The isolated shared store for this batch item
-            idx: The index of this item in the batch (for tracing)
+            idx: Item index
+            item: Original batch item value
+            duration_ms: Execution duration in milliseconds
+            error: Error info dict if item failed
+            node_chain: Node chain to traverse for template resolutions (for parallel: deep-copied chain)
         """
-        llm_usage = None
+        trace_list = self._shared.get("_batch_trace", {}).get(self.node_id)
+        if trace_list is None:
+            return
 
-        # Check root level (for non-namespaced inner nodes)
-        if "llm_usage" in item_shared:
-            llm_usage = item_shared["llm_usage"]
-        # Check namespaced location (when inner node uses namespacing)
-        elif self.node_id in item_shared and isinstance(item_shared[self.node_id], dict):
-            llm_usage = item_shared[self.node_id].get("llm_usage")
+        item_event: dict[str, Any] = {
+            "index": idx,
+            "item": item,
+            "success": error is None,
+            "duration_ms": round(duration_ms, 2) if duration_ms else 0,
+        }
+        if error:
+            item_event["error"] = error.get("error", str(error))
 
-        if llm_usage and isinstance(llm_usage, dict):
-            # Enrich with cost (mutates in-place, so batch item results get it too)
-            enrich_llm_usage_with_cost(llm_usage)
+        # Capture item's node output
+        node_output = item_shared.get(self.node_id)
+        if isinstance(node_output, dict):
+            item_event["node_output"] = dict(node_output)
 
-            # Copy the usage data and add batch context
-            llm_call_data = llm_usage.copy()
-            llm_call_data["node_id"] = self.node_id
-            llm_call_data["batch_item_index"] = idx
+        # Capture template resolutions and child events from wrapper chain
+        chain = node_chain or self.inner_node
+        resolutions = self._find_in_chain(chain, "last_resolutions")
+        if resolutions:
+            item_event["template_resolutions"] = resolutions
+        child_events = self._find_in_chain(chain, "_child_trace_events")
+        if child_events is not None:
+            item_event["events"] = child_events
 
-            # Append to shared __llm_calls__ list (GIL-protected for thread safety)
-            llm_calls = self._shared.get("__llm_calls__")
-            if isinstance(llm_calls, list):
-                llm_calls.append(llm_call_data)
+        # LLM data from item output
+        if isinstance(node_output, dict):
+            llm_usage = node_output.get("llm_usage")
+            if isinstance(llm_usage, dict):
+                # Enrich with cost before trace records it
+                enrich_llm_usage_with_cost(llm_usage)
+                item_event["llm_call"] = llm_usage
+            for src_key, dst_key in [("response", "llm_response"), ("prompt", "llm_prompt")]:
+                value = node_output.get(src_key)
+                if isinstance(value, str):
+                    item_event[dst_key] = value
+
+        trace_list.append(item_event)  # GIL-protected for parallel
 
     def _exec_single(self, idx: int, item: Any) -> tuple[dict[str, Any] | None, dict[str, Any] | None, float]:
         """Execute single item with thread-safe retry logic.
@@ -386,6 +430,7 @@ class PflowBatchNode(Node):
         """
         start_time = time.perf_counter()
         last_exception: Exception | None = None
+        item_shared: dict[str, Any] = {}  # Initialized here for retries-exhausted trace capture
 
         for retry in range(self.max_retries):
             try:
@@ -397,9 +442,6 @@ class PflowBatchNode(Node):
 
                 # Execute inner node — capture action string for fallback error detection
                 action = self.inner_node._run(item_shared)
-
-                # Capture LLM usage from item context before it's discarded
-                self._capture_item_llm_usage(item_shared, idx)
 
                 # Capture result from inner node's namespace
                 result = item_shared.get(self.node_id)
@@ -432,9 +474,13 @@ class PflowBatchNode(Node):
 
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
-                    # Error in result dict - no exception to preserve
-                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)
+                    error_info = {"index": idx, "item": item, "error": error_msg, "exception": None}
+                    self._capture_item_trace(
+                        item_shared, idx, item, duration_ms, error_info, node_chain=self.inner_node
+                    )
+                    return (result, error_info, duration_ms)
 
+                self._capture_item_trace(item_shared, idx, item, duration_ms, None, node_chain=self.inner_node)
                 return (result, None, duration_ms)
 
             except Exception as e:
@@ -455,11 +501,9 @@ class PflowBatchNode(Node):
 
         # All retries exhausted - store the original exception for fail_fast re-raise
         duration_ms = (time.perf_counter() - start_time) * 1000
-        return (
-            None,
-            {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception},
-            duration_ms,
-        )
+        error_info = {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception}
+        self._capture_item_trace(item_shared, idx, item, duration_ms, error_info, node_chain=self.inner_node)
+        return (None, error_info, duration_ms)
 
     def _exec_single_with_node(
         self, idx: int, item: Any, item_shared: dict[str, Any], thread_node: Any
@@ -490,11 +534,6 @@ class PflowBatchNode(Node):
                 # Execute the thread-local node copy — capture action for fallback error detection
                 action = thread_node._run(item_shared)
 
-                # Capture LLM usage from item context before it's discarded
-                # Note: self._capture_item_llm_usage appends to self._shared["__llm_calls__"]
-                # which is the same list object referenced by item_shared (shallow copy)
-                self._capture_item_llm_usage(item_shared, idx)
-
                 # Capture result from node's namespace
                 result = item_shared.get(self.node_id)
                 if result is None:
@@ -523,8 +562,11 @@ class PflowBatchNode(Node):
 
                 duration_ms = (time.perf_counter() - start_time) * 1000
                 if error_msg:
-                    return (result, {"index": idx, "item": item, "error": error_msg, "exception": None}, duration_ms)
+                    error_info = {"index": idx, "item": item, "error": error_msg, "exception": None}
+                    self._capture_item_trace(item_shared, idx, item, duration_ms, error_info, node_chain=thread_node)
+                    return (result, error_info, duration_ms)
 
+                self._capture_item_trace(item_shared, idx, item, duration_ms, None, node_chain=thread_node)
                 return (result, None, duration_ms)
 
             except Exception as e:
@@ -544,11 +586,9 @@ class PflowBatchNode(Node):
                 break
 
         duration_ms = (time.perf_counter() - start_time) * 1000
-        return (
-            None,
-            {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception},
-            duration_ms,
-        )
+        error_info = {"index": idx, "item": item, "error": str(last_exception), "exception": last_exception}
+        self._capture_item_trace(item_shared, idx, item, duration_ms, error_info, node_chain=thread_node)
+        return (None, error_info, duration_ms)
 
     def _exec_sequential(self, items: list[Any]) -> list[dict[str, Any] | None]:
         """Execute items sequentially using _exec_single.
@@ -743,7 +783,7 @@ class PflowBatchNode(Node):
         """Execute items in parallel using ThreadPoolExecutor.
 
         Each thread gets:
-        - Shallow copy of shared store (shares __llm_calls__ list for tracking)
+        - Shallow copy of shared store (shares _batch_trace dict for tracking)
         - Deep copy of node chain (avoids TemplateAwareNodeWrapper race condition)
 
         The deep copy is critical: TemplateAwareNodeWrapper mutates inner_node.params
@@ -766,7 +806,7 @@ class PflowBatchNode(Node):
 
         def process_item(idx: int, item: Any) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None, float]:
             """Process single item in thread. Returns (index, result, error, duration_ms)."""
-            # Create isolated shared store (shallow copy shares __llm_calls__)
+            # Create isolated shared store (shallow copy shares _batch_trace)
             item_shared = dict(self._shared)
             item_shared[self.node_id] = {}
             item_shared[self.item_alias] = item
@@ -866,6 +906,16 @@ class PflowBatchNode(Node):
                 "timing": timing_stats,
             },
         }
+
+        # Store batch trace items for InstrumentedNodeWrapper to read, then clean up.
+        # After this, only self._trace_items is consumed (by _find_batch_or_workflow_node).
+        batch_trace_dict = shared.get("_batch_trace")
+        if isinstance(batch_trace_dict, dict):
+            batch_trace = batch_trace_dict.pop(self.node_id, [])
+            if batch_trace:
+                self._trace_items = batch_trace
+            if not batch_trace_dict:
+                shared.pop("_batch_trace", None)
 
         logger.debug(
             f"Batch node '{self.node_id}' completed: {success_count}/{len(exec_res)} successful",

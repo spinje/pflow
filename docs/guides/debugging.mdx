@@ -40,22 +40,61 @@ Your agent sees that `msg` doesn't exist, but `result.messages` does. It fixes t
 
 These errors are specific because the error space is finite — pflow knows every node type and every declared output. When agents compose known building blocks instead of writing arbitrary code, errors say "node X doesn't output Y, did you mean Z?" instead of handing you a stack trace.
 
+## Execution reports
+
+The `--report` flag generates a structured execution report — a directory of readable markdown files, one per node:
+
+```bash
+# Report to default location (~/.pflow/reports/{name}/)
+pflow my-workflow --report
+
+# Report to a specific directory
+pflow my-workflow --report-dir ./report/
+```
+
+The report includes:
+- **summary.md** — pipeline table with per-node cost, errors with fix suggestions, anomaly warnings for suspicious empty outputs
+- **Per-node files** — rendered prompts (what the LLM actually received), full responses, model/token/cost metadata
+- **Batch items** — per-item files showing individual prompts and responses
+- **Sub-workflows** — nested directories mirroring the workflow structure
+
+Reports are ephemeral — the default location is overwritten each run. The trace files are the durable history. You can regenerate a report from any previous run:
+
+```bash
+# Most recent trace
+pflow trace report
+
+# A specific past run
+pflow trace report ~/.pflow/debug/workflow-trace-my-workflow-20260323-150000.json -o /tmp/old
+```
+
+### Comparing runs with git diff
+
+Write reports to a project-local folder. Stage the report, edit a prompt, re-run — `git diff` shows exactly what changed:
+
+```bash
+pflow my-workflow --report-dir ./report/
+git add report/
+
+# Edit a prompt, re-run
+pflow my-workflow --report-dir ./report/
+git diff report/
+```
+
+Each node gets its own file, so you can diff just the node you changed. With stochastic LLM outputs, a full-report diff is noisy — targeted per-node diffs show whether your prompt change had the intended effect.
+
 ## Trace files
 
 pflow automatically saves detailed execution traces:
 
 - **Location**: `~/.pflow/debug/workflow-trace-*.json`
 - **When**: Every workflow run (success or failure)
-- **Content**: Per-node timing, inputs, outputs, errors
+- **Content**: Per-node timing, inputs, outputs, template resolutions, errors
 
-Your agent reads these when it needs more context to diagnose a failure. You don't need to inspect them yourself - they're designed for your agent to parse.
-
-<Note>
-Trace file inspection requires local filesystem access. This works with **Claude Code**, **Cursor**, and similar tools that can read files on your machine. Desktop apps like **Claude Desktop** or **ChatGPT Desktop** don't have filesystem access by default - you'd need to configure an MCP server that provides file reading capabilities.
-</Note>
+Traces are the raw data behind execution reports. Your agent can read these directly when it needs programmatic access, but the `--report` output is usually more useful for debugging.
 
 <Tip>
-Traces are saved automatically. Use `--no-trace` if you want to disable this.
+Traces are saved automatically. Use `--no-trace` if you want to disable this (the `--report` flag overrides `--no-trace`).
 </Tip>
 
 ## What only you can fix

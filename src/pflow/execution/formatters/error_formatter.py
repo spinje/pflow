@@ -80,7 +80,8 @@ def format_execution_errors(
     # Extract metrics summary if collector provided
     metrics_summary = None
     if metrics_collector and shared_storage:
-        llm_calls = shared_storage.get("__llm_calls__", [])
+        trace = shared_storage.get("_trace_collector")
+        llm_calls = trace.collect_llm_calls() if trace else []
         metrics_summary = metrics_collector.get_summary(llm_calls)
 
     # Add execution state if workflow IR and shared storage provided
