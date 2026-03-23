@@ -15,7 +15,13 @@ from pflow.core.trace_report import (
     _build_batch_item_summary,
     _build_node_file,
     _build_node_summary,
+    _build_output_lookup,
     _build_summary,
+    _collect_errors,
+    _compute_event_cost,
+    _detect_anomalies,
+    _format_cost,
+    _suggest_template_fixes,
     generate_report,
 )
 
@@ -252,8 +258,8 @@ class TestBuildSummary:
             ]
         )
         md = _build_summary(trace, source_path="/home/user/.pflow/debug/trace.json")
-        assert "| 1 | fetch | ShellNode | 200ms | ok |" in md
-        assert "| 2 | process | LLMNode | 500ms | **FAILED** |" in md
+        assert "| 1 | fetch | ShellNode | 200ms | \u2014 | ok |" in md
+        assert "| 2 | process | LLMNode | 500ms | \u2014 | **FAILED** |" in md
 
 
 # --- _build_node_file() ---
@@ -392,8 +398,8 @@ class TestBuildNodeSummary:
         md = _build_node_summary(event)
         assert "# batch-process" in md
         assert "- Items: 3 (2/3 succeeded)" in md
-        assert "| 0 | 50ms | ok |" in md
-        assert "| 1 | 30ms | **FAILED** |" in md
+        assert "| 0 | 50ms | \u2014 | ok |" in md
+        assert "| 1 | 30ms | \u2014 | **FAILED** |" in md
 
     def test_sub_workflow_summary_has_pipeline_table(self) -> None:
         """Sub-workflow node summary should include a pipeline table of child nodes."""
@@ -407,8 +413,8 @@ class TestBuildNodeSummary:
         )
         md = _build_node_summary(event)
         assert "## Pipeline" in md
-        assert "| 1 | step-1 | ShellNode | 10ms | ok |" in md
-        assert "| 2 | step-2 | LLMNode | 500ms | **FAILED** |" in md
+        assert "| 1 | step-1 | ShellNode | 10ms | \u2014 | ok |" in md
+        assert "| 2 | step-2 | LLMNode | 500ms | \u2014 | **FAILED** |" in md
 
 
 # --- _build_batch_item_file() ---
@@ -534,5 +540,470 @@ class TestBuildBatchItemSummary:
         }
         md = _build_batch_item_summary(item)
         assert "## Pipeline" in md
-        assert "| 1 | write-lyrics | LLMNode | 800ms | ok |" in md
-        assert "| 2 | review | LLMNode | 600ms | ok |" in md
+        assert "| 1 | write-lyrics | LLMNode | 800ms | \u2014 | ok |" in md
+        assert "| 2 | review | LLMNode | 600ms | \u2014 | ok |" in md
+
+
+# --- _compute_event_cost() ---
+
+
+class TestComputeEventCost:
+    def test_compute_event_cost_no_llm(self) -> None:
+        """Event without llm_call returns None."""
+        event = _make_event(node_id="shell-step", node_type="ShellNode")
+        result = _compute_event_cost(event)
+        assert result is None
+
+    def test_compute_event_cost_leaf_llm(self) -> None:
+        """Event with direct llm_call returns its cost_usd."""
+        event = _make_event(
+            node_type="LLMNode",
+            llm_call={"model": "gpt-4", "cost_usd": 0.05},
+        )
+        result = _compute_event_cost(event)
+        assert result == pytest.approx(0.05)
+
+    def test_compute_event_cost_batch_items(self) -> None:
+        """Batch items with llm_calls sum their costs."""
+        event = _make_event(
+            node_type="LLMNode",
+            batch_items=[
+                {"llm_call": {"cost_usd": 0.01}},
+                {"llm_call": {"cost_usd": 0.02}},
+            ],
+        )
+        result = _compute_event_cost(event)
+        assert result == pytest.approx(0.03)
+
+    def test_compute_event_cost_sub_workflow(self) -> None:
+        """Sub-workflow events with llm_calls sum recursively."""
+        event = _make_event(
+            node_type="WorkflowExecutor",
+            sub_workflow_events=[
+                _make_event(
+                    node_id="inner-llm",
+                    node_type="LLMNode",
+                    llm_call={"model": "claude", "cost_usd": 0.04},
+                ),
+            ],
+        )
+        result = _compute_event_cost(event)
+        assert result == pytest.approx(0.04)
+
+    def test_compute_event_cost_nested(self) -> None:
+        """Batch items containing sub-workflow events with llm_calls sum correctly."""
+        event = _make_event(
+            node_type="WorkflowExecutor",
+            batch_items=[
+                {
+                    "index": 0,
+                    "success": True,
+                    "duration_ms": 100,
+                    "events": [
+                        _make_event(
+                            node_id="inner-llm-1",
+                            node_type="LLMNode",
+                            llm_call={"model": "gpt-4", "cost_usd": 0.01},
+                        ),
+                        _make_event(
+                            node_id="inner-llm-2",
+                            node_type="LLMNode",
+                            llm_call={"model": "gpt-4", "cost_usd": 0.02},
+                        ),
+                    ],
+                },
+                {
+                    "index": 1,
+                    "success": True,
+                    "duration_ms": 100,
+                    "events": [
+                        _make_event(
+                            node_id="inner-llm-3",
+                            node_type="LLMNode",
+                            llm_call={"model": "gpt-4", "cost_usd": 0.03},
+                        ),
+                    ],
+                },
+            ],
+        )
+        result = _compute_event_cost(event)
+        # 0.01 + 0.02 + 0.03 = 0.06
+        assert result == pytest.approx(0.06)
+
+
+# --- _format_cost() ---
+# (Tested indirectly through table tests, but _build_output_lookup also needs direct use)
+
+
+# --- Cost in tables ---
+
+
+class TestCostInTables:
+    def test_summary_pipeline_table_has_cost_column(self) -> None:
+        """Pipeline table in summary includes Cost column with formatted values."""
+        trace = _make_trace(
+            nodes=[
+                _make_event(
+                    node_id="ask-llm",
+                    node_type="LLMNode",
+                    duration_ms=300,
+                    llm_call={"model": "gpt-4", "cost_usd": 0.05},
+                ),
+            ]
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "| Cost |" in md
+        assert "$0.0500" in md
+
+    def test_node_summary_batch_table_has_cost_column(self) -> None:
+        """Batch items table includes Cost column."""
+        event = _make_event(
+            node_id="batch-llm",
+            node_type="LLMNode",
+            batch_items=[
+                {
+                    "index": 0,
+                    "success": True,
+                    "duration_ms": 50,
+                    "llm_call": {"model": "gpt-4", "cost_usd": 0.01},
+                },
+                {
+                    "index": 1,
+                    "success": True,
+                    "duration_ms": 60,
+                    "llm_call": {"model": "gpt-4", "cost_usd": 0.02},
+                },
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "| Cost |" in md
+        assert "$0.0100" in md
+
+    def test_summary_header_shows_total_cost(self) -> None:
+        """Summary header includes total cost from llm_summary."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 3,
+                "total_tokens": 5000,
+                "total_cost_usd": 0.0847,
+                "models_used": ["gpt-4"],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "Total cost: $0.0847" in md
+
+
+# --- Error summary ---
+
+
+class TestErrorSummary:
+    def test_summary_shows_error_section(self) -> None:
+        """Trace with failed nodes produces an Errors section."""
+        trace = _make_trace(
+            nodes=[
+                _make_event(
+                    node_id="fetch",
+                    node_type="HttpNode",
+                    success=False,
+                    error="Connection refused",
+                ),
+            ]
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "## Errors" in md
+        assert "Connection refused" in md
+
+    def test_summary_no_error_section_on_success(self) -> None:
+        """Trace with all successful nodes has no Errors section."""
+        trace = _make_trace(
+            nodes=[
+                _make_event(
+                    node_id="step-1",
+                    success=True,
+                    node_output={"result": "ok"},
+                ),
+                _make_event(
+                    node_id="step-2",
+                    success=True,
+                    node_output={"result": "done"},
+                ),
+            ]
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "## Errors" not in md
+
+    def test_summary_truncates_long_error(self) -> None:
+        """Error messages longer than 200 chars are truncated in summary."""
+        long_error = "x" * 300
+        trace = _make_trace(
+            nodes=[
+                _make_event(node_id="fail", success=False, error=long_error),
+            ]
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "## Errors" in md
+        assert "..." in md
+        # Full 300-char error should NOT appear — it's truncated to 200 + "..."
+        assert long_error not in md
+
+
+# --- _detect_anomalies() ---
+
+
+class TestDetectAnomalies:
+    def test_detect_anomalies_empty_llm_response(self) -> None:
+        """LLM node with empty string response triggers warning."""
+        event = _make_event(
+            node_id="summarize",
+            node_type="LLMNode",
+            success=True,
+            node_output={"response": ""},
+        )
+        warnings = _detect_anomalies([event])
+        assert any("LLM response is empty" in w for w in warnings)
+
+    def test_detect_anomalies_empty_stdout(self) -> None:
+        """Shell node with empty stdout and exit_code 0 triggers warning."""
+        event = _make_event(
+            node_id="list-files",
+            node_type="ShellNode",
+            success=True,
+            node_output={"stdout": "", "exit_code": 0},
+        )
+        warnings = _detect_anomalies([event])
+        assert any("stdout is empty" in w for w in warnings)
+
+    def test_detect_anomalies_none_result(self) -> None:
+        """Python node with None result triggers warning."""
+        event = _make_event(
+            node_id="compute",
+            node_type="PythonNode",
+            success=True,
+            node_output={"result": None},
+        )
+        warnings = _detect_anomalies([event])
+        assert any("result is None" in w for w in warnings)
+
+    def test_detect_anomalies_empty_list(self) -> None:
+        """Any node with an empty list in a common output key triggers warning."""
+        event = _make_event(
+            node_id="fetch-items",
+            node_type="HttpNode",
+            success=True,
+            node_output={"response": []},
+        )
+        warnings = _detect_anomalies([event])
+        assert any("empty list" in w for w in warnings)
+
+    def test_detect_anomalies_skips_failed_nodes(self) -> None:
+        """Failed nodes should not generate anomaly warnings (shown in Errors)."""
+        event = _make_event(
+            node_id="broken",
+            node_type="LLMNode",
+            success=False,
+            node_output={"response": ""},
+        )
+        warnings = _detect_anomalies([event])
+        assert len(warnings) == 0
+
+
+# --- _suggest_template_fixes() ---
+
+
+class TestSuggestTemplateFixes:
+    def test_suggest_template_fix_wrong_field(self) -> None:
+        """Suggests correct field when template references a non-existent key."""
+        upstream_event = _make_event(
+            node_id="fetch",
+            node_type="HttpNode",
+            success=True,
+            node_output={"result": {"issues": [{"id": 1}], "total_count": 5}},
+        )
+        failed_event = _make_event(
+            node_id="process",
+            node_type="LLMNode",
+            success=False,
+            error="Unresolved variables: ${fetch.result.messages}",
+        )
+        suggestions = _suggest_template_fixes(failed_event, [upstream_event, failed_event])
+        assert len(suggestions) >= 1
+        # Should mention the failed key
+        assert any("messages" in s for s in suggestions)
+        # Should list available keys
+        assert any("issues" in s for s in suggestions)
+        assert any("total_count" in s for s in suggestions)
+
+    def test_suggest_template_fix_no_upstream(self) -> None:
+        """No suggestions when upstream node is not found."""
+        failed_event = _make_event(
+            node_id="process",
+            success=False,
+            error="Unresolved variables: ${unknown.data}",
+        )
+        suggestions = _suggest_template_fixes(failed_event, [failed_event])
+        assert suggestions == []
+
+    def test_suggest_template_fix_non_template_error(self) -> None:
+        """Non-template errors produce no suggestions."""
+        failed_event = _make_event(
+            node_id="fetch",
+            success=False,
+            error="Connection timeout",
+        )
+        suggestions = _suggest_template_fixes(failed_event, [failed_event])
+        assert suggestions == []
+
+    def test_suggest_template_fix_from_template_resolutions(self) -> None:
+        """Detects unresolved variables from template_resolutions (template == resolved)."""
+        upstream_event = _make_event(
+            node_id="api",
+            node_type="HttpNode",
+            success=True,
+            node_output={"result": {"data": [1, 2, 3]}},
+        )
+        failed_event = _make_event(
+            node_id="transform",
+            node_type="LLMNode",
+            success=False,
+            error="Unresolved variables: ${api.result.messages}",
+            template_resolutions={
+                "prompt": {
+                    "template": "Use ${api.result.messages}",
+                    "resolved": "Use ${api.result.messages}",
+                },
+            },
+        )
+        suggestions = _suggest_template_fixes(failed_event, [upstream_event, failed_event])
+        assert len(suggestions) >= 1
+        assert any("messages" in s for s in suggestions)
+        assert any("data" in s for s in suggestions)
+
+
+# --- Batch item warnings in _build_node_summary() ---
+
+
+class TestBatchItemWarnings:
+    def test_node_summary_shows_item_warnings(self) -> None:
+        """Batch items with empty output trigger warnings in node summary."""
+        event = _make_event(
+            node_id="batch-process",
+            node_type="ShellNode",
+            batch_items=[
+                {
+                    "index": 0,
+                    "success": True,
+                    "duration_ms": 50,
+                    "node_output": {},
+                },
+                {
+                    "index": 1,
+                    "success": True,
+                    "duration_ms": 60,
+                    "node_output": {"result": "good data"},
+                },
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "## Warnings" in md
+        assert "Item 0" in md
+
+    def test_node_summary_no_warnings_when_clean(self) -> None:
+        """Batch items with non-empty output produce no warnings."""
+        event = _make_event(
+            node_id="batch-process",
+            node_type="ShellNode",
+            batch_items=[
+                {
+                    "index": 0,
+                    "success": True,
+                    "duration_ms": 50,
+                    "node_output": {"result": "data-a"},
+                },
+                {
+                    "index": 1,
+                    "success": True,
+                    "duration_ms": 60,
+                    "node_output": {"result": "data-b"},
+                },
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "## Warnings" not in md
+
+
+# --- _build_output_lookup() and _collect_errors() direct tests ---
+# These are tested indirectly through _build_summary and _suggest_template_fixes,
+# but we exercise them directly here to ensure _build_output_lookup and _collect_errors
+# are imported (and to validate their standalone behavior).
+
+
+class TestBuildOutputLookup:
+    def test_builds_lookup_from_events(self) -> None:
+        """Builds node_id -> node_output mapping from events."""
+        events = [
+            _make_event(
+                node_id="fetch",
+                node_output={"result": {"data": "hello"}},
+            ),
+            _make_event(
+                node_id="transform",
+                node_output={"result": "done"},
+            ),
+        ]
+        lookup = _build_output_lookup(events)
+        assert "fetch" in lookup
+        assert lookup["fetch"] == {"result": {"data": "hello"}}
+        assert "transform" in lookup
+
+    def test_includes_sub_workflow_children(self) -> None:
+        """Sub-workflow child events are indexed in the lookup."""
+        events = [
+            _make_event(
+                node_id="parent",
+                node_output={"result": "parent-data"},
+                sub_workflow_events=[
+                    _make_event(
+                        node_id="child-step",
+                        node_output={"result": "child-data"},
+                    ),
+                ],
+            ),
+        ]
+        lookup = _build_output_lookup(events)
+        assert "parent" in lookup
+        assert "child-step" in lookup
+        assert lookup["child-step"] == {"result": "child-data"}
+
+
+class TestCollectErrors:
+    def test_collects_failed_events(self) -> None:
+        """Returns only events with success=False."""
+        events = [
+            _make_event(node_id="ok", success=True),
+            _make_event(node_id="fail-1", success=False, error="Error 1"),
+            _make_event(node_id="fail-2", success=False, error="Error 2"),
+        ]
+        errors = _collect_errors(events)
+        assert len(errors) == 2
+        assert errors[0]["node_id"] == "fail-1"
+        assert errors[1]["node_id"] == "fail-2"
+
+    def test_returns_empty_on_all_success(self) -> None:
+        """Returns empty list when all events succeed."""
+        events = [
+            _make_event(node_id="a", success=True),
+            _make_event(node_id="b", success=True),
+        ]
+        errors = _collect_errors(events)
+        assert errors == []
+
+
+class TestFormatCost:
+    def test_format_cost_none(self) -> None:
+        """None cost returns em dash."""
+        assert _format_cost(None) == "\u2014"
+
+    def test_format_cost_value(self) -> None:
+        """Numeric cost formatted to 4 decimal places with dollar sign."""
+        assert _format_cost(0.05) == "$0.0500"
+        assert _format_cost(0.0) == "$0.0000"

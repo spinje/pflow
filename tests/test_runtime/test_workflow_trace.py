@@ -725,6 +725,38 @@ class TestWorkflowTraceCollector:
             assert summary["total_tokens"] == 175
             assert set(summary["models_used"]) == {"gpt-4", "claude-sonnet"}
 
+    def test_llm_summary_includes_cost(self, collector, temp_home):
+        """Test that _collect_llm_summary accumulates total_cost_usd from llm_call events."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="llm-1",
+                node_type="LLMNode",
+                duration_ms=100.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "gpt-4", "total_tokens": 100, "cost_usd": 0.05},
+                },
+            )
+            collector.record_node_execution(
+                node_id="llm-2",
+                node_type="LLMNode",
+                duration_ms=50.0,
+                success=True,
+                node_output={
+                    "llm_usage": {"model": "claude", "total_tokens": 50, "cost_usd": 0.03},
+                },
+            )
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            summary = trace_data["llm_summary"]
+            assert summary["total_calls"] == 2
+            assert summary["total_tokens"] == 150
+            assert summary["total_cost_usd"] == pytest.approx(0.08)
+
     def test_enable_llm_interception_attribute(self, collector):
         """Test that enable_llm_interception defaults to True."""
         assert collector.enable_llm_interception is True

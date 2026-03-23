@@ -279,16 +279,18 @@ class WorkflowTraceCollector:
             events: List of trace events (may contain nested batch_items/sub_workflow_events)
 
         Returns:
-            Summary dict with total_calls, total_tokens, models_used
+            Summary dict with total_calls, total_tokens, total_cost_usd, models_used
         """
         total_calls = 0
         total_tokens = 0
+        total_cost = 0.0
         models: set[str] = set()
 
         for event in events:
             if "llm_call" in event:
                 total_calls += 1
                 total_tokens += event["llm_call"].get("total_tokens", 0)
+                total_cost += event["llm_call"].get("cost_usd", 0) or 0
                 model = event["llm_call"].get("model")
                 if model:
                     models.add(model)
@@ -298,11 +300,13 @@ class WorkflowTraceCollector:
                 sub = self._collect_llm_summary(item.get("events", []))
                 total_calls += sub.get("total_calls", 0)
                 total_tokens += sub.get("total_tokens", 0)
+                total_cost += sub.get("total_cost_usd", 0)
                 models.update(sub.get("models_used", []))
                 # Also count LLM data on the batch item itself
                 if "llm_call" in item:
                     total_calls += 1
                     total_tokens += item["llm_call"].get("total_tokens", 0)
+                    total_cost += item["llm_call"].get("cost_usd", 0) or 0
                     model = item["llm_call"].get("model")
                     if model:
                         models.add(model)
@@ -313,9 +317,15 @@ class WorkflowTraceCollector:
                 sub = self._collect_llm_summary(sub_events)
                 total_calls += sub.get("total_calls", 0)
                 total_tokens += sub.get("total_tokens", 0)
+                total_cost += sub.get("total_cost_usd", 0)
                 models.update(sub.get("models_used", []))
 
-        return {"total_calls": total_calls, "total_tokens": total_tokens, "models_used": sorted(models)}
+        return {
+            "total_calls": total_calls,
+            "total_tokens": total_tokens,
+            "total_cost_usd": total_cost,
+            "models_used": sorted(models),
+        }
 
     def save_to_file(self) -> Path:
         """Save trace to JSON file in ~/.pflow/debug/.

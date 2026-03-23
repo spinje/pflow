@@ -1432,8 +1432,8 @@ registry_run(
 )
 ```
 
-**Tip**: If you need trace-level debugging, guide the user to check trace files on their machine:
-`~/.pflow/debug/workflow-trace-*.json`
+**Tip**: For deeper debugging, guide the user to generate an execution report on their machine:
+`pflow trace report` — generates a directory of markdown files (one per node) with rendered prompts, responses, cost data, error summaries, and fix suggestions.
 
 ## Part 6: Workflow Patterns
 

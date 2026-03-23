@@ -1100,3 +1100,146 @@ Phase 1 code reviews deferred 10 items. D10 was completed in Phase 1.5 (`_valida
 ---
 
 *All deferred items complete. Phase 1 is production-quality. Next: Phase 2 (Smart Analysis + Diagnostics) or Task 106 (Iteration Cache).*
+
+---
+
+## Phase 2: Actionable Summaries (Errors, Warnings, Costs)
+
+### Motivation
+
+Phase 1 shows WHAT happened — one file per node with rendered prompts, responses, and outputs. But the summary.md only had a pipeline table with node names, types, times, and status. An agent debugging a failed workflow had to open every file to find what went wrong. Phase 2 makes `summary.md` actionable: surface errors with fix suggestions, flag suspicious empty outputs, and show cost everywhere.
+
+### What Phase 2 Adds
+
+1. **Error summary** — `## Errors` section surfaces failed nodes + truncated error messages at top level
+2. **Template path suggestions** — when a template reference fails (e.g., `${fetch.result.messages}`), cross-references the upstream node's actual output to show what keys ARE available
+3. **Anomaly warnings** — `## Warnings` section flags suspicious empty outputs from successful nodes (silent failures)
+4. **Cost everywhere** — Cost column in all pipeline/batch tables, total cost in summary header, aggregate cost for container nodes
+5. **Fix: `template_resolutions` populated on error** — prerequisite for #2; previously empty when template resolution raised
+
+### Production Files Changed (3)
+
+| File | Lines | Changes |
+|------|-------|---------|
+| `src/pflow/core/trace_report.py` | +270 | 10 new functions: `_compute_event_cost`, `_format_cost`, `_collect_errors`, `_suggest_template_fixes`, `_check_path_against_upstream`, `_build_output_lookup`, `_detect_anomalies`, `_check_event_anomaly`, `_append_error_section`, `_append_warning_section`, `_append_batch_item_warnings`. Updated `_build_summary` (cost in header, error/warning sections), `_format_pipeline_table` (Cost column), `_build_node_summary` (Cost column, container cost, batch item warnings). |
+| `src/pflow/runtime/workflow_trace.py` | +10 | `_collect_llm_summary()` now accumulates and returns `total_cost_usd`. |
+| `src/pflow/runtime/wrappers/template_wrapper.py` | +12 | `self.last_resolutions` set before each `raise` in the resolution loop (2 error paths). Type annotation added for `resolved_params`. |
+
+### Deviations from Plan
+
+**1. `try/finally` → "set before each raise" for `last_resolutions`**
+
+The plan called for wrapping the entire resolution loop (lines 521–641) in `try/finally` to guarantee `last_resolutions` is always set on error. This would require re-indenting ~120 lines of complex loop body — high risk of introducing bugs and a massive diff for a structural-only change. Instead, I added `self.last_resolutions = {...}` at each of the 2 raise points (type validation strict error at line 575, unresolved template strict error at line 625), plus the existing normal-path assignment at line 655.
+
+**Trade-off**: The `try/finally` approach is structurally safer — a future developer adding a 3rd raise path in the loop would need to remember to set `last_resolutions` first. The "set before each raise" approach is fragile to modification but avoids a 120-line re-indent. Both raise paths have comments explaining why the assignment is there. Acceptable for now; the function could be refactored to extract the loop body later.
+
+**2. Complexity extraction not in the plan**
+
+The plan didn't account for ruff C901 complexity limits. Four functions exceeded the threshold (complexity > 10): `_suggest_template_fixes`, `_detect_anomalies`, `_build_summary`, `_build_node_summary`. Extracted helper functions to reduce complexity:
+- `_check_path_against_upstream()` from `_suggest_template_fixes` (path traversal logic)
+- `_check_event_anomaly()` from `_detect_anomalies` (per-node anomaly check)
+- `_append_error_section()` and `_append_warning_section()` from `_build_summary`
+- `_append_batch_item_warnings()` from `_build_node_summary`
+
+This resulted in 10 new functions instead of the plan's 7, but the public API surface is identical.
+
+**3. Removed dead logic in batch item warnings**
+
+The plan's Step 5b had: `if val is not None and (val == "" or val == [] or val is None)`. The `val is None` branch is unreachable because the outer guard `val is not None` already excludes it. Fixed to `if val is not None and (val == "" or val == [])`.
+
+**4. Step 3b (separate total cost computation) was unnecessary**
+
+The plan included a separate computation in Step 3b to sum `_compute_event_cost()` across all events for the summary header. Step 7 then said to remove it and use `llm_summary.total_cost_usd` instead. I went directly to the Step 7 approach — `_build_summary` reads `llm.get("total_cost_usd", 0)` from the trace's `llm_summary`. No intermediate step needed.
+
+### Key Design Decisions
+
+**`_compute_event_cost` returns `None` vs `0.0`**: `None` means "no cost data anywhere in the tree" (display as `—`), while `0.0` means "cost data exists but all costs are zero" (display as `$0.0000`). This distinguishes shell-only nodes from LLM nodes with zero cost. Mirrors the `found_any` flag pattern.
+
+**Top-level errors only, no recursion**: `_collect_errors` and `_detect_anomalies` only check top-level events. If a sub-workflow fails, the parent container event has `success: false` — we show the container, not the internal failure. The agent drills into the container's directory for specifics. This keeps the summary focused.
+
+**Anomaly warnings are navigation aids, not diagnostics**: They flag WHERE to look (empty LLM response, empty stdout with exit 0, None result, empty lists), not what's wrong. An empty stdout from a shell node that redirected to a file is perfectly fine — but worth flagging because the agent might expect output there.
+
+### Two Parallel Cost Paths — Intentional Duplication
+
+There are now two independent implementations that compute cost:
+1. `_collect_llm_summary()` in `workflow_trace.py` — accumulates `total_cost_usd` during trace save, stored in `llm_summary`
+2. `_compute_event_cost()` in `trace_report.py` — computes per-event cost recursively when generating report
+
+The summary header uses path #1 (`llm_summary.total_cost_usd`). The pipeline table rows use path #2 (`_compute_event_cost()` per event). If you sum the per-event costs, they should equal the header total.
+
+Both traverse the same tree structure (events → batch_items → sub_workflow_events) but are independent implementations. The risk of divergence is low — both are simple recursive traversals with the same base case (`llm_call.cost_usd`). The alternative (having the report generator import and call `_collect_llm_summary` from the runtime module) would create a dependency from `core/` to `runtime/` which violates the existing module boundary.
+
+### High-Value Integration Test
+
+**`test_template_resolutions_flow_through_wrapper_chain_on_error`** — this is the test that validates the entire Phase 2 prerequisite (Step 1). It builds the full production wrapper chain (EchoNode → TemplateAwareNodeWrapper → NamespacedNodeWrapper → InstrumentedNodeWrapper), triggers a template resolution failure, and verifies `collector.events[0]["template_resolutions"]` is NOT empty.
+
+**Why the unit test wasn't sufficient**: The unit test (`test_template_resolutions_populated_on_error`) verified that `TemplateAwareNodeWrapper.last_resolutions` is set before the raise. But in production, `InstrumentedNodeWrapper._record_trace()` reads `last_resolutions` via `_find_template_wrapper()`, which traverses through `NamespacedNodeWrapper.__getattr__` delegation. The integration test exercises this 5-link chain:
+
+```
+TemplateAwareNodeWrapper sets last_resolutions
+  → ValueError propagates through NamespacedNodeWrapper
+    → InstrumentedNodeWrapper catches in except block
+      → _find_template_wrapper() traverses via __getattr__
+        → trace event gets template_resolutions
+```
+
+If ANY link breaks, `template_resolutions` silently becomes `{}` — the report generator's template fix suggestions would have nothing to work with. No error, just empty suggestions.
+
+### Test Changes
+
+| File | Changes |
+|------|---------|
+| `tests/test_core/test_trace_report.py` | +28 new tests across 9 classes (cost computation ×5, cost in tables ×3, error summary ×3, anomaly detection ×5, template suggestions ×4, batch item warnings ×2, output lookup ×2, collect errors ×2, format cost ×2). Updated 4 existing assertions for Cost column in pipeline/batch tables. |
+| `tests/test_runtime/test_trace_integration.py` | +2 new tests: `test_template_resolutions_populated_on_error` (unit-level), `test_template_resolutions_flow_through_wrapper_chain_on_error` (full wrapper chain integration). |
+| `tests/test_runtime/test_workflow_trace.py` | +1 new test: `test_llm_summary_includes_cost` (verifies `total_cost_usd` in saved trace JSON). |
+
+**Total test count**: 4315 → 4346 (+31)
+
+### Manual Verification Needed
+
+| Check | What to verify |
+|-------|----------------|
+| `--report` with LLM workflow | `summary.md` has Cost column in pipeline table, total cost in header |
+| `--report` with failed workflow | `summary.md` has `## Errors` section with error message |
+| `--report` with wrong template path | `## Errors` includes `Suggestion:` with available keys from upstream |
+| `--report` with empty shell output | `summary.md` has `## Warnings` section |
+| Batch container summary | Per-item cost column, aggregate cost in metadata |
+
+### Example Output: `summary.md` After Phase 2
+
+```markdown
+# Execution Report: lyrics-generator
+
+- Status: failed
+- Duration: 45.2s
+- Nodes: 4
+- LLM calls: 5
+- Tokens: 12,340
+- Total cost: $0.0847
+- Models: gemini-3-flash-preview, anthropic/claude-haiku-4-5-20251001
+- Generated: 2026-03-23T16:00:00
+
+## Pipeline
+
+| # | Node | Type | Time | Cost | Status |
+|---|------|------|------|------|--------|
+| 1 | fetch-issues | HttpNode | 2100ms | — | ok |
+| 2 | filter-closed | ShellNode | 50ms | — | ok |
+| 3 | analyze | LLMNode | 16000ms | $0.0400 | ok |
+| 4 | format-output | LLMNode | 900ms | $0.0050 | **FAILED** |
+
+## Errors
+
+- **format-output** (LLMNode): Unresolved variables in parameter 'prompt': ${fetch-issues.result.messages}...
+  - Suggestion: `${fetch-issues.result.messages}`: key `messages` not found at `fetch-issues.result`. Available keys: `issues`, `total_count`
+
+## Warnings
+
+- **filter-closed**: `result` is empty list (0 items)
+
+*Full trace: ~/.pflow/debug/workflow-trace-lyrics-generator-20260323-160000.json*
+```
+
+---
+
+*Phase 2 complete. `summary.md` is now actionable — errors, suggestions, warnings, and cost data surface without opening individual node files.*

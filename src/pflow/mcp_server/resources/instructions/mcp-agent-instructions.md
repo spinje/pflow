@@ -844,7 +844,7 @@ workflow_execute(
 
 Keep iterating on the `.pflow.md` file until the workflow executes successfully. Do NOT save until it works.
 
-**Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` contains events, nodes, outputs, errors and more
+**Trace files**: `~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json` — saved automatically every run. Use `--report` to generate a readable execution report, or `pflow trace report` post-hoc.
 
 ### Step 10: SAVE - Make It Executable by Name (Final Step)
 
@@ -1231,22 +1231,24 @@ mkdir -p ${output_dir}/images && curl -s ${api_url}/items?limit=${limit}
 
 #### Debugging Template Errors
 
-**Error: `Template variable '${fetch.result.messages}' not found`**
+**Error: `Unresolved variables in parameter 'prompt': ${fetch.result.messages}`**
 
 Debug process:
 ```bash
-# 1. Check what's actually available
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch") | .outputs | keys'
+# 1. Generate an execution report — it includes fix suggestions for template errors
+pflow trace report
 
-# Output might be:
-# ["response", "status", "headers"]
+# The summary.md Errors section will show:
+#   - **format-output** (LLMNode): Unresolved variables in parameter 'prompt': ${fetch.result.messages}
+#     - Suggestion: `${fetch.result.messages}`: key `messages` not found at `fetch.result`. Available keys: `issues`, `total_count`
 
-# 2. Explore the structure
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "fetch") | .outputs.response'
+# 2. Or check the upstream node's report file directly
+cat ~/.pflow/reports/my-workflow/01-fetch.md
+# Shows the full output structure — find the correct field name there
 
 # 3. Fix template path
 # Wrong: ${fetch.result.messages}
-# Right: ${fetch.response.data.messages}
+# Right: ${fetch.result.issues}
 ```
 
 ### Parameter Types - Complete Guide
@@ -1426,19 +1428,17 @@ registry_run(
 #### Phase 3: Trace Debugging
 
 ```bash
-# Find latest trace
-ls -lt ~/.pflow/debug/workflow-trace-*.json | head -1
+# Generate an execution report (directory of markdown files — one per node)
+pflow workflow.pflow.md --report
 
-# View timeline
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.events[] | {node: .node_id, duration: .duration_ms, error: .error}'
+# Or generate a report from the most recent trace
+pflow trace report
 
-# See what data was available at failure point
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "failing-node") | .available_inputs'
-
-# Check actual output of previous node (two ways):
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[] | select(.id == "previous-node") | .outputs'
-# Or access via shared_after (especially useful for indexed access):
-cat ~/.pflow/debug/workflow-trace-*.json | jq '.nodes[1].shared_after."node-id"'
+# The report includes:
+# - summary.md: pipeline table with cost, errors section with fix suggestions, anomaly warnings
+# - Per-node .md files: rendered prompts, responses, metadata (model, tokens, cost)
+# - Batch items: per-item files with individual prompts/responses
+# - Sub-workflows: nested directories mirroring workflow structure
 ```
 
 ## Part 6: Workflow Patterns

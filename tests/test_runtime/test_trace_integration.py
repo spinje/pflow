@@ -7,6 +7,8 @@ chain traversal or attribute delegation breaks.
 
 from typing import Any
 
+import pytest
+
 from pflow.pocketflow import Node
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 from pflow.runtime.wrappers.batch_node import PflowBatchNode
@@ -494,3 +496,113 @@ class TestSubWorkflowTraceTree:
         # Child's inner-step should be present
         child_node_ids = [e["node_id"] for e in sub_events]
         assert "inner-step" in child_node_ids
+
+
+class TestTemplateResolutionsOnError:
+    """Verify template_resolutions is populated even when resolution raises."""
+
+    def test_template_resolutions_populated_on_error(self) -> None:
+        """When strict template resolution fails, last_resolutions should
+        still be set before the ValueError propagates so that trace events
+        can capture what was resolved up to the point of failure."""
+        node_id = "failing-node"
+        actual_node = EchoNode()
+
+        template_wrapper = TemplateAwareNodeWrapper(
+            inner_node=actual_node,
+            node_id=node_id,
+        )
+
+        template_wrapper.set_params({"prompt": "Hello ${nonexistent.field}", "__node_id__": node_id})
+
+        shared: dict[str, Any] = {"some_data": "value"}  # no "nonexistent" key
+
+        with pytest.raises(ValueError, match="Unresolved"):
+            template_wrapper._run(shared)
+
+        # Key assertion: last_resolutions was set before the raise
+        assert hasattr(template_wrapper, "last_resolutions")
+        assert template_wrapper.last_resolutions is not None
+        assert "prompt" in template_wrapper.last_resolutions
+
+        res = template_wrapper.last_resolutions["prompt"]
+        assert res["template"] == "Hello ${nonexistent.field}"
+        assert "${nonexistent.field}" in str(res["resolved"])
+
+    def test_template_resolutions_flow_through_wrapper_chain_on_error(self) -> None:
+        """Full wrapper chain: template_resolutions populated in trace event on error.
+
+        This tests the complete integration path:
+        1. TemplateAwareNodeWrapper sets last_resolutions before raising
+        2. Exception propagates through NamespacedNodeWrapper
+        3. InstrumentedNodeWrapper catches it, calls _record_trace(success=False)
+        4. _find_template_wrapper() traverses NamespacedNodeWrapper via __getattr__
+        5. Trace event gets template_resolutions from last_resolutions
+
+        If ANY link breaks, template_resolutions silently becomes {} —
+        and report template fix suggestions have nothing to work with.
+        """
+        node_id = "broken-node"
+        actual_node = EchoNode()
+
+        # Build production wrapper chain (inside-out):
+        # EchoNode -> TemplateAwareNodeWrapper -> NamespacedNodeWrapper -> InstrumentedNodeWrapper
+        template_wrapper = TemplateAwareNodeWrapper(
+            inner_node=actual_node,
+            node_id=node_id,
+        )
+
+        namespace_wrapper = NamespacedNodeWrapper(
+            inner_node=template_wrapper,
+            node_id=node_id,
+        )
+
+        collector = WorkflowTraceCollector("test-error-resolutions")
+        collector.enable_llm_interception = False
+
+        instrumented = InstrumentedNodeWrapper(
+            inner_node=namespace_wrapper,
+            node_id=node_id,
+            trace_collector=collector,
+        )
+
+        # Template references a variable that doesn't exist -> strict mode raises ValueError
+        instrumented.set_params({"prompt": "Summarize ${fetch.result.messages}", "__node_id__": node_id})
+
+        # Provide upstream data that resolves "fetch" but NOT "fetch.result.messages"
+        shared: dict[str, Any] = {
+            "fetch": {"result": {"issues": [1, 2, 3], "total_count": 3}},
+            "__execution__": {
+                "completed_nodes": [],
+                "node_actions": {},
+                "node_hashes": {},
+                "failed_node": None,
+                "node_visit_counts": {},
+            },
+        }
+
+        # The node should fail — instrumented wrapper catches, records trace, then re-raises
+        with pytest.raises(ValueError, match="Unresolved"):
+            instrumented._run(shared)
+
+        # Verify trace event was recorded
+        assert len(collector.events) == 1
+        event = collector.events[0]
+
+        # The node failed
+        assert event["success"] is False
+        assert "error" in event
+
+        # CRITICAL: template_resolutions should NOT be empty.
+        # This verifies the full integration path from TemplateAwareNodeWrapper.last_resolutions
+        # through NamespacedNodeWrapper.__getattr__ to InstrumentedNodeWrapper._record_trace().
+        resolutions = event.get("template_resolutions", {})
+        assert resolutions != {}, (
+            "template_resolutions is empty in trace event on error — "
+            "the integration path from TemplateAwareNodeWrapper.last_resolutions "
+            "through NamespacedNodeWrapper.__getattr__ to InstrumentedNodeWrapper._record_trace() is broken"
+        )
+        assert "prompt" in resolutions
+        # The template and resolved should both contain the literal ${...} (unresolved)
+        assert "${fetch.result.messages}" in str(resolutions["prompt"]["template"])
+        assert "${fetch.result.messages}" in str(resolutions["prompt"]["resolved"])

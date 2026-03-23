@@ -518,7 +518,7 @@ class TemplateAwareNodeWrapper:
         context = self._build_resolution_context(shared)
 
         # Resolve all template parameters
-        resolved_params = {}
+        resolved_params: dict[str, Any] = {}
         for key, template in self.template_params.items():
             resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
 
@@ -570,6 +570,12 @@ class TemplateAwareNodeWrapper:
                         from .error_context import get_upstream_stderr
 
                         upstream_context = get_upstream_stderr(str(template), context)
+                        # Store resolutions for trace capture before raising
+                        # (on error: contains all params resolved so far)
+                        self.last_resolutions = {
+                            k: {"template": self.template_params[k], "resolved": resolved_params[k]}
+                            for k in resolved_params
+                        }
                         if upstream_context:
                             raise ValueError(str(e) + upstream_context) from None
                         raise
@@ -614,6 +620,12 @@ class TemplateAwareNodeWrapper:
                     upstream_context = get_upstream_stderr(str(template), context)
                     if upstream_context:
                         error_msg += upstream_context
+                    # Store resolutions for trace capture before raising
+                    # (on error: contains all params resolved so far, including this one's literal ${...})
+                    self.last_resolutions = {
+                        k: {"template": self.template_params[k], "resolved": resolved_params[k]}
+                        for k in resolved_params
+                    }
                     # Make template errors fatal so execution stops with a clear error
                     raise ValueError(error_msg)
                 else:
