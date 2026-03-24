@@ -710,17 +710,22 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
         return
     try:
         trace_file = workflow_trace.save_to_file()
-        if trace_file:
-            _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
-            report = ctx.obj.get("report")
-            if report:
+    except Exception as trace_err:
+        logger.error(f"Failed to save trace: {trace_err}", exc_info=True)
+        return
+
+    if trace_file:
+        _echo_trace(ctx, f"📊 Workflow trace saved: {trace_file}")
+        report = ctx.obj.get("report")
+        if report:
+            try:
                 from pflow.core.trace_report import generate_report
 
                 report_dir = generate_report(trace_file, report)
                 if report_dir:
                     _echo_trace(ctx, f"📋 Execution report: {report_dir}")
-    except Exception as trace_err:
-        logger.error(f"Failed to save trace: {trace_err}", exc_info=True)
+            except Exception as report_err:
+                logger.error(f"Failed to generate report: {report_err}", exc_info=True)
 
 
 def execute_json_workflow(

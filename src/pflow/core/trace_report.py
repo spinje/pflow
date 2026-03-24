@@ -240,8 +240,12 @@ def generate_report(trace_path: str | Path, output_path: str | None = None) -> P
     if not trace_path.exists():
         return None
 
-    with open(trace_path) as f:
-        trace = json.load(f)
+    try:
+        with open(trace_path) as f:
+            trace = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        logger.exception("Failed to read trace file %s", trace_path)
+        return None
 
     # Require trace format 2.0.0+ (has node_output, template_resolutions)
     version = trace.get("format_version", "unknown")

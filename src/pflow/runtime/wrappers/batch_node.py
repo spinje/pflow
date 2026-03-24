@@ -907,10 +907,15 @@ class PflowBatchNode(Node):
             },
         }
 
-        # Store batch trace items for InstrumentedNodeWrapper to read
-        batch_trace = shared.get("_batch_trace", {}).get(self.node_id, [])
-        if batch_trace:
-            self._trace_items = batch_trace
+        # Store batch trace items for InstrumentedNodeWrapper to read, then clean up.
+        # After this, only self._trace_items is consumed (by _find_batch_or_workflow_node).
+        batch_trace_dict = shared.get("_batch_trace")
+        if isinstance(batch_trace_dict, dict):
+            batch_trace = batch_trace_dict.pop(self.node_id, [])
+            if batch_trace:
+                self._trace_items = batch_trace
+            if not batch_trace_dict:
+                shared.pop("_batch_trace", None)
 
         logger.debug(
             f"Batch node '{self.node_id}' completed: {success_count}/{len(exec_res)} successful",

@@ -1320,6 +1320,24 @@ Updated review with line-by-line methodology found 1 critical + 6 warnings + 6 s
 - S2 (`generate_report` returns None): CLI handles errors, raising adds try/except at every call site for same behavior
 - S3 (report overwrites): intentional for git diff workflow, documented
 
+### PR Review Fixes (PR #147)
+
+PR review found 2 critical + 5 warnings + 6 suggestions. Evaluation: 4 confirmed, 3 disputed, 2 already fixed, 1 noted.
+
+**Fixes applied (4)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | **C1**: Separated try/except in `_save_trace_and_report` — trace save and report generation now have independent error handling. If trace saves but report fails, trace success message still shows. Error message is now accurate ("Failed to generate report" not "Failed to save trace"). | `main.py:711-725` |
+| 2 | **C2**: Added try/except around `json.load()` in `generate_report` — corrupt/unreadable trace files now return None with logged error instead of unhandled exception. | `trace_report.py:243-248` |
+| 3 | **W4**: `_batch_trace` cleanup in `post()` — shared store entry popped after transfer to `self._trace_items`. Outer dict removed when empty. Dead data no longer accumulates. 8 tests updated to assert on `batch._trace_items` (the production contract) instead of `shared["_batch_trace"]`. | `batch_node.py:910-917`, 7 tests in `test_batch_node.py`, 1 in `test_compiler_batch.py` |
+| 4 | **W6**: Aligned `_safe_name` regex in `workflow_trace.py` — now keeps underscores (`[^a-zA-Z0-9_-]`), matching `trace_report.py`. Node IDs commonly contain underscores. | `workflow_trace.py:339` |
+
+**Disputed findings**:
+- W3 (duplicated tree traversal): already addressed — cross-reference comments, standardized order
+- W5 (string matching for node types): already accepted — navigation aids, not diagnostics
+- S3 (report overwrites): intentional, documented as ephemeral views of durable trace files
+
 4348 tests pass, `make check` clean.
 
 ---

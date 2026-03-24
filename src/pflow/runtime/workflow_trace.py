@@ -336,7 +336,7 @@ class WorkflowTraceCollector:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
 
         # Sanitize workflow name for filename (keep only alphanumeric and hyphens, limit length)
-        safe_name = re.sub(r"[^a-zA-Z0-9-]", "-", self.workflow_name)[:30]
+        safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", self.workflow_name)[:30]
         # Remove multiple consecutive hyphens and strip leading/trailing hyphens
         safe_name = re.sub(r"-+", "-", safe_name).strip("-")
 

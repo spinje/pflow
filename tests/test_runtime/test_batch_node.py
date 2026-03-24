@@ -1838,8 +1838,8 @@ class TestParallelThreadSafety:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Should have 3 trace items with llm_call data
-        trace_items = shared["_batch_trace"]["test_node"]
+        # After post(), trace items are on the instance (shared store entry cleaned up)
+        trace_items = batch._trace_items
         assert len(trace_items) == 3
 
         # Verify each trace item has correct LLM data
@@ -1852,7 +1852,7 @@ class TestParallelThreadSafety:
             assert entry["llm_call"]["output_tokens"] == 50
 
     def test_batch_captures_inner_node_llm_usage_parallel(self):
-        """LLM usage from inner nodes is captured via _batch_trace in parallel mode.
+        """LLM usage from inner nodes is captured via _trace_items in parallel mode.
 
         Same as sequential test but verifies thread-safe capture in parallel mode.
         """
@@ -1886,8 +1886,8 @@ class TestParallelThreadSafety:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Should have 5 trace items with llm_call data
-        trace_items = shared["_batch_trace"]["test_node"]
+        # After post(), trace items are on the instance (shared store entry cleaned up)
+        trace_items = batch._trace_items
         assert len(trace_items) == 5
 
         # All trace items should have correct model
@@ -1898,7 +1898,7 @@ class TestParallelThreadSafety:
         assert indices == {0, 1, 2, 3, 4}
 
     def test_batch_captures_namespaced_llm_usage(self):
-        """LLM usage is captured from namespaced node output via _batch_trace.
+        """LLM usage is captured from namespaced node output via _trace_items.
 
         When inner node uses namespacing, llm_usage is written to
         shared[node_id]["llm_usage"]. _capture_item_trace reads from
@@ -1930,17 +1930,17 @@ class TestParallelThreadSafety:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Should have 2 trace items with llm_call from namespaced location
-        trace_items = shared["_batch_trace"]["test_node"]
+        # After post(), trace items are on the instance
+        trace_items = batch._trace_items
         assert len(trace_items) == 2
         assert all(entry["llm_call"]["model"] == "namespaced-model" for entry in trace_items)
 
     def test_batch_initializes_batch_trace(self):
-        """Batch node initializes _batch_trace in prep().
+        """Batch node initializes _batch_trace in prep(), transfers to _trace_items in post().
 
-        prep() must create shared["_batch_trace"][node_id] as an empty list
-        so that _capture_item_trace can append per-item trace events during
-        execution.
+        prep() creates shared["_batch_trace"][node_id] as an empty list.
+        _capture_item_trace appends per-item events during execution.
+        post() transfers to self._trace_items and cleans up the shared store entry.
         """
 
         class MockLLMNode:
@@ -1970,8 +1970,9 @@ class TestParallelThreadSafety:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Trace items should have been captured
-        assert len(shared["_batch_trace"]["test_node"]) == 2
+        # After post(), trace items transferred to instance, shared store cleaned up
+        assert len(batch._trace_items) == 2
+        assert "_batch_trace" not in shared  # Cleaned up (was only entry)
 
     def test_batch_no_llm_usage_no_crash(self):
         """Batch node handles inner nodes that don't write llm_usage.
@@ -1998,8 +1999,8 @@ class TestParallelThreadSafety:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Trace items should exist but without llm_call data
-        trace_items = shared["_batch_trace"]["test_node"]
+        # After post(), trace items on instance — without llm_call data
+        trace_items = batch._trace_items
         assert len(trace_items) == 3
         for entry in trace_items:
             assert "llm_call" not in entry
@@ -2042,8 +2043,8 @@ class TestParallelThreadSafety:
         results = batch._exec(items)
         batch.post(shared, items, results)
 
-        # Verify all 3 trace items have llm_call data
-        trace_items = shared["_batch_trace"]["summarize"]
+        # After post(), trace items on instance
+        trace_items = batch._trace_items
         assert len(trace_items) == 3
 
         for i, entry in enumerate(trace_items):
@@ -2783,8 +2784,8 @@ class TestBatchLLMOutputSchemaIntegration:
         assert batch_output["success_count"] == 2
 
         # 7. Usage metrics captured for all items including the failed one — Fix B
-        # LLM usage is now captured via _batch_trace, not __llm_calls__
-        trace_items = shared.get("_batch_trace", {}).get(node_id, [])
+        # After _run(), trace items are on the batch node instance (shared store cleaned up)
+        trace_items = batch_node._trace_items
         assert len(trace_items) == 3, f"Expected 3 trace entries (including failed item), got {len(trace_items)}"
         for entry in trace_items:
             assert "llm_call" in entry, f"Trace entry should have llm_call: {entry}"

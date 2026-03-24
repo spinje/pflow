@@ -407,7 +407,7 @@ class TestBatchExecutionIntegration:
         assert shared["batch"]["count"] == 2
 
     def test_batch_trace_initialized(self, test_registry):
-        """_batch_trace tracking dict is initialized by batch nodes."""
+        """Batch trace is captured and cleaned up after execution."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -429,9 +429,9 @@ class TestBatchExecutionIntegration:
         shared: dict[str, Any] = {}
         flow.run(shared)
 
-        # Batch trace should be initialized with per-item events
-        assert "_batch_trace" in shared
-        assert isinstance(shared["_batch_trace"], dict)
+        # After execution, _batch_trace is cleaned up from shared store
+        # (data transferred to batch node's _trace_items, consumed by InstrumentedNodeWrapper)
+        assert "_batch_trace" not in shared
 
 
 class TestBatchEdgeCases:
