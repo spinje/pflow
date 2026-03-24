@@ -22,7 +22,11 @@ import textwrap
 
 import pytest
 
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import (
+    MarkdownParseError,
+    _find_colon_offending_line,
+    parse_markdown,
+)
 from tests.shared.markdown_utils import ir_to_markdown
 
 # ---------------------------------------------------------------------------
@@ -3295,3 +3299,111 @@ class TestConditionalBranching:
         # Should not raise — router IS the source of the error edge to handler
         result = parse_markdown(content)
         assert result.ir is not None
+
+
+# ===========================================================================
+# 18. YAML colon-in-value error enhancement
+# ===========================================================================
+
+
+class TestYAMLColonErrorEnhancement:
+    """Tests for actionable error messages when a param value contains unquoted ': '."""
+
+    def test_unquoted_colon_in_value_gives_actionable_error(self) -> None:
+        """When a value has ': ' (colon + space), error suggests quoting the value."""
+        content = _md("""\
+            # Test
+
+            A test workflow.
+
+            ## Steps
+
+            ### ask
+
+            Asks a question.
+
+            - type: llm
+            - prompt: Write a sentence: about dogs
+
+            ```shell command
+            echo placeholder
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match="YAML parse error") as exc_info:
+            parse_markdown(content)
+
+        err = exc_info.value
+        assert err.suggestion is not None
+        assert "colon + space" in err.suggestion
+        assert '- prompt: "Write a sentence: about dogs"' in err.suggestion
+
+    def test_quoted_value_with_colon_parses_successfully(self) -> None:
+        """A value with ': ' that is already quoted should parse without error."""
+        content = _md("""\
+            # Test
+
+            A test workflow.
+
+            ## Steps
+
+            ### ask
+
+            Asks a question.
+
+            - type: llm
+            - prompt: "Write a sentence: about dogs"
+
+            ```shell command
+            echo placeholder
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["prompt"] == "Write a sentence: about dogs"
+
+    def test_other_yaml_errors_get_generic_message(self) -> None:
+        """Non-colon YAML errors should still show 'YAML syntax error', not the enhanced message."""
+        content = _md("""\
+            # Test
+
+            A test workflow.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches data.
+
+            - type: http
+            - headers: {invalid yaml: [unclosed
+
+            ```shell command
+            echo placeholder
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match="YAML syntax error") as exc_info:
+            parse_markdown(content)
+
+        # The generic path should NOT have the colon-specific suggestion
+        err = exc_info.value
+        assert err.suggestion is None
+
+
+class TestFindColonOffendingLine:
+    """Unit tests for _find_colon_offending_line helper."""
+
+    def test_returns_key_value_for_unquoted_colon(self) -> None:
+        result = _find_colon_offending_line(["- prompt: text: more"])
+        assert result == ("prompt", "text: more")
+
+    def test_returns_none_for_simple_value(self) -> None:
+        result = _find_colon_offending_line(["- type: shell"])
+        assert result is None
+
+    def test_returns_none_for_already_quoted_value(self) -> None:
+        result = _find_colon_offending_line(['- prompt: "text: quoted"'])
+        assert result is None
+
+    def test_returns_none_for_empty_list(self) -> None:
+        result = _find_colon_offending_line([])
+        assert result is None

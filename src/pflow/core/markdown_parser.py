@@ -522,6 +522,55 @@ def _join_prose_paragraphs(parts: list[str]) -> list[str]:
     return paragraphs
 
 
+def _enhance_yaml_error(exc: yaml.YAMLError, entity: _Entity) -> MarkdownParseError:
+    """Turn a raw YAML error into an actionable MarkdownParseError.
+
+    Detects the common case where a parameter value contains an unquoted
+    ```: ```(colon + space), which YAML misinterprets as a nested mapping.
+    """
+    exc_str = str(exc)
+    if "mapping values are not allowed here" in exc_str:
+        # Find the offending line from the YAML items
+        offending_line = _find_colon_offending_line(entity.yaml_items)
+        if offending_line:
+            key, value = offending_line
+            quoted = f'- {key}: "{value}"'
+            return MarkdownParseError(
+                f"YAML parse error in '{entity.id}' parameters.",
+                line=entity.heading_line,
+                suggestion=(
+                    f'The value contains ": " (colon + space), which YAML '
+                    f"interprets as a key-value separator.\n"
+                    f"Fix: wrap the value in quotes:\n"
+                    f"    {quoted}"
+                ),
+            )
+    return MarkdownParseError(
+        f"YAML syntax error in parameters for '{entity.id}': {exc}",
+        line=entity.heading_line,
+    )
+
+
+def _find_colon_offending_line(
+    yaml_items: list[str],
+) -> tuple[str, str] | None:
+    """Find a ``- key: value`` line where value contains `: `.
+
+    Returns ``(key, value)`` or ``None``.
+    """
+    for item in yaml_items:
+        # Each item starts with "- key: value" (possibly multiline)
+        first_line = item.split("\n", 1)[0]
+        m = re.match(r"^-\s+(\S+?):\s+(.+)$", first_line)
+        if not m:
+            continue
+        key, value = m.group(1), m.group(2)
+        # Value contains an additional ": " and isn't already quoted
+        if ": " in value and not (value.startswith('"') and value.endswith('"')):
+            return key, value
+    return None
+
+
 def _parse_yaml_items(entity: _Entity) -> dict[str, Any]:
     """Parse collected YAML items into a merged dict.
 
@@ -540,10 +589,7 @@ def _parse_yaml_items(entity: _Entity) -> dict[str, Any]:
     try:
         parsed = yaml.safe_load(yaml_text)
     except yaml.YAMLError as exc:
-        raise MarkdownParseError(
-            f"YAML syntax error in parameters for '{entity.id}': {exc}",
-            line=entity.heading_line,
-        ) from exc
+        raise _enhance_yaml_error(exc, entity) from exc
 
     if parsed is None:
         return {}
