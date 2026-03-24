@@ -1399,3 +1399,185 @@ The runtime `_detect_empty_output_items` only flags items where ALL non-meta key
 ---
 
 *Post-merge polish complete. Remaining gap (linear pipeline empty values) documented for Task 120.*
+
+---
+
+## Report Iteration Round: Agent-Driven Improvements
+
+### [2026-03-24] — Motivated by real lyrics-pipeline usage
+
+An agent used the report system on an 11-node lyrics-generation pipeline (~34 batch items, sub-workflows, ~$1.58/run). Six issues were identified from the actual report output. All changes are in files created by Task 108 — this is a polish/iteration round, not new functionality.
+
+---
+
+### Change 1: Input/Output Token Breakdown
+
+**Problem**: Summary showed `- Tokens: 12,340` (just total). No way to see input vs output ratio, which matters for cost optimization (output tokens cost more).
+
+**Changes**:
+- `workflow_trace.py`: `_collect_llm_summary()` now accumulates `total_input_tokens` and `total_output_tokens` alongside `total_tokens`, across all three recursion paths (direct events, batch items, sub-workflow events)
+- `trace_report.py`: `_build_summary()` shows `- Tokens: 3,200 in / 9,145 out`. Falls back to `- Tokens: N` for older traces without the breakdown
+- `trace_report.py`: `_build_batch_item_file()` adds `- Tokens: N in / N out` to batch item metadata (same format as per-node files via `_format_node_metadata`)
+
+**Tests**: +3 (`test_llm_summary_includes_input_output_tokens`, `test_llm_summary_fallback_total_tokens`, `test_item_with_llm_tokens`)
+
+---
+
+### Change 2: Batch Item Labels in Filenames and Headers
+
+**Problem**: Batch items named `item-0.md`, `item-1.md` — no indication of content. For 34 chorus scoring items, you have to open files blindly.
+
+**Solution**: Auto-label batch items from their input data.
+
+**New functions**:
+- `_extract_item_label(item)` — extracts label from `item["item"]`: strings used directly, dicts checked for `name`/`title`/`label` keys, then first short non-URL string value (< 80 chars), returns `None` if nothing works
+- `_slugify_label(label, max_len=40)` — lowercase, special chars to hyphens, truncates at word boundary
+- `_item_label_or_index(item)` — returns slugified label or `"Item {index}"` fallback
+- `_item_filename(item, suffix)` — builds `item-{idx}-{slug}.md` or `item-{idx}.md`
+
+**Changes**:
+- `_write_node_files()` — uses `_item_filename()` for both files and directories
+- `_build_batch_item_file()` — header: `# analyze — emotional-depth` instead of `# analyze — Item 0`
+- `_build_batch_item_summary()` — header: `# emotional-depth` instead of `# Item 0`
+- `_build_node_summary()` — items table has `Label` column when any item has a label
+
+**Design decision — label source priority**:
+1. If `item["item"]` is a string → use it directly (e.g., `"emotional-depth"`)
+2. If dict → check `name`, `title`, `label` keys (first found)
+3. If dict and no priority key → first short string value (< 80 chars, skip URLs containing `://` and paths starting with `/`)
+4. Return `None` → fall back to `Item {index}`
+
+The `item` field in batch traces contains the original batch input — always present for batch items, can be string, dict, int, list, etc.
+
+**Tests**: +22 across `TestExtractItemLabel` (12), `TestSlugifyLabel` (6), `TestItemFilename` (4)
+
+---
+
+### Change 3: Compact Batch Summaries
+
+**Problem**: Batch summary tables listed every item even when all succeeded. A 34-item batch with all "ok" rows is noise.
+
+**Solution**: Only show notable items in the summary table.
+
+**New functions**:
+- `_find_notable_items(batch_items, parent_event)` — classifies items as notable if: failed, has anomaly warning (empty output), or duration/cost outlier
+- `_compute_outlier_threshold(values)` — IQR-based upper outlier: `Q3 + 1.5 * IQR` (standard box plot whiskers), returns `None` for < 4 values
+- `_build_items_table(items, has_labels, lines)` — renders table for notable items only
+- `_append_batch_stats(batch_items, lines)` — shows median time + total cost when all items are normal (no table)
+
+**Behavior**:
+- All items normal → `- Items: 10 (10/10 succeeded)` + `- Median time: 3ms` (no table)
+- Some notable → table with only notable items + `*... and N more succeeded*`
+- All notable → full table, no hidden count
+
+**Outlier detection (dual-gate)**:
+- IQR-based: `Q3 + 1.5 * IQR` (standard box plot whisker)
+- Plus absolute minimum: must be ≥ 4x the median
+
+The 4x-median gate prevents false positives when all values are close (e.g., 4.78ms vs 3.5ms median in the batch-test workflow). Discovered during manual testing — IQR alone flagged a ~1ms difference as an outlier because the IQR was very tight (0.53ms).
+
+Applied to both duration AND cost outliers (added in a follow-up after the initial implementation).
+
+**Tests**: +7 across `TestFindNotableItems` (5 including cost outlier), `TestCompactBatchSummary` (4 including labeled filenames integration), `TestComputeOutlierThreshold` (4)
+
+---
+
+### Change 4: Sub-Workflow Cost Rollup Fix (Bug)
+
+**Problem**: `_compute_event_cost()` returned `None` (displayed as `—`) when called directly on a sub-workflow batch item. The items table showed `—` for cost even though each item's internal nodes had cost data summing to ~$0.39.
+
+**Root cause**: Sub-workflow batch items store child events under `"events"`, but `_compute_event_cost()` only recursed into `"batch_items"` and `"sub_workflow_events"`. When called on a batch item dict (not a parent event), neither key existed.
+
+**Fix**: Added a fourth recursion path for the `"events"` key (used by sub-workflow batch items). No double-counting risk — only batch item dicts have this key, not regular trace events. The existing `batch_items[].events` path in the parent handles the traversal from the parent side; this new path handles direct calls on the batch item itself.
+
+**Why it wasn't caught before**: The existing `test_compute_event_cost_nested` test called `_compute_event_cost` on the *parent event* (which correctly traverses `batch_items[].events`). No test called it on a *batch item directly* — which is the code path `_build_node_summary` uses for the items table.
+
+**Test**: +1 (`test_compute_event_cost_on_batch_item_directly`)
+
+---
+
+### Change 5: LLM Parameters in Node Metadata
+
+**Problem**: LLM node report files showed model, tokens, and cost — but not `temperature` or `reasoning_effort`. These are critical for prompt iteration: if you're comparing runs where you changed these settings, the report doesn't tell you what was used.
+
+**Solution**: Show user-configured LLM parameters when explicitly set in the workflow file. Read from `node_params` (which contains only what the user wrote — static params, not template-resolved ones).
+
+**New function**: `_format_llm_params(node_params, lines)` — shows:
+- `temperature`, `reasoning_effort`, `reasoning_max_tokens`, `max_tokens` (when present)
+- `system` (truncated to 80 chars with `...`)
+- `output_schema` (shown as `- output: structured (schema)`)
+
+**Design decision**: Show when explicitly set, not when different from default. The "default" varies by model/provider and there's no universal reference. `node_params` contains only what the user wrote — if `temperature` isn't there, they didn't set it. This sidesteps the "what's default" question entirely.
+
+**Tests**: +5 (`TestLLMParamsInMetadata`)
+
+---
+
+### Change 6: Runtime Warnings in Trace and Summary
+
+**Problem**: The CLI showed warnings during execution (e.g., "Batch 'score-choruses': 1 error(s) out of 34 items") but `summary.md` had no such section. These warnings come from `__warnings__` in the shared store, which was stripped from traces by `_sanitize_for_json`.
+
+**Solution**: Include `__warnings__` in the trace file and render in the report.
+
+**Implementation (follows `set_json_output` pattern)**:
+- `workflow_trace.py`: Added `execution_warnings` attribute + `set_warnings()` setter on `WorkflowTraceCollector`. `save_to_file()` includes as top-level `"warnings"` field when non-empty.
+- `executor_service.py`: After execution but before returning `ExecutionResult`, copies `_extract_warnings(shared_store)` to the trace collector via `set_warnings()`. Injection point is right before `_build_execution_result()` — all node execution complete, trace not yet saved.
+- `trace_report.py`: New `_append_runtime_warnings()` renders `## Runtime Warnings` section in `_build_summary()`, placed between `## Errors` and `## Warnings` (anomaly detection).
+
+**Warning shape**: `list[dict]` with `{"node_id": str, "type": str, "message": str}`. Sources: API warning detection (`instrumented_wrapper.py`), batch degradation (`batch_node.py`), template errors in permissive mode.
+
+**Design decision — Option A (include in trace) over Option B (reconstruct from trace data)**: Batch error counts ARE derivable from trace data (`batch_items` success flags). But API warnings on "successful" nodes and degraded status information only live in `__warnings__` — they're not in trace events. Option A captures everything with a small runtime change. Option B would be incomplete and duplicate logic.
+
+**Tests**: +3 (`TestRuntimeWarningsInSummary`)
+
+---
+
+### Change 7: Item Counts in Pipeline Table Status
+
+**Problem**: Pipeline table showed `ok` for batch nodes but not how many items succeeded. You couldn't tell if it was 3/4 or 0/4 without drilling into the sub-directory.
+
+**Solution**: `_format_event_status()` helper checks for `batch_items` on the event and appends `(succeeded/total)` to the status: `ok (3/4)`, `ok (10/10)`, `**FAILED** (0/4)`.
+
+Applied to all three table locations:
+- `_build_summary()` pipeline table
+- `_format_pipeline_table()` (used by sub-workflow summaries)
+- `_build_items_table()` (batch items table — for nested batch-of-batch cases)
+
+Non-batch events remain just `ok` or `**FAILED**`.
+
+**Tests**: +4 (`TestItemCountsInStatus`)
+
+---
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `src/pflow/runtime/workflow_trace.py` | `_collect_llm_summary()` accumulates input/output tokens. `execution_warnings` attribute + `set_warnings()` setter. `save_to_file()` includes warnings. |
+| `src/pflow/core/trace_report.py` | 9 new functions: `_slugify_label`, `_extract_item_label`, `_item_label_or_index`, `_item_filename`, `_find_notable_items`, `_compute_outlier_threshold`, `_build_items_table`, `_append_batch_stats`, `_format_llm_params`, `_format_event_status`, `_append_runtime_warnings`. Updated `_build_summary`, `_write_node_files`, `_build_node_summary`, `_build_batch_item_file`, `_build_batch_item_summary`, `_format_pipeline_table`, `_format_node_metadata`, `_compute_event_cost`. |
+| `src/pflow/execution/executor_service.py` | Copies `_extract_warnings()` to trace collector before returning. |
+| `tests/test_core/test_trace_report.py` | +49 new tests, 5 updated tests |
+| `tests/test_runtime/test_workflow_trace.py` | +1 new test |
+| `tests/test_runtime/test_trace_integration.py` | 1 updated test (labeled filenames) |
+
+### Test Count
+
+4363 → 4423 (+60 net: +51 new, some existing tests updated)
+
+### Manual Verification
+
+| Test | Result |
+|------|--------|
+| Batch workflow `--report` | Labels in filenames (`item-0-leanne-graham.md`) |
+| Compact summary (10/10 ok) | No table, shows `- Median time: 3ms` |
+| 4x-median guard | 4.78ms vs 3.5ms median NOT flagged — correct |
+| Sub-workflow cost rollup | `$0.39`, `$0.40`, `$0.38` per item — correct |
+| LLM params in node file | `temperature: 0.8`, `reasoning_effort: high`, `system: ...` |
+| Runtime warnings in summary | `## Runtime Warnings` section with batch error message |
+| Item counts in pipeline table | `ok (3/4)`, `ok (2/2)` |
+| `pflow trace report` post-hoc | All features work from saved trace |
+| Synthetic 3-song sub-workflow trace | Full report with labels, costs, warnings, counts |
+
+---
+
+*Report iteration round complete. 4423 tests pass, `make check` clean.*

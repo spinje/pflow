@@ -48,6 +48,7 @@ class WorkflowTraceCollector:
         self.llm_prompts: dict[str, str] = {}  # Store prompts by node_id
         self._llm_interceptor_installed = False
         self.json_output: dict[str, Any] | None = None  # Store final JSON output if generated
+        self.execution_warnings: list[dict[str, Any]] | None = None  # Runtime warnings
         self.enable_llm_interception = True  # Set False for child collectors
 
     def record_node_execution(
@@ -253,6 +254,14 @@ class WorkflowTraceCollector:
         """
         self.json_output = json_output
 
+    def set_warnings(self, warnings: list[dict[str, Any]]) -> None:
+        """Store runtime warnings from execution.
+
+        Args:
+            warnings: List of warning dicts with node_id, type, message
+        """
+        self.execution_warnings = warnings if warnings else None
+
     def _determine_trace_status(self) -> str:
         """Determine status from execution events.
 
@@ -272,10 +281,13 @@ class WorkflowTraceCollector:
             events: List of trace events (may contain nested batch_items/sub_workflow_events)
 
         Returns:
-            Summary dict with total_calls, total_tokens, total_cost_usd, models_used
+            Summary dict with total_calls, total_tokens, total_input_tokens,
+            total_output_tokens, total_cost_usd, models_used
         """
         total_calls = 0
         total_tokens = 0
+        total_input_tokens = 0
+        total_output_tokens = 0
         total_cost = 0.0
         models: set[str] = set()
 
@@ -283,6 +295,8 @@ class WorkflowTraceCollector:
             if "llm_call" in event:
                 total_calls += 1
                 total_tokens += event["llm_call"].get("total_tokens", 0)
+                total_input_tokens += event["llm_call"].get("input_tokens", 0)
+                total_output_tokens += event["llm_call"].get("output_tokens", 0)
                 total_cost += event["llm_call"].get("cost_usd", 0) or 0
                 model = event["llm_call"].get("model")
                 if model:
@@ -295,6 +309,8 @@ class WorkflowTraceCollector:
                 if "llm_call" in item:
                     total_calls += 1
                     total_tokens += item["llm_call"].get("total_tokens", 0)
+                    total_input_tokens += item["llm_call"].get("input_tokens", 0)
+                    total_output_tokens += item["llm_call"].get("output_tokens", 0)
                     total_cost += item["llm_call"].get("cost_usd", 0) or 0
                     model = item["llm_call"].get("model")
                     if model:
@@ -303,6 +319,8 @@ class WorkflowTraceCollector:
                 sub = self._collect_llm_summary(item.get("events", []))
                 total_calls += sub.get("total_calls", 0)
                 total_tokens += sub.get("total_tokens", 0)
+                total_input_tokens += sub.get("total_input_tokens", 0)
+                total_output_tokens += sub.get("total_output_tokens", 0)
                 total_cost += sub.get("total_cost_usd", 0)
                 models.update(sub.get("models_used", []))
 
@@ -312,12 +330,16 @@ class WorkflowTraceCollector:
                 sub = self._collect_llm_summary(sub_events)
                 total_calls += sub.get("total_calls", 0)
                 total_tokens += sub.get("total_tokens", 0)
+                total_input_tokens += sub.get("total_input_tokens", 0)
+                total_output_tokens += sub.get("total_output_tokens", 0)
                 total_cost += sub.get("total_cost_usd", 0)
                 models.update(sub.get("models_used", []))
 
         return {
             "total_calls": total_calls,
             "total_tokens": total_tokens,
+            "total_input_tokens": total_input_tokens,
+            "total_output_tokens": total_output_tokens,
             "total_cost_usd": total_cost,
             "models_used": sorted(models),
         }
@@ -374,6 +396,10 @@ class WorkflowTraceCollector:
         llm_summary = self._collect_llm_summary(self.events)
         if llm_summary["total_calls"] > 0:
             trace_data["llm_summary"] = llm_summary
+
+        # Add runtime warnings (e.g., API warnings, batch degradation)
+        if self.execution_warnings:
+            trace_data["warnings"] = self.execution_warnings
 
         # Add JSON output if it was generated (e.g., when --output-format json was used)
         if self.json_output is not None:

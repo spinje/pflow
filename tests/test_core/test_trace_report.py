@@ -19,9 +19,14 @@ from pflow.core.trace_report import (
     _build_summary,
     _collect_errors,
     _compute_event_cost,
+    _compute_outlier_threshold,
     _detect_anomalies,
     _detect_batch_item_anomalies,
+    _extract_item_label,
+    _find_notable_items,
     _format_cost,
+    _item_filename,
+    _slugify_label,
     _suggest_template_fixes,
     generate_report,
 )
@@ -127,8 +132,8 @@ class TestGenerateReport:
         assert report_dir is not None
         assert (report_dir / "01-process").is_dir()
         assert (report_dir / "01-process" / "summary.md").exists()
-        assert (report_dir / "01-process" / "item-0.md").exists()
-        assert (report_dir / "01-process" / "item-1.md").exists()
+        assert (report_dir / "01-process" / "item-0-a.md").exists()
+        assert (report_dir / "01-process" / "item-1-b.md").exists()
 
     def test_sub_workflow_batch_creates_item_directories(self, tmp_path: Path) -> None:
         """Batch items with nested events get item directories, not files."""
@@ -154,7 +159,7 @@ class TestGenerateReport:
         report_dir = generate_report(trace_file, str(tmp_path / "report"))
 
         assert report_dir is not None
-        item_dir = report_dir / "01-create-songs" / "item-0"
+        item_dir = report_dir / "01-create-songs" / "item-0-song-a"
         assert item_dir.is_dir()
         assert (item_dir / "summary.md").exists()
         assert (item_dir / "01-write-lyrics.md").exists()
@@ -214,12 +219,14 @@ class TestBuildSummary:
             llm_summary={
                 "total_calls": 5,
                 "total_tokens": 12345,
+                "total_input_tokens": 3200,
+                "total_output_tokens": 9145,
                 "models_used": ["gpt-4", "claude"],
             }
         )
         md = _build_summary(trace, source_path="/home/user/.pflow/debug/trace.json")
         assert "- LLM calls: 5" in md
-        assert "- Tokens: 12,345" in md
+        assert "- Tokens: 3,200 in / 9,145 out" in md
         assert "gpt-4" in md
         assert "claude" in md
 
@@ -250,6 +257,19 @@ class TestBuildSummary:
         assert "- LLM calls: 1" in md
         assert "Tokens" not in md
         assert "- Models: gpt-4" in md
+
+    def test_llm_summary_fallback_total_tokens(self) -> None:
+        """Old traces without input/output breakdown fall back to total_tokens."""
+        trace = _make_trace(
+            llm_summary={
+                "total_calls": 2,
+                "total_tokens": 500,
+                "models_used": ["gpt-4"],
+            }
+        )
+        md = _build_summary(trace, source_path="test")
+        assert "- Tokens: 500" in md
+        assert "in /" not in md
 
     def test_pipeline_table(self) -> None:
         trace = _make_trace(
@@ -428,20 +448,25 @@ class TestBuildNodeFile:
 
 
 class TestBuildNodeSummary:
-    def test_batch_summary(self) -> None:
+    def test_batch_summary_compact(self) -> None:
+        """Compact summary: only the failed item in the table, others hidden."""
         event = _make_event(
             node_id="batch-process",
+            node_type="ShellNode",
             batch_items=[
-                {"index": 0, "success": True, "duration_ms": 50},
+                {"index": 0, "success": True, "duration_ms": 50, "node_output": {"stdout": "ok", "exit_code": 0}},
                 {"index": 1, "success": False, "duration_ms": 30},
-                {"index": 2, "success": True, "duration_ms": 40},
+                {"index": 2, "success": True, "duration_ms": 40, "node_output": {"stdout": "ok", "exit_code": 0}},
             ],
         )
         md = _build_node_summary(event)
         assert "# batch-process" in md
         assert "- Items: 3 (2/3 succeeded)" in md
-        assert "| 0 | 50ms | \u2014 | ok |" in md
+        # Only the failed item appears in the table
         assert "| 1 | 30ms | \u2014 | **FAILED** |" in md
+        # Successful items hidden behind count
+        assert "| 0 |" not in md
+        assert "... and 2 more succeeded" in md
 
     def test_sub_workflow_summary_has_pipeline_table(self) -> None:
         """Sub-workflow node summary should include a pipeline table of child nodes."""
@@ -467,7 +492,7 @@ class TestBuildBatchItemFile:
         parent = _make_event(node_id="summarize")
         item = {"index": 2, "item": "doc-c", "success": True, "duration_ms": 100}
         md = _build_batch_item_file(item, parent)
-        assert "# summarize — Item 2" in md
+        assert "# summarize — doc-c" in md
         assert "- Status: success" in md
 
     def test_item_with_llm_data(self) -> None:
@@ -487,6 +512,20 @@ class TestBuildBatchItemFile:
         assert "Analyze this" in md
         assert "## Response" in md
         assert "The analysis shows..." in md
+
+    def test_item_with_llm_tokens(self) -> None:
+        """Batch item file shows input/output token breakdown."""
+        parent = _make_event(node_id="summarize")
+        item = {
+            "index": 0,
+            "item": "doc",
+            "success": True,
+            "duration_ms": 300,
+            "llm_call": {"model": "gpt-4", "input_tokens": 800, "output_tokens": 150, "cost_usd": 0.01},
+        }
+        md = _build_batch_item_file(item, parent)
+        assert "- Tokens: 800 in / 150 out" in md
+        assert "- Cost: $0.0100" in md
 
     def test_item_with_template_resolutions(self) -> None:
         parent = _make_event(node_id="process")
@@ -671,6 +710,32 @@ class TestComputeEventCost:
         result = _compute_event_cost(event)
         # 0.01 + 0.02 + 0.03 = 0.06
         assert result == pytest.approx(0.06)
+
+    def test_compute_event_cost_on_batch_item_directly(self) -> None:
+        """Cost computed on a batch item dict (not parent event).
+
+        This is the path used by _build_node_summary's items table.
+        Batch items store child events under "events", not "sub_workflow_events".
+        """
+        batch_item = {
+            "index": 0,
+            "success": True,
+            "duration_ms": 5000,
+            "events": [
+                _make_event(
+                    node_id="write-lyrics",
+                    node_type="LLMNode",
+                    llm_call={"model": "gpt-4", "cost_usd": 0.15},
+                ),
+                _make_event(
+                    node_id="review",
+                    node_type="LLMNode",
+                    llm_call={"model": "gpt-4", "cost_usd": 0.24},
+                ),
+            ],
+        }
+        result = _compute_event_cost(batch_item)
+        assert result == pytest.approx(0.39)
 
 
 # --- _format_cost() ---
@@ -1093,3 +1158,435 @@ class TestFormatCost:
         """Numeric cost formatted to 4 decimal places with dollar sign."""
         assert _format_cost(0.05) == "$0.0500"
         assert _format_cost(0.0) == "$0.0000"
+
+
+# --- _extract_item_label() ---
+
+
+class TestExtractItemLabel:
+    def test_string_item(self) -> None:
+        assert _extract_item_label({"item": "emotional-depth"}) == "emotional-depth"
+
+    def test_dict_with_name(self) -> None:
+        assert _extract_item_label({"item": {"name": "Chorus A", "weight": 3}}) == "Chorus A"
+
+    def test_dict_with_title(self) -> None:
+        assert _extract_item_label({"item": {"title": "My Song", "id": 42}}) == "My Song"
+
+    def test_dict_with_label(self) -> None:
+        assert _extract_item_label({"item": {"label": "verse-1", "data": "..."}}) == "verse-1"
+
+    def test_dict_priority_name_over_title(self) -> None:
+        """name takes priority over title."""
+        assert _extract_item_label({"item": {"name": "A", "title": "B"}}) == "A"
+
+    def test_dict_fallback_first_short_string(self) -> None:
+        """Falls back to first short string value when no priority key."""
+        assert _extract_item_label({"item": {"concept": "Space Travel", "id": 42}}) == "Space Travel"
+
+    def test_dict_skips_urls(self) -> None:
+        """URLs are skipped in fallback search."""
+        result = _extract_item_label({"item": {"url": "https://example.com", "id": 42}})
+        assert result is None
+
+    def test_dict_skips_paths(self) -> None:
+        """Absolute paths are skipped in fallback search."""
+        result = _extract_item_label({"item": {"path": "/usr/local/bin", "id": 42}})
+        assert result is None
+
+    def test_dict_skips_long_strings(self) -> None:
+        """Strings >= 80 chars are skipped in fallback search."""
+        result = _extract_item_label({"item": {"description": "x" * 80, "id": 42}})
+        assert result is None
+
+    def test_no_item_key(self) -> None:
+        assert _extract_item_label({"index": 0, "success": True}) is None
+
+    def test_int_item(self) -> None:
+        assert _extract_item_label({"item": 42}) is None
+
+    def test_list_item(self) -> None:
+        assert _extract_item_label({"item": [1, 2, 3]}) is None
+
+    def test_empty_string(self) -> None:
+        assert _extract_item_label({"item": "   "}) is None
+
+
+# --- _slugify_label() ---
+
+
+class TestSlugifyLabel:
+    def test_basic(self) -> None:
+        assert _slugify_label("Emotional Depth") == "emotional-depth"
+
+    def test_special_chars(self) -> None:
+        assert _slugify_label("Song #1 (remix)") == "song-1-remix"
+
+    def test_truncation(self) -> None:
+        slug = _slugify_label("a" * 50, max_len=40)
+        assert len(slug) <= 40
+
+    def test_truncation_at_word_boundary(self) -> None:
+        slug = _slugify_label("the-quick-brown-fox-jumps-over-the-lazy-dog-again", max_len=40)
+        assert len(slug) <= 40
+        assert not slug.endswith("-")
+
+    def test_empty_after_slug(self) -> None:
+        assert _slugify_label("!!!") == "unnamed"
+
+    def test_preserves_hyphens_and_numbers(self) -> None:
+        assert _slugify_label("item-42-v2") == "item-42-v2"
+
+
+# --- _item_filename() ---
+
+
+class TestItemFilename:
+    def test_with_string_label(self) -> None:
+        assert _item_filename({"index": 0, "item": "chorus"}) == "item-0-chorus.md"
+
+    def test_with_dict_label(self) -> None:
+        assert _item_filename({"index": 3, "item": {"name": "My Song!"}}) == "item-3-my-song.md"
+
+    def test_no_label(self) -> None:
+        assert _item_filename({"index": 5}) == "item-5.md"
+
+    def test_directory_suffix(self) -> None:
+        assert _item_filename({"index": 0, "item": "verse"}, suffix="") == "item-0-verse"
+
+
+# --- _compute_outlier_threshold() ---
+
+
+class TestComputeOutlierThreshold:
+    def test_too_few_values(self) -> None:
+        """Returns None with fewer than 4 values (IQR meaningless)."""
+        assert _compute_outlier_threshold([1, 2, 3]) is None
+
+    def test_uniform_distribution(self) -> None:
+        """Uniform values have IQR=0, threshold = Q3."""
+        threshold = _compute_outlier_threshold([100, 100, 100, 100])
+        assert threshold is not None
+        assert threshold == 100.0
+
+    def test_detects_outlier(self) -> None:
+        """A clearly extreme value exceeds the threshold."""
+        # [50, 60, 70, 80] → Q1=55, Q3=75, IQR=20 → threshold=75+30=105
+        threshold = _compute_outlier_threshold([50, 60, 70, 80])
+        assert threshold is not None
+        assert threshold > 50  # normal values below
+        assert threshold < 200  # extreme value above
+
+    def test_real_world_batch_timing(self) -> None:
+        """Simulates real batch: most items ~100ms, one slow at 800ms."""
+        durations = [95, 100, 105, 110, 98, 102, 100, 800]
+        threshold = _compute_outlier_threshold(durations)
+        assert threshold is not None
+        assert threshold < 800  # 800ms should be above the threshold
+        assert threshold > 110  # normal values should be below
+
+
+# --- _find_notable_items() ---
+
+
+class TestFindNotableItems:
+    def test_failed_items_always_notable(self) -> None:
+        items = [
+            {"index": 0, "success": True, "duration_ms": 50, "node_output": {"stdout": "ok", "exit_code": 0}},
+            {"index": 1, "success": False, "duration_ms": 30},
+        ]
+        notable = _find_notable_items(items, _make_event(node_type="ShellNode"))
+        assert len(notable) == 1
+        assert notable[0]["index"] == 1
+
+    def test_anomaly_items_notable(self) -> None:
+        """Items with empty output are notable."""
+        items = [
+            {"index": 0, "success": True, "duration_ms": 50, "node_output": {}},
+            {"index": 1, "success": True, "duration_ms": 60, "node_output": {"stdout": "data", "exit_code": 0}},
+        ]
+        notable = _find_notable_items(items, _make_event(node_type="ShellNode"))
+        assert len(notable) == 1
+        assert notable[0]["index"] == 0
+
+    def test_all_ok_returns_empty(self) -> None:
+        """All successful items with normal output → nothing notable."""
+        items = [
+            {"index": i, "success": True, "duration_ms": 100, "node_output": {"stdout": "ok", "exit_code": 0}}
+            for i in range(5)
+        ]
+        notable = _find_notable_items(items, _make_event(node_type="ShellNode"))
+        assert len(notable) == 0
+
+    def test_duration_outlier_notable(self) -> None:
+        """An item with extreme duration is notable via IQR detection."""
+        items = [
+            {"index": i, "success": True, "duration_ms": 100, "node_output": {"stdout": "ok", "exit_code": 0}}
+            for i in range(7)
+        ]
+        # Add one slow item
+        items.append({
+            "index": 7,
+            "success": True,
+            "duration_ms": 5000,
+            "node_output": {"stdout": "ok", "exit_code": 0},
+        })
+        notable = _find_notable_items(items, _make_event(node_type="ShellNode"))
+        assert len(notable) == 1
+        assert notable[0]["index"] == 7
+
+    def test_cost_outlier_notable(self) -> None:
+        """An item with extreme cost is notable via IQR detection."""
+        items = [
+            {
+                "index": i,
+                "success": True,
+                "duration_ms": 100,
+                "node_output": {"response": "ok"},
+                "llm_call": {"model": "gpt-4", "cost_usd": 0.01},
+            }
+            for i in range(7)
+        ]
+        # Add one expensive item (10x the rest, well above 4x median)
+        items.append({
+            "index": 7,
+            "success": True,
+            "duration_ms": 100,
+            "node_output": {"response": "ok"},
+            "llm_call": {"model": "gpt-4", "cost_usd": 0.10},
+        })
+        notable = _find_notable_items(items, _make_event(node_type="LLMNode"))
+        assert len(notable) == 1
+        assert notable[0]["index"] == 7
+
+
+# --- Compact batch summary ---
+
+
+class TestCompactBatchSummary:
+    def test_all_ok_no_table_shows_stats(self) -> None:
+        """When all items succeed normally, no table but shows median time."""
+        event = _make_event(
+            node_id="batch",
+            node_type="ShellNode",
+            batch_items=[
+                {"index": i, "success": True, "duration_ms": 100, "node_output": {"stdout": "ok", "exit_code": 0}}
+                for i in range(10)
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "10/10 succeeded" in md
+        assert "## Items" not in md
+        assert "Median time: 100ms" in md
+
+    def test_all_ok_shows_total_cost(self) -> None:
+        """Compact batch with LLM costs shows total cost in stats."""
+        event = _make_event(
+            node_id="batch",
+            node_type="LLMNode",
+            batch_items=[
+                {
+                    "index": i,
+                    "success": True,
+                    "duration_ms": 5000,
+                    "node_output": {"response": "ok"},
+                    "llm_call": {"model": "gpt-4", "cost_usd": 0.01},
+                }
+                for i in range(10)
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "## Items" not in md
+        assert "Median time: 5.0s" in md
+        assert "Total cost: $0.1000" in md
+
+    def test_one_failure_shows_only_failure(self) -> None:
+        """Only the failed item appears in the table."""
+        items = [
+            {"index": i, "success": True, "duration_ms": 100, "node_output": {"stdout": "ok", "exit_code": 0}}
+            for i in range(5)
+        ]
+        items[2] = {"index": 2, "success": False, "duration_ms": 50, "error": "exit code 1"}
+        event = _make_event(node_id="batch", node_type="ShellNode", batch_items=items)
+        md = _build_node_summary(event)
+        assert "## Items" in md
+        assert "**FAILED**" in md
+        assert "| 2 |" in md
+        assert "... and 4 more succeeded" in md
+        # Other items not in table
+        assert "| 0 |" not in md
+
+    def test_labels_in_table(self) -> None:
+        """When items have labels, the Label column appears."""
+        event = _make_event(
+            node_id="score",
+            node_type="LLMNode",
+            batch_items=[
+                {"index": 0, "item": "depth", "success": False, "duration_ms": 50},
+                {"index": 1, "item": "clarity", "success": True, "duration_ms": 60, "node_output": {"response": "ok"}},
+            ],
+        )
+        md = _build_node_summary(event)
+        assert "| Label |" in md
+        assert "depth" in md
+
+    def test_labeled_filenames_integration(self, tmp_path: Path) -> None:
+        """generate_report creates labeled filenames for batch items."""
+        batch_event = _make_event(
+            node_id="analyze",
+            batch_items=[
+                {"index": 0, "item": {"name": "Alpha"}, "success": True, "duration_ms": 50},
+                {"index": 1, "item": {"name": "Beta"}, "success": True, "duration_ms": 60},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        trace_file = tmp_path / "trace.json"
+        trace_file.write_text(json.dumps(trace))
+
+        report_dir = generate_report(trace_file, str(tmp_path / "report"))
+        assert report_dir is not None
+        assert (report_dir / "01-analyze" / "item-0-alpha.md").exists()
+        assert (report_dir / "01-analyze" / "item-1-beta.md").exists()
+
+
+# --- LLM params in node metadata (Issue 4) ---
+
+
+class TestLLMParamsInMetadata:
+    def test_temperature_shown(self) -> None:
+        event = _make_event(
+            node_type="LLMNode",
+            node_params={"temperature": 0.4, "prompt": "Hello"},
+            llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 5},
+        )
+        md = _build_node_file(event)
+        assert "- temperature: 0.4" in md
+
+    def test_reasoning_effort_shown(self) -> None:
+        event = _make_event(
+            node_type="LLMNode",
+            node_params={"reasoning_effort": "high"},
+            llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 5},
+        )
+        md = _build_node_file(event)
+        assert "- reasoning_effort: high" in md
+
+    def test_system_prompt_truncated(self) -> None:
+        event = _make_event(
+            node_type="LLMNode",
+            node_params={"system": "x" * 100},
+            llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 5},
+        )
+        md = _build_node_file(event)
+        assert "- system: " in md
+        assert "..." in md
+        assert "x" * 100 not in md
+
+    def test_output_schema_shown(self) -> None:
+        event = _make_event(
+            node_type="LLMNode",
+            node_params={"output_schema": {"type": "object"}},
+            llm_call={"model": "gpt-4", "input_tokens": 10, "output_tokens": 5},
+        )
+        md = _build_node_file(event)
+        assert "- output: structured (schema)" in md
+
+    def test_no_params_no_extra_lines(self) -> None:
+        """Shell node with no LLM params shows nothing extra."""
+        event = _make_event(node_type="ShellNode", node_params={"command": "echo hi"})
+        md = _build_node_file(event)
+        assert "temperature" not in md
+        assert "reasoning" not in md
+
+
+# --- Runtime warnings in summary (Issue 5) ---
+
+
+class TestRuntimeWarningsInSummary:
+    def test_runtime_warnings_rendered(self) -> None:
+        trace = _make_trace(
+            warnings=[
+                {
+                    "node_id": "score-choruses",
+                    "type": "api_warning",
+                    "message": "Batch 'score-choruses': 1 error(s) out of 34 items",
+                },
+            ]
+        )
+        md = _build_summary(trace)
+        assert "## Runtime Warnings" in md
+        assert "score-choruses" in md
+        assert "1 error(s) out of 34 items" in md
+
+    def test_no_runtime_warnings_no_section(self) -> None:
+        trace = _make_trace()
+        md = _build_summary(trace)
+        assert "## Runtime Warnings" not in md
+
+    def test_multiple_runtime_warnings(self) -> None:
+        trace = _make_trace(
+            warnings=[
+                {"node_id": "node-a", "type": "api_warning", "message": "API error: not found"},
+                {"node_id": "node-b", "type": "api_warning", "message": "Batch 'node-b': 2 error(s)"},
+            ]
+        )
+        md = _build_summary(trace)
+        assert "node-a" in md
+        assert "node-b" in md
+
+
+# --- Item counts in pipeline status (Issue 6) ---
+
+
+class TestItemCountsInStatus:
+    def test_batch_event_shows_item_counts(self) -> None:
+        """Pipeline table shows item counts for batch nodes."""
+        batch_event = _make_event(
+            node_id="process",
+            batch_items=[
+                {"index": 0, "success": True, "duration_ms": 50},
+                {"index": 1, "success": True, "duration_ms": 60},
+                {"index": 2, "success": False, "duration_ms": 30},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        assert "ok (2/3)" in md
+
+    def test_all_succeeded_batch(self) -> None:
+        batch_event = _make_event(
+            node_id="greet",
+            batch_items=[
+                {"index": 0, "success": True, "duration_ms": 50},
+                {"index": 1, "success": True, "duration_ms": 60},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        md = _build_summary(trace)
+        assert "ok (2/2)" in md
+
+    def test_non_batch_no_counts(self) -> None:
+        """Non-batch events just show ok/FAILED without counts."""
+        event = _make_event(node_id="fetch", node_type="ShellNode")
+        trace = _make_trace(nodes=[event])
+        md = _build_summary(trace)
+        assert "| ok |" in md
+        assert "(" not in md.split("ok")[1].split("|")[0]  # no parenthesized count
+
+    def test_sub_workflow_pipeline_table_has_counts(self) -> None:
+        """_format_pipeline_table also uses item counts."""
+        from pflow.core.trace_report import _format_pipeline_table
+
+        events = [
+            _make_event(
+                node_id="batch-step",
+                batch_items=[
+                    {"index": 0, "success": True, "duration_ms": 50},
+                    {"index": 1, "success": False, "duration_ms": 60},
+                ],
+            ),
+        ]
+        lines: list[str] = []
+        _format_pipeline_table(events, lines)
+        table = "\n".join(lines)
+        assert "ok (1/2)" in table

@@ -256,4 +256,28 @@ uv run pytest tests/test_integration/test_metrics_integration.py -v  # Cost chai
 
 ---
 
-*Generated from implementation context of Task 108. Branch: feat/smart-trace-debug. 4346 tests passing.*
+## Post-Implementation Iteration (2026-03-24)
+
+Seven improvements driven by real lyrics-pipeline usage (11 nodes, 34 batch items, sub-workflows, ~$1.58/run):
+
+| # | Change | Files |
+|---|--------|-------|
+| 1 | Input/output token breakdown in summary and batch items | `workflow_trace.py`, `trace_report.py` |
+| 2 | Batch item labels in filenames and headers (auto-extracted from input data) | `trace_report.py` |
+| 3 | Compact batch summaries (only notable items in table, IQR+4x-median outlier detection) | `trace_report.py` |
+| 4 | Sub-workflow cost rollup fix (`_compute_event_cost` missing `events` recursion path) | `trace_report.py` |
+| 5 | LLM params in node metadata (temperature, reasoning_effort, system, output_schema) | `trace_report.py` |
+| 6 | Runtime warnings in trace file and summary (`__warnings__` → trace → report) | `workflow_trace.py`, `executor_service.py`, `trace_report.py` |
+| 7 | Item counts in pipeline table status (`ok (3/4)`) | `trace_report.py` |
+
+Key design decisions:
+- **Outlier detection**: Dual-gate — IQR-based threshold AND ≥4x median. Prevents false positives when values are close.
+- **Label extraction**: Priority keys (`name`/`title`/`label`) then first short string. Strings used directly, slugified for filenames.
+- **LLM params**: Show when explicitly set (present in `node_params`), not when different from default. Sidesteps provider-specific default ambiguity.
+- **Runtime warnings**: Option A (include in trace) over Option B (reconstruct). API warnings and degraded status only live in `__warnings__` — not derivable from trace events.
+
+Tests: 4346 → 4423 (+77). See progress log for full details.
+
+---
+
+*Updated after iteration round. 4423 tests passing.*

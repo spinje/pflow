@@ -7,16 +7,158 @@ of markdown files — one file per node, with summaries at each level.
 import json
 import logging
 import re
+import statistics
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Priority keys for extracting a label from a batch item's input data
+_LABEL_PRIORITY_KEYS = ("name", "title", "label")
 
 
 def _safe_name(name: str) -> str:
     """Sanitize a name for use in file/directory paths."""
     safe = re.sub(r"[^a-zA-Z0-9_-]", "-", name)
     return re.sub(r"-+", "-", safe).strip("-") or "unnamed"
+
+
+def _slugify_label(label: str, max_len: int = 40) -> str:
+    """Convert a label to a filename-safe slug.
+
+    Lowercase, spaces/special chars to hyphens, collapse consecutive hyphens,
+    strip leading/trailing hyphens, truncate to max_len.
+    """
+    slug = label.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")
+    if len(slug) > max_len:
+        # Truncate at max_len, but don't cut mid-word if there's a hyphen nearby
+        truncated = slug[:max_len]
+        last_hyphen = truncated.rfind("-", max_len - 10, max_len)
+        if last_hyphen > 0:
+            truncated = truncated[:last_hyphen]
+        slug = truncated.rstrip("-")
+    return slug or "unnamed"
+
+
+def _extract_item_label(item: dict[str, Any]) -> str | None:
+    """Extract a human-readable label from a batch item's input data.
+
+    Priority order:
+    1. If item["item"] is a string, use it directly
+    2. If item["item"] is a dict, look for name/title/label keys
+    3. Fall back to first short string value (< 80 chars, not a URL/path)
+    4. Return None if nothing works
+    """
+    data = item.get("item")
+    if data is None:
+        return None
+
+    if isinstance(data, str):
+        return data if data.strip() else None
+
+    if isinstance(data, dict):
+        # Check priority keys first
+        for key in _LABEL_PRIORITY_KEYS:
+            val = data.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()
+        # Fall back to first short string value that isn't a URL or path
+        for val in data.values():
+            if isinstance(val, str) and val.strip() and len(val) < 80 and "://" not in val and not val.startswith("/"):
+                return val.strip()
+
+    return None
+
+
+def _item_label_or_index(item: dict[str, Any]) -> str:
+    """Return the label for a batch item, or 'Item {index}' as fallback."""
+    label = _extract_item_label(item)
+    if label:
+        return _slugify_label(label)
+    return f"Item {item.get('index', '?')}"
+
+
+def _item_filename(item: dict[str, Any], suffix: str = ".md") -> str:
+    """Build the filename (or directory name) for a batch item.
+
+    Format: item-{index}-{slug} when label exists, item-{index} otherwise.
+    """
+    idx = item.get("index", 0)
+    label = _extract_item_label(item)
+    if label:
+        return f"item-{idx}-{_slugify_label(label)}{suffix}"
+    return f"item-{idx}{suffix}"
+
+
+def _find_notable_items(
+    batch_items: list[dict[str, Any]],
+    parent_event: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Identify batch items worth showing in the summary table.
+
+    Notable items: failures, anomaly warnings, duration outliers, or cost outliers.
+    Uses IQR (interquartile range) for outlier detection — items above
+    Q3 + 1.5*IQR are flagged (standard box plot whiskers), with 4x-median minimum.
+    """
+    node_type = parent_event.get("node_type", "")
+
+    # Compute IQR-based outlier thresholds for duration and cost
+    durations = [item.get("duration_ms", 0) for item in batch_items]
+    duration_outlier = _compute_outlier_threshold(durations)
+    median_duration = statistics.median(durations) if durations else 0
+
+    costs = [_compute_event_cost(item) for item in batch_items]
+    cost_values = [c for c in costs if c is not None]
+    cost_outlier = _compute_outlier_threshold(cost_values)
+    median_cost = statistics.median(cost_values) if cost_values else 0
+
+    notable: list[dict[str, Any]] = []
+    for item in batch_items:
+        # Failed items are always notable
+        if not item.get("success"):
+            notable.append(item)
+            continue
+
+        # Anomaly warnings (aligned with _detect_batch_item_anomalies)
+        output = item.get("node_output", {})
+        if not output or _check_batch_item_anomaly(output, node_type):
+            notable.append(item)
+            continue
+
+        # Duration outlier: must exceed both IQR threshold AND 4x median
+        dur = item.get("duration_ms", 0)
+        if duration_outlier is not None and dur > duration_outlier and dur > 4 * median_duration:
+            notable.append(item)
+            continue
+
+        # Cost outlier: must exceed both IQR threshold AND 4x median cost
+        item_cost = _compute_event_cost(item)
+        if (
+            cost_outlier is not None
+            and item_cost is not None
+            and item_cost > cost_outlier
+            and item_cost > 4 * median_cost
+        ):
+            notable.append(item)
+            continue
+
+    return notable
+
+
+def _compute_outlier_threshold(values: list[float]) -> float | None:
+    """Compute IQR-based upper outlier threshold.
+
+    Returns Q3 + 1.5*IQR, or None if fewer than 4 values (IQR meaningless).
+    """
+    if len(values) < 4:
+        return None
+    sorted_vals = sorted(values)
+    q1 = statistics.median(sorted_vals[: len(sorted_vals) // 2])
+    q3 = statistics.median(sorted_vals[(len(sorted_vals) + 1) // 2 :])
+    iqr = q3 - q1
+    return q3 + 1.5 * iqr
 
 
 def _compute_event_cost(event: dict[str, Any]) -> float | None:
@@ -55,6 +197,14 @@ def _compute_event_cost(event: dict[str, Any]) -> float | None:
 
     # Recurse into sub-workflow events
     for child_event in event.get("sub_workflow_events", []):
+        child_cost = _compute_event_cost(child_event)
+        if child_cost is not None:
+            total += child_cost
+            found_any = True
+
+    # Recurse into "events" — used by sub-workflow batch items
+    # (batch items store child events under "events", not "sub_workflow_events")
+    for child_event in event.get("events", []):
         child_cost = _compute_event_cost(child_event)
         if child_cost is not None:
             total += child_cost
@@ -298,17 +448,16 @@ def _write_node_files(events: list[dict[str, Any]], parent_dir: Path, node_index
 
             if batch_items:
                 for item in batch_items:
-                    item_idx = item.get("index", 0)
                     item_events = item.get("events", [])
                     if item_events:
                         # Sub-workflow batch item — create item directory
-                        item_dir = node_dir / f"item-{item_idx}"
+                        item_dir = node_dir / _item_filename(item, suffix="")
                         item_dir.mkdir(exist_ok=True)
                         (item_dir / "summary.md").write_text(_build_batch_item_summary(item))
                         _write_node_files(item_events, item_dir, node_index=1)
                     else:
                         # Simple batch item — single file
-                        (node_dir / f"item-{item_idx}.md").write_text(_build_batch_item_file(item, event))
+                        (node_dir / _item_filename(item)).write_text(_build_batch_item_file(item, event))
 
             if sub_events:
                 _write_node_files(sub_events, node_dir, node_index=1)
@@ -330,9 +479,13 @@ def _build_summary(trace: dict[str, Any], source_path: str = "N/A") -> str:
     llm = trace.get("llm_summary")
     if llm and llm.get("total_calls", 0) > 0:
         lines.append(f"- LLM calls: {llm.get('total_calls', 0)}")
-        tokens = llm.get("total_tokens", 0)
-        if tokens:
-            lines.append(f"- Tokens: {tokens:,}")
+        tokens_in = llm.get("total_input_tokens", 0)
+        tokens_out = llm.get("total_output_tokens", 0)
+        if tokens_in or tokens_out:
+            lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
+        elif llm.get("total_tokens", 0):
+            # Fallback for traces generated before input/output breakdown was added
+            lines.append(f"- Tokens: {llm['total_tokens']:,}")
         cost = llm.get("total_cost_usd", 0)
         if cost is not None and cost > 0:
             lines.append(f"- Total cost: ${cost:.4f}")
@@ -354,13 +507,14 @@ def _build_summary(trace: dict[str, Any], source_path: str = "N/A") -> str:
         node_type = event.get("node_type", "?")
         duration = event.get("duration_ms", 0)
         cost = _format_cost(_compute_event_cost(event))
-        status = "ok" if event.get("success") else "**FAILED**"
+        status = _format_event_status(event)
         lines.append(f"| {i} | {node_id} | {node_type} | {duration:.0f}ms | {cost} | {status} |")
 
     lines.append("")
 
     # Error and warning sections
     _append_error_section(all_events, lines)
+    _append_runtime_warnings(trace.get("warnings", []), lines)
     _append_warning_section(all_events, lines)
 
     lines.append(f"*Full trace: {source_path}*")
@@ -383,6 +537,23 @@ def _append_error_section(events: list[dict[str, Any]], lines: list[str]) -> Non
         lines.append(f"- **{node_id}** ({node_type}): {error_msg}")
         for s in _suggest_template_fixes(event, events):
             lines.append(f"  - Suggestion: {s}")
+    lines.append("")
+
+
+def _append_runtime_warnings(warnings: list[dict[str, Any]], lines: list[str]) -> None:
+    """Append runtime warnings from execution (API warnings, batch degradation, etc.).
+
+    These come from the trace file's top-level 'warnings' field, which mirrors
+    the __warnings__ shared store key captured during execution.
+    """
+    if not warnings:
+        return
+    lines.append("## Runtime Warnings")
+    lines.append("")
+    for w in warnings:
+        node_id = w.get("node_id", "?")
+        message = w.get("message", "Unknown warning")
+        lines.append(f"- **{node_id}**: {message}")
     lines.append("")
 
 
@@ -415,6 +586,43 @@ def _append_warning_section(events: list[dict[str, Any]], lines: list[str]) -> N
     lines.append("")
 
 
+def _format_event_status(event: dict[str, Any]) -> str:
+    """Format the status column for a trace event.
+
+    For batch/sub-workflow events, includes item counts (e.g., 'ok (4/4)').
+    """
+    base = "ok" if event.get("success") else "**FAILED**"
+    batch_items = event.get("batch_items")
+    if batch_items:
+        total = len(batch_items)
+        succeeded = sum(1 for i in batch_items if i.get("success"))
+        return f"{base} ({succeeded}/{total})"
+    return base
+
+
+def _format_llm_params(node_params: dict[str, Any], lines: list[str]) -> None:
+    """Append user-configured LLM parameters when explicitly set.
+
+    Only shows params the user wrote in the workflow file — not defaults.
+    Params like prompt/command/code are shown elsewhere in the report.
+    """
+    # Params that have dedicated rendering elsewhere in the report
+    _skip = {"prompt", "command", "code", "inputs", "model", "batch", "timeout"}
+
+    for key in ("temperature", "reasoning_effort", "reasoning_max_tokens", "max_tokens"):
+        if key in node_params and key not in _skip:
+            lines.append(f"- {key}: {node_params[key]}")
+
+    if "system" in node_params:
+        system = str(node_params["system"])
+        if len(system) > 80:
+            system = system[:77] + "..."
+        lines.append(f"- system: {system}")
+
+    if "output_schema" in node_params:
+        lines.append("- output: structured (schema)")
+
+
 def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
     """Append metadata lines for a node event."""
     lines.append(f"- Type: {event.get('node_type', 'unknown')}")
@@ -434,6 +642,10 @@ def _format_node_metadata(event: dict[str, Any], lines: list[str]) -> None:
         if cost is not None:
             lines.append(f"- Cost: ${cost:.4f}")
 
+    # Show user-configured LLM parameters (only when explicitly set in workflow)
+    node_params = event.get("node_params", {})
+    _format_llm_params(node_params, lines)
+
     error = event.get("error")
     if error:
         lines.append(f"- Error: {error}")
@@ -452,7 +664,7 @@ def _format_pipeline_table(events: list[dict[str, Any]], lines: list[str]) -> No
         node_type = event.get("node_type", "?")
         duration = event.get("duration_ms", 0)
         cost = _format_cost(_compute_event_cost(event))
-        status = "ok" if event.get("success") else "**FAILED**"
+        status = _format_event_status(event)
         lines.append(f"| {i} | {node_id} | {node_type} | {duration:.0f}ms | {cost} | {status} |")
     lines.append("")
 
@@ -628,7 +840,12 @@ def _append_batch_item_warnings(
 
 
 def _build_node_summary(event: dict[str, Any]) -> str:
-    """Build summary for a container node (batch or sub-workflow)."""
+    """Build summary for a container node (batch or sub-workflow).
+
+    Uses compact format: only shows notable items (failures, warnings,
+    duration outliers) in the table. When all items succeed without
+    anomalies, just shows the count.
+    """
     node_id = event.get("node_id", "unknown")
     lines = [f"# {node_id}", ""]
     lines.append(f"- Type: {event.get('node_type', '?')}")
@@ -643,17 +860,19 @@ def _build_node_summary(event: dict[str, Any]) -> str:
         succeeded = sum(1 for i in batch_items if i.get("success"))
         lines.append(f"- Items: {len(batch_items)} ({succeeded}/{len(batch_items)} succeeded)")
         lines.append("")
-        lines.append("## Items")
-        lines.append("")
-        lines.append("| # | Time | Cost | Status |")
-        lines.append("|---|------|------|--------|")
-        for item in batch_items:
-            idx = item.get("index", "?")
-            dur = item.get("duration_ms", 0)
-            cost = _format_cost(_compute_event_cost(item))
-            status = "ok" if item.get("success") else "**FAILED**"
-            lines.append(f"| {idx} | {dur:.0f}ms | {cost} | {status} |")
-        lines.append("")
+
+        notable = _find_notable_items(batch_items, event)
+        has_labels = any(_extract_item_label(item) for item in batch_items)
+
+        if notable:
+            _build_items_table(notable, has_labels, lines)
+            hidden = len(batch_items) - len(notable)
+            if hidden > 0:
+                lines.append(f"*... and {hidden} more succeeded*")
+                lines.append("")
+        else:
+            # All items normal — show aggregate stats for quick orientation
+            _append_batch_stats(batch_items, lines)
 
         _append_batch_item_warnings(batch_items, lines, parent_event=event)
 
@@ -663,16 +882,69 @@ def _build_node_summary(event: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _build_items_table(
+    items: list[dict[str, Any]],
+    has_labels: bool,
+    lines: list[str],
+) -> None:
+    """Append a markdown table for a list of batch items."""
+    lines.append("## Items")
+    lines.append("")
+    if has_labels:
+        lines.append("| # | Label | Time | Cost | Status |")
+        lines.append("|---|-------|------|------|--------|")
+    else:
+        lines.append("| # | Time | Cost | Status |")
+        lines.append("|---|------|------|--------|")
+    for item in items:
+        idx = item.get("index", "?")
+        dur = item.get("duration_ms", 0)
+        cost = _format_cost(_compute_event_cost(item))
+        status = _format_event_status(item)
+        if has_labels:
+            label = _item_label_or_index(item)
+            lines.append(f"| {idx} | {label} | {dur:.0f}ms | {cost} | {status} |")
+        else:
+            lines.append(f"| {idx} | {dur:.0f}ms | {cost} | {status} |")
+    lines.append("")
+
+
+def _append_batch_stats(batch_items: list[dict[str, Any]], lines: list[str]) -> None:
+    """Append aggregate stats (median time, total cost) for a clean batch.
+
+    Shown when all items are normal (no table rendered). Gives a sense of
+    per-item behavior without listing everything.
+    """
+    durations = [item.get("duration_ms", 0) for item in batch_items]
+    if durations:
+        median_dur = statistics.median(durations)
+        if median_dur >= 1000:
+            lines.append(f"- Median time: {median_dur / 1000:.1f}s")
+        else:
+            lines.append(f"- Median time: {median_dur:.0f}ms")
+
+    costs = [_compute_event_cost(item) for item in batch_items]
+    total_cost = sum(c for c in costs if c is not None)
+    if total_cost > 0:
+        lines.append(f"- Total cost: ${total_cost:.4f}")
+
+    lines.append("")
+
+
 def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -> str:
     """Build file for a simple batch item (no sub-workflow)."""
-    idx = item.get("index", "?")
-    lines = [f"# {parent_event.get('node_id', '?')} — Item {idx}", ""]
+    node_id = parent_event.get("node_id", "?")
+    label = _item_label_or_index(item)
+    lines = [f"# {node_id} — {label}", ""]
     lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
     lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
 
     llm_call = item.get("llm_call")
     if llm_call:
         lines.append(f"- Model: {llm_call.get('model', '?')}")
+        tokens_in = llm_call.get("input_tokens", llm_call.get("prompt_tokens", 0))
+        tokens_out = llm_call.get("output_tokens", llm_call.get("completion_tokens", 0))
+        lines.append(f"- Tokens: {tokens_in:,} in / {tokens_out:,} out")
         cost = llm_call.get("cost_usd")
         if cost is not None:
             lines.append(f"- Cost: ${cost:.4f}")
@@ -690,8 +962,8 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
 
 def _build_batch_item_summary(item: dict[str, Any]) -> str:
     """Build summary for a batch item that contains sub-workflow events."""
-    idx = item.get("index", "?")
-    lines = [f"# Item {idx}", ""]
+    label = _item_label_or_index(item)
+    lines = [f"# {label}", ""]
     lines.append(f"- Time: {item.get('duration_ms', 0):.0f}ms")
     lines.append(f"- Status: {'success' if item.get('success') else 'failed'}")
     lines.append("")

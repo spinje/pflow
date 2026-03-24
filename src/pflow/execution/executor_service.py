@@ -153,6 +153,12 @@ class WorkflowExecutorService:
 
         duration = time.time() - start_time
 
+        # Copy runtime warnings to trace collector (for inclusion in trace file)
+        trace_collector = shared_store.get("_trace_collector") if shared_store else None
+        if trace_collector is not None:
+            warnings_for_trace = self._extract_warnings(shared_store)
+            trace_collector.set_warnings(warnings_for_trace)
+
         return self._build_execution_result(
             success=success,
             status=status,

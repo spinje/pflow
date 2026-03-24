@@ -297,17 +297,17 @@ class TestTraceToReportFormatCompatibility:
         batch_dir = report_dir / "01-processor"
         assert batch_dir.is_dir(), "Batch node should produce a directory, not a file"
         assert (batch_dir / "summary.md").exists()
-        assert (batch_dir / "item-0.md").exists()
-        assert (batch_dir / "item-1.md").exists()
+        assert (batch_dir / "item-0-alpha.md").exists()
+        assert (batch_dir / "item-1-beta.md").exists()
 
         # Verify REAL execution data appears in the report (not empty/placeholder)
-        item0_md = (batch_dir / "item-0.md").read_text()
+        item0_md = (batch_dir / "item-0-alpha.md").read_text()
         assert "processed-alpha" in item0_md, (
             "Report item file doesn't contain real node output — "
             "trace format may have diverged from report generator expectations"
         )
 
-        item1_md = (batch_dir / "item-1.md").read_text()
+        item1_md = (batch_dir / "item-1-beta.md").read_text()
         assert "processed-beta" in item1_md
 
         # Summary should reference the batch
