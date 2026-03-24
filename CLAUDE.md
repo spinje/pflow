@@ -197,12 +197,13 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 130: Workflow Bundling on Save
 - ✅ Task 66: Structured Output for LLM Node
 - ✅ Task 92: Remove Planning Module and Repair System
+- ✅ Task 108: Smart Trace Debug Output
 
 ### Planned Features (in order of priority)
 
 **Next**
+- Task 106: Workflow Iteration Cache
 - Task 125: Human-in-the-Loop Approval Gates
-- Task 108: Smart Trace Debug Output
 
 **Bug Fixes:**
 - Task 117: JSON Error Output for Stdin Routing
@@ -220,7 +221,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
-- Task 106: Workflow Iteration Cache
 
 **v1.0.0 - Security & Sandboxing:**
 - Task 126: Structured Output for Claude Code Node
