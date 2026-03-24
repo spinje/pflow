@@ -20,6 +20,7 @@ from pflow.core.trace_report import (
     _collect_errors,
     _compute_event_cost,
     _detect_anomalies,
+    _detect_batch_item_anomalies,
     _format_cost,
     _suggest_template_fixes,
     generate_report,
@@ -380,6 +381,47 @@ class TestBuildNodeFile:
         assert "LLM said this" in md
         # node_output's stdout/stderr/result not shown because llm_response path was taken
         assert "## Output" not in md
+
+    def test_code_node_shows_source_and_inputs(self) -> None:
+        """Code node report renders the source code and resolved input variables.
+
+        This is the key debugging view for code nodes: see what code ran and
+        what data it received. Without this, agents have to re-run the workflow
+        with print statements to inspect code node behavior.
+        """
+        event = _make_event(
+            node_id="transform",
+            node_type="PythonCodeNode",
+            node_params={"code": "result = len(inputs['data'])"},
+            template_resolutions={
+                "inputs": {
+                    "template": {"data": "${fetch.result}"},
+                    "resolved": {"data": [1, 2, 3]},
+                }
+            },
+            node_output={"result": 3, "stdout": ""},
+        )
+        md = _build_node_file(event)
+        assert "## Code" in md
+        assert "result = len(inputs['data'])" in md
+        assert "## Inputs" in md
+        assert '"data"' in md
+        assert "## Result" in md
+
+    def test_remaining_resolutions_shown_as_catch_all(self) -> None:
+        """Template resolutions not matching prompt/command/inputs get a catch-all section."""
+        event = _make_event(
+            node_id="fetch",
+            node_type="HttpNode",
+            template_resolutions={
+                "url": {"template": "${config.api_url}/users", "resolved": "https://api.example.com/users"},
+                "headers": {"template": {"Auth": "${config.token}"}, "resolved": {"Auth": "Bearer xyz"}},
+            },
+            node_output={"response": {"users": []}},
+        )
+        md = _build_node_file(event)
+        assert "## Resolved Parameters" in md
+        assert "api.example.com" in md
 
 
 # --- _build_node_summary() ---
@@ -929,6 +971,50 @@ class TestBatchItemWarnings:
         )
         md = _build_node_summary(event)
         assert "## Warnings" not in md
+
+    def test_llm_batch_empty_response_detected(self) -> None:
+        """LLM parent type with item having empty response triggers warning."""
+        batch_items = [
+            {"index": 0, "success": True, "duration_ms": 50, "node_output": {"response": ""}},
+            {"index": 1, "success": True, "duration_ms": 60, "node_output": {"response": "good"}},
+        ]
+        parent = _make_event(node_id="summarize", node_type="LLMNode")
+        warnings = _detect_batch_item_anomalies(batch_items, parent)
+        assert len(warnings) == 1
+        assert "Item 0" in warnings[0]
+        assert "LLM response is empty" in warnings[0]
+
+    def test_skips_failed_batch_items(self) -> None:
+        """Failed batch items should not generate anomaly warnings."""
+        batch_items = [
+            {"index": 0, "success": False, "duration_ms": 50, "node_output": {"response": ""}},
+            {"index": 1, "success": True, "duration_ms": 60, "node_output": {"response": "good"}},
+        ]
+        parent = _make_event(node_id="summarize", node_type="LLMNode")
+        warnings = _detect_batch_item_anomalies(batch_items, parent)
+        assert len(warnings) == 0
+
+
+class TestTopLevelBatchWarnings:
+    """Tests for batch item anomalies surfacing in the top-level summary."""
+
+    def test_top_level_summary_surfaces_batch_item_warnings(self) -> None:
+        """A batch event with items producing empty output shows warnings in _build_summary."""
+        batch_event = _make_event(
+            node_id="batch-llm",
+            node_type="LLMNode",
+            success=True,
+            batch_items=[
+                {"index": 0, "success": True, "duration_ms": 50, "node_output": {"response": ""}},
+                {"index": 1, "success": True, "duration_ms": 60, "node_output": {"response": "good data"}},
+            ],
+        )
+        trace = _make_trace(nodes=[batch_event])
+        summary = _build_summary(trace)
+
+        assert "## Warnings" in summary
+        assert "batch-llm" in summary
+        assert "LLM response is empty" in summary
 
 
 # --- _build_output_lookup() and _collect_errors() direct tests ---

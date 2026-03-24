@@ -387,8 +387,25 @@ def _append_error_section(events: list[dict[str, Any]], lines: list[str]) -> Non
 
 
 def _append_warning_section(events: list[dict[str, Any]], lines: list[str]) -> None:
-    """Append ## Warnings section if there are anomalies."""
+    """Append ## Warnings section if there are anomalies.
+
+    Checks both top-level events and batch items within container events,
+    so the top-level summary surfaces silent failures from batch items.
+    """
     anomalies = _detect_anomalies(events)
+
+    # Also surface batch item anomalies at the top level
+    for event in events:
+        if not event.get("success"):
+            continue
+        batch_items = event.get("batch_items", [])
+        if not batch_items:
+            continue
+        node_id = event.get("node_id", "?")
+        item_warnings = _detect_batch_item_anomalies(batch_items, event)
+        for w in item_warnings:
+            anomalies.append(f"**{node_id}**: {w}")
+
     if not anomalies:
         return
     lines.append("## Warnings")
@@ -452,15 +469,18 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
         for key, heading in [("stdout", "## stdout"), ("stderr", "## stderr")]:
             if key in output and str(output[key]).strip():
                 lines.extend([heading, "", f"```\n{output[key]}\n```", ""])
-        if "result" in output:
-            lines.append("## Result")
-            lines.append("")
-            result = output["result"]
-            if isinstance(result, (dict, list)):
-                lines.append(f"```json\n{json.dumps(result, indent=2, default=str)}\n```")
-            else:
-                lines.append(str(result))
-            lines.append("")
+        # Render primary output: "result" for code nodes, "response" for HTTP nodes
+        for key in ("result", "response"):
+            if key in output:
+                val = output[key]
+                heading = "## Result" if key == "result" else "## Response"
+                lines.append(heading)
+                lines.append("")
+                if isinstance(val, (dict, list)):
+                    lines.append(f"```json\n{json.dumps(val, indent=2, default=str)}\n```")
+                elif val is not None and str(val).strip():
+                    lines.append(str(val))
+                lines.append("")
         # Catch-all: render remaining keys not already shown
         shown_keys = {
             "stdout",
@@ -482,6 +502,50 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
             lines.append("")
 
 
+def _format_resolutions(event: dict[str, Any], lines: list[str]) -> None:
+    """Render template resolutions and static params as markdown sections.
+
+    Handles all node types: prompt (LLM), command (Shell), code+inputs (Python),
+    and a catch-all for any other resolved parameters (HTTP headers, file paths, etc.).
+    """
+    resolutions = event.get("template_resolutions", {})
+    shown: set[str] = set()
+
+    if "prompt" in resolutions:
+        lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])
+        shown.add("prompt")
+    elif event.get("llm_prompt"):
+        lines.extend(["## Prompt", "", event["llm_prompt"], ""])
+
+    if "command" in resolutions:
+        lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])
+        shown.add("command")
+
+    # Code nodes: source code from node_params (static, not in template_resolutions)
+    node_params = event.get("node_params", {})
+    if "code" in node_params and not isinstance(node_params["code"], dict):
+        lines.extend(["## Code", "", f"```python\n{node_params['code']}\n```", ""])
+
+    # Code/other nodes: resolved input variables
+    if "inputs" in resolutions:
+        resolved_inputs = resolutions["inputs"].get("resolved", {})
+        if resolved_inputs:
+            lines.extend(["## Inputs", ""])
+            if isinstance(resolved_inputs, dict):
+                lines.append(f"```json\n{json.dumps(resolved_inputs, indent=2, default=str)}\n```")
+            else:
+                lines.append(f"```\n{resolved_inputs}\n```")
+            lines.append("")
+        shown.add("inputs")
+
+    # Catch-all: any remaining template resolutions
+    remaining = {k: v.get("resolved", v) for k, v in resolutions.items() if k not in shown}
+    if remaining:
+        lines.extend(["## Resolved Parameters", ""])
+        lines.append(f"```json\n{json.dumps(remaining, indent=2, default=str)}\n```")
+        lines.append("")
+
+
 def _build_node_file(event: dict[str, Any]) -> str:
     """Build a single node's markdown file."""
     lines = [f"# {event.get('node_id', 'unknown')}", ""]
@@ -489,23 +553,47 @@ def _build_node_file(event: dict[str, Any]) -> str:
     _format_node_metadata(event, lines)
     lines.append("")
 
-    # Template resolutions — show rendered prompt/command
-    resolutions = event.get("template_resolutions", {})
-    if "prompt" in resolutions:
-        lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])
-    elif event.get("llm_prompt"):
-        lines.extend(["## Prompt", "", event["llm_prompt"], ""])
-
-    if "command" in resolutions:
-        lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])
-
+    _format_resolutions(event, lines)
     _format_node_output(event, lines)
 
     return "\n".join(lines)
 
 
-def _append_batch_item_warnings(batch_items: list[dict[str, Any]], lines: list[str]) -> None:
-    """Append ## Warnings section for batch items with suspicious output."""
+def _check_batch_item_anomaly(output: dict[str, Any], node_type: str) -> str | None:
+    """Check a single batch item's output for anomalies. Returns warning suffix or None."""
+    # Type-aware checks — same logic as _check_event_anomaly
+    if "LLM" in node_type:
+        response = output.get("response")
+        if response is not None and (response == "" or response == {}):
+            return "LLM response is empty"
+
+    if "Shell" in node_type:
+        stdout = output.get("stdout")
+        exit_code = output.get("exit_code")
+        if exit_code == 0 and stdout is not None and str(stdout).strip() == "":
+            return "stdout is empty (exit code 0)"
+
+    if "Python" in node_type or "Code" in node_type:
+        result = output.get("result")
+        if "result" in output and result is None:
+            return "result is None"
+
+    # Generic check for empty list in common keys
+    for key in ("response", "result", "stdout"):
+        val = output.get(key)
+        if isinstance(val, list) and len(val) == 0:
+            return f"`{key}` is empty list (0 items)"
+
+    return None
+
+
+def _detect_batch_item_anomalies(batch_items: list[dict[str, Any]], parent_event: dict[str, Any]) -> list[str]:
+    """Detect suspicious output from successful batch items.
+
+    Uses the same type-aware logic as _check_event_anomaly for consistency.
+    Returns warning strings like "Item 0: LLM response is empty".
+    """
+    node_type = parent_event.get("node_type", "")
     item_warnings: list[str] = []
     for item in batch_items:
         if not item.get("success"):
@@ -513,13 +601,24 @@ def _append_batch_item_warnings(batch_items: list[dict[str, Any]], lines: list[s
         idx = item.get("index", "?")
         output = item.get("node_output", {})
         if not output:
-            item_warnings.append(f"**Item {idx}**: produced no output")
-        else:
-            for key in ("response", "result", "stdout"):
-                val = output.get(key)
-                if val is not None and (val == "" or val == []):
-                    item_warnings.append(f"**Item {idx}**: `{key}` is empty")
-                    break
+            item_warnings.append(f"Item {idx}: produced no output")
+            continue
+        warning = _check_batch_item_anomaly(output, node_type)
+        if warning:
+            item_warnings.append(f"Item {idx}: {warning}")
+    return item_warnings
+
+
+def _append_batch_item_warnings(
+    batch_items: list[dict[str, Any]],
+    lines: list[str],
+    parent_event: dict[str, Any] | None = None,
+) -> None:
+    """Append ## Warnings section for batch items with suspicious output."""
+    # Use parent_event for type-aware detection when available
+    if parent_event is None:
+        parent_event = {}
+    item_warnings = _detect_batch_item_anomalies(batch_items, parent_event)
     if item_warnings:
         lines.append("## Warnings")
         lines.append("")
@@ -556,7 +655,7 @@ def _build_node_summary(event: dict[str, Any]) -> str:
             lines.append(f"| {idx} | {dur:.0f}ms | {cost} | {status} |")
         lines.append("")
 
-        _append_batch_item_warnings(batch_items, lines)
+        _append_batch_item_warnings(batch_items, lines, parent_event=event)
 
     sub_events = event.get("sub_workflow_events", [])
     _format_pipeline_table(sub_events, lines)
@@ -583,16 +682,7 @@ def _build_batch_item_file(item: dict[str, Any], parent_event: dict[str, Any]) -
         lines.append(f"- Error: {error}")
     lines.append("")
 
-    # Show rendered prompt/command (same logic as _build_node_file)
-    resolutions = item.get("template_resolutions", {})
-    if "prompt" in resolutions:
-        lines.extend(["## Prompt", "", str(resolutions["prompt"].get("resolved", "")), ""])
-    elif item.get("llm_prompt"):
-        lines.extend(["## Prompt", "", item["llm_prompt"], ""])
-
-    if "command" in resolutions:
-        lines.extend(["## Command", "", f"```bash\n{resolutions['command'].get('resolved', '')}\n```", ""])
-
+    _format_resolutions(item, lines)
     _format_node_output(item, lines)
 
     return "\n".join(lines)

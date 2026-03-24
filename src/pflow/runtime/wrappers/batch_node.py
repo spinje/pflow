@@ -84,6 +84,44 @@ from ..template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
 
+# Keys injected by the batch framework, not by the inner node.
+# A result with ONLY these keys (and nothing else meaningful) is "empty".
+_BATCH_META_KEYS = frozenset({"item", "error", "exception"})
+
+
+def _detect_empty_output_items(
+    exec_res: list[dict[str, Any] | None],
+    errors: list[dict[str, Any]],
+) -> list[int]:
+    """Find batch items that succeeded but produced empty output.
+
+    A result is "empty" when every non-meta key has an empty value (None, "",
+    [], {}). Meta keys ("item", "error", "exception", _-prefixed) are excluded
+    because they're injected by the batch framework, not the inner node.
+
+    This works for ANY node type — it doesn't assume which keys the node writes.
+    """
+    error_indices = {e["index"] for e in errors if "index" in e}
+    empty: list[int] = []
+    for idx, result in enumerate(exec_res):
+        if result is None or idx in error_indices:
+            continue
+        if not isinstance(result, dict):
+            continue
+        if result.get("error"):
+            continue
+        # Check if any non-meta key has a non-empty value
+        has_content = False
+        for key, val in result.items():
+            if key in _BATCH_META_KEYS or key.startswith("_"):
+                continue
+            if val is not None and val != "" and val != [] and val != {}:
+                has_content = True
+                break
+        if not has_content:
+            empty.append(idx)
+    return empty
+
 
 class PflowBatchNode(Node):
     """Batch node using PocketFlow's prep/exec/post lifecycle with isolated contexts.
@@ -927,14 +965,24 @@ class PflowBatchNode(Node):
             },
         )
 
-        # In continue mode with errors: push warning for DEGRADED status
-        # but return "default" so the workflow continues
+        # Detect items that succeeded but produced empty output (silent failures).
+        # These are invisible without explicit checking — the pipeline reports success
+        # but downstream nodes get empty/useless input.
+        empty_indices = _detect_empty_output_items(exec_res, self._errors)
+
+        # Push warnings for DEGRADED status
+        warning_parts: list[str] = []
         if self.error_handling == "continue" and self._errors:
-            error_summary = (
-                f"Batch '{self.node_id}' completed with {len(self._errors)} error(s) out of {len(exec_res)} items"
-            )
+            warning_parts.append(f"{len(self._errors)} error(s) out of {len(exec_res)} items")
+        if empty_indices:
+            indices_str = ", ".join(str(i) for i in empty_indices[:5])
+            if len(empty_indices) > 5:
+                indices_str += f" (+{len(empty_indices) - 5} more)"
+            warning_parts.append(f"{len(empty_indices)} item(s) produced empty output (items {indices_str})")
+
+        if warning_parts:
             if "__warnings__" not in shared:
                 shared["__warnings__"] = {}
-            shared["__warnings__"][self.node_id] = error_summary
+            shared["__warnings__"][self.node_id] = f"Batch '{self.node_id}': " + "; ".join(warning_parts)
 
         return "default"

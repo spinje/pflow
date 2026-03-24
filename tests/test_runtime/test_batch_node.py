@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from pflow.runtime.wrappers.batch_node import PflowBatchNode
+from pflow.runtime.wrappers.batch_node import PflowBatchNode, _detect_empty_output_items
 
 
 class MockInnerNode:
@@ -3015,3 +3015,165 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         )
         assert batch_result.get("count") == 2
         assert len(batch_result.get("errors", [])) == 2
+
+
+class TestDetectEmptyOutputItems:
+    """Unit tests for _detect_empty_output_items module-level function."""
+
+    def test_returns_empty_when_all_items_have_content(self):
+        """All items have non-empty content keys — returns empty list."""
+        exec_res = [
+            {"response": "hello", "item": "a"},
+            {"result": "world", "item": "b"},
+            {"stdout": "output", "item": "c"},
+            {"output": "data", "item": "d"},
+        ]
+        assert _detect_empty_output_items(exec_res, []) == []
+
+    def test_detects_items_with_empty_string_content(self):
+        """Items where all content keys are empty strings are detected."""
+        exec_res = [
+            {"response": "good", "item": "a"},
+            {"response": "", "result": "", "stdout": "", "output": "", "item": "b"},
+            {"response": "good", "item": "c"},
+        ]
+        result = _detect_empty_output_items(exec_res, [])
+        assert result == [1]
+
+    def test_detects_items_with_only_meta_keys(self):
+        """Items with only batch meta keys (item, _-prefixed) are detected as empty."""
+        exec_res = [
+            {"response": "good", "item": "a"},
+            {"item": "b", "_trace_id": "abc"},  # Only meta keys
+        ]
+        result = _detect_empty_output_items(exec_res, [])
+        assert result == [1]
+
+    def test_skips_none_results(self):
+        """None results (exception failures) are skipped, not counted as empty."""
+        exec_res = [
+            {"response": "good", "item": "a"},
+            None,  # Exception failure
+            {"response": "good", "item": "c"},
+        ]
+        result = _detect_empty_output_items(exec_res, [])
+        assert result == []
+
+    def test_skips_items_in_error_list(self):
+        """Items whose indices appear in the errors list are skipped."""
+        exec_res = [
+            {"response": "good", "item": "a"},
+            {"item": "b"},  # No content keys, but in error list
+            {"response": "good", "item": "c"},
+        ]
+        errors = [{"index": 1, "item": "b", "error": "something failed"}]
+        result = _detect_empty_output_items(exec_res, errors)
+        assert result == []
+
+    def test_skips_items_with_error_key(self):
+        """Items with an 'error' key in their result dict are skipped."""
+        exec_res = [
+            {"response": "good", "item": "a"},
+            {"error": "Processing failed", "item": "b"},
+            {"response": "good", "item": "c"},
+        ]
+        result = _detect_empty_output_items(exec_res, [])
+        assert result == []
+
+    def test_detects_items_with_none_content_values(self):
+        """Items where content keys have None values are detected as empty."""
+        exec_res = [
+            {"response": None, "result": None, "item": "a"},
+            {"response": "good", "item": "b"},
+        ]
+        result = _detect_empty_output_items(exec_res, [])
+        assert result == [0]
+
+    def test_non_standard_output_keys_not_flagged(self):
+        """Nodes writing to non-standard keys (file, git, etc.) are NOT false positives.
+
+        This is the most important test here. Without the meta-key approach,
+        a file-read batch would flag every item as "empty" because it writes
+        to "content"/"path" which aren't in any hardcoded content-key list.
+        """
+        exec_res = [
+            # File read node: writes "content" and "path"
+            {"content": "file data", "path": "output/foo.txt", "item": "foo.txt"},
+            # Git status node: writes custom keys
+            {"branch": "main", "changes": ["file.py"], "item": "repo1"},
+            # Workflow executor: auto-exposed child output
+            {"analysis": {"score": 0.8}, "item": "doc1"},
+        ]
+        result = _detect_empty_output_items(exec_res, [])
+        assert result == [], "Non-standard output keys should count as content"
+
+
+class TestEmptyOutputWarnings:
+    """Integration tests for empty output warnings in PflowBatchNode.post()."""
+
+    def test_empty_output_pushes_warning(self):
+        """Batch items that succeed with empty output push a warning to __warnings__."""
+
+        class EmptyOutputNode:
+            """Inner node that produces empty output for specific indices."""
+
+            def __init__(self, node_id: str, empty_indices: set[int]):
+                self.node_id = node_id
+                self._empty_indices = empty_indices
+
+            def _run(self, shared: dict) -> str:
+                idx = shared.get("__index__", 0)
+                if idx in self._empty_indices:
+                    shared[self.node_id] = {"result": ""}
+                else:
+                    shared[self.node_id] = {"response": f"content-{idx}"}
+                return "default"
+
+        inner = EmptyOutputNode("test_node", empty_indices={0, 2})
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+
+        shared: dict = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert "__warnings__" in shared
+        assert "test_node" in shared["__warnings__"]
+        warning = shared["__warnings__"]["test_node"]
+        assert "2 item(s) produced empty output" in warning
+        assert "items 0, 2" in warning
+
+    def test_empty_output_combined_with_errors(self):
+        """Both errors AND empty output are combined in a single warning message."""
+
+        class MixedResultNode:
+            """Inner node: item 0 = error, item 1 = empty, item 2 = good."""
+
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+                self._call_count = 0
+
+            def _run(self, shared: dict) -> str:
+                idx = shared.get("__index__", 0)
+                self._call_count += 1
+                if idx == 0:
+                    raise ValueError("Intentional error")
+                elif idx == 1:
+                    shared[self.node_id] = {"result": ""}
+                else:
+                    shared[self.node_id] = {"response": "good"}
+                return "default"
+
+        inner = MixedResultNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared: dict = {"data": ["a", "b", "c"]}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert "__warnings__" in shared
+        warning = shared["__warnings__"]["test_node"]
+        # Both parts should be present in the combined message
+        assert "error" in warning.lower()
+        assert "empty output" in warning

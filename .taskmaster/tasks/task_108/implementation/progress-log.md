@@ -1343,3 +1343,59 @@ PR review found 2 critical + 5 warnings + 6 suggestions. Evaluation: 4 confirmed
 ---
 
 *Task 108 complete. All phases implemented, reviewed, polished, and documented.*
+
+---
+
+## Post-Merge Polish: Runtime Warnings, Report Completeness, Bug Fixes
+
+### [2026-03-24] — Motivated by agent experience report analysis
+
+An agent's braindump from a real lyrics-generation pipeline (11 nodes, ~$1.58/run) reported "Run 0016 produced entirely empty output and looked successful." We investigated each claim against current code, fixed gaps, and documented remaining issues.
+
+### Changes (3 production files, 2 test files, 2 research docs)
+
+**Runtime empty output warnings (`batch_node.py`)**:
+- New `_detect_empty_output_items()` function detects batch items that succeeded but all non-meta keys are empty/None/""/[]/{}
+- Uses meta-key exclusion (not hardcoded content keys) to avoid false positives on file/git/custom nodes
+- `post()` combines error warnings and empty-output warnings into a single `__warnings__` message → DEGRADED status
+- Conservative by design: real nodes (shell, LLM, HTTP) always write metadata keys with values, so this only fires for truly empty output (e.g., sub-workflow items that produced nothing)
+
+**Report completeness (`trace_report.py`)**:
+- **Code node visibility**: Extracted `_format_resolutions()` helper. Now renders `## Code` (source from `node_params`), `## Inputs` (resolved input variables), and `## Resolved Parameters` (catch-all for HTTP URLs, headers, etc.)
+- **HTTP response body fix**: `response` was in `shown_keys` (excluded from catch-all) but had no dedicated rendering for non-LLM nodes. Now renders `## Response` for both LLM and HTTP nodes.
+- **Top-level batch item warnings**: `_append_warning_section()` now scans batch items within container events, surfacing anomalies in the top-level `summary.md`
+- **Type-aware batch item detection**: Unified `_append_batch_item_warnings` with `_check_event_anomaly` logic via new `_check_batch_item_anomaly()` and `_detect_batch_item_anomalies()` functions
+
+**Tests**:
+- 10 new tests in `test_batch_node.py` (unit + integration for empty detection)
+- 5 new tests in `test_trace_report.py` (type-aware batch warnings, top-level summary, code node rendering, catch-all params)
+- 7 superficial tests removed during quality review
+- Total: 4346 → 4363 (+17 net)
+
+**Research docs**:
+- `.taskmaster/tasks/task_108/research/silent-failure-analysis.md` — Three layers of empty-value failures, what's solved, what's not, possible solutions
+- `.taskmaster/tasks/task_120/starting-context/broader-validation-gap.md` — Note for Task 120 implementer about output validation extension
+
+### Bugs Found During Manual Testing
+
+1. **HTTP response body invisible in reports** (fixed) — `_format_node_output` had `"response"` in `shown_keys` but no rendering path for non-LLM nodes
+2. **Code node silently accepts type annotations in inputs YAML** (filed as #148) — `text: str = ${fetch.stdout}` produces `"str = hello world"` with no error
+
+### Key Design Decision: Conservative Runtime Detection
+
+The runtime `_detect_empty_output_items` only flags items where ALL non-meta keys are empty. This is deliberately more conservative than the report's type-aware detection (`_detect_batch_item_anomalies`). Real nodes always write metadata keys (`exit_code`, `command`, `llm_usage`) with non-empty values, so the runtime check catches the extreme case (truly nothing) while the report catches the nuanced case (primary content empty but metadata present).
+
+### Manual Test Results
+
+| Test | Result |
+|------|--------|
+| Code node `## Code` + `## Inputs` in report | Pass |
+| HTTP `## Resolved Parameters` + `## Response` in report | Pass |
+| Batch shell: report warnings in top-level summary | Pass — "Item 1: stdout is empty (exit code 0)" |
+| Shell batch: runtime NOT triggered (correct) | Pass — `command` and `exit_code` are non-empty non-meta values |
+
+4363 tests pass, `make check` clean.
+
+---
+
+*Post-merge polish complete. Remaining gap (linear pipeline empty values) documented for Task 120.*
