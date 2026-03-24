@@ -5,9 +5,12 @@ of markdown files — one file per node, with summaries at each level.
 """
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def _safe_name(name: str) -> str:
@@ -21,6 +24,9 @@ def _compute_event_cost(event: dict[str, Any]) -> float | None:
 
     Returns None if no cost data exists anywhere in the tree.
     Returns 0.0 if cost data exists but all costs are zero.
+
+    NOTE: This traverses the same tree structure as _collect_llm_summary() in
+    workflow_trace.py. If the trace event shape changes, both must be updated.
     """
     total = 0.0
     found_any = False
@@ -240,11 +246,10 @@ def generate_report(trace_path: str | Path, output_path: str | None = None) -> P
     # Require trace format 2.0.0+ (has node_output, template_resolutions)
     version = trace.get("format_version", "unknown")
     if not version.startswith("2."):
-        import logging
-
-        logging.getLogger(__name__).error(
-            f"Trace format {version} not supported. Report generation requires format 2.0.0+. "
-            f"Re-run the workflow to generate a new trace."
+        logger.error(
+            "Trace format %s not supported. Report generation requires format 2.0.0+. "
+            "Re-run the workflow to generate a new trace.",
+            version,
         )
         return None
 
@@ -462,6 +467,8 @@ def _format_node_output(event: dict[str, Any], lines: list[str]) -> None:
             "command",
             "stdout_is_binary",
             "stderr_is_binary",
+            "llm_usage",
+            "response",
         }
         remaining = {k: v for k, v in output.items() if k not in shown_keys}
         if remaining:

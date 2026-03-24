@@ -1270,3 +1270,58 @@ Two independent reviews (narrative + line-verified) produced 9 deduplicated find
 ---
 
 *Phase 2 complete with review fixes. `summary.md` is now actionable — errors, suggestions, warnings, and cost data surface without opening individual node files.*
+
+---
+
+## Cleanup: Docs, Deprecation, and Final Review Fixes
+
+### Docs & Deprecation
+
+Updated all agent instructions and user-facing docs to reference `--report` / `pflow trace report` instead of manual `jq` trace parsing. Removed `scripts/analyze-trace/` entirely (no users, `--report` replaces it).
+
+**Files updated (8)**:
+- `src/pflow/cli/resources/cli-agent-instructions.md` — replaced Phase 3 trace debugging, template error debugging, trace file description
+- `src/pflow/mcp_server/resources/instructions/mcp-agent-instructions.md` — same 3 sections
+- `src/pflow/mcp_server/resources/instructions/mcp-sandbox-agent-instructions.md` — updated trace debugging tip
+- `docs/guides/debugging.mdx` — added Execution Reports section with git diff workflow, documented reports as ephemeral views of durable trace files
+- `docs/reference/cli/index.mdx` — documented `--report`, `--report-dir`, `pflow trace report`
+- `docs/reference/experimental.mdx` — replaced `analyze.py` section with execution reports
+- `scripts/README.md` — removed analyze-trace reference
+
+**Files deleted**: `scripts/analyze-trace/` (analyze.py, compare.py, latest.sh, compare-latest.sh, README.md)
+
+**Key insight documented**: Reports are ephemeral views — trace files are the durable history. Every run saves a timestamped trace. Regenerate a report from any past run with `pflow trace report <trace-file>`.
+
+### First Code Review Fixes
+
+4 fixes from initial review evaluation:
+- Cross-reference comment on `_compute_event_cost` pointing to `_collect_llm_summary`
+- `import logging` moved from inline to module level in `trace_report.py`
+- `trace.py` CLI: added `@click.pass_context`, replaced `raise SystemExit(1)` with `ctx.exit(1)`
+- 2 CLI tests added: `test_report_flag_generates_report`, `test_report_flag_overrides_no_trace`
+
+### Second Code Review Fixes
+
+Updated review with line-by-line methodology found 1 critical + 6 warnings + 6 suggestions. Evaluation: 5 confirmed, 4 disputed, 2 already fixed, 1 deferred.
+
+**Fixes applied (4)**:
+
+| # | Fix | File |
+|---|-----|------|
+| 1 | **C1**: Removed dead "degraded" path from `_determine_trace_status()` — no code ever sets `warning` on trace events, so `"degraded"` was unreachable. Simplified to `return "failed" if failed else "success"` | `workflow_trace.py:256-263` |
+| 2 | **W1**: Added `"llm_usage"` and `"response"` to `shown_keys` in `_format_node_output` — prevents redundant display in catch-all `## Output` block when `llm_response` is absent | `trace_report.py:461-472` |
+| 3 | **W2**: Added `_wrapped` attribute check to `_find_template_wrapper` and `_find_batch_or_workflow_node` — consistent with `_get_actual_node_class` and `_get_node_params` traversal | `instrumented_wrapper.py:260-298` |
+| 4 | **W4**: Standardized batch item traversal order in `_collect_llm_summary` — now checks `llm_call` first then `events`, matching `_collect_llm_calls_from_events` and `_compute_event_cost`. Added inline invariant comment. | `workflow_trace.py:291-305` |
+
+**Disputed findings**:
+- W3 (`_find_template_wrapper` returns NamespacedNodeWrapper): by design — `__getattr__` delegation is the established pattern
+- W5 (`last_resolutions` fragility): already documented as accepted tech debt
+- W6 (truthiness drops empty values): `node_output={}` absent from trace is fine — report handles with `.get("node_output", {})`, no direct trace consumers exist
+- S2 (`generate_report` returns None): CLI handles errors, raising adds try/except at every call site for same behavior
+- S3 (report overwrites): intentional for git diff workflow, documented
+
+4348 tests pass, `make check` clean.
+
+---
+
+*Task 108 complete. All phases implemented, reviewed, polished, and documented.*

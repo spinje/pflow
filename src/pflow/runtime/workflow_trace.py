@@ -254,20 +254,13 @@ class WorkflowTraceCollector:
         self.json_output = json_output
 
     def _determine_trace_status(self) -> str:
-        """Determine tri-state status from execution events.
+        """Determine status from execution events.
 
         Returns:
-            Status string: "success", "degraded", or "failed"
+            Status string: "success" or "failed"
         """
-        failed = [e for e in self.events if not e.get("success", True)]
-        if failed:
-            return "failed"
-
-        warned = [e for e in self.events if e.get("warning")]
-        if warned:
-            return "degraded"
-
-        return "success"
+        failed = any(not e.get("success", True) for e in self.events)
+        return "failed" if failed else "success"
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.
@@ -296,13 +289,9 @@ class WorkflowTraceCollector:
                     models.add(model)
 
             # Recurse into batch items
+            # Invariant: items have llm_call XOR events, never both (see _collect_llm_calls_from_events)
             for item in event.get("batch_items", []):
-                sub = self._collect_llm_summary(item.get("events", []))
-                total_calls += sub.get("total_calls", 0)
-                total_tokens += sub.get("total_tokens", 0)
-                total_cost += sub.get("total_cost_usd", 0)
-                models.update(sub.get("models_used", []))
-                # Also count LLM data on the batch item itself
+                # Leaf item with direct LLM call
                 if "llm_call" in item:
                     total_calls += 1
                     total_tokens += item["llm_call"].get("total_tokens", 0)
@@ -310,6 +299,12 @@ class WorkflowTraceCollector:
                     model = item["llm_call"].get("model")
                     if model:
                         models.add(model)
+                # Sub-workflow item with nested events
+                sub = self._collect_llm_summary(item.get("events", []))
+                total_calls += sub.get("total_calls", 0)
+                total_tokens += sub.get("total_tokens", 0)
+                total_cost += sub.get("total_cost_usd", 0)
+                models.update(sub.get("models_used", []))
 
             # Recurse into sub-workflow events
             sub_events = event.get("sub_workflow_events", [])

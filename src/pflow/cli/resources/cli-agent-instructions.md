@@ -1422,6 +1422,10 @@ pflow trace report
 # - Batch items: per-item files with individual prompts/responses
 # - Sub-workflows: nested directories mirroring workflow structure
 
+# Reports are ephemeral views — trace files are the durable history.
+# Every run saves a timestamped trace. Regenerate a report from any past run:
+pflow trace report ~/.pflow/debug/workflow-trace-my-workflow-20260323-150000.json -o /tmp/old
+
 # Comparing runs: stage the report, edit a prompt, re-run, then git diff
 # shows exactly what changed per-node (prompt diffs + response diffs)
 pflow workflow.pflow.md --report-dir ./report/

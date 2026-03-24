@@ -272,6 +272,8 @@ class InstrumentedNodeWrapper:
                 current = current.inner_node
             elif hasattr(current, "_inner_node"):
                 current = current._inner_node
+            elif hasattr(current, "_wrapped"):
+                current = current._wrapped
             else:
                 break
         return None
@@ -293,6 +295,8 @@ class InstrumentedNodeWrapper:
                 current = current.inner_node
             elif hasattr(current, "_inner_node"):
                 current = current._inner_node
+            elif hasattr(current, "_wrapped"):
+                current = current._wrapped
             else:
                 break
         return (None, None)

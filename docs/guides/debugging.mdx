@@ -58,10 +58,14 @@ The report includes:
 - **Batch items** — per-item files showing individual prompts and responses
 - **Sub-workflows** — nested directories mirroring the workflow structure
 
-You can also generate a report from any previous run:
+Reports are ephemeral — the default location is overwritten each run. The trace files are the durable history. You can regenerate a report from any previous run:
 
 ```bash
+# Most recent trace
 pflow trace report
+
+# A specific past run
+pflow trace report ~/.pflow/debug/workflow-trace-my-workflow-20260323-150000.json -o /tmp/old
 ```
 
 ### Comparing runs with git diff
