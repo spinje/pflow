@@ -221,6 +221,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 39: Task Parallelism in Workflows
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
+- Task 133: Unified Per-Node Storage for Trace and Cache
 
 **v1.0.0 - Security & Sandboxing:**
 - Task 126: Structured Output for Claude Code Node

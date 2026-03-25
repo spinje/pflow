@@ -1,455 +1,239 @@
-# Task 106: Automatic Workflow Iteration Cache
+# Task 106: Workflow Iteration Cache
 
 ## Description
-Implement automatic caching of node execution results during workflow.json iteration, enabling AI agents to rapidly test and fix workflows without re-executing completed nodes. Zero configuration required - caching is automatic for workflow files, invisible to the agent, and prevents both wasted computation and duplicate side effects.
+
+Memoization-based caching for workflow node execution. When an AI agent iterates on a workflow file (edit prompt, re-run, evaluate, repeat), unchanged nodes are served from a disk-persisted cache instead of re-executing. Same mechanism works at every level: top-level nodes, sub-workflow nodes, sub-sub-workflow nodes. Zero configuration — caching is automatic for file-based workflows.
 
 ## Status
+
 not started
 
-## Dependencies
-- Task 89: Implement Structure-Only Mode and Selective Data Retrieval - Provides ExecutionCache patterns and infrastructure to extend
-- Task 72: Implement MCP Server for pflow - The MCP tools need to support the same caching behavior as CLI
-
 ## Priority
+
 high
 
-## Context
+## Problem
 
-### The Problem
-
-When AI agents iterate on workflow.json files:
+When AI agents iterate on `.pflow.md` workflow files, every re-run executes ALL nodes from scratch:
 
 ```
-Iteration 1: pflow ./workflow.json
-  → Node 1: ✓ (5s, $0.02)
-  → Node 2: ✓ (3s, $0.01)
-  → Node 3: ✗ fails
+Run 1: pflow workflow.pflow.md
+  → fetch-sources      ✓ (4s)
+  → analyze-sources    ✓ (16s, 6 LLM calls)
+  → generate-concepts  ✓ (10s, 1 LLM call)
+  → create-songs       ✓ (200s, 4 sub-workflows × 12 nodes each)
+  → evaluate           ✓ (15s)
 
-Agent fixes node 3...
+Agent edits write-lyrics.prompt.md (inside the create-songs sub-workflow)...
 
-Iteration 2: pflow ./workflow.json
-  → Node 1: ✓ (5s, $0.02)  ← WASTED
-  → Node 2: ✓ (3s, $0.01)  ← WASTED
-  → Node 3: ✓ (4s, $0.02)
+Run 2: pflow workflow.pflow.md
+  → fetch-sources      ✓ (4s)   ← WASTED
+  → analyze-sources    ✓ (16s)  ← WASTED
+  → generate-concepts  ✓ (10s)  ← WASTED
+  → create-songs       ✓ (200s) ← MOSTLY WASTED (only write-lyrics changed)
+  → evaluate           ✓ (15s)  ← runs with new data (correct)
 ```
 
-**Problems:**
-1. **Cost**: Re-running LLM nodes costs money
-2. **Time**: 8 seconds wasted per iteration
-3. **Side effects**: GitHub issues created twice, emails sent twice, etc.
-4. **Agent friction**: No way to avoid this without complex checkpoint management
+Cost: ~$1.58 and ~280s per iteration. Over 10+ iterations, that's significant wasted time and money. Side effects (GitHub issues, emails, file writes) are also duplicated.
 
-### The Solution
+## Solution
 
-Automatic iteration caching - no flags, no configuration:
+Memoization-based caching. Each node is treated as a pure function:
 
 ```
-Iteration 1: pflow ./workflow.json
-  → Node 1: ✓ (5s) → cached
-  → Node 2: ✓ (3s) → cached
-  → Node 3: ✗ fails
-
-Agent fixes node 3...
-
-Iteration 2: pflow ./workflow.json
-  → Node 1: ✓ cached (0.01s)
-  → Node 2: ✓ cached (0.01s)
-  → Node 3: ✓ (4s)
+cache_key = hash(node_config + resolved_inputs)
+if cache_key in cache → return cached output
+else → execute, store result
 ```
 
-## Scope
+**Core principle**: Same config + same inputs = same output. This applies identically at every level of the execution tree. No special sub-workflow logic, no cascade rules — just memoization.
 
-### In Scope
+With caching, the same iteration becomes:
 
-| Context | Caching |
-|---------|---------|
-| `pflow ./workflow.json` | ✅ Automatic |
-| `pflow /absolute/path/workflow.json` | ✅ Automatic |
-| `pflow workflow.json` (relative) | ✅ Automatic |
+```
+Run 2 (after editing write-lyrics.prompt.md):
+  → fetch-sources      ✓ cached (instant)
+  → analyze-sources    ✓ cached (instant)
+  → generate-concepts  ✓ cached (instant)
+  → create-songs       re-executes, but INSIDE each song sub-workflow:
+      → creative-direction  ✓ cached (same inputs, same config)
+      → song-architecture   ✓ cached
+      → choose-chorus       ✓ cached (saves ~50s per song!)
+      → write-lyrics        RE-EXECUTES (prompt file changed)
+      → downstream nodes    RE-EXECUTE (inputs changed)
+  → evaluate           RE-EXECUTES (inputs changed)
+```
 
-### Out of Scope
+Three composable flags provide the full development loop:
 
-| Context | Caching | Reason |
+```bash
+pflow workflow.pflow.md                                # full run + cache
+pflow workflow.pflow.md --only write-lyrics             # run just one node (cached upstream)
+pflow workflow.pflow.md --only write-lyrics tone=dark   # override an input
+pflow workflow.pflow.md --no-cache                      # bypass cache entirely
+```
+
+## Design Decisions
+
+- **Memoization, not cascade invalidation**: We do NOT use "upstream re-executed → downstream must too." Instead, we compare actual inputs. If upstream re-executes but produces the same output, downstream stays cached. This is strictly more efficient and conceptually consistent at every level.
+
+- **Input comparison at template resolution time**: The cache check happens AFTER template resolution (which is cheap — just dict lookups). We hash the resolved template values to determine if inputs changed. This avoids needing compile-time dependency analysis.
+
+- **Separate cache storage from trace**: The trace system stores 17MB per run for the lyrics generator workflow (LLM prompts, responses, template resolutions, nested event trees). The cache only needs ~3MB (node outputs + metadata). Different purposes, different access patterns, different files. Future unification opportunity noted but deferred.
+
+- **Cache accumulates (not latest-only)**: Like a real memoization cache, old entries are kept. Running with input A, then input B, then input A again hits cache on the third run. TTL-based eviction bounds disk growth.
+
+- **Per-workflow-file caching, keyed by content + inputs**: A sub-workflow's cache is portable — it doesn't matter if it was run standalone or as part of a parent. Same file + same inputs = same cache. The cache key for sub-workflows is `hash(workflow_path + workflow_content + child_params)`.
+
+- **`--only <node>` instead of separate `run-step` command**: The three modes (full run, re-run one node, standalone execution with manual inputs) are all combinations of `--only`, `--no-cache`, and `key=value` overrides. One command, composable flags.
+
+- **`--no-cache` (not `--fresh`)**: Standard CLI convention (Docker, npm, pip). Self-documenting. Click supports `--cache/--no-cache` paired flags natively.
+
+- **Whole-batch caching for MVP**: Cache entire batch results, not individual items. Per-item caching only matters for partial failure recovery (3 of 4 items succeed, 1 fails from transient error). Narrow edge case — defer to later.
+
+- **Extend existing `__execution__` mechanism**: The instrumented wrapper already has config hashing, cache checking, cache-hit trace recording. We're adding disk persistence and input-hash-based validation, not building from scratch.
+
+## Dependencies
+
+None. The existing instrumented wrapper, template wrapper, and trace system provide the integration points.
+
+## Requirements
+
+### Cache Validity
+
+- Cache key is `hash(config_hash + resolved_input_hash)` per node invocation
+- Config hash includes: node type, ALL params (static + template), batch config. Excludes `_source_lines` metadata (noise — whitespace changes shouldn't invalidate)
+- Input hash includes: resolved template values after `TemplateAwareNodeWrapper` resolves `${...}` expressions
+- Nodes without templates: config hash alone is sufficient (no upstream data dependency)
+- File-resolved params with templates (e.g., prompt file containing `${var}`): file CONTENT must be included in the config hash. The file resolver already inlines content into params at compile time, but template params live on `TemplateAwareNodeWrapper.template_params`, not on the inner node. The enhanced config hash must include these.
+
+### Sub-Workflow Caching
+
+- Same memoization mechanism at every level — no special sub-workflow logic
+- Sub-workflow cache key: `hash(workflow_file_path + workflow_content_hash + child_params)`
+- `child_params` = resolved non-reserved params from `WorkflowExecutor.prep()` — the canonical input dict
+- Cache is portable: same `.pflow.md` with same inputs hits cache regardless of whether run standalone or as sub-workflow
+- For batch sub-workflows: each batch item gets different resolved `child_params` (templates like `${doc.name}` resolved per-item), producing different cache keys. This is correct — different items should cache independently.
+
+### Cache Storage
+
+- Separate from trace files (different purpose, access pattern, and lifecycle)
+- Lean format: per-node entries containing only `cache_key`, `action` (string returned by node for flow routing), `output` (the data to restore into shared store), and `output_hash` (for quick comparison)
+- Accumulating (memoization — old entries kept for different input combinations)
+- TTL-based eviction to bound disk growth (default 24h, configurable)
+- Location: `~/.pflow/cache/` directory
+
+### CLI Flags
+
+- `--cache/--no-cache` (default: cache enabled): Bypass memoization entirely when `--no-cache` is set
+- `--only <node_id>`: Execute workflow up to and including the named node, then stop. Upstream nodes served from cache (if available). Downstream nodes do NOT execute.
+- `key=value` positional args: Override inputs. Injected into `execution_params` before compilation, flow through both shared store and `initial_params` paths. Override cached upstream outputs.
+- All flags are composable and orthogonal
+
+### Scope
+
+- **In scope**: File-based workflow execution (`pflow ./workflow.pflow.md`, `pflow /path/to/workflow.pflow.md`)
+- **Out of scope**: Saved/named workflows (`pflow my-saved-workflow`) — these are production artifacts, always run fresh
+- **Out of scope**: Per-batch-item caching, CLI cache commands (`pflow cache status/clear`), unifying trace + cache storage
+
+## Implementation Notes
+
+### Integration Points (verified by codebase investigation)
+
+**Template wrapper — resolve without executing:**
+- `TemplateAwareNodeWrapper._run()` resolves templates at lines 509-662, then calls `inner_node._run()` at line 667. Template resolution is side-effect-free (only reads from shared store context).
+- Add a `resolve_templates(shared)` method that performs resolution without execution. The instrumented wrapper calls this to compute the input hash for the cache key.
+- After resolution, `merged_params` is a simple dict that can be serialized and hashed.
+
+**Instrumented wrapper — enhanced cache check:**
+- Current `_check_cache_validity()` only checks config hash against `__execution__["node_hashes"]`. For memoization, it needs to also check the resolved input hash.
+- Current `_compute_node_config()` traverses to innermost node and reads only static params. Must be enhanced to include template params from `TemplateAwareNodeWrapper` and batch config from `PflowBatchNode`.
+- Current hash includes `_source_lines` metadata (noise). Exclude these.
+- `_handle_cached_execution()` already records `cached=True` trace events and fires progress callbacks. Reuse this for memoization cache hits.
+
+**`--only` flag — override `get_next_node`:**
+- PocketFlow's `Flow._orch()` loop terminates when `get_next_node()` returns `None`.
+- After `compile_ir_to_flow()`, override `flow.get_next_node` to return `None` when `curr.node_id == stop_after_node_id`. Same monkey-patch pattern as existing `run_with_hooks`.
+- No PocketFlow modification needed.
+
+**Sub-workflow caching:**
+- `WorkflowExecutor.prep()` produces `prep_res["child_params"]` — the canonical resolved input dict (all non-reserved params, fully resolved by parent's `TemplateAwareNodeWrapper`).
+- This is the clean interception point for computing the sub-workflow cache key.
+- `_create_child_storage()` creates child shared store from `child_params.copy()` + infrastructure keys. Cache can pre-populate this with cached node outputs.
+
+**CLI arg flow:**
+- `key=value` pairs are parsed by `parse_workflow_params()` in `cli/param_parsing.py`
+- Placed at root of shared store via `_initialize_shared_store()`
+- Also passed as `initial_params` to every `TemplateAwareNodeWrapper`
+- `initial_params` overrides shared store in resolution context (`context.update(self.initial_params)`)
+- Override injection: add to `execution_params` before compilation — flows through both paths naturally
+
+### Config Hash Gaps (current state → needed state)
+
+| Element | Current | Needed |
 |---------|---------|--------|
-| `pflow my-saved-workflow` | ❌ None | Saved workflows are validated, no iteration needed |
-| `pflow "natural language"` | ❌ None | Planner generates new workflow each time |
-| `pflow registry run node` | N/A | Task 89 handles this separately |
+| Node type (class name) | Included | Keep |
+| Static params (non-template) | Included | Keep |
+| Template params | **Missing** (on TemplateAwareNodeWrapper, not inner node) | Include |
+| Batch config | **Missing** (on PflowBatchNode) | Include |
+| Sub-workflow file content | **Missing** (only path string in params) | Include content hash |
+| `_source_lines` metadata | **Included** (noise) | Exclude |
+| Resolved template values | **Missing** | This becomes the input hash |
 
-### Key Principle
+### Cache File Design Note
 
-**Saved workflows are production artifacts.** They should never be modified by agents. If iteration is needed, agents copy to pwd and work on the file there. This task only caches file-based workflow execution.
+The trace system stores per-node `node_output` (full data, no truncation) — the same data the cache needs. In a future task, the trace could be restructured as per-node files (content-addressed store), unifying trace and cache storage. For now, accept the ~3MB duplication per workflow run. Design the cache format to be compatible with future unification.
 
-## Details
+## Verification
 
-### Cache Architecture
+### Core Memoization
+- Second run of unchanged workflow: all nodes served from cache, no execution
+- Edit a node's prompt file: that node + downstream re-execute, upstream cached
+- Edit a prompt file inside a sub-workflow: sub-workflow re-executes but unchanged internal nodes are cached
+- Same config + same inputs from different runs: cache hit regardless of time between runs
+- Upstream re-executes but produces same output: downstream stays cached (no false invalidation)
 
-**Location:** `~/.pflow/cache/workflow-iterations/{workflow_path_hash}/`
+### Sub-Workflow Caching
+- Sub-workflow run standalone, then as part of parent with same inputs: cache hit
+- Batch sub-workflow with 4 items: each item caches independently (different inputs → different keys)
+- Edit a file deep in sub-sub-workflow: only affected nodes re-execute, rest cached
 
-**Structure:**
-```
-~/.pflow/cache/workflow-iterations/
-  └── a1b2c3d4/                      # hash of absolute workflow path
-      ├── metadata.json              # workflow info, timestamps
-      ├── node_1.json                # node 1 outputs
-      ├── node_2.json                # node 2 outputs
-      └── ...
-```
-
-**Metadata file:**
-```json
-{
-  "workflow_path": "/Users/dev/project/workflow.json",
-  "workflow_hash": "abc123...",
-  "created_at": "2026-01-03T12:00:00Z",
-  "last_accessed": "2026-01-03T12:05:00Z",
-  "nodes": {
-    "node_1": {
-      "config_hash": "def456...",
-      "status": "completed",
-      "cached_at": "2026-01-03T12:00:05Z"
-    },
-    "node_2": {
-      "config_hash": "ghi789...",
-      "status": "completed",
-      "cached_at": "2026-01-03T12:00:08Z"
-    },
-    "node_3": {
-      "config_hash": "jkl012...",
-      "status": "failed",
-      "error": "Template variable ${undefined} not found"
-    }
-  }
-}
-```
-
-**Node output file:**
-```json
-{
-  "node_id": "node_1",
-  "node_type": "llm",
-  "config_hash": "def456...",
-  "outputs": {
-    "response": "...",
-    "llm_usage": {...}
-  },
-  "execution_time_ms": 5000,
-  "cached_at": "2026-01-03T12:00:05Z"
-}
-```
-
-### Cache Invalidation
-
-**Automatic invalidation when:**
-
-1. **Node config changed** - hash(node.type + node.params + node.batch) differs
-2. **Upstream node invalidated** - if node_1 re-runs, invalidate node_2+
-3. **Workflow structure changed** - node added/removed/reordered before this node
-4. **TTL expired** - 24 hours (configurable via settings)
-
-**NOT invalidated when:**
-- Downstream nodes change (node_3 change doesn't invalidate node_1)
-- Node purpose/comments change (cosmetic)
-- Workflow metadata changes (inputs, outputs declarations)
-
-### Cache Hit Logic
-
-```python
-def should_use_cache(node_id: str, workflow_ir: dict, cache: IterationCache) -> bool:
-    """Determine if cached output can be used."""
-
-    # 1. Cache entry exists?
-    if not cache.has_node(node_id):
-        return False
-
-    # 2. Node config unchanged?
-    current_hash = compute_node_hash(workflow_ir, node_id)
-    cached_hash = cache.get_node_hash(node_id)
-    if current_hash != cached_hash:
-        return False
-
-    # 3. All upstream nodes are cache hits?
-    for upstream_id in get_upstream_nodes(workflow_ir, node_id):
-        if not cache.is_cache_hit(upstream_id):
-            return False
-
-    # 4. TTL not expired?
-    if cache.is_expired(node_id):
-        return False
-
-    return True
-```
-
-### Integration Points
-
-**With workflow executor:**
-```python
-# In workflow_executor.py
-
-def execute_node(node_id, shared, workflow_ir):
-    # Check iteration cache first
-    if iteration_cache.should_use_cache(node_id, workflow_ir):
-        cached = iteration_cache.load_node(node_id)
-        shared.update(cached.outputs)
-        logger.info(f"Node {node_id}: using cached result")
-        return cached.outputs
-
-    # Execute normally
-    result = node.run(shared)
-
-    # Cache successful execution
-    if result.success:
-        iteration_cache.save_node(node_id, result.outputs, workflow_ir)
-
-    return result
-```
-
-**With existing ExecutionCache (Task 89):**
-- Reuse binary encoding patterns (`_encode_binary`, `_decode_binary`)
-- Reuse atomic write patterns (temp file → rename)
-- Different storage location (workflow-iterations vs registry-run)
-- Different purpose (iteration vs structure-only retrieval)
-
-### Display Behavior
-
-**Cache hit display:**
-```
-✓ Node 'fetch-data' completed (cached, 12ms)
-✓ Node 'process' completed (cached, 8ms)
-✓ Node 'format' completed (2.3s)
-```
-
-**Cache invalidation display:**
-```
-ℹ Node 'fetch-data' config changed, re-executing...
-✓ Node 'fetch-data' completed (5.2s)
-ℹ Node 'process' invalidated (upstream changed)
-✓ Node 'process' completed (3.1s)
-```
-
-### CLI Commands
-
-**Inspect cache (optional, for debugging):**
-```bash
-# Show cache status for a workflow
-pflow cache status ./workflow.json
-
-Output:
-  Workflow: ./workflow.json
-  Cache: ~/.pflow/cache/workflow-iterations/a1b2c3d4/
-
-  Nodes:
-    ✓ fetch-data   cached (2 min ago)
-    ✓ process      cached (2 min ago)
-    ✗ format       not cached (failed)
-```
-
-**Clear cache (optional):**
-```bash
-# Clear cache for specific workflow
-pflow cache clear ./workflow.json
-
-# Clear all iteration caches
-pflow cache clear --all
-```
-
-### Settings Integration
-
-```bash
-# Configure TTL (default 24 hours)
-pflow settings cache ttl 48h
-
-# Disable iteration caching entirely (not recommended)
-pflow settings cache iteration-mode off
-
-# Show cache settings
-pflow settings cache show
-```
-
-### Security Considerations
-
-1. **File permissions**: Cache files created with 600 (user-only read/write)
-2. **Sensitive data**: Cached outputs may contain sensitive data - same security model as workflow execution
-3. **No cross-user access**: Cache in user's home directory
-4. **Atomic writes**: Prevent corruption from concurrent access
+### CLI Flags
+- `--no-cache`: full execution, no cache reads (writes still happen for next run)
+- `--only <node>`: upstream cached, target executes, downstream does NOT execute
+- `--only <node> key=value`: overrides cached upstream value for the specified key
+- All flags composable: `--only <node> --no-cache key=value` works
 
 ### Edge Cases
+- Cache file missing or corrupted: degrades gracefully to full execution
+- Workflow file renamed/moved: different cache key, full execution (correct)
+- Node added/removed from workflow: unaffected nodes still cache, new nodes execute
+- Binary data in node output: handled correctly by serialization
 
-**1. Concurrent executions of same workflow:**
-- Last write wins (same as Task 73 approach)
-- Documented limitation for MVP
-- Future: file locking or execution IDs
+### Performance
+- Cache lookup: < 10ms per node
+- Full workflow with all cache hits: < 1s overhead regardless of node count
+- Cache file size: proportional to output data only (~3MB for lyrics generator, not 17MB like trace)
 
-**2. Workflow file moved/renamed:**
-- Cache keyed by absolute path → cache miss
-- Agent gets fresh execution (correct behavior)
+## References
 
-**3. Node IDs changed:**
-- Old cache entries become orphaned
-- New node IDs get fresh execution
-- Cleanup on next full cache clear
+### Key Code Files
+- `src/pflow/runtime/wrappers/instrumented_wrapper.py` — Existing cache mechanism: `_check_cache_validity()`, `_handle_cached_execution()`, `_compute_node_config()`, `_compute_config_hash()`
+- `src/pflow/runtime/wrappers/template_wrapper.py` — Template resolution in `_run()` (lines 509-672), `set_params()` splits template/static (lines 79-116)
+- `src/pflow/runtime/workflow_executor.py` — Sub-workflow execution, `_create_child_storage()`, `RESERVED_PARAMS`, `_PROPAGATED_KEYS`
+- `src/pflow/runtime/compilation/compiler.py` — Wrapper chain in `_create_single_node()`, `run_with_hooks` monkey-patch pattern
+- `src/pflow/pocketflow/__init__.py` — `Flow._orch()` loop, `get_next_node()` termination
+- `src/pflow/execution/executor_service.py` — `_initialize_shared_store()`, shared store setup
+- `src/pflow/core/file_resolver.py` — File content inlining, `_source_files` provenance
+- `src/pflow/cli/main.py` — CLI arg parsing, `workflow_command`, `_validate_and_prepare_workflow_params`
+- `src/pflow/cli/param_parsing.py` — `parse_workflow_params()` key=value parsing
 
-**4. Circular dependencies (shouldn't happen):**
-- Validation catches this before execution
-- Cache logic assumes DAG structure
+### Starting Context
+- `.taskmaster/tasks/task_106/starting-context/braindump-post-task108-architecture.md` — Architecture state after Task 108
+- `.taskmaster/tasks/task_106/starting-context/pflow-iteration-cache-agent-perspective.md` — Agent user perspective on iteration pain
+- `.taskmaster/tasks/task_106/starting-context/run-step-insight.md` — How run-step was folded into --only flag
+- `.taskmaster/tasks/task_106/starting-context/task-106-handover.md` — Original handover context
 
-**5. Batch nodes:**
-- Cache entire batch result, not individual items
-- If batch config changes, re-run entire batch
-
-### Performance Targets
-
-| Metric | Target |
-|--------|--------|
-| Cache lookup | < 10ms |
-| Cache write | < 50ms |
-| Memory overhead | < 1MB per workflow |
-| Disk space per node | ~size of outputs |
-
-### Relationship to Other Tasks
-
-**Task 44 (Build caching system):**
-- DEPRECATED by this task
-- Task 44 was narrower (only `@flow_safe` nodes)
-- This task is more comprehensive (all nodes during iteration)
-
-**Task 73 (Checkpoint persistence):**
-- DEPRECATED by this task
-- Task 73 required `--resume` flag
-- This task is automatic (no flags)
-- This task is scoped to file-based workflows only
-
-**Task 89 (Structure-only mode):**
-- COMPLEMENTARY - different purposes
-- Task 89: Creation-time token efficiency + security
-- Task 106: Execution-time iteration efficiency
-- Can share infrastructure patterns
-
-## Implementation Components
-
-### New Files
-
-**Core:**
-- `src/pflow/core/iteration_cache.py` (~200 LOC)
-  - `IterationCache` class
-  - `compute_node_hash()`, `should_use_cache()`, `save_node()`, `load_node()`
-
-**CLI:**
-- `src/pflow/cli/commands/cache.py` (~100 LOC)
-  - `pflow cache status`, `pflow cache clear`
-
-### Modified Files
-
-**Execution:**
-- `src/pflow/runtime/workflow_executor.py`
-  - Check cache before execution
-  - Save to cache after success
-  - Display cache hit/miss status
-
-**CLI:**
-- `src/pflow/cli/main.py`
-  - Detect file-based vs saved workflow
-  - Initialize iteration cache for file-based
-
-**Settings:**
-- `src/pflow/core/settings.py`
-  - Add cache TTL and iteration-mode settings
-
-## Test Strategy
-
-### Unit Tests
-
-**IterationCache class:**
-- `test_compute_node_hash_deterministic` - Same config = same hash
-- `test_compute_node_hash_changes_on_param_change` - Different params = different hash
-- `test_should_use_cache_returns_true_when_valid`
-- `test_should_use_cache_returns_false_when_config_changed`
-- `test_should_use_cache_returns_false_when_upstream_invalidated`
-- `test_should_use_cache_returns_false_when_expired`
-- `test_save_and_load_node_roundtrip`
-- `test_atomic_write_prevents_corruption`
-- `test_binary_data_handling`
-
-### Integration Tests
-
-**End-to-end iteration flow:**
-- `test_second_run_uses_cache_for_unchanged_nodes`
-- `test_modified_node_invalidates_downstream`
-- `test_saved_workflow_does_not_use_iteration_cache`
-- `test_cache_cleared_on_explicit_clear`
-
-**Side effect prevention:**
-- `test_side_effect_node_not_re_executed_on_cache_hit`
-  - Mock node with counter
-  - Run twice, assert counter = 1
-
-### Performance Tests
-
-- `test_cache_lookup_under_10ms`
-- `test_cache_write_under_50ms`
-- `test_handles_100_node_workflow`
-
-## Success Criteria
-
-1. ✅ AI agent can iterate on workflow.json without re-running completed nodes
-2. ✅ No flags or configuration required - just works
-3. ✅ Cache invalidation correctly detects node changes
-4. ✅ Side effects not duplicated (cache hit = no re-execution)
-5. ✅ Saved workflows unaffected (no caching)
-6. ✅ `pflow run-step` extracts and executes a single node from a workflow file
-7. ✅ `make test` and `make check` pass
-8. ✅ Performance targets met
-
-## Run-Step: Single Node Execution from Workflow Files
-
-Run a single step from a workflow file in isolation, without executing the full pipeline.
-
-### Why This Is In Scope
-
-The iteration cache and run-step are complementary halves of the development loop:
-- **Cache** handles: "re-run the workflow efficiently" (upstream nodes served from cache)
-- **Run-step** handles: "test this one node right now" (no workflow run at all)
-
-Cases where caching alone isn't enough:
-1. **First iteration on a new node** — no cache exists yet, but you want to test just the node you're writing
-2. **Testing with different inputs** — try a node with varied data without re-running the full workflow each time
-3. **Developing a node before wiring it in** — write the code, test it standalone, then connect to data flow
-4. **Rapid inner-loop iteration** — even cache lookup has overhead; direct execution is faster for tight edit-test cycles
-
-Both features share infrastructure (workflow parsing, node extraction, config hashing), so building them together is cheaper than separate tasks.
-
-> See `starting-context/run-step-insight.md` for the full analysis from the generate-changelog workflow rewrite.
-
-### Proposed UX
-
-```bash
-# Run a single step, providing its inputs manually
-pflow run-step workflow.pflow.md get-commits-enriched tag=v0.7.0
-```
-
-### How It Works
-
-1. Parse the `.pflow.md` file
-2. Find the step by name
-3. Extract its type, params, code block, batch config, etc.
-4. Map CLI args to the node's input variables (e.g., `tag=v0.7.0` satisfies the `tag` input, regardless of its template source `${resolve-tag.result}`)
-5. Execute the node in isolation using the existing `registry_run` execution path
-6. Display output using the standard registry-run format (template paths, structure)
-
-### Input Resolution
-
-The node's `inputs` dict has template references like `{tag: ${resolve-tag.result}}`. Run-step maps CLI args by **input variable name** (the key), not the template source (the value). So `tag=v0.7.0` satisfies:
-
-```yaml
-- inputs:
-    tag: ${resolve-tag.result}   # <-- "tag" matched, template ignored
-```
-
-For non-code nodes (shell, http, etc.), template variables in params are replaced by matching CLI arg names.
-
-## Future Enhancements (Out of Scope)
-
-- **Concurrent execution support** - File locking for parallel runs
-- **Cache sharing** - Share caches across similar workflows
-- **Selective re-run** - `pflow workflow.json --rerun=node_3`
-- **Cache export** - Package cache for reproducibility
-- **Remote cache** - Cloud-based cache for team workflows
+### Superseded Tasks
+- Task 44 (Build caching system) — superseded by this task
+- Task 73 (Checkpoint persistence with `--resume` flag) — superseded by this task's automatic approach
