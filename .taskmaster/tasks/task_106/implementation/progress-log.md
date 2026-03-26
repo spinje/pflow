@@ -452,20 +452,53 @@ Review identified that no agent-facing instructions or user-facing docs mentione
 - **Sandbox instructions omit CLI flags**: Sandbox agents use `workflow_execute` MCP tool, which doesn't expose `--only` or `--no-cache`. They only need to know that re-execution is automatically cached.
 - **User docs follow existing patterns**: The "Iteration and caching" section mirrors the structure of "Stdin input" and "Validation mode" — brief explanation, code examples, subsections for specific flags.
 
+## Phase 18: PR Review Fixes — COMPLETED
+
+External PR review (#152) found zero critical issues. Three actionable findings addressed:
+
+### W3: Batch item resolution duplication (confirmed, fixed)
+`_compute_batch_memo_key()` in `instrumented_wrapper.py` duplicated the 8-line items resolution logic from `PflowBatchNode.prep()`. A comment warned "if the batch node's resolution changes, this must be updated to match" — proving the coupling was known.
+
+**Fix**: Extracted `resolve_batch_items(items_template, shared) -> Any` as a module-level function in `batch_node.py`. Both `prep()` and `_compute_batch_memo_key()` now call it. The function returns the resolved value (list on success, None if unresolved, other types if resolved to non-list). Callers validate the type — `prep()` raises ValueError/TypeError with enriched error messages, `_compute_batch_memo_key()` returns None to skip caching.
+
+Initial attempt returned `list | None`, which collapsed two distinct error cases in `prep()` (unresolved vs wrong type). Fixed by returning `Any` and letting callers check `isinstance(result, list)`.
+
+### S5: `hasattr` defensive check (confirmed, fixed)
+`_compute_memo_cache_key()` had `if template_wrapper and hasattr(template_wrapper, "resolve_templates")`. The `hasattr` check is redundant — `_find_template_wrapper()` identifies the wrapper by duck typing (`hasattr(current, "last_resolutions")`), and `TemplateAwareNodeWrapper` always has `resolve_templates`. Simplified to `if template_wrapper:`.
+
+### W1: Duplicate `_make_serializable` (confirmed on reconsideration, fixed)
+Originally disputed as "intentional to avoid cross-module dependency." On reconsideration: the cross-module dependency already exists — `instrumented_wrapper.py` already lazy-imports `compute_node_cache_key` and `compute_batch_cache_key` from `cache.py`. The duplication wasn't avoiding anything.
+
+**Fix**: Removed `_make_serializable()` instance method from `InstrumentedNodeWrapper` (lines 471-506). `_compute_config_hash()` now calls `cache._deterministic_json()` which uses the same serialization pipeline. Ruff auto-removed the now-unused `json` import.
+
+### Disputed findings (no action)
+- **S4: Connection per operation** — Connection-per-call is correct for parallel batch. WAL allows concurrent writes from *separate connections*; a shared connection would serialize writes through Python's sqlite3 module-level lock. The WAL pragma per call is redundant but harmless.
+- **S6: Config hash computed twice** — Sub-millisecond cost. Not worth the complexity of caching it as a local variable in the already-complex `_run()`.
+- **W2: Auto-detection divergence** — Already tracked as Task 134.
+
+### Files modified
+- `src/pflow/runtime/wrappers/batch_node.py` — Added `resolve_batch_items()`, simplified `prep()`
+- `src/pflow/runtime/wrappers/instrumented_wrapper.py` — Removed `_make_serializable()`, simplified `_compute_config_hash()` and `_compute_batch_memo_key()`, removed `hasattr` guard
+
+**4495 tests pass, `make check` clean.**
+
 ## Implementation Complete
 
-**Final state**: 4492 tests pass, `make check` clean (ruff + mypy + deptry).
+**Final state**: 4495 tests pass, `make check` clean (ruff + mypy + deptry).
 
-7 code reviews / design iterations performed across the implementation:
+8 code reviews / design iterations performed across the implementation:
 - Reviews 1-2 (parallel, wave 1): Found critical `_resolved` stale-state bug + missing sub-workflow propagation
 - Review 3 (wave 2): Confirmed all fixes, identified missing regression test
 - Review 4 (Phase 14, data integrity): Found `_make_serializable` data loss bug in `put()`, missing data-flow-through-cache test
 - Review 5 (final): 7 cosmetic/documentation fixes, no behavioral issues
 - Review 6 (Phase 17): Identified zero documentation of cache features across all agent instructions and user docs
-- Review 7 (Phase 16, design iteration): 5 attempts at `--only` output design. Manual testing revealed 3 missed declared-output code paths, namespace-awareness gap in JSON auto-detection, and data exposure concerns. Final design: no special output handling, namespace-aware auto-detection, detailed inspection through `--report`.
+- Review 7 (Phase 16, design iteration): 5 attempts at `--only` output design. Manual testing revealed 3 missed declared-output code paths, namespace-awareness gap in JSON auto-detection, and data exposure concerns.
+- Review 8 (PR review, Phase 18): External review found 3 actionable items — batch resolution duplication, hasattr noise, _make_serializable duplication. All fixed. Zero critical issues.
 
 Phase 16 (--only UX fixes) went through significant design evolution — 5 implementation attempts before settling on the final approach. The key lesson: the output pipeline has more independent code paths than it appears (3 declared-output resolution points, 3 auto-detection implementations). Changes that seem simple in one path often miss the others. Manual end-to-end testing caught issues that unit tests couldn't.
 
 Phase 17 (documentation) updated 5 files to ensure agents and users can discover and use the cache features.
+
+Phase 18 (PR review fixes) addressed 3 findings from external review. Key lesson: "intentional duplication" arguments weaken when the cross-module dependency you're avoiding already exists through other imports.
 
 **Follow-up task created**: Task 134 (Unify Auto-Detection Output Functions) — consolidate the three divergent `_find_auto_output` implementations into a single shared function.
