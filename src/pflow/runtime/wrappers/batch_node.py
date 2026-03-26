@@ -9,6 +9,8 @@ Key Design Decisions:
 - **Deep copy for parallel**: Each thread gets its own node chain copy to avoid
   TemplateAwareNodeWrapper race condition on `inner_node.params`
 - **Isolated context per item**: Each item gets `item_shared = dict(shared)`
+- **CompilationError always fatal**: Compile errors mean the workflow definition
+  is broken, not the data. Never swallowed by error_handling: continue.
 
 IR Syntax:
     ```json
@@ -79,6 +81,7 @@ from typing import Any
 from pflow.core.json_utils import try_parse_json
 from pflow.core.llm_pricing import enrich_llm_usage_with_cost
 from pflow.pocketflow import Node
+from pflow.runtime.compilation.compiler import CompilationError
 
 from ..template_resolver import TemplateResolver
 
@@ -343,6 +346,15 @@ class PflowBatchNode(Node):
 
         return items
 
+    @staticmethod
+    def _normalize_result(result: Any) -> dict[str, Any]:
+        """Normalize node output to a dict for uniform downstream processing."""
+        if result is None:
+            return {}
+        if not isinstance(result, dict):
+            return {"value": result}
+        return result
+
     def _extract_error(self, result: Any) -> str | None:
         """Extract error message from result dict if present.
 
@@ -492,12 +504,8 @@ class PflowBatchNode(Node):
                 # Execute inner node — capture action string for fallback error detection
                 action = self.inner_node._run(item_shared)
 
-                # Capture result from inner node's namespace
-                result = item_shared.get(self.node_id)
-                if result is None:
-                    result = {}
-                elif not isinstance(result, dict):
-                    result = {"value": result}
+                # Capture and normalize result from inner node's namespace
+                result = self._normalize_result(item_shared.get(self.node_id))
 
                 # Include original item in result for self-contained downstream processing
                 if "item" in result:
@@ -532,6 +540,8 @@ class PflowBatchNode(Node):
                 self._capture_item_trace(item_shared, idx, item, duration_ms, None, node_chain=self.inner_node)
                 return (result, None, duration_ms)
 
+            except CompilationError:
+                raise  # Workflow definition is broken — never swallow, never retry
             except Exception as e:
                 last_exception = e
                 if retry < self.max_retries - 1:
@@ -583,12 +593,8 @@ class PflowBatchNode(Node):
                 # Execute the thread-local node copy — capture action for fallback error detection
                 action = thread_node._run(item_shared)
 
-                # Capture result from node's namespace
-                result = item_shared.get(self.node_id)
-                if result is None:
-                    result = {}
-                elif not isinstance(result, dict):
-                    result = {"value": result}
+                # Capture and normalize result from node's namespace
+                result = self._normalize_result(item_shared.get(self.node_id))
 
                 # Include original item in result for self-contained downstream processing
                 if "item" in result:
@@ -618,6 +624,8 @@ class PflowBatchNode(Node):
                 self._capture_item_trace(item_shared, idx, item, duration_ms, None, node_chain=thread_node)
                 return (result, None, duration_ms)
 
+            except CompilationError:
+                raise  # Workflow definition is broken — never swallow, never retry
             except Exception as e:
                 last_exception = e
                 if retry < self.max_retries - 1:
@@ -767,6 +775,8 @@ class PflowBatchNode(Node):
                                 batch_total=total,
                                 batch_success=(error is None),
                             )
+                except CompilationError:
+                    raise  # Workflow definition is broken — always fatal
                 except Exception as e:
                     logger.debug(f"Exception collecting result during stop: {e}")
                     completed_count += 1
@@ -798,6 +808,8 @@ class PflowBatchNode(Node):
                         for f in future_to_idx:
                             f.cancel()
 
+            except CompilationError:
+                raise  # Workflow definition is broken — never swallow, never retry
             except Exception as e:
                 idx = future_to_idx[future]
                 pending_errors.append({
@@ -928,6 +940,18 @@ class PflowBatchNode(Node):
         # Count successes: non-None results without error keys
         success_count = sum(1 for r in exec_res if r is not None and not self._extract_error(r))
 
+        # All items failed → abort. "continue" means tolerate partial failure,
+        # not total failure. With 0 successes, downstream nodes would run on
+        # garbage (None/error dicts). Standard batch semantics: all-fail = step failure.
+        if self.error_handling == "continue" and success_count == 0 and self._errors:
+            error_summary = "; ".join(e["error"] for e in self._errors[:3])
+            if len(self._errors) > 3:
+                error_summary += f" (+{len(self._errors) - 3} more)"
+            raise RuntimeError(
+                f"Batch '{self.node_id}': all {len(self._errors)} items failed, "
+                f"no successful results to continue with. Errors: {error_summary}"
+            )
+
         # Calculate timing statistics
         timing_stats: dict[str, float] | None = None
         if self._item_timings:
@@ -976,12 +1000,15 @@ class PflowBatchNode(Node):
             },
         )
 
+        self._push_warnings(shared, exec_res)
+
+        return "default"
+
+    def _push_warnings(self, shared: dict[str, Any], exec_res: list) -> None:
+        """Push warnings for DEGRADED status when batch had issues."""
         # Detect items that succeeded but produced empty output (silent failures).
-        # These are invisible without explicit checking — the pipeline reports success
-        # but downstream nodes get empty/useless input.
         empty_indices = _detect_empty_output_items(exec_res, self._errors)
 
-        # Push warnings for DEGRADED status
         warning_parts: list[str] = []
         if self.error_handling == "continue" and self._errors:
             warning_parts.append(f"{len(self._errors)} error(s) out of {len(exec_res)} items")
@@ -995,5 +1022,3 @@ class PflowBatchNode(Node):
             if "__warnings__" not in shared:
                 shared["__warnings__"] = {}
             shared["__warnings__"][self.node_id] = f"Batch '{self.node_id}': " + "; ".join(warning_parts)
-
-        return "default"
