@@ -843,6 +843,24 @@ metadata:
 - Single output via `result` variable — use dict for structured output
 - Downstream access: `${node.result}` or `${node.result.field}` for dict results
 
+💡 **`- inputs:` works on ANY node type** (not just code nodes). It maps named variables into the template context so other params (prompt, command, etc.) can reference them by name. This is especially useful for reusing external prompt files with different data sources:
+
+````markdown
+### review
+
+Review each item using an external prompt that expects specific variable names.
+
+- type: llm
+- prompt: ./specialist-review.prompt.md
+- inputs:
+    concept_brief: ${item.concept_brief}
+    creative_direction: ${item.creative_direction}
+- batch:
+    items: ${load-data.results}
+````
+
+The prompt file uses `${concept_brief}` and `${creative_direction}` — resolved from the `inputs` mapping, not from the shared store. In production (where upstream node names already match the prompt's variables), `inputs` is optional.
+
 ### Step 9: TEST - Systematic Testing
 
 **Development loop: edit file → run from path → debug → repeat until working**

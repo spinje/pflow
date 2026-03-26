@@ -283,7 +283,14 @@ def _validate_node_params(
     errors: list[str],
 ) -> None:
     """Validate template references in a single node's parameters."""
+    # If node has 'inputs' mapping, its keys are valid template references
+    # for other params in the same node (inputs-as-context pattern)
+    node_refs = valid_simple_refs
+    inputs_param = node.get("params", {}).get("inputs")
+    if isinstance(inputs_param, dict):
+        node_refs = valid_simple_refs | set(inputs_param.keys())
+
     for param_name, param_value in node.get("params", {}).items():
         _check_param_value(
-            param_name, param_value, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors
+            param_name, param_value, node_id, node_position, nodes_by_id, node_positions, node_refs, errors
         )

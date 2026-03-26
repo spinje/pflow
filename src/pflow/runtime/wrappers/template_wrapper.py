@@ -515,9 +515,24 @@ class TemplateAwareNodeWrapper:
         # Build resolution context
         context = self._build_resolution_context(shared)
 
+        # Enrich context with inputs values so other params (e.g., prompt)
+        # can reference input-mapped variables. Handles both static inputs
+        # (no templates) and template inputs (resolved first below).
+        static_inputs = self.static_params.get("inputs")
+        if isinstance(static_inputs, dict):
+            context.update(static_inputs)
+
+        # Process 'inputs' before other params so its resolved values
+        # are available as template context (e.g., for prompt resolution)
+        param_keys = list(self.template_params.keys())
+        if "inputs" in param_keys:
+            param_keys.remove("inputs")
+            param_keys.insert(0, "inputs")
+
         # Resolve all template parameters
         resolved_params: dict[str, Any] = {}
-        for key, template in self.template_params.items():
+        for key in param_keys:
+            template = self.template_params[key]
             resolved_value, is_simple_template = self._resolve_template_parameter(key, template, context)
 
             # Auto-parse JSON strings for structured parameters (only simple templates)
@@ -649,6 +664,11 @@ class TemplateAwareNodeWrapper:
                     f"Resolved param '{key}': '{template}' -> '{resolved_value}'",
                     extra={"node_id": self.node_id, "param": key},
                 )
+
+            # After resolving 'inputs', enrich context so subsequent params
+            # (e.g., prompt) can reference input-mapped variables
+            if key == "inputs" and isinstance(resolved_value, dict):
+                context.update(resolved_value)
 
         # Store resolutions for trace capture (read by InstrumentedNodeWrapper)
         self.last_resolutions = {

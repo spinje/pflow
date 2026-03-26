@@ -474,6 +474,10 @@ class WorkflowValidator:
         """
         from pflow.core.suggestion_utils import find_similar_items
 
+        # Framework-level params valid for any node type, independent of
+        # the node's declared interface (handled by the wrapper chain)
+        framework_keys = frozenset({"inputs"})
+
         error_list: list[str] = []
 
         try:
@@ -498,7 +502,7 @@ class WorkflowValidator:
                 continue
 
             for param_key in params:
-                if param_key not in known_keys:
+                if param_key not in known_keys and param_key not in framework_keys:
                     valid_params = ", ".join(sorted(known_keys))
                     msg = f"Node '{node_id}' ({node_type}): unknown parameter '{param_key}'."
                     similar = find_similar_items(param_key, sorted(known_keys), max_results=2, method="fuzzy")

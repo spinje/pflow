@@ -545,3 +545,85 @@ class TestBatchEdgeCases:
         assert results[0]["result"]["data"] == {"content": "hello world"}
         assert results[1]["result"]["op"] == "lower"
         assert results[1]["result"]["data"] == {"content": "hello world"}
+
+
+class TestInputsAsTemplateContext:
+    """Tests for inputs-as-context through the full compiled pipeline.
+
+    Exercises the entire wrapper chain (instrumented → batch → namespace → template)
+    to verify that 'inputs' values are available as template context for other params.
+    """
+
+    def test_batch_inputs_resolve_in_other_params(self, test_registry):
+        """Inputs mapping from batch item fields resolves in another param.
+
+        This is the core use case: a node maps ${item.field} to a simpler name
+        via inputs, then references that name in another param. The full wrapper
+        chain must cooperate: batch injects 'item', namespace proxies the store,
+        template resolves inputs first then uses enriched context for other params.
+        """
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "source",
+                    "type": "value-node",
+                    "params": {
+                        "value": [
+                            {"name": "Alice", "role": "engineer"},
+                            {"name": "Bob", "role": "designer"},
+                        ]
+                    },
+                },
+                {
+                    "id": "batch",
+                    "type": "value-node",
+                    "batch": {"items": "${source.result}"},
+                    "params": {
+                        "inputs": {
+                            "person_name": "${item.name}",
+                            "person_role": "${item.role}",
+                        },
+                        "value": "Name=${person_name}, Role=${person_role}",
+                    },
+                },
+            ],
+            "edges": [{"from": "source", "to": "batch"}],
+        }
+
+        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        shared: dict[str, Any] = {}
+        flow.run(shared)
+
+        results = shared["batch"]["results"]
+        assert len(results) == 2
+        assert results[0]["result"] == "Name=Alice, Role=engineer"
+        assert results[1]["result"] == "Name=Bob, Role=designer"
+
+    def test_static_inputs_resolve_in_other_params(self, test_registry):
+        """Static inputs (no templates) also enrich the template context.
+
+        When inputs has literal values, they should be available for resolving
+        template variables in other params — even though inputs itself has no
+        templates and goes through set_params as a static param.
+        """
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "node",
+                    "type": "value-node",
+                    "params": {
+                        "inputs": {"greeting": "hello", "target": "world"},
+                        "value": "${greeting} ${target}",
+                    },
+                },
+            ],
+            "edges": [],
+        }
+
+        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        shared: dict[str, Any] = {}
+        flow.run(shared)
+
+        assert shared["node"]["result"] == "hello world"
