@@ -82,7 +82,7 @@ Outermost wrapper. Provides:
 
 **Memoization helper methods** (extracted for C901 complexity):
 - `_enforce_loop_guard(shared)` — visit counting + in-process cache invalidation for revisited nodes. Returns visit_counts dict.
-- `_check_memo_cache(shared, visit_counts, shared_keys_before)` — returns `(hit, result, cache_key)`. Skipped when `visit_count > 1` or no cache in shared.
+- `_check_memo_cache(shared, visit_counts, shared_keys_before)` — returns `(hit, result, cache_key)`. Skipped when `visit_count > 1`, no cache in shared, or node is a `WorkflowExecutor` (sub-workflow files may change between runs; inner nodes are individually cached via propagated `__memoization_cache__`).
 - `_compute_memo_cache_key(shared)` — dispatches to non-batch or batch key computation. Calls `template_wrapper.resolve_templates(shared)` for the resolved inputs hash.
 - `_compute_batch_memo_key(config_hash, shared)` — resolves items template, builds batch-specific key.
 - `_write_memo_cache(shared, result, cache_key)` — stores result after successful execution. Skips on error or None cache_key.

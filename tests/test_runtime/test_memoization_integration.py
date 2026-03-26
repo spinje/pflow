@@ -296,3 +296,49 @@ def test_memo_cache_no_write_on_error(tmp_path: Any) -> None:
     if memo_key:
         cached = cache.get(memo_key)
         assert cached is None, "Error results should not be written to memoization cache"
+
+
+# ---------------------------------------------------------------------------
+# Workflow node memoization skip
+# ---------------------------------------------------------------------------
+
+
+def test_workflow_node_skips_memoization(tmp_path: Any) -> None:
+    """WorkflowExecutor nodes should not be memoized — sub-workflow files may change."""
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    shared: dict[str, Any] = {"__memoization_cache__": cache}
+
+    # Build wrapper chain with WorkflowExecutor as the inner node
+    wf_node = WorkflowExecutor()
+    iw = _build_wrapper_chain("sub-wf", initial_params={"workflow": "./child.pflow.md"}, node=wf_node)
+
+    # Memoization should be skipped entirely (no cache key computed)
+    hit, result, cache_key = iw._check_memo_cache(shared, {}, None)
+    assert hit is False
+    assert result is None
+    assert cache_key is None, "Workflow nodes should not produce a memo cache key"
+
+
+def test_batch_workflow_node_skips_memoization(tmp_path: Any) -> None:
+    """Batch nodes wrapping WorkflowExecutor should also skip memoization."""
+    from pflow.runtime.workflow_executor import WorkflowExecutor
+    from pflow.runtime.wrappers.batch_node import PflowBatchNode
+
+    cache = MemoizationCache(db_path=tmp_path / "cache.db")
+    shared: dict[str, Any] = {"__memoization_cache__": cache}
+
+    # Build: WorkflowExecutor -> TemplateAware -> Namespaced -> Batch -> Instrumented
+    wf_node = WorkflowExecutor()
+    tw = TemplateAwareNodeWrapper(wf_node, "batch-wf", initial_params={"workflow": "./child.pflow.md"})
+    tw.set_params({"workflow": "./child.pflow.md"})
+    ns = NamespacedNodeWrapper(tw, "batch-wf")
+    batch = PflowBatchNode(ns, "batch-wf", batch_config={"items": "${items}", "as": "item"})
+    iw = InstrumentedNodeWrapper(batch, "batch-wf")
+
+    # Memoization should be skipped — innermost node is WorkflowExecutor
+    hit, result, cache_key = iw._check_memo_cache(shared, {}, None)
+    assert hit is False
+    assert result is None
+    assert cache_key is None, "Batch-over-workflow nodes should not produce a memo cache key"

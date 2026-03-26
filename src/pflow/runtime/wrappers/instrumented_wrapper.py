@@ -632,6 +632,12 @@ class InstrumentedNodeWrapper:
         if not memo_cache or visit_counts.get(self.node_id, 0) > 1:
             return False, None, None
 
+        # Skip memoization for workflow nodes — sub-workflow files may have changed
+        # since the cache was populated. Inner nodes are individually cached via the
+        # propagated __memoization_cache__, so this doesn't lose caching benefits.
+        if self._get_actual_node_class().__name__ == "WorkflowExecutor":
+            return False, None, None
+
         cache_key = self._compute_memo_cache_key(shared)
         if not cache_key:
             return False, None, None
