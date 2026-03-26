@@ -635,6 +635,8 @@ class InstrumentedNodeWrapper:
         # Skip memoization for workflow nodes — sub-workflow files may have changed
         # since the cache was populated. Inner nodes are individually cached via the
         # propagated __memoization_cache__, so this doesn't lose caching benefits.
+        # String check (not isinstance) to avoid circular import: wrappers → workflow_executor.
+        # Same pattern as _find_batch_or_workflow_node().
         if self._get_actual_node_class().__name__ == "WorkflowExecutor":
             return False, None, None
 
