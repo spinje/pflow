@@ -2,7 +2,6 @@
 
 import contextlib
 import hashlib
-import json
 import logging
 import os
 import time
@@ -457,53 +456,14 @@ class InstrumentedNodeWrapper:
         Returns:
             Hexadecimal hash string
         """
-        # Create a serializable version of the config
-        serializable_config = self._make_serializable(config)
+        from pflow.runtime.cache import _deterministic_json
 
-        # Serialize to JSON with sorted keys for deterministic hashing
-        config_json = json.dumps(serializable_config, sort_keys=True)
+        config_json = _deterministic_json(config)
         # MD5 is used here for fast configuration change detection, not for security.
         # This hash is only used to detect if a node's parameters have changed between
         # workflow runs, so cryptographic security is not required. MD5 is chosen for
         # its speed since this check happens frequently during workflow execution.
         return hashlib.md5(config_json.encode()).hexdigest()  # noqa: S324
-
-    def _make_serializable(self, obj: Any) -> Any:
-        """Convert an object to a JSON-serializable representation.
-
-        This handles common non-serializable objects like Registry by converting
-        them to a deterministic string representation for hashing purposes.
-
-        Args:
-            obj: Object to make serializable
-
-        Returns:
-            JSON-serializable version of the object
-        """
-        if isinstance(obj, dict):
-            # Recursively process dictionary, excluding non-serializable internal keys
-            result = {}
-            for key, value in obj.items():
-                # Skip internal registry objects and other non-serializable internals
-                if isinstance(key, str) and key.startswith("__") and key.endswith("__"):
-                    # For internal keys like __registry__, use type name for hash
-                    if value is not None:
-                        result[key] = f"<{type(value).__name__}>"
-                    else:
-                        result[key] = "<None>"
-                else:
-                    result[key] = self._make_serializable(value)
-            return result
-        elif isinstance(obj, (list, tuple)):
-            # Recursively process sequences
-            return [self._make_serializable(item) for item in obj]
-        elif isinstance(obj, (str, int, float, bool, type(None))):
-            # Primitives are already serializable
-            return obj
-        else:
-            # For any other non-serializable object, use its type and id for deterministic hashing
-            # This includes Registry objects and any other complex types
-            return f"<{type(obj).__module__}.{type(obj).__name__}>"
 
     def _get_node_param(self, param_name: str, default: Any = None) -> Any:
         """Get a parameter from the node configuration.
@@ -714,7 +674,7 @@ class InstrumentedNodeWrapper:
 
         # Non-batch: use resolved template inputs
         template_wrapper = self._find_template_wrapper()
-        if template_wrapper and hasattr(template_wrapper, "resolve_templates"):
+        if template_wrapper:
             try:
                 merged_params = template_wrapper.resolve_templates(shared)
                 return compute_node_cache_key(config_hash, merged_params)
@@ -729,9 +689,6 @@ class InstrumentedNodeWrapper:
         """Compute cache key for a batch node.
 
         Returns None if items can't be resolved.
-
-        Note: The items resolution logic below parallels PflowBatchNode._resolve_items().
-        If the batch node's resolution changes, this must be updated to match.
         """
         from pflow.runtime.cache import compute_batch_cache_key
 
@@ -744,18 +701,9 @@ class InstrumentedNodeWrapper:
             return None
 
         try:
-            from ..template_resolver import TemplateResolver
+            from .batch_node import resolve_batch_items
 
-            if isinstance(items_template, list):
-                resolved_items = TemplateResolver.resolve_nested(items_template, shared)
-            else:
-                resolved_items = TemplateResolver.resolve_template(items_template.strip(), shared)
-                if isinstance(resolved_items, str):
-                    from pflow.core.json_utils import try_parse_json
-
-                    success, parsed = try_parse_json(resolved_items)
-                    if success and isinstance(parsed, list):
-                        resolved_items = parsed
+            resolved_items = resolve_batch_items(items_template, shared)
             if not isinstance(resolved_items, list):
                 return None
         except Exception:
