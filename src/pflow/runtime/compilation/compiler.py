@@ -63,6 +63,7 @@ class CompilationError(Exception):
             details: Additional error context
             suggestion: Helpful suggestion for resolution
         """
+        self.raw_message = message
         self.phase = phase
         self.node_id = node_id
         self.node_type = node_type

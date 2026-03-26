@@ -31,8 +31,10 @@ def _create_json_error_output(
         Dictionary with unified error structure
     """
     from pflow.core.user_errors import UserFriendlyError
+    from pflow.runtime import CompilationError as CompilerCompilationError
 
     # Determine error type
+    details: str | dict[str, Any] | None
     suggestion: str | None
     if isinstance(exception, UserFriendlyError):
         error_type = exception.__class__.__name__
@@ -41,6 +43,16 @@ def _create_json_error_output(
         details = exception.explanation
         # Join suggestions list into a single string
         suggestion = " ".join(exception.suggestions) if exception.suggestions else None
+    elif isinstance(exception, CompilerCompilationError):
+        error_type = "CompilationError"
+        message = exception.raw_message
+        details = {
+            "phase": exception.phase,
+            **({"node_id": exception.node_id} if exception.node_id else {}),
+            **({"node_type": exception.node_type} if exception.node_type else {}),
+            **(exception.details if exception.details else {}),
+        }
+        suggestion = exception.suggestion
     else:
         error_type = exception.__class__.__name__
         message = str(exception)
@@ -323,16 +335,24 @@ def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
         error_message = e.format_for_cli(verbose=verbose)
         click.echo(error_message, err=True)
     elif isinstance(e, CompilerCompilationError):
-        click.echo(f"❌ Compilation failed: {e}", err=True)
-        if hasattr(e, "suggestion") and e.suggestion:
-            click.echo(f"\n{e.suggestion}", err=True)
-        if verbose:
-            click.echo(f"\ncli: Error details: {e}", err=True)
+        # Display structured fields from the compiler's CompilationError
+        click.echo(f"❌ Compilation failed: {e.raw_message}", err=True)
+        if e.node_type:
+            click.echo(f"  Node type: {e.node_type}", err=True)
+        if e.node_id:
+            click.echo(f"  Node: {e.node_id}", err=True)
+        sub_path = (e.details or {}).get("sub_workflow_path")
+        if sub_path:
+            click.echo(f"  Sub-workflow: {sub_path}", err=True)
+        if e.suggestion:
+            click.echo(f"\n  Suggestion: {e.suggestion}", err=True)
+        if verbose and e.details:
+            click.echo(f"\n  Details: {e.details}", err=True)
     else:
         # Fallback for other exceptions
         click.echo(f"❌ Compilation failed: {e}", err=True)
         if verbose:
-            click.echo(f"cli: Error details: {e}", err=True)
+            click.echo(f"  Error details: {e}", err=True)
 
 
 def _handle_compilation_error_json(

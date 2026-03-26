@@ -9,7 +9,7 @@ from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import CompilationError, compile_ir_to_flow
 from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
@@ -106,6 +106,43 @@ class WorkflowExecutor(BaseNode):
             "parent_shared": shared,
         }
 
+    def _compile_sub_workflow(
+        self,
+        workflow_ir: dict[str, Any],
+        workflow_path: str,
+        child_params: dict[str, Any],
+        child_trace: Any,
+    ) -> Any:
+        """Compile the sub-workflow, enriching errors with sub-workflow context.
+
+        CompilationError always propagates — it means the workflow definition
+        is broken, not the data. Other exceptions are wrapped in CompilationError.
+        """
+        registry = self.params.get("__registry__")
+        if registry is not None and not isinstance(registry, Registry):
+            registry = None
+
+        try:
+            return compile_ir_to_flow(
+                workflow_ir,
+                registry=registry,  # type: ignore[arg-type]
+                initial_params=child_params,
+                validate=True,
+                trace_collector=child_trace,
+            )
+        except CompilationError as e:
+            if not e.details:
+                e.details = {}
+            e.details["sub_workflow_path"] = str(workflow_path)
+            raise
+        except Exception as e:
+            raise CompilationError(
+                f"Failed to compile sub-workflow at {workflow_path}: {e!s}",
+                phase="sub_workflow_compilation",
+                details={"sub_workflow_path": str(workflow_path)},
+                suggestion=getattr(e, "suggestion", None),
+            ) from e
+
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
         workflow_ir = prep_res["workflow_ir"]
@@ -121,11 +158,6 @@ class WorkflowExecutor(BaseNode):
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 
-        # Get registry (injected by compiler)
-        registry = self.params.get("__registry__")
-        if registry is not None and not isinstance(registry, Registry):
-            registry = None
-
         # Create child trace collector for sub-workflow visibility
         parent_trace = parent_shared.get("_trace_collector")
         child_trace = None
@@ -135,16 +167,7 @@ class WorkflowExecutor(BaseNode):
             child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
             child_trace.enable_llm_interception = False  # Prompts captured via template_resolutions
 
-        try:
-            sub_flow = compile_ir_to_flow(
-                workflow_ir,
-                registry=registry,  # type: ignore[arg-type]
-                initial_params=child_params,
-                validate=True,
-                trace_collector=child_trace,
-            )
-        except Exception as e:
-            return {"success": False, "error": f"Failed to compile sub-workflow: {e!s}", "workflow_path": workflow_path}
+        sub_flow = self._compile_sub_workflow(workflow_ir, workflow_path, child_params, child_trace)
 
         # Create child storage
         child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)

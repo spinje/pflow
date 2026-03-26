@@ -15,6 +15,7 @@ import pytest
 
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
+from pflow.runtime.compilation.compiler import CompilationError
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from tests.shared.markdown_utils import write_workflow_file
 
@@ -207,7 +208,7 @@ class TestWorkflowExecutorComprehensive:
     # --- Test 14: compilation error ---
 
     def test_compilation_error(self, simple_workflow_ir):
-        """Test handling of compilation errors."""
+        """Test that compilation errors propagate as CompilationError (never swallowed)."""
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
@@ -221,12 +222,17 @@ class TestWorkflowExecutorComprehensive:
             "storage_mode": "mapped",
         }
 
+        # CompilationError propagates directly
         with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
-            mock_compile.side_effect = Exception("Compilation failed")
-            exec_res = node.exec(prep_res)
+            mock_compile.side_effect = CompilationError("Compilation failed", phase="test")
+            with pytest.raises(CompilationError, match="Compilation failed"):
+                node.exec(prep_res)
 
-        assert exec_res["success"] is False
-        assert "Failed to compile" in exec_res["error"]
+        # Other exceptions are wrapped in CompilationError
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = ValueError("Bad IR structure")
+            with pytest.raises(CompilationError, match="Failed to compile sub-workflow"):
+                node.exec(prep_res)
 
     # --- Test 15: execution error ---
 
@@ -660,3 +666,165 @@ class TestWorkflowExecutorComprehensive:
         # Saved names (no path separators, no dots prefix, no .pflow.md suffix)
         assert WorkflowExecutor._is_file_reference("my-workflow") is False
         assert WorkflowExecutor._is_file_reference("simple") is False
+
+
+class TestBatchCompilationErrorPropagation:
+    """Verify CompilationError propagates through batch regardless of error_handling.
+
+    Bug context: error_handling: continue was swallowing CompilationError from
+    sub-workflows, causing the pipeline to continue on empty data. The fix
+    ensures CompilationError is always re-raised (never retried, never swallowed).
+    """
+
+    @pytest.fixture
+    def child_workflow_ir(self):
+        """A valid-looking child workflow IR for WorkflowExecutor."""
+        return {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "step1", "type": "echo", "params": {"message": "hello"}}],
+            "edges": [],
+        }
+
+    @pytest.fixture
+    def mock_registry(self, tmp_path):
+        """A mock registry for WorkflowExecutor."""
+        registry = Mock(spec=Registry)
+        return registry
+
+    def _build_batch_over_workflow_executor(
+        self,
+        child_workflow_ir: dict,
+        mock_registry: Mock,
+        error_handling: str = "continue",
+        parallel: bool = False,
+    ) -> tuple:
+        """Build a PflowBatchNode wrapping NamespacedNodeWrapper wrapping WorkflowExecutor.
+
+        Returns:
+            (batch_node, shared_store) ready for execution.
+        """
+        from pflow.runtime.wrappers.batch_node import PflowBatchNode
+        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
+
+        executor = WorkflowExecutor()
+        executor.set_params({
+            "workflow_ir": child_workflow_ir,
+            "__registry__": mock_registry,
+        })
+
+        namespaced = NamespacedNodeWrapper(executor, "fetch-sources")
+        batch = PflowBatchNode(
+            inner_node=namespaced,
+            node_id="fetch-sources",
+            batch_config={
+                "items": "${sources}",
+                "error_handling": error_handling,
+                "parallel": parallel,
+                "max_retries": 1,
+                "retry_wait": 0,
+            },
+        )
+
+        shared = {"sources": ["item_a", "item_b", "item_c"]}
+        return batch, shared
+
+    def test_compilation_error_propagates_through_sequential_batch_with_continue(
+        self, child_workflow_ir, mock_registry
+    ):
+        """When compile_ir_to_flow raises CompilationError, sequential batch must propagate it
+        even with error_handling: continue. Compilation errors mean the workflow definition
+        is broken — data-level error handling must not swallow them."""
+
+        batch, shared = self._build_batch_over_workflow_executor(
+            child_workflow_ir, mock_registry, error_handling="continue", parallel=False
+        )
+
+        # prep() resolves items from shared store
+        items = batch.prep(shared)
+        assert len(items) == 3
+
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = CompilationError("Unknown node type 'fetch-rss'", phase="node_loading")
+            with pytest.raises(CompilationError, match="Unknown node type"):
+                batch._exec(items)
+
+    def test_compilation_error_propagates_through_sequential_batch_with_fail_fast(
+        self, child_workflow_ir, mock_registry
+    ):
+        """CompilationError propagates with fail_fast too (sanity check)."""
+        batch, shared = self._build_batch_over_workflow_executor(
+            child_workflow_ir, mock_registry, error_handling="fail_fast", parallel=False
+        )
+
+        items = batch.prep(shared)
+
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = CompilationError("Missing required node", phase="validation")
+            with pytest.raises(CompilationError, match="Missing required node"):
+                batch._exec(items)
+
+    def test_generic_exception_wrapped_as_compilation_error_propagates(self, child_workflow_ir, mock_registry):
+        """When compile_ir_to_flow raises a generic Exception, WorkflowExecutor wraps
+        it in CompilationError. This wrapped error must also propagate through batch."""
+        batch, shared = self._build_batch_over_workflow_executor(
+            child_workflow_ir, mock_registry, error_handling="continue", parallel=False
+        )
+
+        items = batch.prep(shared)
+
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = ValueError("Bad IR structure")
+            with pytest.raises(CompilationError, match="Failed to compile sub-workflow"):
+                batch._exec(items)
+
+    def test_compilation_error_propagates_through_parallel_batch_with_continue(self, child_workflow_ir, mock_registry):
+        """When compile_ir_to_flow raises CompilationError, parallel batch must propagate it
+        even with error_handling: continue. The error escapes the thread via future.result()."""
+        batch, shared = self._build_batch_over_workflow_executor(
+            child_workflow_ir, mock_registry, error_handling="continue", parallel=True
+        )
+
+        items = batch.prep(shared)
+
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = CompilationError("Unknown node type 'fetch-rss'", phase="node_loading")
+            # CompilationError propagates through the future and is re-raised
+            # by _collect_parallel_results — never swallowed by error_handling
+            with pytest.raises(CompilationError, match="Unknown node type"):
+                batch._exec(items)
+
+    def test_compilation_error_propagates_through_exec_single_directly(self, child_workflow_ir, mock_registry):
+        """Test _exec_single directly: CompilationError is raised, not returned as error tuple."""
+        batch, shared = self._build_batch_over_workflow_executor(
+            child_workflow_ir, mock_registry, error_handling="continue", parallel=False
+        )
+
+        # prep() sets batch._shared
+        batch.prep(shared)
+
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = CompilationError("Node type not found", phase="node_loading")
+            # _exec_single must raise CompilationError, not return it as an error tuple
+            with pytest.raises(CompilationError, match="Node type not found"):
+                batch._exec_single(0, "item_a")
+
+    def test_compilation_error_not_retried(self, child_workflow_ir, mock_registry):
+        """CompilationError must not trigger retry logic — retrying a broken workflow
+        definition would just fail again."""
+
+        batch, shared = self._build_batch_over_workflow_executor(
+            child_workflow_ir, mock_registry, error_handling="continue", parallel=False
+        )
+        # Set max_retries to 3 — if CompilationError triggered retries,
+        # compile_ir_to_flow would be called 3 times instead of 1
+        batch.max_retries = 3
+
+        batch.prep(shared)
+
+        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
+            mock_compile.side_effect = CompilationError("Broken workflow", phase="test")
+            with pytest.raises(CompilationError):
+                batch._exec_single(0, "item_a")
+
+            # CompilationError should cause immediate raise — compile called only once
+            assert mock_compile.call_count == 1
