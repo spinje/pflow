@@ -174,6 +174,9 @@ class WorkflowTraceCollector:
         calls: list[dict[str, Any]] = []
 
         for event in events:
+            if event.get("cached"):
+                continue  # Cached nodes incurred no cost this run
+
             if "llm_call" in event:
                 call = dict(event["llm_call"])
                 call["node_id"] = event.get("node_id", "unknown")
@@ -292,6 +295,9 @@ class WorkflowTraceCollector:
         models: set[str] = set()
 
         for event in events:
+            if event.get("cached"):
+                continue  # Cached nodes incurred no cost this run
+
             if "llm_call" in event:
                 total_calls += 1
                 total_tokens += event["llm_call"].get("total_tokens", 0)

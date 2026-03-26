@@ -947,6 +947,189 @@ class TestCollectLLMCalls:
         assert models == {"top-model", "nested-model"}
 
 
+class TestCachedCostExclusion:
+    """Cached events should not contribute to LLM cost aggregation."""
+
+    @pytest.fixture
+    def collector(self):
+        return WorkflowTraceCollector("test-workflow")
+
+    def test_collect_llm_calls_excludes_cached_events(self, collector):
+        """Cached LLM events should not appear in collect_llm_calls()."""
+        collector.record_node_execution(
+            node_id="cached-llm",
+            node_type="LLMNode",
+            duration_ms=0.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.05}},
+            cached=True,
+        )
+        collector.record_node_execution(
+            node_id="fresh-llm",
+            node_type="LLMNode",
+            duration_ms=500.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.10}},
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["node_id"] == "fresh-llm"
+
+    def test_collect_llm_summary_excludes_cached_cost(self, collector):
+        """Cost summary should only reflect nodes that actually executed."""
+        collector.record_node_execution(
+            node_id="cached-llm",
+            node_type="LLMNode",
+            duration_ms=0.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "total_tokens": 150, "cost_usd": 0.05}},
+            cached=True,
+        )
+        collector.record_node_execution(
+            node_id="fresh-llm",
+            node_type="LLMNode",
+            duration_ms=500.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "total_tokens": 300, "cost_usd": 0.10}},
+        )
+        summary = collector._collect_llm_summary(collector.events)
+        assert summary["total_calls"] == 1
+        assert summary["total_cost_usd"] == pytest.approx(0.10)
+        assert summary["total_tokens"] == 300
+
+    def test_cached_sub_workflow_event_excluded_from_cost(self, collector):
+        """A cached sub-workflow event's children should not be counted."""
+        collector.record_node_execution(
+            node_id="cached-wf",
+            node_type="WorkflowExecutor",
+            duration_ms=0.0,
+            success=True,
+            cached=True,
+            sub_workflow_events=[
+                {
+                    "node_id": "child-llm",
+                    "node_type": "LLMNode",
+                    "duration_ms": 300.0,
+                    "success": True,
+                    "llm_call": {"model": "claude-sonnet", "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.08},
+                },
+            ],
+        )
+        assert collector.collect_llm_calls() == []
+        summary = collector._collect_llm_summary(collector.events)
+        assert summary["total_calls"] == 0
+        assert summary["total_cost_usd"] == 0.0
+
+    def test_cached_batch_event_excluded_from_cost(self, collector):
+        """A cached batch event's items should not be counted."""
+        collector.record_node_execution(
+            node_id="cached-batch",
+            node_type="PflowBatchNode",
+            duration_ms=0.0,
+            success=True,
+            cached=True,
+            batch_items=[
+                {
+                    "index": 0,
+                    "item": "a",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "m1", "input_tokens": 10, "output_tokens": 5, "cost_usd": 0.01},
+                },
+                {
+                    "index": 1,
+                    "item": "b",
+                    "success": True,
+                    "duration_ms": 100,
+                    "llm_call": {"model": "m1", "input_tokens": 20, "output_tokens": 10, "cost_usd": 0.02},
+                },
+            ],
+        )
+        assert collector.collect_llm_calls() == []
+        summary = collector._collect_llm_summary(collector.events)
+        assert summary["total_calls"] == 0
+        assert summary["total_cost_usd"] == 0.0
+
+    def test_mixed_cached_and_fresh_cost(self, collector):
+        """Only fresh nodes contribute to total cost in a mixed scenario."""
+        # Two cached LLM nodes with different costs
+        collector.record_node_execution(
+            node_id="cached-1",
+            node_type="LLMNode",
+            duration_ms=0.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "total_tokens": 100, "cost_usd": 0.05}},
+            cached=True,
+        )
+        collector.record_node_execution(
+            node_id="cached-2",
+            node_type="LLMNode",
+            duration_ms=0.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "total_tokens": 200, "cost_usd": 0.10}},
+            cached=True,
+        )
+        # One fresh node
+        collector.record_node_execution(
+            node_id="fresh-1",
+            node_type="LLMNode",
+            duration_ms=800.0,
+            success=True,
+            node_output={"llm_usage": {"model": "gpt-4o", "total_tokens": 300, "cost_usd": 0.15}},
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["node_id"] == "fresh-1"
+
+        summary = collector._collect_llm_summary(collector.events)
+        assert summary["total_calls"] == 1
+        assert summary["total_cost_usd"] == pytest.approx(0.15)
+        assert summary["total_tokens"] == 300
+
+    def test_non_cached_workflow_with_mixed_inner_nodes(self, collector):
+        """Real-world scenario: workflow node re-executes (not cached), but its
+        sub_workflow_events contain a mix of cached and fresh inner nodes.
+
+        This is the exact interaction of both bug fixes:
+        - Bug 1 fix: workflow node skips memoization, so it re-executes
+        - Bug 2 fix: cached inner nodes don't contribute to cost
+
+        Only the fresh inner node's cost should be counted.
+        """
+        collector.record_node_execution(
+            node_id="greet",
+            node_type="WorkflowExecutor",
+            duration_ms=50.0,
+            success=True,
+            # Not cached — workflow nodes skip memoization (Bug 1 fix)
+            sub_workflow_events=[
+                {
+                    "node_id": "say-hello",
+                    "node_type": "LLMNode",
+                    "duration_ms": 0.0,
+                    "success": True,
+                    "cached": True,  # Unchanged inner node served from cache
+                    "llm_call": {"model": "gpt-4o", "input_tokens": 100, "output_tokens": 50, "cost_usd": 0.05},
+                },
+                {
+                    "node_id": "format-output",
+                    "node_type": "LLMNode",
+                    "duration_ms": 800.0,
+                    "success": True,
+                    # No cached flag — this node actually executed
+                    "llm_call": {"model": "gpt-4o", "input_tokens": 200, "output_tokens": 100, "cost_usd": 0.10},
+                },
+            ],
+        )
+        calls = collector.collect_llm_calls()
+        assert len(calls) == 1
+        assert calls[0]["node_id"] == "format-output"
+
+        summary = collector._collect_llm_summary(collector.events)
+        assert summary["total_calls"] == 1
+        assert summary["total_cost_usd"] == pytest.approx(0.10)
+
+
 class TestCachedNodeEvent:
     """D5: Verify cached=True flag appears in trace events."""
 
