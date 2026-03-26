@@ -940,6 +940,18 @@ class PflowBatchNode(Node):
         # Count successes: non-None results without error keys
         success_count = sum(1 for r in exec_res if r is not None and not self._extract_error(r))
 
+        # All items failed → abort. "continue" means tolerate partial failure,
+        # not total failure. With 0 successes, downstream nodes would run on
+        # garbage (None/error dicts). Standard batch semantics: all-fail = step failure.
+        if self.error_handling == "continue" and success_count == 0 and self._errors:
+            error_summary = "; ".join(e["error"] for e in self._errors[:3])
+            if len(self._errors) > 3:
+                error_summary += f" (+{len(self._errors) - 3} more)"
+            raise RuntimeError(
+                f"Batch '{self.node_id}': all {len(self._errors)} items failed, "
+                f"no successful results to continue with. Errors: {error_summary}"
+            )
+
         # Calculate timing statistics
         timing_stats: dict[str, float] | None = None
         if self._item_timings:
@@ -988,12 +1000,15 @@ class PflowBatchNode(Node):
             },
         )
 
+        self._push_warnings(shared, exec_res)
+
+        return "default"
+
+    def _push_warnings(self, shared: dict[str, Any], exec_res: list) -> None:
+        """Push warnings for DEGRADED status when batch had issues."""
         # Detect items that succeeded but produced empty output (silent failures).
-        # These are invisible without explicit checking — the pipeline reports success
-        # but downstream nodes get empty/useless input.
         empty_indices = _detect_empty_output_items(exec_res, self._errors)
 
-        # Push warnings for DEGRADED status
         warning_parts: list[str] = []
         if self.error_handling == "continue" and self._errors:
             warning_parts.append(f"{len(self._errors)} error(s) out of {len(exec_res)} items")
@@ -1007,5 +1022,3 @@ class PflowBatchNode(Node):
             if "__warnings__" not in shared:
                 shared["__warnings__"] = {}
             shared["__warnings__"][self.node_id] = f"Batch '{self.node_id}': " + "; ".join(warning_parts)
-
-        return "default"

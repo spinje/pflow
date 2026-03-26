@@ -1683,12 +1683,14 @@ class TestParallelRetry:
         shared = {"data": ["x"], "_attempts": []}
         items = batch.prep(shared)
         results = batch._exec(items)
-        batch.post(shared, items, results)
 
         # Should have tried 3 times (tracked in shared list)
         assert len(shared["_attempts"]) == 3
         assert results[0] is None
-        assert shared["test_node"]["error_count"] == 1
+
+        # All items failed → post() raises (all-fail = step failure)
+        with pytest.raises(RuntimeError, match="all 1 items failed"):
+            batch.post(shared, items, results)
 
     def test_parallel_retry_resets_namespace(self):
         """Namespace is reset between retries in parallel mode (matches sequential behavior).
@@ -2866,11 +2868,13 @@ class TestBatchActionFallbackErrorDetection:
         shared: dict = {"data": ["a"]}
         items = batch.prep(shared)
         results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # Error should come from _extract_error, not the fallback
-        assert shared["test_node"]["error_count"] == 1
-        assert shared["test_node"]["errors"][0]["error"] == "Specific error from node"
+        # Error detected via _extract_error (preferred path), not action string fallback
+        assert batch._errors[0]["error"] == "Specific error from node"
+
+        # All items failed → post() raises (all-fail = step failure)
+        with pytest.raises(RuntimeError, match="all 1 items failed"):
+            batch.post(shared, items, results)
 
     def test_exec_single_no_error_when_default_action(self):
         """When _run() returns 'default' and no error in result, item succeeds."""
@@ -3006,15 +3010,11 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
 
         flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
         shared: dict = {}
-        flow.run(shared)
 
-        # The batch should detect both items as errors — NOT silent success.
-        batch_result = shared.get("batch-call", {})
-        assert batch_result.get("error_count") == 2, (
-            f"Expected 2 errors but got {batch_result.get('error_count')}. Batch result: {batch_result}"
-        )
-        assert batch_result.get("count") == 2
-        assert len(batch_result.get("errors", [])) == 2
+        # All items fail → batch raises RuntimeError (all-fail = step failure).
+        # This propagates through the flow — the workflow aborts.
+        with pytest.raises(RuntimeError, match="all 2 items failed"):
+            flow.run(shared)
 
 
 class TestDetectEmptyOutputItems:
