@@ -1,0 +1,311 @@
+"""Tests for the runtime memoization cache module.
+
+Covers: cache key computation, put/get lifecycle, TTL eviction, read-disabled mode,
+graceful degradation on corrupted DB, and concurrent access safety.
+"""
+
+import sqlite3
+import threading
+import time
+
+from pflow.runtime.cache import (
+    MemoizationCache,
+    compute_batch_cache_key,
+    compute_node_cache_key,
+)
+
+# ---------------------------------------------------------------------------
+# Basic put / get lifecycle
+# ---------------------------------------------------------------------------
+
+
+def test_put_get_cycle(tmp_path):
+    """Storing an entry and retrieving it returns the same action and output."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("key1", "node-a", "/wf.pflow.md", "default", {"stdout": "hello"})
+    result = cache.get("key1")
+
+    assert result is not None
+    action, output = result
+    assert action == "default"
+    assert output == {"stdout": "hello"}
+
+
+def test_cache_miss(tmp_path):
+    """Looking up a key that was never stored returns None."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    result = cache.get("nonexistent-key")
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# TTL and eviction
+# ---------------------------------------------------------------------------
+
+
+def test_ttl_eviction(tmp_path):
+    """Entries older than TTL are removed by evict_expired()."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path, ttl_seconds=3600)
+
+    cache.put("old", "n1", "/wf.pflow.md", "default", {"v": 1})
+    cache.put("new", "n2", "/wf.pflow.md", "default", {"v": 2})
+
+    # Backdate the "old" entry by 2 hours
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE cache_entries SET created_at = ? WHERE cache_key = ?",
+        (time.time() - 7200, "old"),
+    )
+    conn.commit()
+    conn.close()
+
+    removed = cache.evict_expired()
+    assert removed == 1
+
+    # "old" is gone, "new" is still there
+    assert cache.get("old") is None
+    assert cache.get("new") is not None
+
+
+def test_expired_entry_deleted_on_get(tmp_path):
+    """Getting an expired entry deletes it from the DB and returns None."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path, ttl_seconds=3600)
+
+    cache.put("key1", "n1", "/wf.pflow.md", "default", {"v": 1})
+
+    # Backdate entry beyond TTL
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE cache_entries SET created_at = ? WHERE cache_key = ?",
+        (time.time() - 7200, "key1"),
+    )
+    conn.commit()
+    conn.close()
+
+    # get() should return None for the expired entry
+    assert cache.get("key1") is None
+
+    # Verify the row was actually deleted from the database
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.execute("SELECT COUNT(*) FROM cache_entries WHERE cache_key = ?", ("key1",))
+    count = cursor.fetchone()[0]
+    conn.close()
+    assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# Overwrite and clear
+# ---------------------------------------------------------------------------
+
+
+def test_overwrite_same_key(tmp_path):
+    """Putting the same key again overwrites the previous output."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"version": 1})
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"version": 2})
+
+    result = cache.get("k")
+    assert result is not None
+    _, output = result
+    assert output == {"version": 2}
+
+
+def test_clear_all(tmp_path):
+    """clear() with no arguments removes all entries."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("a", "n1", "/wf1.pflow.md", "default", {"x": 1})
+    cache.put("b", "n2", "/wf2.pflow.md", "default", {"x": 2})
+
+    removed = cache.clear()
+    assert removed == 2
+
+    assert cache.get("a") is None
+    assert cache.get("b") is None
+
+
+def test_clear_by_workflow(tmp_path):
+    """clear(workflow_path) only removes entries for that specific workflow."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+
+    cache.put("a", "n1", "/wf1.pflow.md", "default", {"x": 1})
+    cache.put("b", "n2", "/wf2.pflow.md", "default", {"x": 2})
+    cache.put("c", "n3", "/wf1.pflow.md", "default", {"x": 3})
+
+    removed = cache.clear(workflow_path="/wf1.pflow.md")
+    assert removed == 2
+
+    # wf1 entries gone
+    assert cache.get("a") is None
+    assert cache.get("c") is None
+    # wf2 entry intact
+    assert cache.get("b") is not None
+
+
+# ---------------------------------------------------------------------------
+# read_enabled flag
+# ---------------------------------------------------------------------------
+
+
+def test_read_disabled(tmp_path):
+    """When read_enabled=False, get() always returns None even for stored entries."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path, read_enabled=False)
+
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 1})
+    assert cache.get("k") is None
+
+
+def test_write_still_works_when_read_disabled(tmp_path):
+    """put() writes to DB even when read_enabled=False; a read-enabled cache can retrieve it."""
+    db_path = tmp_path / "cache.db"
+    write_cache = MemoizationCache(db_path=db_path, read_enabled=False)
+    write_cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 42})
+
+    # A separate cache instance with reads enabled can see the entry
+    read_cache = MemoizationCache(db_path=db_path, read_enabled=True)
+    result = read_cache.get("k")
+    assert result is not None
+    _, output = result
+    assert output == {"v": 42}
+
+
+# ---------------------------------------------------------------------------
+# Cache key computation — node keys
+# ---------------------------------------------------------------------------
+
+
+def test_compute_node_cache_key_determinism():
+    """Same config_hash and resolved_inputs always produce the same key."""
+    key1 = compute_node_cache_key("hash_abc", resolved_inputs={"prompt": "hello"})
+    key2 = compute_node_cache_key("hash_abc", resolved_inputs={"prompt": "hello"})
+    assert key1 == key2
+
+
+def test_compute_node_cache_key_different_inputs():
+    """Different resolved_inputs produce different keys."""
+    key1 = compute_node_cache_key("hash_abc", resolved_inputs={"prompt": "hello"})
+    key2 = compute_node_cache_key("hash_abc", resolved_inputs={"prompt": "world"})
+    assert key1 != key2
+
+
+def test_compute_node_cache_key_none_vs_empty_inputs():
+    """No resolved_inputs vs empty dict produce different keys (different hash content)."""
+    key_none = compute_node_cache_key("hash_abc")
+    key_empty = compute_node_cache_key("hash_abc", resolved_inputs={})
+    assert key_none != key_empty
+
+
+def test_compute_node_cache_key_dict_order_irrelevant():
+    """Dict key order does not affect the cache key (JSON sort_keys=True)."""
+    key1 = compute_node_cache_key("h", resolved_inputs={"a": 1, "b": 2})
+    key2 = compute_node_cache_key("h", resolved_inputs={"b": 2, "a": 1})
+    assert key1 == key2
+
+
+# ---------------------------------------------------------------------------
+# Cache key computation — batch keys
+# ---------------------------------------------------------------------------
+
+
+def test_compute_batch_cache_key_determinism():
+    """Same inputs always produce the same batch cache key."""
+    config = {"items_template": "${data}", "item_alias": "item"}
+    key1 = compute_batch_cache_key("hash_abc", config, ["a", "b", "c"])
+    key2 = compute_batch_cache_key("hash_abc", config, ["a", "b", "c"])
+    assert key1 == key2
+
+
+def test_compute_batch_cache_key_different_items():
+    """Different resolved_items produce different batch cache keys."""
+    config = {"items_template": "${data}", "item_alias": "item"}
+    key1 = compute_batch_cache_key("hash_abc", config, ["a", "b", "c"])
+    key2 = compute_batch_cache_key("hash_abc", config, ["x", "y", "z"])
+    assert key1 != key2
+
+
+def test_compute_batch_cache_key_different_config():
+    """Different batch config produces different batch cache keys."""
+    items = ["a", "b"]
+    key1 = compute_batch_cache_key("h", {"item_alias": "item"}, items)
+    key2 = compute_batch_cache_key("h", {"item_alias": "row"}, items)
+    assert key1 != key2
+
+
+# ---------------------------------------------------------------------------
+# Graceful degradation
+# ---------------------------------------------------------------------------
+
+
+def test_corrupted_db_graceful_degradation(tmp_path):
+    """Operations on a corrupted database file do not raise; they return defaults."""
+    db_path = tmp_path / "cache.db"
+
+    # Write garbage to the file before MemoizationCache tries to init
+    db_path.write_bytes(b"this is not a sqlite database at all!!!")
+
+    # Constructor should not crash
+    cache = MemoizationCache(db_path=db_path)
+
+    # get should return None, not raise
+    assert cache.get("any-key") is None
+
+    # put should not raise
+    cache.put("k", "n1", "/wf.pflow.md", "default", {"v": 1})
+
+    # evict should return 0, not raise
+    assert cache.evict_expired() == 0
+
+    # clear should return 0, not raise
+    assert cache.clear() == 0
+
+
+# ---------------------------------------------------------------------------
+# Concurrent access
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_access(tmp_path):
+    """Multiple threads can read and write to the same cache without errors."""
+    db_path = tmp_path / "cache.db"
+    cache = MemoizationCache(db_path=db_path)
+    errors: list[Exception] = []
+    num_threads = 8
+    ops_per_thread = 20
+
+    def worker(thread_id: int) -> None:
+        try:
+            for i in range(ops_per_thread):
+                key = f"t{thread_id}-{i}"
+                cache.put(key, f"node-{thread_id}", "/wf.pflow.md", "default", {"tid": thread_id, "i": i})
+                result = cache.get(key)
+                # The entry we just wrote should be retrievable
+                if result is None:
+                    errors.append(AssertionError(f"get({key}) returned None immediately after put"))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(tid,)) for tid in range(num_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == [], f"Concurrent access errors: {errors}"
+
+    # Verify total entries written
+    conn = sqlite3.connect(str(db_path))
+    cursor = conn.execute("SELECT COUNT(*) FROM cache_entries")
+    count = cursor.fetchone()[0]
+    conn.close()
+    assert count == num_threads * ops_per_thread

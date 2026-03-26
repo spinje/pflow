@@ -6,7 +6,7 @@ Memoization-based caching for workflow node execution. When an AI agent iterates
 
 ## Status
 
-not started
+complete
 
 ## Priority
 
@@ -79,11 +79,11 @@ pflow workflow.pflow.md --no-cache                      # bypass cache entirely
 
 - **Input comparison at template resolution time**: The cache check happens AFTER template resolution (which is cheap — just dict lookups). We hash the resolved template values to determine if inputs changed. This avoids needing compile-time dependency analysis.
 
-- **Separate cache storage from trace**: The trace system stores 17MB per run for the lyrics generator workflow (LLM prompts, responses, template resolutions, nested event trees). The cache only needs ~3MB (node outputs + metadata). Different purposes, different access patterns, different files. Future unification opportunity noted but deferred.
+- **Separate cache storage from trace (SQLite)**: The trace system stores 17MB per run for the lyrics generator workflow (LLM prompts, responses, template resolutions, nested event trees). The cache only needs ~3MB (node outputs + metadata). SQLite chosen over files for concurrent safety (WAL mode handles parallel batch), TTL eviction (one SQL statement), and Task 133 alignment (add trace columns later). Single file: `~/.pflow/cache/cache.db`.
 
 - **Cache accumulates (not latest-only)**: Like a real memoization cache, old entries are kept. Running with input A, then input B, then input A again hits cache on the third run. TTL-based eviction bounds disk growth.
 
-- **Per-workflow-file caching, keyed by content + inputs**: A sub-workflow's cache is portable — it doesn't matter if it was run standalone or as part of a parent. Same file + same inputs = same cache. The cache key for sub-workflows is `hash(workflow_path + workflow_content + child_params)`.
+- **No sub-workflow-level caching**: Sub-workflows compile fresh each run (reading current file contents from disk). Individual nodes inside sub-workflows are cached via the propagated `__memoization_cache__` instance. This handles the "edit a prompt file referenced by a sub-workflow" case naturally — file content is inlined into node params at compile time, so the config hash changes when the file changes. No special sub-workflow cache key needed.
 
 - **`--only <node>` instead of separate `run-step` command**: The three modes (full run, re-run one node, standalone execution with manual inputs) are all combinations of `--only`, `--no-cache`, and `key=value` overrides. One command, composable flags.
 
@@ -91,7 +91,7 @@ pflow workflow.pflow.md --no-cache                      # bypass cache entirely
 
 - **Whole-batch caching for MVP**: Cache entire batch results, not individual items. Per-item caching only matters for partial failure recovery (3 of 4 items succeed, 1 fails from transient error). Narrow edge case — defer to later.
 
-- **Extend existing `__execution__` mechanism**: The instrumented wrapper already has config hashing, cache checking, cache-hit trace recording. We're adding disk persistence and input-hash-based validation, not building from scratch.
+- **Separate memoization layer alongside `__execution__`**: The existing `__execution__` mechanism handles in-process resume (within a single run). The new `__memoization_cache__` (SQLite-backed) handles cross-run persistence. They coexist — memoization checks run first, then in-process cache checks. The instrumented wrapper's existing `_handle_cached_execution()` is reused for both.
 
 ## Dependencies
 
@@ -109,19 +109,19 @@ None. The existing instrumented wrapper, template wrapper, and trace system prov
 
 ### Sub-Workflow Caching
 
-- Same memoization mechanism at every level — no special sub-workflow logic
-- Sub-workflow cache key: `hash(workflow_file_path + workflow_content_hash + child_params)`
-- `child_params` = resolved non-reserved params from `WorkflowExecutor.prep()` — the canonical input dict
-- Cache is portable: same `.pflow.md` with same inputs hits cache regardless of whether run standalone or as sub-workflow
-- For batch sub-workflows: each batch item gets different resolved `child_params` (templates like `${doc.name}` resolved per-item), producing different cache keys. This is correct — different items should cache independently.
+- Same memoization mechanism at every level — no special sub-workflow logic, no sub-workflow-level cache
+- `__memoization_cache__` (the shared SQLite cache instance) is propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`
+- Sub-workflows compile fresh each run, reading current file contents from disk — file changes are caught because inlined content changes the node config hash
+- Each node inside a sub-workflow checks its own cache key independently: `hash(config + resolved_inputs)`
+- For batch sub-workflows: the batch node is cached as a whole unit (MVP). Inside each batch item's sub-workflow, individual nodes are cached via the propagated cache instance
 
 ### Cache Storage
 
-- Separate from trace files (different purpose, access pattern, and lifecycle)
-- Lean format: per-node entries containing only `cache_key`, `action` (string returned by node for flow routing), `output` (the data to restore into shared store), and `output_hash` (for quick comparison)
+- SQLite database at `~/.pflow/cache/cache.db` — WAL journal mode for concurrent read/write safety (parallel batch threads), stdlib `sqlite3` (zero dependencies)
+- Separate from trace files (different purpose, access pattern, and lifecycle). Designed for future Task 133 unification (add trace columns to same table)
+- Per-node entries: `cache_key` (PRIMARY KEY), `node_id`, `workflow_path`, `action`, `output` (zlib-compressed JSON BLOB), `output_hash`, `created_at`
 - Accumulating (memoization — old entries kept for different input combinations)
-- TTL-based eviction to bound disk growth (default 24h, configurable)
-- Location: `~/.pflow/cache/` directory
+- TTL-based eviction to bound disk growth (default 24h). Checked inline on `get()` for expired entries, periodically on `put()` (every 50 writes)
 
 ### CLI Flags
 
@@ -132,8 +132,7 @@ None. The existing instrumented wrapper, template wrapper, and trace system prov
 
 ### Scope
 
-- **In scope**: File-based workflow execution (`pflow ./workflow.pflow.md`, `pflow /path/to/workflow.pflow.md`)
-- **Out of scope**: Saved/named workflows (`pflow my-saved-workflow`) — these are production artifacts, always run fresh
+- **In scope**: File-based and saved workflow execution — cache keys are content-addressed (node config + resolved inputs), correct regardless of workflow origin
 - **Out of scope**: Per-batch-item caching, CLI cache commands (`pflow cache status/clear`), unifying trace + cache storage
 
 ## Implementation Notes
@@ -157,9 +156,9 @@ None. The existing instrumented wrapper, template wrapper, and trace system prov
 - No PocketFlow modification needed.
 
 **Sub-workflow caching:**
-- `WorkflowExecutor.prep()` produces `prep_res["child_params"]` — the canonical resolved input dict (all non-reserved params, fully resolved by parent's `TemplateAwareNodeWrapper`).
-- This is the clean interception point for computing the sub-workflow cache key.
-- `_create_child_storage()` creates child shared store from `child_params.copy()` + infrastructure keys. Cache can pre-populate this with cached node outputs.
+- No sub-workflow-level cache. `__memoization_cache__` is propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`.
+- Sub-workflows compile fresh each run (`WorkflowExecutor.exec()` calls `compile_ir_to_flow()`), reading current file contents from disk. File changes are caught because inlined content enters the node config hash.
+- Each child node has its own `InstrumentedNodeWrapper` that checks the shared memoization cache independently.
 
 **CLI arg flow:**
 - `key=value` pairs are parsed by `parse_workflow_params()` in `cli/param_parsing.py`
@@ -176,13 +175,13 @@ None. The existing instrumented wrapper, template wrapper, and trace system prov
 | Static params (non-template) | Included | Keep |
 | Template params | **Missing** (on TemplateAwareNodeWrapper, not inner node) | Include |
 | Batch config | **Missing** (on PflowBatchNode) | Include |
-| Sub-workflow file content | **Missing** (only path string in params) | Include content hash |
+| Sub-workflow file content | **Missing** (only path string in params) | Not needed — sub-workflows compile fresh, child nodes check own cache |
 | `_source_lines` metadata | **Included** (noise) | Exclude |
 | Resolved template values | **Missing** | This becomes the input hash |
 
-### Cache File Design Note
+### Cache/Trace Unification Note
 
-The trace system stores per-node `node_output` (full data, no truncation) — the same data the cache needs. In a future task, the trace could be restructured as per-node files (content-addressed store), unifying trace and cache storage. For now, accept the ~3MB duplication per workflow run. Design the cache format to be compatible with future unification.
+The trace system stores per-node `node_output` (full data, no truncation) — the same data the cache stores. In Task 133, the trace could be restructured to use the same SQLite database (add trace metadata columns to cache entries), unifying trace and cache storage. The SQLite schema is designed for this — `output_hash` column enables content-addressed lookup, and per-node rows map naturally to trace events.
 
 ## Verification
 
@@ -194,9 +193,9 @@ The trace system stores per-node `node_output` (full data, no truncation) — th
 - Upstream re-executes but produces same output: downstream stays cached (no false invalidation)
 
 ### Sub-Workflow Caching
-- Sub-workflow run standalone, then as part of parent with same inputs: cache hit
-- Batch sub-workflow with 4 items: each item caches independently (different inputs → different keys)
-- Edit a file deep in sub-sub-workflow: only affected nodes re-execute, rest cached
+- Sub-workflow nodes cached via propagated `__memoization_cache__` — same cache instance at every nesting level
+- Edit a file referenced by a sub-workflow: sub-workflow compiles fresh (reads current file), changed node's config hash differs → cache miss, upstream nodes inside sub-workflow stay cached
+- Batch sub-workflow with 4 items: whole batch cached as a unit. Inside each item's sub-workflow, individual nodes cached independently
 
 ### CLI Flags
 - `--no-cache`: full execution, no cache reads (writes still happen for next run)
@@ -205,7 +204,7 @@ The trace system stores per-node `node_output` (full data, no truncation) — th
 - All flags composable: `--only <node> --no-cache key=value` works
 
 ### Edge Cases
-- Cache file missing or corrupted: degrades gracefully to full execution
+- Cache DB missing or corrupted: degrades gracefully to full execution (WARNING logged on DB init failure)
 - Workflow file renamed/moved: different cache key, full execution (correct)
 - Node added/removed from workflow: unaffected nodes still cache, new nodes execute
 - Binary data in node output: handled correctly by serialization
@@ -213,7 +212,7 @@ The trace system stores per-node `node_output` (full data, no truncation) — th
 ### Performance
 - Cache lookup: < 10ms per node
 - Full workflow with all cache hits: < 1s overhead regardless of node count
-- Cache file size: proportional to output data only (~3MB for lyrics generator, not 17MB like trace)
+- Cache DB size: proportional to output data only (zlib-compressed, ~3MB for lyrics generator vs 17MB trace)
 
 ## References
 

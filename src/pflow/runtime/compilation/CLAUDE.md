@@ -27,7 +27,9 @@ The orchestrator. `compile_ir_to_flow()` is the main entry point: parse IR dict,
 **CompilationError** — Rich exception with `phase`, `node_id`, `node_type`, `details`, `suggestion`. **WARNING**: A DIFFERENT `CompilationError` exists in `core/user_errors.py` (subclass of `UserFriendlyError`, different constructor). `cli/main.py` imports this one as `CompilerCompilationError` to disambiguate.
 
 **Key functions**:
-- `compile_ir_to_flow()` — main pipeline. Monkey-patches `flow.run` for output resolution and visit count reset.
+- `compile_ir_to_flow()` — main pipeline. Delegates to extracted helpers for run hooks and --only behavior.
+- `_apply_run_hooks(flow, ir_dict, only_node=None)` — monkey-patches `flow.run` for output resolution, visit count reset, and `--only` metadata. When `only_node` is set: stores `__execution__["only_node"]` and skips `populate_declared_outputs()` (prevents `OutputResolutionError` from unresolved downstream outputs). Extracted from `compile_ir_to_flow()` for C901 complexity.
+- `_apply_only_node_stop(flow, only_node_id, nodes)` — monkey-patches `flow.get_next_node` to return None after target node (implements `--only` CLI flag). Validates target exists, raises `CompilationError` with available node names on invalid target.
 - `inject_special_parameters()` — injects `__registry__` for workflow nodes, `__mcp_server__`/`__mcp_tool__` for MCP nodes. Delegates to `mcp_resolution` for MCP validation.
 - `_create_single_node()` — full node factory: import class, instantiate, apply wrapper chain (template -> namespace -> batch -> instrumentation), inject special params.
 - `_parse_ir_input()` — parses IR from JSON string or passes through dict.
@@ -36,6 +38,7 @@ The orchestrator. `compile_ir_to_flow()` is the main entry point: parse IR dict,
 - LLM nodes without `model` get auto-injected default from `get_default_workflow_model()`.
 - Source lines from markdown parser are threaded into params as `_<key>_source_line` for error reporting.
 - Template resolution mode: from IR `template_resolution_mode` field OR global settings fallback.
+- **`__only_node__`** is read from `initial_params` (passed through from CLI). It stays in `initial_params` (the compiler needs it) but is filtered from the shared store update in `executor_service.py` to avoid polluting template resolution context. This is asymmetric with `__no_cache__` which is popped from `execution_params` before shared store update.
 
 ## compile_validation.py
 

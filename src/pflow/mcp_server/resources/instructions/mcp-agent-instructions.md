@@ -629,6 +629,14 @@ Analysis results from the LLM processing step.
 - source: ${process.response}
 ```
 
+#### Iteration is Free
+
+pflow caches node outputs automatically. When you edit a prompt or parameter and re-run, only the changed node and its downstream re-execute. Use this:
+
+- Edit a prompt file → re-run → only affected nodes execute (~seconds, not minutes)
+- `--only <node>` → run just that node (upstream cached, downstream skipped)
+- `--no-cache` → force everything fresh (side-effect nodes, external API changes)
+
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->
 #### Input Declaration - Complete Rules

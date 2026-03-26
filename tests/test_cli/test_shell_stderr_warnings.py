@@ -278,12 +278,13 @@ class TestStderrInJsonOutput:
 
         output = json.loads(result.output)
 
-        # Verify stderr is in the result data
-        node_result = output["result"]["shell-with-stderr"]
-        assert "stderr" in node_result
-        assert "warning message" in node_result["stderr"]
+        # Verify the primary output is extracted (auto-detected stdout from namespace)
+        assert "stdout" in output["result"]
+        assert output["result"]["stdout"] == "output"
 
-        # Verify has_stderr flag is in execution steps (for agent detection)
+        # Verify has_stderr flag is in execution steps (for agent detection).
+        # This is where agents find stderr — the per-step execution metadata,
+        # not the result field (which carries the primary output value).
         steps = output["execution"]["steps"]
         assert len(steps) == 1
         assert steps[0]["has_stderr"] is True

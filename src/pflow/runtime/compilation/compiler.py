@@ -598,6 +598,70 @@ def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
     return nodes[start_node_id]
 
 
+def _apply_run_hooks(flow: Any, ir_dict: dict[str, Any], only_node: Optional[str] = None) -> None:
+    """Wrap flow.run for per-execution setup and output population.
+
+    When ``only_node`` is set (``--only`` flag), declared output resolution is
+    skipped and the target node's output is promoted to ``shared["result"]``
+    so the existing extraction pipeline picks it up.
+    """
+    has_outputs = bool(ir_dict.get("outputs"))
+    if has_outputs:
+        from pflow.runtime.output_resolver import populate_declared_outputs
+
+    original_run = flow.run
+
+    def run_with_hooks(shared_storage: dict[str, Any]) -> str:
+        """Run flow with per-execution setup and optional output population."""
+        # Reset node visit counts for this execution cycle.
+        if "__execution__" in shared_storage and "node_visit_counts" in shared_storage["__execution__"]:
+            shared_storage["__execution__"]["node_visit_counts"] = {}
+
+        result = original_run(shared_storage)
+
+        is_error = result and isinstance(result, str) and result.startswith("error")
+
+        if only_node:
+            # Store --only metadata for execution summary display.
+            # Output extraction handled by namespace-aware auto-detection in the
+            # display layer (success_formatter._find_auto_output, workflow_output._find_auto_output).
+            if "__execution__" in shared_storage:
+                shared_storage["__execution__"]["only_node"] = only_node
+        elif has_outputs and not is_error:
+            populate_declared_outputs(shared_storage, ir_dict)
+
+        return str(result)
+
+    flow.run = run_with_hooks
+
+
+def _apply_only_node_stop(flow: Any, only_node_id: str, nodes: dict[str, Any]) -> None:
+    """Apply --only monkey-patch to stop flow after the target node.
+
+    Validates the target node exists, then overrides get_next_node to return None
+    after the target, terminating the flow.
+    """
+    if only_node_id not in nodes:
+        raise CompilationError(
+            f"Node '{only_node_id}' not found",
+            phase="only_node_resolution",
+            details={"available_nodes": sorted(nodes.keys())},
+            suggestion=f"Available nodes: {', '.join(sorted(nodes.keys()))}",
+        )
+    original_get_next = flow.get_next_node
+
+    def get_next_with_stop(curr: Any, action: Any) -> Any:
+        if getattr(curr, "node_id", None) == only_node_id:
+            return None  # Terminate flow after target node
+        return original_get_next(curr, action)
+
+    flow.get_next_node = get_next_with_stop
+    logger.info(
+        f"--only: flow will stop after node '{only_node_id}'",
+        extra={"phase": "flow_creation", "only_node": only_node_id},
+    )
+
+
 def compile_ir_to_flow(
     ir_json: Union[str, dict[str, Any]],
     registry: Registry,
@@ -701,32 +765,13 @@ def compile_ir_to_flow(
     logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
     flow = Flow(start=start_node)
 
+    # Step 10b: Apply --only monkey-patch to stop flow after target node
+    only_node_id = initial_params.get("__only_node__") if initial_params else None
+    if only_node_id:
+        _apply_only_node_stop(flow, only_node_id, nodes)
+
     # Step 11: Wrap flow.run for per-execution setup and output population
-    has_outputs = bool(ir_dict.get("outputs"))
-    if has_outputs:
-        from pflow.runtime.output_resolver import populate_declared_outputs
-
-    original_run = flow.run
-
-    def run_with_hooks(shared_storage: dict[str, Any]) -> str:
-        """Run flow with per-execution setup and optional output population."""
-        # Reset node visit counts for this execution cycle.
-        # Visit counts track revisits WITHIN a single flow.run() (for loop
-        # detection and cache invalidation). They must reset between runs
-        # so that workflow resume state doesn't confuse cross-run revisits
-        # with in-run loops.
-        if "__execution__" in shared_storage and "node_visit_counts" in shared_storage["__execution__"]:
-            shared_storage["__execution__"]["node_visit_counts"] = {}
-
-        result = original_run(shared_storage)
-
-        # Populate declared outputs on successful execution
-        if has_outputs and not (result and isinstance(result, str) and result.startswith("error")):
-            populate_declared_outputs(shared_storage, ir_dict)
-
-        return str(result)
-
-    flow.run = run_with_hooks  # type: ignore[method-assign]
+    _apply_run_hooks(flow, ir_dict, only_node=only_node_id)
 
     logger.info(
         "Compilation successful",

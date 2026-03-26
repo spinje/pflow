@@ -392,6 +392,10 @@ class InstrumentedNodeWrapper:
     def _compute_node_config(self) -> dict[str, Any]:
         """Compute the configuration dictionary for the node.
 
+        Includes all semantically relevant configuration: node type, static params,
+        template params (raw templates), batch semantic config. Excludes noise like
+        _source_line metadata keys injected by the markdown parser.
+
         Returns:
             Dictionary containing node type and parameters
         """
@@ -399,7 +403,7 @@ class InstrumentedNodeWrapper:
         actual_node_class = self._get_actual_node_class()
 
         # Build configuration dictionary
-        node_config = {"type": actual_node_class.__name__, "params": {}}
+        node_config: dict[str, Any] = {"type": actual_node_class.__name__, "params": {}}
 
         # Get the actual node instance to access params
         actual_node = self.inner_node
@@ -421,6 +425,26 @@ class InstrumentedNodeWrapper:
         if hasattr(actual_node, "params") and actual_node.params:
             # Sort keys for deterministic hashing
             node_config["params"] = dict(sorted(actual_node.params.items()))
+
+        # Include template params from TemplateAwareNodeWrapper (raw templates, not resolved)
+        template_wrapper = self._find_template_wrapper()
+        if template_wrapper and hasattr(template_wrapper, "template_params") and template_wrapper.template_params:
+            node_config["template_params"] = dict(sorted(template_wrapper.template_params.items()))
+
+        # Include semantic batch config (affects results)
+        node_type, batch_node = self._find_batch_or_workflow_node()
+        if node_type == "batch" and batch_node:
+            node_config["batch"] = {
+                "items_template": getattr(batch_node, "items_template", None),
+                "item_alias": getattr(batch_node, "item_alias", "item"),
+                "error_handling": getattr(batch_node, "error_handling", "fail_fast"),
+                "max_retries": getattr(batch_node, "max_retries", 1),
+            }
+
+        # Filter out _source_line noise from params (injected by markdown parser,
+        # changes when lines move but doesn't affect node behavior)
+        if node_config.get("params"):
+            node_config["params"] = {k: v for k, v in node_config["params"].items() if not k.endswith("_source_line")}
 
         return node_config
 
@@ -593,6 +617,160 @@ class InstrumentedNodeWrapper:
         logger.debug(f"Node {self.node_id} skipped (already completed), returning cached action: {cached_action}")
         return cached_action
 
+    def _enforce_loop_guard(self, shared: dict[str, Any]) -> dict[str, int]:
+        """Enforce loop guard and invalidate in-process cache for revisited nodes.
+
+        Returns the visit_counts dict for use by memoization checks.
+        """
+        visit_counts: dict[str, int] = shared["__execution__"]["node_visit_counts"]
+        visit_counts[self.node_id] = visit_counts.get(self.node_id, 0) + 1
+        if visit_counts[self.node_id] > MAX_NODE_VISITS:
+            raise MaxNodeVisitsError(self.node_id, visit_counts[self.node_id], MAX_NODE_VISITS)
+
+        # Invalidate cache for revisited nodes — cache is for workflow resume,
+        # not loops. Without this, looping nodes return the first iteration's
+        # cached action forever and never re-evaluate exit conditions.
+        if visit_counts[self.node_id] > 1:
+            completed = shared["__execution__"]["completed_nodes"]
+            if self.node_id in completed:
+                completed.remove(self.node_id)
+                shared["__execution__"]["node_actions"].pop(self.node_id, None)
+                shared["__execution__"]["node_hashes"].pop(self.node_id, None)
+
+        return visit_counts
+
+    def _write_memo_cache(self, shared: dict[str, Any], result: str, memo_cache_key: Optional[str]) -> None:
+        """Write node output to memoization cache after successful execution."""
+        if not memo_cache_key or result == "error":
+            return
+        memo_cache = shared.get("__memoization_cache__")
+        if not memo_cache:
+            return
+        node_output = shared.get(self.node_id)
+        if node_output is not None:
+            workflow_path = shared.get("_pflow_workflow_file")
+            # Non-dict branch is dead code: NamespacedNodeWrapper guarantees shared[node_id] is always a dict.
+            # Kept as defensive fallback — if the invariant ever changes, prefer wrapping over crashing.
+            output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
+            memo_cache.put(memo_cache_key, self.node_id, workflow_path, result, output_dict)
+
+    def _check_memo_cache(
+        self,
+        shared: dict[str, Any],
+        visit_counts: dict[str, int],
+        shared_keys_before: Optional[set[str]],
+    ) -> tuple[bool, Any, Optional[str]]:
+        """Check the memoization cache for a cached result.
+
+        Returns:
+            Tuple of (hit, result, cache_key):
+            - hit=True, result=action_result, cache_key=None on cache hit
+            - hit=False, result=None, cache_key=str on cache miss (key for later write)
+            - hit=False, result=None, cache_key=None when memoization is skipped
+        """
+        memo_cache = shared.get("__memoization_cache__")
+        if not memo_cache or visit_counts.get(self.node_id, 0) > 1:
+            return False, None, None
+
+        cache_key = self._compute_memo_cache_key(shared)
+        if not cache_key:
+            return False, None, None
+
+        cached = memo_cache.get(cache_key)
+        if cached is None:
+            return False, None, cache_key
+
+        cached_action, cached_output = cached
+        # Restore output for downstream template resolution
+        shared[self.node_id] = cached_output
+        # Record in in-process execution state (for checkpoint consistency)
+        node_config = self._compute_node_config()
+        node_hash = self._compute_config_hash(node_config)
+        shared["__execution__"]["completed_nodes"].append(self.node_id)
+        shared["__execution__"]["node_actions"][self.node_id] = cached_action
+        shared["__execution__"]["node_hashes"][self.node_id] = node_hash
+        result = self._handle_cached_execution(shared, cached_action, shared_keys_before)
+        return True, result, None
+
+    def _is_batch_node(self) -> bool:
+        """Check if this wrapper chain contains a batch node."""
+        node_type, _ = self._find_batch_or_workflow_node()
+        return node_type == "batch"
+
+    def _compute_memo_cache_key(self, shared: dict[str, Any]) -> Optional[str]:
+        """Compute memoization cache key for the current node.
+
+        For non-batch nodes: hash(config + resolved_inputs)
+        For batch nodes: hash(config + semantic_batch_config + resolved_items)
+
+        Returns None if the key cannot be computed (e.g., batch items can't be resolved).
+        """
+        from pflow.runtime.cache import compute_node_cache_key
+
+        config_hash = self._compute_config_hash(self._compute_node_config())
+
+        if self._is_batch_node():
+            return self._compute_batch_memo_key(config_hash, shared)
+
+        # Non-batch: use resolved template inputs
+        template_wrapper = self._find_template_wrapper()
+        if template_wrapper and hasattr(template_wrapper, "resolve_templates"):
+            try:
+                merged_params = template_wrapper.resolve_templates(shared)
+                return compute_node_cache_key(config_hash, merged_params)
+            except Exception:
+                # Template resolution failed — can't compute cache key, skip memoization
+                logger.debug("Failed to resolve templates for memo cache key", exc_info=True)
+                return None
+        else:
+            return compute_node_cache_key(config_hash)
+
+    def _compute_batch_memo_key(self, config_hash: str, shared: dict[str, Any]) -> Optional[str]:
+        """Compute cache key for a batch node.
+
+        Returns None if items can't be resolved.
+
+        Note: The items resolution logic below parallels PflowBatchNode._resolve_items().
+        If the batch node's resolution changes, this must be updated to match.
+        """
+        from pflow.runtime.cache import compute_batch_cache_key
+
+        node_type, batch_node = self._find_batch_or_workflow_node()
+        if node_type != "batch" or not batch_node:
+            return None
+
+        items_template = getattr(batch_node, "items_template", None)
+        if items_template is None:
+            return None
+
+        try:
+            from ..template_resolver import TemplateResolver
+
+            if isinstance(items_template, list):
+                resolved_items = TemplateResolver.resolve_nested(items_template, shared)
+            else:
+                resolved_items = TemplateResolver.resolve_template(items_template.strip(), shared)
+                if isinstance(resolved_items, str):
+                    from pflow.core.json_utils import try_parse_json
+
+                    success, parsed = try_parse_json(resolved_items)
+                    if success and isinstance(parsed, list):
+                        resolved_items = parsed
+            if not isinstance(resolved_items, list):
+                return None
+        except Exception:
+            logger.debug("Failed to resolve batch items for memo cache key", exc_info=True)
+            return None
+
+        semantic_config = {
+            "items_template": items_template,
+            "item_alias": getattr(batch_node, "item_alias", "item"),
+            "error_handling": getattr(batch_node, "error_handling", "fail_fast"),
+            "max_retries": getattr(batch_node, "max_retries", 1),
+        }
+
+        return compute_batch_cache_key(config_hash, semantic_config, resolved_items)
+
     def _run(self, shared: dict[str, Any]) -> Any:
         """Execute the wrapped node with metrics and optional tracing.
 
@@ -612,23 +790,15 @@ class InstrumentedNodeWrapper:
         # Initialize execution state
         self._initialize_execution_state(shared)
 
-        # Loop guard: prevent infinite loops
-        visit_counts = shared["__execution__"]["node_visit_counts"]
-        visit_counts[self.node_id] = visit_counts.get(self.node_id, 0) + 1
-        if visit_counts[self.node_id] > MAX_NODE_VISITS:
-            raise MaxNodeVisitsError(self.node_id, visit_counts[self.node_id], MAX_NODE_VISITS)
+        # Loop guard + cache invalidation for revisited nodes
+        visit_counts = self._enforce_loop_guard(shared)
 
-        # Invalidate cache for revisited nodes — cache is for workflow resume,
-        # not loops. Without this, looping nodes return the first iteration's
-        # cached action forever and never re-evaluate exit conditions.
-        if visit_counts[self.node_id] > 1:
-            completed = shared["__execution__"]["completed_nodes"]
-            if self.node_id in completed:
-                completed.remove(self.node_id)
-                shared["__execution__"]["node_actions"].pop(self.node_id, None)
-                shared["__execution__"]["node_hashes"].pop(self.node_id, None)
+        # Memoization cache check (cross-run persistence via SQLite)
+        memo_hit, memo_result, memo_cache_key = self._check_memo_cache(shared, visit_counts, shared_keys_before)
+        if memo_hit:
+            return memo_result
 
-        # Check cache validity
+        # Check in-process cache validity (for workflow resume within same run)
         is_cached, cached_action = self._check_cache_validity(shared)
         if is_cached:
             return self._handle_cached_execution(shared, cached_action, shared_keys_before)
@@ -650,8 +820,11 @@ class InstrumentedNodeWrapper:
             if warning_msg:
                 return self._handle_api_warning(shared, warning_msg, start_time, shared_keys_before, callback)
 
-            # Cache successful results
+            # Cache successful results (in-process)
             self._cache_result_if_successful(shared, result)
+
+            # Store in memoization cache after successful execution
+            self._write_memo_cache(shared, result, memo_cache_key)
 
             # Calculate duration
             duration_ms = (time.perf_counter() - start_time) * 1000

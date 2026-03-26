@@ -376,12 +376,19 @@ def _check_event_anomaly(event: dict[str, Any]) -> str | None:
     return None
 
 
-def generate_report(trace_path: str | Path, output_path: str | None = None) -> Path | None:
+def generate_report(
+    trace_path: str | Path,
+    output_path: str | None = None,
+    only_node: str | None = None,
+    total_nodes: int | None = None,
+) -> Path | None:
     """Generate report directory from a trace file.
 
     Args:
         trace_path: Path to the trace JSON file
         output_path: Output directory. "auto" or None = ~/.pflow/reports/{name}/
+        only_node: If set, the --only target node (adds context to summary)
+        total_nodes: Total workflow nodes (used with only_node to show skipped count)
 
     Returns:
         Path to the report directory, or None on error
@@ -417,7 +424,7 @@ def generate_report(trace_path: str | Path, output_path: str | None = None) -> P
     report_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate summary.md (pass source path without mutating loaded trace)
-    summary = _build_summary(trace, source_path=str(trace_path))
+    summary = _build_summary(trace, source_path=str(trace_path), only_node=only_node, total_nodes=total_nodes)
     (report_dir / "summary.md").write_text(summary)
 
     # Generate per-node files
@@ -469,12 +476,22 @@ def _write_node_files(events: list[dict[str, Any]], parent_dir: Path, node_index
     return idx
 
 
-def _build_summary(trace: dict[str, Any], source_path: str = "N/A") -> str:
+def _build_summary(
+    trace: dict[str, Any],
+    source_path: str = "N/A",
+    only_node: str | None = None,
+    total_nodes: int | None = None,
+) -> str:
     """Build top-level summary.md content."""
     lines = [f"# Execution Report: {trace.get('workflow_name', 'workflow')}", ""]
     lines.append(f"- Status: {trace.get('final_status', 'unknown')}")
     lines.append(f"- Duration: {trace.get('duration_ms', 0) / 1000:.1f}s")
-    lines.append(f"- Nodes: {trace.get('nodes_executed', 0)}")
+    executed = trace.get("nodes_executed", 0)
+    if only_node and total_nodes:
+        skipped = total_nodes - executed
+        lines.append(f"- Nodes: {executed}/{total_nodes} (--only '{only_node}', {skipped} skipped)")
+    else:
+        lines.append(f"- Nodes: {executed}")
 
     llm = trace.get("llm_summary")
     if llm and llm.get("total_calls", 0) > 0:
@@ -590,8 +607,11 @@ def _format_event_status(event: dict[str, Any]) -> str:
     """Format the status column for a trace event.
 
     For batch/sub-workflow events, includes item counts (e.g., 'ok (4/4)').
+    Cached nodes show '[cached]' suffix.
     """
     base = "ok" if event.get("success") else "**FAILED**"
+    if event.get("cached"):
+        base += " [cached]"
     batch_items = event.get("batch_items")
     if batch_items:
         total = len(batch_items)

@@ -63,6 +63,27 @@ Data saved successfully # Only first workflow output is presented to the user (t
 ```
 > **Important**: You should never run the workflow again if successful, this information is *more than enough* to present to the user and running it more than once can be disruptive. Do NOT attempt to gather more information about the workflow execution by using --verbose or --debug flags or anything else.
 
+### Iterating on Workflow Files
+
+Re-runs are automatically cached — unchanged nodes return instantly:
+
+```bash
+# Second run: unchanged nodes show [cached], instant
+pflow ./workflow.pflow.md param1=value1
+
+# Re-run just one node (upstream from cache, downstream skipped)
+pflow ./workflow.pflow.md --only node-name
+
+# Test with different input (cache miss for affected nodes only)
+pflow ./workflow.pflow.md --only node-name param1=different
+
+# Force fresh execution (bypass cache)
+pflow ./workflow.pflow.md --no-cache
+
+# Inspect a node in detail (resolved command, stderr, timing)
+pflow ./workflow.pflow.md --only node-name --report
+```
+
 ### Instructions for building workflows
 
 ```bash

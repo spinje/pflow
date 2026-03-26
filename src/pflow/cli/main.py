@@ -183,6 +183,15 @@ def _prepare_execution_environment(
     if source_file_path:
         enhanced_params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
 
+    # Pass --no-cache flag to execution (controls memoization cache reads)
+    if not ctx.obj.get("cache", True):
+        enhanced_params["__no_cache__"] = True
+
+    # Pass --only node target to execution (controls flow termination)
+    only_node = ctx.obj.get("only_node")
+    if only_node:
+        enhanced_params["__only_node__"] = only_node
+
     return cli_output, display, workflow_trace, enhanced_params, effective_verbose
 
 
@@ -721,11 +730,39 @@ def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> No
             try:
                 from pflow.core.trace_report import generate_report
 
-                report_dir = generate_report(trace_file, report)
+                only_node = ctx.obj.get("only_node")
+                report_dir = generate_report(
+                    trace_file,
+                    report,
+                    only_node=only_node,
+                    total_nodes=ctx.obj.get("total_nodes") if only_node else None,
+                )
                 if report_dir:
                     _echo_trace(ctx, f"📋 Execution report: {report_dir}")
+                    # Point the agent to the target node's report file
+                    if only_node:
+                        _echo_target_node_path(ctx, report_dir, workflow_trace.events, only_node)
             except Exception as report_err:
                 logger.error(f"Failed to generate report: {report_err}", exc_info=True)
+
+
+def _echo_target_node_path(ctx: click.Context, report_dir: Path, events: list[dict[str, Any]], only_node: str) -> None:
+    """Display the --only target node's report file path."""
+    from pflow.core.trace_report import _safe_name
+
+    for i, event in enumerate(events, 1):
+        if event.get("node_id") == only_node:
+            safe_id = _safe_name(only_node)
+            prefix = f"{i:02d}"
+            is_container = event.get("batch_items") or event.get("sub_workflow_events")
+            target = (
+                report_dir / f"{prefix}-{safe_id}" / "summary.md"
+                if is_container
+                else report_dir / f"{prefix}-{safe_id}.md"
+            )
+            if target.exists():
+                _echo_trace(ctx, f"   → Target node: {target}")
+            break
 
 
 def execute_json_workflow(
@@ -771,6 +808,7 @@ def execute_json_workflow(
 
     # Show execution starting
     node_count = len(ir_data.get("nodes", []))
+    ctx.obj["total_nodes"] = node_count
     if verbose and output_format != "json":
         click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
     display.show_execution_start(node_count)
@@ -1480,6 +1518,10 @@ def _handle_invalid_workflow_input(ctx: click.Context, workflow: tuple[str, ...]
     help="Custom output directory for execution report (implies --report)",
 )
 @click.option("--validate-only", is_flag=True, help="Validate workflow without executing")
+@click.option("--cache/--no-cache", default=True, help="Enable/disable memoization cache (default: enabled)")
+@click.option(
+    "--only", "only_node", default=None, help="Run workflow through this node then stop (caching still applies)"
+)
 @click.argument("workflow", nargs=-1, type=click.UNPROCESSED)
 def workflow_command(
     ctx: click.Context,
@@ -1492,6 +1534,8 @@ def workflow_command(
     report_flag: bool,
     report_dir: str | None,
     validate_only: bool,
+    cache: bool,
+    only_node: str | None,
     workflow: tuple[str, ...],
 ) -> None:
     """Reusable CLI workflows from shell, LLM, HTTP, code, and MCP nodes.
@@ -1579,6 +1623,8 @@ def workflow_command(
             validate_only,
         )
         ctx.obj["report"] = report_dir or ("auto" if report_enabled else None)
+        ctx.obj["cache"] = cache
+        ctx.obj["only_node"] = only_node
 
         # Auto-discover and sync MCP servers
         # Only show MCP output if verbose AND not in print mode or JSON output

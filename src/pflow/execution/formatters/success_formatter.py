@@ -83,12 +83,27 @@ def format_execution_success(
                 completed_count = sum(1 for s in steps if s["status"] == "completed")
                 nodes_total = len(steps)
 
-                result["execution"] = {
+                execution_dict: dict[str, Any] = {
                     "duration_ms": metrics_summary.get("duration_ms"),
                     "nodes_executed": completed_count,
                     "nodes_total": nodes_total,
                     "steps": steps,
                 }
+
+                # --only metadata (from __execution__ state)
+                exec_state = shared_storage.get("__execution__", {})
+                only_node_val = exec_state.get("only_node")
+                if only_node_val:
+                    execution_dict["only_node"] = only_node_val
+                    not_executed_count = sum(1 for s in steps if s["status"] == "not_executed")
+                    execution_dict["nodes_skipped"] = not_executed_count
+
+                # Aggregate cache stats
+                cache_hit_count = sum(1 for s in steps if s.get("cached"))
+                if cache_hit_count > 0:
+                    execution_dict["cache_hits"] = cache_hit_count
+
+                result["execution"] = execution_dict
 
     # Add trace_path if provided (MCP bonus feature)
     if trace_path:
@@ -122,8 +137,14 @@ def _collect_outputs(
         if output_key in shared_storage:
             result[output_key] = parse_json_or_original(shared_storage[output_key])
 
-    elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
-        # Collect ALL declared outputs
+    elif (
+        workflow_ir
+        and "outputs" in workflow_ir
+        and workflow_ir["outputs"]
+        and not shared_storage.get("__execution__", {}).get("only_node")
+    ):
+        # Collect ALL declared outputs (skip when --only is active — declared outputs
+        # reference downstream nodes that didn't execute; use auto-detection instead)
         declared = workflow_ir["outputs"]
 
         for output_name in declared:
@@ -131,7 +152,9 @@ def _collect_outputs(
                 result[output_name] = parse_json_or_original(shared_storage[output_name])
 
     else:
-        # Fallback: Use auto-detection
+        # Auto-detect output (handles both --only and no-declared-outputs cases).
+        # _find_auto_output is namespace-aware: looks inside node namespace dicts
+        # for common output keys, so it finds the target node's stdout/result/response.
         key_found, value = _find_auto_output(shared_storage)
         if key_found:
             result[key_found] = parse_json_or_original(value)
@@ -143,6 +166,8 @@ def _find_auto_output(shared: dict[str, Any]) -> tuple[Optional[str], Any]:
     """Find output automatically from shared storage.
 
     Tries common output patterns to find the most likely output value.
+    Checks root-level keys first, then looks inside namespace dicts
+    (last occurrence wins so the most downstream node is preferred).
 
     Args:
         shared: Shared storage dictionary
@@ -156,19 +181,25 @@ def _find_auto_output(shared: dict[str, Any]) -> tuple[Optional[str], Any]:
     if not user_keys:
         return None, None
 
-    # Try common output keys first
-    common_keys = ["result", "output", "response", "text", "data"]
+    # Try common output keys at root level first, then inside namespaces.
+    # Includes "stdout" for shell nodes (they write stdout, not result).
+    common_keys = ["result", "output", "response", "text", "data", "stdout"]
     for key in common_keys:
         if key in user_keys:
             return key, user_keys[key]
 
-    # Try last node's output (heuristic: likely to be final result)
-    # Get the last key that was set (most recent)
-    if user_keys:
-        last_key = list(user_keys.keys())[-1]
-        return last_key, user_keys[last_key]
+    # Look inside namespace dicts (last occurrence wins — most downstream node)
+    for key in common_keys:
+        last_match = None
+        for ns_val in user_keys.values():
+            if isinstance(ns_val, dict) and key in ns_val:
+                last_match = ns_val[key]
+        if last_match is not None:
+            return key, last_match
 
-    return None, None
+    # Last-key fallback (heuristic: likely to be final result)
+    last_key = list(user_keys.keys())[-1]
+    return last_key, user_keys[last_key]
 
 
 def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
@@ -198,16 +229,24 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
         lines.append(f"{workflow_name} was created and executed")
     # Skip for "unsaved" workflows
 
-    # Success header with tri-state status
+    # Success header with tri-state status and optional cache stats
+    execution_data = success_dict.get("execution", {})
+    cache_hits = execution_data.get("cache_hits", 0)
+    completed_count = execution_data.get("nodes_executed", 0)
+    cache_suffix = ""
+    if cache_hits > 0:
+        executed_fresh = completed_count - cache_hits
+        cache_suffix = f" ({cache_hits} cached, {executed_fresh} executed)"
+
     if status == "degraded":
-        lines.append(f"⚠️ Workflow completed with warnings in {duration_sec:.3f}s")
+        lines.append(f"⚠️ Workflow completed with warnings in {duration_sec:.3f}s{cache_suffix}")
     elif status == "failed":
-        lines.append(f"❌ Workflow failed after {duration_sec:.3f}s")
+        lines.append(f"❌ Workflow failed after {duration_sec:.3f}s{cache_suffix}")
     else:
-        lines.append(f"✓ Workflow completed in {duration_sec:.3f}s")
+        lines.append(f"✓ Workflow completed in {duration_sec:.3f}s{cache_suffix}")
 
     # Show node execution details (matches CLI lines 646-655)
-    _append_execution_steps(lines, success_dict.get("execution", {}))
+    _append_execution_steps(lines, execution_data)
 
     # Show cost (matches CLI _display_cost_summary)
     metrics = success_dict.get("metrics", {})
@@ -285,17 +324,33 @@ def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None
 
     For batch nodes with errors, also appends a batch errors section
     showing failed item indices and error messages.
+    When --only is active, filters out not_executed steps and shows a summary line.
     """
     if not execution or "steps" not in execution:
         return
 
     steps = execution["steps"]
-    nodes_executed = execution.get("nodes_executed", 0)
+    only_node_val = execution.get("only_node")
+    nodes_skipped = execution.get("nodes_skipped", 0)
+    nodes_total = execution.get("nodes_total", len(steps))
 
-    lines.append(f"Nodes executed ({nodes_executed}):")
-    for step in steps:
+    # When --only is active, show only executed steps
+    if only_node_val:
+        display_steps = [s for s in steps if s["status"] != "not_executed"]
+        lines.append(f"Nodes executed ({len(display_steps)}/{nodes_total}):")
+    else:
+        display_steps = steps
+        nodes_executed = execution.get("nodes_executed", 0)
+        lines.append(f"Nodes executed ({nodes_executed}):")
+
+    for step in display_steps:
         formatted_step = _format_execution_step(step)
         lines.append(formatted_step)
+
+    # --only summary line
+    if only_node_val and nodes_skipped > 0:
+        noun = "node" if nodes_skipped == 1 else "nodes"
+        lines.append(f"  ⤷ Stopped after '{only_node_val}' (--only), {nodes_skipped} remaining {noun} skipped")
 
     # Add batch errors section if any batch nodes had failures
     batch_error_lines = _format_batch_errors_section(steps)

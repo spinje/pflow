@@ -110,6 +110,8 @@ Key formatters:
 
 **MCP Connection Pool**: `executor_service._initialize_shared_store()` creates `MCPConnectionPool()` and stores it in `shared["__mcp_pool__"]`. Shutdown happens in the `finally` block of `execute_workflow()`. MCP nodes look up this pool from shared store to reuse server connections across workflow steps.
 
+**Memoization Cache**: `executor_service._initialize_shared_store()` creates `MemoizationCache()` and stores it in `shared["__memoization_cache__"]`. Consumed by `InstrumentedNodeWrapper._run()` for cross-run node output caching. The `--no-cache` flag (`__no_cache__` in execution_params) is **popped** before the shared store update and controls `read_enabled` on the cache instance. The `--only` flag (`__only_node__`) is **filtered** from the shared store update (not popped — the compiler reads it from `execution_params` as `initial_params`). This asymmetric handling is because `__no_cache__` is consumed by `_initialize_shared_store()` while `__only_node__` must survive for the compiler.
+
 ## Testing
 
 **Mock points**: `OutputInterface`, `compile_ir_to_flow()` (main mock for execution tests), `model.prompt()` (LLM calls), `Registry`/`WorkflowManager`.

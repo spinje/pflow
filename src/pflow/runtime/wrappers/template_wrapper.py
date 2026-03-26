@@ -492,22 +492,20 @@ class TemplateAwareNodeWrapper:
         # No template variables present, preserve original type
         return template, False
 
-    def _run(self, shared: dict[str, Any]) -> Any:  # noqa: C901
-        """Execute with template resolution.
+    def resolve_templates(self, shared: dict[str, Any]) -> dict[str, Any]:  # noqa: C901
+        """Resolve all template params against shared store context.
 
-        This is the key interception point. We resolve templates just
-        before execution, using both the shared store (runtime data)
-        and initial parameters passed into the workflow.
+        Returns merged_params (static + resolved template params).
+        Side effects: sets self.last_resolutions (for trace capture).
 
         Args:
             shared: The shared store containing runtime data
 
         Returns:
-            Result from the inner node's execution
+            Merged parameters dictionary (static + resolved template params)
         """
-        # Skip resolution if no templates
         if not self.template_params:
-            return self.inner_node._run(shared)
+            return dict(self.static_params)
 
         logger.debug(
             f"Resolving {len(self.template_params)} template parameters for node '{self.node_id}'",
@@ -657,9 +655,30 @@ class TemplateAwareNodeWrapper:
             key: {"template": self.template_params[key], "resolved": resolved_params[key]} for key in resolved_params
         }
 
+        merged_params = {**self.static_params, **resolved_params}
+        return merged_params
+
+    def _run(self, shared: dict[str, Any]) -> Any:
+        """Execute with template resolution.
+
+        This is the key interception point. We resolve templates just
+        before execution, using both the shared store (runtime data)
+        and initial parameters passed into the workflow.
+
+        Args:
+            shared: The shared store containing runtime data
+
+        Returns:
+            Result from the inner node's execution
+        """
+        # Skip resolution if no templates
+        if not self.template_params:
+            return self.inner_node._run(shared)
+
+        merged_params = self.resolve_templates(shared)
+
         # Temporarily update inner node params with resolved values
         original_params = self.inner_node.params
-        merged_params = {**self.static_params, **resolved_params}
         self.inner_node.params = merged_params
 
         try:
