@@ -69,6 +69,7 @@ class WorkflowExecutor(BaseNode):
         "__progress_callback__",
         "__mcp_pool__",
         "__warnings__",
+        "__memoization_cache__",  # Shared SQLite cache for cross-run memoization at all nesting levels.
         "_trace_collector",  # Propagated so grandchild+ workflows detect tracing is active.
         # Points to the PARENT collector (not child) — used only as truthiness check in exec().
     )

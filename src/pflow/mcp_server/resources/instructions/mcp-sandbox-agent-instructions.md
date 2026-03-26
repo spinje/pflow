@@ -631,6 +631,10 @@ Analysis results from the LLM processing step.
 - source: ${process.response}
 ```
 
+#### Iteration is Free
+
+pflow caches node outputs automatically. When you re-execute a workflow with `workflow_execute`, unchanged nodes return instantly from cache. Only nodes whose config or inputs changed will re-execute.
+
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->
 #### Input Declaration - Complete Rules

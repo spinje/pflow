@@ -73,6 +73,8 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `--output-format text\|json` | Output format (default: text) |
 | `-p, --print` | Force non-interactive output |
 | `--no-trace` | Disable workflow trace saving |
+| `--cache/--no-cache` | Enable/disable memoization cache reads (default: enabled) |
+| `--only NODE` | Run workflow through this node then stop |
 | `--validate-only` | Validate workflow without running |
 | `--help` | Show help message |
 
@@ -168,7 +170,14 @@ pflow --output-format json my-workflow | jq '.result'
     "duration_ms": 456.78,
     "nodes_executed": 3,
     "nodes_total": 3,
+    "cache_hits": 2,
     "steps": [
+      {
+        "node_id": "fetch-data",
+        "status": "completed",
+        "duration_ms": 0,
+        "cached": true
+      },
       {
         "node_id": "read-data",
         "status": "completed",
@@ -225,6 +234,7 @@ pflow --output-format json my-workflow | jq '.result'
 | `result` | Workflow output (object, string, or array based on declared outputs) |
 | `duration_ms` | Total execution time in milliseconds |
 | `total_cost_usd` | LLM API cost (0.0 if no LLM calls) |
+| `execution.cache_hits` | Number of nodes served from memoization cache |
 | `errors[].available_fields` | Valid fields for template variables - helps agents fix errors |
 
 </Expandable>
@@ -247,6 +257,43 @@ pflow --validate-only my-saved-workflow
 ```
 
 Agents use this to check workflows before running them — pflow catches template errors, type mismatches, and missing inputs during validation, so problems surface immediately instead of after step 5 fails. Exit code 0 means valid.
+
+## Iteration and caching
+
+pflow caches node outputs automatically. When your agent re-runs a workflow file, unchanged nodes return instantly from a persistent cache — only nodes whose configuration or inputs changed will re-execute.
+
+```bash
+# First run: all nodes execute
+pflow ./workflow.pflow.md title=hello
+
+# Second run (same inputs): all nodes served from cache
+pflow ./workflow.pflow.md title=hello
+
+# Changed input: only affected nodes re-execute
+pflow ./workflow.pflow.md title=different
+```
+
+The cache is content-addressed — same node config plus same resolved inputs produces the same cache key, regardless of when or how the workflow was run. Cache entries expire after 24 hours. The cache lives at `~/.pflow/cache/cache.db`.
+
+### Run a single node
+
+The `--only` flag runs the workflow through the named node and stops. Upstream nodes are served from cache if available, downstream nodes don't execute:
+
+```bash
+pflow ./workflow.pflow.md --only process-data
+```
+
+This is how agents iterate on a specific node without re-running the full workflow.
+
+### Bypass caching
+
+Use `--no-cache` to force fresh execution. Cache writes still happen, so the next run without `--no-cache` benefits from the results:
+
+```bash
+pflow ./workflow.pflow.md --no-cache
+```
+
+Use this when a node has external side effects (API calls, file writes) that should always run, or when cached results seem stale.
 
 ## Traces and reports
 

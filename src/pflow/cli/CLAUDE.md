@@ -101,13 +101,16 @@ This split is critical: `pflow workflow.pflow.md | jq` works because progress no
 
 Non-interactive sends data to stderr too — this prevents output appearing before summary when tools capture streams separately.
 
-### Output Auto-Detection (`_find_auto_output` in workflow_output.py)
+### Output Auto-Detection (`_find_auto_output`)
 
-When no `--output-key` is specified and no outputs are declared in the workflow, auto-detection searches for output in priority order:
+Two implementations exist (Task 134 will unify them):
 
-**Priority**: response > output > result > text > stdout
+| Location | Used by | Priority | Namespace-aware |
+|----------|---------|----------|-----------------|
+| `workflow_output.py` | CLI text | response > output > result > text > stdout | Yes |
+| `success_formatter.py` | JSON, MCP | result > output > response > text > data > stdout | Yes |
 
-Searches namespaced storage first (each node's namespace dict), then direct storage keys. Returns the **last** occurrence of the highest priority key (so in sequential workflows, the final node's output wins).
+Both search inside node namespace dicts (last occurrence wins — most downstream node). Also used as `--only` fallback when declared outputs are skipped.
 
 ### JSON/Text Duality
 
@@ -117,8 +120,8 @@ Almost every output and error function has parallel JSON and text code paths. Th
 
 Three responsibilities:
 
-1. **Output routing**: `_handle_workflow_output` → `_handle_text_output` / `_handle_json_output`. Checks user-specified key, then declared outputs, then auto-detection.
-2. **Execution summary**: `_display_execution_summary` with per-node timing, cache/batch/stderr tags, LLM cost display, and warnings. Always shown except in `--print` mode.
+1. **Output routing**: `_handle_workflow_output` → `_handle_text_output` / `_handle_json_output`. Checks user-specified key, then declared outputs (skipped when `--only` active), then auto-detection.
+2. **Execution summary**: `_display_execution_summary` with per-node timing, cache/batch/stderr tags, LLM cost display, and warnings. Always shown except in `--print` mode. When `--only` is active: filters `not_executed` steps, shows `⤷ Stopped after 'X' (--only)` summary line. `_display_workflow_completion_status` shows cache stats suffix `(N cached, M executed)` when `cache_hits > 0`.
 3. **Shared utilities**: `safe_output` (BrokenPipeError handling), `_serialize_json_result` (JSON serialization), `_create_workflow_metadata`. These are also imported by `workflow_errors.py`.
 
 ## workflow_errors.py
@@ -176,8 +179,10 @@ Note: has its own copy of `_get_output_controller` (duplicated from main.py to a
 --output-format        # "text" (default) or "json" — json forces non-interactive
 --print, -p            # Force non-interactive, clean output for piping
 --no-trace             # Disable automatic workflow trace saving
+--cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
+--only <node>          # Execute up to and including this node, then stop. Upstream from cache.
 --validate-only        # Validate without executing (exit 0/1), auto-normalizes IR
-workflow (nargs=-1)    # Catch-all: file path, saved name
+workflow (nargs=-1)    # Catch-all: file path, saved name, key=value params
 ```
 
 ## Context (`ctx.obj`) — Non-Obvious Keys
@@ -191,6 +196,9 @@ Most keys are straightforward (`verbose`, `output_format`, `print_flag`, `trace`
 | `source_file_path` | Set for file and saved workflows — used for relative path resolution in nested workflows |
 | `workflow_metadata` | Action field: `"reused"` (saved) or `"unsaved"` (file) — drives execution summary display |
 | `workflow_trace` | `WorkflowTraceCollector` — set during `_prepare_execution_environment`, not at context init |
+| `cache` | Boolean from `--cache/--no-cache` (default True). Flows to `enhanced_params["__no_cache__"]` in `_prepare_execution_environment` |
+| `only_node` | String from `--only` (default None). Flows to `enhanced_params["__only_node__"]` in `_prepare_execution_environment` |
+| `total_nodes` | Total node count from IR (set during execution). Used by `--report` to show `N/M (--only, K skipped)` |
 
 Full list readable in `_initialize_context` and `_setup_workflow_execution` in main.py.
 
@@ -206,9 +214,10 @@ What `--validate-only` checks (and doesn't):
 
 See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData modes, and routing. Key CLI-specific behavior: validation happens AFTER stdin routing, so required inputs can be satisfied by piped data.
 
-## Trace and Signal Handling
+## Trace, Report, and Signal Handling
 
 - Traces: `~/.pflow/debug/workflow-trace-{name}-{YYYYMMDD-HHMMSS}.json` — saved automatically (disable with `--no-trace`)
+- Reports: `--report` generates `~/.pflow/reports/{name}/` directory of markdown files (one per node + summary). When `--only` is active, passes `only_node` and `total_nodes` to `generate_report()` for context in summary. `_echo_target_node_path` displays pointer to the target node's report file.
 - Ctrl+C: exit code 130, no cleanup (relies on finally blocks)
 - SIGPIPE: set to SIG_IGN (prevents subprocess SIGPIPE from killing parent process)
 - Resource cleanup: `_cleanup_workflow_resources()` handles LLM interception cleanup, temp file deletion. Never raises.

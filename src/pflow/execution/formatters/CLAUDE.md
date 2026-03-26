@@ -40,7 +40,7 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 
 **history_formatter** expects FLAT metadata dicts with execution fields at top level (`execution_count`, `last_execution_timestamp`, etc.) — NOT wrapped in `rich_metadata`. Silently returns `None` if fields aren't found, which can be hard to debug.
 
-**success_formatter** auto-detects output when no declared outputs: tries keys `result`, `output`, `response`, `text`, `data` in order, then falls back to last key in shared store.
+**success_formatter** auto-detects output when no declared outputs: namespace-aware `_find_auto_output` searches both root-level and inside node namespace dicts for keys `result`, `output`, `response`, `text`, `data`, `stdout` (last occurrence wins — most downstream node). When `--only` is active: skips declared outputs (downstream nodes didn't execute), relies on auto-detection. JSON `execution` dict includes `cache_hits`, `only_node`, `nodes_skipped` fields when applicable. MCP text output filters `not_executed` steps and shows `⤷ Stopped after 'X' (--only)` summary.
 
 ## Dependencies
 

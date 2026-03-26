@@ -295,6 +295,22 @@ def isolate_pflow_config(tmp_path, monkeypatch, precomputed_core_registry_nodes)
     _patch_mcp_server_manager(monkeypatch, MCPServerManager, test_mcp_servers_path)
     _patch_workflow_manager(monkeypatch, WorkflowManager, test_workflows_path)
 
+    # Patch MemoizationCache to use isolated cache directory
+    test_cache_path = test_pflow_dir / "cache" / "cache.db"
+    try:
+        from pflow.runtime.cache import MemoizationCache
+
+        _original_cache_init = MemoizationCache.__init__
+
+        def _patched_cache_init(self, db_path=None, ttl_seconds=86400.0, read_enabled=True):
+            _original_cache_init(
+                self, db_path=db_path or test_cache_path, ttl_seconds=ttl_seconds, read_enabled=read_enabled
+            )
+
+        monkeypatch.setattr(MemoizationCache, "__init__", _patched_cache_init)
+    except ImportError:
+        pass  # Graceful degradation if module is removed or renamed
+
     # Log the paths being used for debugging
     if os.environ.get("DEBUG_TEST_PATHS"):
         print("[test-isolation] Using isolated paths:")

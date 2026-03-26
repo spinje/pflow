@@ -27,6 +27,7 @@ src/pflow/core/
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
 ├── execution_cache.py       # Two-phase execution cache for registry run
+├── trace_report.py          # Execution report generation (--report flag, per-node .md files)
 ├── file_resolver.py         # External file reference detection and resolution
 ├── workflow/                # Workflow lifecycle subdirectory (see workflow/CLAUDE.md)
 │   ├── __init__.py          # Re-exports public API
@@ -190,6 +191,18 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 ### execution_cache.py
 
 Two-phase execution pattern for AI agents: (1) execute node → return structure-only + `execution_id`, (2) read specific fields → retrieve from `~/.pflow/cache/registry-run/`. TTL: 24h stored but **not enforced** in MVP.
+
+### trace_report.py
+
+Generates navigable markdown report directories from trace files. `generate_report(trace_path, output_path, only_node, total_nodes)` → `~/.pflow/reports/{name}/` with `summary.md` + per-node files (`01-node-id.md`). Batch/sub-workflow nodes get directories with nested files.
+
+**`--only` context**: When `only_node` and `total_nodes` are provided, summary shows `Nodes: N/M (--only 'X', K skipped)` instead of just `Nodes: N`. Only executed nodes get report files (skipped nodes aren't in the trace).
+
+**Pipeline table**: `_format_event_status()` shows `ok [cached]` for cached nodes, `**FAILED**` for errors, and `ok (N/M)` for batch nodes with item counts.
+
+**Per-node files include**: metadata (type, timing, status, LLM model/tokens/cost, error), resolved inputs (`## Command` for shell, `## Prompt` for LLM, `## Code` + `## Inputs` for python), outputs (`## stdout`, `## stderr`, `## Result`, `## Response`), and a catch-all for remaining output keys.
+
+**Consumer**: `cli/main.py:_save_trace_and_report()` (CLI `--report` flag), `cli/commands/trace.py` (trace subcommand).
 
 **Binary encoding convention**: `{"__type": "base64", "data": "..."}` — used project-wide for binary data in JSON. Sensitive params auto-masked before caching.
 

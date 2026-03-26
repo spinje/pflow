@@ -84,6 +84,38 @@ from ..template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
 
+
+def resolve_batch_items(items_template: Any, shared: dict[str, Any]) -> Any:
+    """Resolve a batch items template to its runtime value.
+
+    Shared logic used by both PflowBatchNode.prep() (execution) and
+    InstrumentedNodeWrapper._compute_batch_memo_key() (cache key computation).
+
+    Args:
+        items_template: Template string (e.g., "${node.files}") or inline list
+        shared: The shared store to resolve against
+
+    Returns:
+        Resolved value (list on success, None if unresolved, other types if
+        the template resolved to a non-list value). Callers should check
+        isinstance(result, list) for success.
+    """
+    if isinstance(items_template, list):
+        return TemplateResolver.resolve_nested(items_template, shared)
+
+    resolved = TemplateResolver.resolve_template(items_template.strip(), shared)
+    if resolved == items_template.strip():
+        return None  # Unresolved template
+
+    # Auto-parse JSON strings (enables shell → batch patterns)
+    if isinstance(resolved, str):
+        success, parsed = try_parse_json(resolved)
+        if success and isinstance(parsed, list):
+            return parsed
+
+    return resolved
+
+
 # Keys injected by the batch framework, not by the inner node.
 # A result with ONLY these keys (and nothing else meaningful) is "empty".
 _BATCH_META_KEYS = frozenset({"item", "error", "exception"})
@@ -287,29 +319,8 @@ class PflowBatchNode(Node):
             shared["_batch_trace"] = {}
         shared["_batch_trace"][self.node_id] = []
 
-        # Handle inline array vs template reference
-        if isinstance(self.items_template, list):
-            # Inline array - resolve templates inside each element
-            # Task 103's resolve_nested() preserves types in nested structures
-            items = TemplateResolver.resolve_nested(self.items_template, shared)
-        else:
-            # Template reference - use resolve_template for full syntax support
-            # (coalesce ??, nested indices, type preservation)
-            items = TemplateResolver.resolve_template(self.items_template.strip(), shared)
-            # resolve_template returns original string if unresolved
-            if items == self.items_template.strip():
-                items = None
-
-            # Auto-parse JSON strings (enables shell → batch patterns)
-            # Shell nodes output text; if that text is valid JSON array, parse it
-            if isinstance(items, str):
-                success, parsed = try_parse_json(items)
-                if success and isinstance(parsed, list):
-                    items = parsed
-                    logger.debug(
-                        "Auto-parsed JSON string to list for batch.items",
-                        extra={"node_id": self.node_id, "item_count": len(items)},
-                    )
+        # Resolve items template to a list (shared logic with memoization cache key computation)
+        items = resolve_batch_items(self.items_template, shared)
 
         if items is None:
             base_error = (

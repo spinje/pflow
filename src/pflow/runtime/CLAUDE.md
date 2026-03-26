@@ -8,6 +8,7 @@ Compilation and execution infrastructure. Transforms workflow IR into executable
 src/pflow/runtime/
 ├── __init__.py              # Exports: compile_ir_to_flow(), import_node_class(), CompilationError
 ├── compilation/             # IR→Flow compiler package (see compilation/CLAUDE.md)
+├── cache.py                 # Persistent memoization cache (SQLite, cross-run node output caching)
 ├── template_resolver.py     # Template variable resolution engine
 ├── wrappers/                # Execution wrapper chain (see wrappers/CLAUDE.md)
 ├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
@@ -97,6 +98,27 @@ Downstream: `${process_title.result}`
 - **Child input validation**: compares provided params against child's `## Inputs`, gives actionable error with "You provided X, Available inputs: Y"
 - **Cross-cutting key propagation**: `_PROPAGATED_KEYS` tuple defines which keys flow from parent to child storage in mapped mode (`__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`). Execution-scoped keys (`__execution__`, `__cache_hits__`, `__template_errors__`) are deliberately NOT propagated — children get their own.
 
+### MemoizationCache (`cache.py`)
+
+Persistent cross-run caching of node outputs. When an AI agent iterates on a workflow (edit prompt, re-run, evaluate, repeat), unchanged nodes serve cached results instead of re-executing.
+
+- **Storage**: SQLite at `~/.pflow/cache/cache.db`, WAL journal mode, zlib-compressed output BLOBs
+- **Cache key**: `md5(config_hash + resolved_inputs)` for non-batch nodes. Batch nodes add `semantic_batch_config + resolved_items`. Keys are content-addressed — no collision risk across workflows or nesting levels.
+- **TTL**: Default 24 hours. Checked inline on `get()` (expired entries deleted). Periodic eviction on `put()` every 50 writes.
+- **`read_enabled=False`**: For `--no-cache` mode — writes still happen (seeds cache for next run), reads return None.
+- **Graceful degradation**: All SQLite/zlib/JSON operations wrapped in try/except with debug logging. Cache failures never crash workflows.
+- **Test isolation**: `tests/conftest.py::isolate_pflow_config` monkey-patches `MemoizationCache.__init__` to use temp paths. Without this, tests pollute the real cache DB and cause cross-test hits.
+
+**Integration point**: Created by `execution/executor_service.py::_initialize_shared_store()`, stored as `shared["__memoization_cache__"]`. Consumed by `InstrumentedNodeWrapper._run()` (see wrappers/CLAUDE.md). Propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`.
+
+**What the config hash includes** (from `InstrumentedNodeWrapper._compute_node_config()`):
+- Node type (class name of innermost actual node)
+- Static params (from innermost node, `_source_line` keys filtered out)
+- Template params (raw `${...}` templates from `TemplateAwareNodeWrapper.template_params`)
+- Batch semantic config (`items_template`, `item_alias`, `error_handling`, `max_retries`) — but NOT operational config (`parallel`, `max_concurrent`, `retry_wait`)
+
+**Side-effecting nodes ARE cached**: `write-file`, `shell` nodes with deterministic config+inputs will return cached output on second run (file won't be re-written, command won't re-execute). This is intentional for the iteration loop use case. `--no-cache` provides an escape hatch.
+
 ### WorkflowTraceCollector (`workflow_trace.py`)
 
 - **Format 2.0.0**: Tree-structured events with `node_output`, `template_resolutions`, `node_params`, `batch_items`, `sub_workflow_events` (no `shared_before`/`shared_after` snapshots, no value truncation)
@@ -133,6 +155,7 @@ shared["__execution__"] = {
     "node_hashes": {},         # MD5 config hashes for cache validation
     "failed_node": None,       # Node that caused workflow failure
     "node_visit_counts": {},   # Per-node visit counter (loop guard)
+    "only_node": None,         # --only target node ID (set by _apply_run_hooks, read by display layer)
 }
 
 # System keys
@@ -142,6 +165,7 @@ shared["__warnings__"] = {}               # Node warnings → triggers DEGRADED 
 shared["__cache_hits__"] = []             # Nodes that used cached results
 shared["__template_errors__"] = {}        # Template/type errors in permissive mode
 shared["__mcp_pool__"] = MCPConnectionPool  # MCP server connection pool (see mcp/pool.py)
+shared["__memoization_cache__"] = MemoizationCache  # Cross-run node output cache (see cache.py)
 shared["__index__"] = int                  # 0-based batch item index (injected by PflowBatchNode)
 
 # Nested workflow keys (different prefix — _pflow_ not __)
@@ -164,9 +188,11 @@ shared["_pflow_workflow_file"] = str       # Current workflow file path
 
 ## Critical Behaviors
 
-### Cache Invalidation
+### Cache Invalidation (Two Levels)
 
-Cache used when: node in `completed_nodes` AND config hash matches AND no error action returned. Invalidated on parameter change (hash mismatch).
+**In-process cache** (within a single `flow.run()`): Node in `completed_nodes` AND config hash matches → skip re-execution. Invalidated on parameter change (hash mismatch) or revisited nodes (loops).
+
+**Memoization cache** (cross-run, SQLite-backed): `cache_key = hash(config + resolved_inputs)` → hit returns cached output without executing. Invalidated when: config changes (edited node params, different template text), resolved inputs change (upstream produced different output, CLI override changed), or TTL expires (24h default). **Skipped for revisited nodes** (`visit_count > 1`) — memoization is for cross-run caching, not loop caching. Error results are never cached.
 
 ### Error Categorization (API Warning Detection)
 

@@ -220,8 +220,14 @@ def _handle_text_output(
             if not print_flag:
                 click.echo(f"cli: Warning - output key '{output_key}' not found in shared store", err=True)
 
-    # Check workflow-declared outputs
-    elif workflow_ir and "outputs" in workflow_ir and workflow_ir["outputs"]:
+    # Check workflow-declared outputs (skip when --only is active — declared outputs
+    # reference downstream nodes that didn't execute; use auto-detection instead)
+    elif (
+        workflow_ir
+        and "outputs" in workflow_ir
+        and workflow_ir["outputs"]
+        and not shared_storage.get("__execution__", {}).get("only_node")
+    ):
         if _try_declared_outputs(
             shared_storage, workflow_ir, verbose and not print_flag, print_flag, output_controller
         ):
@@ -528,22 +534,35 @@ def _display_cost_summary(total_cost: float | None, formatted_result: dict[str, 
         click.echo(f"💰 Cost: ${total_cost:.4f}", err=True)
 
 
-def _display_workflow_completion_status(duration_s: float, status: str, has_stderr_warnings: bool) -> None:
+def _display_workflow_completion_status(
+    duration_s: float,
+    status: str,
+    has_stderr_warnings: bool,
+    cache_hits: int = 0,
+    nodes_executed: int = 0,
+) -> None:
     """Display workflow completion status with appropriate indicator.
 
     Args:
         duration_s: Execution duration in seconds
         status: Workflow status ("success", "degraded", "failed")
         has_stderr_warnings: Whether any shell node produced stderr with exit_code=0
+        cache_hits: Number of nodes served from cache (0 = no cache stats shown)
+        nodes_executed: Total completed nodes (used to compute fresh executions)
     """
+    cache_suffix = ""
+    if cache_hits > 0:
+        executed_fresh = nodes_executed - cache_hits
+        cache_suffix = f" ({cache_hits} cached, {executed_fresh} executed)"
+
     if status == "degraded":
-        click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s", err=True)
+        click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s{cache_suffix}", err=True)
     elif status == "failed":
-        click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
+        click.echo(f"❌ Workflow failed after {duration_s:.3f}s{cache_suffix}", err=True)
     elif has_stderr_warnings:
-        click.echo(f"⚠️ Workflow completed in {duration_s:.3f}s", err=True)
+        click.echo(f"⚠️ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
     else:
-        click.echo(f"✓ Workflow completed in {duration_s:.3f}s", err=True)
+        click.echo(f"✓ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
 
 
 def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) -> None:
@@ -582,14 +601,37 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
         duration_s = duration_ms / 1000.0
         status = formatted_result.get("status", "success")
         has_stderr_warnings = any(step.get("has_stderr") for step in steps)
-        _display_workflow_completion_status(duration_s, status, has_stderr_warnings)
+        cache_hits = execution.get("cache_hits", 0)
+        completed_count = execution.get("nodes_executed", 0)
+        _display_workflow_completion_status(
+            duration_s,
+            status,
+            has_stderr_warnings,
+            cache_hits=cache_hits,
+            nodes_executed=completed_count,
+        )
 
     # Show per-node execution details
     if steps:
-        click.echo(f"Nodes executed ({total_nodes}):", err=True)
-        for step in steps:
+        only_node = execution.get("only_node")
+        nodes_skipped = execution.get("nodes_skipped", 0)
+
+        # When --only is active, show only executed steps with N/M format
+        if only_node:
+            display_steps = [s for s in steps if s["status"] != "not_executed"]
+            click.echo(f"Nodes executed ({len(display_steps)}/{total_nodes}):", err=True)
+        else:
+            display_steps = steps
+            click.echo(f"Nodes executed ({total_nodes}):", err=True)
+
+        for step in display_steps:
             status_line = _format_node_status_line(step)
             click.echo(status_line, err=True)
+
+        # --only summary line
+        if only_node and nodes_skipped > 0:
+            noun = "node" if nodes_skipped == 1 else "nodes"
+            click.echo(f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped", err=True)
 
         # Show batch errors section if any batch nodes had failures
         _display_batch_errors(steps)

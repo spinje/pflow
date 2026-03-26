@@ -37,7 +37,13 @@ node = InstrumentedNodeWrapper(node, ...)        # 5. Instrumentation (ALWAYS ap
 
 ```
 InstrumentedNodeWrapper._run()
-  ├─ Check cache, setup callbacks
+  ├─ Loop guard (visit count, max visits)
+  ├─ Memoization cache check (SQLite, cross-run)
+  │   ├─ Calls template_wrapper.resolve_templates(shared) for cache key
+  │   ├─ HIT: restore shared[node_id], return cached action
+  │   └─ MISS: continue to execution, write result after
+  ├─ In-process cache check (within-run resume)
+  ├─ Progress callback (node_start)
   └─ Call: inner_node._run()
        ↓
   PflowBatchNode._run() [if batch configured]
@@ -67,11 +73,21 @@ InstrumentedNodeWrapper.set_params()
 ## InstrumentedNodeWrapper (`instrumented_wrapper.py`)
 
 Outermost wrapper. Provides:
-- **Checkpoint system**: MD5-based configuration caching (skip re-execution on resume)
+- **Memoization cache** (cross-run): Checks `shared["__memoization_cache__"]` (SQLite-backed). See helper methods below.
+- **Checkpoint system** (in-process): MD5-based configuration caching (skip re-execution on resume)
 - **API warning detection**: Delegates to `api_warning_detector.py` (see below)
 - **LLM usage capture**: Token tracking and cost attribution
 - **Progress callbacks**: Real-time execution feedback via OutputInterface
 - **Cache hit tracking**: Records which nodes used cache in `shared["__cache_hits__"]`
+
+**Memoization helper methods** (extracted for C901 complexity):
+- `_enforce_loop_guard(shared)` — visit counting + in-process cache invalidation for revisited nodes. Returns visit_counts dict.
+- `_check_memo_cache(shared, visit_counts, shared_keys_before)` — returns `(hit, result, cache_key)`. Skipped when `visit_count > 1` or no cache in shared.
+- `_compute_memo_cache_key(shared)` — dispatches to non-batch or batch key computation. Calls `template_wrapper.resolve_templates(shared)` for the resolved inputs hash.
+- `_compute_batch_memo_key(config_hash, shared)` — resolves items template, builds batch-specific key.
+- `_write_memo_cache(shared, result, cache_key)` — stores result after successful execution. Skips on error or None cache_key.
+
+**Critical: `resolve_templates()` is called twice on cache miss.** Once in `_compute_memo_cache_key()` for the cache key, once in `TemplateAwareNodeWrapper._run()` for actual execution. This is intentional — `resolve_templates()` is a pure method with no instance state caching. An earlier design cached the result in a `_resolved` field, but this created stale-state bugs in loops (the `TemplateAwareNodeWrapper` instance is shared across `copy.copy()` iterations in PocketFlow's `_orch` loop). The double resolution is sub-millisecond and eliminates the bug class entirely.
 
 ## API Warning Detector (`api_warning_detector.py`)
 
@@ -101,12 +117,15 @@ Automatic collision prevention:
 Template resolution at runtime:
 - Separates template vs static parameters at `set_params()` time
 - Resolves `${variable}` syntax during `_run()`
+- **`resolve_templates(shared) -> dict`**: Public method that resolves all template params and returns merged_params (static + resolved). Called externally by `InstrumentedNodeWrapper._compute_memo_cache_key()` for cache key computation, and internally by `_run()`. **This is a pure query** — only side effect is setting `self.last_resolutions` (read by trace system). No instance state caching.
 - **Bidirectional type coercion**: (1) str->dict/list auto-parse when expected type is structured, (2) dict/list->str auto-serialize via `coerce_to_declared_type` when expected type is str. Both use registry interface metadata.
 - Partial resolution detection via set intersection
 - **Strict mode** (default): Template/type errors are fatal ValueError
 - **Permissive mode**: Warnings only, stores errors in `shared["__template_errors__"]`
 - **Params temporarily mutated**: `inner_node.params` is swapped to resolved params during `_run()`, restored in `finally` block. Critical for understanding parallel batch execution.
 - Error messages delegated to `template_errors.py` (see below)
+
+**Why `resolve_templates()` has no instance state caching**: An earlier design cached the result in a `_resolved` field so `_run()` could skip re-resolution. But `TemplateAwareNodeWrapper` instances are shared across PocketFlow's `copy.copy()` iterations (because `NamespacedNodeWrapper` has no `__copy__` — default shallow copy shares `_inner_node` reference). This caused stale resolved params to leak across loop iterations. Removing the caching eliminates the bug class. The cost (one extra sub-millisecond resolution on cache miss) is negligible.
 
 ## Template Errors (`template_errors.py`)
 
@@ -144,6 +163,7 @@ Used by `batch_node.py` (batch item resolution errors) and `template_wrapper.py`
 ## Cross-Module Dependencies
 
 - `template_resolver.py` (parent `runtime/`): Used by `template_wrapper.py`, `batch_node.py`, `error_context.py`, `template_errors.py` via `..template_resolver`
+- `cache.py` (parent `runtime/`): Used by `instrumented_wrapper.py` for memoization key computation (lazy import inside `_compute_memo_cache_key`)
 - `core/json_utils.py`: Used by `template_wrapper.py`, `batch_node.py`
 - `core/param_coercion.py`: Used by `template_wrapper.py`
 - `core/llm_pricing.py`: Used by `instrumented_wrapper.py`, `batch_node.py`
@@ -155,3 +175,6 @@ Used by `batch_node.py` (batch item resolution errors) and `template_wrapper.py`
 - **Don't modify `__execution__` structure** — checkpoint integrity is critical for resume
 - **Cache assumes immutability** — don't modify cached node state
 - **`validate=False` only for testing** — skipping validation bypasses safety checks
+- **`TemplateAwareNodeWrapper` is shared across `copy.copy()` iterations** — PocketFlow's `_orch` loop copies the outermost `InstrumentedNodeWrapper`, but `NamespacedNodeWrapper` has no `__copy__` so its `_inner_node` (the template wrapper) is shared. Never store mutable per-execution state on the template wrapper instance. `last_resolutions` is safe (overwritten each call), but anything that persists across calls will leak between loop iterations.
+- **Memoization skipped for revisited nodes** — `visit_count > 1` bypasses `_check_memo_cache()`. This prevents loops from returning the first iteration's cached result forever. The in-process cache is also invalidated for revisited nodes.
+- **Don't add instance state caching to `resolve_templates()`** — this method is intentionally pure. Caching its result on the wrapper instance creates stale-state bugs in loops (see previous point). The sub-millisecond cost of re-resolution is the correct tradeoff.

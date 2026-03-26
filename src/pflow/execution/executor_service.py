@@ -192,9 +192,14 @@ class WorkflowExecutorService:
         if shared_store is None:
             shared_store = {}
 
-        # Add execution parameters
+        # Extract internal flags before updating shared store (prevent pollution)
+        no_cache = False
         if execution_params:
-            shared_store.update(execution_params)
+            no_cache = execution_params.pop("__no_cache__", False)
+
+        # Add execution parameters (filter internal keys from shared store)
+        if execution_params:
+            shared_store.update({k: v for k, v in execution_params.items() if k != "__only_node__"})
 
         # Note: stdin data is now routed to workflow inputs via stdin: true
         # in the workflow IR, handled by _validate_and_prepare_workflow_params
@@ -212,6 +217,12 @@ class WorkflowExecutorService:
         from pflow.mcp.pool import MCPConnectionPool
 
         shared_store["__mcp_pool__"] = MCPConnectionPool()
+
+        # Create memoization cache for cross-run node output caching
+        # --no-cache: still write (for next run) but disable reads
+        from pflow.runtime.cache import MemoizationCache
+
+        shared_store["__memoization_cache__"] = MemoizationCache(read_enabled=not no_cache)
 
         return shared_store
 
