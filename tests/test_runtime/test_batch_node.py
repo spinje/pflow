@@ -3177,3 +3177,16 @@ class TestEmptyOutputWarnings:
         # Both parts should be present in the combined message
         assert "error" in warning.lower()
         assert "empty output" in warning
+
+    def test_empty_input_list_pushes_warning(self):
+        """When batch receives an empty input list, post() warns about 0 items to process."""
+        inner = MockInnerNode("test_node")
+        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+
+        shared: dict = {"data": []}
+        items = batch.prep(shared)
+        results = batch._exec(items)
+        batch.post(shared, items, results)
+
+        assert "test_node" in shared.get("__warnings__", {})
+        assert "0 items" in shared["__warnings__"]["test_node"]

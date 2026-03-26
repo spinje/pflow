@@ -204,3 +204,167 @@ class TestResolveTemplatesWithInitialParams:
         result = wrapper.resolve_templates({"data": "from_shared"})
 
         assert result["field"] == "from_initial"
+
+
+class TestInputsAsTemplateContext:
+    """Tests for inputs-as-context: resolved inputs enrich the template context.
+
+    When a node has an 'inputs' param, its resolved values become available
+    as template variables for other params (e.g., prompt). This enables
+    LLM nodes with external prompt files to use variable mappings — the same
+    pattern code nodes use, but for template resolution instead of namespace
+    injection.
+    """
+
+    def test_template_inputs_resolve_in_prompt(self) -> None:
+        """Template inputs values are available for prompt resolution.
+
+        This is the core use case: an LLM node maps batch item fields to
+        the variable names an external prompt expects.
+        """
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"concept_brief": "${item.concept_brief}"},
+            "prompt": "Write about ${concept_brief}",
+        })
+
+        result = wrapper.resolve_templates({
+            "item": {"concept_brief": "A song about rain"},
+        })
+
+        assert result["prompt"] == "Write about A song about rain"
+        assert result["inputs"] == {"concept_brief": "A song about rain"}
+
+    def test_static_inputs_resolve_in_prompt(self) -> None:
+        """Static inputs (no templates) are also available for prompt resolution.
+
+        When inputs have literal values, they should still enrich the context.
+        """
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"language": "python", "framework": "django"},
+            "prompt": "Analyze ${language} code using ${framework}",
+        })
+
+        result = wrapper.resolve_templates({})
+
+        assert result["prompt"] == "Analyze python code using django"
+
+    def test_inputs_mixed_with_shared_store(self) -> None:
+        """Prompt can use both input-mapped and shared store variables.
+
+        Variables not in inputs fall back to normal shared store resolution.
+        """
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"brief": "${item.brief}"},
+            "prompt": "Model: ${model_name}. Brief: ${brief}",
+        })
+
+        result = wrapper.resolve_templates({
+            "item": {"brief": "song concept"},
+            "model_name": "claude-sonnet",
+        })
+
+        assert result["prompt"] == "Model: claude-sonnet. Brief: song concept"
+
+    def test_inputs_override_shared_store_in_prompt(self) -> None:
+        """Input mappings take priority over shared store keys for prompt resolution.
+
+        If the same variable name exists in both inputs and shared store,
+        the inputs value wins (it's added to context after shared store).
+        """
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"data": "${item.data}"},
+            "prompt": "Process: ${data}",
+        })
+
+        result = wrapper.resolve_templates({
+            "item": {"data": "from inputs"},
+            "data": "from shared store",
+        })
+
+        assert result["prompt"] == "Process: from inputs"
+
+    def test_inputs_preserves_type_in_inputs_dict(self) -> None:
+        """Resolved inputs preserve native types in the inputs dict.
+
+        While prompt interpolation stringifies values, the inputs dict
+        itself should keep native types (for code nodes that also use inputs).
+        """
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"count": "${item.count}", "tags": "${item.tags}"},
+            "prompt": "Count: ${count}",
+        })
+
+        result = wrapper.resolve_templates({
+            "item": {"count": 42, "tags": ["a", "b"]},
+        })
+
+        assert result["inputs"]["count"] == 42
+        assert result["inputs"]["tags"] == ["a", "b"]
+        assert result["prompt"] == "Count: 42"
+
+    def test_multiple_inputs_in_prompt(self) -> None:
+        """Multiple input mappings are all available in the prompt."""
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {
+                "concept_brief": "${item.concept_brief}",
+                "creative_direction": "${item.creative_direction}",
+                "draft_lyrics": "${item.draft_lyrics}",
+            },
+            "prompt": "Brief: ${concept_brief}\nDirection: ${creative_direction}\nLyrics: ${draft_lyrics}",
+        })
+
+        result = wrapper.resolve_templates({
+            "item": {
+                "concept_brief": "rain song",
+                "creative_direction": "melancholic",
+                "draft_lyrics": "verse one...",
+            },
+        })
+
+        assert result["prompt"] == "Brief: rain song\nDirection: melancholic\nLyrics: verse one..."
+
+    def test_no_inputs_param_unchanged_behavior(self) -> None:
+        """Without inputs, behavior is unchanged — prompt resolves from shared store.
+
+        This confirms the feature is purely additive.
+        """
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "prompt": "Hello ${name}",
+        })
+
+        result = wrapper.resolve_templates({"name": "world"})
+
+        assert result["prompt"] == "Hello world"
+
+    def test_inputs_run_integration(self) -> None:
+        """Inputs-as-context works through the full _run() path."""
+        node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"topic": "${item.topic}"},
+            "prompt": "Write about ${topic}",
+        })
+
+        wrapper._run({"item": {"topic": "the ocean"}})
+
+        assert node.params_at_execution["prompt"] == "Write about the ocean"
+
+    def test_inputs_trace_capture(self) -> None:
+        """Both inputs and prompt appear in last_resolutions for trace."""
+        _node, wrapper = _make_wrapper()
+        wrapper.set_params({
+            "inputs": {"x": "${item.x}"},
+            "prompt": "Value: ${x}",
+        })
+
+        wrapper.resolve_templates({"item": {"x": "42"}})
+
+        assert "inputs" in wrapper.last_resolutions
+        assert "prompt" in wrapper.last_resolutions
+        assert wrapper.last_resolutions["prompt"]["resolved"] == "Value: 42"

@@ -1010,6 +1010,8 @@ class PflowBatchNode(Node):
         empty_indices = _detect_empty_output_items(exec_res, self._errors)
 
         warning_parts: list[str] = []
+        if not exec_res:
+            warning_parts.append("0 items to process (input list was empty)")
         if self.error_handling == "continue" and self._errors:
             warning_parts.append(f"{len(self._errors)} error(s) out of {len(exec_res)} items")
         if empty_indices:

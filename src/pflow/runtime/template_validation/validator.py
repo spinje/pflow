@@ -113,6 +113,16 @@ def validate_workflow_templates(
     # Get full output structure from nodes
     node_outputs = extract_node_outputs(workflow_ir, registry, available_params)
 
+    # Remove inputs keys from templates — these are resolved by the inputs-as-context
+    # mechanism at runtime, not from node_outputs. Per-node scoping is handled by
+    # data_flow.py validation (which gives better errors with node ID and param name).
+    inputs_keys: set[str] = set()
+    for node in workflow_ir.get("nodes", []):
+        inputs_param = node.get("params", {}).get("inputs")
+        if isinstance(inputs_param, dict):
+            inputs_keys.update(inputs_param.keys())
+    all_templates -= inputs_keys
+
     logger.debug(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
     )
