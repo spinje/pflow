@@ -302,6 +302,68 @@ def test_search_no_results(runner, mock_registry):
     assert "No nodes found matching 'xyz123'" in result.output
 
 
+def test_search_no_results_hints_matching_mcp_server(runner, mock_registry):
+    """When search returns nothing and an MCP server name matches the query, hint is shown on stderr."""
+    _MockRegistry, instance = mock_registry
+    instance.search.return_value = []
+
+    with patch("pflow.mcp.manager.MCPServerManager") as MockManager:
+        MockManager.return_value.list_servers.return_value = ["slack-composio", "github-mcp"]
+        result = runner.invoke(registry, ["list", "slack"])
+
+    assert result.exit_code == 0
+    assert "No nodes found matching 'slack'" in result.stdout
+    assert "Hint: MCP servers matching your query are configured but not synced: slack-composio" in result.stderr
+    assert "pflow mcp sync --all" in result.stderr
+
+
+def test_search_no_results_no_hint_when_no_matching_servers(runner, mock_registry):
+    """When search returns nothing but no MCP server names match, no hint is shown."""
+    _MockRegistry, instance = mock_registry
+    instance.search.return_value = []
+
+    with patch("pflow.mcp.manager.MCPServerManager") as MockManager:
+        MockManager.return_value.list_servers.return_value = ["github-mcp", "notion-server"]
+        result = runner.invoke(registry, ["list", "slack"])
+
+    assert result.exit_code == 0
+    assert "No nodes found matching 'slack'" in result.stdout
+    assert "Hint" not in result.stderr
+
+
+def test_search_no_results_no_hint_when_no_mcp_servers(runner, mock_registry):
+    """When search returns nothing and there are no MCP servers configured, no hint is shown."""
+    _MockRegistry, instance = mock_registry
+    instance.search.return_value = []
+
+    with patch("pflow.mcp.manager.MCPServerManager") as MockManager:
+        MockManager.return_value.list_servers.return_value = []
+        result = runner.invoke(registry, ["list", "slack"])
+
+    assert result.exit_code == 0
+    assert "No nodes found matching 'slack'" in result.stdout
+    assert "Hint" not in result.stderr
+
+
+def test_search_with_results_no_mcp_hint(runner, mock_registry):
+    """When search returns results, the MCP hint is NOT shown even if matching servers exist."""
+    _MockRegistry, instance = mock_registry
+    instance.search.return_value = [
+        (
+            "mcp-slack-send",
+            {"interface": {"description": "Send Slack message"}, "file_path": "virtual://mcp/slack"},
+            70,
+        ),
+    ]
+
+    with patch("pflow.mcp.manager.MCPServerManager") as MockManager:
+        MockManager.return_value.list_servers.return_value = ["slack-composio"]
+        result = runner.invoke(registry, ["list", "slack"])
+
+    assert result.exit_code == 0
+    assert "Hint" not in result.stderr
+
+
 # --- Criteria 10-14: Scan functionality ---
 def test_scan_non_existent_path_shows_error(runner, mock_registry):
     """Test that scan shows error for non-existent path."""

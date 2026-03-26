@@ -98,6 +98,10 @@ def list_nodes(filter_pattern: str | None, output_json: bool) -> None:
                 # Use shared search formatter
                 result = format_search_results(filter_pattern, matches)
                 click.echo(result)
+
+                # Hint: if no results, check for unsynced MCP servers
+                if not matches:
+                    _hint_unsynced_mcp_servers(filter_pattern)
         else:
             # No filter - show all grouped by package (current behavior)
             nodes = reg.load()
@@ -273,6 +277,33 @@ def scan(path: Optional[str], force: bool, output_json: bool) -> None:
         _perform_scan(reg, scan_path, force, output_json)
     except Exception as e:
         _handle_scan_error(e, output_json)
+
+
+def _hint_unsynced_mcp_servers(filter_pattern: str) -> None:
+    """Show a hint if MCP servers match the search but aren't synced to the registry."""
+    try:
+        from pflow.mcp.manager import MCPServerManager
+
+        manager = MCPServerManager()
+        servers = manager.list_servers()
+        if not servers:
+            return
+
+        keywords = [k.lower() for k in filter_pattern.split() if k.strip()]
+        matching_servers = [s for s in servers if any(kw in s.lower() for kw in keywords)]
+
+        if matching_servers:
+            names = ", ".join(matching_servers)
+            click.echo(
+                f"\nHint: MCP servers matching your query are configured but not synced: {names}",
+                err=True,
+            )
+            click.echo(
+                "  Run 'pflow mcp sync --all' to discover their tools.",
+                err=True,
+            )
+    except Exception:
+        return  # Don't let hint logic break the command
 
 
 def _get_node_type(name: str, metadata: dict) -> str:
