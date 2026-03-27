@@ -59,6 +59,7 @@ class WorkflowExecutor(BaseNode):
         "max_depth",
         "error_action",
         "__registry__",
+        "inputs",  # Framework key consumed by TemplateAwareNodeWrapper, not a child input
     })
 
     # Cross-cutting infrastructure keys propagated from parent to child storage.
@@ -376,8 +377,9 @@ class WorkflowExecutor(BaseNode):
 
         missing_required = []
         for input_name, input_spec in declared_inputs.items():
+            is_required = input_spec.get("required", True)
             has_default = "default" in input_spec
-            if not has_default and input_name not in child_params:
+            if is_required and not has_default and input_name not in child_params:
                 desc = input_spec.get("description", "")
                 input_type = input_spec.get("type", "any")
                 missing_required.append(

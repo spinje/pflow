@@ -27,6 +27,8 @@ class WorkflowValidator:
         extracted_params: Optional[dict[str, Any]] = None,
         registry: Optional[Registry] = None,
         skip_node_types: bool = False,
+        _seen: Optional[set[str]] = None,
+        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Any]]]] = None,
     ) -> tuple[list[str], list[ValidationWarning]]:
         """Run complete workflow validation.
 
@@ -38,6 +40,7 @@ class WorkflowValidator:
         5. Node type validation - Registry verification
         6. Output source validation - Output node references
         7. Unknown param errors - Rejects params not in node interface
+        8. Sub-workflow validation - Recursive validation of child workflows
 
         Args:
             workflow_ir: Workflow to validate
@@ -92,6 +95,12 @@ class WorkflowValidator:
         if registry is not None:
             unknown_param_errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
             errors.extend(unknown_param_errors)
+
+        # 8. Sub-workflow validation (recursive)
+        sub_errors = WorkflowValidator._validate_sub_workflows(
+            workflow_ir, extracted_params, registry, _seen, _ir_cache
+        )
+        errors.extend(sub_errors)
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
@@ -513,3 +522,199 @@ class WorkflowValidator:
                     error_list.append(msg)
 
         return error_list
+
+    # =========================================================================
+    # Sub-Workflow Validation (Step 8)
+    # =========================================================================
+
+    @staticmethod
+    def _validate_sub_workflows(
+        workflow_ir: dict[str, Any],
+        extracted_params: Optional[dict[str, Any]],
+        registry: Optional[Registry],
+        _seen: Optional[set[str]],
+        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Any]]]] = None,
+    ) -> list[str]:
+        """Recursively validate sub-workflow references.
+
+        For each workflow-type node, loads the child workflow and runs
+        full validation on it. Catches parse errors, structural errors,
+        missing required inputs, and cycles.
+        """
+        from pflow.core.ir_schema import normalize_ir
+        from pflow.core.validation_utils import generate_dummy_parameters
+        from pflow.runtime.workflow_executor import WorkflowExecutor
+
+        errors: list[str] = []
+        seen = _seen if _seen is not None else set()
+        # Cache loaded child IRs so duplicate references can still run the input check.
+        # Shared across recursion levels so a grandchild validated via one path
+        # is still available for input checking when referenced from another path.
+        ir_cache = _ir_cache if _ir_cache is not None else {}
+        workflow_types = {"workflow", "pflow.runtime.workflow_executor"}
+
+        for node in workflow_ir.get("nodes", []):
+            if node.get("type", "") not in workflow_types:
+                continue
+
+            node_id = node.get("id", "unknown")
+            params = node.get("params", {})
+
+            # Load child workflow (file, saved name, or inline IR).
+            # already_seen=True means the child was loaded before — skip recursive
+            # validation (already done) but still check this node's provided inputs.
+            child_ir, child_path, ref_label, load_errors, already_seen = WorkflowValidator._load_child_workflow(
+                node_id, params, extracted_params, seen, ir_cache
+            )
+            errors.extend(load_errors)
+
+            if child_ir is None or "nodes" not in child_ir:
+                continue
+
+            if not already_seen:
+                # Normalize child IR (adds ir_version, edges) — same as CLI/save paths
+                normalize_ir(child_ir)
+
+            # Static required-input check — always runs, even for already-seen children,
+            # because each parent node may provide different params.
+            parent_keys = {k for k in params if k not in WorkflowExecutor.RESERVED_PARAMS and not k.startswith("__")}
+            child_inputs = child_ir.get("inputs", {})
+            for input_name, input_spec in child_inputs.items():
+                is_required = input_spec.get("required", True)
+                has_default = "default" in input_spec
+                if is_required and not has_default and input_name not in parent_keys:
+                    errors.append(
+                        f"Step '{node_id}': sub-workflow '{ref_label}' requires "
+                        f"input '{input_name}' but it is not provided"
+                    )
+
+            # Recursive validation — skip if this child was already validated
+            if not already_seen:
+                dummy_params = generate_dummy_parameters(child_inputs)
+                if child_path:
+                    dummy_params["_pflow_workflow_file"] = str(child_path)
+
+                child_errors, _child_warnings = WorkflowValidator.validate(
+                    child_ir,
+                    extracted_params=dummy_params,
+                    registry=registry,
+                    _seen=seen,
+                    _ir_cache=ir_cache,
+                )
+                for err in child_errors:
+                    errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {err}")
+
+        return errors
+
+    @staticmethod
+    def _load_child_workflow(
+        node_id: str,
+        params: dict[str, Any],
+        extracted_params: Optional[dict[str, Any]],
+        seen: set[str],
+        ir_cache: dict[str, tuple[dict[str, Any], Optional[Any]]],
+    ) -> tuple[Optional[dict[str, Any]], Optional[Any], str, list[str], bool]:
+        """Load a child workflow from inline IR, file reference, or saved name.
+
+        Returns:
+            (child_ir, child_path, ref_label, errors, already_seen)
+            already_seen=True means recursive validation should be skipped.
+        """
+        from pathlib import Path
+
+        from pflow.core.file_resolver import is_workflow_file_reference
+        from pflow.core.workflow.manager import WorkflowManager
+
+        inline_ir = params.get("workflow_ir")
+        workflow_ref = params.get("workflow")
+
+        if isinstance(inline_ir, dict):
+            return inline_ir, None, "<inline>", [], False
+
+        if not isinstance(workflow_ref, str) or not workflow_ref:
+            return None, None, "", [], False
+
+        # Template references can't be resolved statically
+        if "${" in workflow_ref:
+            return None, None, "", [], False
+
+        if is_workflow_file_reference(workflow_ref):
+            return WorkflowValidator._load_child_from_file(node_id, workflow_ref, extracted_params, seen, ir_cache)
+
+        # Saved workflow name
+        seen_key = f"name:{workflow_ref}"
+        if seen_key in seen:
+            # Already validated — return cached IR for input check
+            cached = ir_cache.get(seen_key)
+            if cached:
+                return cached[0], cached[1], workflow_ref, [], True
+            return None, None, workflow_ref, [], True
+        seen.add(seen_key)
+
+        try:
+            wm = WorkflowManager()
+            child_ir = wm.load_ir(workflow_ref)
+            child_path = Path(wm.get_path(workflow_ref))
+            ir_cache[seen_key] = (child_ir, child_path)
+            return child_ir, child_path, workflow_ref, [], False
+        except Exception as e:
+            return (
+                None,
+                None,
+                workflow_ref,
+                [f"Step '{node_id}': failed to load sub-workflow '{workflow_ref}': {e}"],
+                False,
+            )
+
+    @staticmethod
+    def _load_child_from_file(
+        node_id: str,
+        workflow_ref: str,
+        extracted_params: Optional[dict[str, Any]],
+        seen: set[str],
+        ir_cache: dict[str, tuple[dict[str, Any], Optional[Any]]],
+    ) -> tuple[Optional[dict[str, Any]], Optional[Any], str, list[str], bool]:
+        """Load a child workflow from a file reference."""
+        from pathlib import Path
+
+        from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+
+        path = Path(workflow_ref)
+        if not path.is_absolute() and extracted_params:
+            parent_file = extracted_params.get("_pflow_workflow_file")
+            base_dir = Path(parent_file).parent if parent_file else Path.cwd()
+            path = base_dir / path
+        child_path = path.resolve()
+
+        seen_key = str(child_path)
+        if seen_key in seen:
+            # Already validated — return cached IR for input check
+            cached = ir_cache.get(seen_key)
+            if cached:
+                return cached[0], cached[1], workflow_ref, [], True
+            return None, None, workflow_ref, [], True
+        seen.add(seen_key)
+
+        try:
+            if not child_path.exists():
+                return (
+                    None,
+                    None,
+                    workflow_ref,
+                    [f"Step '{node_id}': sub-workflow file not found: {workflow_ref}"],
+                    False,
+                )
+            content = child_path.read_text(encoding="utf-8")
+            result = parse_markdown(content)
+            ir_cache[seen_key] = (result.ir, child_path)
+            return result.ir, child_path, workflow_ref, [], False
+        except MarkdownParseError as e:
+            return None, None, workflow_ref, [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): {e}"], False
+        except Exception as e:
+            return (
+                None,
+                None,
+                workflow_ref,
+                [f"Step '{node_id}': failed to load sub-workflow '{workflow_ref}': {e}"],
+                False,
+            )

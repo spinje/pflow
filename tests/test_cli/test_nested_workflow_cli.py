@@ -222,8 +222,73 @@ class TestNestedWorkflowCLI:
             f"Expected non-zero exit code for missing input\nstdout: {result.output}\nstderr: {result.stderr}"
         )
         combined = (result.output + result.stderr).lower()
-        assert "missing required inputs" in combined, (
-            f"Expected 'missing required inputs' in output but got:\n{combined}"
+        # Error may come from static validation (step 8: "requires input ... but it is not provided")
+        # or from runtime validation ("missing required inputs")
+        assert "input" in combined and ("missing" in combined or "not provided" in combined), (
+            f"Expected missing input error in output but got:\n{combined}"
+        )
+
+    def test_broken_sub_workflow_caught_before_execution(self, tmp_path: Path, mock_llm_calls: Any) -> None:
+        """Sub-workflow parse error caught at validation time — zero LLM calls.
+
+        This is the core reproduction case: parent has an expensive upstream LLM
+        node, then calls a broken sub-workflow. The error must be caught during
+        validation (step 8), before any nodes execute, saving time and money.
+        """
+        # Broken child: missing step description (parse error)
+        broken_child = tmp_path / "broken-child.pflow.md"
+        broken_child.write_text(
+            "# Broken\n\nA broken workflow.\n\n## Steps\n\n### process\n- type: llm\n- prompt: hello\n"
+        )
+
+        # Parent: upstream LLM node → broken sub-workflow
+        parent_file = tmp_path / "parent.pflow.md"
+        parent_file.write_text(f"""\
+# Parent
+
+A parent workflow with an expensive upstream step.
+
+## Inputs
+
+### query
+
+The user query.
+
+- type: string
+
+## Steps
+
+### expensive-llm
+
+This LLM call should NOT run if the sub-workflow is broken.
+
+- type: llm
+- prompt: "Analyze this: ${{query}}"
+
+### process-child
+
+Call the broken sub-workflow.
+
+- type: workflow
+- workflow: {broken_child}
+- text: ${{expensive-llm.response}}
+""")
+
+        result = invoke_cli([str(parent_file), "query=test"])
+
+        # Must fail
+        assert result.exit_code != 0, (
+            f"Expected non-zero exit but got:\nstdout: {result.output}\nstderr: {result.stderr}"
+        )
+        # Error must mention the sub-workflow problem
+        combined = result.output + result.stderr
+        assert "missing a description" in combined.lower() or "sub-workflow" in combined.lower(), (
+            f"Expected sub-workflow validation error but got:\n{combined}"
+        )
+        # THE KEY ASSERTION: no LLM calls were made — error caught at validation time
+        assert len(mock_llm_calls.call_history) == 0, (
+            f"Expected 0 LLM calls but got {len(mock_llm_calls.call_history)} — "
+            "sub-workflow error was not caught before execution"
         )
 
     def test_three_level_nesting_with_relative_paths(self, tmp_path: Path) -> None:

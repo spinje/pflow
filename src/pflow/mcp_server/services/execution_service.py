@@ -383,15 +383,17 @@ class ExecutionService(BaseService):
         inputs = workflow_ir.get("inputs", {})
         dummy_params = generate_dummy_parameters(inputs)
 
+        # Inject file path for sub-workflow resolution
+        if source == "file":
+            dummy_params["_pflow_workflow_file"] = str(Path(str(workflow)).resolve())
+        elif source == "library":
+            dummy_params["_pflow_workflow_file"] = wm.get_path(str(workflow))
+
         # Use comprehensive validator (same as CLI)
         try:
             registry = Registry()
 
-            # Run all 4 validation checks:
-            # 1. Structural validation (IR schema compliance)
-            # 2. Data flow validation (execution order, cycles)
-            # 3. Template validation (${variable} resolution)
-            # 4. Node type validation (registry verification)
+            # Run all validation checks (same as CLI)
             errors, _warnings = WorkflowValidator.validate(
                 workflow_ir=workflow_ir,
                 extracted_params=dummy_params,

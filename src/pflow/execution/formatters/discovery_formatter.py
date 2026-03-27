@@ -159,7 +159,7 @@ def format_workflow_inputs_outputs(ir: dict[str, Any]) -> list[str]:
     if inputs := ir.get("inputs"):
         lines.append("**Inputs**:")
         for key, spec in inputs.items():
-            req = "(required)" if spec.get("required") else "(optional)"
+            req = "(required)" if spec.get("required", True) else "(optional)"
             input_type = spec.get("type", "any")
             desc = spec.get("description", "")
             lines.append(f"  - {key}: {input_type} {req} - {desc}")
