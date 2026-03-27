@@ -636,7 +636,7 @@ class WorkflowExecutorService:
 
         error_dict = {
             "source": "runtime",
-            "category": "exception",
+            "category": self._determine_error_category(str(exception)),
             "message": str(exception),
             "exception_type": type(exception).__name__,
         }

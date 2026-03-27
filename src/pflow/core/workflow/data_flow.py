@@ -4,7 +4,6 @@ This module ensures that workflows have correct execution order and that
 all data dependencies are satisfied before nodes execute.
 """
 
-import re
 from typing import Any, Optional
 
 from pflow.runtime.template_resolver import TemplateResolver
@@ -244,7 +243,7 @@ def _check_param_value(
 ) -> None:
     """Recursively validate template references in a parameter value."""
     if isinstance(value, str) and "${" in value:
-        for match in re.finditer(r"\$\{([^}]+)\}", value):
+        for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
             for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
                 error = _validate_template_reference(
                     operand, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs

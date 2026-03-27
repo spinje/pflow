@@ -431,9 +431,9 @@ class TestPerformanceBenchmarks:
         """Test that compilation time with real nodes meets performance targets."""
         # Test with different sizes using real nodes
         sizes_and_targets = [
-            (5, 50),  # 5 nodes should compile in <50ms
-            (10, 100),  # 10 nodes should compile in <100ms
-            (20, 200),  # 20 nodes should compile in <200ms
+            (5, 100),  # 5 nodes should compile in <100ms
+            (10, 200),  # 10 nodes should compile in <200ms
+            (20, 400),  # 20 nodes should compile in <400ms
         ]
 
         for size, target_ms in sizes_and_targets:

@@ -34,6 +34,12 @@ class TemplateResolver:
     # Must not be preceded by $ (to avoid $${var} escapes)
     TEMPLATE_PATTERN = re.compile(rf"(?<!\$)\$\{{({_COALESCE_EXPR_PATTERN})\}}")
 
+    # Loose extraction pattern for validation/diagnostics code.
+    # Captures everything between ${ and } (including coalesce ??).
+    # Handles $$ escape but does NOT validate variable name format.
+    # Use this for template discovery, NOT for resolution.
+    TEMPLATE_EXTRACT_PATTERN = re.compile(r"(?<!\$)\$\{([^}]+)\}")
+
     # Pattern for detecting simple templates (entire string is exactly one ${var})
     # Used to determine when to preserve type vs stringify
     # Uses same strict variable name pattern as TEMPLATE_PATTERN

@@ -266,13 +266,17 @@ class WorkflowTraceCollector:
         self.execution_warnings = warnings if warnings else None
 
     def _determine_trace_status(self) -> str:
-        """Determine status from execution events.
+        """Determine status from execution events and warnings.
 
         Returns:
-            Status string: "success" or "failed"
+            Status string: "success", "degraded", or "failed"
         """
         failed = any(not e.get("success", True) for e in self.events)
-        return "failed" if failed else "success"
+        if failed:
+            return "failed"
+        if self.execution_warnings:
+            return "degraded"
+        return "success"
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.

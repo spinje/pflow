@@ -328,13 +328,10 @@ class WorkflowValidator:
         Returns:
             List of error messages (empty if valid)
         """
-        import re
-
         errors = []
 
         # Extract template variables: ${...}
-        template_pattern = r"\$\{([^}]+)\}"
-        matches = re.findall(template_pattern, source)
+        matches = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.findall(source)
 
         if not matches:
             # Has ${ but malformed

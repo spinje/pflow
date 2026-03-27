@@ -349,6 +349,12 @@ def _execute_workflow_and_handle_result(
             metrics_collector=metrics_collector,
             verbose=verbose,
         )
+        # Distinct exit code for degraded workflows (partial batch failure, etc.)
+        # Follows CLI convention: 0=success, 1=error, 2=degraded (cf. rsync, xargs)
+        from pflow.core.workflow.status import WorkflowStatus
+
+        if result.status == WorkflowStatus.DEGRADED:
+            ctx.exit(2)
     else:
         _handle_workflow_error(
             ctx=ctx,

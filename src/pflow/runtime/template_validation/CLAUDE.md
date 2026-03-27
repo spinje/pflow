@@ -101,17 +101,19 @@ Passes use `is_batch_output` and `is_batch_item` to branch behavior. Workflow no
 
 ## Design Decisions
 
-### Two regex patterns for template discovery
+### Three regex patterns for template discovery
 
-`_PERMISSIVE_PATTERN` (validator.py) and `TEMPLATE_PATTERN` (template_resolver.py) intentionally diverge:
+Three patterns exist, each serving a different purpose:
 
-| | `_PERMISSIVE_PATTERN` (validation) | `TEMPLATE_PATTERN` (runtime) |
-|-|-------------------------------------|------------------------------|
-| Nested `${...}` in brackets | Yes: `${node[${__index__}].field}` | No: captures inner `${__index__}` only |
-| `$$` escape handling | No lookbehind | Yes: `(?<!\$)` lookbehind |
-| First-char rules | Permissive (`[\w-]*`) | Strict (`[a-zA-Z_][\w-]*`) |
+| | `_PERMISSIVE_PATTERN` (validation) | `TEMPLATE_PATTERN` (runtime) | `TEMPLATE_EXTRACT_PATTERN` (diagnostics) |
+|-|-------------------------------------|------------------------------|------------------------------------------|
+| Purpose | Path validation (pass 5) | Template resolution | Data flow validation, error messages, trace suggestions |
+| Nested `${...}` in brackets | Yes: `${node[${__index__}].field}` | No: captures inner `${__index__}` only | No |
+| `$$` escape handling | No lookbehind | Yes: `(?<!\$)` lookbehind | Yes: `(?<!\$)` lookbehind |
+| First-char rules | Permissive (`[\w-]*`) | Strict (`[a-zA-Z_][\w-]*`) | None (`[^}]+` — captures everything) |
+| Variable name validation | Partial | Full | None (delegates to downstream) |
 
-The validator needs to find all template-like patterns (including edge cases) to give good error messages. The resolver only needs to match well-formed templates it can actually resolve. These are different jobs — do not try to unify them.
+`_PERMISSIVE_PATTERN` finds all template-like patterns for error messages. `TEMPLATE_PATTERN` matches well-formed templates for resolution. `TEMPLATE_EXTRACT_PATTERN` is for discovery/diagnostics — captures any `${...}` content for data flow analysis, error formatting, and trace suggestions. It replaces 4 formerly ad-hoc inline regex copies. Do not try to unify these — they serve different jobs.
 
 ### Coalesce operands are pre-split before passes
 
