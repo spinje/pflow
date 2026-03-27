@@ -290,6 +290,51 @@ Added `# Inline IR is embedded, not a file/name reference — no cycle possible`
 
 ---
 
+## Specialized Code Review (7 agents) — COMPLETED
+
+Full code review deployed 7 parallel specialized review agents against the branch.
+
+### Findings inventory
+
+| Agent | Findings |
+|-------|----------|
+| review-silent-failures | `normalize_ir` mutates inline IR (disputed — benign/idempotent), `save_service` missing `_pflow_workflow_file` (confirmed, narrow — filed as #166), template refs silently skipped |
+| review-validation-consistency | `save_service` gap (same), `skip_node_types` not propagated (confirmed) |
+| review-impact-completeness | `save_service` gap (same), stale CLAUDE.md files and MCP tool docstring (confirmed) |
+| review-feature-interactions | `skip_node_types` not forwarded (confirmed), all feature combinations verified correct |
+| review-agent-ux | Error messages need resolved path, available inputs, standardized prefix (confirmed) |
+| review-test-fidelity | `TestSubWorkflowDataFlowError` assertion concern (disputed — matches real error text), MCP path untested |
+| review-concurrency-safety | No issues found. All new code single-threaded in pre-execution phase. |
+
+### Fixes applied (commit `f0ca2cb1`)
+
+1. **`skip_node_types` forwarded in recursive calls** — added parameter to `_validate_sub_workflows()`, threaded through from `validate()` step 8 and into recursive `validate()` calls on child IRs. Without this, `skip_node_types=True` on the parent had no effect on children.
+
+2. **Error messages improved for agent actionability:**
+   - "File not found" now includes resolved absolute path: `'./child.pflow.md' (resolved to: /abs/path/child.pflow.md)`
+   - "Required input missing" now lists available inputs: `Available inputs: count, text`
+   - Standardized error prefix to `"In sub-workflow '...' (step '...'): ..."` for saved workflow and file load errors (was inconsistent `"Step '...': failed to load..."`)
+
+3. **Debug log for template workflow ref skips** — `logger.debug("Skipping sub-workflow validation for step '%s': template reference '%s'", ...)` when `${...}` in workflow param causes step 8 to skip validation. Template path itself is already validated by step 4; this log explains why the child's *internals* weren't checked.
+
+4. **Documentation updated (6 files):**
+   - `src/pflow/core/workflow/CLAUDE.md` — "7-step" → "8-step", added step 8 description
+   - `src/pflow/runtime/compilation/CLAUDE.md` — "7-step" → "8-step"
+   - `src/pflow/mcp_server/CLAUDE.md` — "4-layer" → "8-step" (3 locations)
+   - `src/pflow/mcp_server/tools/execution_tools.py` — added sub-workflow validation to checks list, removed "File existence" from "Does NOT check"
+
+### Disputed findings
+
+- **`normalize_ir` mutates inline IR** (4 agents flagged): `normalize_ir()` is idempotent — adds `ir_version`, `edges`, converts `parameters`→`params` only if absent. Every downstream consumer also calls it. Mutation is doing early what compilation would do anyway. `validate()` is always called immediately before `compile_ir_to_flow()` on the same IR. Zero practical impact.
+
+- **`TestSubWorkflowDataFlowError` passes by filename coincidence** (test-fidelity): Verified that `validate_data_flow()` produces `"Circular dependency detected involving nodes: ..."` — the assertion `"circular" in e.lower()` matches the real error text, not just the filename. Both happen to contain "circular" but the test checks real behavior.
+
+### Deferred (filed as GitHub issue)
+
+- **`save_service` missing `_pflow_workflow_file`** → spinje/pflow#166. Narrow impact (MCP save only), false error (not silent), fix is straightforward but touches save service callers. Pre-existing limitation surfaced by step 8.
+
+---
+
 ## Final Verification
 
 ```
@@ -297,17 +342,21 @@ make test  → 4543 passed (14 sub-workflow validation tests, +1 from review fix
 make check → all clean (ruff, ruff-format, mypy, deptry)
 ```
 
-### Files modified (final, 10 source + 3 test)
+### Files modified (final, 10 source + 6 docs + 3 test)
 
 | File | Change |
 |------|--------|
 | `src/pflow/runtime/workflow_executor.py` | `"inputs"` in RESERVED_PARAMS; `required` heuristic fix |
-| `src/pflow/core/workflow/validator.py` | `_seen` + `_ir_cache` params, step 8 call, 3 new methods |
+| `src/pflow/core/workflow/validator.py` | `_seen` + `_ir_cache` params, step 8 call, 3 new methods, `skip_node_types` forwarding, improved error messages, debug log |
 | `src/pflow/cli/main.py` | `_perform_validation()` accepts `source_file_path`, injects `_pflow_workflow_file` |
 | `src/pflow/mcp_server/services/execution_service.py` | `validate_workflow()` injects `_pflow_workflow_file`; reuse `wm`; fix stale comment |
 | `src/pflow/core/workflow/context.py` | `required` default fix |
 | `src/pflow/execution/formatters/discovery_formatter.py` | `required` default fix |
 | `src/pflow/cli/commands/mcp.py` | `required` default fix |
+| `src/pflow/core/workflow/CLAUDE.md` | 8-step validator docs |
+| `src/pflow/runtime/compilation/CLAUDE.md` | 8-step validator docs |
+| `src/pflow/mcp_server/CLAUDE.md` | 8-step validator docs |
+| `src/pflow/mcp_server/tools/execution_tools.py` | Updated tool docstring for step 8 |
 | `tests/test_core/test_sub_workflow_validation.py` | **NEW** — 14 tests |
 | `tests/test_runtime/test_workflow_executor/test_workflow_executor_comprehensive.py` | 3 new tests |
 | `tests/test_cli/test_nested_workflow_cli.py` | 1 new E2E test + updated assertion |
