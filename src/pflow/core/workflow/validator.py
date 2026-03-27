@@ -5,6 +5,7 @@ ensuring consistency between production, tests, and any other consumers.
 """
 
 import logging
+from pathlib import Path
 from typing import Any, Optional
 
 from pflow.registry import Registry
@@ -28,7 +29,7 @@ class WorkflowValidator:
         registry: Optional[Registry] = None,
         skip_node_types: bool = False,
         _seen: Optional[set[str]] = None,
-        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Any]]]] = None,
+        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
     ) -> tuple[list[str], list[ValidationWarning]]:
         """Run complete workflow validation.
 
@@ -533,7 +534,7 @@ class WorkflowValidator:
         extracted_params: Optional[dict[str, Any]],
         registry: Optional[Registry],
         _seen: Optional[set[str]],
-        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Any]]]] = None,
+        _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
     ) -> list[str]:
         """Recursively validate sub-workflow references.
 
@@ -612,16 +613,14 @@ class WorkflowValidator:
         params: dict[str, Any],
         extracted_params: Optional[dict[str, Any]],
         seen: set[str],
-        ir_cache: dict[str, tuple[dict[str, Any], Optional[Any]]],
-    ) -> tuple[Optional[dict[str, Any]], Optional[Any], str, list[str], bool]:
+        ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
+    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
         """Load a child workflow from inline IR, file reference, or saved name.
 
         Returns:
             (child_ir, child_path, ref_label, errors, already_seen)
             already_seen=True means recursive validation should be skipped.
         """
-        from pathlib import Path
-
         from pflow.core.file_resolver import is_workflow_file_reference
         from pflow.core.workflow.manager import WorkflowManager
 
@@ -629,6 +628,7 @@ class WorkflowValidator:
         workflow_ref = params.get("workflow")
 
         if isinstance(inline_ir, dict):
+            # Inline IR is embedded, not a file/name reference — no cycle possible
             return inline_ir, None, "<inline>", [], False
 
         if not isinstance(workflow_ref, str) or not workflow_ref:
@@ -658,6 +658,7 @@ class WorkflowValidator:
             ir_cache[seen_key] = (child_ir, child_path)
             return child_ir, child_path, workflow_ref, [], False
         except Exception as e:
+            logger.debug("Failed to load saved workflow '%s'", workflow_ref, exc_info=True)
             return (
                 None,
                 None,
@@ -672,11 +673,9 @@ class WorkflowValidator:
         workflow_ref: str,
         extracted_params: Optional[dict[str, Any]],
         seen: set[str],
-        ir_cache: dict[str, tuple[dict[str, Any], Optional[Any]]],
-    ) -> tuple[Optional[dict[str, Any]], Optional[Any], str, list[str], bool]:
+        ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
+    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
         """Load a child workflow from a file reference."""
-        from pathlib import Path
-
         from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
         path = Path(workflow_ref)

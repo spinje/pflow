@@ -263,6 +263,33 @@ When a grandchild was validated during child recursion (level 2), its IR was cac
 
 ---
 
+## PR Code Review (spinje/pflow#164) — COMPLETED
+
+Review by Claude bot on the PR. 3 warnings, 4 suggestions. No critical issues.
+
+### Findings addressed
+
+**W1 — `Optional[Any]` for `child_path` should be `Optional[Path]`:**
+Tightened type annotations on `ir_cache` dict type and return types of `_load_child_workflow()` and `_load_child_from_file()`. Moved `from pathlib import Path` to module-level import (stdlib, no circular dep risk). Removed redundant lazy imports inside method bodies.
+
+**W2 — Broad `except Exception` in saved workflow loading:**
+Added `logger.debug("Failed to load saved workflow '%s'", workflow_ref, exc_info=True)` so exception type is diagnosable. Kept broad `except` — narrowing to specific exceptions is fragile since `WorkflowManager.load_ir()` can raise many things.
+
+**S7 — Missing comment on inline IR cycle detection:**
+Added `# Inline IR is embedded, not a file/name reference — no cycle possible` before the return.
+
+### Findings disputed
+
+**W3 — `wm` variable scope could be unbound:** Both `wm = WorkflowManager()` (line 376) and `wm.get_path(...)` (line 390) are inside `elif source == "library"` branches. If line 376 raises, the `except` catches and returns early, or the exception propagates past line 390. Line 390 is never reached with `wm` unbound.
+
+### Suggestions not addressed
+
+- **S4** (global inputs key subtraction) — reviewer explicitly said no change needed
+- **S5** (brittle line-count assertions) — not introduced by this PR
+- **S6** (test numbering gaps) — pre-existing, cosmetic
+
+---
+
 ## Final Verification
 
 ```
