@@ -7,17 +7,7 @@ all data dependencies are satisfied before nodes execute.
 import re
 from typing import Any, Optional
 
-_COALESCE_SPLIT = re.compile(r"\s*\?\?\s*")
-
-
-def _split_coalesce(ref: str) -> list[str]:
-    """Split a template reference on ?? into individual operands.
-
-    Mirrors TemplateResolver.split_coalesce_operands — keep in sync.
-    """
-    if "??" not in ref:
-        return [ref]
-    return [op.strip() for op in _COALESCE_SPLIT.split(ref)]
+from pflow.runtime.template_resolver import TemplateResolver
 
 
 class CycleError(Exception):
@@ -255,7 +245,7 @@ def _check_param_value(
     """Recursively validate template references in a parameter value."""
     if isinstance(value, str) and "${" in value:
         for match in re.finditer(r"\$\{([^}]+)\}", value):
-            for operand in _split_coalesce(match.group(1)):
+            for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
                 error = _validate_template_reference(
                     operand, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
                 )

@@ -120,8 +120,8 @@ class TestTypeConversion:
     def test_zero_conversion(self):
         """Test zero converts to "0"."""
         assert TemplateResolver._convert_to_string(0) == "0"
-        # 0.0 will convert to "0" due to Python's str() behavior where 0.0 == 0
-        assert TemplateResolver._convert_to_string(0.0) == "0.0" or TemplateResolver._convert_to_string(0.0) == "0"
+        # 0.0 == 0 in Python, so _convert_to_string(0.0) returns "0"
+        assert TemplateResolver._convert_to_string(0.0) == "0"
 
     def test_boolean_conversion(self):
         """Test boolean conversion."""

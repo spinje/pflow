@@ -265,12 +265,10 @@ class TestNestedTemplateResolution:
 
         wrapper.set_params(params)
 
-        # Currently this will categorize the nested structures as static (BUG!)
-        # After fix, they should be in template_params
-        assert "headers" in wrapper.template_params or "headers" in wrapper.static_params
-        assert "body" in wrapper.template_params or "body" in wrapper.static_params
-
-        # This test will fail with current implementation, showing the bug
+        # Nested dicts/lists with templates should be categorized as template params
+        # (has_templates() recursively checks nested structures)
+        assert "headers" in wrapper.template_params
+        assert "body" in wrapper.template_params
 
 
 class TestTemplateResolverBackwardCompatibility:

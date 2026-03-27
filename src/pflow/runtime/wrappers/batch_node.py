@@ -881,14 +881,21 @@ class PflowBatchNode(Node):
             result, error, duration_ms = self._exec_single_with_node(idx, item, item_shared, thread_node)
             return (idx, result, error, duration_ms)
 
-        with ThreadPoolExecutor(max_workers=self.max_concurrent) as executor:
+        # IMPORTANT: Do NOT use `with ThreadPoolExecutor` — its __exit__ calls
+        # shutdown(wait=True). Currently _collect_parallel_results drains all futures,
+        # but explicit shutdown(wait=False, cancel_futures=True) is defensive against
+        # future early-exit paths and consistent with llm.py/python_code.py.
+        pool = ThreadPoolExecutor(max_workers=self.max_concurrent)
+        try:
             # Submit all items
-            future_to_idx = {executor.submit(process_item, idx, item): idx for idx, item in enumerate(items)}
+            future_to_idx = {pool.submit(process_item, idx, item): idx for idx, item in enumerate(items)}
 
             # Collect results as they complete
             should_stop = self._collect_parallel_results(
                 future_to_idx, items, results, timings, pending_errors, should_stop
             )
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
         # Store timings for batch metadata
         self._item_timings = timings

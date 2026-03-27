@@ -279,7 +279,12 @@ class WorkflowExecutor(BaseNode):
         context = dict(shared)
         resolved = {}
         for param_name, param_value in child_inputs.items():
-            if isinstance(param_value, str) and TemplateResolver.has_templates(param_value):
+            if isinstance(param_value, (dict, list)):
+                try:
+                    resolved[param_name] = TemplateResolver.resolve_nested(param_value, context)
+                except Exception as e:
+                    raise ValueError(f"Failed to resolve parameter '{param_name}': {e}") from e
+            elif isinstance(param_value, str) and TemplateResolver.has_templates(param_value):
                 try:
                     resolved[param_name] = TemplateResolver.resolve_template(param_value, context)
                 except Exception as e:

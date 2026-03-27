@@ -172,6 +172,29 @@ class TestWorkflowExecutorComprehensive:
         assert prep_res["child_params"]["nested"] == "nested_value"
         assert prep_res["child_params"]["static"] == "literal"
 
+    # --- Test 9b: template resolution in dict/list child inputs ---
+
+    def test_template_resolution_dict_and_list_inputs(self, simple_workflow_ir):
+        """Dict/list params with nested templates are resolved in child inputs."""
+        node = WorkflowExecutor()
+        node.set_params({
+            "workflow_ir": simple_workflow_ir,
+            "config": {"endpoint": "${api.url}", "retries": 3},
+            "tags": ["${category}", "static-tag"],
+            "nested": {"items": [{"name": "${user.name}"}]},
+        })
+
+        shared = {
+            "api": {"url": "https://example.com"},
+            "category": "production",
+            "user": {"name": "Alice"},
+        }
+
+        prep_res = node.prep(shared)
+        assert prep_res["child_params"]["config"] == {"endpoint": "https://example.com", "retries": 3}
+        assert prep_res["child_params"]["tags"] == ["production", "static-tag"]
+        assert prep_res["child_params"]["nested"] == {"items": [{"name": "Alice"}]}
+
     # --- Test 10: storage_mode "mapped" ---
 
     def test_storage_mode_mapped(self, simple_workflow_ir):
