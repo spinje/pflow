@@ -101,11 +101,12 @@ async def workflow_validate(
     - Data flow correctness (execution order, no cycles)
     - Template structure (${node.output} references)
     - Node types exist in registry
+    - Sub-workflow validation (recursive — checks referenced workflow files for errors)
+    - Required input coverage (sub-workflows receive all required inputs)
 
     Does NOT check:
     - Runtime values
     - API credentials
-    - File existence
     - ANY runtime issues
 
     Examples:

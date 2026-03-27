@@ -99,7 +99,7 @@ class WorkflowValidator:
 
         # 8. Sub-workflow validation (recursive)
         sub_errors = WorkflowValidator._validate_sub_workflows(
-            workflow_ir, extracted_params, registry, _seen, _ir_cache
+            workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types
         )
         errors.extend(sub_errors)
 
@@ -535,6 +535,7 @@ class WorkflowValidator:
         registry: Optional[Registry],
         _seen: Optional[set[str]],
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
+        skip_node_types: bool = False,
     ) -> list[str]:
         """Recursively validate sub-workflow references.
 
@@ -584,9 +585,11 @@ class WorkflowValidator:
                 is_required = input_spec.get("required", True)
                 has_default = "default" in input_spec
                 if is_required and not has_default and input_name not in parent_keys:
+                    available = ", ".join(sorted(child_inputs.keys()))
                     errors.append(
                         f"Step '{node_id}': sub-workflow '{ref_label}' requires "
-                        f"input '{input_name}' but it is not provided"
+                        f"input '{input_name}' but it is not provided. "
+                        f"Available inputs: {available}"
                     )
 
             # Recursive validation — skip if this child was already validated
@@ -599,6 +602,7 @@ class WorkflowValidator:
                     child_ir,
                     extracted_params=dummy_params,
                     registry=registry,
+                    skip_node_types=skip_node_types,
                     _seen=seen,
                     _ir_cache=ir_cache,
                 )
@@ -636,6 +640,9 @@ class WorkflowValidator:
 
         # Template references can't be resolved statically
         if "${" in workflow_ref:
+            logger.debug(
+                "Skipping sub-workflow validation for step '%s': template reference '%s'", node_id, workflow_ref
+            )
             return None, None, "", [], False
 
         if is_workflow_file_reference(workflow_ref):
@@ -663,7 +670,7 @@ class WorkflowValidator:
                 None,
                 None,
                 workflow_ref,
-                [f"Step '{node_id}': failed to load sub-workflow '{workflow_ref}': {e}"],
+                [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
                 False,
             )
 
@@ -700,7 +707,7 @@ class WorkflowValidator:
                     None,
                     None,
                     workflow_ref,
-                    [f"Step '{node_id}': sub-workflow file not found: {workflow_ref}"],
+                    [f"Step '{node_id}': sub-workflow file not found: '{workflow_ref}' (resolved to: {child_path})"],
                     False,
                 )
             content = child_path.read_text(encoding="utf-8")
@@ -714,6 +721,6 @@ class WorkflowValidator:
                 None,
                 None,
                 workflow_ref,
-                [f"Step '{node_id}': failed to load sub-workflow '{workflow_ref}': {e}"],
+                [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
                 False,
             )

@@ -73,7 +73,7 @@ IR structure validation and input preparation. Renamed from `workflow_validator.
 - `prepare_inputs()` — validates inputs, resolves from fallback sources, coerces types. **5-tier precedence**: CLI args -> `os.environ` -> `settings.env` -> workflow default -> error if required.
 - Only one `stdin: true` input allowed (validated here).
 
-**WARNING**: A DIFFERENT `validator.py` exists at `core/workflow/validator.py` (pre-execution 7-step orchestrator, 7+ external consumers). Don't confuse them.
+**WARNING**: A DIFFERENT `validator.py` exists at `core/workflow/validator.py` (pre-execution 8-step orchestrator, 7+ external consumers). Don't confuse them.
 
 ## Dependency Graph (no cycles at import time)
 
