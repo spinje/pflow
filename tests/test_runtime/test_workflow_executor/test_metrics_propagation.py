@@ -359,12 +359,15 @@ class TestCreateChildStorage:
         registry = Mock()
         trace_collector = Mock()
 
+        memo_cache = Mock()
+
         parent_shared: dict = {
             "__progress_callback__": progress_cb,
             "__mcp_pool__": mcp_pool,
             "__warnings__": warnings_dict,
             "__registry__": registry,
             "_trace_collector": trace_collector,
+            "__memoization_cache__": memo_cache,
             "_pflow_depth": 0,
             "_pflow_stack": [],
         }
@@ -378,6 +381,7 @@ class TestCreateChildStorage:
         assert child_storage["__warnings__"] is warnings_dict
         assert child_storage["__registry__"] is registry
         assert child_storage["_trace_collector"] is trace_collector
+        assert child_storage["__memoization_cache__"] is memo_cache
 
         # Child params are present
         assert child_storage["input1"] == "value1"

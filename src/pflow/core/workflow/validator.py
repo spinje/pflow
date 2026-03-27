@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pflow.registry import Registry
+from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation import ValidationWarning
 
 logger = logging.getLogger(__name__)
@@ -346,9 +347,7 @@ class WorkflowValidator:
         # Validate each template
         for template_var in matches:
             # Split coalesce operands and validate each one
-            operands = (
-                [op.strip() for op in re.split(r"\s*\?\?\s*", template_var)] if "??" in template_var else [template_var]
-            )
+            operands = TemplateResolver.split_coalesce_operands(template_var)
             for operand in operands:
                 # Skip if not a node reference (no dot)
                 if "." not in operand:

@@ -363,16 +363,18 @@ class TestParallelBatchTraceCapture:
         batch_items = event["batch_items"]
         assert len(batch_items) == 2
 
-        for i, name in enumerate(["alice", "bob"]):
-            item = batch_items[i]
+        # Parallel batch items may complete in any order — match by content
+        resolved_commands = set()
+        for item in batch_items:
             assert item["success"] is True
             # Template resolutions captured from deep-copied chain
             resolutions = item.get("template_resolutions", {})
             assert "command" in resolutions, (
-                f"Item {i}: template_resolutions missing 'command' — "
+                "template_resolutions missing 'command' — "
                 "deep-copied TemplateAwareNodeWrapper may not preserve last_resolutions"
             )
-            assert resolutions["command"]["resolved"] == f"echo {name}"
+            resolved_commands.add(resolutions["command"]["resolved"])
+        assert resolved_commands == {"echo alice", "echo bob"}
 
 
 class TestFailedBatchItemsInTrace:
