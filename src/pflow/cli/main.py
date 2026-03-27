@@ -508,12 +508,14 @@ def _setup_execution_context(
 def _perform_validation(
     ir_data: dict[str, Any],
     output_format: str,
+    source_file_path: str | None = None,
 ) -> tuple[list[str], list[Any]]:
     """Perform static workflow validation.
 
     Args:
         ir_data: Workflow IR data
         output_format: Output format for error display
+        source_file_path: Optional path to the workflow file (for sub-workflow resolution)
 
     Returns:
         Tuple of (errors, warnings):
@@ -523,6 +525,8 @@ def _perform_validation(
     Raises:
         SystemExit: If validation raises an exception
     """
+    from pathlib import Path
+
     from pflow.core.workflow.validator import WorkflowValidator
     from pflow.registry.registry import Registry
 
@@ -533,6 +537,10 @@ def _perform_validation(
     declared_inputs = ir_data.get("inputs", {})
     for input_name in declared_inputs:
         dummy_params[input_name] = "__validation_placeholder__"
+
+    # Inject file path for sub-workflow resolution
+    if source_file_path:
+        dummy_params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
 
     try:
         errors, warnings = WorkflowValidator.validate(
@@ -624,7 +632,8 @@ def _handle_validate_only_mode(
     _resolve_file_refs_or_exit(ctx, ir_data, output_format)
 
     # Perform static validation
-    errors, warnings = _perform_validation(ir_data, output_format)
+    source_file_path = ctx.obj.get("source_file_path")
+    errors, warnings = _perform_validation(ir_data, output_format, source_file_path=source_file_path)
 
     # Display results and exit
     _display_validation_results(errors, warnings, output_format)

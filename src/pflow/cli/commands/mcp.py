@@ -609,7 +609,7 @@ def _format_parameters(params: list[dict], title: str = "Parameters") -> None:
     if params:
         click.echo(f"\n{title}:")
         for param in params:
-            required = " (required)" if param.get("required") else ""
+            required = " (required)" if param.get("required", True) else ""
             desc = f" - {param.get('description', '')}" if param.get("description") else ""
             click.echo(f"  - {param['key']}: {param['type']}{required}{desc}")
     else:

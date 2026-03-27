@@ -667,6 +667,74 @@ class TestWorkflowExecutorComprehensive:
         assert WorkflowExecutor._is_file_reference("my-workflow") is False
         assert WorkflowExecutor._is_file_reference("simple") is False
 
+    # --- Test 33: 'inputs' key excluded from child inputs ---
+
+    def test_inputs_not_passed_as_child_input(self):
+        """Verify 'inputs' framework key is excluded from child inputs.
+
+        The 'inputs' param is consumed by TemplateAwareNodeWrapper to inject
+        additional template context. It must NOT leak through to child workflow
+        inputs — it is a framework-level concern, not a user param.
+        """
+        executor = WorkflowExecutor()
+        executor.params = {
+            "workflow": "./child.pflow.md",
+            "inputs": {"api_key": "xxx"},  # Framework key, not a child input
+            "text": "hello",
+            "count": 5,
+        }
+        child_inputs = executor._extract_child_inputs()
+        assert "inputs" not in child_inputs
+        assert "workflow" not in child_inputs  # Also reserved
+        assert child_inputs == {"text": "hello", "count": 5}
+
+    # --- Test 34: required: false with no default is not rejected ---
+
+    def test_required_false_no_default_not_rejected(self, tmp_path):
+        """Child input with required: false and no default should not raise.
+
+        When a child workflow declares an input as optional (required: false),
+        the parent should be able to omit it without triggering a validation error,
+        even if no default value is specified.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+            "inputs": {
+                "text": {"type": "string", "required": True},
+                "optional_param": {"type": "string", "required": False},
+            },
+        }
+        executor = WorkflowExecutor()
+        # Only provide "text", not "optional_param"
+        child_params = {"text": "hello"}
+        # Should NOT raise
+        executor._validate_child_params(workflow_ir, child_params, str(tmp_path / "child.pflow.md"))
+
+    # --- Test 35: required: true with no default IS rejected ---
+
+    def test_required_true_no_default_rejected(self, tmp_path):
+        """Child input with required: true and no default should raise.
+
+        This is the counterpart to test_required_false_no_default_not_rejected:
+        when required is explicitly true (or implicitly true via the default),
+        omitting the input must produce an actionable validation error.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+            "inputs": {
+                "text": {"type": "string", "required": True},
+                "count": {"type": "integer", "required": True},
+            },
+        }
+        executor = WorkflowExecutor()
+        child_params = {"text": "hello"}
+        with pytest.raises(ValueError, match="missing required inputs"):
+            executor._validate_child_params(workflow_ir, child_params, str(tmp_path / "child.pflow.md"))
+
 
 class TestBatchCompilationErrorPropagation:
     """Verify CompilationError propagates through batch regardless of error_handling.

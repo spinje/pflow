@@ -78,7 +78,7 @@ All tools use async/sync bridge: `await asyncio.to_thread(_sync_operation)` — 
 
 **execution_tools.py** (5 tools):
 - `workflow_execute(workflow, parameters)` — Execute with agent defaults (no repair, silent, traces saved)
-- `workflow_validate(workflow)` — Static 4-layer validation without execution
+- `workflow_validate(workflow)` — Static validation without execution (8 checks including sub-workflow validation)
 - `workflow_save(workflow, name, force)` — Save to library (accepts raw markdown or file path)
 - `registry_run(node_type, parameters)` — Test node to discover output structure + template paths
 - `read_fields(execution_id, field_paths)` — Read specific fields from cached `registry_run` execution
@@ -111,7 +111,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 
 - **BaseService** — `@ensure_stateless` decorator (logs instance creation), `validate_stateless()` checks
 - **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions for LLM-powered discovery.
-- **ExecutionService** — Execute (NullOutput), validate (4-layer + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
+- **ExecutionService** — Execute (NullOutput), validate (8-step + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
 - **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
@@ -175,7 +175,7 @@ See `utils/CLAUDE.md` for the 5-step resolution order used by `resolve_workflow(
 
 ### Validation
 
-`WorkflowValidator.validate()` runs 4 checks: structural (IR schema), data flow (order, cycles), template (`${variable}` resolution), node types (registry). `generate_dummy_parameters()` creates `__validation_placeholder__` values so templates resolve during validation without real API keys.
+`WorkflowValidator.validate()` runs 8 checks: structural (IR schema), stdin inputs, data flow (order, cycles), template (`${variable}` resolution), node types (registry), output sources, unknown params, and sub-workflow validation (recursive). `generate_dummy_parameters()` creates `__validation_placeholder__` values so templates resolve during validation without real API keys.
 
 ## Testing
 
