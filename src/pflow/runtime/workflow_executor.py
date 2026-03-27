@@ -260,7 +260,7 @@ class WorkflowExecutor(BaseNode):
             if isinstance(node_data, dict):
                 error = node_data.get("error")
                 if error:
-                    return f"Sub-workflow failed at {workflow_path}: {error}"
+                    return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {error}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:

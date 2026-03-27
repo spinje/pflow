@@ -161,6 +161,18 @@ def _check_string_template_types(
 # ---------------------------------------------------------------------------
 
 
+def _build_quoted_templates(command: str) -> set[str]:
+    """Extract templates wrapped in single quotes as escape hatch.
+
+    Splits coalesce operands so '${a ?? b}' exempts both 'a' and 'b'.
+    """
+    result: set[str] = set()
+    for match in _QUOTED_TEMPLATE_PATTERN.finditer(command):
+        for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
+            result.add(operand)
+    return result
+
+
 def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[str]:
     """Block dict/list types in shell command parameters.
 
@@ -206,7 +218,7 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
 
         # Tier 2: Find templates exactly wrapped in single quotes (escape hatch)
         # Pattern '${var}' signals user accepts runtime coercion to string
-        quoted_templates = {match.group(1) for match in _QUOTED_TEMPLATE_PATTERN.finditer(command)}
+        quoted_templates = _build_quoted_templates(command)
 
         # Check each template in the command and collect blocked ones
         templates = TemplateResolver.extract_variables(command)

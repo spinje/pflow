@@ -30,10 +30,8 @@ def build_type_error_message(
     Returns:
         Formatted multi-section error message with fix suggestions
     """
-    import re
-
     # Extract variable name from template for suggestions
-    var_match = re.search(r"\$\{([^}]+)\}", template_str)
+    var_match = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.search(template_str)
     var_name = var_match.group(1) if var_match else "variable"
 
     # Build base error

@@ -128,7 +128,7 @@ Three responsibilities:
 
 Three error categories with different display:
 
-1. **Execution errors** (`_display_text_error_details` → `_display_single_error`): Per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr in verbose mode). Security: sanitizes raw responses via `sanitize_parameters`.
+1. **Execution errors** (`_display_text_error_details` → `_display_single_error`): Per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr always shown on failure). Security: sanitizes raw responses via `sanitize_parameters`.
 2. **Compilation errors** (`_format_compilation_error_text`, `_handle_compilation_error_json`): UserFriendlyError formatting or generic message with suggestion.
 3. **JSON error construction** (`_create_json_error_output`, `_build_json_error_response`): Structured error output with execution state, metrics, and cost.
 
@@ -174,7 +174,7 @@ Note: has its own copy of `_get_output_controller` (duplicated from main.py to a
 
 ```
 --version              # Show version
---verbose, -v          # Detailed output (shows shell stderr, error details)
+--verbose, -v          # Detailed output (extra error context)
 --output-key, -o       # Extract specific shared store key instead of auto-detection
 --output-format        # "text" (default) or "json" — json forces non-interactive
 --print, -p            # Force non-interactive, clean output for piping

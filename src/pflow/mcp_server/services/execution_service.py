@@ -202,6 +202,41 @@ def _format_error_result(
     }
 
 
+def _build_error_text(error_dict: dict[str, Any], trace_path: Path) -> str:
+    """Build detailed error text from error dict for MCP agent consumption.
+
+    Args:
+        error_dict: Formatted error dictionary from _format_error_result
+        trace_path: Path to trace file
+
+    Returns:
+        Human-readable error text with shell details for agent diagnosis
+    """
+    error_msg = error_dict.get("error", {}).get("message", "Workflow execution failed")
+    lines = [f"❌ {error_msg}"]
+
+    if error_dict.get("errors"):
+        lines.append("\nError details:")
+        for err in error_dict["errors"][:3]:
+            node_id = err.get("node_id", "unknown")
+            msg = err.get("message", "Unknown error")
+            lines.append(f"  • {node_id}: {msg}")
+            # Include shell details for agent diagnosis
+            if err.get("shell_command"):
+                cmd = err["shell_command"]
+                cmd_display = cmd[:200] + "..." if len(cmd) > 200 else cmd
+                lines.append(f"    Command: {cmd_display}")
+            if err.get("shell_stderr"):
+                stderr = err["shell_stderr"]
+                stderr_display = stderr[:300] + "..." if len(stderr) > 300 else stderr
+                lines.append(f"    Stderr: {stderr_display}")
+
+    if trace_path.exists():
+        lines.append(f"\nTrace: {trace_path}")
+
+    return "\n".join(lines)
+
+
 def _inject_workflow_file_path(params: dict[str, Any], source: str, workflow: Any) -> None:
     """Set _pflow_workflow_file in params for file reference resolution."""
     if source == "file":
@@ -308,25 +343,7 @@ class ExecutionService(BaseService):
             else:
                 # Format error as text and raise
                 error_dict = _format_error_result(result, workflow_ir, metrics_collector, trace_path)
-                error_msg = error_dict.get("error", {}).get("message", "Workflow execution failed")
-
-                # Build detailed error text
-                lines = [f"❌ {error_msg}"]
-
-                # Add error details if available
-                if error_dict.get("errors"):
-                    lines.append("\nError details:")
-                    for err in error_dict["errors"][:3]:  # Show first 3 errors
-                        node_id = err.get("node_id", "unknown")
-                        msg = err.get("message", "Unknown error")
-                        lines.append(f"  • {node_id}: {msg}")
-
-                # Add trace path
-                if trace_path.exists():
-                    lines.append(f"\nTrace: {trace_path}")
-
-                error_text = "\n".join(lines)
-                raise RuntimeError(error_text)
+                raise RuntimeError(_build_error_text(error_dict, trace_path))
 
         except RuntimeError:
             # Re-raise our formatted errors

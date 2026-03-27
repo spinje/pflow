@@ -232,10 +232,13 @@ def _display_single_error(
 ) -> None:
     """Display a single workflow error with all details.
 
+    Shell command details (command, stdout, stderr) are always shown on failure
+    for agent diagnosis — not gated by verbose.
+
     Args:
         error: Error dict from ExecutionResult
         error_number: Error number for display (1-indexed)
-        verbose: Whether to show extended details (command, stdout, etc.)
+        verbose: Reserved for future use (shell details are always shown)
     """
     if error_number == 1:
         click.echo("❌ Workflow execution failed", err=True)
@@ -276,8 +279,8 @@ def _display_single_error(
             click.echo("\n  📁 Complete field list available in trace file", err=True)
             click.echo("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json", err=True)
 
-    # Show shell command details in verbose mode
-    if verbose and "shell_command" in error:
+    # Always show shell command details on failure (agents need this for diagnosis)
+    if "shell_command" in error:
         _display_shell_error_details(error)
 
 
@@ -308,7 +311,7 @@ def _display_text_error_details(
 
     Args:
         result: ExecutionResult with error details
-        verbose: Whether to show extended details (command, stdout, etc.)
+        verbose: Reserved for future use (shell details are always shown)
     """
     if not result or not hasattr(result, "errors") or not result.errors:
         # Fallback to generic message
