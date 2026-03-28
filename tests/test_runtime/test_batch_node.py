@@ -3202,6 +3202,65 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         # Failed item should have error indicator.
         assert results[1].get("error") is not None
 
+    def test_batch_workflow_all_fail_with_continue(self):
+        """All items fail with error_handling: continue — aborts with RuntimeError.
+
+        Continue mode only continues when SOME items succeed (so downstream
+        nodes have usable data). When ALL items fail, even continue mode
+        raises RuntimeError rather than passing garbage downstream.
+        This was an intentional design decision (fix 52d9057b).
+
+        This is the third point in the error matrix:
+        - partial-fail + continue → completes with degraded status (tested above)
+        - all-fail + raise → aborts on first error (tested elsewhere)
+        - all-fail + continue → aborts after all items, RuntimeError (this test)
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime import compile_ir_to_flow
+
+        registry = Registry()
+
+        child_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "always-fail",
+                    "type": "shell",
+                    "params": {
+                        "command": "exit 1",
+                    },
+                    "purpose": "Shell node that always fails with exit code 1",
+                }
+            ],
+            "edges": [],
+        }
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch-call",
+                    "type": "workflow",
+                    "params": {
+                        "workflow_ir": child_ir,
+                    },
+                    "batch": {
+                        "items": ["a", "b", "c"],
+                        "error_handling": "continue",
+                    },
+                    "purpose": "Batch where every item fails — continue mode still aborts",
+                }
+            ],
+            "edges": [],
+        }
+
+        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        shared: dict = {}
+
+        # All-fail with continue raises RuntimeError — no usable results to pass downstream.
+        with pytest.raises(RuntimeError, match="all 3 items failed"):
+            flow.run(shared)
+
 
 class TestDetectEmptyOutputItems:
     """Unit tests for _detect_empty_output_items module-level function."""

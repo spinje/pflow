@@ -334,6 +334,103 @@ class TestWorkflowExecutorComprehensive:
         assert child_snapshot["tags"] == ["production", "static-tag"]
         assert child_snapshot["nested"] == {"items": [{"name": "Alice"}]}
 
+    # --- Test 9c: no template injection from upstream output ---
+
+    def test_no_template_injection_from_upstream_output(self, mock_registry):
+        """Upstream output containing literal ${...} must NOT be re-resolved.
+
+        Regression test for the _resolve_child_inputs removal. The old double-
+        resolution would attempt to resolve ${SECRET} from the shared store,
+        leaking parent data into the child. The wrapper resolves ${producer.data}
+        once (getting the literal string), and WorkflowExecutor passes it through
+        without a second resolution pass.
+        """
+        child_workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "edges": [],
+        }
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "pflow.nodes.test_node",
+                    "params": {},
+                },
+                {
+                    "id": "sub",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow_ir": child_workflow_ir,
+                        "payload": "${producer.data}",
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "sub"}],
+        }
+
+        child_snapshot: dict = {}
+
+        class ProducerNode(BaseNode):
+            """Produces output containing a literal ${...} string."""
+
+            def prep(self, shared):
+                return None
+
+            def exec(self, prep_res):
+                return None
+
+            def post(self, shared, prep_res, exec_res):
+                # Output contains a literal template-like string
+                shared["data"] = "config: ${SECRET}/path"
+                return "default"
+
+        class CaptureNode(BaseNode):
+            def prep(self, shared):
+                nonlocal child_snapshot
+                child_snapshot = {
+                    k: v for k, v in shared.items() if not k.startswith("_pflow_") and not k.startswith("__")
+                }
+                return None
+
+            def exec(self, prep_res):
+                return None
+
+            def post(self, shared, prep_res, exec_res):
+                return "default"
+
+        # The shared store has a "SECRET" key — if double-resolution occurred,
+        # ${SECRET} would resolve to "leaked" instead of staying literal.
+        mock_module = Mock()
+        mock_module.WorkflowExecutor = WorkflowExecutor
+
+        call_count = {"n": 0}
+
+        def side_effect(module_path):
+            if module_path == "pflow.runtime.workflow_executor":
+                import pflow.runtime.workflow_executor
+
+                return pflow.runtime.workflow_executor
+            # First import is for "producer" node, second for "test" node inside child
+            mock = Mock()
+            if call_count["n"] == 0:
+                mock.ExampleNode = ProducerNode
+                call_count["n"] += 1
+            else:
+                mock.ExampleNode = CaptureNode
+            return mock
+
+        with patch("importlib.import_module", side_effect=side_effect):
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            shared = {"SECRET": "leaked", "__registry__": mock_registry}
+            flow.run(shared)
+
+        # The child must see the LITERAL string, not the resolved "leaked" value
+        assert child_snapshot["payload"] == "config: ${SECRET}/path"
+        assert "leaked" not in child_snapshot.get("payload", "")
+
     # --- Test 10: storage_mode "mapped" ---
 
     def test_storage_mode_mapped(self, simple_workflow_ir):
