@@ -10,7 +10,6 @@ from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_ir_to_flow
-from pflow.runtime.template_resolver import TemplateResolver
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +64,45 @@ class WorkflowExecutor(BaseNode):
     # Cross-cutting infrastructure keys propagated from parent to child storage.
     # These are accumulators/resources that must flow through workflow boundaries,
     # NOT execution-scoped state (__execution__, __cache_hits__, __template_errors__).
+    #
+    # Propagation copies REFERENCES (not deep copies) — parent and child share the
+    # same objects. Missing keys are silently skipped; all consumers use .get() with
+    # defaults, so missing keys cause graceful degradation, never crashes.
+    #
+    # Key           | Producer                          | If missing
+    # --------------|-----------------------------------|----------------------------------
+    # __registry__  | compiler.py inject_special_params  | Child can't compile sub-workflows.
+    #               | (into node params) AND propagated  | NOTE: dual path — WorkflowExecutor
+    #               | via shared store for grandchildren  | reads from self.params (direct),
+    #               |                                    | shared store copy is for grandchild
+    #               |                                    | propagation only.
+    # __progress__  | executor_service._initialize_      | No progress display (silent).
+    #   _callback__ | shared_store()                     | MCP server always None (NullOutput).
+    # __mcp_pool__  | executor_service._initialize_      | No connection reuse — each MCP call
+    #               | shared_store()                     | creates a fresh connection.
+    # __warnings__  | executor_service._initialize_      | Self-healing: consumers create {} if
+    #               | shared_store()                     | missing. NOTE: parent and child share
+    #               |                                    | the SAME dict — child warnings appear
+    #               |                                    | in parent's status determination.
+    # __memo...__   | executor_service._initialize_      | Memoization skipped (no caching).
+    #               | shared_store()                     |
+    # _trace_       | executor_service.execute_workflow() | No child trace collector created;
+    #   collector   |                                    | sub-workflow events not captured.
+    #               |                                    | NOTE: propagated for truthiness check
+    #               |                                    | only — child creates its OWN collector
+    #               |                                    | in exec(), not reusing parent's.
+    #
+    # NOT propagated (per-workflow, children get their own):
+    #   __execution__       — node completion/failure tracking
+    #   __cache_hits__      — per-workflow cache hit display
+    #   __template_errors__ — per-workflow template error accumulation
     _PROPAGATED_KEYS = (
         "__registry__",
         "__progress_callback__",
         "__mcp_pool__",
         "__warnings__",
-        "__memoization_cache__",  # Shared SQLite cache for cross-run memoization at all nesting levels.
-        "_trace_collector",  # Propagated so grandchild+ workflows detect tracing is active.
-        # Points to the PARENT collector (not child) — used only as truthiness check in exec().
+        "__memoization_cache__",
+        "_trace_collector",
     )
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
@@ -90,8 +120,8 @@ class WorkflowExecutor(BaseNode):
         workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
 
         # Extract child inputs: all non-reserved params
-        child_inputs = self._extract_child_inputs()
-        child_params = self._resolve_child_inputs(child_inputs, shared)
+        # Template resolution already handled by TemplateAwareNodeWrapper before prep() runs
+        child_params = self._extract_child_inputs()
 
         # Validate child params against declared inputs
         self._validate_child_params(workflow_ir, child_params, workflow_path)
@@ -271,28 +301,6 @@ class WorkflowExecutor(BaseNode):
             if key not in self.RESERVED_PARAMS and not key.startswith("__")
         }
 
-    def _resolve_child_inputs(self, child_inputs: dict[str, Any], shared: dict[str, Any]) -> dict[str, Any]:
-        """Resolve template variables in child input values."""
-        if not child_inputs:
-            return {}
-
-        context = dict(shared)
-        resolved = {}
-        for param_name, param_value in child_inputs.items():
-            if isinstance(param_value, (dict, list)):
-                try:
-                    resolved[param_name] = TemplateResolver.resolve_nested(param_value, context)
-                except Exception as e:
-                    raise ValueError(f"Failed to resolve parameter '{param_name}': {e}") from e
-            elif isinstance(param_value, str) and TemplateResolver.has_templates(param_value):
-                try:
-                    resolved[param_name] = TemplateResolver.resolve_template(param_value, context)
-                except Exception as e:
-                    raise ValueError(f"Failed to resolve parameter '{param_name}': {e}") from e
-            else:
-                resolved[param_name] = param_value
-        return resolved
-
     def _load_workflow(
         self, shared: dict[str, Any], execution_stack: list[str]
     ) -> tuple[dict[str, Any], Optional[Path], str]:
@@ -409,7 +417,17 @@ class WorkflowExecutor(BaseNode):
     def _create_child_storage(
         self, parent_shared: dict[str, Any], storage_mode: str, prep_res: dict[str, Any]
     ) -> dict[str, Any]:
-        """Create storage for child workflow based on isolation mode."""
+        """Create storage for child workflow based on isolation mode.
+
+        In "mapped" mode, child gets a fresh dict with only passed params.
+        In "shared" mode, child uses parent storage directly (propagation is
+        redundant but harmless — just re-assigns references to themselves).
+
+        Propagated keys are SAME object references, not copies. This is
+        intentional: __warnings__ accumulates across the full tree,
+        __memoization_cache__ is a shared SQLite instance, etc.
+        See _PROPAGATED_KEYS for the full contract.
+        """
         child_depth = prep_res["current_depth"] + 1
         child_stack = [*prep_res["execution_stack"], prep_res["workflow_path"]]
         child_storage: dict[str, Any]

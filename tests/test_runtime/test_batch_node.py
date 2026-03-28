@@ -3016,6 +3016,192 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         with pytest.raises(RuntimeError, match="all 2 items failed"):
             flow.run(shared)
 
+    def test_batch_workflow_partial_failure_with_continue(self):
+        """Partial batch failure: some child sub-workflows succeed, some fail.
+
+        When error_handling is "continue" and NOT all items fail, the batch
+        should complete without raising. The shared store should reflect which
+        items succeeded (with shell output) and which failed (with error info).
+
+        Design note: The child IR uses ${item} directly in the shell command.
+        The parent's TemplateAwareNodeWrapper recursively resolves templates
+        inside the workflow_ir dict, so ${item} is replaced with the literal
+        batch item value before the child workflow is compiled. This avoids
+        needing to escape templates or pass data as a separate child input.
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime import compile_ir_to_flow
+
+        registry = Registry()
+
+        # Child workflow: shell node whose command contains ${item}.
+        # The parent's template wrapper resolves ${item} per batch iteration,
+        # so the child sees a literal command like:
+        #   'if [ "good-a" = "fail-b" ]; then exit 1; fi; echo "good-a"'
+        # For "fail-b", exit 1 triggers ShellNode.post() returning "error" action.
+        child_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "check",
+                    "type": "shell",
+                    "params": {
+                        "command": 'if [ "${item}" = "fail-b" ]; then exit 1; fi; echo "${item}"',
+                    },
+                    "purpose": "Shell node that fails when item is fail-b, otherwise echoes it",
+                }
+            ],
+            "edges": [],
+        }
+
+        # Parent workflow: batch calls the child workflow via inline workflow_ir.
+        # The ${item} inside child_ir is resolved by the parent's template wrapper
+        # for each batch iteration before WorkflowExecutor compiles the child.
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch-call",
+                    "type": "workflow",
+                    "params": {
+                        "workflow_ir": child_ir,
+                    },
+                    "batch": {
+                        "items": ["good-a", "fail-b", "good-c"],
+                        "error_handling": "continue",
+                    },
+                    "purpose": "Batch calling a sub-workflow with partial failures expected",
+                }
+            ],
+            "edges": [],
+        }
+
+        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        shared: dict = {}
+
+        # Partial failure with continue mode should NOT raise.
+        flow.run(shared)
+
+        # The batch results are written to shared["batch-call"] by PflowBatchNode.post().
+        batch_output = shared["batch-call"]
+
+        assert batch_output["count"] == 3
+        assert batch_output["success_count"] == 2
+        assert batch_output["error_count"] == 1
+
+        # Verify error details: item at index 1 ("fail-b") failed.
+        assert batch_output["errors"] is not None
+        assert len(batch_output["errors"]) == 1
+        assert batch_output["errors"][0]["index"] == 1
+        assert batch_output["errors"][0]["item"] == "fail-b"
+
+        # Verify successful items have real output (not empty dicts).
+        results = batch_output["results"]
+        assert len(results) == 3
+
+        # Items 0 and 2 succeeded — they should have non-error results with the item field.
+        assert results[0] is not None
+        assert results[0]["item"] == "good-a"
+        assert results[0].get("error") is None
+
+        assert results[2] is not None
+        assert results[2]["item"] == "good-c"
+        assert results[2].get("error") is None
+
+        # Item 1 failed — it should have an error indicator.
+        # The failed sub-workflow returns {"error": "..."} in the result dict,
+        # detected via action-string fallback in _exec_single.
+        assert results[1] is not None
+        assert results[1]["item"] == "fail-b"
+        assert results[1].get("error") is not None
+
+    def test_batch_workflow_partial_failure_parallel(self):
+        """Parallel variant of partial-fail: exercises _exec_single_with_node.
+
+        The parallel path deep-copies the entire node chain per thread
+        (copy.deepcopy(self.inner_node)) and collects results via futures.
+        Error detection goes through: thread → future.result() →
+        _collect_parallel_results — a genuinely different code path from
+        the sequential _exec_single used by the test above.
+
+        This test exists because _exec_single and _exec_single_with_node
+        are 171 lines of duplicated logic (the #1 structural risk in
+        batch_node.py). If someone fixes a bug in one but not the other,
+        this test catches the asymmetry.
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime import compile_ir_to_flow
+
+        registry = Registry()
+
+        child_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "check",
+                    "type": "shell",
+                    "params": {
+                        "command": 'if [ "${item}" = "fail-b" ]; then exit 1; fi; echo "${item}"',
+                    },
+                    "purpose": "Shell node that fails when item is fail-b, otherwise echoes it",
+                }
+            ],
+            "edges": [],
+        }
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "batch-call",
+                    "type": "workflow",
+                    "params": {
+                        "workflow_ir": child_ir,
+                    },
+                    "batch": {
+                        "items": ["good-a", "fail-b", "good-c"],
+                        "error_handling": "continue",
+                        "parallel": True,
+                    },
+                    "purpose": "Parallel batch calling a sub-workflow with partial failures",
+                }
+            ],
+            "edges": [],
+        }
+
+        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        shared: dict = {}
+
+        flow.run(shared)
+
+        batch_output = shared["batch-call"]
+
+        assert batch_output["count"] == 3
+        assert batch_output["success_count"] == 2
+        assert batch_output["error_count"] == 1
+
+        # Verify the failed item is correctly identified.
+        assert len(batch_output["errors"]) == 1
+        assert batch_output["errors"][0]["item"] == "fail-b"
+
+        # Verify successful items have real output.
+        results = batch_output["results"]
+        assert len(results) == 3
+
+        # Find successful and failed results by item value
+        # (parallel execution order is deterministic in result collection
+        # but item ordering in results matches original items list).
+        for i, expected_item in enumerate(["good-a", "fail-b", "good-c"]):
+            assert results[i] is not None
+            assert results[i]["item"] == expected_item
+
+        # Successful items should have no error.
+        assert results[0].get("error") is None
+        assert results[2].get("error") is None
+
+        # Failed item should have error indicator.
+        assert results[1].get("error") is not None
+
 
 class TestDetectEmptyOutputItems:
     """Unit tests for _detect_empty_output_items module-level function."""

@@ -61,20 +61,18 @@ class TestWorkflowExecutor:
             node.prep(shared)
 
     def test_parameter_mapping(self):
-        """Test that non-reserved params are passed as child inputs with template resolution."""
+        """Test that non-reserved params are extracted as child inputs."""
         node = WorkflowExecutor()
 
-        shared = {"input_data": "test_value", "config": {"api_key": "secret"}}
-
-        # Non-reserved params become child inputs directly (no param_mapping wrapper)
+        # Static values only — template resolution is tested via compiled pipeline
         node.set_params({
             "workflow_ir": {"nodes": []},
-            "data": "${input_data}",
-            "key": "${config.api_key}",
+            "data": "test_value",
+            "key": "secret",
             "static": "fixed_value",
         })
 
-        prep_res = node.prep(shared)
+        prep_res = node.prep({})
 
         assert prep_res["child_params"]["data"] == "test_value"
         assert prep_res["child_params"]["key"] == "secret"

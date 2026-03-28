@@ -109,10 +109,10 @@ class TestWorkflowSavedName:
             node.set_params({
                 "workflow": "test-workflow",
                 "input_value": "static_value",
-                "dynamic_value": "${parent_value}",
+                "dynamic_value": "test123",
             })
 
-            shared = {"parent_value": "test123"}
+            shared = {}
             prep_res = node.prep(shared)
 
             assert prep_res["child_params"]["input_value"] == "static_value"

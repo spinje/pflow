@@ -9,7 +9,6 @@ import click
 from pflow.cli.workflow_output import (
     _extract_workflow_node_count,
     _get_default_workflow_metadata,
-    _serialize_json_result,
 )
 
 
@@ -31,9 +30,10 @@ def _create_json_error_output(
         Dictionary with unified error structure
     """
     from pflow.core.user_errors import UserFriendlyError
-    from pflow.runtime import CompilationError as CompilerCompilationError
 
-    # Determine error type
+    # Determine error type.
+    # CompilationError is NOT handled here — it's caught by execute_workflow()
+    # and wrapped in ExecutionResult before reaching the CLI exception handler.
     details: str | dict[str, Any] | None
     suggestion: str | None
     if isinstance(exception, UserFriendlyError):
@@ -43,16 +43,6 @@ def _create_json_error_output(
         details = exception.explanation
         # Join suggestions list into a single string
         suggestion = " ".join(exception.suggestions) if exception.suggestions else None
-    elif isinstance(exception, CompilerCompilationError):
-        error_type = "CompilationError"
-        message = exception.raw_message
-        details = {
-            "phase": exception.phase,
-            **({"node_id": exception.node_id} if exception.node_id else {}),
-            **({"node_type": exception.node_type} if exception.node_type else {}),
-            **(exception.details if exception.details else {}),
-        }
-        suggestion = exception.suggestion
     else:
         error_type = exception.__class__.__name__
         message = str(exception)
@@ -240,16 +230,21 @@ def _display_single_error(
         error_number: Error number for display (1-indexed)
         verbose: Reserved for future use (shell details are always shown)
     """
-    if error_number == 1:
-        click.echo("❌ Workflow execution failed", err=True)
+    category = error.get("category") or "unknown"
 
-    node_id = error.get("node_id", "unknown")
-    category = error.get("category", "unknown")
-    message = error.get("message", "Unknown error")
+    if error_number == 1:
+        header = "❌ Compilation failed" if category == "compilation" else "❌ Workflow execution failed"
+        click.echo(header, err=True)
+
+    node_id = error.get("node_id") or "unknown"
+    message = error.get("message") or "Unknown error"
 
     click.echo(f"\nError {error_number} at node '{node_id}':", err=True)
     click.echo(f"  Category: {category}", err=True)
     click.echo(f"  Message: {message}", err=True)
+
+    # Show suggestion and compilation-specific context
+    _display_suggestion_and_compilation_context(error, category)
 
     # Show raw API response if available (SECURITY FIX: Sanitize before display)
     if (raw := error.get("raw_response")) and isinstance(raw, dict):
@@ -282,6 +277,18 @@ def _display_single_error(
     # Always show shell command details on failure (agents need this for diagnosis)
     if "shell_command" in error:
         _display_shell_error_details(error)
+
+
+def _display_suggestion_and_compilation_context(error: dict[str, Any], category: str) -> None:
+    """Display suggestion and compilation-specific fields from error dict."""
+    if suggestion := error.get("suggestion"):
+        click.echo(f"\n  Suggestion: {suggestion}", err=True)
+
+    if category == "compilation":
+        if node_type := error.get("node_type"):
+            click.echo(f"  Node type: {node_type}", err=True)
+        if sub_path := error.get("sub_workflow_path"):
+            click.echo(f"  Sub-workflow: {sub_path}", err=True)
 
 
 def _display_shell_error_details(error: dict[str, Any]) -> None:
@@ -321,61 +328,3 @@ def _display_text_error_details(
 
     for i, error in enumerate(result.errors, 1):
         _display_single_error(error, i, verbose=verbose)
-
-
-def _format_compilation_error_text(e: Exception, verbose: bool) -> None:
-    """Format and display compilation error in text mode.
-
-    Args:
-        e: The exception to format
-        verbose: Whether to show verbose output
-    """
-    from pflow.core.user_errors import UserFriendlyError
-    from pflow.runtime import CompilationError as CompilerCompilationError
-
-    if isinstance(e, UserFriendlyError):
-        # Use the formatted user-friendly error
-        error_message = e.format_for_cli(verbose=verbose)
-        click.echo(error_message, err=True)
-    elif isinstance(e, CompilerCompilationError):
-        # Display structured fields from the compiler's CompilationError
-        click.echo(f"❌ Compilation failed: {e.raw_message}", err=True)
-        if e.node_type:
-            click.echo(f"  Node type: {e.node_type}", err=True)
-        if e.node_id:
-            click.echo(f"  Node: {e.node_id}", err=True)
-        sub_path = (e.details or {}).get("sub_workflow_path")
-        if sub_path:
-            click.echo(f"  Sub-workflow: {sub_path}", err=True)
-        if e.suggestion:
-            click.echo(f"\n  Suggestion: {e.suggestion}", err=True)
-        if verbose and e.details:
-            click.echo(f"\n  Details: {e.details}", err=True)
-    else:
-        # Fallback for other exceptions
-        click.echo(f"❌ Compilation failed: {e}", err=True)
-        if verbose:
-            click.echo(f"  Error details: {e}", err=True)
-
-
-def _handle_compilation_error_json(
-    ctx: Any,
-    e: Exception,
-    metrics_collector: Any | None,
-) -> None:
-    """Handle compilation error in JSON output mode.
-
-    Args:
-        ctx: Click context
-        e: The exception to handle
-        metrics_collector: Optional metrics collector
-    """
-    verbose = ctx.obj.get("verbose", False)
-    workflow_metadata = ctx.obj.get("workflow_metadata")
-    error_output = _create_json_error_output(
-        e,
-        metrics_collector,
-        None,  # No shared_storage at compilation time
-        workflow_metadata,
-    )
-    _serialize_json_result(error_output, verbose)
