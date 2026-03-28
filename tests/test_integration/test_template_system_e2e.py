@@ -19,6 +19,11 @@ def test_template_system_with_file_nodes():
         # Create workflow with templates
         workflow_ir = {
             "ir_version": "0.1.0",
+            "inputs": {
+                "input_file": {"type": "string", "description": "Source file path"},
+                "output_file": {"type": "string", "description": "Destination file path"},
+                "encoding": {"type": "string", "description": "File encoding"},
+            },
             "nodes": [
                 {
                     "id": "reader",

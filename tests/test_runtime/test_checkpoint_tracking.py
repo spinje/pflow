@@ -274,21 +274,12 @@ class TestCheckpointIntegration:
             output_data=None,
         )
 
-        # Mock validation and execution to succeed
-        with (
-            patch("pflow.core.workflow.validator.WorkflowValidator.validate") as mock_validate,
-            patch("pflow.execution.executor_service.WorkflowExecutorService.execute_workflow") as mock_execute,
-        ):
-            # No validation errors
-            mock_validate.return_value = ([], [])
-            # Execution succeeds
+        # Mock execution to succeed (validation removed from execute_workflow)
+        with patch("pflow.execution.executor_service.WorkflowExecutorService.execute_workflow") as mock_execute:
             mock_execute.return_value = success_result
 
-            # Execute without repair
+            # Execute
             result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, output=NullOutput())
-
-            # Verify validation WAS called (always validates, even with repair disabled)
-            assert mock_validate.called
 
             # Verify execution happened
             assert mock_execute.called

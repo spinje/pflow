@@ -506,34 +506,25 @@ This step uses a nonexistent node type.
 
 class TestSubWorkflowDataFlowError:
     def test_sub_workflow_data_flow_error_caught(self, tmp_path: Path) -> None:
-        """A child workflow with circular edges (A -> B -> A) should produce
+        """A child workflow with a non-existent node reference should produce
         a data-flow error visible in the parent's validation."""
-        child = tmp_path / "circular-child.pflow.md"
-        # Write a child with circular next routing to produce a cycle
+        child = tmp_path / "bad-ref-child.pflow.md"
+        # Write a child with a reference to a non-existent node
         write_pflow_md(
             child,
             """\
-# Circular Child
+# Bad Ref Child
 
-A child with circular dependencies.
+A child that references a non-existent node.
 
 ## Steps
 
 ### step-a
 
-First step that references output of step-b.
+First step that references a non-existent node.
 
 - type: shell
-- command: echo ${step-b.stdout}
-- next: step-b
-
-### step-b
-
-Second step that references output of step-a.
-
-- type: shell
-- command: echo ${step-a.stdout}
-- next: step-a
+- command: echo ${nonexistent-node.stdout}
 """,
         )
 
@@ -545,8 +536,8 @@ Second step that references output of step-a.
             skip_node_types=True,
         )
 
-        assert any("circular" in e.lower() for e in errors), (
-            f"Expected circular dependency error from child, got: {errors}"
+        assert any("non-existent" in e.lower() or "nonexistent" in e.lower() for e in errors), (
+            f"Expected non-existent node error from child, got: {errors}"
         )
 
 

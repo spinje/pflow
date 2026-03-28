@@ -252,21 +252,24 @@ class TestUnknownParamErrorsIntegration:
 class TestUnknownParamBlocksExecution:
     """Test that unknown params block workflow execution (the #100 scenario).
 
-    This tests the full pipeline: execute_workflow() → validate() → error →
-    ExecutionResult(FAILED). The unit and integration tests above only test
-    validate() in isolation — this tests the actual user-facing behavior.
+    This tests the WorkflowValidator pipeline: validate() → error.
+    Unknown param detection is step 7 of WorkflowValidator — it's not checked
+    by the compiler. Each caller owns its preconditions: CLI validates via
+    _validate_before_execution(), MCP validates in execution_service.py.
     """
 
-    def test_typo_param_blocks_execution_with_suggestion(self) -> None:
-        """A param typo should block execution and suggest the correct name.
+    @pytest.fixture
+    def registry(self) -> Registry:
+        """Load real registry for tests."""
+        return Registry()
+
+    def test_typo_param_blocks_execution_with_suggestion(self, registry: Registry) -> None:
+        """A param typo should be caught by WorkflowValidator and suggest the correct name.
 
         This is the core scenario from GitHub Issue #100: a user writes
         'promt' instead of 'prompt', and the workflow silently ignores it.
-        After the fix, execution should fail with a helpful error.
+        After the fix, validation catches it with a helpful error.
         """
-        from pflow.core.workflow.status import WorkflowStatus
-        from pflow.execution.workflow_execution import execute_workflow
-
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -281,13 +284,13 @@ class TestUnknownParamBlocksExecution:
             "edges": [],
         }
 
-        result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
-
-        assert not result.success
-        assert result.status == WorkflowStatus.FAILED
-        assert result.action_result == "validation_failed"
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=workflow_ir,
+            registry=registry,
+            skip_node_types=False,
+        )
 
         # Error should identify the typo and suggest the fix
-        error_messages = " ".join(e["message"] for e in result.errors)
-        assert "promt" in error_messages
-        assert "Did you mean" in error_messages
+        error_text = " ".join(errors)
+        assert "promt" in error_text
+        assert "Did you mean" in error_text

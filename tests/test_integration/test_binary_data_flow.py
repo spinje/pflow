@@ -48,6 +48,7 @@ class TestBinaryDataRoundtrip:
         # Create workflow IR for HTTP → Write → Read pipeline
         workflow_ir = {
             "name": "test-binary-roundtrip",
+            "inputs": {"temp_file": {"type": "string", "description": "Path to temp file"}},
             "nodes": [
                 {
                     "id": "download",
@@ -136,6 +137,7 @@ class TestBinaryDataRoundtrip:
         # Create workflow IR for Write → Read text pipeline
         workflow_ir = {
             "name": "test-text-roundtrip",
+            "inputs": {"temp_file": {"type": "string", "description": "Path to temp file"}},
             "nodes": [
                 {
                     "id": "write",

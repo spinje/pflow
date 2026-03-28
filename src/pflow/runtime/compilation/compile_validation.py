@@ -157,6 +157,34 @@ def _get_template_resolution_mode(ir_dict: dict[str, Any]) -> str:
     return template_resolution_mode
 
 
+def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], CompilationError: type) -> None:
+    """Validate data flow at compile time (cycles, forward refs, non-existent node refs).
+
+    Passes check_inputs=False because the compiler has initial_params containing
+    variables not declared in IR inputs — undefined input checking is a semantic
+    concern for WorkflowValidator.
+
+    Args:
+        ir_dict: The workflow IR dictionary
+        CompilationError: The CompilationError class (passed to avoid circular import)
+
+    Raises:
+        CompilationError: If data flow validation finds errors
+    """
+    from pflow.core.workflow.data_flow import validate_data_flow
+
+    data_flow_errors = validate_data_flow(ir_dict, check_inputs=False)
+    if data_flow_errors:
+        lines = [f"  - {e}" for e in data_flow_errors[:5]]
+        if len(data_flow_errors) > 5:
+            lines.append(f"  ... and {len(data_flow_errors) - 5} more errors")
+        error_msg = "Data flow validation failed:\n" + "\n".join(lines)
+        raise CompilationError(
+            message=error_msg,
+            phase="data_flow_validation",
+        )
+
+
 def _validate_workflow(
     ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
 ) -> dict[str, Any]:
@@ -187,6 +215,9 @@ def _validate_workflow(
     except CompilationError:
         logger.debug("IR validation failed", extra={"phase": "validation"}, exc_info=True)
         raise
+
+    # Step 2.1: Validate data flow (cycles, forward refs, non-existent node refs)
+    _validate_data_flow_at_compile_time(ir_dict, CompilationError)
 
     # Step 2.5: Get and validate template resolution mode
     template_resolution_mode = _get_template_resolution_mode(ir_dict)
