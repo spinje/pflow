@@ -61,7 +61,7 @@ workflow_resolution.py     (leaf — core/ only)
 mcp_sync.py                (leaf — mcp/, registry/ only)
 workflow_output.py          (leaf — core/, execution/ only)
     ↑
-workflow_errors.py          (imports _serialize_json_result, metadata helpers from workflow_output)
+workflow_errors.py          (imports metadata helpers from workflow_output)
     ↑
 main.py                    (orchestrator — imports from all 5 modules above)
     ↑
@@ -122,15 +122,14 @@ Three responsibilities:
 
 1. **Output routing**: `_handle_workflow_output` → `_handle_text_output` / `_handle_json_output`. Checks user-specified key, then declared outputs (skipped when `--only` active), then auto-detection.
 2. **Execution summary**: `_display_execution_summary` with per-node timing, cache/batch/stderr tags, LLM cost display, and warnings. Always shown except in `--print` mode. When `--only` is active: filters `not_executed` steps, shows `⤷ Stopped after 'X' (--only)` summary line. `_display_workflow_completion_status` shows cache stats suffix `(N cached, M executed)` when `cache_hits > 0`.
-3. **Shared utilities**: `safe_output` (BrokenPipeError handling), `_serialize_json_result` (JSON serialization), `_create_workflow_metadata`. These are also imported by `workflow_errors.py`.
+3. **Shared utilities**: `safe_output` (BrokenPipeError handling), `_serialize_json_result` (JSON serialization), `_create_workflow_metadata`.
 
 ## workflow_errors.py
 
 Three error categories with different display:
 
-1. **Execution errors** (`_display_text_error_details` → `_display_single_error`): Per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr always shown on failure). Security: sanitizes raw responses via `sanitize_parameters`.
-2. **Compilation errors** (`_format_compilation_error_text`, `_handle_compilation_error_json`): UserFriendlyError formatting or generic message with suggestion.
-3. **JSON error construction** (`_create_json_error_output`, `_build_json_error_response`): Structured error output with execution state, metrics, and cost.
+1. **Execution errors** (`_display_text_error_details` → `_display_single_error`): Per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr always shown on failure). Compilation errors also flow through this path — `execute_workflow()` wraps `CompilationError` in `ExecutionResult` with structured fields (`node_id`, `node_type`, `suggestion`). Security: sanitizes raw responses via `sanitize_parameters`.
+2. **JSON error construction** (`_create_json_error_output`, `_build_json_error_response`): Structured error output with execution state, metrics, and cost.
 
 ## Workflow Resolution (workflow_resolution.py)
 

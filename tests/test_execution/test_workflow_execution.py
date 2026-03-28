@@ -52,7 +52,11 @@ class TestWorkflowExecution:
         with patch("pflow.execution.workflow_execution.WorkflowExecutorService") as MockExecutor:
             mock_executor = MockExecutor.return_value
             mock_executor.execute_workflow.side_effect = CompilationError(
-                message="bad template", phase="template_validation"
+                message="bad template",
+                phase="template_validation",
+                node_id="node1",
+                node_type="shell",
+                suggestion="Check your template syntax",
             )
 
             result = execute_workflow(
@@ -65,9 +69,14 @@ class TestWorkflowExecution:
             assert result.status == WorkflowStatus.FAILED
             assert result.action_result == "compilation_failed"
             assert len(result.errors) == 1
-            assert result.errors[0]["source"] == "compilation"
-            assert "bad template" in result.errors[0]["message"]
-            assert result.errors[0]["phase"] == "template_validation"
+            error = result.errors[0]
+            assert error["source"] == "compilation"
+            assert error["category"] == "compilation"
+            assert "bad template" in error["message"]
+            assert error["phase"] == "template_validation"
+            assert error["node_id"] == "node1"
+            assert error["node_type"] == "shell"
+            assert error["suggestion"] == "Check your template syntax"
             assert result.shared_after == {}
 
     def test_runtime_failure_returns_error(self):

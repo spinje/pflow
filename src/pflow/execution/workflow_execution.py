@@ -75,8 +75,13 @@ def execute_workflow(
                 errors=[
                     {
                         "source": "compilation",
-                        "message": str(e),
+                        "category": "compilation",
+                        "message": getattr(e, "raw_message", str(e)),
                         "phase": getattr(e, "phase", None),
+                        "node_id": getattr(e, "node_id", None),
+                        "node_type": getattr(e, "node_type", None),
+                        "suggestion": getattr(e, "suggestion", None),
+                        "sub_workflow_path": (getattr(e, "details", None) or {}).get("sub_workflow_path"),
                     }
                 ],
                 shared_after={},

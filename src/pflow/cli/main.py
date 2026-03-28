@@ -19,8 +19,6 @@ from pflow.cli.workflow_errors import (
     _build_json_error_response,
     _create_json_error_output,
     _display_text_error_details,
-    _format_compilation_error_text,
-    _handle_compilation_error_json,
 )
 from pflow.cli.workflow_output import (
     _create_workflow_metadata,
@@ -193,32 +191,6 @@ def _prepare_execution_environment(
         enhanced_params["__only_node__"] = only_node
 
     return cli_output, display, workflow_trace, enhanced_params, effective_verbose
-
-
-def _handle_compilation_error(
-    ctx: click.Context,
-    error: Exception,
-    output_format: str,
-    verbose: bool,
-    workflow_trace: Any | None,
-    metrics_collector: Any | None,
-) -> None:
-    """Handle compilation errors specially.
-
-    Args:
-        ctx: Click context
-        error: Compilation error
-        output_format: Output format (json or text)
-        verbose: Verbose flag
-        workflow_trace: Optional workflow trace
-        metrics_collector: Optional metrics collector
-    """
-    if output_format == "json":
-        _handle_compilation_error_json(ctx, error, metrics_collector)
-    else:
-        _format_compilation_error_text(error, verbose)
-
-    ctx.exit(1)
 
 
 def _handle_workflow_error(
@@ -861,17 +833,12 @@ def execute_json_workflow(
         )
 
     except Exception as e:
-        from pflow.runtime import CompilationError
-
         # Re-raise Click exceptions (Exit, Abort) - don't handle them
         if isinstance(e, click.exceptions.Exit):
             raise
 
-        # Handle compilation errors specially
-        if isinstance(e, CompilationError):
-            _handle_compilation_error(ctx, e, output_format, verbose, workflow_trace, metrics_collector)
-
-        # Handle other exceptions
+        # CompilationError is caught by execute_workflow() and wrapped in
+        # ExecutionResult — it never reaches here. Other exceptions are handled below.
         _handle_workflow_exception(
             ctx,
             e,

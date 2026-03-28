@@ -15,6 +15,7 @@ import pytest
 
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
+from pflow.runtime import compile_ir_to_flow
 from pflow.runtime.compilation.compiler import CompilationError
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from tests.shared.markdown_utils import write_workflow_file
@@ -44,6 +45,77 @@ class TestWorkflowExecutorComprehensive:
             "nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}],
             "edges": [],
         }
+
+    @pytest.fixture
+    def mock_registry(self, tmp_path):
+        """Registry with test node and workflow executor for integration tests."""
+        registry_path = tmp_path / "test_registry.json"
+        registry = Registry(registry_path)
+        registry_data = {
+            "pflow.nodes.test_node": {
+                "module": "pflow.nodes.test_node",
+                "class_name": "ExampleNode",
+                "docstring": "Test node for testing",
+                "file_path": "/mock/path/test_node.py",
+                "interface": {
+                    "inputs": [],
+                    "outputs": [{"key": "test_output", "type": "string"}],
+                    "parameters": [],
+                },
+            },
+            "pflow.runtime.workflow_executor": {
+                "module": "pflow.runtime.workflow_executor",
+                "class_name": "WorkflowExecutor",
+                "docstring": "Runtime executor for nested workflow execution",
+                "file_path": "/mock/path/workflow_executor.py",
+                "interface": {
+                    "inputs": [],
+                    "outputs": [],
+                    "parameters": [
+                        {"key": "workflow", "type": "string", "required": False},
+                        {"key": "workflow_ir", "type": "dict", "required": False},
+                        {"key": "storage_mode", "type": "string", "required": False},
+                        {"key": "max_depth", "type": "integer", "required": False},
+                        {"key": "error_action", "type": "string", "required": False},
+                    ],
+                },
+            },
+        }
+        registry.save(registry_data)
+        return registry
+
+    def _setup_mock_imports(self, mock_test_node_class=None):
+        """Setup mock imports for integration tests (mirrors test_integration.py)."""
+        if mock_test_node_class is None:
+
+            class MockExampleNode(BaseNode):
+                def prep(self, shared):
+                    return shared.get("test_input", "no input")
+
+                def exec(self, prep_res):
+                    return f"Processed: {prep_res}"
+
+                def post(self, shared, prep_res, exec_res):
+                    shared["test_output"] = exec_res
+                    return "default"
+
+            mock_test_node_class = MockExampleNode
+
+        mock_module = Mock()
+        mock_module.ExampleNode = mock_test_node_class
+        mock_module.WorkflowExecutor = WorkflowExecutor
+
+        def side_effect(module_path):
+            if module_path == "pflow.nodes.test_node":
+                return mock_module
+            elif module_path == "pflow.runtime.workflow_executor":
+                import pflow.runtime.workflow_executor
+
+                return pflow.runtime.workflow_executor
+            else:
+                return mock_module
+
+        return patch("importlib.import_module", side_effect=side_effect)
 
     # --- Test 1: workflow file reference loads and parses correctly ---
 
@@ -153,47 +225,211 @@ class TestWorkflowExecutorComprehensive:
         with pytest.raises(ValueError):
             node.prep(shared)
 
-    # --- Test 9: template resolution in direct params ---
+    # --- Test 9: template resolution via compiled pipeline ---
 
-    def test_template_resolution(self, simple_workflow_ir):
-        """Test template resolution in params passed directly as child inputs."""
-        node = WorkflowExecutor()
-        node.set_params({
-            "workflow_ir": simple_workflow_ir,
-            "simple": "${value}",
-            "nested": "${obj.field}",
-            "static": "literal",
-        })
-
-        shared = {"value": "resolved", "obj": {"field": "nested_value"}}
-
-        prep_res = node.prep(shared)
-        assert prep_res["child_params"]["simple"] == "resolved"
-        assert prep_res["child_params"]["nested"] == "nested_value"
-        assert prep_res["child_params"]["static"] == "literal"
-
-    # --- Test 9b: template resolution in dict/list child inputs ---
-
-    def test_template_resolution_dict_and_list_inputs(self, simple_workflow_ir):
-        """Dict/list params with nested templates are resolved in child inputs."""
-        node = WorkflowExecutor()
-        node.set_params({
-            "workflow_ir": simple_workflow_ir,
-            "config": {"endpoint": "${api.url}", "retries": 3},
-            "tags": ["${category}", "static-tag"],
-            "nested": {"items": [{"name": "${user.name}"}]},
-        })
-
-        shared = {
-            "api": {"url": "https://example.com"},
-            "category": "production",
-            "user": {"name": "Alice"},
+    def test_template_resolution(self, mock_registry):
+        """Template params are resolved by the wrapper chain before child receives them."""
+        child_workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "edges": [],
         }
 
-        prep_res = node.prep(shared)
-        assert prep_res["child_params"]["config"] == {"endpoint": "https://example.com", "retries": 3}
-        assert prep_res["child_params"]["tags"] == ["production", "static-tag"]
-        assert prep_res["child_params"]["nested"] == {"items": [{"name": "Alice"}]}
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "sub",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow_ir": child_workflow_ir,
+                        "simple": "${value}",
+                        "nested": "${obj.field}",
+                        "static": "literal",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        child_snapshot: dict = {}
+
+        class CaptureNode(BaseNode):
+            def prep(self, shared):
+                nonlocal child_snapshot
+                child_snapshot = {
+                    k: v for k, v in shared.items() if not k.startswith("_pflow_") and not k.startswith("__")
+                }
+                return None
+
+            def exec(self, prep_res):
+                return None
+
+            def post(self, shared, prep_res, exec_res):
+                return "default"
+
+        with self._setup_mock_imports(CaptureNode):
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            shared = {"value": "resolved", "obj": {"field": "nested_value"}, "__registry__": mock_registry}
+            flow.run(shared)
+
+        assert child_snapshot["simple"] == "resolved"
+        assert child_snapshot["nested"] == "nested_value"
+        assert child_snapshot["static"] == "literal"
+
+    # --- Test 9b: template resolution in dict/list child inputs via compiled pipeline ---
+
+    def test_template_resolution_dict_and_list_inputs(self, mock_registry):
+        """Dict/list params with nested templates are resolved by wrapper chain."""
+        child_workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "edges": [],
+        }
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "sub",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow_ir": child_workflow_ir,
+                        "config": {"endpoint": "${api.url}", "retries": 3},
+                        "tags": ["${category}", "static-tag"],
+                        "nested": {"items": [{"name": "${user.name}"}]},
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        child_snapshot: dict = {}
+
+        class CaptureNode(BaseNode):
+            def prep(self, shared):
+                nonlocal child_snapshot
+                child_snapshot = {
+                    k: v for k, v in shared.items() if not k.startswith("_pflow_") and not k.startswith("__")
+                }
+                return None
+
+            def exec(self, prep_res):
+                return None
+
+            def post(self, shared, prep_res, exec_res):
+                return "default"
+
+        with self._setup_mock_imports(CaptureNode):
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            shared = {
+                "api": {"url": "https://example.com"},
+                "category": "production",
+                "user": {"name": "Alice"},
+                "__registry__": mock_registry,
+            }
+            flow.run(shared)
+
+        assert child_snapshot["config"] == {"endpoint": "https://example.com", "retries": 3}
+        assert child_snapshot["tags"] == ["production", "static-tag"]
+        assert child_snapshot["nested"] == {"items": [{"name": "Alice"}]}
+
+    # --- Test 9c: no template injection from upstream output ---
+
+    def test_no_template_injection_from_upstream_output(self, mock_registry):
+        """Upstream output containing literal ${...} must NOT be re-resolved.
+
+        Regression test for the _resolve_child_inputs removal. The old double-
+        resolution would attempt to resolve ${SECRET} from the shared store,
+        leaking parent data into the child. The wrapper resolves ${producer.data}
+        once (getting the literal string), and WorkflowExecutor passes it through
+        without a second resolution pass.
+        """
+        child_workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "edges": [],
+        }
+
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "pflow.nodes.test_node",
+                    "params": {},
+                },
+                {
+                    "id": "sub",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow_ir": child_workflow_ir,
+                        "payload": "${producer.data}",
+                    },
+                },
+            ],
+            "edges": [{"from": "producer", "to": "sub"}],
+        }
+
+        child_snapshot: dict = {}
+
+        class ProducerNode(BaseNode):
+            """Produces output containing a literal ${...} string."""
+
+            def prep(self, shared):
+                return None
+
+            def exec(self, prep_res):
+                return None
+
+            def post(self, shared, prep_res, exec_res):
+                # Output contains a literal template-like string
+                shared["data"] = "config: ${SECRET}/path"
+                return "default"
+
+        class CaptureNode(BaseNode):
+            def prep(self, shared):
+                nonlocal child_snapshot
+                child_snapshot = {
+                    k: v for k, v in shared.items() if not k.startswith("_pflow_") and not k.startswith("__")
+                }
+                return None
+
+            def exec(self, prep_res):
+                return None
+
+            def post(self, shared, prep_res, exec_res):
+                return "default"
+
+        # The shared store has a "SECRET" key — if double-resolution occurred,
+        # ${SECRET} would resolve to "leaked" instead of staying literal.
+        mock_module = Mock()
+        mock_module.WorkflowExecutor = WorkflowExecutor
+
+        call_count = {"n": 0}
+
+        def side_effect(module_path):
+            if module_path == "pflow.runtime.workflow_executor":
+                import pflow.runtime.workflow_executor
+
+                return pflow.runtime.workflow_executor
+            # First import is for "producer" node, second for "test" node inside child
+            mock = Mock()
+            if call_count["n"] == 0:
+                mock.ExampleNode = ProducerNode
+                call_count["n"] += 1
+            else:
+                mock.ExampleNode = CaptureNode
+            return mock
+
+        with patch("importlib.import_module", side_effect=side_effect):
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            shared = {"SECRET": "leaked", "__registry__": mock_registry}
+            flow.run(shared)
+
+        # The child must see the LITERAL string, not the resolved "leaked" value
+        assert child_snapshot["payload"] == "config: ${SECRET}/path"
+        assert "leaked" not in child_snapshot.get("payload", "")
 
     # --- Test 10: storage_mode "mapped" ---
 
@@ -202,11 +438,11 @@ class TestWorkflowExecutorComprehensive:
         node = WorkflowExecutor()
         node.set_params({
             "workflow_ir": simple_workflow_ir,
-            "allowed": "${value}",
+            "allowed": "mapped_value",
             "storage_mode": "mapped",
         })
 
-        parent_shared = {"value": "mapped_value", "other": "should_not_see"}
+        parent_shared = {"other": "should_not_see"}
 
         prep_res = node.prep(parent_shared)
         child_storage = node._create_child_storage(parent_shared, "mapped", prep_res)
@@ -375,23 +611,38 @@ class TestWorkflowExecutorComprehensive:
         prep_res = node.prep(shared)
         assert prep_res["workflow_path"] == str(child_file.resolve())
 
-    # --- Test 20: unresolved template in input ---
+    # --- Test 20: unresolved template raises in production pipeline ---
 
-    def test_unresolved_template_in_input(self, simple_workflow_ir):
-        """Test that unresolved templates are preserved in child inputs."""
-        node = WorkflowExecutor()
-        node.set_params({
-            "workflow_ir": simple_workflow_ir,
-            "exists": "${present}",
-            "missing": "${not_there}",
-        })
+    def test_unresolved_template_in_input(self, mock_registry):
+        """In production, TemplateAwareNodeWrapper raises ValueError for unresolved templates."""
+        child_workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "edges": [],
+        }
 
-        shared = {"present": "value"}
-        prep_res = node.prep(shared)
+        parent_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "sub",
+                    "type": "pflow.runtime.workflow_executor",
+                    "params": {
+                        "workflow_ir": child_workflow_ir,
+                        "exists": "${present}",
+                        "missing": "${not_there}",
+                    },
+                }
+            ],
+            "edges": [],
+        }
 
-        assert prep_res["child_params"]["exists"] == "value"
-        # Unresolved templates are preserved as-is
-        assert prep_res["child_params"]["missing"] == "${not_there}"
+        with self._setup_mock_imports():
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            shared = {"present": "value", "__registry__": mock_registry}
+
+            with pytest.raises(ValueError, match="not_there"):
+                flow.run(shared)
 
     # --- Test 23: invalid storage_mode ---
 
