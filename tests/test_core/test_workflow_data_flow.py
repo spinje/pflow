@@ -331,6 +331,82 @@ class TestValidateDataFlow:
         assert "fetch" in errors[0]
 
 
+class TestArrayAccessValidation:
+    """Test that pflow array access templates are validated (not skipped as bash).
+
+    These tests verify the fix where _is_bash_syntax() was replaced with positive
+    pflow pattern matching. Previously, ALL bracket-containing templates were
+    skipped as bash syntax, meaning ${results[0].field} got zero validation.
+    """
+
+    def test_array_access_with_nonexistent_node_fails(self):
+        """${nonexistent_node[0].field} should produce 'non-existent node' error."""
+        workflow = {
+            "nodes": [
+                {"id": "process", "type": "shell", "params": {"command": "echo ${nonexistent_node[0].field}"}},
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "non-existent node 'nonexistent_node'" in errors[0]
+
+    def test_array_access_with_forward_reference_fails(self):
+        """${future_node[0].field} where future_node comes after should produce forward ref error."""
+        workflow = {
+            "nodes": [
+                {"id": "early", "type": "shell", "params": {"command": "echo ${late[0].field}"}},
+                {"id": "late", "type": "shell", "params": {"command": "echo data"}},
+            ],
+            "edges": [{"from": "early", "to": "late"}],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "'late'" in errors[0]
+        assert "after" in errors[0]
+
+    def test_undefined_input_with_array_access_fails(self):
+        """${undefined_input[0]} should produce 'non-existent node' error (array access routes through node-ref path)."""
+        workflow = {
+            "nodes": [
+                {"id": "process", "type": "shell", "params": {"command": "echo ${undefined_input[0]}"}},
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "non-existent node 'undefined_input'" in errors[0]
+
+    def test_valid_array_access_passes(self):
+        """${data[0]} where data is a previous node should pass validation."""
+        workflow = {
+            "nodes": [
+                {"id": "data", "type": "shell", "params": {"command": "echo '[1,2,3]'"}},
+                {"id": "process", "type": "shell", "params": {"command": "echo ${data[0]}"}},
+            ],
+            "edges": [{"from": "data", "to": "process"}],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == []
+
+    def test_valid_dotted_array_access_passes(self):
+        """${node.items[0].field} where node is a previous node should pass."""
+        workflow = {
+            "nodes": [
+                {"id": "fetch", "type": "shell", "params": {"command": "echo data"}},
+                {"id": "process", "type": "shell", "params": {"command": "echo ${fetch.items[0].field}"}},
+            ],
+            "edges": [{"from": "fetch", "to": "process"}],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert errors == []
+
+
 class TestBatchDataFlowValidation:
     """Test batch-specific data flow validation."""
 

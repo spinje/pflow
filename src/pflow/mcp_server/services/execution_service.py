@@ -315,6 +315,23 @@ class ExecutionService(BaseService):
             # Set workflow file path for file reference resolution
             _inject_workflow_file_path(validated_params, source, workflow)
 
+            # Validate workflow (structural, data flow, templates, sub-workflows)
+            # Must be after _inject_workflow_file_path so step 8 (sub-workflow
+            # validation) can resolve relative child workflow paths.
+            registry = Registry()
+            validation_errors, _warnings = WorkflowValidator.validate(
+                workflow_ir=workflow_ir,
+                extracted_params=validated_params or {},
+                registry=registry,
+                skip_node_types=False,
+            )
+            if validation_errors:
+                lines = [f"  - {e}" for e in validation_errors[:5]]
+                if len(validation_errors) > 5:
+                    lines.append(f"  ... and {len(validation_errors) - 5} more errors")
+                error_msg = "Workflow validation failed:\n" + "\n".join(lines)
+                raise ValueError(error_msg)
+
             # Create fresh instances
             workflow_manager = WorkflowManager()
             metrics_collector = MetricsCollector()

@@ -21,11 +21,14 @@ def execute_workflow(
     metrics_collector: Optional[Any] = None,
     trace_collector: Optional[Any] = None,
 ) -> ExecutionResult:
-    """Execute a workflow with validation.
+    """Execute a pre-validated workflow.
 
-    1. Validate workflow (fail fast on errors)
-    2. Execute directly
-    3. Return result
+    Callers are responsible for running WorkflowValidator.validate()
+    before calling this function. The compiler still runs its own
+    structural and template validation as defense-in-depth.
+
+    Returns ExecutionResult in all cases — compilation errors are
+    wrapped rather than propagated.
 
     Args:
         workflow_ir: The workflow IR to execute
@@ -46,37 +49,39 @@ def execute_workflow(
 
     executor = WorkflowExecutorService(output_interface=output, workflow_manager=workflow_manager)
 
-    # Validate
-    from pflow.core.workflow.validator import WorkflowValidator
-    from pflow.registry import Registry
-
-    registry = Registry()
-    validation_errors, _warnings = WorkflowValidator.validate(
-        workflow_ir, extracted_params=execution_params or {}, registry=registry, skip_node_types=False
-    )
-
-    if validation_errors:
-        from pflow.core.workflow.status import WorkflowStatus
-
-        return ExecutionResult(
-            success=False,
-            status=WorkflowStatus.FAILED,
-            errors=[{"source": "validation", "message": err} for err in validation_errors[:3]],
-            shared_after={},
-            action_result="validation_failed",
+    try:
+        result = executor.execute_workflow(
+            workflow_ir=workflow_ir,
+            execution_params=execution_params,
+            shared_store={},
+            workflow_name=workflow_name,
+            stdin_data=stdin_data,
+            output_key=output_key,
+            metrics_collector=metrics_collector,
+            trace_collector=trace_collector,
+            validate=True,  # Compiler-level template validation (separate from WorkflowValidator)
         )
+    except Exception as e:
+        # CompilationError and other exceptions from the compiler are wrapped
+        # in ExecutionResult so callers always get the declared return type.
+        from pflow.runtime import CompilationError
 
-    # Execute
-    result = executor.execute_workflow(
-        workflow_ir=workflow_ir,
-        execution_params=execution_params,
-        shared_store={},
-        workflow_name=workflow_name,
-        stdin_data=stdin_data,
-        output_key=output_key,
-        metrics_collector=metrics_collector,
-        trace_collector=trace_collector,
-        validate=True,
-    )
+        if isinstance(e, CompilationError):
+            from pflow.core.workflow.status import WorkflowStatus
+
+            return ExecutionResult(
+                success=False,
+                status=WorkflowStatus.FAILED,
+                errors=[
+                    {
+                        "source": "compilation",
+                        "message": str(e),
+                        "phase": getattr(e, "phase", None),
+                    }
+                ],
+                shared_after={},
+                action_result="compilation_failed",
+            )
+        raise
 
     return result

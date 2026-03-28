@@ -39,7 +39,7 @@ class ExecutionResult:
     shared_after: dict[str, Any] = field(default_factory=dict)
     errors: list[dict[str, Any]] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)  # api_warning, template_resolution
-    action_result: Optional[str] = None                    # Flow action (e.g., "error")
+    action_result: Optional[str] = None                    # "error", "compilation_failed", or flow action
     node_count: int = 0
     duration: float = 0.0
     output_data: Optional[str] = None                      # Extracted output

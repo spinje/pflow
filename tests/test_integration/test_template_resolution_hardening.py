@@ -18,6 +18,12 @@ FIX HISTORY:
   template_resolution_mode - it catches all invalid templates as errors.
   Tests that previously expected DEGRADED status with permissive mode now
   verify that the static validator catches errors (FAILED status).
+- Latest: execute_workflow() no longer runs WorkflowValidator.validate() — callers
+  own their preconditions. The compiler runs data flow + template validation as
+  defense-in-depth. Undefined variables are caught by data flow validation
+  (CompilationError, action_result="compilation_failed"). Invalid field access
+  on existing nodes is caught by template validation (ValueError,
+  action_result="error").
 """
 
 import pytest
@@ -40,15 +46,7 @@ class TestIssue95Prevention:
         sending literal ${...} text to production systems like Slack.
 
         Scenario: Node produces no output, downstream tries to use nonexistent field.
-        Expected: Fail at validation, before any node executes.
-
-        FIX HISTORY:
-        - Original: Checked for "unresolved variables" in runtime error message
-          and verified external-api-call not in completed_nodes.
-        - Updated: Validation now catches this before execution starts. The
-          validator produces a message about the field not being in shell outputs.
-          shared_after is {} because no execution happened at all - even better
-          than the original behavior.
+        Expected: Fail at compilation, before any node executes.
         """
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -77,17 +75,15 @@ class TestIssue95Prevention:
         assert not result.success, "Workflow should fail with unresolved template"
         assert result.status == WorkflowStatus.FAILED
 
-        # Verify it failed at validation (before any execution)
-        assert result.action_result == "validation_failed"
+        # Verify it failed before any user nodes executed
         assert len(result.errors) > 0
         error = result.errors[0]
         # Validator catches that nonexistent_field is not a valid shell output
         assert "nonexistent_field" in error["message"]
 
-        # No execution happened at all - shared_after is empty
-        # This is even BETTER than the original test: not only did external-api-call
-        # not execute, but NO nodes executed at all.
-        assert result.shared_after == {}
+        # No user nodes should have completed
+        completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
+        assert "external-api-call" not in completed
 
     def test_empty_stdout_causes_failure_not_literal_template(self):
         """Empty stdout from node should fail downstream template resolution.
@@ -127,12 +123,6 @@ class TestIssue95Prevention:
 
         This is the EXACT bug from Issue #95 where a workflow tried to use
         a field that doesn't exist, causing literal '${...}' to be sent to Slack API.
-
-        FIX HISTORY:
-        - Original: Checked runtime error for "unresolved" and verified api-call
-          not in __execution__.completed_nodes.
-        - Updated: Validation now catches this before execution. No nodes run at
-          all (shared_after is {}). Error message format comes from template validator.
         """
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -160,14 +150,14 @@ class TestIssue95Prevention:
         assert result.success is False
         assert result.status == WorkflowStatus.FAILED
 
-        # Validation caught it before any execution - shared_after is empty
-        assert result.action_result == "validation_failed"
-        assert result.shared_after == {}
-
         # Verify error is about the nonexistent field
         assert len(result.errors) > 0
         error = result.errors[0]
         assert "nonexistent_field" in error["message"]
+
+        # No user nodes should have completed
+        completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
+        assert "api-call" not in completed
 
     def test_issue_6_json_status_field_not_null_on_failure(self):
         """Issue #6: JSON status field should be 'failed' not null when workflow fails.
@@ -244,25 +234,16 @@ class TestTriStateStatus:
         assert result.status == WorkflowStatus.SUCCESS
         assert len(result.warnings) == 0
 
-    def test_invalid_template_caught_at_validation_in_permissive_mode(self):
-        """Static validator catches invalid templates regardless of permissive mode.
+    def test_invalid_template_caught_at_compilation_in_permissive_mode(self):
+        """Compiler catches invalid templates regardless of permissive mode.
 
-        The static WorkflowValidator runs before execution and does not respect
-        template_resolution_mode. Templates referencing unknown variables are
-        caught at validation time and cause FAILED status.
-
-        FIX HISTORY:
-        - Original name: test_degraded_status_for_permissive_mode_with_warnings
-        - Original: Expected DEGRADED status because permissive mode would allow
-          continuation with unresolved templates at runtime.
-        - Updated: Static validation now catches ${missing_variable} before
-          execution begins. Permissive mode only affects runtime resolution,
-          but the validator prevents execution from starting. This is correct
-          behavior - the validator catches errors that would definitely fail.
+        The compiler's template validation catches undefined variables.
+        Permissive mode only affects runtime resolution, but the compiler
+        prevents execution from starting.
         """
         workflow_ir = {
             "ir_version": "0.1.0",
-            "template_resolution_mode": "permissive",  # Does not affect static validation
+            "template_resolution_mode": "permissive",  # Does not affect compiler validation
             "nodes": [
                 {
                     "id": "node-with-missing-template",
@@ -275,10 +256,9 @@ class TestTriStateStatus:
 
         result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
-        # Static validator catches the invalid template before execution
+        # Template validation catches the invalid template before execution
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
-        assert result.action_result == "validation_failed"
         assert len(result.errors) > 0
 
         # Error should mention the missing variable
@@ -315,26 +295,13 @@ class TestConfigurationHierarchy:
     """Tests for strict/permissive mode configuration.
 
     Validates that users can control behavior through workflow IR.
-
-    FIX HISTORY:
-    - Original: Tested that permissive mode allowed execution with DEGRADED status.
-    - Updated: Static validation now catches template errors regardless of
-      template_resolution_mode. Both strict and permissive modes result in
-      validation failure for templates that reference unknown variables.
     """
 
-    def test_permissive_mode_still_fails_validation_for_unknown_templates(self):
-        """Permissive mode does not bypass static validation.
+    def test_permissive_mode_still_fails_compilation_for_unknown_templates(self):
+        """Permissive mode does not bypass compiler validation.
 
-        The static validator catches templates referencing unknown variables
+        The compiler catches templates referencing unknown variables
         regardless of template_resolution_mode setting.
-
-        FIX HISTORY:
-        - Original name: test_workflow_ir_overrides_default_to_permissive
-        - Original: Expected success=True and DEGRADED status.
-        - Updated: Static validation catches ${missing} before execution,
-          resulting in FAILED status. This is correct because ${missing}
-          has no valid source at all.
         """
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -351,10 +318,9 @@ class TestConfigurationHierarchy:
 
         result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
-        # Static validator catches it - fails before execution
+        # Template validation catches it - fails before execution
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
-        assert result.action_result == "validation_failed"
 
     def test_default_strict_mode_when_not_specified(self):
         """Workflows without explicit mode should default to strict.
@@ -387,16 +353,11 @@ class TestMultipleTemplateErrors:
     Validates that all errors are captured and reported correctly.
     """
 
-    def test_multiple_template_errors_all_captured_at_validation(self):
-        """Multiple unresolved templates should all be captured as validation errors.
+    def test_multiple_template_errors_all_captured_at_compilation(self):
+        """Multiple unresolved templates should all be captured as compilation errors.
 
-        FIX HISTORY:
-        - Original name: test_multiple_template_errors_all_captured_permissive
-        - Original: Expected DEGRADED status with permissive mode and warnings
-          from runtime template resolution.
-        - Updated: Static validation catches all template errors before execution.
-          Both ${missing1} and ${missing2} are caught at validation time. The
-          result contains errors (not warnings) and status is FAILED.
+        Data flow validation catches both undefined variables and raises a
+        single CompilationError containing all error messages.
         """
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -418,13 +379,11 @@ class TestMultipleTemplateErrors:
 
         result = execute_workflow(workflow_ir=workflow_ir, execution_params={})
 
-        # Static validator catches both errors before execution
+        # Template validation catches both errors before execution
         assert not result.success
         assert result.status == WorkflowStatus.FAILED
-        assert result.action_result == "validation_failed"
 
-        # Both template errors should be captured
-        assert len(result.errors) >= 2
+        # Both template errors should be captured in the error message
         error_messages = " ".join(e["message"] for e in result.errors)
         assert "missing1" in error_messages
         assert "missing2" in error_messages
@@ -459,7 +418,6 @@ class TestMultipleTemplateErrors:
         assert result.status == WorkflowStatus.FAILED
 
         # No execution happened - node2 was never reached
-        # shared_after is {} because validation failed before execution
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
         assert "node2" not in completed
 
@@ -474,15 +432,6 @@ class TestEnhancedErrorMessages:
         """Error messages should show what IS available when accessing invalid field.
 
         Critical for debugging - users need to know what they CAN use.
-
-        FIX HISTORY:
-        - Original name: test_error_shows_available_context_keys
-        - Original: Used ${wrong_field} (simple variable) and checked for "available"
-          in error message. The validator treats ${wrong_field} as a simple variable
-          and says "has no valid source" without listing available fields.
-        - Updated: Use ${producer.wrong_field} (node.field format) to trigger the
-          validator's field-level check, which lists available outputs from the
-          producer node. This better tests the "show available fields" behavior.
         """
         workflow_ir = {
             "ir_version": "0.1.0",

@@ -250,9 +250,18 @@ class TestEndToEndCompilation:
                 }
             ],
             "edges": [],
+            "inputs": {
+                "user_input": {"type": "string", "default": "test"},
+                "count": {"type": "number", "default": 1},
+            },
         }
 
-        flow = compile_ir_to_flow(ir_with_templates, test_registry, validate=False)
+        flow = compile_ir_to_flow(
+            ir_with_templates,
+            test_registry,
+            validate=False,
+            initial_params={"user_input": "test", "count": 1},
+        )
 
         # Get the node and check it's wrapped
         node = flow.start_node
@@ -780,8 +789,8 @@ class TestEdgeCases:
         flow = compile_ir_to_flow(ir, test_registry)
         assert flow is not None
 
-    def test_cyclic_flow(self, test_registry):
-        """Test compilation with cyclic dependencies."""
+    def test_retry_loop_compiles_successfully(self, test_registry):
+        """Backward edges with explicit actions are valid PocketFlow retry patterns."""
         ir = {
             "nodes": [
                 {"id": "a", "type": "basic-node"},
@@ -791,13 +800,32 @@ class TestEdgeCases:
             "edges": [
                 {"from": "a", "to": "b"},
                 {"from": "b", "to": "c"},
-                {"from": "c", "to": "a"},  # Cycle
+                {"from": "c", "to": "a", "action": "retry"},  # Valid retry pattern
             ],
         }
 
-        # Compilation should succeed (cycles are valid in PocketFlow)
         flow = compile_ir_to_flow(ir, test_registry)
         assert flow is not None
+
+    def test_actionless_cycle_rejected_at_compile_time(self, test_registry):
+        """Actionless backward edges are data flow cycles — rejected at compile time."""
+        from pflow.runtime.compilation.compiler import CompilationError
+
+        ir = {
+            "nodes": [
+                {"id": "a", "type": "basic-node"},
+                {"id": "b", "type": "basic-node"},
+                {"id": "c", "type": "basic-node"},
+            ],
+            "edges": [
+                {"from": "a", "to": "b"},
+                {"from": "b", "to": "c"},
+                {"from": "c", "to": "a"},  # Actionless backward edge = cycle
+            ],
+        }
+
+        with pytest.raises(CompilationError, match="data_flow_validation"):
+            compile_ir_to_flow(ir, test_registry)
 
     def test_node_with_empty_params(self, test_registry):
         """Test nodes with empty params dict."""

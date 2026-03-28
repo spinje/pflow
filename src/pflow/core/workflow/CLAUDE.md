@@ -106,7 +106,7 @@ Unified validation orchestrator. Replaces scattered validation that previously e
 
 Uses Kahn's algorithm for topological sort. Catches: forward references, circular dependencies, references to non-existent nodes, undefined input parameters.
 
-**Bash syntax detection**: Template refs like `${#array[@]}`, `${var:-default}`, `${var%%pattern}` are detected as bash syntax and **skipped** during validation. Without this, shell commands with bash parameter expansion would trigger false "undefined input" errors.
+**Pflow vs bash syntax**: Uses positive pattern matching (`_PFLOW_VAR_RE` compiled from `TemplateResolver._VAR_NAME_PATTERN`) to identify valid pflow variable refs. Refs that don't match (bash syntax like `${#array[@]}`, `${var:-default}`, `${var%%pattern}`, or truncated nested templates) are skipped. Supports a `check_inputs` parameter: `True` (default, used by `WorkflowValidator`) checks undefined inputs; `False` (used by compiler) skips input checks since the compiler has `initial_params` not visible to data flow validation.
 
 ### save_service.py
 

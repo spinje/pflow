@@ -4,9 +4,16 @@ This module ensures that workflows have correct execution order and that
 all data dependencies are satisfied before nodes execute.
 """
 
+import re
 from typing import Any, Optional
 
 from pflow.runtime.template_resolver import TemplateResolver
+
+# Positive match for pflow variable paths (e.g., "node", "node.field", "node[0].field").
+# Uses TemplateResolver._VAR_NAME_PATTERN as the canonical definition of valid pflow
+# variable names. This is a private attribute — if the pattern changes there, it must
+# change here too.
+_PFLOW_VAR_RE = re.compile(rf"^{TemplateResolver._VAR_NAME_PATTERN}$")
 
 
 class CycleError(Exception):
@@ -40,6 +47,10 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
 
     for edge in edges:
         if edge.get("from") and edge.get("to"):
+            # Skip edges referencing nodes not in the graph (caught by wiring step later)
+            if edge["from"] not in nodes or edge["to"] not in nodes:
+                continue
+
             action = edge.get("action")
             source_pos = node_positions.get(edge["from"], -1)
             target_pos = node_positions.get(edge["to"], -1)
@@ -52,17 +63,28 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
                 graph[edge["from"]].append(edge["to"])
                 in_degree[edge["to"]] += 1
 
-    # Topological sort using Kahn's algorithm
-    queue = [node for node in nodes if in_degree[node] == 0]
+    # Topological sort using Kahn's algorithm.
+    # Use document order (node_positions) as tiebreaker for equal in-degree
+    # to give deterministic results and honor the author's intended order
+    # for disconnected components (e.g., branch targets with no incoming edges).
+    queue = sorted(
+        [node for node in nodes if in_degree[node] == 0],
+        key=lambda n: node_positions.get(n, 0),
+    )
     order = []
 
     while queue:
         node = queue.pop(0)
         order.append(node)
+        new_ready = []
         for neighbor in graph.get(node, []):
             in_degree[neighbor] -= 1
             if in_degree[neighbor] == 0:
-                queue.append(neighbor)
+                new_ready.append(neighbor)
+        # Insert newly ready nodes in document order
+        if new_ready:
+            new_ready.sort(key=lambda n: node_positions.get(n, 0))
+            queue.extend(new_ready)
 
     # Check for cycles
     if len(order) != len(nodes):
@@ -73,50 +95,32 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
     return order
 
 
-def _is_bash_syntax(ref: str) -> bool:
-    """Check if a template reference is bash-specific syntax, not a pflow template.
+def _check_forward_reference(
+    node_id: str,
+    ref_node_id: str,
+    node_position: int,
+    node_positions: dict[str, int],
+    loop_forward_limits: dict[str, int],
+) -> Optional[str]:
+    """Check if a node reference is a disallowed forward reference.
 
-    Bash-specific patterns include:
-    - Array operations: ${#array[@]}, ${array[@]}, ${array[*]}, ${array[$i]}
-    - String manipulation: ${var%%pattern}, ${var##pattern}, ${var/pattern/replacement}
-    - Default values: ${var:-default}, ${var:=default}, ${var:?error}, ${var:+value}
-    - Substring: ${var:offset:length}
-    - Length: ${#var}
-    - Case modification: ${var^^}, ${var,,}, ${var^}, ${var,}
-
-    Args:
-        ref: The content inside ${...} (e.g., "#array[@]" from "${#array[@]}")
-
-    Returns:
-        True if this is bash-specific syntax, False if it could be a pflow template
+    Returns error message if ref_node_id comes after node_id in execution order
+    and is not part of a valid loop pattern. Returns None if the reference is valid.
     """
-    # Bash array syntax with brackets
-    if "[" in ref or "]" in ref:
-        return True
-
-    # Bash string operations (contains special operators)
-    bash_operators = ["%%", "##", ":-", ":=", ":?", ":+", "/", "^^", ",,"]
-    if any(op in ref for op in bash_operators):
-        return True
-
-    # Bash length operator at start
-    if ref.startswith("#"):
-        return True
-
-    # Bash substring syntax (contains colon but not at start, which would be special operators)
-    if ":" in ref and not ref.startswith(":"):
-        # Check if it's a substring operation like ${var:2:5}
-        # But not parameter expansion like ${var:-default} (already caught above)
-        parts = ref.split(":")
-        if len(parts) >= 2:
-            # If the part after : looks like a number/offset, it's bash substring
-            try:
-                int(parts[1].strip())
-                return True
-            except ValueError:
-                pass
-
-    return False
+    if ref_node_id not in node_positions:
+        return None
+    ref_position = node_positions[ref_node_id]
+    if ref_position < node_position:
+        return None
+    # Allow forward references for loop targets — backward edges with actions
+    # indicate valid PocketFlow retry/loop patterns.
+    max_allowed = loop_forward_limits.get(node_id)
+    if max_allowed is not None and ref_position <= max_allowed:
+        return None
+    return (
+        f"Node '{node_id}' references '{ref_node_id}' which comes "
+        f"after it in execution order (position {ref_position} >= {node_position})"
+    )
 
 
 def _validate_template_reference(
@@ -127,6 +131,8 @@ def _validate_template_reference(
     nodes_by_id: dict[str, Any],
     node_positions: dict[str, int],
     declared_inputs: set[str],
+    loop_forward_limits: dict[str, int],
+    check_inputs: bool,
 ) -> Optional[str]:
     """Validate a single template reference.
 
@@ -138,54 +144,70 @@ def _validate_template_reference(
         nodes_by_id: Mapping of node IDs to node objects
         node_positions: Mapping of node IDs to execution positions
         declared_inputs: Set of declared input parameters
+        loop_forward_limits: For loop targets, the max position they can reference
+        check_inputs: Whether to validate undefined input references
 
     Returns:
         Error message if invalid, None if valid
     """
-    # Skip validation for bash-specific syntax (but still validate pflow templates)
-    if _is_bash_syntax(ref):
+    # Only validate refs that match pflow variable syntax. Non-matching refs
+    # are bash syntax (${#count}, ${var:-default}, ${array[@]}), or truncated
+    # nested templates (${results[${__index__}) — skip them.
+    if not _PFLOW_VAR_RE.match(ref):
         return None
 
-    if "." in ref:  # Node output reference like ${node1.output}
-        parts = ref.split(".", 1)
-        ref_node_id = parts[0]
+    # Extract root identifier (before first . or [)
+    # Uses TemplateResolver._ROOT_SPLIT_PATTERN — private attribute, see note on _PFLOW_VAR_RE.
+    root = TemplateResolver._ROOT_SPLIT_PATTERN.split(ref)[0]
+    has_path = root != ref
+
+    if has_path:  # Node output reference like ${node1.output} or ${data[0].field}
+        ref_node_id = root
 
         # Check if referenced node exists (also allow batch aliases like "item")
         if ref_node_id not in nodes_by_id and ref_node_id not in declared_inputs:
+            if not check_inputs:
+                return None  # Could be a runtime param — compiler lacks context
             return f"Node '{node_id}' references non-existent node '{ref_node_id}' in parameter '{param_name}'"
         # Check if referenced node comes before this node
-        elif ref_node_id in node_positions:
-            ref_position = node_positions[ref_node_id]
-            if ref_position >= node_position:
-                return (
-                    f"Node '{node_id}' references '{ref_node_id}' which comes "
-                    f"after it in execution order (position {ref_position} >= {node_position})"
-                )
-    else:  # Input parameter reference like ${repo_name}
-        if ref not in declared_inputs:
-            # Check if it's a typo of an existing input
-            close_matches = [inp for inp in declared_inputs if inp.lower() == ref.lower()]
-            if close_matches:
-                return (
-                    f"Node '{node_id}' references undefined input '${{{ref}}}' "
-                    f"in parameter '{param_name}' - did you mean '${{{close_matches[0]}}}'?"
-                )
-            else:
-                return f"Node '{node_id}' references undefined input '${{{ref}}}' in parameter '{param_name}'"
+        return _check_forward_reference(node_id, ref_node_id, node_position, node_positions, loop_forward_limits)
+
+    # Input parameter reference like ${repo_name}
+    if not check_inputs:
+        return None
+    if ref not in declared_inputs:
+        close_matches = [inp for inp in declared_inputs if inp.lower() == ref.lower()]
+        if close_matches:
+            return (
+                f"Node '{node_id}' references undefined input '${{{ref}}}' "
+                f"in parameter '{param_name}' - did you mean '${{{close_matches[0]}}}'?"
+            )
+        return f"Node '{node_id}' references undefined input '${{{ref}}}' in parameter '{param_name}'"
     return None
 
 
-def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
+def validate_data_flow(
+    workflow_ir: dict[str, Any],
+    check_inputs: bool = True,
+) -> list[str]:
     """Validate that data flows correctly between nodes.
 
     This function checks:
-    - References to non-existent nodes
-    - References to nodes that come later in execution order
-    - References to undefined input parameters
-    - Circular dependencies in the workflow
+    - Circular dependencies in the workflow (always)
+    - Forward references to nodes that come later in execution order (always)
+    - References to non-existent nodes (always when check_inputs=True;
+      skips ambiguous refs when False — they could be runtime params)
+    - References to undefined input parameters (only when check_inputs=True)
+
+    The check_inputs parameter controls semantic checks that depend on knowing
+    all available variable sources. The compiler passes False because it has
+    initial_params that legitimately contain variables not declared in IR inputs.
+    The pre-execution WorkflowValidator passes True (default) because it runs
+    after all variable sources are known.
 
     Args:
         workflow_ir: The workflow IR to validate
+        check_inputs: Whether to validate undefined input references
 
     Returns:
         List of error messages (empty if valid)
@@ -222,11 +244,33 @@ def validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
         errors.append(f"Data flow error: {e!s}")
         return errors
 
+    # Compute loop forward limits: for each backward edge B→A (with action),
+    # node A can reference nodes up to B's position (valid in subsequent iterations).
+    loop_forward_limits: dict[str, int] = {}
+    for edge in workflow_ir.get("edges", []):
+        if edge.get("from") and edge.get("to"):
+            action = edge.get("action")
+            source_pos = node_positions.get(edge["from"], -1)
+            target_pos = node_positions.get(edge["to"], -1)
+            if action is not None and source_pos >= target_pos:
+                target = edge["to"]
+                loop_forward_limits[target] = max(loop_forward_limits.get(target, 0), source_pos)
+
     # Check each node's parameter references
     for node in workflow_ir.get("nodes", []):
         node_id = node.get("id")
         node_position = node_positions.get(node_id, -1)
-        _validate_node_params(node, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors)
+        _validate_node_params(
+            node,
+            node_id,
+            node_position,
+            nodes_by_id,
+            node_positions,
+            valid_simple_refs,
+            loop_forward_limits,
+            check_inputs,
+            errors,
+        )
 
     return errors
 
@@ -239,6 +283,8 @@ def _check_param_value(
     nodes_by_id: dict[str, Any],
     node_positions: dict[str, int],
     valid_simple_refs: set[str],
+    loop_forward_limits: dict[str, int],
+    check_inputs: bool,
     errors: list[str],
 ) -> None:
     """Recursively validate template references in a parameter value."""
@@ -246,19 +292,45 @@ def _check_param_value(
         for match in TemplateResolver.TEMPLATE_EXTRACT_PATTERN.finditer(value):
             for operand in TemplateResolver.split_coalesce_operands(match.group(1)):
                 error = _validate_template_reference(
-                    operand, node_id, param_name, node_position, nodes_by_id, node_positions, valid_simple_refs
+                    operand,
+                    node_id,
+                    param_name,
+                    node_position,
+                    nodes_by_id,
+                    node_positions,
+                    valid_simple_refs,
+                    loop_forward_limits,
+                    check_inputs,
                 )
                 if error:
                     errors.append(error)
     elif isinstance(value, dict):
         for val in value.values():
             _check_param_value(
-                param_name, val, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors
+                param_name,
+                val,
+                node_id,
+                node_position,
+                nodes_by_id,
+                node_positions,
+                valid_simple_refs,
+                loop_forward_limits,
+                check_inputs,
+                errors,
             )
     elif isinstance(value, list):
         for item in value:
             _check_param_value(
-                param_name, item, node_id, node_position, nodes_by_id, node_positions, valid_simple_refs, errors
+                param_name,
+                item,
+                node_id,
+                node_position,
+                nodes_by_id,
+                node_positions,
+                valid_simple_refs,
+                loop_forward_limits,
+                check_inputs,
+                errors,
             )
 
 
@@ -269,6 +341,8 @@ def _validate_node_params(
     nodes_by_id: dict[str, Any],
     node_positions: dict[str, int],
     valid_simple_refs: set[str],
+    loop_forward_limits: dict[str, int],
+    check_inputs: bool,
     errors: list[str],
 ) -> None:
     """Validate template references in a single node's parameters."""
@@ -281,5 +355,14 @@ def _validate_node_params(
 
     for param_name, param_value in node.get("params", {}).items():
         _check_param_value(
-            param_name, param_value, node_id, node_position, nodes_by_id, node_positions, node_refs, errors
+            param_name,
+            param_value,
+            node_id,
+            node_position,
+            nodes_by_id,
+            node_positions,
+            node_refs,
+            loop_forward_limits,
+            check_inputs,
+            errors,
         )
