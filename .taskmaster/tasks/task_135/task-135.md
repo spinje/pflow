@@ -12,6 +12,19 @@ not started
 
 medium
 
+## Depends On
+
+Task 138 (Shared Execution Pipeline) — provides unified param preparation path so `initial_params` has a consistent shape. Task 138's `_prepare_compilation()` is what this task splits further into structural validation and input preparation.
+
+## Scope Update (2026-03-29)
+
+This task now also includes batch decomposition (from Issue 5): unify `_exec_single` / `_exec_single_with_node` (~170 lines of duplication), consolidate error handling policy, deduplicate progress callbacks. Same files, same refactoring pass.
+
+Key additional context from Task 138 research:
+- `braindump-pipeline-analysis.md` in `.taskmaster/tasks/task_138/starting-context/` has the full `initial_params` flow trace, wrapper chain analysis, and batch decomposition details
+- After Task 138, the `_prepare_compilation()` function (renamed from `_validate_workflow()`) contains only input preparation — this task splits it further
+- The implementing agent should prototype compile-once (measure deepcopy cost) before committing to approach
+
 ## Problem
 
 pflow's execution model has diverged from PocketFlow's design in ways that compound into real costs:
