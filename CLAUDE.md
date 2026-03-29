@@ -208,7 +208,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 125: Human-in-the-Loop Approval Gates
 
 **Bug Fixes:**
-- Task 117: JSON Error Output for Stdin Routing
+- Task 117: JSON Error Output for CLI Subcommands (registry, workflow — narrowed, main.py done by Task 137)
 
 **v0.12.0**
 - Task 46: Workflow Export to Zero-Dependency Code

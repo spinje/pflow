@@ -46,11 +46,12 @@ JSON/MCP includes `data` in its priority list; CLI text does not. If a node writ
 ## Recommendation
 
 When implementing Task 134:
-1. Start by documenting all 5 implementations (the spec's 3 + the 2 new ones)
+1. Start by documenting all 4 remaining implementations (~~the spec's 3~~ now 2 workflow-output detectors after Task 137 deleted `executor_service._extract_default_output`, + the 2 bare-node extractors)
 2. Fix the priority order divergence FIRST (this is the correctness bug)
 3. Decide on `data` key and last-key fallback — include in unified implementation or not?
 4. Consider the bare-node extraction separately — it's a different use case
 5. Consider the stderr routing issue for text mode — this affects agent UX but is probably a separate fix
+6. **NEW (from Task 137 Layer 5)**: Deduplicate step formatting (`_format_node_status_line` vs `_format_execution_step`) and `_truncate_error_message` — same files, same refactoring pass
 
 ## Reference
 

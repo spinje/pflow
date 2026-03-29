@@ -487,10 +487,8 @@ See "Post-Review: Regression Fixes" above.
 ### 4. ~~Validate-only success JSON missing `status` field~~ FIXED
 See "Post-Review: Regression Fixes" above.
 
-### 5. `test_dual_mode_stdin.py` removed `path`/`suggestion` assertions
-- **Before**: Asserted that multiple-stdin validation errors had `path` and `suggestion` structured fields in JSON
-- **After**: Assertion removed because the error flow changed
-- **Why accepted**: The new `test_missing_required_input_preserves_path_and_suggestion` test covers the `prepare_inputs()` → JSON pipeline end-to-end. The removed assertions were for a different error path (multiple stdin inputs) that now goes through `_validate_before_execution` which wraps errors as `(e, "", "")` tuples — correctly producing no path/suggestion.
+### 5. ~~`test_dual_mode_stdin.py` removed `path`/`suggestion` assertions~~ FIXED (Pass 2)
+The review pass 2 (test-fidelity + feature-interactions agents) identified that the original reasoning was wrong: the multiple-stdin error comes from `prepare_inputs()` (not `_validate_before_execution`), so the tuples DO have real `path` and `suggestion` values. Assertions restored.
 
 ### 6. `test_workflow_commands.py` stdout→stderr not strictly verified
 - **Tests use**: `combined = result.output + result.stderr`
@@ -544,6 +542,27 @@ See "Post-Review: Regression Fixes" above.
 
 ---
 
+## Code Review Pass 2
+
+Deployed 7 review agents on staged changes. Provided task spec, progress log, and task review to all agents for full context.
+
+**Findings**: 2 confirmed, 0 disputed.
+
+1. **Compilation error `error` field hardcoded "Compilation failed"** (agent-ux). Single compilation errors produced `"error": "Compilation failed"` instead of the actual message. Agents parsing `jq '.error'` got a category label, not the diagnostic. Fixed: removed the special case, `error` now always uses the first error's message.
+
+2. **`test_multiple_stdin_error_json_output` removed valid assertions** (test-fidelity, feature-interactions). The reasoning in Known Regression #5 was wrong — the multiple-stdin error comes from `prepare_inputs()` (not `_validate_before_execution`), so the `(msg, path, suggestion)` tuples DO have real values. Restored `path`/`suggestion` assertions.
+
+All other findings were re-flags of already-accepted items (UnicodeDecodeError JSON category, yaml.YAMLError category, nested MarkdownParseError field loss, validate-only bypass, test naming) or cosmetic (dead param, category set grouping).
+
+---
+
+## Issue and PR
+
+- **Issue**: spinje/pflow#176 — filed describing the 6 problems this task solves
+- **PR**: spinje/pflow#177 — `fix/unified-cli-output-pipeline` branch, 40 files, +3751/-975 lines
+
+---
+
 ## Key Metrics
 - **4628 tests pass** (11 new), 9 skipped
 - **`make check` clean** (ruff, mypy, deptry)
@@ -551,6 +570,7 @@ See "Post-Review: Regression Fixes" above.
 - **9 early-exit handlers → exceptions** through single pipeline, 6 wrapper functions deleted
 - **5 orphaned ExecutionResult fields → removed**
 - **9 dead functions → deleted** total (3 Phase 0/1, 3 found by review, 3 dead workflow_output functions)
+- **2 code review passes** (14 agents total): 13 confirmed fixes, 3 disputed, 2 accepted regressions remaining
 - **1 correctness bug found and fixed** by review (OutputResolutionError list-as-message)
 - **2 regressions fixed** post-review (UnicodeDecodeError handler, validate-only status field)
 - **1 high-value test added** post-review (prepare_inputs path preservation)

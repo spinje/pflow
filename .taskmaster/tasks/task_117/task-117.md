@@ -1,320 +1,123 @@
-# Task 117: Comprehensive JSON Error Output for CLI
+# Task 117: JSON Error Output for CLI Subcommands
 
 ## Description
 
-Make ALL CLI error paths respect `--output-format json` with a unified error structure. Currently, ~72% of error-related functions output plain text even when JSON is requested, and the errors that do output JSON use inconsistent structures.
+Make error paths in CLI subcommands (`registry.py`, `registry_run.py`, `workflow.py`) respect `--output-format json` / `--json` with the unified error structure established by Task 137.
+
+**Scope narrowed**: Task 137 (Unified CLI Output Pipeline, completed 2026-03-29) fully handled main.py — unified pipeline, `output_error()` infrastructure, exception-based propagation, pre-initialization safety. This task covers only the remaining subcommand modules that Task 137 did not touch.
 
 ## Status
-not started
+partially completed (Phases 1-2 done by Task 137, Phase 3 remains)
 
 ## Priority
 
-high
+medium (lowered — the main workflow path used by agents is fixed)
 
 ## Problem
 
-### Problem 1: Most errors ignore `--output-format json`
+### What's fixed (Task 137)
 
-When users specify `--output-format json`, they expect ALL output to be valid JSON. Currently:
+- ~~main.py: 39 error-related functions~~ — **ALL FIXED**. Unified pipeline via `output_error()` in `error_output.py`.
+- ~~Inconsistent JSON structures (7 shapes)~~ — **FIXED**. One unified shape: `{success, status, error, errors, workflow}`.
+- ~~Pre-initialization errors~~ — **FIXED**. Outer catch in `workflow_command` handles `ctx.obj` being None.
+- ~~stdout bugs~~ — **FIXED** (registry.py, workflow.py).
 
-- **Only 11 of 39 error-related functions** in main.py check `output_format` (28%)
-- **28 functions** output text unconditionally regardless of format setting
-- **Other CLI modules** (registry.py, registry_run.py, workflow.py) have similar or worse issues
+### What remains (this task)
 
-Example of broken behavior:
-```bash
-# User expects JSON, gets plain text
-echo "data" | uv run pflow --output-format json workflow-no-stdin.json
-# Output: ❌ Piped input cannot be routed to workflow (WRONG - should be JSON)
-```
+CLI subcommand modules still output plain text errors regardless of `--json` / `--output-format json`:
 
-### Problem 2: Inconsistent JSON structures
+| Module | Error paths | Check format | Notes |
+|--------|-------------|-------------|-------|
+| `registry.py` | ~7 without JSON | 6 of 13 check `output_json` | `describe` and `discover` have no `--json` flag |
+| `registry_run.py` | 8 | 0 of 8 | `--output-format json` exists but only governs success |
+| `workflow.py` | ~14 | 0 of 14 | Only `list` has `--json`; save/describe/history/discover have none |
 
-Errors that DO output JSON use different structures:
-
-**Validation errors:**
-```json
-{
-  "success": false,
-  "error": "Workflow validation failed",
-  "validation_errors": ["..."],
-  "metadata": {"action": "unsaved", "name": "..."}
-}
-```
-
-**Runtime errors:**
-```json
-{
-  "success": false,
-  "status": "failed",
-  "error": "Workflow execution failed",
-  "is_error": true,
-  "errors": [{"source": "runtime", "category": "...", "message": "...", "node_id": "..."}],
-  "failed_node": "...",
-  "execution": {...},
-  "duration_ms": ...,
-  "metrics": {...}
-}
-```
-
-This inconsistency means:
-- Consumers must handle multiple structures
-- Field names differ (`validation_errors` vs `errors`, `metadata` vs `workflow`)
-- Some fields only exist in certain structures
-
-### Problem 3: Cross-module inconsistency
-
-Each CLI module handles errors differently:
-
-| Module | JSON Flag? | Error JSON Support | Notes |
-|--------|------------|-------------------|-------|
-| `main.py` | `--output-format json` | Partial (11/39 functions) | Inconsistent structures |
-| `registry.py` | `--json` on some commands | Partial (scan only) | Bug: line 426 outputs to stdout not stderr |
-| `registry_run.py` | `--output-format json` | **NONE** | All 8 error outputs ignore format |
-| `workflow.py` | `--json` on `list` only | **NONE** | Bug: lines 48-55 output to stdout not stderr |
-
-### Problem 4: Pre-initialization errors
-
-**Critical**: Some errors can occur BEFORE `ctx.obj` is populated (line 3863 in `workflow_command()`).
-
-Specifically, `_inject_settings_env_vars()` at line 3859 can fail before context initialization. Any central error function that accesses `ctx.obj["output_format"]` will fail with `KeyError` or `TypeError`.
+Additionally, flag naming is inconsistent: `list`/`scan` use `--json` (boolean), `run` uses `--output-format` (choice).
 
 ---
 
 ## Solution
 
-### 1. Unified JSON Error Structure
+### Use Task 137's infrastructure
 
-All errors output the same base structure:
+Task 137 created `src/pflow/cli/error_output.py` with `output_error()` — the single error output function for the CLI. The subcommand modules should use this same function and produce the same unified JSON shape.
 
+**The unified JSON error shape** (established by Task 137):
 ```json
 {
   "success": false,
+  "status": "failed",
   "error": "Human readable summary",
-  "error_type": "validation" | "runtime" | "compilation" | "cli",
   "errors": [
     {
       "message": "Detailed error message",
-      "path": "inputs.data",           // Optional - location in workflow/config
-      "suggestion": "How to fix",      // Optional
-      "node_id": "node1",              // Optional - for runtime errors
-      "category": "missing_input"      // Optional - specific error category
+      "category": "validation|not_found|cli|...",
+      "suggestion": "How to fix"
     }
   ],
-  "workflow": {
-    "name": "workflow-name",
-    "source": "file" | "saved" | "planner" | null
-  },
-
-  // Runtime-only fields (omitted for validation/cli errors)
-  "duration_ms": 1234,
-  "metrics": {...},
-  "execution": {
-    "nodes_executed": 3,
-    "steps": [...]
-  }
+  "workflow": {"action": "unsaved"}
 }
 ```
 
-**Design decisions:**
-- Optional fields are **omitted** (not null) when not applicable
-- `error_type` distinguishes error category at top level
-- `errors` array always present (even for single error)
-- `workflow` always present (may have null values for early CLI errors)
+**Design note for subcommands**: The `workflow` field was designed for `workflow_command`. For registry/workflow subcommands, it should still be present (consistent shape) but may have `{"action": "unsaved"}` as a default. Alternatively, these commands could omit the `workflow` field entirely and document that — the unified shape contract says optional fields are "omitted when not applicable."
 
-### 2. Central Error Output Infrastructure
+### Approach for each module
 
-Create a central function that ALL error output flows through, with safe handling for pre-initialization errors:
+For each subcommand error path, the conversion follows the same pattern Task 137 used for main.py:
 
-```python
-def _output_cli_error(
-    ctx: click.Context | None,
-    error_type: str,
-    summary: str,
-    errors: list[dict],
-    text_display: Callable[[], None] | None = None,
-    workflow_metadata: dict | None = None,
-    metrics: dict | None = None,
-    execution: dict | None = None,
-    output_format: str | None = None,  # Override for pre-init errors
-    verbose: bool | None = None,       # Override for pre-init errors
-) -> NoReturn:
-    """Central error output respecting output_format.
-
-    Handles three cases:
-    1. Post-initialization: ctx.obj is populated, use it
-    2. Pre-initialization: ctx.obj is None/empty, use overrides or defaults
-    3. No context: ctx is None, use overrides or defaults
-
-    Args:
-        ctx: Click context (may be None for very early errors)
-        error_type: Category (validation, runtime, compilation, cli)
-        summary: Human-readable one-line summary
-        errors: List of structured error dicts
-        text_display: Function for rich text output (emojis, examples)
-        workflow_metadata: Workflow name/source info
-        metrics: Runtime metrics (optional)
-        execution: Execution state (optional)
-        output_format: Override for pre-initialization errors
-        verbose: Override for pre-initialization errors
-    """
-    # Safe extraction with fallbacks for pre-initialization
-    if ctx and ctx.obj:
-        _output_format = ctx.obj.get("output_format", "text")
-        _verbose = ctx.obj.get("verbose", False)
-    else:
-        _output_format = output_format or "text"
-        _verbose = verbose or False
-
-    if _output_format == "json":
-        error_output = {
-            "success": False,
-            "error": summary,
-            "error_type": error_type,
-            "errors": errors,
-            "workflow": workflow_metadata or {"name": None, "source": None},
-        }
-        # Add optional runtime fields
-        if metrics:
-            error_output["metrics"] = metrics
-        if execution:
-            error_output["execution"] = execution
-            error_output["duration_ms"] = execution.get("duration_ms")
-
-        click.echo(json.dumps(error_output, indent=2 if _verbose else None))
-    else:
-        # Rich text output
-        if text_display:
-            text_display()
-        else:
-            # Fallback: simple text
-            click.echo(f"❌ {summary}", err=True)
-            for err in errors:
-                click.echo(f"   {err['message']}", err=True)
-                if err.get("suggestion"):
-                    click.echo(f"   👉 {err['suggestion']}", err=True)
-
-    if ctx:
-        ctx.exit(1)
-    else:
-        sys.exit(1)
-```
-
-**Key features:**
-- Handles pre-initialization errors (ctx.obj not populated)
-- Handles no-context errors (ctx is None)
-- Preserves rich text formatting via `text_display` callback
-- Standardizes JSON structure automatically
-- Single place to maintain/audit
-
-### 3. Error Helper Dataclass
-
-```python
-@dataclass
-class CliErrorDetail:
-    """Structured error detail for JSON output."""
-    message: str
-    path: str | None = None
-    suggestion: str | None = None
-    node_id: str | None = None
-    category: str | None = None
-
-    def to_dict(self) -> dict:
-        result = {"message": self.message}
-        if self.path:
-            result["path"] = self.path
-        if self.suggestion:
-            result["suggestion"] = self.suggestion
-        if self.node_id:
-            result["node_id"] = self.node_id
-        if self.category:
-            result["category"] = self.category
-        return result
-```
+1. Convert `click.echo() + sys.exit(1)` to exception raises (use `UserFriendlyError` or `WorkflowValidationError`)
+2. Add a catch block that calls `output_error()` from `error_output.py`
+3. Add `--json` or `--output-format` flags to commands that lack them
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Infrastructure
+### ~~Phase 1: Infrastructure~~ DONE (Task 137)
 
-1. Create `CliErrorDetail` dataclass in `src/pflow/cli/error_output.py`
-2. Create `_output_cli_error()` central function with pre-init handling
-3. Add unit tests for the infrastructure (including pre-init scenarios)
+`output_error()` in `src/pflow/cli/error_output.py` is the infrastructure. No new function or dataclass needed.
 
-### Phase 2: main.py Migration (High Priority)
+### ~~Phase 2: main.py Migration~~ DONE (Task 137)
 
-Migrate error sites in priority order:
+All main.py error paths unified via pipeline restructure. See `.taskmaster/tasks/task_137/task-review.md`.
 
-**Functions that already check output_format (11 - need structure unification):**
+### Phase 3: CLI Subcommand Modules (THE REMAINING WORK)
 
-| Function | Line | Current Status |
-|----------|------|----------------|
-| `_handle_workflow_output` | 275 | Has format check |
-| `_handle_compilation_error` | 1356 | Has format check |
-| `_handle_workflow_error` | 1576 | Has format check |
-| `_handle_workflow_success` | 1605 | Has format check |
-| `_execute_workflow_and_handle_result` | 1717 | Has format check |
-| `_handle_workflow_exception` | 1826 | Has format check |
-| `_display_validation_results` | 1993 | Has format check |
-| `_handle_validate_only_mode` | 2039 | Has format check |
-| `_show_stdin_routing_error` | 3112 | Has format check (Task 115) |
-| `_output_validation_errors` | 3152 | Has format check (Task 115) |
-| `_handle_named_workflow` | 3394 | Has format check |
+**NOTE**: Line numbers below are from the original investigation (2026-01-23) and have shifted. Re-verify before implementing.
 
-**Functions that DON'T check output_format (28 - need migration):**
+**registry.py** (~7 error paths without JSON):
+- `list` exception handler — add JSON
+- `describe` node not found — add JSON (needs `--json` flag on `describe` command)
+- `describe` exception handler — add JSON
+- `discover` validation errors — add JSON (needs `--json` flag on `discover` command)
+- `describe_nodes` errors — add JSON
 
-| Priority | Function | Line | Error Type |
-|----------|----------|------|------------|
-| P1 | `_show_json_syntax_error` | 131 | JSON parse errors |
-| P1 | `_handle_workflow_not_found` | 3454 | Workflow not found |
-| P1 | `_handle_planning_failure` | 2756 | Planning errors |
-| P2 | `_display_single_error` | 1477 | Individual errors (called from text handler) |
-| P2 | `_display_api_error_response` | 1440 | API errors |
-| P2 | `_display_mcp_error_details` | 1461 | MCP errors |
-| P2 | `_display_shell_error_details` | 1535 | Shell errors |
-| P2 | `_show_timeout_help` | 2381 | Timeout errors |
-| P3 | `_display_batch_errors` | 721 | Batch processing errors |
-| P3 | `_display_stderr_warnings` | 745 | Hidden pipeline errors |
-| P3 | `_format_compilation_error_text` | 1665 | Compilation (text mode) |
-| P4 | Other display/status functions | Various | Lower priority |
+**registry_run.py** (8 error paths, 0 check format):
+- `_validate_parameters` — add JSON
+- `_prepare_node_execution` — add JSON
+- Cache failure warning — add JSON
+- MCPError display — add JSON
+- `_handle_ambiguous_node` — add JSON
+- `_handle_unknown_node` — add JSON
+- `_handle_execution_error` — add JSON
 
-### Phase 3: Other CLI Modules
+**workflow.py** (~14 error paths, 0 check format):
+- `_handle_workflow_not_found` — add JSON (needs `--json` flag on `describe`/`history`)
+- `_validate_discovery_query` — add JSON (needs `--json` flag on `discover`)
+- `_load_and_parse_workflow` — add JSON (needs `--json` flag on `save`)
+- Save errors — add JSON
+- Delete warning — add JSON
+- Name validation — add JSON
 
-**registry.py** (11 error outputs, 3 check format):
-- Line 272: `list` exception handler - add JSON
-- Line 380: `describe` node not found - add JSON
-- Line 415: `describe` exception handler - add JSON
-- Line 426: **BUG FIX** - `_handle_nonexistent_path` outputs to stdout, should be stderr
-- Line 532: `scan` exception handler - already has JSON
-- Lines 636-639: `discover` validation - add JSON (needs `--json` flag first)
-- Lines 850, 857: `describe_nodes` errors - add JSON (needs `--json` flag first)
+**Flag decisions needed**:
+- Which commands get `--json` vs `--output-format`? Current inconsistency: `list`/`scan` use `--json` (boolean), `run` uses `--output-format` (choice). Should standardize.
+- Commands like `describe` and `history` output rich text — does `--json` make sense for them?
 
-**registry_run.py** (8 error outputs, 0 check format):
-- Line 77-78: `_validate_parameters` - add JSON
-- Line 191: `_prepare_node_execution` - add JSON
-- Line 286: Cache failure warning - add JSON
-- Line 312: MCPError display - add JSON
-- Line 377: `_handle_ambiguous_node` - add JSON, add output_format param
-- Line 386: `_handle_unknown_node` - add JSON, add output_format param
-- Line 395: `_handle_execution_error` - add JSON, add output_format param
+### Phase 4: Testing
 
-**workflow.py** (14 error outputs, 0 check format):
-- Lines 48-55: **BUG FIX** - Filter message to stdout, should be stderr
-- Line 76-80: `_handle_workflow_not_found` - add JSON
-- Lines 209, 213-214: `_validate_discovery_query` - add JSON (needs `--json` flag first)
-- Lines 237, 240: `_load_and_normalize_workflow` - add JSON (needs `--json` flag first)
-- Line 270: Metadata warning - add JSON
-- Lines 311-312, 315, 318: Save errors - add JSON (needs `--json` flag first)
-- Lines 342-344: Delete warning - add JSON
-- Line 371: Name validation - add JSON (needs `--json` flag first)
-
-### Phase 4: Testing & Documentation
-
-1. Add tests for JSON output of each error category
-2. Test pre-initialization error handling
-3. Test that text output is unchanged (preserves emojis, formatting)
-4. Document the JSON error format in user docs
+1. JSON output tests for each subcommand error path
+2. Text output regression (preserve rich formatting)
+3. Flag consistency tests
 
 ---
 
@@ -322,95 +125,66 @@ Migrate error sites in priority order:
 
 | File | Changes |
 |------|---------|
-| `src/pflow/cli/error_output.py` | **NEW** - Central error output infrastructure |
-| `src/pflow/cli/main.py` | Migrate 28 functions to central function, unify 11 existing |
-| `src/pflow/cli/registry.py` | Add JSON error support to 8 error paths, fix stdout bug |
-| `src/pflow/cli/registry_run.py` | Add JSON error support to all 8 error paths |
-| `src/pflow/cli/commands/workflow.py` | Add `--json` flag to commands, add JSON error support, fix stdout bug |
-| `tests/test_cli/test_json_errors.py` | **NEW** - Comprehensive JSON error tests |
+| ~~`src/pflow/cli/error_output.py`~~ | ~~**NEW**~~ **EXISTS** (Task 137) — use `output_error()` from here |
+| ~~`src/pflow/cli/main.py`~~ | **DONE** (Task 137) |
+| `src/pflow/cli/commands/registry.py` | Add JSON error support to ~7 error paths, add `--json` to describe/discover |
+| `src/pflow/cli/commands/registry_run.py` | Add JSON error support to all 8 error paths |
+| `src/pflow/cli/commands/workflow.py` | Add `--json` flag to save/describe/history/discover, add JSON error support |
+| `tests/test_cli/` | New tests for subcommand JSON error output |
 
 ---
 
-## Bugs to Fix (Discovered During Investigation)
+## ~~Bugs to Fix~~ DONE (Task 137)
 
-| File | Line | Bug | Fix |
-|------|------|-----|-----|
-| `registry.py` | 426 | `_handle_nonexistent_path` outputs errors to stdout | Add `err=True` |
-| `workflow.py` | 48-55 | Filter message outputs to stdout | Add `err=True` |
+~~Both stdout→stderr bugs~~ fixed in Task 137 Phase 7.
 
 ---
 
 ## Error Categories Reference
 
-| error_type | category | When |
-|------------|----------|------|
-| `validation` | `stdin_routing` | Piped input can't be routed |
-| `validation` | `multiple_stdin` | Multiple stdin: true inputs |
-| `validation` | `missing_input` | Required input not provided |
-| `validation` | `invalid_template` | Template reference error |
-| `validation` | `unknown_node` | Node type not in registry |
-| `compilation` | `import_error` | Node class can't be imported |
-| `compilation` | `schema_error` | Workflow IR invalid |
-| `runtime` | `execution_failure` | Node execution failed |
-| `runtime` | `api_error` | HTTP/API call failed |
-| `runtime` | `shell_error` | Shell command failed |
-| `runtime` | `mcp_error` | MCP tool call failed |
-| `cli` | `json_syntax` | Invalid JSON in workflow file |
-| `cli` | `file_not_found` | Workflow file doesn't exist |
-| `cli` | `permission_denied` | Can't read workflow file |
-| `cli` | `workflow_not_found` | Saved workflow doesn't exist |
-| `cli` | `invalid_params` | Invalid CLI parameters |
-| `cli` | `planning_failed` | Natural language planning failed |
+Use the authoritative category enum from Task 137 (`tests/test_cli/test_unified_error_output.py`):
+
+**Pre-execution**: `validation`, `compilation`, `parse_error`, `not_found`, `cli`, `mcp`, `max_visits`, `file_not_found`, `permission_denied`, `unknown`
+
+**Post-execution**: `execution_failure`, `api_validation`, `template_error`
+
+For subcommand errors, the most relevant categories are: `not_found` (node/workflow not found), `validation` (bad params), `cli` (usage errors).
 
 ---
 
 ## Verification
 
 ```bash
-# All these should output valid JSON with the same base structure:
+# These ALREADY work (Task 137):
+uv run pflow --output-format json nonexistent.pflow.md          # ✅ unified JSON
+echo "data" | uv run pflow --output-format json no-stdin.pflow.md  # ✅ unified JSON
+uv run pflow --output-format json bad-node.pflow.md             # ✅ unified JSON
 
-# Validation error (stdin routing)
-echo "data" | uv run pflow --output-format json workflow-no-stdin.json
+# These are the REMAINING gaps (this task):
+uv run pflow registry describe nonexistent-node --json          # ❌ plain text
+uv run pflow registry run nonexistent-node --output-format json # ❌ plain text errors
+uv run pflow workflow describe nonexistent --json               # ❌ no --json flag
+uv run pflow workflow save bad-file.txt --json                  # ❌ no --json flag
 
-# Validation error (missing input)
-uv run pflow --output-format json workflow.json
-
-# Compilation error (unknown node)
-uv run pflow --output-format json bad-node-workflow.json
-
-# Runtime error (node failure)
-uv run pflow --output-format json failing-workflow.json
-
-# CLI error (file not found)
-uv run pflow --output-format json nonexistent.json
-
-# CLI error (JSON syntax)
-uv run pflow --output-format json malformed.json
-
-# Registry error
-uv run pflow registry describe nonexistent-node --json
-
-# Registry run error
-uv run pflow registry run nonexistent-node --output-format json
-
-# All should parse with: jq '.success, .error_type, .errors'
+# After this task, all should parse with:
+# jq '.success, .error, .errors[0].message'
 ```
 
 ---
 
 ## Acceptance Criteria
 
-- [ ] Central `_output_cli_error()` function created with pre-init handling
-- [ ] All 39 error-related functions in main.py use central function
-- [ ] All 11 error paths in registry.py use central function
-- [ ] All 8 error paths in registry_run.py use central function
-- [ ] All 14 error paths in workflow.py use central function
-- [ ] Single unified JSON structure for all error types
+- [x] ~~Central error output function~~ **DONE** (Task 137 — `output_error()`)
+- [x] ~~All main.py error paths unified~~ **DONE** (Task 137)
+- [x] ~~Single unified JSON structure~~ **DONE** (Task 137)
+- [x] ~~Pre-initialization errors handled~~ **DONE** (Task 137)
+- [x] ~~stdout→stderr bugs fixed~~ **DONE** (Task 137)
+- [ ] All error paths in registry.py produce JSON when `--json` is set
+- [ ] All 8 error paths in registry_run.py produce JSON when `--output-format json` is set
+- [ ] All error paths in workflow.py produce JSON when `--json` is set
+- [ ] `--json` flag added to `describe`, `discover`, `save`, `history` commands that lack it
 - [ ] Rich text formatting preserved for text mode
-- [ ] Pre-initialization errors handled correctly
-- [ ] Bugs fixed (registry.py line 426, workflow.py lines 48-55)
-- [ ] Tests verify JSON output for each error category
-- [ ] Tests verify text output unchanged
+- [ ] Tests verify JSON output for each subcommand error path
 - [ ] `make check` passes
 - [ ] `make test` passes
 
@@ -418,38 +192,40 @@ uv run pflow registry run nonexistent-node --output-format json
 
 ## Design Decisions
 
-### Decided
+### Established by Task 137
 
-1. **Optional fields omitted** (not null) - Cleaner JSON, easier parsing
-2. **Rich text via callback** - Preserves emojis, examples, formatting
-3. **Single `errors` array** - Consistent structure, `error_type` distinguishes category
-4. **workflow field always present** - May have null values for early CLI errors
-5. **Handle pre-init errors** - Function accepts overrides for output_format/verbose
+1. **Optional fields omitted** (not null) — cleaner JSON, easier parsing
+2. **Single `errors` array** — each entry has `message` and `category` at minimum
+3. **`error` is always a string** — never a dict
+4. **Use `output_error()` from `error_output.py`** — don't create new formatting functions
+5. **Exception-based error propagation** — convert `click.echo + exit` to exception raises where possible
 
-### Open Questions
+### Open Questions (for this task)
 
-1. **Should we version the JSON format?** - Probably not needed since no users yet
-2. **Backward compatibility?** - Not needed, project is pre-release
+1. **`--json` vs `--output-format`**: Standardize? `list`/`scan` use `--json`, `run` uses `--output-format`. Pick one.
+2. **`workflow` field for non-workflow commands**: `pflow registry describe nonexistent-node --json` — should the output include a `workflow` field? Could omit it or use `null`.
+3. **Which commands actually benefit from `--json`?**: `describe` and `history` are display-oriented. Does JSON make sense for them, or only for error output?
 
 ---
 
 ## Dependencies
 
-- Task 115: Automatic Stdin Routing (completed) — Added stdin routing error, partially fixed
+- Task 137: Unified CLI Output Pipeline (completed 2026-03-29) — provides infrastructure (`output_error()`, unified JSON shape, exception classes)
+- Task 115: Automatic Stdin Routing (completed) — added stdin routing error (now fully handled by Task 137)
 
 ## Related Work
 
-- Task 115 partially addressed this by adding JSON support to `_show_stdin_routing_error()` and `_output_validation_errors()`
-- This task completes and generalizes that work
+- Task 137 `.taskmaster/tasks/task_137/task-review.md` — architectural insights, patterns to follow
+- Layer 5 (formatter deduplication) is Task 134 territory, NOT this task
 
 ---
 
 ## Investigation Notes
 
-Verified 2026-01-23:
-- main.py has 39 error-related functions, 11 check output_format (28%)
-- registry.py has 11 error outputs, 3 check output_json (partial support)
+Original investigation (2026-01-23) — line numbers are STALE (code changed significantly by Task 137):
+- ~~main.py has 39 error-related functions~~ — restructured by Task 137
+- registry.py has ~13 error outputs, 6 check output_json (partial support)
 - registry_run.py has 8 error outputs, 0 check output_format (no support)
-- workflow.py has 14 error outputs, 0 check output format (no support, only `list` has `--json`)
-- ctx.obj is populated at line 3863, errors before this can occur
-- Line numbers verified accurate as of this date
+- workflow.py has ~14 error outputs, 0 check output format (no support, only `list` has `--json`)
+
+Re-verify line numbers before implementing — Task 137 also modified registry.py (stdout fixes) and workflow.py (stdout fixes).
