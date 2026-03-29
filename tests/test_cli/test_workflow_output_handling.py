@@ -349,15 +349,15 @@ class TestWorkflowOutputHandling:
         """Test that fallback keys are checked in the correct order."""
         runner = click.testing.CliRunner()
 
-        # Test the priority: response > output > result > text
+        # Test the priority: result > response > output > text > data > stdout
         test_cases = [
             # (keys_to_add, expected_output)
             ({"text": "Text value", "result": "Result value"}, "Result value"),
             ({"text": "Text value"}, "Text value"),
-            ({"result": "Result value", "output": "Output value"}, "Output value"),
+            ({"result": "Result value", "output": "Output value"}, "Result value"),
             (
                 {"response": "Response value", "output": "Output value", "result": "Result", "text": "Text"},
-                "Response value",
+                "Result",
             ),
         ]
 
@@ -390,8 +390,8 @@ class TestWorkflowOutputHandling:
                     "id": "test",
                     "type": "test-node",
                     "params": {
-                        # Node doesn't produce any of the expected keys
-                        "output_key": "internal_key",
+                        # Node writes to _-prefixed key, filtered by auto-detection
+                        "output_key": "_internal_key",
                         "output_value": "Internal value",
                     },
                 }

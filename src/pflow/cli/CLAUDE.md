@@ -101,16 +101,17 @@ This split is critical: `pflow workflow.pflow.md | jq` works because progress no
 
 Non-interactive sends data to stderr too — this prevents output appearing before summary when tools capture streams separately.
 
-### Output Auto-Detection (`_find_auto_output`)
+### Output Auto-Detection (`find_auto_output`)
 
-Two implementations exist (Task 134 will unify them):
+Single unified implementation in `execution/formatters/output_utils.py`, used by both CLI text and JSON/MCP paths:
 
-| Location | Used by | Priority | Namespace-aware |
-|----------|---------|----------|-----------------|
-| `workflow_output.py` | CLI text | response > output > result > text > stdout | Yes |
-| `success_formatter.py` | JSON, MCP | result > output > response > text > data > stdout | Yes |
+- **Priority**: `result > response > output > text > data > stdout`
+- **Search order**: Root first, then namespaces (root is where declared outputs live)
+- **Validity filter**: Skips None and empty/whitespace strings
+- **Key filter**: Skips `_` and `__` prefixed keys
+- **Last-key fallback**: If no priority key matches, takes the last valid non-internal key
 
-Both search inside node namespace dicts (last occurrence wins — most downstream node). Also used as `--only` fallback when declared outputs are skipped.
+CLI text mode emits a stderr warning when auto-detection is used (not in `--print` mode).
 
 ### JSON/Text Duality
 

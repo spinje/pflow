@@ -4,9 +4,9 @@ These tests catch real bugs that could break execution output for agents and CLI
 Each test documents what bug it prevents.
 """
 
+from pflow.execution.formatters.output_utils import find_auto_output
 from pflow.execution.formatters.success_formatter import (
     _append_execution_steps,
-    _find_auto_output,
     _format_batch_errors_section,
     _format_batch_node_line,
     _format_execution_step,
@@ -832,7 +832,7 @@ class TestAppendExecutionStepsOnlyNode:
 class TestFindAutoOutputNamespaceAware:
     """Tests for namespace-aware JSON auto-detection.
 
-    _find_auto_output serves ALL JSON/MCP output. A regression here silently
+    find_auto_output serves ALL JSON/MCP output. A regression here silently
     changes what agents receive — no error, just different data.
     """
 
@@ -847,7 +847,7 @@ class TestFindAutoOutputNamespaceAware:
             "__execution__": {"completed_nodes": ["fetch"]},
             "fetch": {"stdout": "hello world", "exit_code": 0, "command": "echo hello"},
         }
-        key, value = _find_auto_output(shared)
+        key, value = find_auto_output(shared)
 
         assert key == "stdout"
         assert value == "hello world"
@@ -863,7 +863,7 @@ class TestFindAutoOutputNamespaceAware:
             "step-a": {"stdout": "upstream output"},
             "step-b": {"stdout": "final output"},
         }
-        key, value = _find_auto_output(shared)
+        key, value = find_auto_output(shared)
 
         assert key == "stdout"
         assert value == "final output"
@@ -880,7 +880,7 @@ class TestFindAutoOutputNamespaceAware:
             "process": {"stdout": "raw shell output"},
             "result": "clean declared output",  # populated by populate_declared_outputs
         }
-        key, value = _find_auto_output(shared)
+        key, value = find_auto_output(shared)
 
         assert key == "result"
         assert value == "clean declared output"

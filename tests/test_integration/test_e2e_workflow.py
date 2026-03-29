@@ -52,7 +52,7 @@ def test_hello_workflow_execution(tmp_path):
 
         # Verify success
         assert result.exit_code == 0
-        assert "Workflow executed successfully" in result.output
+        assert "Workflow completed" in result.output
 
         # Verify output file
         assert Path("output.txt").exists()
@@ -250,7 +250,7 @@ def test_verbose_execution_output(tmp_path):
         assert result.exit_code == 0
         assert "Starting workflow execution with 2 node(s)" in result.output
         assert "Workflow execution completed" in result.output
-        assert "Workflow executed successfully" in result.output
+        assert "Workflow completed" in result.output
 
 
 def test_data_flows_between_nodes(tmp_path):
@@ -288,7 +288,7 @@ def test_data_flows_between_nodes(tmp_path):
 
         # Verify success
         assert result.exit_code == 0
-        assert "Workflow executed successfully" in result.output
+        assert "Workflow completed" in result.output
 
         # Verify the data was correctly passed and written
         assert Path("output.txt").exists()
@@ -430,7 +430,7 @@ def test_tilde_path_with_directory_creation(tmp_path, monkeypatch):
 
         # Verify success
         assert result.exit_code == 0, f"Workflow failed: {result.output}"
-        assert "Workflow executed successfully" in result.output
+        assert "Workflow completed" in result.output
 
         # Verify the file was created at the expanded path
         expected_path = fake_home / "stories" / "cat_story.md"

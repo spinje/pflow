@@ -153,53 +153,15 @@ def _collect_outputs(
 
     else:
         # Auto-detect output (handles both --only and no-declared-outputs cases).
-        # _find_auto_output is namespace-aware: looks inside node namespace dicts
+        # find_auto_output is namespace-aware: looks inside node namespace dicts
         # for common output keys, so it finds the target node's stdout/result/response.
-        key_found, value = _find_auto_output(shared_storage)
+        from pflow.execution.formatters.output_utils import find_auto_output
+
+        key_found, value = find_auto_output(shared_storage)
         if key_found:
             result[key_found] = parse_json_or_original(value)
 
     return result
-
-
-def _find_auto_output(shared: dict[str, Any]) -> tuple[Optional[str], Any]:
-    """Find output automatically from shared storage.
-
-    Tries common output patterns to find the most likely output value.
-    Checks root-level keys first, then looks inside namespace dicts
-    (last occurrence wins so the most downstream node is preferred).
-
-    Args:
-        shared: Shared storage dictionary
-
-    Returns:
-        Tuple of (key, value) if found, otherwise (None, None)
-    """
-    # Filter out internal keys
-    user_keys = {k: v for k, v in shared.items() if not k.startswith("__")}
-
-    if not user_keys:
-        return None, None
-
-    # Try common output keys at root level first, then inside namespaces.
-    # Includes "stdout" for shell nodes (they write stdout, not result).
-    common_keys = ["result", "output", "response", "text", "data", "stdout"]
-    for key in common_keys:
-        if key in user_keys:
-            return key, user_keys[key]
-
-    # Look inside namespace dicts (last occurrence wins — most downstream node)
-    for key in common_keys:
-        last_match = None
-        for ns_val in user_keys.values():
-            if isinstance(ns_val, dict) and key in ns_val:
-                last_match = ns_val[key]
-        if last_match is not None:
-            return key, last_match
-
-    # Last-key fallback (heuristic: likely to be final result)
-    last_key = list(user_keys.keys())[-1]
-    return last_key, user_keys[last_key]
 
 
 def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
