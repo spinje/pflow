@@ -473,18 +473,3 @@ def _format_execution_step(step: dict[str, Any]) -> str:
     tag_str = f" [{', '.join(tags)}]" if tags else ""
     # Round duration to integer for readability (matches CLI format)
     return f"  {indicator} {node_id} ({int(duration)}ms){tag_str}"
-
-
-def _append_footer(lines: list[str], cost: Optional[float], trace_path: Optional[str]) -> None:
-    """Append cost and trace footer to lines list."""
-    if not cost and not trace_path:
-        return
-
-    parts = []
-    if cost:
-        parts.append(f"Cost: ${cost:.4f}")
-    if trace_path:
-        parts.append(f"Trace: {trace_path}")
-
-    lines.append("")
-    lines.append(" | ".join(parts))

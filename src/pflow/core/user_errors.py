@@ -109,12 +109,6 @@ class MCPError(UserFriendlyError):
         super().__init__(title, explanation, suggestions, technical_details)
 
 
-class CompilationError(UserFriendlyError):
-    """Error during workflow compilation."""
-
-    pass
-
-
 class OutputResolutionError(UserFriendlyError):
     """Error when workflow output source expressions cannot be resolved."""
 

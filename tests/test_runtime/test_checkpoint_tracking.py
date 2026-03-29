@@ -271,7 +271,6 @@ class TestCheckpointIntegration:
                 "result": "success",
                 "__execution__": {"completed_nodes": ["node1"], "node_actions": {"node1": "success"}},
             },
-            output_data=None,
         )
 
         # Mock execution to succeed (validation removed from execute_workflow)

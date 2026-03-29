@@ -182,7 +182,8 @@ class TestValidationBeforeExecution:
 
         assert output_data is not None, "Expected JSON output"
         assert output_data.get("success") is False
-        assert "validation_errors" in output_data or "error" in output_data
+        assert "errors" in output_data
+        assert "validation_errors" not in output_data  # Old shape must not appear
 
     def test_valid_workflow_still_executes(self, tmp_path: Path) -> None:
         """Valid workflows should still execute normally after validation passes."""

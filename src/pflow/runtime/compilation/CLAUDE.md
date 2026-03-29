@@ -24,7 +24,7 @@ Also re-exported through `runtime/__init__.py`: `CompilationError`, `compile_ir_
 
 The orchestrator. `compile_ir_to_flow()` is the main entry point: parse IR dict, validate, instantiate nodes, wire edges, build Flow.
 
-**CompilationError** — Rich exception with `phase`, `node_id`, `node_type`, `details`, `suggestion`. **WARNING**: A DIFFERENT `CompilationError` exists in `core/user_errors.py` (subclass of `UserFriendlyError`, different constructor). `cli/main.py` imports this one as `CompilerCompilationError` to disambiguate.
+**CompilationError** — Rich exception with `phase`, `node_id`, `node_type`, `details`, `suggestion`. The only `CompilationError` in the codebase is this one (the vestigial copy in `core/user_errors.py` was removed in Task 137).
 
 **Key functions**:
 - `compile_ir_to_flow()` — main pipeline. Delegates to extracted helpers for run hooks and --only behavior.
@@ -100,7 +100,7 @@ Lazy imports (break cycles):
 
 | Consumer | Symbols used |
 |----------|-------------|
-| `cli/main.py` | `display_validation_warnings`, `CompilationError` (as `CompilerCompilationError`), `prepare_inputs` |
+| `cli/main.py` | `display_validation_warnings`, `prepare_inputs` |
 | `cli/commands/registry_run.py` | `inject_special_parameters`, `import_node_class` |
 | `execution/executor_service.py` | `compile_ir_to_flow`, `CompilationError` (via `runtime/__init__.py`) |
 | `mcp_server/services/execution_service.py` | `import_node_class`, `_parse_mcp_node_type` (lazy import, boundary violation) |
@@ -118,7 +118,6 @@ Tests live in `tests/test_runtime/`:
 
 ## Known Issues
 
-- **Two `CompilationError` classes**: `runtime/compilation/compiler.py` vs `core/user_errors.py` — naming collision, different constructors, different inheritance hierarchies.
 - **`_parse_mcp_node_type` placement**: Conceptually belongs in `mcp/` but raises `CompilationError`, anchoring it here.
 - **`display_validation_warnings` placement**: Display/UX logic living in the compilation pipeline rather than in `execution/`.
 

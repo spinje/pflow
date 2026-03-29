@@ -105,7 +105,7 @@ def mock_compile():
             # Create a successful result
             from pflow.execution.executor_service import ExecutionResult
 
-            return ExecutionResult(success=True, errors=[], shared_after=shared_storage, output_data=None)
+            return ExecutionResult(success=True, errors=[], shared_after=shared_storage)
 
         mock_execute.side_effect = execute_mock
         yield mock_execute

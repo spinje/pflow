@@ -695,11 +695,6 @@ def _handle_json_output(
     return _serialize_json_result(result, verbose)
 
 
-def _get_default_workflow_metadata() -> dict[str, Any]:
-    """Get default workflow metadata when none is provided."""
-    return {"action": "unsaved"}
-
-
 def _create_workflow_metadata(name: str | None, action: str) -> dict[str, Any]:
     """Create workflow metadata with name and action.
 
@@ -721,16 +716,6 @@ def _create_workflow_metadata(name: str | None, action: str) -> dict[str, Any]:
     if name:
         metadata["name"] = name
     return metadata
-
-
-def _extract_workflow_node_count(metrics_summary: dict[str, Any]) -> int:
-    """Extract workflow node count from metrics summary.
-
-    Only counts workflow nodes.
-    """
-    workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
-    node_count = workflow_metrics.get("nodes_executed", 0)
-    return int(node_count)  # Ensure we return an int
 
 
 def _serialize_json_result(result: dict[str, Any], verbose: bool) -> bool:

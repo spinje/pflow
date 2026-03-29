@@ -583,7 +583,7 @@ class TestEdgeCases:
         with patch("pathlib.Path.read_text", raise_perm):
             result = runner.invoke(main, [str(wf)])
             assert result.exit_code != 0
-            assert "Permission denied" in result.output
+            assert "Permission" in result.output or "permission" in result.output
 
     def test_unicode_decode_error_on_file(self, tmp_path):
         """Test decode error yields helpful message."""
@@ -598,7 +598,7 @@ class TestEdgeCases:
         with patch("pathlib.Path.read_text", raise_decode):
             result = runner.invoke(main, [str(wf)])
             assert result.exit_code != 0
-            assert "Unable to read file" in result.output
+            assert "utf-8" in result.output.lower()
 
     def test_parameter_with_equals_in_value(self):
         """Test parameters with = in the value are handled correctly."""

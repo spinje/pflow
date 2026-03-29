@@ -19,16 +19,11 @@ logger = logging.getLogger(__name__)
 class ExecutionResult:
     """Result of workflow execution."""
 
-    success: bool  # Keep for backward compatibility
-    status: WorkflowStatus = WorkflowStatus.SUCCESS  # NEW: Tri-state status
+    success: bool
+    status: WorkflowStatus = WorkflowStatus.SUCCESS
     shared_after: dict[str, Any] = field(default_factory=dict)
     errors: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[dict[str, Any]] = field(default_factory=list)  # NEW: Warnings list
-    action_result: Optional[str] = None
-    node_count: int = 0
-    duration: float = 0.0
-    output_data: Optional[str] = None
-    metrics_summary: Optional[dict[str, Any]] = None
+    warnings: list[dict[str, Any]] = field(default_factory=list)
 
 
 class WorkflowExecutorService:
@@ -124,7 +119,6 @@ class WorkflowExecutorService:
 
             # Process execution results
             success, status = self._determine_workflow_status(action_result, shared_store)
-            output_data = self._extract_output_data(shared_store, workflow_ir, output_key, success)
             errors = self._build_error_list(success, action_result, shared_store)
 
             # Update metadata if successful (calculate duration for metadata)
@@ -136,8 +130,6 @@ class WorkflowExecutorService:
             success = result["success"]
             status = WorkflowStatus.FAILED  # Exceptions always mean failure
             errors = result["errors"]
-            action_result = result["action_result"]
-            output_data = result["output_data"]
 
         finally:
             # Shut down MCP connection pool (kills all server subprocesses)
@@ -151,8 +143,6 @@ class WorkflowExecutorService:
             if metrics_collector:
                 metrics_collector.record_workflow_end()
 
-        duration = time.time() - start_time
-
         # Copy runtime warnings to trace collector (for inclusion in trace file)
         trace_collector = shared_store.get("_trace_collector") if shared_store else None
         if trace_collector is not None:
@@ -164,11 +154,6 @@ class WorkflowExecutorService:
             status=status,
             shared_store=shared_store,
             errors=errors,
-            action_result=action_result,
-            workflow_ir=workflow_ir,
-            duration=duration,
-            output_data=output_data,
-            metrics_collector=metrics_collector,
         )
 
     def _initialize_shared_store(
@@ -282,30 +267,6 @@ class WorkflowExecutorService:
             })
 
         return warnings
-
-    def _extract_output_data(
-        self,
-        shared_store: dict[str, Any],
-        workflow_ir: dict[str, Any],
-        output_key: Optional[str],
-        success: bool,
-    ) -> Optional[str]:
-        """Extract output data from shared store.
-
-        Args:
-            shared_store: The shared store after execution
-            workflow_ir: The workflow IR specification
-            output_key: Optional specific key to extract
-            success: Whether execution was successful
-
-        Returns:
-            The extracted output as a string, or None
-        """
-        if output_key and output_key in shared_store:
-            return str(shared_store[output_key])
-        elif success:
-            return self._extract_default_output(shared_store, workflow_ir)
-        return None
 
     def _build_error_list(
         self, success: bool, action_result: Optional[str], shared_store: dict[str, Any]
@@ -648,8 +609,6 @@ class WorkflowExecutorService:
         return {
             "success": False,
             "errors": [error_dict],
-            "action_result": "error",
-            "output_data": None,
         }
 
     def _build_execution_result(
@@ -658,34 +617,8 @@ class WorkflowExecutorService:
         status: WorkflowStatus,
         shared_store: dict[str, Any],
         errors: list[dict[str, Any]],
-        action_result: Optional[str],
-        workflow_ir: dict[str, Any],
-        duration: float,
-        output_data: Optional[str],
-        metrics_collector: Optional[Any],
     ) -> ExecutionResult:
-        """Build the final execution result.
-
-        Args:
-            success: Whether execution was successful (backward compatibility)
-            status: Tri-state workflow status (SUCCESS/DEGRADED/FAILED)
-            shared_store: The shared store after execution
-            errors: List of errors if any
-            action_result: The action result from flow execution
-            workflow_ir: The workflow IR specification
-            duration: Execution duration
-            output_data: Extracted output data
-            metrics_collector: Optional metrics collector
-
-        Returns:
-            ExecutionResult instance
-        """
-        metrics_summary = None
-        if metrics_collector:
-            trace = shared_store.get("_trace_collector") if shared_store else None
-            llm_calls = trace.collect_llm_calls() if trace else []
-            metrics_summary = metrics_collector.get_summary(llm_calls)
-
+        """Build the final execution result."""
         warnings = self._extract_warnings(shared_store)
 
         return ExecutionResult(
@@ -694,11 +627,6 @@ class WorkflowExecutorService:
             shared_after=shared_store,
             errors=errors,
             warnings=warnings,
-            action_result=action_result,
-            node_count=len(workflow_ir.get("nodes", [])),
-            duration=duration,
-            output_data=output_data,
-            metrics_summary=metrics_summary,
         )
 
     def _extract_default_output(self, shared: dict[str, Any], workflow_ir: dict[str, Any]) -> Optional[str]:

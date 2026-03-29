@@ -4,25 +4,9 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-import click
-
-if TYPE_CHECKING:
-    from pflow.core.markdown_parser import MarkdownParseError
-
+from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow.manager import WorkflowManager
-
-
-def _show_markdown_parse_error(path: Path, error: MarkdownParseError) -> None:
-    """Show a helpful markdown parse error message.
-
-    Args:
-        path: Path to the workflow file.
-        error: The parse error with line number and suggestion.
-    """
-    click.echo(f"❌ Invalid workflow syntax in {path}", err=True)
-    click.echo(f"  {error}", err=True)
 
 
 def _is_path_like(identifier: str) -> bool:
@@ -37,57 +21,47 @@ def _is_path_like(identifier: str) -> bool:
     )
 
 
-def _try_load_workflow_from_file(path: Path) -> tuple[dict | None, str | None]:
-    """Attempt to load a workflow from a file path, with error reporting.
+def _try_load_workflow_from_file(path: Path) -> dict | None:
+    """Attempt to load a workflow from a file path.
 
-    Returns a tuple of (workflow_ir, source). On handled errors, returns (None, "parse_error").
+    Returns workflow IR dict on success, None if file doesn't exist.
+    Raises WorkflowNotFoundError for wrong extensions,
+    MarkdownParseError/PermissionError/UnicodeDecodeError propagate.
     """
     path_str = str(path).lower()
 
     # Reject .json files with a clear migration message (before existence check)
     if path_str.endswith(".json"):
-        click.echo(
-            f"❌ JSON workflow format is no longer supported: {path}\n"
+        raise WorkflowNotFoundError(
+            str(path),
+            hint=f"JSON workflow format is no longer supported: {path}\n"
             "Workflow files use .pflow.md format.\n"
             "Example: pflow ./my-workflow.pflow.md",
-            err=True,
         )
-        return None, "parse_error"
 
     # Reject .md files that aren't .pflow.md
     if path_str.endswith(".md") and not path_str.endswith(".pflow.md"):
         suggested = str(path).rsplit(".md", 1)[0] + ".pflow.md"
-        click.echo(
-            f"❌ Wrong file extension: {path}\nWorkflow files use .pflow.md extension.\nRename to: {suggested}",
-            err=True,
+        raise WorkflowNotFoundError(
+            str(path),
+            hint=f"Wrong file extension: {path}\nWorkflow files use .pflow.md extension.\nRename to: {suggested}",
         )
-        return None, "parse_error"
 
     if not path.exists():
-        return None, None
+        return None
 
-    try:
-        from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+    from pflow.core.markdown_parser import parse_markdown
 
-        content = path.read_text(encoding="utf-8")
-        result = parse_markdown(content)
-        workflow_ir = result.ir
+    content = path.read_text(encoding="utf-8")
+    result = parse_markdown(content)
+    workflow_ir = result.ir
 
-        # Auto-normalize: add missing boilerplate fields
-        from pflow.core import normalize_ir
+    # Auto-normalize: add missing boilerplate fields
+    from pflow.core import normalize_ir
 
-        normalize_ir(workflow_ir)
+    normalize_ir(workflow_ir)
 
-        return workflow_ir, "file"
-    except MarkdownParseError as e:
-        _show_markdown_parse_error(path, e)
-        return None, "parse_error"
-    except PermissionError:
-        click.echo(f"cli: Permission denied reading file: '{path}'. Check file permissions.", err=True)
-        return None, "parse_error"
-    except UnicodeDecodeError:
-        click.echo(f"cli: Unable to read file: '{path}'. File must be valid UTF-8 text.", err=True)
-        return None, "parse_error"
+    return workflow_ir
 
 
 def _try_load_workflow_from_registry(identifier: str, wm: WorkflowManager) -> tuple[dict | None, str | None]:
@@ -116,8 +90,10 @@ def resolve_workflow(identifier: str, wm: WorkflowManager | None = None) -> tupl
     2. Exact saved workflow name
     3. Saved workflow without .pflow.md extension
 
-    Returns:
-        (workflow_ir, source) where source is 'file', 'saved', 'parse_error', or None
+    Returns (ir_dict, source) or (None, None) if not found.
+    Raises WorkflowNotFoundError for wrong extensions,
+    MarkdownParseError for parse failures,
+    PermissionError/UnicodeDecodeError propagate.
     """
     if not wm:
         wm = WorkflowManager()
@@ -125,9 +101,10 @@ def resolve_workflow(identifier: str, wm: WorkflowManager | None = None) -> tupl
     # 1. File path detection (platform separators or workflow file extension)
     if _is_path_like(identifier):
         path = Path(identifier).expanduser().resolve()
-        ir, source = _try_load_workflow_from_file(path)
-        if ir is not None or source == "parse_error":
-            return ir, source
+        ir = _try_load_workflow_from_file(path)
+        if ir is not None:
+            return ir, "file"
+        # File not found — fall through to registry
 
     # 2/3. Saved workflow (exact name or extension-stripped)
     ir, source = _try_load_workflow_from_registry(identifier, wm)

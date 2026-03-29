@@ -149,7 +149,7 @@ class TestWorkflowSavedName:
     def test_workflow_manager_error_handling(self, mock_manager_class):
         """When WorkflowManager raises, wrap in ValueError with workflow name context."""
         mock_manager = Mock()
-        mock_manager.load_ir.side_effect = WorkflowNotFoundError("Workflow 'test' not found")
+        mock_manager.load_ir.side_effect = WorkflowNotFoundError("test")
         mock_manager_class.return_value = mock_manager
 
         node = WorkflowExecutor()

@@ -197,13 +197,14 @@ class TestWorkflowListCommand:
             result = invoke_cli(["workflow", "list", "slack github"])
 
             assert result.exit_code == 0
-            # Should show custom message
-            assert "No workflows match filter: 'slack github'" in result.output
-            assert "Found 2 total workflows" in result.output
-            assert "Try:" in result.output
-            assert "Broader keywords" in result.output
+            # Filter no-match messages go to stderr
+            combined = result.output + result.stderr
+            assert "No workflows match filter: 'slack github'" in combined
+            assert "Found 2 total workflows" in combined
+            assert "Try:" in combined
+            assert "Broader keywords" in combined
             # Should NOT show the default "No workflows saved yet" message
-            assert "No workflows saved yet" not in result.output
+            assert "No workflows saved yet" not in combined
 
     def test_list_workflows_json_format(self) -> None:
         """Test listing workflows with --json flag excludes ir field."""
@@ -314,10 +315,11 @@ class TestWorkflowListCommand:
             result = invoke_cli(["workflow", "list", "github"])
 
             assert result.exit_code == 0
-            # Should show custom message with context (workflows exist but don't match)
-            assert "No workflows match filter: 'github'" in result.output
-            assert "Found 2 total workflows" in result.output
-            # Original workflows should not appear
+            # Filter no-match messages go to stderr
+            combined = result.output + result.stderr
+            assert "No workflows match filter: 'github'" in combined
+            assert "Found 2 total workflows" in combined
+            # Original workflows should not appear in stdout
             assert "backup-photos" not in result.output
             assert "daily-report" not in result.output
 

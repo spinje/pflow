@@ -807,7 +807,7 @@ class TestJSONOutputStructure:
 
             if json_parsed:
                 # Test behavior: Error information is present
-                assert output.get("is_error") is True or "error" in output
+                assert output.get("success") is False
 
                 # Test behavior: Some metrics are available even on error
                 # At least one of these should be present
