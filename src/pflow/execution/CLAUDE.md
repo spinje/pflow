@@ -34,16 +34,11 @@ Implementations: `CliOutput` (cli/cli_output.py), `NullOutput` (null_output.py f
 ```python
 @dataclass
 class ExecutionResult:
-    success: bool                                          # Keep for backward compat
-    status: WorkflowStatus = WorkflowStatus.SUCCESS        # Tri-state: SUCCESS/DEGRADED/FAILED
+    success: bool
+    status: WorkflowStatus = WorkflowStatus.SUCCESS
     shared_after: dict[str, Any] = field(default_factory=dict)
     errors: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[dict[str, Any]] = field(default_factory=list)  # api_warning, template_resolution
-    action_result: Optional[str] = None                    # "error", "compilation_failed", or flow action
-    node_count: int = 0
-    duration: float = 0.0
-    output_data: Optional[str] = None                      # Extracted output
-    metrics_summary: Optional[dict[str, Any]] = None       # LLM usage metrics
+    warnings: list[dict[str, Any]] = field(default_factory=list)
 ```
 
 ## Error Structure (Canonical Reference)

@@ -123,16 +123,18 @@ class WorkflowValidator:
         Returns:
             List of structural validation errors
         """
+        from pflow.core.ir_schema import ValidationError as SchemaValidationError
         from pflow.core.ir_schema import validate_ir
 
         try:
             validate_ir(workflow_ir)
             return []
-        except Exception as e:
+        except SchemaValidationError as e:
             # Use str(e) to get full error including suggestions
             # ValidationError.__str__() includes path, message, and suggestions
-            error_msg = str(e)
-            return [f"Structure: {error_msg}"]
+            return [f"Structure: {e}"]
+        except Exception as e:
+            return [f"Structure: Unexpected error during validation: {e}"]
 
     @staticmethod
     def _validate_stdin_inputs(workflow_ir: dict[str, Any]) -> list[str]:

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.file_resolver import is_workflow_file_reference
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import parse_markdown
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
@@ -370,11 +370,7 @@ class WorkflowExecutor(BaseNode):
         except Exception as e:
             raise OSError(f"Error reading workflow file: {e}") from e
 
-        try:
-            result = parse_markdown(content)
-        except MarkdownParseError as e:
-            raise ValueError(f"Invalid workflow file {path}: {e}") from e
-
+        result = parse_markdown(content)
         workflow_ir = result.ir
         if "nodes" not in workflow_ir:
             raise ValueError(f"Workflow file {path} must contain a '## Steps' section with at least one node")

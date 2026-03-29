@@ -705,10 +705,10 @@ class TestJSONOutputFormat:
         assert output["success"] is False
         assert "error" in output
         assert "Piped input cannot be routed" in output["error"]
-        assert "validation_errors" in output
-        assert isinstance(output["validation_errors"], list)
-        assert len(output["validation_errors"]) > 0
-        assert "stdin" in output["validation_errors"][0].lower()
+        assert "errors" in output
+        assert isinstance(output["errors"], list)
+        assert len(output["errors"]) > 0
+        assert "stdin" in output["errors"][0].get("message", "").lower()
 
     @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
     def test_stdin_error_text_output_default(self, mock_stdin, tmp_path):
@@ -727,8 +727,7 @@ class TestJSONOutputFormat:
         result = runner.invoke(main, [str(workflow_file)], input="piped data")
 
         assert result.exit_code == 1
-        # Output should be plain text with emoji
-        assert "❌" in result.output
+        # Output should be plain text error
         assert "stdin" in result.output.lower()
         # Should NOT be valid JSON
         with pytest.raises(json.JSONDecodeError):
@@ -759,16 +758,21 @@ class TestJSONOutputFormat:
         output = json.loads(result.output)
         assert output["success"] is False
         assert "error" in output
-        assert "validation_errors" in output
-        assert isinstance(output["validation_errors"], list)
-        # Should have structured error with path and suggestion
+        assert "errors" in output
+        assert isinstance(output["errors"], list)
+        # Should have structured error about multiple stdin inputs
         multi_stdin_error = next(
-            (e for e in output["validation_errors"] if "Multiple inputs" in e.get("message", "")),
+            (
+                e
+                for e in output["errors"]
+                if "Multiple inputs" in e.get("message", "") or "stdin" in e.get("message", "").lower()
+            ),
             None,
         )
         assert multi_stdin_error is not None
-        assert "path" in multi_stdin_error
-        assert "suggestion" in multi_stdin_error
+        # Structured fields from prepare_inputs() tuples must survive to JSON
+        assert "path" in multi_stdin_error, f"path field missing: {multi_stdin_error}"
+        assert "suggestion" in multi_stdin_error, f"suggestion field missing: {multi_stdin_error}"
 
     @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
     def test_multiple_stdin_error_text_output(self, mock_stdin, tmp_path):

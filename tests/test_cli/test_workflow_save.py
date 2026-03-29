@@ -121,12 +121,8 @@ class TestWorkflowSaveCLI:
 
         assert result.exit_code == 1
         assert "Save this workflow?" not in result.output
-        # Check for execution or planning failure
-        assert "failed" in result.output.lower()
-        # Check that the specific error is shown
-        assert (
-            "Unknown node type" in result.output or "non-existent-node" in result.output or "not found" in result.output
-        )
+        # Check that the specific error is shown (validation catches unknown node type)
+        assert "non-existent-node" in result.output or "Unknown node type" in result.output
 
     def test_no_prompt_when_stdout_is_piped(self, sample_workflow, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that save prompt is not shown when stdout is piped."""

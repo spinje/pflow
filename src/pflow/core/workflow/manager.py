@@ -284,7 +284,7 @@ class WorkflowManager:
         file_path = self._entry_point(name)
 
         if not file_path.exists():
-            raise WorkflowNotFoundError(f"Workflow '{name}' not found")
+            raise WorkflowNotFoundError(name)
 
         try:
             content = file_path.read_text(encoding="utf-8")
@@ -382,7 +382,7 @@ class WorkflowManager:
         workflow_dir = self._workflow_dir(name)
 
         if not workflow_dir.is_dir():
-            raise WorkflowNotFoundError(f"Workflow '{name}' not found")
+            raise WorkflowNotFoundError(name)
 
         try:
             shutil.rmtree(workflow_dir)
@@ -410,7 +410,7 @@ class WorkflowManager:
         file_path = self._entry_point(name)
 
         if not file_path.exists():
-            raise WorkflowNotFoundError(f"Workflow '{name}' not found")
+            raise WorkflowNotFoundError(name)
 
         try:
             content = file_path.read_text(encoding="utf-8")

@@ -137,9 +137,9 @@ def _handle_nonexistent_path(scan_path: Path, path: Optional[str], output_json: 
     error_msg = f"Path does not exist: {scan_path}"
     if output_json:
         output = {"error": error_msg, "path": str(scan_path)}
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json.dumps(output, indent=2), err=True)
     else:
-        click.echo(error_msg)
+        click.echo(error_msg, err=True)
         if not path:  # Default path
             click.echo("\nTo add custom nodes:")
             click.echo(f"  1. Create directory: mkdir -p {scan_path}")
@@ -243,7 +243,7 @@ def _handle_scan_error(e: Exception, output_json: bool) -> None:
     """Handle errors during scanning."""
     if output_json:
         output = {"error": str(e)}
-        click.echo(json.dumps(output, indent=2))
+        click.echo(json.dumps(output, indent=2), err=True)
     else:
         click.echo(f"Error: Failed to scan: {e}", err=True)
     sys.exit(1)

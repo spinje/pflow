@@ -67,7 +67,6 @@ class TestWorkflowExecution:
             # Must return ExecutionResult, not raise
             assert result.success is False
             assert result.status == WorkflowStatus.FAILED
-            assert result.action_result == "compilation_failed"
             assert len(result.errors) == 1
             error = result.errors[0]
             assert error["source"] == "compilation"
@@ -163,6 +162,6 @@ class TestCompilationErrorIntegration:
 
         assert result.success is False
         assert result.status == WorkflowStatus.FAILED
-        assert result.action_result == "compilation_failed"
+        assert result.errors[0]["source"] == "compilation"
         assert any("data_flow_validation" in str(e.get("phase", "")) for e in result.errors)
         assert result.shared_after == {}

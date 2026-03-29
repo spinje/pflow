@@ -8,9 +8,7 @@ Fix 4: Error category uses _determine_error_category (not hardcoded)
 """
 
 from typing import Any
-from unittest.mock import MagicMock, patch
-
-import click
+from unittest.mock import patch
 
 from pflow.cli.workflow_errors import _display_single_error
 from pflow.core.workflow.status import WorkflowStatus
@@ -177,67 +175,58 @@ def test_trace_status_success_when_warnings_empty_list() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_degraded_workflow_exits_with_code_2() -> None:
+def test_degraded_workflow_exits_with_code_2(tmp_path) -> None:
     """A successful but degraded workflow should exit with code 2.
 
     This follows CLI conventions (0=success, 1=error, 2=degraded) similar to
     rsync and xargs, giving agents a machine-readable signal for partial failure.
     """
-    result = ExecutionResult(
-        success=True,
-        status=WorkflowStatus.DEGRADED,
-    )
+    from click.testing import CliRunner
 
-    mock_ctx = MagicMock(spec=click.Context)
+    from pflow.cli.main import main
+    from tests.shared.markdown_utils import write_workflow_file
 
-    # Mock _handle_workflow_success to do nothing (we're testing exit code logic)
-    with patch("pflow.cli.main._handle_workflow_success"):
-        from pflow.cli.main import _execute_workflow_and_handle_result
+    workflow = {
+        "nodes": [{"id": "n1", "type": "shell", "params": {"command": "echo ok"}}],
+        "edges": [],
+    }
+    wf_path = tmp_path / "test.pflow.md"
+    write_workflow_file(workflow, wf_path)
 
-        _execute_workflow_and_handle_result(
-            ctx=mock_ctx,
-            result=result,
-            shared_storage={},
-            workflow_trace=None,
-            output_key=None,
-            ir_data={"nodes": []},
-            output_format="text",
-            metrics_collector=None,
-            verbose=False,
-            display=MagicMock(),
-        )
+    degraded_result = ExecutionResult(success=True, status=WorkflowStatus.DEGRADED, shared_after={"result": "ok"})
 
-    # Verify ctx.exit(2) was called
-    mock_ctx.exit.assert_called_once_with(2)
+    runner = CliRunner()
+    with patch(
+        "pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow", return_value=degraded_result
+    ):
+        result = runner.invoke(main, [str(wf_path)])
+
+    assert result.exit_code == 2
 
 
-def test_successful_workflow_does_not_exit_with_code_2() -> None:
-    """A fully successful workflow should not call ctx.exit(2)."""
-    result = ExecutionResult(
-        success=True,
-        status=WorkflowStatus.SUCCESS,
-    )
+def test_successful_workflow_does_not_exit_with_code_2(tmp_path) -> None:
+    """A fully successful workflow should not exit with code 2."""
+    from click.testing import CliRunner
 
-    mock_ctx = MagicMock(spec=click.Context)
+    from pflow.cli.main import main
+    from tests.shared.markdown_utils import write_workflow_file
 
-    with patch("pflow.cli.main._handle_workflow_success"):
-        from pflow.cli.main import _execute_workflow_and_handle_result
+    workflow = {
+        "nodes": [{"id": "n1", "type": "shell", "params": {"command": "echo ok"}}],
+        "edges": [],
+    }
+    wf_path = tmp_path / "test.pflow.md"
+    write_workflow_file(workflow, wf_path)
 
-        _execute_workflow_and_handle_result(
-            ctx=mock_ctx,
-            result=result,
-            shared_storage={},
-            workflow_trace=None,
-            output_key=None,
-            ir_data={"nodes": []},
-            output_format="text",
-            metrics_collector=None,
-            verbose=False,
-            display=MagicMock(),
-        )
+    success_result = ExecutionResult(success=True, status=WorkflowStatus.SUCCESS, shared_after={"result": "ok"})
 
-    # ctx.exit should NOT be called for successful workflows
-    mock_ctx.exit.assert_not_called()
+    runner = CliRunner()
+    with patch(
+        "pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow", return_value=success_result
+    ):
+        result = runner.invoke(main, [str(wf_path)])
+
+    assert result.exit_code == 0
 
 
 # ---------------------------------------------------------------------------

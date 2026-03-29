@@ -425,8 +425,8 @@ def test_error_file_encoding():
         result = runner.invoke(main, ["./binary.pflow.md"])
 
         assert result.exit_code != 0
-        # File encoding errors now show explicit decoding message
-        assert "Unable to read file" in result.output
+        # UnicodeDecodeError shows actionable message
+        assert "utf-8" in result.output.lower()
 
 
 def test_signal_handling_exit_code():

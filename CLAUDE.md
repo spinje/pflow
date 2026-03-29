@@ -200,6 +200,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 108: Smart Trace Debug Output
 - ✅ Task 106: Workflow Iteration Cache
 - ✅ Task 136: Recursive Sub-Workflow Validation at Parse Time
+- ✅ Task 137: Unified CLI Output Pipeline
 
 ### Planned Features (in order of priority)
 

@@ -1,13 +1,10 @@
 """Unified workflow execution."""
 
-import logging
 from typing import Any, Optional
 
 from .executor_service import ExecutionResult, WorkflowExecutorService
 from .null_output import NullOutput
 from .output_interface import OutputInterface
-
-logger = logging.getLogger(__name__)
 
 
 def execute_workflow(
@@ -62,13 +59,14 @@ def execute_workflow(
             validate=True,  # Compiler-level template validation (separate from WorkflowValidator)
         )
     except Exception as e:
-        # CompilationError and other exceptions from the compiler are wrapped
-        # in ExecutionResult so callers always get the declared return type.
+        # CompilationError, MaxNodeVisitsError, and other exceptions from the
+        # compiler/runtime are wrapped in ExecutionResult so callers always get
+        # the declared return type.
+        from pflow.core.exceptions import MaxNodeVisitsError
+        from pflow.core.workflow.status import WorkflowStatus
         from pflow.runtime import CompilationError
 
         if isinstance(e, CompilationError):
-            from pflow.core.workflow.status import WorkflowStatus
-
             return ExecutionResult(
                 success=False,
                 status=WorkflowStatus.FAILED,
@@ -84,9 +82,24 @@ def execute_workflow(
                         "sub_workflow_path": (getattr(e, "details", None) or {}).get("sub_workflow_path"),
                     }
                 ],
-                shared_after={},
-                action_result="compilation_failed",
             )
+
+        if isinstance(e, MaxNodeVisitsError):
+            return ExecutionResult(
+                success=False,
+                status=WorkflowStatus.FAILED,
+                errors=[
+                    {
+                        "source": "runtime",
+                        "category": "max_visits",
+                        "message": str(e),
+                        "node_id": e.node_id,
+                        "visit_count": e.visit_count,
+                        "max_visits": e.max_visits,
+                    }
+                ],
+            )
+
         raise
 
     return result

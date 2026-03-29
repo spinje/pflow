@@ -48,7 +48,7 @@ src/pflow/core/
 
 ### exceptions.py
 
-**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError`, `WorkflowValidationError`, `CriticalDiscoveryError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
+**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError` (structured: `workflow_name`, `similar_names`, `hint`, `format_for_cli()`), `WorkflowValidationError` (structured: `summary`, `validation_errors` as strings or `(msg, path, suggestion)` tuples, `format_for_cli()`), `CriticalDiscoveryError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`, has `node_id`, `visit_count`, `max_visits`, `format_for_cli()`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
@@ -176,7 +176,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### user_errors.py
 
-Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `CompilationError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
+Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
 
 ### validation_utils.py
 

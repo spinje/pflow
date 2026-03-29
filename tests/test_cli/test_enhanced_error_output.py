@@ -146,12 +146,10 @@ class TestEnhancedErrorOutput:
         assert "cached" in steps2[0]
 
     def test_error_handler_signature_compatibility(self, tmp_path, monkeypatch):
-        """Verify _handle_workflow_error receives result param.
+        """Verify error handler receives ExecutionResult through the pipeline.
 
-        This validates the signature change from Task 71.
-        The actual signature validation is done by Python - if the wrong
-        parameters were passed, we'd get a TypeError. This test verifies
-        that ExecutionResult is passed through the call chain.
+        Validates that execution failures produce proper error output
+        (the error pipeline was restructured in Task 137).
         """
         workflow = {
             "ir_version": "0.1.0",

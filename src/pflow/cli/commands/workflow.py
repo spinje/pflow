@@ -48,11 +48,11 @@ def list_workflows(filter_pattern: str | None, output_json: bool) -> None:
         # Custom message when filter excludes everything but workflows exist
         if not workflows and total_count > 0 and not output_json:
             plural = "workflow" if total_count == 1 else "workflows"
-            click.echo(f"No workflows match filter: '{filter_pattern}'")
-            click.echo(f"\nFound {total_count} total {plural}. Try:")
-            click.echo("  - Broader keywords: Use fewer or different terms")
-            click.echo("  - List all: pflow workflow list")
-            click.echo('  - Discovery: pflow workflow discover "your task description"')
+            click.echo(f"No workflows match filter: '{filter_pattern}'", err=True)
+            click.echo(f"\nFound {total_count} total {plural}. Try:", err=True)
+            click.echo("  - Broader keywords: Use fewer or different terms", err=True)
+            click.echo("  - List all: pflow workflow list", err=True)
+            click.echo('  - Discovery: pflow workflow discover "your task description"', err=True)
             return
     else:
         workflows = all_workflows

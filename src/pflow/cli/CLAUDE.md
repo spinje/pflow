@@ -24,9 +24,8 @@ workflow_command (main.py) ← the default path
         ↓ execute_json_workflow
             ↓ _validate_before_execution
             ↓ execute_workflow() (from pflow.execution)
-            ↓ _execute_workflow_and_handle_result
-                ├─→ _handle_workflow_success → _handle_workflow_output (workflow_output.py)
-                └─→ _handle_workflow_error → _display_text_error_details (workflow_errors.py)
+            ├─→ success: _handle_workflow_success → _handle_workflow_output (workflow_output.py)
+            └─→ error: output_error() (error_output.py) → JSON or text
 ```
 
 **Why the wrapper exists**: Click can't handle both `@click.argument("workflow", nargs=-1)` and subcommands in the same group. `main_wrapper.py` detects known subcommands BEFORE Click processes arguments. Adding a new subcommand: add to the `subcommand_routes` dict in `main_wrapper.py` and import the handler.
@@ -38,7 +37,8 @@ src/pflow/cli/
 ├── main_wrapper.py          # Entry point: routing table + _route_subcommand helper
 ├── main.py                  # Workflow execution orchestration (see "main.py" section below)
 ├── workflow_output.py       # Output detection, display, execution summaries
-├── workflow_errors.py       # Error display and JSON error construction
+├── workflow_errors.py       # Text-mode error display for ExecutionResult failures
+├── error_output.py            # Unified error output (JSON + text for all error types)
 ├── workflow_resolution.py   # File/name → IR resolution (resolve_workflow, is_likely_workflow_name)
 ├── mcp_sync.py              # MCP auto-discovery at startup
 ├── param_parsing.py         # infer_type, parse_workflow_params, format_param_value
@@ -60,10 +60,9 @@ param_parsing.py           (leaf — stdlib only)
 workflow_resolution.py     (leaf — core/ only)
 mcp_sync.py                (leaf — mcp/, registry/ only)
 workflow_output.py          (leaf — core/, execution/ only)
+error_output.py            (leaf — imports from workflow_output, workflow_errors, core/, execution/)
     ↑
-workflow_errors.py          (imports metadata helpers from workflow_output)
-    ↑
-main.py                    (orchestrator — imports from all 5 modules above)
+main.py                    (orchestrator — imports from all modules above)
     ↑
 main_wrapper.py            (entry point — imports workflow_command from main.py)
 ```
@@ -74,8 +73,9 @@ Contains the Click command definition (`workflow_command`) and everything that c
 
 **What's here**:
 - The Click command and its startup sequence (signals, env injection, context init)
-- Execution pipeline: `execute_json_workflow` → prepare → validate → execute → handle result
-- Success/error routing: dispatches to `workflow_output` or `workflow_errors`, then handles trace saving and exit codes
+- Execution pipeline: `execute_json_workflow` → prepare → validate → execute → success/error handling
+- Success routing: `_handle_workflow_success` → `workflow_output.py`
+- Error routing: `output_error()` from `error_output.py` (unified JSON + text for all error types)
 - Validation: static workflow validation, validate-only mode
 - Stdin routing: detects piped input, routes to workflow inputs marked `stdin: true`
 - Named workflow handling: parameter preparation, workflow help display
@@ -114,7 +114,7 @@ Both search inside node namespace dicts (last occurrence wins — most downstrea
 
 ### JSON/Text Duality
 
-Almost every output and error function has parallel JSON and text code paths. The `--output-format json` flag gates which path executes. JSON mode also suppresses all logging below ERROR level to prevent stdout contamination.
+Error output is unified: `output_error()` in `error_output.py` handles JSON/text branching for ALL error types. Success output still has parallel paths in `workflow_output.py`. The `--output-format json` flag gates which path executes. JSON mode suppresses all logging below ERROR level to prevent stdout contamination.
 
 ## workflow_output.py
 
@@ -122,20 +122,26 @@ Three responsibilities:
 
 1. **Output routing**: `_handle_workflow_output` → `_handle_text_output` / `_handle_json_output`. Checks user-specified key, then declared outputs (skipped when `--only` active), then auto-detection.
 2. **Execution summary**: `_display_execution_summary` with per-node timing, cache/batch/stderr tags, LLM cost display, and warnings. Always shown except in `--print` mode. When `--only` is active: filters `not_executed` steps, shows `⤷ Stopped after 'X' (--only)` summary line. `_display_workflow_completion_status` shows cache stats suffix `(N cached, M executed)` when `cache_hits > 0`.
-3. **Shared utilities**: `safe_output` (BrokenPipeError handling), `_serialize_json_result` (JSON serialization), `_create_workflow_metadata`.
+3. **Shared utilities**: `safe_output` (BrokenPipeError handling), `_serialize_json_result` (JSON serialization with custom type handling), `_create_workflow_metadata`.
 
 ## workflow_errors.py
 
-Three error categories with different display:
+Text-mode error display for `ExecutionResult` failures. `_display_text_error_details` → `_display_single_error`: per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr always shown on failure). Compilation errors also flow through this path — `execute_workflow()` wraps `CompilationError` in `ExecutionResult` with structured fields (`node_id`, `node_type`, `suggestion`). Security: sanitizes raw responses via `sanitize_parameters`.
 
-1. **Execution errors** (`_display_text_error_details` → `_display_single_error`): Per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr always shown on failure). Compilation errors also flow through this path — `execute_workflow()` wraps `CompilationError` in `ExecutionResult` with structured fields (`node_id`, `node_type`, `suggestion`). Security: sanitizes raw responses via `sanitize_parameters`.
-2. **JSON error construction** (`_create_json_error_output`, `_build_json_error_response`): Structured error output with execution state, metrics, and cost.
+## error_output.py
+
+Unified error output for ALL error types (Task 137). Single entry point: `output_error()` handles both JSON and text modes for both exceptions and `ExecutionResult` failures.
+
+- `format_error_json()` — builds unified JSON shape: `{success, status, error, errors, workflow}`
+- `_exception_to_errors()` — converts any exception to structured `(summary, errors_list)`, extracting fields from known types
+- `display_exception_text()` — text-mode display using `format_for_cli()` protocol
+- `output_error()` — THE single error output function (JSON delegates to `_serialize_json_result`, text delegates to `display_exception_text` or `_display_text_error_details`)
 
 ## Workflow Resolution (workflow_resolution.py)
 
-`resolve_workflow(identifier)` resolves user input to workflow IR:
+`resolve_workflow(identifier)` resolves user input to workflow IR. Returns `(ir_dict, source)` or `(None, None)`. Raises on errors (never returns error sentinels):
 1. Path detection (`_is_path_like`): file separators or `.pflow.md`/`.json`/`.md` extension
-2. File loading (`_try_load_workflow_from_file`): parse markdown, normalize IR. `.json` → rejection with migration message.
+2. File loading (`_try_load_workflow_from_file`): parse markdown, normalize IR. `.json` → raises `WorkflowNotFoundError` with migration hint. `MarkdownParseError`/`PermissionError`/`UnicodeDecodeError` propagate.
 3. Registry lookup (`_try_load_workflow_from_registry`): exact name, then strip `.pflow.md` extension and retry.
 
 `is_likely_workflow_name(text, remaining_args)` heuristics:
@@ -279,6 +285,7 @@ pflow instructions usage                   # Agent guide
 | Source file | Primary test file(s) |
 |------------|---------------------|
 | `main.py` | `test_cli.py`, `test_main.py`, `test_parse_error_handling.py`, `test_workflow_output_handling.py`, `test_dual_mode_stdin.py`, `test_enhanced_error_output.py` |
+| `error_output.py` | `test_unified_error_output.py` (unified JSON shape, structured field preservation, regressions) |
 | `workflow_output.py` | `test_shell_stderr_warnings.py`, `test_direct_execution_helpers.py` |
 | `workflow_resolution.py` | `test_workflow_resolution.py` |
 | `mcp_sync.py` | `test_mcp_auto_discovery.py` |

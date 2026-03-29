@@ -136,9 +136,7 @@ def test_invalid_workflow_markdown(tmp_path):
 
         # Should fail validation
         assert result.exit_code == 1
-        assert (
-            "failed" in result.output.lower() or "error" in result.output.lower() or "invalid" in result.output.lower()
-        )
+        assert "steps" in result.output.lower() or "error" in result.output.lower()
 
 
 def test_invalid_workflow_validation(tmp_path):
@@ -180,11 +178,9 @@ def test_plain_text_file_handling(tmp_path):
 
         # With new system, non-.pflow.md files are treated as workflow names or parsed as markdown
         assert result.exit_code == 1
-        # Should show not found, error, or invalid syntax
+        # Should show not found, error, or parse error
         assert (
-            "not found" in result.output.lower()
-            or "error" in result.output.lower()
-            or "invalid" in result.output.lower()
+            "not found" in result.output.lower() or "error" in result.output.lower() or "steps" in result.output.lower()
         )
 
 
