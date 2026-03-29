@@ -207,8 +207,10 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 **Next**
 - Task 125: Human-in-the-Loop Approval Gates
 
-**Bug Fixes:**
+**Refactors:**
+- Task 134: Output Detection Unification
 - Task 117: JSON Error Output for CLI Subcommands (registry, workflow — narrowed, main.py done by Task 137)
+- Task 120: Strict Input Type Validation
 
 **v0.12.0**
 - Task 46: Workflow Export to Zero-Dependency Code
@@ -241,9 +243,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 
 **Later:**
 - Task 124: Code Node Dependency Management
-- Task 120: Strict Input Type Validation
 - Task 45: Evaluate n8n integration
-- Task 51: Refactor CLI main.py
 - Task 62: Route stdin to Workflow Inputs
 - Task 64: MCP Orchestration (long-running servers)
 - Task 74: Knowledge base system
