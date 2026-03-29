@@ -1,0 +1,9 @@
+✗ Line 7: Node 'fetch' is missing a 'type' parameter.
+
+Every node needs a type:
+
+    ### fetch
+
+    Description of what this node does.
+
+    - type: shell

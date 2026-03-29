@@ -8,7 +8,6 @@ from .base_service import BaseService
 from .discovery_service import DiscoveryService
 from .execution_service import ExecutionService
 from .registry_service import RegistryService
-from .settings_service import SettingsService
 from .workflow_service import WorkflowService
 
 __all__ = [
@@ -16,6 +15,5 @@ __all__ = [
     "DiscoveryService",
     "ExecutionService",
     "RegistryService",
-    "SettingsService",
     "WorkflowService",
 ]

@@ -73,15 +73,6 @@ Rich error context extracted once in `_build_error_list()` (executor_service.py)
 2. Direct execution
 3. Fail fast on first error — return ExecutionResult
 
-## Output Extraction Priority
-
-`executor_service._extract_default_output()` tries 3 strategies in order:
-1. **Declared outputs** from workflow IR (`outputs` field)
-2. **Common keys** in shared store: `result`, `output`, `response`, `data`
-3. **Last node's namespace** — looks for `result`, `output`, `response` in `shared[last_node_id]`
-
-If "why isn't my output showing?" — check this chain.
-
 ## Shared Formatters
 
 **Pattern**: Formatters return strings or dicts, **never print**. Consumers (CLI, MCP) handle display. See `formatters/CLAUDE.md` for details.
