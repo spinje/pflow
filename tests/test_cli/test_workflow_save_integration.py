@@ -139,7 +139,7 @@ class TestWorkflowSaveIntegration:
 
         # Verify workflow executed successfully
         assert result.exit_code == 0
-        assert "Workflow executed successfully" in result.output
+        assert "Workflow completed" in result.output
         assert output_file.exists()
         assert output_file.read_text() == "Integration test output"
 

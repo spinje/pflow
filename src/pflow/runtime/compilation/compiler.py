@@ -625,7 +625,7 @@ def _apply_run_hooks(flow: Any, ir_dict: dict[str, Any], only_node: Optional[str
         if only_node:
             # Store --only metadata for execution summary display.
             # Output extraction handled by namespace-aware auto-detection in the
-            # display layer (success_formatter._find_auto_output, workflow_output._find_auto_output).
+            # display layer (execution/formatters/output_utils.find_auto_output).
             if "__execution__" in shared_storage:
                 shared_storage["__execution__"]["only_node"] = only_node
         elif has_outputs and not is_error:

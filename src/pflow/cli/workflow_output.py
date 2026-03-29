@@ -84,81 +84,6 @@ def _output_with_header(value: Any, print_flag: bool, output_controller: Any, de
             click.echo(str(value), err=True)
 
 
-def _is_valid_output_value(value: Any) -> bool:
-    """Check if a value is valid for output.
-
-    Args:
-        value: The value to check
-
-    Returns:
-        True if the value is non-None and (not a string or non-empty string)
-    """
-    return value is not None and (not isinstance(value, str) or value.strip() != "")
-
-
-def _find_in_namespaces(shared_storage: dict[str, Any], key: str) -> Any:
-    """Find the last occurrence of a key in namespaced storage.
-
-    Args:
-        shared_storage: The shared storage dictionary
-        key: The key to search for
-
-    Returns:
-        The last valid value found, or None
-    """
-    last_value = None
-
-    for storage_key, namespace_dict in shared_storage.items():
-        # Skip non-dict values and special keys
-        if not isinstance(namespace_dict, dict):
-            continue
-        if storage_key.startswith("__") or storage_key.startswith("_"):
-            continue
-
-        # Check if this namespace contains the key
-        if key in namespace_dict:
-            value = namespace_dict[key]
-            if _is_valid_output_value(value):
-                last_value = value
-
-    return last_value
-
-
-def _find_auto_output(shared_storage: dict[str, Any]) -> tuple[str | None, Any]:
-    """Find the auto-detectable output with the highest priority.
-
-    In sequential workflows, returns the last occurrence of the highest priority key.
-    Priority order: response > output > result > text > stdout
-
-    Args:
-        shared_storage: The shared storage dictionary
-
-    Returns:
-        Tuple of (key_found, value) or (None, None) if no output found
-    """
-    # Common output keys in priority order (highest priority first)
-    priority_keys = ["response", "output", "result", "text", "stdout"]
-
-    # For each priority level, find the LAST occurrence
-    for priority_key in priority_keys:
-        # Check namespaced storage first
-        last_value = _find_in_namespaces(shared_storage, priority_key)
-        if last_value is not None:
-            return priority_key, last_value
-
-        # Check direct storage (legacy/non-namespaced)
-        if priority_key in shared_storage:
-            value = shared_storage[priority_key]
-            # Skip special dictionaries that are actually namespaces
-            if not isinstance(value, dict) and _is_valid_output_value(value):
-                return priority_key, value
-            # Handle the case where it might be a dict but not a namespace
-            if isinstance(value, dict) and not any(k in priority_keys for k in value) and _is_valid_output_value(value):
-                return priority_key, value
-
-    return None, None
-
-
 def _handle_text_output(
     shared_storage: dict[str, Any],
     output_key: str | None,
@@ -235,8 +160,21 @@ def _handle_text_output(
 
     # Fall back to auto-detect from common keys (using unified function)
     else:
-        key_found, value = _find_auto_output(shared_storage)
+        from pflow.execution.formatters.output_utils import find_auto_output
+
+        key_found, value = find_auto_output(shared_storage)
         if key_found:
+            if not print_flag:
+                only_node = shared_storage.get("__execution__", {}).get("only_node")
+                has_declared_outputs = workflow_ir and workflow_ir.get("outputs")
+                if only_node and has_declared_outputs:
+                    msg = f"cli: Declared outputs skipped (--only). Showing auto-detected key '{key_found}'."
+                else:
+                    msg = (
+                        f"cli: No outputs declared — showing auto-detected key '{key_found}'."
+                        " Declare outputs for reliable results."
+                    )
+                click.echo(msg, err=True)
             _output_with_header(value, print_flag, output_controller)
             output_found = True
 
