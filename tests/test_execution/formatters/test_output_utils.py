@@ -276,6 +276,26 @@ class TestAutoDetectionWarning:
         assert "Declared outputs skipped (--only)" in captured.err
         assert "auto-detected key 'result'" in captured.err
 
+    def test_only_node_without_declared_outputs_shows_no_outputs_warning(self, capsys):
+        """CORRECTNESS: --only on workflow without outputs section says 'No outputs declared'.
+
+        Bug caught in review: the else branch triggers for both 'no declared outputs'
+        and '--only with declared outputs'. Without checking has_declared_outputs,
+        --only on a workflow without outputs: would incorrectly say 'Declared outputs skipped'.
+        """
+        from pflow.cli.workflow_output import _handle_text_output
+
+        shared = {
+            "__execution__": {"only_node": "fetch"},
+            "result": "some value",
+        }
+        # No outputs declared in workflow_ir
+        _handle_text_output(shared, output_key=None, workflow_ir={"nodes": []}, verbose=False)
+
+        captured = capsys.readouterr()
+        assert "No outputs declared" in captured.err
+        assert "Declared outputs skipped" not in captured.err
+
     def test_print_mode_suppresses_warning(self, capsys):
         """CORRECTNESS: --print mode shows no warning (clean for piping)."""
         from pflow.cli.workflow_output import _handle_text_output

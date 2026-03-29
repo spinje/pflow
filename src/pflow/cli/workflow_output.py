@@ -166,7 +166,8 @@ def _handle_text_output(
         if key_found:
             if not print_flag:
                 only_node = shared_storage.get("__execution__", {}).get("only_node")
-                if only_node:
+                has_declared_outputs = workflow_ir and workflow_ir.get("outputs")
+                if only_node and has_declared_outputs:
                     msg = f"cli: Declared outputs skipped (--only). Showing auto-detected key '{key_found}'."
                 else:
                     msg = (
