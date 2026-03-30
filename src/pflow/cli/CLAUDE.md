@@ -38,7 +38,7 @@ src/pflow/cli/
 ├── workflow_output.py       # Output detection, display, execution summaries
 ├── workflow_errors.py       # Text-mode error display for ExecutionResult failures
 ├── error_output.py            # Unified error output (JSON + text for all error types)
-├── workflow_resolution.py   # File/name → IR resolution (resolve_workflow, is_likely_workflow_name)
+├── workflow_resolution.py   # CLI routing heuristic (is_likely_workflow_name only — resolve_workflow moved to execution/workflow_resolver.py)
 ├── mcp_sync.py              # MCP auto-discovery at startup
 ├── param_parsing.py         # infer_type, parse_workflow_params, format_param_value
 ├── cli_output.py            # CliOutput: OutputInterface implementation for Click
@@ -223,7 +223,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 - Reports: `--report` generates `~/.pflow/reports/{name}/` directory of markdown files (one per node + summary). When `--only` is active, passes `only_node` and `total_nodes` to `generate_report()` for context in summary. `_echo_target_node_path` displays pointer to the target node's report file.
 - Ctrl+C: exit code 130, no cleanup (relies on finally blocks)
 - SIGPIPE: set to SIG_IGN (prevents subprocess SIGPIPE from killing parent process)
-- Resource cleanup: `_cleanup_workflow_resources()` handles LLM interception cleanup, temp file deletion. Never raises.
+- Resource cleanup: Runner handles LLM interception cleanup in `_cleanup()`. CLI only cleans up temp files (stdin FIFO) in `execute_json_workflow`'s finally block.
 
 ## Shared Formatters
 

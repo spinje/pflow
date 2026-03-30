@@ -121,7 +121,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 See `utils/CLAUDE.md` for details. Quick reference:
 
 - **validation.py** — `validate_execution_parameters()` (shell-safe names, 1MB limit, code injection detection), `validate_file_path()` (exists but **never called** — design decision: local MCP = trusted), `generate_dummy_parameters()` (re-exported from `core.validation_utils`)
-- **errors.py** — `sanitize_parameters()` redacts SENSITIVE_KEYS recursively. **Currently never called in any service** — security gap for error messages.
+- **errors.py** — Re-exports `sanitize_parameters()` from `core.security_utils` for backward compat. Called by `WorkflowRunner._update_metadata()` for metadata redaction.
 
 ## Key Patterns
 
@@ -145,7 +145,6 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 
 **What exists but is never called:**
 - `validate_file_path()` — path traversal prevention. Design decision: local MCP server = trusted environment.
-- `sanitize_parameters()` — sensitive data may leak in error messages returned to LLM.
 
 ## Agent-Optimized Defaults
 
@@ -194,4 +193,4 @@ See `utils/CLAUDE.md` for the 5-step resolution order used by `resolve_workflow(
 - **Import formatters locally** inside service methods, not at module level (circular dep risk)
 - **stdout is sacred** — only MCP protocol messages; all logging to stderr
 - **FieldService not in `__init__.py`** — imported directly where needed in execution_tools.py
-- **`sanitize_parameters()` is dead code** — exists but never wired into error paths
+- **`sanitize_parameters()` moved to `core/security_utils.py`** — `mcp_server/utils/errors.py` re-exports for backward compat. Called by `WorkflowRunner._update_metadata()` for metadata redaction before saving to disk.

@@ -1700,3 +1700,15 @@ The distinction: compiler prerequisites protect the compiler's own code from cra
 4. **`WorkflowExecutorService` was deleted because the name actively misled agents.** An AI agent reading `executor_service.py` built a wrong mental model ("this is the service that executes workflows"). The 7 alive methods were stateless — extracted as standalone functions. The indirection of creating a throwaway instance just to call `_build_error_list` was replaced with a direct function call.
 
 5. **Runtime exceptions carry `_pflow_node_id` via annotation.** `_compile_and_execute` catches exceptions from `flow.run()`, reads `shared_store["__execution__"]["failed_node"]`, and attaches it as `exception._pflow_node_id` before re-raising. `_exception_to_result` reads this attribute for exception types that don't natively carry `node_id` (`ValueError`, `RuntimeError`, etc.). `CompilationError` and `MaxNodeVisitsError` carry their own `node_id` attribute and don't need annotation.
+
+---
+
+## Manual Testing (2026-03-30)
+
+20 manual tests across CLI, MCP, and edge cases. All pass. `make test`: 4,678 passed, 0 failed.
+
+Two known display changes (not regressions):
+- Validate-only text dropped `"Validating workflow (static validation)..."` preamble
+- Validation errors use `✗ Static validation failed:` + bulleted list instead of bare `❌` lines
+
+### Status: Task 138 Phase 1 complete. Manual testing done. Ready for PR.

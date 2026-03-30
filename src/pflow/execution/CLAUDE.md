@@ -36,7 +36,7 @@ class WorkflowRunner:
 **Pipeline** (inside `run()`):
 1. `_resolve()` — unified resolver (file, library, markdown, dict → `ResolvedWorkflow`)
 2. `_resolve_file_references()` — external file refs in IR
-3. `_enrich_params_with_defaults()` — idempotent, runs before validation
+3. `_fill_declared_defaults()` — fills declared inputs with defaults or placeholders so validation doesn't flag them as missing. Stripped before compilation.
 4. `_validate()` — `WorkflowValidator.validate()`, once per execution
 5. Create per-execution resources (MetricsCollector, TraceCollector, MCPConnectionPool, MemoizationCache)
 6. `_compile_and_execute()` — `compile_ir_to_flow()` + `flow.run()`
