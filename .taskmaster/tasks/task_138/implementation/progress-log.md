@@ -44,32 +44,347 @@
 
 ---
 
+## Pre-Phase 1 Audit (2026-03-30)
+
+### Smoke Test Baseline Expanded
+
+Added 4 HIGH-risk baselines (paths Phase 1 fundamentally rewrites):
+- `11-saved-workflow.txt` — CLI named/saved workflow (`pflow test-manual-check`)
+- `12-registry-run.txt` — CLI registry run (`pflow registry run shell command="echo smoke-test-baseline"`)
+- `13-mcp-execute.txt` — MCP workflow execution via `ExecutionService.execute_workflow()`
+- `14-mcp-registry-run.txt` — MCP registry node run via `ExecutionService.run_registry_node()`
+
+MCP baselines recaptured with logging suppressed (timestamps and log formatting make diffs useless). Baselines now show only the tool return value — what an AI agent would see.
+
+### Dead Code: `__cache_chunks__` Removed
+
+`cache_chunks` parameter and `__cache_chunks__` injection removed from `cli/main.py`. Evidence:
+- Single call site at line 1101 never passes it (default `None`)
+- Zero consumers in runtime/execution/nodes
+- Test references in `test_rerun_display.py` are test data only (test generic `__dunder__` filtering, not `__cache_chunks__` specifically) — left unchanged
+
+3 production lines removed. 4,666 tests pass, `make check` clean.
+
+### MCP Execution Baseline Tests Added
+
+`ExecutionService.execute_workflow()` had **zero test coverage** — the most critical MCP method that Phase 1 rewrites. Added 5 tests in `tests/test_mcp_server/test_execution_workflow.py`:
+
+| Test | Behavior |
+|------|----------|
+| `test_file_workflow_returns_success_string` | File path → success `str` with `"✓"` |
+| `test_library_workflow_returns_success_string` | Saved name → resolves from library, success `str` |
+| `test_nonexistent_workflow_raises_value_error` | Unknown name → `ValueError` with "not found" |
+| `test_unknown_node_type_raises_validation_error` | Bad node type → `RuntimeError` with type name |
+| `test_failing_command_raises_runtime_error` | `exit 1` → `RuntimeError` |
+
+**Exception contract finding**: The docstring claims `ValueError` for "workflow not found or parameters invalid." In practice, validation errors raised inside the `try` block (line 333) are caught by the broad `except Exception` handler (line 368) and re-wrapped as `RuntimeError`. The actual contract is:
+- `ValueError` — **only** for "workflow not found" (raised before the `try` block at line 305)
+- `RuntimeError` — **everything else**: validation failures, execution failures, unexpected errors
+
+**Impact on Phase 1**: After Phase 1, the Runner always returns `ExecutionResult`. MCP converts all failures to `RuntimeError`. The only visible change: "not found" goes from `ValueError` to `RuntimeError`. AI agents consuming MCP don't care — the MCP protocol returns error text, not Python exception types. The error message still says "not found" with suggestions. `test_nonexistent_workflow_raises_value_error` will flag this change; we update it consciously.
+
+4,671 tests pass (4,666 + 5 new), `make check` clean.
+
+### Assumption Audit Results
+
+8 review agents verified 10 design assumptions against current code:
+
+**Confirmed (8/10):**
+- `WorkflowNotFoundError` with `similar_names` — exists at `core/exceptions.py:18`
+- `display_validation_warnings()` — exactly 2 call sites confirmed
+- `_load_settings_env()` — 2 definitions, 2 call sites (duplicated code)
+- `_handle_execution_exception()` re-raises `CompilationError` and `RuntimeError` — confirmed
+- `WorkflowExecutorService` single public method — confirmed
+- `OutputInterface`, `NullOutput`, `CliOutput` — all exist as designed
+
+**Corrected (2/10):**
+1. **`RecursionError` does NOT escape both layers** — caught by `executor_service.py`'s `except Exception` catch-all, wrapped into error dict. NOT re-raised. The Runner still catches it but the original claim "unhandled today" was wrong — it's handled (with a generic error category).
+2. **`_prepare_compilation()` doesn't exist yet** — it's the rename target of `_validate_workflow()`. Pipeline ordering constraint is correct for the *current* function name.
+
+**New findings:**
+- `ValidationResult` type doesn't exist — must be created
+- `_suppress_logging_in_json_mode()` referenced in "CLI after" sketch doesn't exist — it's inline code at 2 different severity levels
+- `__cache_chunks__` was dead code — removed (see above)
+- `__env_param_names__` is a pipeline artifact (produced by `prepare_inputs()`, consumed by metadata redaction), not a config value
+- `resolve_file_references()` runs redundantly in CLI (before validation AND inside compiler)
+- `@ensure_stateless` is a no-op — logs only, prevents nothing
+
+### Ambiguity Resolution (2026-03-30)
+
+4 remaining items resolved through code tracing and discussion.
+
+**1. Logging suppression → CLI keeps it**
+
+Logging suppression is caller-specific display policy, not execution logic. Evidence:
+- All logging goes to **stderr** (both CLI and MCP). JSON stdout contamination is not a real risk.
+- `OutputInterface` / `NullOutput` / `CliOutput` have **zero relationship** to Python logging — they're separate systems.
+- MCP intentionally leaves INFO logging on stderr (diagnostic channel for stdio transport, doesn't contaminate tool responses).
+- CLI has two overlapping inline suppression sites (`workflow_command` sets ERROR with restore, `execute_json_workflow` escalates to CRITICAL without restore). These collapse to one site in the CLI, outside the Runner.
+- Runner never touches logging. Caller configures before calling Runner — same as how `CliOutput` is configured by the caller.
+
+**2. `ValidationResult` → Minimal internal type, rich agent-facing JSON**
+
+Internal type wraps `WorkflowValidator.validate()` return directly:
+```python
+@dataclass
+class ValidationResult:
+    valid: bool
+    errors: list[str]
+    warnings: list[ValidationWarning]
+```
+
+Agent-facing JSON output (converted by CLI/MCP display layer):
+```json
+{
+  "success": true,
+  "validated_only": true,
+  "errors": [],
+  "warnings": [
+    {
+      "node": "process-data",
+      "node_type": "mcp-github-search",
+      "template": "${fetch.response.items}",
+      "message": "Output 'response' from 'fetch' has type 'Any' — nested access '.items' cannot be validated before execution"
+    }
+  ]
+}
+```
+
+Failure:
+```json
+{
+  "success": false,
+  "validated_only": true,
+  "errors": [
+    {"message": "Workflow requires input 'github_token': ...", "category": "validation"}
+  ],
+  "warnings": []
+}
+```
+
+Design rationale:
+- Consuming AI agents get: `success` (can I run this?), `errors` (what's wrong, how to fix), `warnings` (what might fail at runtime, with node + template + reason).
+- Consuming AI agents do NOT get: `output_type`, `nested_path`, `output_key` (pflow internals from `ValidationWarning` — implementation details).
+- Internal type carries everything; display layer selects what to expose. Conversion is a one-place function per entry point.
+- Fixes existing bugs: warnings lost in all JSON paths today, MCP discards warnings entirely.
+
+**3. `resolve_file_references()` → Defense-in-depth, keep compiler's internal call**
+
+Evidence from code tracing:
+- **Sub-workflow child IR is ONLY resolved by the compiler's internal call** (`compiler.py:721`). Child IR is loaded fresh from `.pflow.md` at runtime inside `WorkflowExecutor`, long after the parent's pre-compilation resolution. Removing the compiler's call would break child file references.
+- `resolve_file_references()` is **idempotent** — proven by test at `test_file_resolver.py:270`. After first resolution, content no longer matches `is_file_reference()` heuristic (contains newlines/spaces/parsed to non-string). Second call is a no-op.
+- MCP's `_check_inline_file_references()` is a **guard** (detects unresolvable refs in inline workflows), NOT a resolver. Completely different function.
+- Runner calls pre-compilation (for the validate path where compilation doesn't happen). Compiler keeps internal call (for sub-workflows). Double-call on parent IR is idempotent and harmless.
+
+**4. `__env_param_names__` → Metadata update stays inside Runner**
+
+Evidence from code tracing:
+- `_update_workflow_metadata()` is **already inside** the execution pipeline at `executor_service.py:126` — called between `flow.run()` and exception handling. It's not a post-execution caller concern today.
+- Both CLI and MCP already control it through constructor args: CLI passes `workflow_manager=None` for non-saved workflows, MCP passes `workflow_name=None` for non-library. The "policy decision" is expressed through what the caller passes, not by the caller doing the update.
+- `env_param_names` is produced by `prepare_inputs()` and consumed by `sanitize_parameters()` — both will live inside the Runner. Keeping metadata update inside means `env_param_names` is a local variable that never surfaces to callers.
+- Moving metadata update out would force every caller to: extract `env_param_names`, call `sanitize_parameters` correctly, call `update_metadata`. That's security plumbing that should be invisible — getting it wrong silently leaks secrets to disk.
+- `sanitize_parameters` currently lives in `mcp_server/utils/errors.py` — an architectural inversion (execution layer imports from MCP server). Runner absorbing this fixes the dependency direction.
+
+Trace saving is fundamentally different: it involves user-facing file paths, optional report generation, and CLI-specific display ("Trace saved to: ..."). Metadata update is a fire-and-forget side effect gated by a kwarg.
+
+---
+
 ## Phase 1 — Shared WorkflowRunner
+
+### Design Decisions (locked 2026-03-29, updated 2026-03-30)
+
+8 review agents analyzed all 10 questions. Full synthesis in `design-review-synthesis.md`. Original decisions below, with updates marked.
+
+**Q1 — Runner config: Frozen dataclass, kwargs for collaborators**
+- `@dataclass(frozen=True)` for immutable scalars: `trace_enabled`, `cache_enabled`, `verbose`, `only_node`, `output_format`, `source_file_path`
+- Per-call kwargs: `output: OutputInterface | None`, `workflow_manager: WorkflowManager | None`, `workflow_name: str | None` *(updated: was single kwarg, now includes metadata update collaborators)*
+- Runner creates `MetricsCollector` and `TraceCollector` internally — per-execution, no one customizes these, results exposed via `ExecutionResult`
+- `__no_cache__` becomes config-only — no more popping from params dict
+
+**Q2 — Validate-only: Separate method `runner.validate()` → `ValidationResult`**
+- `runner.validate(ir, params) → ValidationResult(valid, errors, warnings)`
+- `runner.run(ir, params, config, **kwargs) → ExecutionResult`
+- Validate-only intentionally skips `prepare_inputs()` — separate method makes this enforced, not conditional
+- `ValidationResult` is minimal: `valid: bool`, `errors: list[str]`, `warnings: list[ValidationWarning]`
+- CLI/MCP convert to agent-facing JSON with `"validated_only": true`, actionable error messages, and structured warnings (node, node_type, template, message)
+- No more `sys.exit()` bypass — CLI handles exit codes from structured result
+- Fixes existing bugs: warnings lost in all JSON paths, MCP discards warnings entirely
+
+**Q3 — CLI boundary: CLI reads stdin, hands clean params to Runner (Option A)**
+- CLI reads stdin via `read_stdin_content()`, finds `stdin: true` input, puts value in params dict
+- Runner receives complete params — never knows about stdin
+- Ordering preserved: stdin value in params before `runner.run()` calls validation
+- Simpler, no stdin concept in Runner API. MCP can add `stdin_data` param later if needed
+
+**Q4 — Merged resolver: Raise on error, return `(ir, source)` — ANSWER FIRST**
+- `resolve_workflow(identifier: str | dict) → tuple[dict, str]`
+- Raises `WorkflowNotFoundError`, `MarkdownParseError`, `PermissionError` on failure
+- MCP gains "Did you mean" suggestions it currently lacks (via `WorkflowNotFoundError.similar_names`)
+- Must `normalize_ir()` in ALL resolution paths (file, library, dict, raw markdown)
+- Always returns fresh dict (never cached reference) — concurrency safety
+
+**Q5 — Registry run: Full — synthetic IR through Runner**
+- Build single-node IR, call `runner.run()` — less code than Medium, zero special-casing
+- Gets template resolution, tracing, metrics, error handling for free
+- Output handling (structure mode, execution caching, `node_output_formatter`) stays in `registry_run.py` — output is a display concern, not execution
+- `action` return from `node.run()` replaced by `result.success` check
+- Eliminates registry run as a separate execution path — same argument as the whole task
+
+**Q6 — MCP service classes: Shrink, don't flatten**
+- Keep `@classmethod` + `@ensure_stateless` as defense-in-depth guardrail
+- Each service method becomes 10-20 lines: construct config, call Runner, format result
+- Remove `BaseService` if it provides no shared behavior
+- Fresh `Registry()` per call prevents stale node metadata — concurrency safety
+
+**Q7 — Validation warnings: Return from `_prepare_compilation()`, never print**
+- Change return type: `_prepare_compilation() → tuple[dict, list[str]]` (params + warnings)
+- Remove `display_validation_warnings()` call from inside compiler
+- Runner collects warnings from both `WorkflowValidator.validate()` and `_prepare_compilation()`
+- Routes through `OutputInterface` — fixes: MCP silently losing warnings, double-emission in verbose, stderr pollution in JSON mode
+- Note: TWO call sites exist today — compiler (`compile_validation.py:265`) AND validate-only path (`cli/main.py:399`)
+
+**Q8 — Settings env: Runner loads once, passes as parameter**
+- `_load_settings_env()` moves to Runner, called once per `run()` invocation
+- Result passed to `_prepare_compilation(settings_env=...)` as explicit parameter
+- Sub-workflows: `_prepare_compilation()` still calls its own load for child workflows (Runner isn't in sub-workflow path)
+- MCP gains settings_env loading it currently skips — new behavior, needs test
+- Never cache at module level — load fresh per call
+
+**Q9 — Exceptions: Single layer, always return `ExecutionResult`**
+- Runner catches all exceptions at its boundary, wraps into `ExecutionResult.errors`
+- Callers (CLI, MCP) always receive `ExecutionResult`, never raw exceptions from `runner.run()`
+- Wrapped types: `CompilationError`, `MaxNodeVisitsError`, `ValueError`, `RuntimeError`, `WorkflowValidationError`, `RecursionError`, `MarkdownParseError`, `WorkflowNotFoundError`
+- Propagated through: `KeyboardInterrupt`, `SystemExit`
+- `finally` for MCP pool shutdown: **non-negotiable** — must survive any restructuring
+- Use `_exception_to_errors()` dispatch table from `error_output.py` as canonical error conversion
+- Correction: `RecursionError` is already caught by `executor_service.py`'s `except Exception` catch-all (not "unhandled" as originally claimed). Runner still catches it but with proper error category.
+
+**Q10 — Resolver location: `execution/workflow_resolver.py`**
+- Sibling to `executor_service.py` and `workflow_execution.py`
+- Zero new dependency edges — both CLI and MCP already import from `execution/`
+- Preserves `source` return value distinction (`"file"` vs `"library"`) for `_inject_workflow_file_path()`
+- `.json` extension validation with migration hint preserved (currently CLI-only, benefits MCP too)
+
+### Runner Boundary Principle (locked 2026-03-29, revised 2026-03-30)
+
+**The Runner is an execution pipeline** — it transforms inputs into results. It owns the execution resource lifecycle (create + cleanup MCP pools, caches, LLM interceptions, metrics, traces) and fire-and-forget side effects controlled by caller-provided collaborators. It does NOT own presentation or user-facing persistence.
+
+| Concern | Owner | Why |
+|---------|-------|-----|
+| MetricsCollector creation | **Runner** | Per-execution, no one customizes, results in `ExecutionResult.metrics` |
+| TraceCollector creation | **Runner** | Per-execution, Runner knows workflow_name from resolution |
+| Trace **saving** to disk | **Caller** | User-facing (path display, report generation). Runner returns trace data. |
+| Metadata update | **Runner** | Security (env param sanitization co-located with data). Caller controls via `workflow_manager` kwarg — pass `None` for no-op. |
+| MCP pool + LLM interception cleanup | **Runner** (finally) | Runner creates these, Runner cleans them up |
+| Temp file cleanup (stdin) | **CLI** | CLI creates temp files, CLI cleans them up |
+| OutputInterface | **Caller** (kwarg) | Display policy differs per entry point |
+| Logging suppression | **Caller** | Caller-specific display policy (CLI JSON mode vs MCP stderr) |
+| Report generation | **Caller** | Presentation concern — CLI-only feature |
+
+**Why trace saving is a caller concern but metadata update is not**: Trace saving involves user-facing file paths, optional report generation, and CLI-specific display ("Trace saved to: ..."). Metadata update is a fire-and-forget side effect that requires security-critical `sanitize_parameters()` with `env_param_names` — data that's produced and consumed entirely within the Runner. Moving it out would force callers to replicate security plumbing, with silent secret leaks on failure.
+
+**Runner API**:
+```python
+class WorkflowRunner:
+    def run(
+        self,
+        workflow: str | dict,          # file path, saved name, raw markdown, or IR dict
+        params: dict[str, Any],
+        config: RunnerConfig,
+        *,
+        output: OutputInterface | None = None,
+        workflow_manager: WorkflowManager | None = None,
+        workflow_name: str | None = None,
+    ) -> ExecutionResult:
+        ...
+
+    def validate(
+        self,
+        workflow: str | dict,
+        params: dict[str, Any],
+        source_file_path: Optional[str] = None,
+    ) -> ValidationResult:
+        ...
+```
+
+**CLI after** (~25 lines):
+```python
+def execute_json_workflow(ctx, ir_data, stdin_data=None, output_key=None,
+                          execution_params=None, output_format="text"):
+    params = execution_params or {}
+    if stdin_data:
+        _route_stdin_to_params(ir_data, params, stdin_data)
+
+    if ctx.obj.get("validate_only"):
+        vresult = WorkflowRunner().validate(ir_data, params,
+            source_file_path=ctx.obj.get("source_file_path"))
+        _display_validation_result(ctx, vresult, output_format)
+        return
+
+    config = RunnerConfig(
+        trace_enabled=not ctx.obj.get("no_trace"),
+        cache_enabled=ctx.obj.get("cache", True),
+        verbose=ctx.obj.get("verbose") and output_format != "json",
+        only_node=ctx.obj.get("only_node"),
+        output_format=output_format,
+        source_file_path=ctx.obj.get("source_file_path"),
+    )
+
+    result = WorkflowRunner().run(ir_data, params, config,
+        output=CliOutput(ctx.obj["output_controller"], config.verbose, output_format),
+        workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "saved" else None,
+        workflow_name=ctx.obj.get("workflow_name"))
+
+    # Trace saving — caller's job (user-facing path display + optional report)
+    if result.trace and config.trace_enabled:
+        trace_path = result.trace.save_to_file()
+        _echo_trace(ctx, trace_path)
+
+    # Display
+    _display_execution_result(ctx, result, output_key, ir_data, output_format)
+```
+
+**MCP after** (~12 lines):
+```python
+@classmethod
+@ensure_stateless
+def execute_workflow(cls, workflow, parameters=None):
+    workflow_name = str(workflow) if source == "library" else None
+    result = WorkflowRunner().run(workflow, parameters or {}, RunnerConfig(),
+        workflow_manager=WorkflowManager(), workflow_name=workflow_name)
+    if result.success:
+        return format_success_as_text(_format_success_result(result))
+    else:
+        raise RuntimeError(_build_error_text(_format_error_result(result)))
+```
+
+### Key Findings from Review (new, not in original spec)
+
+1. **MCP passes `{}` not `None` to `WorkflowValidator.validate()`** — template validation runs against empty params, fails on workflows with required inputs. Runner must populate dummy params for declared inputs.
+2. **`display_validation_warnings()` has TWO call sites** — compiler + validate-only path. Both must be addressed.
+3. **Test migration scope larger than spec**: `test_workflow_resolution.py` (8+14 patches), `test_template_resolution_hardening.py` (13 imports), `test_connection_pool.py` (3 instantiations) not in spec's migration list.
+4. **`RecursionError` is already caught** by `executor_service.py`'s `except Exception` catch-all (originally claimed "unhandled" — corrected during audit). Handled with generic error category. Runner catches it with proper categorization.
+5. **`execute_json_workflow()` is the real consumer** — the spec doesn't name it but Runner config must absorb everything it constructs.
+6. **Batch child workflow template validation gap widens slightly** — stripping compiler's `validate_workflow_templates()` means child `${item.field}` only validated against dummy params. Pre-existing gap, flag in implementation.
+7. **`PflowBatchNode` instance state not reset between executions** — safe for Task 138 (recompiles per call), dangerous for Task 135 (compile-once). Document explicitly.
+8. **Runner should copy params at boundary** — `_params = dict(params)` makes every call mutation-safe from caller's perspective.
+9. **`__cache_chunks__` was dead code** — removed during pre-Phase 1 audit. Zero consumers, never passed at the only call site.
+10. **`sanitize_parameters` lives in `mcp_server/utils/errors.py`** — architectural inversion (execution layer imports from MCP server). Runner absorbing metadata update fixes the dependency direction. Consider moving `sanitize_parameters` to `core/security_utils.py` alongside `SENSITIVE_KEYS`.
 
 ### Implementation Steps
 
-1. Design `WorkflowRunner.run()` signature and config object
-2. Resolve open design questions with user (10 questions in task spec)
-3. Show concrete before/after for `cli/main.py` and MCP `execution_service.py`
-4. Get user approval on API design
-5. Merge two `resolve_workflow()` functions into one
+1. ~~Design `WorkflowRunner.run()` signature and config object~~ → decisions locked
+2. ~~Resolve open design questions with user~~ → 10 questions locked
+3. ~~Show concrete before/after for CLI and MCP~~ → approved
+4. ~~Define Runner boundary principle~~ → metadata update inside Runner, trace saving with caller
+5. Merge two `resolve_workflow()` functions into one (`execution/workflow_resolver.py`)
 6. Strip duplicated validation from `_validate_workflow()` → rename to `_prepare_compilation()`
 7. Implement `WorkflowRunner` — absorb `WorkflowExecutorService` + `execute_workflow()`
 8. Thin down `cli/main.py` to Click handler + Runner call
 9. Thin down MCP `execution_service.py` to async wrapper + Runner call
-10. Migrate affected tests (8-10 test files with mock target changes)
-11. Add new tests: CLI/MCP parity, validator-called-once guard, registry template resolution
-12. Verify: `make test && make check`, smoke test diffs, manual spot checks
+10. Route registry run through Runner with synthetic IR
+11. Migrate affected tests (10-13 test files — expanded list from review)
+12. Add new tests: CLI/MCP parity, validator-called-once guard, registry template resolution
+13. Verify: `make test && make check`, smoke test diffs, manual spot checks
 
-### Status: Awaiting design discussion with user
-
-**Open design questions** (from task spec):
-- Runner config shape (dataclass vs separate params)
-- Validate-only mode (separate method vs flag)
-- CLI vs Runner responsibility boundary (stdin routing, flag validation)
-- Merged `resolve_workflow()` return signature
-- Registry run template resolution
-- MCP service classes fate (plain functions vs shrink)
-- `display_validation_warnings()` routing through Runner output interface
-- `_load_settings_env()` deduplication
-- Exception wrapping strategy for `ExecutionResult`
+### Status: All design decisions locked, baselines captured, MCP tests added — ready for implementation plan

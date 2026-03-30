@@ -1,0 +1,12 @@
+✓ Node executed successfully
+
+Execution ID: exec-1774854127-80a8e686
+
+Output:
+  ✓ ${exit_code} (int) = 0
+  ✓ ${stderr} (str) = ""
+  ✓ ${stderr_is_binary} (bool) = false
+  ✓ ${stdout} (str) = "smoke-test-baseline"
+  ✓ ${stdout_is_binary} (bool) = false
+
+Execution time: 3ms

@@ -131,7 +131,6 @@ def _prepare_execution_environment(
     output_format: str,
     verbose: bool,
     execution_params: dict[str, Any] | None,
-    cache_chunks: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, Any, Any, dict[str, Any], bool]:
     """Prepare the execution environment for workflow execution.
 
@@ -167,8 +166,6 @@ def _prepare_execution_environment(
     # Prepare execution params with verbose flag
     enhanced_params = execution_params or {}
     enhanced_params["__verbose__"] = effective_verbose
-    if cache_chunks:
-        enhanced_params["__cache_chunks__"] = cache_chunks
 
     # Set workflow file path for relative path resolution in nested workflows
     source_file_path = ctx.obj.get("source_file_path")
@@ -563,7 +560,6 @@ def execute_json_workflow(  # noqa: C901
     execution_params: dict[str, Any] | None = None,
     output_format: str = "text",
     metrics_collector: Any | None = None,
-    cache_chunks: list[dict[str, Any]] | None = None,
 ) -> None:
     """Thin CLI wrapper for workflow execution.
 
@@ -591,7 +587,7 @@ def execute_json_workflow(  # noqa: C901
 
     # Prepare execution environment
     cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
-        ctx, ir_data, output_format, verbose, execution_params, cache_chunks
+        ctx, ir_data, output_format, verbose, execution_params
     )
 
     _resolve_file_refs(ctx, ir_data)

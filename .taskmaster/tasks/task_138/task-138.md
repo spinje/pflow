@@ -1,12 +1,14 @@
 # Task 138: Shared Execution Pipeline
 
+> **Authoritative design decisions**: `implementation/progress-log.md` contains all resolved design questions and assumption audit results etc. This spec provides problem context, requirements, and implementation notes. Where they conflict, the progress log is correct.
+
 ## Description
 
 Replace the parallel CLI/MCP orchestration layers with a single execution pipeline. Both entry points call one runner, eliminating ~1,500 lines of duplicated/glue code. Resolves Issue 6 (entry point divergence) and Issue 4 remainder (dual validation).
 
 ## Status
 
-not started
+in progress
 
 ## Priority
 
@@ -28,19 +30,20 @@ CLI file execution, CLI validate-only, MCP server, CLI registry run, and MCP reg
 
 Two phases, each independently shippable:
 
-### Phase 0 — Dead Code Cleanup
-Remove ~745 lines of verified dead code. No behavioral changes.
+### Phase 0 — Dead Code Cleanup ✅
+Removed ~620 lines of verified dead code (plus `__cache_chunks__` dead parameter). No behavioral changes. 4,666 tests pass unchanged.
 
 ### Phase 1 — Shared WorkflowRunner
 A single `WorkflowRunner` that both CLI and MCP call:
 ```
-WorkflowRunner.run(ir, params, config) → ExecutionResult
+WorkflowRunner.run(ir, params, config, *, output, workflow_manager, workflow_name) → ExecutionResult
   # resolve file refs
   # validate (once, via WorkflowValidator)
   # compile (via compile_ir_to_flow)
   # run (via flow.run)
   # extract results, errors, warnings
-  # cleanup (MCP pool, temp files)
+  # update metadata (if workflow_manager provided)
+  # cleanup (MCP pool)
 ```
 - CLI and MCP become thin callers configuring the runner
 - Merge two `resolve_workflow()` into one accepting `str | dict`
@@ -77,42 +80,28 @@ Before writing any code:
 2. Show concrete before/after for cli/main.py and MCP execution_service.py
 3. Get user approval on the API, then implement
 
-**Open design questions the implementer must resolve with the user:**
-- What is the Runner config? Dataclass with output interface, trace options, cache options, metrics? Or separate parameters?
-- How does validate-only mode flow through the Runner? Separate method? Flag in config?
-- What stays in `cli/main.py` vs moves to the Runner? (Stdin routing, flag validation, `run` prefix stripping are CLI concerns. Validation, compilation, execution are Runner concerns. Note: stdin routing currently raises `UserFriendlyError` coupled to Click context.)
-- Merged `resolve_workflow()` return signature — CLI returns `(ir, source)`, MCP returns `(ir, error, source)`. Which pattern? Where does the merged function live?
-- Registry run: how does template resolution work for single-node runs with no workflow IR and no upstream outputs in the shared store?
-- Do the 7 MCP service classes become plain functions or just shrink?
-- How does `display_validation_warnings()` (currently prints directly to stderr from inside `_prepare_compilation()`) route through the Runner's output interface?
-- Where does `_load_settings_env()` live? Currently duplicated in `compile_validation.py` and `cli/main.py`.
-- Which exception types does the Runner wrap into `ExecutionResult`? Currently `CompilationError` and `MaxNodeVisitsError` are caught in `workflow_execution.py`, while `_handle_execution_exception()` re-raises `CompilationError` and `RuntimeError`. This two-layer dance must be preserved or replaced.
+**Design questions — ALL RESOLVED.** See `implementation/progress-log.md` for decisions Q1–Q10 plus 4 additional items resolved during pre-Phase 1 audit.
 
 **Design constraints (non-negotiable, from code review):**
 1. **Mutation ordering**: Shared store seeded from `execution_params` BEFORE `_prepare_compilation()` mutates `initial_params`. This task preserves this ordering; Task 135 changes it deliberately.
 2. **Per-execution instantiation**: `MCPConnectionPool` and `MemoizationCache` created per `run()` call, never on Runner init. MCP pool is stateful (daemon thread, sessions). Memoization cache holds per-execution `read_enabled` flag.
 3. **Runner statelessness**: No mutable state on Runner instance. MCP uses `asyncio.to_thread` for concurrent calls — shared mutable state causes races.
-4. **Asymmetric key handling**: `__no_cache__` is popped (consumed before store seed), `__only_node__` is filtered from store but kept in `initial_params` (compiler reads it). Do not simplify.
-5. **Pipeline ordering**: `_inject_workflow_file_path()` → `resolve_file_references()` → `WorkflowValidator.validate()` → `_prepare_compilation()` → `compile_ir_to_flow()`. Sub-workflow relative paths need `_pflow_workflow_file` set before validation.
+4. **Asymmetric key handling**: Currently `__no_cache__` is popped from params, `__only_node__` is filtered from store but kept in `initial_params`. Phase 1 moves both to `RunnerConfig` — `cache_enabled` and `only_node` — eliminating the pop/filter hacks. The compiler reads `only_node` from config instead of `initial_params`.
+5. **Pipeline ordering**: `_inject_workflow_file_path()` → `resolve_file_references()` → `WorkflowValidator.validate()` → `_validate_workflow()` (renamed to `_prepare_compilation()`) → `compile_ir_to_flow()`. Sub-workflow relative paths need `_pflow_workflow_file` set before validation.
 
 ## Requirements
 
-### Phase 0 — Dead Code (~680 lines)
+### Phase 0 — Dead Code ✅ (~620 lines removed)
 
-- Remove `executor_service.py:_extract_default_output` + 3 helper methods (~90 lines, zero production callers)
-- Remove `planning/` directory remnants (empty, Task 92 leftovers)
-- Remove `core/workflow/__init__.py` re-exports (59 lines, zero consumers — all imports are from submodules)
-- Remove MCP disabled tools + services: `settings_tools.py` (173 lines), `settings_service.py` (136 lines), `test_tools.py` (146 lines) — commented out in `__init__.py`. Also update `mcp_server/services/__init__.py` to remove `SettingsService` import.
-- Remove `mcp_server/utils/validation.py:validate_file_path()` (48 lines, never called)
-- Clean unused `core/__init__.py` re-exports — **verify each symbol with grep across both `src/` and `tests/` before removing**. Known used: `normalize_ir`, `StdinData`, `validate_ir`, `ValidationError`, `FLOW_IR_SCHEMA`. Likely dead: `MODEL_PRICING`, `PRICING_VERSION`, `calculate_llm_cost`, `get_model_pricing`, `coerce_to_declared_type`, `PflowError`, `BATCH_CONFIG_SCHEMA`, shell_integration functions.
-- **NOT dead code** (do not remove): `mcp_server/utils/errors.py:sanitize_parameters()` — called by `executor_service.py:546`, `workflow_errors.py:84,91`, `error_formatter.py:67,70`
-- All existing tests pass unchanged
+Completed 2026-03-29. See `implementation/progress-log.md` for full details.
+
+Also removed during pre-Phase 1 audit: `__cache_chunks__` dead parameter from `cli/main.py` (never passed at call site, zero consumers).
 
 ### Phase 1 — Shared Runner
 
 #### Pipeline
 - Single `WorkflowRunner` class/module that both CLI and MCP call
-- Runner accepts configuration (output interface, trace options, cache options, metrics) — entry points configure but don't implement
+- Runner accepts `RunnerConfig` (frozen dataclass: trace, cache, verbose, only_node, output_format, source_file_path) + kwargs (`output`, `workflow_manager`, `workflow_name`) — entry points configure but don't implement
 - `cli/main.py` reduced from ~1,383 lines to thin Click handler + Runner call
 - `mcp_server/services/execution_service.py` reduced from ~790 lines to thin async wrapper + Runner call
 - `execute_workflow()` in `workflow_execution.py` absorbed into runner
@@ -135,10 +124,10 @@ Before writing any code:
 - CLI and MCP params go through the same preparation path (unified `prepare_inputs()` call)
 - `initial_params` has consistent shape regardless of entry point
 - MCP gains type coercion (currently skipped) and input defaults (currently skipped)
-- Internal keys (`__verbose__`, `__only_node__`, etc.) injected uniformly
+- Internal keys (`__verbose__`, etc.) injected uniformly. `__no_cache__` and `__only_node__` absorbed by `RunnerConfig` — no longer in params dict.
 
 #### Registry Run
-- At minimum: template resolution wrapper for `pflow registry run` and MCP `run_registry_node`
+- Full: build synthetic single-node IR, call `runner.run()` — gets template resolution, tracing, metrics, error handling for free
 - Unified MCP metadata injection (currently split between `inject_special_parameters` and `_parse_mcp_node_type`)
 - Unified type coercion (currently split between `coerce_input_to_declared_type` and `coerce_to_declared_type`)
 - Empty shared store in MCP registry run fixed (should have params like CLI)
@@ -173,7 +162,7 @@ For sub-workflows: `child_params` is a FRESH dict containing resolved template v
 | Aspect | CLI | MCP |
 |--------|-----|-----|
 | Early `prepare_inputs()` | Yes (type coercion, defaults) | No |
-| Internal keys | `__verbose__`, `__only_node__`, `__cache_chunks__` | None |
+| Internal keys | `__verbose__`, `__only_node__`, `__no_cache__` | None |
 | Type coercion | `coerce_input_to_declared_type` | None (compiler's `prepare_inputs` does it later) |
 | Env var resolution | Via `prepare_inputs` 5-tier | None |
 
@@ -202,12 +191,14 @@ Task 135 (Compile-Once + Batch Decomposition) depends on this task. This task un
 
 ## Verification
 
-### Phase 0
-- `make test && make check` passes with zero test changes
-- Grep confirms zero remaining references to removed functions/files
+### Phase 0 ✅
+- 4,666 tests pass with zero test changes, `make check` clean
+- Grep confirmed zero remaining references to removed functions/files
+- 10 smoke test baselines diffed — only timing/timestamps/cache hits differ
 
 ### Phase 1
 - All existing tests pass (test migration required — see affected files below)
+- 14 smoke test baselines in `.taskmaster/tasks/task_138/baseline/` — diff before/after for behavioral regression
 - CLI workflow execution produces identical output before/after
 - MCP workflow execution produces identical output before/after
 - Add CLI/MCP parity integration test: same workflow through both paths, assert identical `ExecutionResult` contents
@@ -230,9 +221,15 @@ Task 135 (Compile-Once + Batch Decomposition) depends on this task. This task un
 - `scratchpads/architectural-debt/compounding-issues.md` — the 10-issue catalog with per-issue analysis, ~~DONE~~ markers for completed fixes
 - `scratchpads/handoffs/architectural-debt-fixes.md` — handoff from 6 completed sweeps, decision history, open threads
 
-### Starting context (braindumps from this conversation)
+### Starting context (braindumps from design conversation)
 - `.taskmaster/tasks/task_138/starting-context/braindump-pipeline-analysis.md` — detailed technical analysis: codebase metrics, entry point comparison matrix, `initial_params` flow trace, dead code inventory, validation overlap matrix, wrapper chain analysis, MCP duplication quantification, output layer inventory
 - `.taskmaster/tasks/task_138/starting-context/braindump-conversation-context.md` — reasoning journey, user's mental model, where assumptions were corrected, unexplored territory, advice for implementing agent
+- `.taskmaster/tasks/task_138/starting-context/code-review-results.md` — 8 review agents' findings on original spec
+
+### Implementation artifacts
+- `.taskmaster/tasks/task_138/implementation/progress-log.md` — **authoritative**: all design decisions, assumption audit results, ambiguity resolutions
+- `.taskmaster/tasks/task_138/implementation/design-review-synthesis.md` — 8 review agents' analysis of 10 design questions with consensus/conflict per question
+- `.taskmaster/tasks/task_138/baseline/` — 14 smoke test baselines (10 original + 4 HIGH-risk paths added during audit)
 
 ### Key source files
 - `src/pflow/execution/executor_service.py` — `WorkflowExecutorService` (absorbed into runner)

@@ -1,0 +1,12 @@
+✓ Node executed successfully
+
+Execution ID: exec-1774856417-e1cce43e
+
+Output:
+  ✓ ${exit_code} (int) = 0
+  ✓ ${stderr} (str) = ""
+  ✓ ${stderr_is_binary} (bool) = false
+  ✓ ${stdout} (str) = "mcp-smoke-test"
+  ✓ ${stdout_is_binary} (bool) = false
+
+Execution time: 4ms

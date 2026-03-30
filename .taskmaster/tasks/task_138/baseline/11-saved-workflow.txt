@@ -1,0 +1,10 @@
+test-manual-check was executed
+✓ Workflow completed in 0.034s
+Nodes executed (1):
+  ✓ greet (10ms)
+cli: No outputs declared — showing auto-detected key 'stdout'. Declare outputs for reliable results.
+
+Workflow output:
+
+Hello from pflow test
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-test-manual-check-20260330-090206.json
