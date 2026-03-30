@@ -2,7 +2,7 @@
 name: review-impact-completeness
 description: "When a shared pattern is modified, find ALL consumers — including ad-hoc reimplementations that don't use shared code. The pattern behind the most subtle post-merge bugs. Catches: bypass paths that miss new capabilities, duplicate logic that diverged, code paths that should have changed but didn't."
 tools: Bash, Glob, Grep, LS, Read
-model: sonnet
+model: opus
 color: red
 ---
 

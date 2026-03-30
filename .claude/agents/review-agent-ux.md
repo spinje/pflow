@@ -2,7 +2,7 @@
 name: review-agent-ux
 description: "Evaluate every user-facing output (errors, warnings, success results, reports, CLI output) for AI agent actionability. pflow is agent-first — every message must help an AI agent diagnose and fix the problem, and every result must be parseable for downstream reasoning."
 tools: Bash, Glob, Grep, LS, Read
-model: sonnet
+model: opus
 color: red
 ---
 
