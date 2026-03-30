@@ -1,0 +1,59 @@
+"""Type definitions for the execution engine.
+
+These dataclasses represent the compiled workflow structure. They are built
+at compile time and are immutable after compilation. Runtime data flows
+through the shared store, not through these types.
+"""
+
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+
+@dataclass
+class TemplateConfig:
+    """Per-node template configuration, built at compile time."""
+
+    template_params: dict[str, Any]  # Params containing ${...} (raw template strings)
+    static_params: dict[str, Any]  # Params without templates (already type-coerced)
+    expected_types: dict[str, str]  # param_key -> declared type (from registry interface)
+    resolution_mode: str  # "strict" or "permissive"
+    optional_input_keys: set[str] = field(default_factory=set)  # For branch convergence
+
+
+@dataclass
+class BatchConfig:
+    """Per-node batch configuration, built at compile time."""
+
+    items_template: Any  # Template string "${node.list}" or inline list
+    item_alias: str = "item"  # Variable name for current item
+    error_handling: str = "fail_fast"  # "fail_fast" or "continue"
+    parallel: bool = False
+    max_concurrent: int = 10
+    max_retries: int = 1
+    retry_wait: float = 0.0
+
+
+@dataclass
+class NodeConfig:
+    """Per-node metadata extracted at compile time. Immutable after compilation."""
+
+    node_id: str
+    node_type_name: str  # Actual node class name (e.g., "ShellNode")
+    template_config: Optional[TemplateConfig]  # None if no templates in params
+    batch_config: Optional[BatchConfig]  # None if not a batch node
+    namespaced: bool  # Whether node outputs are namespaced
+    interface_metadata: Optional[dict[str, Any]]  # Registry interface for type validation
+
+
+@dataclass
+class CompiledWorkflow:
+    """Structural compilation result. Reusable across sequential batch items
+    within one execution. NOT safe for concurrent engine.run() calls
+    (node.params is mutated during execution)."""
+
+    start_node: Any  # First bare node (BaseNode/Node instance)
+    node_configs: dict[str, NodeConfig]  # node_id -> config
+    outputs: dict[str, Any] = field(default_factory=dict)  # IR outputs section
+    resolved_defaults: dict[str, Any] = field(default_factory=dict)  # From prepare_inputs
+    env_param_names: set[str] = field(default_factory=set)
+    template_resolution_mode: str = "strict"

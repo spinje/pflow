@@ -543,8 +543,9 @@ class TestRunnerPoolLifecycle:
         from pflow.execution.runner import WorkflowRunner
 
         mock_pool = MagicMock()
-        mock_flow = MagicMock()
-        mock_flow.run.return_value = "default"
+        mock_compiled = MagicMock(resolved_defaults={})
+        mock_engine = MagicMock()
+        mock_engine.run.return_value = "default"
 
         workflow_ir = {
             "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hi"}}],
@@ -552,7 +553,8 @@ class TestRunnerPoolLifecycle:
         }
 
         with (
-            patch("pflow.runtime.compile_ir_to_flow", return_value=mock_flow),
+            patch("pflow.runtime.compile_workflow", return_value=mock_compiled),
+            patch("pflow.runtime.WorkflowEngine", return_value=mock_engine),
             patch("pflow.mcp.pool.MCPConnectionPool", return_value=mock_pool),
         ):
             WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
@@ -576,7 +578,7 @@ class TestRunnerPoolLifecycle:
 
         with (
             patch(
-                "pflow.runtime.compile_ir_to_flow",
+                "pflow.runtime.compile_workflow",
                 side_effect=ValueError("compilation failed"),
             ),
             patch("pflow.mcp.pool.MCPConnectionPool", return_value=mock_pool),

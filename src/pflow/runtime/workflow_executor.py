@@ -9,7 +9,7 @@ from pflow.core.markdown_parser import parse_markdown
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime import CompilationError, compile_ir_to_flow
+from pflow.runtime import CompilationError, compile_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -142,23 +142,35 @@ class WorkflowExecutor(BaseNode):
         workflow_ir: dict[str, Any],
         workflow_path: str,
         child_params: dict[str, Any],
-        child_trace: Any,
     ) -> Any:
-        """Compile the sub-workflow, enriching errors with sub-workflow context.
+        """Compile the sub-workflow with compile-once caching.
+
+        First call compiles and caches. Subsequent calls (batch items) reuse
+        the cached CompiledWorkflow. Safe for sequential batch because
+        node.params is reset per-item by the engine. For parallel batch,
+        each deep-copied WorkflowExecutor compiles independently.
 
         CompilationError always propagates — it means the workflow definition
-        is broken, not the data. Other exceptions are wrapped in CompilationError.
+        is broken, not the data.
         """
+        from pflow.runtime.engine.types import CompiledWorkflow
+
+        # Check compile-once cache
+        ir_id = id(workflow_ir)
+        cached: Optional[CompiledWorkflow] = getattr(self, "_cached_workflow", None)
+        cached_ir_id: Optional[int] = getattr(self, "_cached_workflow_ir_id", None)
+        if cached is not None and cached_ir_id == ir_id:
+            return cached
+
         registry = self.params.get("__registry__")
         if registry is not None and not isinstance(registry, Registry):
             registry = None
 
         try:
-            return compile_ir_to_flow(
+            compiled = compile_workflow(
                 workflow_ir,
-                registry=registry,  # type: ignore[arg-type]
-                initial_params=child_params,
-                trace_collector=child_trace,
+                registry=registry or Registry(),
+                initial_params=dict(child_params),  # Copy — don't mutate caller's dict
             )
         except CompilationError as e:
             if not e.details:
@@ -173,8 +185,15 @@ class WorkflowExecutor(BaseNode):
                 suggestion=getattr(e, "suggestion", None),
             ) from e
 
+        # Cache for compile-once
+        self._cached_workflow = compiled
+        self._cached_workflow_ir_id = ir_id
+        return compiled
+
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
+        from pflow.runtime.engine import WorkflowEngine
+
         workflow_ir = prep_res["workflow_ir"]
         workflow_path = prep_res["workflow_path"]
         workflow_source = prep_res.get("workflow_source", "unknown")
@@ -195,27 +214,31 @@ class WorkflowExecutor(BaseNode):
             from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
             child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
-            child_trace.enable_llm_interception = False  # Prompts captured via template_resolutions
+            child_trace.enable_llm_interception = False
 
-        sub_flow = self._compile_sub_workflow(workflow_ir, workflow_path, child_params, child_trace)
+        # Compile (with compile-once caching)
+        compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)
 
         # Create child storage
         child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)
 
-        # Initialize _child_trace_events (will be populated after sub-flow runs)
+        # Seed: defaults first (from compile-time), then per-item values (override defaults)
+        child_storage.update(compiled.resolved_defaults)
+        child_storage.update(child_params)
+
+        # Initialize _child_trace_events (will be populated after engine runs)
         self._child_trace_events: list[dict[str, Any]] | None = None
 
-        try:
-            result = sub_flow.run(child_storage)
+        engine = WorkflowEngine(trace_collector=child_trace)
 
-            # Store child trace events for parent InstrumentedNodeWrapper to embed
+        try:
+            result = engine.run(compiled, child_storage)
+
+            # Store child trace events for parent engine to embed in trace
             if child_trace and child_trace.events:
                 self._child_trace_events = child_trace.events
 
-            # Detect sub-workflow failure via action string (not just exceptions).
-            # When a child node returns "error" and the flow has no error successor,
-            # sub_flow.run() returns "error" without raising. We must treat this as
-            # a failure so batch error_handling can detect it via _extract_error().
+            # Detect sub-workflow failure via action string
             if isinstance(result, str) and result.startswith("error"):
                 error_msg = self._extract_child_error(child_storage, workflow_path)
                 return {
@@ -227,7 +250,6 @@ class WorkflowExecutor(BaseNode):
 
             return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
         except Exception as e:
-            # Still capture child trace events on failure
             if child_trace and child_trace.events:
                 self._child_trace_events = child_trace.events
             return {

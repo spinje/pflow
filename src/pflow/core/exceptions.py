@@ -1,6 +1,6 @@
 """Custom exceptions for pflow."""
 
-from typing import Optional
+from typing import Any, Optional
 
 
 class PflowError(Exception):
@@ -92,6 +92,46 @@ class CriticalDiscoveryError(PflowError):
             message = f"{message}\nOriginal error: {original_error!s}"
 
         super().__init__(message)
+
+
+class CompilationError(PflowError):
+    """Error during IR compilation with rich context.
+
+    Attributes:
+        phase: The compilation phase where the error occurred
+        node_id: ID of the node being compiled (if applicable)
+        node_type: Type of the node being compiled (if applicable)
+        details: Additional context about the error
+        suggestion: Helpful suggestion for fixing the error
+    """
+
+    def __init__(
+        self,
+        message: str,
+        phase: str = "unknown",
+        node_id: str | None = None,
+        node_type: str | None = None,
+        details: dict[str, Any] | None = None,
+        suggestion: str | None = None,
+    ):
+        self.raw_message = message
+        self.phase = phase
+        self.node_id = node_id
+        self.node_type = node_type
+        self.details = details or {}
+        self.suggestion = suggestion
+
+        parts = [f"compiler: {message}"]
+        if phase != "unknown":
+            parts.append(f"Phase: {phase}")
+        if node_id:
+            parts.append(f"Node ID: {node_id}")
+        if node_type:
+            parts.append(f"Node Type: {node_type}")
+        if suggestion:
+            parts.append(f"Suggestion: {suggestion}")
+
+        super().__init__("\n".join(parts))
 
 
 class MaxNodeVisitsError(RuntimeError):

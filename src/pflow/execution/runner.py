@@ -168,27 +168,31 @@ class WorkflowRunner:
         this method raises.
         """
         from pflow.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import WorkflowEngine, compile_workflow
 
         # Strip validation placeholders BEFORE seeding shared store — a KeyError
         # on direct shared["input"] access is more honest than a placeholder string.
-        # Template access (${input}) works regardless (uses initial_params override).
         self._strip_placeholders(params)
 
         shared_store = self._initialize_shared_store(params, config.verbose, output, mcp_pool, cache, trace_collector)
 
         registry = Registry()
-        flow = compile_ir_to_flow(
-            resolved.ir,
-            registry=registry,
-            initial_params=params,
+        workflow = compile_workflow(resolved.ir, registry=registry, initial_params=params)
+
+        # Seed shared store with resolved defaults (from prepare_inputs).
+        # User-provided params are already in shared_store via _initialize_shared_store.
+        # resolved_defaults contains ONLY defaults for inputs not provided by the user,
+        # so this doesn't overwrite user values.
+        shared_store.update(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(
             metrics_collector=metrics_collector,
             trace_collector=trace_collector,
             only_node=config.only_node,
         )
 
         try:
-            action_result = flow.run(shared_store)
+            action_result = engine.run(workflow, shared_store)
         except Exception as e:
             # Annotate with failed_node from shared store before propagating —
             # _exception_to_result doesn't have shared_store access.

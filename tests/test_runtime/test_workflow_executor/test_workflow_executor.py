@@ -156,13 +156,16 @@ class TestExecErrorActionDetection:
             "parent_shared": {},
         }
 
-    @patch("pflow.runtime.workflow_executor.Registry")
-    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
-    def test_exec_detects_error_action_from_sub_flow(self, mock_compile, mock_registry):
-        """When sub_flow.run() returns 'error', exec() should return success=False."""
-        mock_flow = MagicMock()
-        mock_flow.run.return_value = "error"
-        mock_compile.return_value = mock_flow
+    @patch("pflow.runtime.engine.WorkflowEngine")
+    @patch("pflow.runtime.workflow_executor.compile_workflow")
+    def test_exec_detects_error_action_from_sub_flow(self, mock_compile, MockEngine):
+        """When engine.run() returns 'error', exec() should return success=False."""
+        mock_compiled = MagicMock(resolved_defaults={})
+        mock_compile.return_value = mock_compiled
+
+        mock_engine = MagicMock()
+        mock_engine.run.return_value = "error"
+        MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": []}})
@@ -176,24 +179,27 @@ class TestExecErrorActionDetection:
         assert result["workflow_path"] == "child.pflow.md"
         assert "child_storage" in result
 
-    @patch("pflow.runtime.workflow_executor.Registry")
-    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
-    def test_exec_extracts_error_from_child_storage(self, mock_compile, mock_registry):
-        """When sub_flow.run() returns 'error' and child_storage has execution tracking
+    @patch("pflow.runtime.engine.WorkflowEngine")
+    @patch("pflow.runtime.workflow_executor.compile_workflow")
+    def test_exec_extracts_error_from_child_storage(self, mock_compile, MockEngine):
+        """When engine.run() returns 'error' and child_storage has execution tracking
         with a failed_node and namespaced error, the error message should include it."""
-        # Set up a flow that populates child_storage with error info, then returns "error"
+        mock_compiled = MagicMock(resolved_defaults={})
+        mock_compile.return_value = mock_compiled
+
+        # Set up an engine whose run() populates child_storage with error info, then returns "error"
         child_storage_state = {
             "__execution__": {"failed_node": "step1"},
             "step1": {"error": "Connection refused on port 8080"},
         }
 
-        def fake_run(storage):
+        def fake_run(compiled, storage):
             storage.update(child_storage_state)
             return "error"
 
-        mock_flow = MagicMock()
-        mock_flow.run.side_effect = fake_run
-        mock_compile.return_value = mock_flow
+        mock_engine = MagicMock()
+        mock_engine.run.side_effect = fake_run
+        MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": []}})
@@ -205,13 +211,16 @@ class TestExecErrorActionDetection:
         assert "Connection refused on port 8080" in result["error"]
         assert "child.pflow.md" in result["error"]
 
-    @patch("pflow.runtime.workflow_executor.Registry")
-    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
-    def test_exec_success_when_default_action(self, mock_compile, mock_registry):
-        """When sub_flow.run() returns 'default', exec() should return success=True."""
-        mock_flow = MagicMock()
-        mock_flow.run.return_value = "default"
-        mock_compile.return_value = mock_flow
+    @patch("pflow.runtime.engine.WorkflowEngine")
+    @patch("pflow.runtime.workflow_executor.compile_workflow")
+    def test_exec_success_when_default_action(self, mock_compile, MockEngine):
+        """When engine.run() returns 'default', exec() should return success=True."""
+        mock_compiled = MagicMock(resolved_defaults={})
+        mock_compile.return_value = mock_compiled
+
+        mock_engine = MagicMock()
+        mock_engine.run.return_value = "default"
+        MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": []}})
@@ -222,13 +231,16 @@ class TestExecErrorActionDetection:
         assert result["success"] is True
         assert result["result"] == "default"
 
-    @patch("pflow.runtime.workflow_executor.Registry")
-    @patch("pflow.runtime.workflow_executor.compile_ir_to_flow")
-    def test_exec_success_when_none_action(self, mock_compile, mock_registry):
-        """When sub_flow.run() returns None, exec() should return success=True."""
-        mock_flow = MagicMock()
-        mock_flow.run.return_value = None
-        mock_compile.return_value = mock_flow
+    @patch("pflow.runtime.engine.WorkflowEngine")
+    @patch("pflow.runtime.workflow_executor.compile_workflow")
+    def test_exec_success_when_none_action(self, mock_compile, MockEngine):
+        """When engine.run() returns None, exec() should return success=True."""
+        mock_compiled = MagicMock(resolved_defaults={})
+        mock_compile.return_value = mock_compiled
+
+        mock_engine = MagicMock()
+        mock_engine.run.return_value = None
+        MockEngine.return_value = mock_engine
 
         node = WorkflowExecutor()
         node.set_params({"workflow_ir": {"nodes": []}})
