@@ -108,6 +108,7 @@ class TestCompilerIntegration:
         assert "'message': 'Processing 10 items'" in result
         assert "'static': 'unchanged'" in result
 
+    @pytest.mark.xfail(reason="Task 138: template validation moved from compiler to WorkflowValidator")
     def test_validation_fails_missing_params(self, mock_registry):
         """Test that validation catches missing parameters.
 

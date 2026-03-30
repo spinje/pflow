@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from pflow.execution.execution_state import build_execution_steps
-from pflow.execution.executor_service import ExecutionResult
+from pflow.execution.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
 

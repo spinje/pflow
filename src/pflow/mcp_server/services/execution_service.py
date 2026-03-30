@@ -16,10 +16,10 @@ from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.null_output import NullOutput
 from pflow.execution.workflow_execution import execute_workflow
+from pflow.execution.workflow_resolver import resolve_workflow as _unified_resolve
 from pflow.registry import Registry
 from pflow.runtime import import_node_class
 
-from ..utils.resolver import resolve_workflow
 from ..utils.validation import (
     generate_dummy_parameters,
     validate_execution_parameters,
@@ -42,21 +42,25 @@ def _resolve_and_validate_workflow(
         Tuple of (workflow_ir, error_response, validated_parameters, source)
         If error_response is not None, workflow_ir will be None
     """
-    # Resolve workflow to IR
-    workflow_ir, error, source = resolve_workflow(workflow)
-    if error or workflow_ir is None:
+    # Resolve workflow to IR via unified resolver
+    try:
+        resolved = _unified_resolve(workflow)
+    except Exception as e:
         return (
             None,
             {
                 "success": False,
                 "error": {
                     "type": "not_found",
-                    "message": error or "Workflow not found",
+                    "message": str(e),
                 },
             },
             {},
-            source or "",
+            "",
         )
+
+    workflow_ir = resolved.ir
+    source = resolved.source
 
     # Normalize the workflow IR
     normalize_ir(workflow_ir)  # Modifies in-place
@@ -383,13 +387,14 @@ class ExecutionService(BaseService):
         Returns:
             Formatted text with validation results (same as CLI output)
         """
-        # Resolve workflow to IR
-        workflow_ir, error, source = resolve_workflow(workflow)
-        if error or workflow_ir is None:
-            return f"✗ Workflow not found: {error or 'Unknown error'}"
+        # Resolve workflow to IR via unified resolver
+        try:
+            resolved = _unified_resolve(workflow)
+        except Exception as e:
+            return f"✗ Workflow not found: {e}"
 
-        # Normalize the workflow IR (mypy now knows workflow_ir is not None)
-        normalize_ir(workflow_ir)  # Modifies in-place
+        workflow_ir = resolved.ir
+        source = resolved.source
 
         # Check for file references in inline workflows (no file path to resolve from)
         try:
@@ -403,12 +408,8 @@ class ExecutionService(BaseService):
         from pflow.core.file_resolver import resolve_file_references
 
         try:
-            if source == "file":
-                base_dir = Path(str(workflow)).resolve().parent
-                resolve_file_references(workflow_ir, base_dir)
-            elif source == "library":
-                wm = WorkflowManager()
-                base_dir = Path(wm.get_path(str(workflow))).parent
+            if resolved.file_path:
+                base_dir = Path(resolved.file_path).parent
                 resolve_file_references(workflow_ir, base_dir)
         except (FileNotFoundError, yaml.YAMLError) as e:
             return f"✗ File reference error: {e}"

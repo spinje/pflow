@@ -103,7 +103,7 @@ def mock_compile():
             node.run(shared_storage)
 
             # Create a successful result
-            from pflow.execution.executor_service import ExecutionResult
+            from pflow.execution.result import ExecutionResult
 
             return ExecutionResult(success=True, errors=[], shared_after=shared_storage)
 

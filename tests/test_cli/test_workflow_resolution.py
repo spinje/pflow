@@ -170,7 +170,7 @@ class TestWorkflowResolutionCLI:
         """Test running a saved workflow by name."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {
@@ -195,7 +195,7 @@ class TestWorkflowResolutionCLI:
         """Test running workflow with .pflow.md extension strips it."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
@@ -236,7 +236,7 @@ class TestWorkflowResolutionCLI:
         """Test that helpful suggestions are shown when workflow not found."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             with patch("pflow.cli.main.WorkflowManager", MockWM):
                 mock_wm = MockWM.return_value
                 mock_wm.exists.return_value = False
@@ -257,7 +257,7 @@ class TestWorkflowResolutionCLI:
         """Test message when no similar workflows found."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             with patch("pflow.cli.main.WorkflowManager", MockWM):
                 mock_wm = MockWM.return_value
                 mock_wm.exists.return_value = False
@@ -273,7 +273,7 @@ class TestWorkflowResolutionCLI:
         """Test passing parameters to a named workflow - simplified test."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "process-data"
             mock_wm.load_ir.return_value = {
@@ -302,7 +302,7 @@ class TestWorkflowResolutionCLI:
         """Test that parameters are validated using prepare_inputs."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "process-data"
             mock_wm.load_ir.return_value = {
@@ -327,7 +327,7 @@ class TestWorkflowResolutionCLI:
         """Test that default values are applied for optional parameters - simplified."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "analyze"
             mock_wm.load_ir.return_value = {
@@ -356,7 +356,7 @@ class TestWorkflowResolutionCLI:
         """Test that verbose mode shows what's happening."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "my-workflow"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
@@ -394,7 +394,7 @@ class TestWorkflowResolutionCLI:
         """Test that parameter types are correctly inferred."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
@@ -444,7 +444,7 @@ class TestWorkflowResolutionCLI:
         """Test that --output-format json works with named workflows - simplified."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {
@@ -461,7 +461,7 @@ class TestWorkflowResolutionCLI:
         """Test that natural language shows invalid input guidance when workflow not found."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.return_value = False
             mock_wm.list_all.return_value = []
@@ -604,7 +604,7 @@ class TestEdgeCases:
         """Test parameters with = in the value are handled correctly."""
         runner = click.testing.CliRunner()
 
-        with patch("pflow.cli.workflow_resolution.WorkflowManager") as MockWM:
+        with patch("pflow.execution.workflow_resolver.WorkflowManager") as MockWM:
             mock_wm = MockWM.return_value
             mock_wm.exists.side_effect = lambda name: name == "test"
             mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}

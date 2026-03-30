@@ -2,7 +2,6 @@
 
 import logging
 import time
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
 
@@ -15,15 +14,7 @@ from .output_interface import OutputInterface
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ExecutionResult:
-    """Result of workflow execution."""
-
-    success: bool
-    status: WorkflowStatus = WorkflowStatus.SUCCESS
-    shared_after: dict[str, Any] = field(default_factory=dict)
-    errors: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[dict[str, Any]] = field(default_factory=list)
+from .result import ExecutionResult
 
 
 class WorkflowExecutorService:
@@ -88,6 +79,9 @@ class WorkflowExecutorService:
 
         start_time = time.time()
 
+        # Extract only_node before shared store init (prevents it leaking into shared store)
+        only_node_val = execution_params.pop("__only_node__", None) if execution_params else None
+
         # Initialize shared store and registry
         shared_store = self._initialize_shared_store(shared_store, execution_params, stdin_data, metrics_collector)
 
@@ -114,6 +108,7 @@ class WorkflowExecutorService:
                 validate=validate,
                 metrics_collector=metrics_collector,
                 trace_collector=trace_collector,
+                only_node=only_node_val,
             )
             action_result = flow.run(shared_store)
 
@@ -182,9 +177,9 @@ class WorkflowExecutorService:
         if execution_params:
             no_cache = execution_params.pop("__no_cache__", False)
 
-        # Add execution parameters (filter internal keys from shared store)
+        # Add execution parameters to shared store
         if execution_params:
-            shared_store.update({k: v for k, v in execution_params.items() if k != "__only_node__"})
+            shared_store.update(execution_params)
 
         # Note: stdin data is now routed to workflow inputs via stdin: true
         # in the workflow IR, handled by _validate_and_prepare_workflow_params

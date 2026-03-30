@@ -174,13 +174,13 @@ class TestNestedWorkflowCLI:
         child_file = saved_dir / "child-upper.pflow.md"
         child_file.write_text(CHILD_WORKFLOW)
 
-        # Patch WorkflowManager to use our tmp workflows dir
-        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_wm_class:
-            mock_wm_class.return_value = wm
-
-            # Also patch the WorkflowManager used in CLI setup
-            with patch("pflow.cli.workflow_resolution.WorkflowManager", return_value=wm):
-                result = invoke_cli(["test-saved-nested", "title=saved"])
+        # Patch WorkflowManager at all import sites to use our tmp workflows dir
+        with (
+            patch("pflow.core.workflow.manager.WorkflowManager", return_value=wm),
+            patch("pflow.execution.workflow_resolver.WorkflowManager", return_value=wm),
+            patch("pflow.cli.main.WorkflowManager", return_value=wm),
+        ):
+            result = invoke_cli(["test-saved-nested", "title=saved"])
 
         assert result.exit_code == 0, (
             f"Saved workflow with relative child failed (exit {result.exit_code})\n"

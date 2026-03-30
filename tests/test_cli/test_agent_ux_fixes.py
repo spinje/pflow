@@ -12,8 +12,9 @@ from unittest.mock import patch
 
 from pflow.cli.workflow_errors import _display_single_error
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.execution.executor_service import ExecutionResult, WorkflowExecutorService
+from pflow.execution.executor_service import WorkflowExecutorService
 from pflow.execution.null_output import NullOutput
+from pflow.execution.result import ExecutionResult
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 

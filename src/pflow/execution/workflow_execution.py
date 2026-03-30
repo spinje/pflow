@@ -2,9 +2,10 @@
 
 from typing import Any, Optional
 
-from .executor_service import ExecutionResult, WorkflowExecutorService
+from .executor_service import WorkflowExecutorService
 from .null_output import NullOutput
 from .output_interface import OutputInterface
+from .result import ExecutionResult
 
 
 def execute_workflow(

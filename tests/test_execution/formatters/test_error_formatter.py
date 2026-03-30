@@ -11,8 +11,8 @@ bug that could break production:
 If a test passes but the feature is broken, the test failed its purpose.
 """
 
-from pflow.execution.executor_service import ExecutionResult
 from pflow.execution.formatters.error_formatter import format_execution_errors
+from pflow.execution.result import ExecutionResult
 
 
 class TestSecurityGuardrails:
