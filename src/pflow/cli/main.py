@@ -241,7 +241,6 @@ def execute_json_workflow(  # noqa: C901
     output_key: str | None = None,
     execution_params: dict[str, Any] | None = None,
     output_format: str = "text",
-    metrics_collector: Any | None = None,  # Unused after Runner owns metrics, kept for signature compat
 ) -> None:
     """Execute a workflow through the shared Runner."""
     from pflow.cli.error_output import output_error
@@ -716,25 +715,15 @@ def _setup_workflow_execution(
     first_arg: str,
     source: str | None,
     output_format: str,
-) -> Any | None:
-    """Setup workflow execution context and metrics.
+) -> None:
+    """Setup workflow execution context (source, name, file path).
 
     Args:
         ctx: Click context
         first_arg: First workflow argument (name or path)
         source: Workflow source ("library", "file", etc.)
         output_format: Output format
-
-    Returns:
-        Metrics collector if JSON output, otherwise None
     """
-    # Create metrics collector if needed
-    metrics_collector = None
-    if output_format == "json":
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-
     # Set workflow metadata based on source
     # This ensures proper action field in JSON output
     if source == "library":
@@ -766,8 +755,6 @@ def _setup_workflow_execution(
             ctx.obj["source_file_path"] = wm.get_path(workflow_name)
         except Exception:
             logger.debug("Could not resolve saved workflow path for '%s'", workflow_name, exc_info=True)
-
-    return metrics_collector
 
 
 def _handle_named_workflow(
@@ -829,10 +816,10 @@ def _handle_named_workflow(
             click.echo(f"cli: With parameters: {params}")
 
     # Setup workflow execution context
-    metrics_collector = _setup_workflow_execution(ctx, first_arg, source, output_format)
+    _setup_workflow_execution(ctx, first_arg, source, output_format)
 
     # Execute workflow
-    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, output_format, metrics_collector)
+    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, output_format)
     return True
 
 

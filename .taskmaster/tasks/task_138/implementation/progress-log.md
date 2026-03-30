@@ -1496,4 +1496,15 @@ Also verified clean:
 - `runtime/CLAUDE.md` and `mcp/CLAUDE.md` — already updated by cleanup phase (zero stale `executor_service` references)
 - `template_validation/CLAUDE.md:62` reference to `executor_service.py` for `MAX_DISPLAYED_FIELDS` — still accurate (function exists in extracted standalone code)
 
+### Dead `metrics_collector` parameter chain removed (2026-03-30)
+
+3 parallel audit agents swept modified files for unused code. One finding: `_setup_workflow_execution()` created a `MetricsCollector` → returned it → `_handle_named_workflow` passed it to `execute_json_workflow` → parameter annotated "Unused" → function body used `result.metrics` from the Runner instead. The entire chain was vestigial — the Runner creates its own `MetricsCollector` internally.
+
+Fixed:
+- `execute_json_workflow` — removed `metrics_collector` parameter
+- `_setup_workflow_execution` — removed `MetricsCollector` creation, return type `None`
+- `_handle_named_workflow` — removed return value capture and arg passthrough
+
+All other files clean: zero unused imports, zero dead functions, zero dead exports across all 7 modified production files.
+
 ### Status: Task 138 Phase 1 fully complete. Ready for commit.
