@@ -29,7 +29,13 @@ FIX HISTORY:
 import pytest
 
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.execution.workflow_execution import execute_workflow
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
+
+
+def execute_workflow(workflow_ir: dict, execution_params: dict, **_kwargs: object) -> object:
+    """Compatibility shim: routes old execute_workflow() calls through WorkflowRunner."""
+    return WorkflowRunner().run(workflow_ir, execution_params, RunnerConfig())
 
 
 class TestIssue95Prevention:
@@ -234,7 +240,6 @@ class TestTriStateStatus:
         assert result.status == WorkflowStatus.SUCCESS
         assert len(result.warnings) == 0
 
-    @pytest.mark.xfail(reason="Task 138: template validation moved from compiler to WorkflowValidator")
     def test_invalid_template_caught_at_compilation_in_permissive_mode(self):
         """Compiler catches invalid templates regardless of permissive mode.
 
@@ -298,7 +303,6 @@ class TestConfigurationHierarchy:
     Validates that users can control behavior through workflow IR.
     """
 
-    @pytest.mark.xfail(reason="Task 138: template validation moved from compiler to WorkflowValidator")
     def test_permissive_mode_still_fails_compilation_for_unknown_templates(self):
         """Permissive mode does not bypass compiler validation.
 
@@ -355,7 +359,6 @@ class TestMultipleTemplateErrors:
     Validates that all errors are captured and reported correctly.
     """
 
-    @pytest.mark.xfail(reason="Task 138: template validation moved from compiler to WorkflowValidator")
     def test_multiple_template_errors_all_captured_at_compilation(self):
         """Multiple unresolved templates should all be captured as compilation errors.
 

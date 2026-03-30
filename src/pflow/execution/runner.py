@@ -85,18 +85,25 @@ class WorkflowRunner:
             metrics_collector = MetricsCollector()
             metrics_collector.record_workflow_start()
 
-            trace_collector = WorkflowTraceCollector(
-                workflow_name=workflow_name or resolved.file_path or "unnamed"
-            )
+            trace_collector = WorkflowTraceCollector(workflow_name=workflow_name or resolved.file_path or "unnamed")
 
             mcp_pool = MCPConnectionPool()
             cache = MemoizationCache(read_enabled=config.cache_enabled)
 
             # Compile, execute, build result
             result = self._compile_and_execute(
-                resolved, params, config, output, workflow_manager, workflow_name,
-                validation_warnings, start_time,
-                metrics_collector, trace_collector, mcp_pool, cache,
+                resolved,
+                params,
+                config,
+                output,
+                workflow_manager,
+                workflow_name,
+                validation_warnings,
+                start_time,
+                metrics_collector,
+                trace_collector,
+                mcp_pool,
+                cache,
             )
             return result
 
@@ -120,6 +127,9 @@ class WorkflowRunner:
         """
         resolved = self._resolve(workflow)
 
+        # For dict inputs (pre-resolved IR), file_path is always None here.
+        # Callers who pre-resolve must inject _pflow_workflow_file into params
+        # before calling run(). See MCP execute_workflow() and CLI execute_json_workflow().
         if resolved.file_path:
             params["_pflow_workflow_file"] = resolved.file_path
 
@@ -159,9 +169,7 @@ class WorkflowRunner:
         from pflow.registry import Registry
         from pflow.runtime import compile_ir_to_flow
 
-        shared_store = self._initialize_shared_store(
-            params, config.verbose, output, mcp_pool, cache, trace_collector
-        )
+        shared_store = self._initialize_shared_store(params, config.verbose, output, mcp_pool, cache, trace_collector)
 
         registry = Registry()
         flow = compile_ir_to_flow(
@@ -357,9 +365,7 @@ class WorkflowRunner:
         if env_param_names:
             params["__env_param_names__"] = list(env_param_names)
 
-    def _determine_status(
-        self, action_result: Any, shared_store: dict[str, Any]
-    ) -> tuple[bool, WorkflowStatus]:
+    def _determine_status(self, action_result: Any, shared_store: dict[str, Any]) -> tuple[bool, WorkflowStatus]:
         """Map action result + store state to (success, status)."""
         if action_result and isinstance(action_result, str) and action_result.startswith("error"):
             return False, WorkflowStatus.FAILED
@@ -369,9 +375,7 @@ class WorkflowRunner:
             return True, WorkflowStatus.DEGRADED
         return True, WorkflowStatus.SUCCESS
 
-    def _build_errors(
-        self, success: bool, action_result: Any, shared_store: dict[str, Any]
-    ) -> list[dict[str, Any]]:
+    def _build_errors(self, success: bool, action_result: Any, shared_store: dict[str, Any]) -> list[dict[str, Any]]:
         """Build error list from execution result. Delegates to executor_service logic."""
         from .executor_service import WorkflowExecutorService
 
@@ -425,9 +429,7 @@ class WorkflowRunner:
         except Exception:
             logger.debug("Metadata update failed", exc_info=True)
 
-    def _exception_to_result(
-        self, exception: Exception, start_time: float, trace_collector: Any
-    ) -> ExecutionResult:
+    def _exception_to_result(self, exception: Exception, start_time: float, trace_collector: Any) -> ExecutionResult:
         """Convert any exception to ExecutionResult."""
         from pflow.core.exceptions import MaxNodeVisitsError, WorkflowValidationError
         from pflow.core.markdown_parser import MarkdownParseError
@@ -444,9 +446,7 @@ class WorkflowRunner:
                 "node_id": getattr(exception, "node_id", None),
                 "node_type": getattr(exception, "node_type", None),
                 "suggestion": getattr(exception, "suggestion", None),
-                "sub_workflow_path": (getattr(exception, "details", None) or {}).get(
-                    "sub_workflow_path"
-                ),
+                "sub_workflow_path": (getattr(exception, "details", None) or {}).get("sub_workflow_path"),
             })
         elif isinstance(exception, MaxNodeVisitsError):
             error_dict.update({

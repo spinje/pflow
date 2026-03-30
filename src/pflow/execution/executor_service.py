@@ -10,11 +10,9 @@ from pflow.core.workflow.status import WorkflowStatus
 from pflow.mcp_server.utils.errors import sanitize_parameters
 
 from .output_interface import OutputInterface
+from .result import ExecutionResult
 
 logger = logging.getLogger(__name__)
-
-
-from .result import ExecutionResult
 
 
 class WorkflowExecutorService:

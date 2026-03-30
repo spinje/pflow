@@ -973,4 +973,215 @@ Rewrote `execute_json_workflow()` in `cli/main.py` to call `WorkflowRunner().run
 
 **Fix**: Moved resource creation (MetricsCollector, WorkflowTraceCollector, MCPConnectionPool, MemoizationCache) back into `run()` scope. Renamed `_execute_workflow` → `_compile_and_execute` which now receives resources as parameters. Resources are always visible to `_cleanup()` in the finally block, regardless of whether `_compile_and_execute` succeeds or raises. Added `noqa: C901` to `run()` since the resource creation adds to line count (not branching complexity).
 
-### Status: Phases 1-5 complete. 25 test failures (mock-target, Phase 8). Ready for Phase 6 (MCP wiring).
+---
+
+## Phase 6 Implementation — Wire MCP to Runner (2026-03-30)
+
+### What was done
+Rewrote 3 methods in `execution_service.py`: `execute_workflow()`, `validate_workflow()`, `run_registry_node()`. Removed 6 absorbed helpers (`_resolve_and_validate_workflow`, `_build_workflow_metadata`, `_inject_workflow_file_path`, `_check_inline_file_references`, `_configure_node_parameters`, `_extract_node_outputs`). Simplified `_format_success_result`, `_format_error_result`, `_build_error_text` signatures. Fixed E402 ruff error in `executor_service.py`.
+
+### Deviations from plan
+
+1. **`_format_success_result` signature simplified.** Plan had complex signature matching old code. New version takes `(result, resolved, workflow_manager)` — derives trace path from `result.trace`, builds metadata from `resolved.source`.
+
+2. **`_build_error_text` signature changed.** Removed `trace_path` parameter — now derived from `error_dict.get("trace_path")`. This breaks 2 tests that call it with 2 args.
+
+3. **`run_registry_node` kept env var resolution before synthetic IR.** The plan said to pass `{}` as Runner params and put everything in node.params. But `expand_env_vars_nested` must run BEFORE the Runner because the compiler's template resolver doesn't resolve env vars. Resolved env var values go into node.params in the synthetic IR.
+
+4. **`format_node_output(action=None)` → `action="default"`.** mypy caught that `action` expects `str`, not `None`. Used `"default"` which is the standard non-error action.
+
+5. **`format_execution_error(node_type, error_msg)` → `format_execution_error(node_type, RuntimeError(error_msg))`.** The formatter expects `Exception`, not `str`. Wrapped string in `RuntimeError`.
+
+### Verification
+- 4,655 passed, 11 failed (all Phase 8 mock-target), 4 xfailed
+- `make check` fully clean (ruff + mypy + deptry)
+
+---
+
+## Phase 7 Implementation — Delete Old Code (2026-03-30)
+
+### What was done
+
+1. **Deleted `src/pflow/execution/workflow_execution.py`** — zero production callers after Phase 5.
+2. **Removed `WorkflowExecutorService` from `execution/__init__.py` exports** — internal utility only, not public API.
+3. **Deleted 8 dead functions from `cli/main.py`**: `_prepare_execution_environment`, `_cleanup_workflow_resources`, `_setup_execution_context`, `_perform_validation`, `_display_validation_results`, `_handle_validate_only_mode`, `_resolve_file_refs`, `_validate_before_execution`. Total ~250 lines removed.
+4. **Removed dead `display_validation_warnings` import** from top of `main.py`.
+5. **Fixed collection errors** from deleted module: rewrote `test_workflow_execution.py` to use `WorkflowRunner` instead of deleted `execute_workflow()`. Added compatibility shim in `test_template_resolution_hardening.py`.
+6. **Fixed `test_workflow_output_handling.py` fixture** — changed mock target from `pflow.execution.workflow_execution.execute_workflow` to `pflow.execution.runner.WorkflowRunner.run`.
+7. **Removed 3 xfail markers** from template validation tests that now pass through the Runner's validation path. Removed 2 xfail markers from `test_workflow_execution.py` tests that work with `_compile_and_execute` mock.
+
+### Test impact from Phase 7 fixes
+- `test_workflow_output_handling.py`: 24 tests went from ERROR (collection failure) → PASS (fixture updated)
+- `test_workflow_execution.py`: 4 tests went from ERROR/XFAIL → PASS (rewritten for Runner)
+- `test_template_resolution_hardening.py`: 3 tests went from XPASS → PASS (xfail markers removed)
+
+### `_load_settings_env` NOT deleted
+The agent search confirmed it's still alive — called from `_validate_and_prepare_workflow_params` at line 960 of main.py. Not duplicate of the copy in `compile_validation.py` — each is called at different pipeline stages.
+
+### Remaining 11 failures (all Phase 8)
+- 6 `test_registry_run_mcp.py` — mock `import_node_class` which Runner doesn't use
+- 4 `test_agent_ux_fixes.py` — mock old executor (2 tests), `_build_error_text` signature (2 tests)
+- 1 `test_checkpoint_tracking.py` — patches old `execute_workflow`
+
+### Verification
+- 4,655 passed, 11 failed, 4 xfailed
+- `make check` fully clean (ruff, mypy, deptry all pass)
+
+### Post-Phase-6/7 review fixes (2026-03-30)
+
+**18. Duplicate `WorkflowManager()` in MCP `execute_workflow`.** Created two instances (line 208 for Runner, line 213 for formatter). Fixed: create one `wm = WorkflowManager()` and reuse.
+
+**19. `execution_time_ms=0` in registry run `format_node_output`.** Old code measured time with `time.perf_counter()`. New synthetic IR path through Runner doesn't expose per-node timing directly. Fixed: extract from `result.metrics._calculate_durations()` which returns total workflow duration. The timing includes Runner overhead (validation, compilation) not just node execution, so it's slightly longer than the old measurement. Acceptable tradeoff — the total time is more honest for agent consumption.
+
+**20. MCP `execute_workflow` missing formatter error wrapper.** Old code had `try/except RuntimeError: raise; except Exception: raise RuntimeError(...)` to wrap unexpected formatter errors into `RuntimeError` (the MCP contract). My initial rewrite omitted this. Added back. Without it, a formatter bug would propagate as a raw Python exception (KeyError, AttributeError) instead of a RuntimeError with error message — confusing for AI agents consuming the MCP tool.
+
+**21. `_format_success_result` metadata name was absolute file path instead of user-facing name.** `_format_success_result` used `resolved.file_path` in metadata `{"name": resolved.file_path}`. The formatter displays `"{name} was executed"` in MCP output. With `resolved.file_path`, this showed `/Users/x/.pflow/workflows/my-workflow/my-workflow.pflow.md was executed` instead of `my-workflow was executed`. Fixed: changed signature to accept `workflow_name_display: str | None` and pass `str(workflow)` (the original user-provided identifier) from the caller. Also removed unused `workflow_manager` parameter.
+
+**22. MCP path doesn't save traces.** The old MCP code also didn't save traces — trace saving was always a CLI concern (`_save_trace_and_report`). The Runner's `WorkflowTraceCollector` has `save_to_file()` but it's only called from the CLI's finally block. `_format_success_result` and `_format_error_result` guard `result.trace.trace_path` with `hasattr()`, producing empty string for MCP. This is consistent with pre-existing behavior.
+
+### Key architectural patterns for future agents
+
+**1. MCP `execute_workflow` pre-resolves then passes dict to Runner.**
+The MCP caller calls `_unified_resolve(workflow)` BEFORE calling `runner.run(resolved.ir, ...)`. This seems redundant (the Runner can resolve internally). The reason: the MCP caller needs `resolved.source` and `resolved.file_path` for (a) building workflow metadata for display formatting, (b) deciding `workflow_name` for metadata update, (c) injecting `_pflow_workflow_file` for sub-workflow resolution. These are caller-level concerns the Runner doesn't expose. The Runner then re-resolves the dict (a no-op passthrough — just `normalize_ir()` + wrap in `ResolvedWorkflow(source="direct")`).
+
+**2. MCP `validate_workflow` does NOT pre-resolve — passes raw workflow to Runner.**
+Asymmetric with `execute_workflow`. The reason: `validate_workflow` doesn't need `resolved.source` or `resolved.file_path` — the Runner's `validate()` method handles resolution, file path injection, and file reference resolution internally. No metadata display, no `_pflow_workflow_file` injection needed from outside.
+
+**3. Two different `${...}` resolution systems in registry run.**
+`run_registry_node` calls `expand_env_vars_nested()` BEFORE building synthetic IR, then passes resolved values in `node.params`. A future agent might think "the compiler handles `${...}` resolution, why do we need this pre-step?" The answer: they resolve from DIFFERENT sources.
+- `expand_env_vars_nested`: resolves `${ENV_VAR}` from `os.environ` and `settings.json`. Used for secrets (`${API_KEY}`, `${SLACK_TOKEN}`).
+- Compiler's `TemplateResolver`: resolves `${param_name}` from shared store (workflow-level parameters). Used for data flow (`${fetch.response.items}`).
+If we didn't resolve env vars first, `${API_KEY}` in node params would be treated as a template referencing `API_KEY` in shared store — which is empty `{}` — and fail with "unresolved template".
+
+**4. MCP parameter validation is a system boundary concern.**
+Both `execute_workflow` and `run_registry_node` call `validate_execution_parameters()` before passing to the Runner. The Runner does NOT validate parameters — it trusts its caller. This is intentional: CLI params come from Click (already validated), MCP params come from AI agents (untrusted — need injection detection). The validation function (`validate_execution_parameters`) checks for shell injection characters, oversized values, etc.
+
+**5. `test_template_resolution_hardening.py` uses a compatibility shim.**
+This test file was updated in Phase 7 with a local `execute_workflow()` function that wraps `WorkflowRunner().run()`. This is a quick fix to unblock test collection (the old import failed). Phase 8/9 should replace this with direct Runner calls. The shim exists at the top of the test file and looks like a real function — it's intentionally named `execute_workflow` to minimize test body changes.
+
+**6. `test_workflow_execution.py` mocks at `_compile_and_execute` level.**
+These tests mock `WorkflowRunner._compile_and_execute` (a private method). This is the closest equivalent to the old `WorkflowExecutorService.execute_workflow` mock. When `_compile_and_execute` is mocked, the `run()` method still creates real per-execution resources (MetricsCollector, MCPConnectionPool, etc.) and cleans them up in `finally`. The mock's return value must be a valid `ExecutionResult`. The resources are created but unused (no-op cleanup) — this is acceptable test overhead.
+
+---
+
+## Context Reset Handoff — Ready for Phase 8 (2026-03-30)
+
+### Current state
+
+- **`make check`**: fully clean (ruff + mypy + deptry)
+- **`make test`**: 4,655 passed, 11 failed, 4 xfailed
+- **Branch**: `feat/shared-execution-pipeline`
+- **Git state**: Phases 1-4 committed (`730aaad1`), Phases 5-7 committed (`81a40bba`). Clean working tree.
+- **CLAUDE.md files are STALE**: `execution/CLAUDE.md` and `mcp_server/CLAUDE.md` still reference deleted code (`workflow_execution.py`, `execute_workflow()`, `import_node_class`, `_configure_node_parameters`, etc.). Do NOT trust them for current code structure. They are updated in Phase 10. For current structure, read `runner.py`, `result.py`, and `workflow_resolver.py` directly.
+
+### What Phases 1-7 accomplished
+
+Replaced pflow's parallel CLI/MCP orchestration with a single `WorkflowRunner`. Before: CLI (`cli/main.py`) and MCP (`mcp_server/services/execution_service.py`) each built their own execution pipeline from partially-shared components. After: both call `WorkflowRunner().run()` which owns resolution → file reference resolution → validation → compilation → execution → resource lifecycle → metadata update → exception boundary.
+
+**New files created:**
+- `src/pflow/execution/result.py` — `RunnerConfig`, `ResolvedWorkflow`, `ValidationResult`, `ExecutionResult` (extended with `validation_warnings`, `trace`, `metrics`)
+- `src/pflow/execution/workflow_resolver.py` — Unified resolver merging CLI and MCP resolvers, returns `ResolvedWorkflow`
+- `src/pflow/execution/runner.py` — `WorkflowRunner` class with `run()` and `validate()` methods
+
+**Deleted:**
+- `src/pflow/execution/workflow_execution.py` — the old `execute_workflow()` wrapper
+- 8 dead functions from `cli/main.py` (~250 lines): `_prepare_execution_environment`, `_cleanup_workflow_resources`, `_setup_execution_context`, `_perform_validation`, `_display_validation_results`, `_handle_validate_only_mode`, `_resolve_file_refs`, `_validate_before_execution`
+- 6 absorbed helpers from `execution_service.py` (~180 lines): `_resolve_and_validate_workflow`, `_build_workflow_metadata`, `_inject_workflow_file_path`, `_check_inline_file_references`, `_configure_node_parameters`, `_extract_node_outputs`
+
+**Modified (key changes):**
+- `cli/main.py`: `execute_json_workflow()` rewritten from ~130 to ~55 lines, new `_display_execution_result()` and `_display_validation_result()` functions
+- `execution_service.py`: `execute_workflow()`, `validate_workflow()`, `run_registry_node()` all rewritten to call `WorkflowRunner`
+- `runtime/compilation/compile_validation.py`: `_validate_workflow` → `_prepare_compilation`, template validation stripped (now in WorkflowValidator via Runner)
+- `runtime/compilation/compiler.py`: `compile_ir_to_flow()` gained `only_node` parameter
+
+### The 11 failing tests — exact diagnosis and fix for each
+
+**Group A: Mock targets reference deleted module (3 tests)**
+
+These tests mock `pflow.execution.workflow_execution.*` which no longer exists.
+
+| Test | File:Line | Error | Fix |
+|------|-----------|-------|-----|
+| `test_degraded_workflow_exits_with_code_2` | `test_agent_ux_fixes.py:200` | `AttributeError: module 'pflow.execution' has no attribute 'workflow_execution'` | Change mock target from `pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow` to `pflow.execution.runner.WorkflowRunner.run`. The mock return value must be `ExecutionResult(success=True, status=WorkflowStatus.DEGRADED, shared_after={"result": "ok"})`. |
+| `test_successful_workflow_does_not_exit_with_code_2` | `test_agent_ux_fixes.py:222` | Same `AttributeError` | Same fix — mock `WorkflowRunner.run` instead, return `ExecutionResult(success=True, shared_after={"result": "ok"})`. |
+| `test_repair_and_resume_with_mocked_flow` | `test_checkpoint_tracking.py:256` | `ModuleNotFoundError: No module named 'pflow.execution.workflow_execution'` | Line 256 has `from pflow.execution.workflow_execution import execute_workflow` (lazy import inside test). Change to `from pflow.execution.runner import WorkflowRunner` and `from pflow.execution.result import RunnerConfig`. Line 277 patches `pflow.execution.executor_service.WorkflowExecutorService.execute_workflow` — change to `pflow.execution.runner.WorkflowRunner.run`. Line 281 calls `execute_workflow(...)` — change to `WorkflowRunner().run(workflow_ir, {}, RunnerConfig())`. |
+
+**Group B: `_build_error_text` signature changed (2 tests)**
+
+The function signature changed from `_build_error_text(error_dict, trace_path)` (2 args) to `_build_error_text(error_dict)` (1 arg, trace_path derived from `error_dict.get("trace_path")`).
+
+| Test | File:Line | Error | Fix |
+|------|-----------|-------|-----|
+| `test_mcp_build_error_text_includes_shell_details` | `test_agent_ux_fixes.py:364` | `TypeError: _build_error_text() takes 1 positional argument but 2 were given` | Change `_build_error_text(error_dict, trace_path)` → `error_dict["trace_path"] = str(trace_path); _build_error_text(error_dict)`. Or just pass 1 arg since the test doesn't assert on trace path display. |
+| `test_mcp_build_error_text_truncates_long_values` | `test_agent_ux_fixes.py:388` | Same `TypeError` | Same fix. |
+
+**Group C: `import_node_class` no longer imported in `execution_service.py` (6 tests)**
+
+All 6 tests in `test_registry_run_mcp.py` mock `pflow.mcp_server.services.execution_service.import_node_class`. The function was removed from the MCP module because `run_registry_node` now routes through the Runner (synthetic IR → `compile_ir_to_flow` → `flow.run`). The compiler handles node class importing internally.
+
+| Test | Error | Fix strategy |
+|------|-------|--------------|
+| All 6 in `TestRegistryRunMCP` | `AttributeError: ... does not have the attribute 'import_node_class'` | **Full rewrite needed.** These tests mock the old direct-execution path (import node class → set params → run node). The new path is: build synthetic IR → `WorkflowRunner().run()`. The tests should either: (a) mock `WorkflowRunner.run` to return controlled results, or (b) test `run_registry_node` end-to-end with real shell nodes. Option (b) is better — `run_registry_node("shell", {"command": "echo test"})` actually executes and the test asserts on the output string. |
+| `test_mcp_node_parameter_injection` | Tests that MCP nodes get `__mcp_server__` + `__mcp_tool__` injected | With synthetic IR, the compiler handles MCP metadata injection during compilation. Test should verify the output shows MCP results, not that specific params were injected. |
+| `test_template_variable_resolution_from_environment` | Tests `${ENV_VAR}` expansion | Still valid — `expand_env_vars_nested` is called before building synthetic IR. Mock `os.environ` and verify the resolved value appears in output. |
+| `test_missing_variable_raises_helpful_error` | Tests that missing `${VAR}` raises | `expand_env_vars_nested(raise_on_missing=True)` still raises. The error now surfaces through `run_registry_node`'s `except Exception` handler → `format_execution_error`. Verify the returned string contains the error message. |
+
+### The 4 xfailed tests — what they test and how to resolve
+
+These tests call `compile_ir_to_flow()` directly and expect `ValueError` from template validation. Template validation was stripped from the compiler in Phase 3 (moved to WorkflowValidator, called by the Runner). The compiler no longer rejects bad templates — it produces a Flow that fails at runtime instead.
+
+| Test | File | What it expects | How to fix |
+|------|------|----------------|------------|
+| `test_typo_in_field_still_errors_despite_optional` | `test_branch_convergence.py:155` | `pytest.raises(ValueError, match=r"does not output.*stddout")` from `compile_and_run_ir()` | The error still occurs but with different message. When run through the compiler, the typo `stddout` now manifests as an `Unresolved variables` ValueError at runtime (from `TemplateAwareNodeWrapper`), not a compile-time validation error. Change the regex to match the actual message: `match=r"Unresolved variables.*stddout"`. Remove xfail. |
+| `test_validation_fails_missing_params` | `test_template_integration.py:111` | `pytest.raises(ValueError, match=r"Template validation failed.*required_param")` from `compile_ir_to_flow()` | The compiler no longer raises for missing params. Route through `WorkflowRunner().run()` which catches the validation error and returns `ExecutionResult(success=False)`. Or call `WorkflowValidator.validate()` directly and assert errors. Remove xfail. |
+| `test_dict_in_shell_command_fails_at_compile_time` | `test_types.py:1067` | `pytest.raises(ValueError)` from `compile_ir_to_flow()` when a dict value is in a shell command template | Same — the type validation was in template validation which was stripped. Route through Runner or WorkflowValidator. |
+| `test_list_in_shell_command_fails_at_compile_time` | `test_types.py:1103` | Same but with list value | Same fix. |
+
+### Phase 8 implementation order
+
+Recommended order (easiest → hardest):
+
+1. **`test_agent_ux_fixes.py` — `_build_error_text` signature** (2 tests, trivial: remove 2nd arg)
+2. **`test_agent_ux_fixes.py` — mock target** (2 tests: change patch target)
+3. **`test_checkpoint_tracking.py` — import + mock target** (1 test: change import + patch target)
+4. **4 xfail tests** — route through Runner or WorkflowValidator (change test approach)
+5. **`test_registry_run_mcp.py`** (6 tests: full rewrite, most complex)
+
+### Phase 9 and 10 — what the plan specifies
+
+**Phase 9** (new tests): See implementation plan section 9a-9e. Key tests:
+- CLI/MCP parity test: same workflow through Runner with CliOutput vs NullOutput, assert `ExecutionResult` fields match
+- Validator-called-once guard: workflow with known validation error, assert Runner returns failure and `compile_ir_to_flow` was NOT called
+- Registry run template resolution: synthetic IR with `${greeting}` template, assert output contains resolved value
+- MCP gains warnings test: workflow triggering validation warnings, assert `result.validation_warnings` is non-empty
+
+**Phase 10** (verification): `make test && make check`, smoke test baselines in `.taskmaster/tasks/task_138/baseline/`, manual spot checks, update CLAUDE.md files (`execution/CLAUDE.md`, `cli/CLAUDE.md`, `mcp_server/CLAUDE.md`).
+
+### Critical files to read first
+
+A new agent implementing Phase 8-10 should read, in order:
+1. This progress log (you're reading it)
+2. `src/pflow/execution/runner.py` — the Runner's public API (what tests should mock/call)
+3. `src/pflow/execution/result.py` — the result types (what assertions should check)
+4. `.taskmaster/tasks/task_138/implementation/implementation-plan.md` — Phase 8 section has detailed test migration specs, Phase 9 has new test specs
+
+### Mock target reference
+
+| Old mock target | New mock target | Notes |
+|----------------|-----------------|-------|
+| `pflow.execution.workflow_execution.execute_workflow` | `pflow.execution.runner.WorkflowRunner.run` | Runner.run returns `ExecutionResult` (same type, more fields) |
+| `pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow` | `pflow.execution.runner.WorkflowRunner.run` | Same |
+| `pflow.execution.runner.WorkflowRunner._compile_and_execute` | (same — already correct) | Use to bypass resolution/validation; returns `ExecutionResult` |
+| `pflow.runtime.compile_ir_to_flow` | (same — already correct) | Use to test compilation error wrapping |
+| `pflow.mcp_server.services.execution_service.import_node_class` | **DELETED** — rewrite test | Registry run now uses synthetic IR through Runner |
+| `pflow.mcp_server.services.execution_service._build_error_text(dict, path)` | `_build_error_text(dict)` — 1 arg | trace_path now inside dict as `dict["trace_path"]` |
+
+### Key behavioral changes a test author must know
+
+1. **Runner always returns `ExecutionResult`, never raises** (except `KeyboardInterrupt`/`SystemExit`). Old `execute_workflow()` could raise `CompilationError`, `RuntimeError`. Tests using `pytest.raises()` for execution errors need `assert result.success is False` instead.
+2. **Validation runs before compilation.** The Runner calls `WorkflowValidator.validate()` then `compile_ir_to_flow()`. Tests that expect compile-time template errors get validation-time errors instead. Error messages differ slightly.
+3. **`ExecutionResult` has new fields.** `validation_warnings`, `trace`, `metrics` all have defaults, so old `ExecutionResult(success=True, errors=[])` constructions still work. But tests asserting `result.shared_after == {}` may fail because the Runner populates shared store with `__verbose__`, `__warnings__`, `__mcp_pool__`, etc.
+4. **Source `"saved"` is now `"library"`.** Anywhere tests check `source == "saved"` must change to `source == "library"`.
+5. **Validate-only JSON shape changed.** Old: `{"success": true, "status": "valid", "message": "..."}`. New: `{"success": true, "validated_only": true, "errors": [], "warnings": []}`. One test already updated (`test_validate_only.py:285`).
+
+### Status: Phases 1-7 complete. Context reset safe. Next agent: Phase 8 (test migration).

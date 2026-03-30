@@ -1,7 +1,6 @@
 """Workflow execution services for pflow."""
 
 from .display_manager import DisplayManager
-from .executor_service import WorkflowExecutorService
 from .output_interface import OutputInterface
 from .result import ExecutionResult, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .runner import WorkflowRunner
@@ -14,7 +13,6 @@ __all__ = [
     "ResolvedWorkflow",
     "RunnerConfig",
     "ValidationResult",
-    "WorkflowExecutorService",
     "WorkflowRunner",
     "resolve_workflow",
 ]
