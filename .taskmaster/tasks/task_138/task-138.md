@@ -86,7 +86,7 @@ Before writing any code:
 1. **Mutation ordering**: Shared store seeded from `execution_params` BEFORE `_prepare_compilation()` mutates `initial_params`. This task preserves this ordering; Task 135 changes it deliberately.
 2. **Per-execution instantiation**: `MCPConnectionPool` and `MemoizationCache` created per `run()` call, never on Runner init. MCP pool is stateful (daemon thread, sessions). Memoization cache holds per-execution `read_enabled` flag.
 3. **Runner statelessness**: No mutable state on Runner instance. MCP uses `asyncio.to_thread` for concurrent calls — shared mutable state causes races.
-4. **Asymmetric key handling**: Currently `__no_cache__` is popped from params, `__only_node__` is filtered from store but kept in `initial_params`. Phase 1 moves both to `RunnerConfig` — `cache_enabled` and `only_node` — eliminating the pop/filter hacks. The compiler reads `only_node` from config instead of `initial_params`.
+4. **Asymmetric key handling**: Currently `__no_cache__` is popped from params, `__only_node__` is filtered from store but kept in `initial_params`. Phase 1 moves both to `RunnerConfig` — `cache_enabled` and `only_node` — eliminating the pop/filter hacks. The compiler reads `only_node` from a new explicit parameter on `compile_ir_to_flow()` (Option A from pre-implementation audit).
 5. **Pipeline ordering**: `_inject_workflow_file_path()` → `resolve_file_references()` → `WorkflowValidator.validate()` → `_validate_workflow()` (renamed to `_prepare_compilation()`) → `compile_ir_to_flow()`. Sub-workflow relative paths need `_pflow_workflow_file` set before validation.
 
 ## Requirements
@@ -101,7 +101,7 @@ Also removed during pre-Phase 1 audit: `__cache_chunks__` dead parameter from `c
 
 #### Pipeline
 - Single `WorkflowRunner` class/module that both CLI and MCP call
-- Runner accepts `RunnerConfig` (frozen dataclass: trace, cache, verbose, only_node, output_format, source_file_path) + kwargs (`output`, `workflow_manager`, `workflow_name`) — entry points configure but don't implement
+- Runner accepts `RunnerConfig` (frozen dataclass: trace, cache, verbose, only_node) + kwargs (`output`, `workflow_manager`, `workflow_name`) — entry points configure but don't implement
 - `cli/main.py` reduced from ~1,383 lines to thin Click handler + Runner call
 - `mcp_server/services/execution_service.py` reduced from ~790 lines to thin async wrapper + Runner call
 - `execute_workflow()` in `workflow_execution.py` absorbed into runner
@@ -109,6 +109,7 @@ Also removed during pre-Phase 1 audit: `__cache_chunks__` dead parameter from `c
 
 #### Resolution
 - Single `resolve_workflow()` accepting `str | dict` with input-type dispatch
+- Returns `ResolvedWorkflow(ir, source, file_path)` frozen dataclass — `file_path` is `None` for content/direct sources
 - CLI's extension validation (.json migration hint, .md rename suggestion) preserved
 - MCP's raw-markdown and dict-input support preserved
 - Suggestion mechanisms unified
@@ -123,8 +124,8 @@ Also removed during pre-Phase 1 audit: `__cache_chunks__` dead parameter from `c
 #### Param Flow
 - CLI and MCP params go through the same preparation path (unified `prepare_inputs()` call)
 - `initial_params` has consistent shape regardless of entry point
-- MCP gains type coercion (currently skipped) and input defaults (currently skipped)
-- Internal keys (`__verbose__`, etc.) injected uniformly. `__no_cache__` and `__only_node__` absorbed by `RunnerConfig` — no longer in params dict.
+- MCP gains type coercion (currently skipped) and input defaults (currently skipped) — verified safe, no breakage risk
+- Internal keys (`__verbose__`, etc.) injected uniformly. `__no_cache__` and `__only_node__` absorbed by `RunnerConfig` / `compile_ir_to_flow()` parameter — no longer in params dict.
 
 #### Registry Run
 - Full: build synthetic single-node IR, call `runner.run()` — gets template resolution, tracing, metrics, error handling for free

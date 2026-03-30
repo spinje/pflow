@@ -387,4 +387,249 @@ def execute_workflow(cls, workflow, parameters=None):
 12. Add new tests: CLI/MCP parity, validator-called-once guard, registry template resolution
 13. Verify: `make test && make check`, smoke test diffs, manual spot checks
 
-### Status: All design decisions locked, baselines captured, MCP tests added — ready for implementation plan
+### Pre-Implementation Audit (2026-03-29)
+
+9 parallel agents (4 codebase searchers, 5 review agents) verified assumptions and analyzed design gaps.
+
+#### Verification Results (Items 4–7)
+
+**Item 4 — ExecutionResult shape verified.** Current fields: `success`, `status`, `shared_after`, `errors`, `warnings` (all `list[dict]`). Located at `executor_service.py:18-26`. Missing for Runner: `trace` (currently in `shared_after["_trace_collector"]`), `metrics` (currently passed as separate arg). `ValidationResult` doesn't exist yet. 3 construction sites, ~15 consumer access points identified.
+
+**Item 5 — `only_node` threading traced.** Full chain: CLI `ctx.obj["only_node"]` → `enhanced_params["__only_node__"]` → filtered from shared store but kept in `initial_params` → compiler reads at `compiler.py:770` → `_apply_only_node_stop()` monkey-patches `flow.get_next_node`. Validation layers don't touch it. **Decision: Option A** — add `only_node: Optional[str] = None` parameter to `compile_ir_to_flow()`. One line in signature, default `None` means sub-workflows and tests need zero changes. Eliminates the filter hack in `_initialize_shared_store()`.
+
+**Item 6 — MCP type coercion confirmed safe.** MCP already gets `prepare_inputs()` via compiler's `_validate_workflow()`. The `context.update(initial_params)` override means template resolution end results are identical today. Moving `prepare_inputs()` earlier only changes: shared store has correct types from the start, earlier error detection. JSON params from AI agents are natively typed — coercion is a no-op for well-typed inputs. No breakage risk.
+
+**Item 7 — Sub-workflow validation gap: none.** `WorkflowValidator` Step 8 runs the full 8-step pipeline recursively on children, including `validate_data_flow(check_inputs=True)` — stricter than the compiler's `check_inputs=False`. Only cosmetic gap: template validation uses dummy params instead of actual child values (structural check, not value check). All `_prepare_compilation()` mutations continue for children. No previously-caught error would go undetected.
+
+#### Design Gap Resolutions (from 5 review agents)
+
+**Gap 1 — Warnings: Two separate fields on `ExecutionResult`** *(updates Q7, Q9)*
+
+Three problems found by all 5 agents:
+- Type collision: `ExecutionResult.warnings` is `list[dict]`, `ValidationWarning` is a dataclass. `success_formatter.py:240` calls `warning.get("node_id")` — crashes on dataclass objects.
+- OutputInterface-only routing contradicts Q9 ("always return ExecutionResult"). JSON/MCP consumers never see warnings through display channel alone.
+- Child workflow compilation warnings silently dropped: `compile_ir_to_flow()` returns `Flow`, not `(Flow, warnings)`. After `_prepare_compilation()` returns warnings instead of printing, the compiler discards them.
+
+**Resolution:**
+- Keep existing `warnings: list[dict[str, Any]]` for runtime warnings (API degradation, template errors) — no change.
+- Add `validation_warnings: list[dict[str, Any]]` for pre-execution warnings — new field, converted from `ValidationWarning` objects at Runner boundary. Dict shape: `{"node": ..., "node_type": ..., "template": ..., "message": ...}` — same as `ValidationResult.warnings` JSON shape, so validate-only and execution are consistent.
+- Warnings go into `ExecutionResult` (authoritative) AND through `OutputInterface` (real-time display).
+- Runner deduplicates validation warnings by `(node_id, template)` before storing — prevents N identical warnings from batch compilations.
+- **Child workflow warnings: known limitation for Phase 1.** Fixing requires `compile_ir_to_flow()` return type change or shared-store accumulator — scope creep. Current behavior (print to stderr) is also lossy for JSON/MCP. Document explicitly; address in wrapper chain refactor.
+
+**Gap 2 — Resolver return type: `ResolvedWorkflow` dataclass** *(updates Q4, Q1)*
+
+Problem: `_inject_workflow_file_path()` needs the actual file path. Current resolvers return semantic labels ("file"/"library"), not paths. Runner resolves internally for string inputs but gets no path back.
+
+**Resolution:**
+- Merged resolver returns `ResolvedWorkflow(ir: dict, source: str, file_path: Optional[str])` frozen dataclass.
+  - `source`: `"file"`, `"library"`, `"content"`, `"direct"`
+  - `file_path`: absolute path for file/library sources, `None` for content/direct
+- **Remove `source_file_path` from `RunnerConfig`** — redundant when Runner resolves internally. Dual source of truth is a bug magnet. Runner reads `file_path` from `ResolvedWorkflow`.
+- Keep `source_file_path` as explicit param on `runner.validate()` — caller may have pre-resolved.
+- Fixes MCP sub-workflow relative path bug as side effect.
+
+Updated `RunnerConfig`:
+```python
+@dataclass(frozen=True)
+class RunnerConfig:
+    trace_enabled: bool = True
+    cache_enabled: bool = True
+    verbose: bool = False
+    only_node: Optional[str] = None
+```
+
+**Gap 3 — `output_format` removed from `RunnerConfig`** *(updates Q1)*
+
+Unanimous across all 5 agents. Zero reads of `output_format` in `runtime/` or `execution/`. `verbose` already encodes JSON-mode suppression (`verbose and output_format != "json"` computed by caller). `OutputInterface` (`CliOutput`) already carries format awareness. Keeping it invites the exact coupling this task eliminates.
+
+**Resolution:** Removed. `RunnerConfig` has 4 fields: `trace_enabled`, `cache_enabled`, `verbose`, `only_node`.
+
+**Gap 8 — CLI function inventory: 7 concrete items** *(refines implementation steps)*
+
+| Item | Issue | Resolution |
+|------|-------|------------|
+| `_prepare_execution_environment()` | Straddles Runner boundary — creates both `CliOutput` (CLI concern) and `TraceCollector` (Runner concern) | **Split**: CLI keeps `CliOutput`/`DisplayManager` creation. Runner creates `TraceCollector`, `MetricsCollector`, `MemoizationCache`, `MCPConnectionPool`. |
+| `compiler.py:731` unpacking | When `_validate_workflow()` return type changes to tuple, `initial_params = _validate_workflow(...)` silently assigns tuple to `initial_params`. `initial_params["__template_resolution_mode__"]` then fails with `TypeError`. | Add to implementation checklist. Must unpack: `initial_params, comp_warnings = _prepare_compilation(...)`. |
+| `total_nodes` for `--report` | CLI reads `len(ir_data.get("nodes", []))` before execution. After Runner resolves internally, CLI may not have IR. | CLI computes from IR before calling Runner (IR available in "after" sketch as it's passed to `runner.run()`). Not a problem when CLI pre-resolves for stdin routing. |
+| `warnings.filterwarnings("ignore")` | PocketFlow "Flow ends" noise suppression at `main.py:604`. Not in "after" sketch. | Keep in CLI wrapper before `runner.run()` call. |
+| Registry run + cache | After Phase 1, registry run gains memoization via Runner. Defeats discovery purpose — cached results instead of fresh execution. | `RunnerConfig(cache_enabled=False)` for registry run. |
+| `validate_execution_parameters()` | MCP security check for registry run params (code injection detection). Unclear placement after Runner. | MCP caller validates before building synthetic IR and calling Runner. Security check stays at system boundary. |
+| `KeyboardInterrupt` before result | "CLI after" sketch accesses `result.trace` in finally — `result` may not exist if `KeyboardInterrupt` fires before Runner returns. | Guard with `trace = result.trace if 'result' in locals() else None`. |
+
+#### Updated Runner API
+
+```python
+@dataclass(frozen=True)
+class RunnerConfig:
+    trace_enabled: bool = True
+    cache_enabled: bool = True
+    verbose: bool = False
+    only_node: Optional[str] = None
+
+@dataclass(frozen=True)
+class ResolvedWorkflow:
+    ir: dict[str, Any]
+    source: str                         # "file", "library", "content", "direct"
+    file_path: Optional[str] = None     # Absolute path for file/library, None for content/direct
+
+@dataclass
+class ValidationResult:
+    valid: bool
+    errors: list[str]
+    warnings: list[dict[str, Any]]      # Same shape as ExecutionResult.validation_warnings
+
+class WorkflowRunner:
+    def run(
+        self,
+        workflow: str | dict,          # file path, saved name, raw markdown, or IR dict
+        params: dict[str, Any],
+        config: RunnerConfig,
+        *,
+        output: OutputInterface | None = None,
+        workflow_manager: WorkflowManager | None = None,
+        workflow_name: str | None = None,
+    ) -> ExecutionResult:
+        ...
+
+    def validate(
+        self,
+        workflow: str | dict,
+        params: dict[str, Any],
+        *,
+        source_file_path: Optional[str] = None,
+    ) -> ValidationResult:
+        ...
+```
+
+Updated `ExecutionResult`:
+```python
+@dataclass
+class ExecutionResult:
+    success: bool
+    status: WorkflowStatus = WorkflowStatus.SUCCESS
+    shared_after: dict[str, Any] = field(default_factory=dict)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[dict[str, Any]] = field(default_factory=list)              # runtime: API degradation, template errors
+    validation_warnings: list[dict[str, Any]] = field(default_factory=list)   # pre-execution: type-unknown templates
+    trace: Optional[Any] = None                                               # WorkflowTraceCollector, if trace_enabled
+    metrics: Optional[Any] = None                                             # MetricsCollector
+```
+
+#### Updated CLI "after" sketch (~30 lines)
+
+```python
+def execute_json_workflow(ctx, ir_data, stdin_data=None, output_key=None,
+                          execution_params=None, output_format="text"):
+    params = dict(execution_params or {})  # copy at boundary
+    if stdin_data:
+        _route_stdin_to_params(ir_data, params, stdin_data)
+
+    if ctx.obj.get("validate_only"):
+        vresult = WorkflowRunner().validate(ir_data, params,
+            source_file_path=ctx.obj.get("source_file_path"))
+        _display_validation_result(ctx, vresult, output_format)
+        return
+
+    config = RunnerConfig(
+        trace_enabled=not ctx.obj.get("no_trace"),
+        cache_enabled=ctx.obj.get("cache", True),
+        verbose=ctx.obj.get("verbose") and output_format != "json",
+        only_node=ctx.obj.get("only_node"),
+    )
+
+    # Suppress PocketFlow "Flow ends" warnings in non-verbose mode
+    if not config.verbose:
+        warnings.filterwarnings("ignore", message="Flow ends:*", module="pflow.pocketflow")
+
+    result = WorkflowRunner().run(ir_data, params, config,
+        output=CliOutput(ctx.obj["output_controller"], config.verbose, output_format),
+        workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "saved" else None,
+        workflow_name=ctx.obj.get("workflow_name"))
+
+    # Trace saving — caller's job (user-facing path display + optional report)
+    trace = result.trace if 'result' in locals() else None
+    if trace and config.trace_enabled:
+        trace_path = trace.save_to_file()
+        _echo_trace(ctx, trace_path)
+
+    # Display
+    _display_execution_result(ctx, result, output_key, ir_data, output_format)
+```
+
+#### Updated MCP "after" sketch (~12 lines)
+
+```python
+@classmethod
+@ensure_stateless
+def execute_workflow(cls, workflow, parameters=None):
+    resolved = resolve_workflow(workflow)  # raises on error
+    workflow_name = str(workflow) if resolved.source == "library" else None
+    result = WorkflowRunner().run(workflow, parameters or {}, RunnerConfig(),
+        workflow_manager=WorkflowManager(), workflow_name=workflow_name)
+    if result.success:
+        return format_success_as_text(_format_success_result(result))
+    else:
+        raise RuntimeError(_build_error_text(_format_error_result(result)))
+```
+
+#### Updated Implementation Checklist
+
+1. ~~Design `WorkflowRunner.run()` signature and config object~~ → decisions locked
+2. ~~Resolve open design questions with user~~ → 10 questions + 4 gaps locked
+3. ~~Show concrete before/after for CLI and MCP~~ → approved (updated above)
+4. ~~Define Runner boundary principle~~ → metadata update inside Runner, trace saving with caller
+5. Create `ResolvedWorkflow`, `ValidationResult`, `RunnerConfig` types in `execution/result.py`
+6. Move `ExecutionResult` to `execution/result.py` (stable home), add `validation_warnings`, `trace`, `metrics` fields
+7. Merge two `resolve_workflow()` functions into `execution/workflow_resolver.py` — returns `ResolvedWorkflow`
+8. Strip duplicated validation from `_validate_workflow()` → rename to `_prepare_compilation()` → returns `tuple[dict, list[ValidationWarning]]`
+9. **Update `compiler.py:731`** — unpack tuple: `initial_params, comp_warnings = _prepare_compilation(...)`
+10. Add `only_node: Optional[str] = None` parameter to `compile_ir_to_flow()`
+11. Implement `WorkflowRunner` — absorb `WorkflowExecutorService` + `execute_workflow()`, single exception boundary, `finally` for MCP pool + LLM interception cleanup
+12. **Split `_prepare_execution_environment()`** — CLI keeps `CliOutput`/`DisplayManager`, Runner creates `TraceCollector`/`MetricsCollector`/`MemoizationCache`/`MCPConnectionPool`
+13. Thin down `cli/main.py` to Click handler + Runner call (keep `warnings.filterwarnings`, stdin routing, logging suppression, trace saving, display)
+14. Thin down MCP `execution_service.py` to async wrapper + Runner call (`validate_execution_parameters()` stays in MCP caller)
+15. Route registry run through Runner with synthetic IR — `RunnerConfig(cache_enabled=False)`
+16. Migrate affected tests (~13 test files — expanded list from review)
+17. Add new tests: CLI/MCP parity, validator-called-once guard, registry template resolution, MCP gains warnings
+18. Verify: `make test && make check`, smoke test diffs, manual spot checks
+
+**Known limitations (Phase 1, documented):**
+- Child workflow compilation warnings not surfaced in `ExecutionResult.validation_warnings` — requires `compile_ir_to_flow()` return type change. Address in wrapper chain refactor.
+- Batch child template validation uses dummy params at pre-execution time (pre-existing, slightly wider gap).
+
+### Plan Review (2026-03-30)
+
+8 review agents reviewed the implementation plan. 12 critical issues found in plan code snippets — all fixed in the plan before handoff.
+
+**Critical fixes applied to plan** (code snippet bugs that would crash at runtime):
+1. `'metrics_collector' in dir()` → broken Python. Fixed: init `None` before try, use `is not None` in finally.
+2. Validation ordering regression: `_validate()` ran before `prepare_inputs()` → false errors for workflows with defaults. Fixed: added `_enrich_params_with_defaults()` call before validation in `run()`.
+3. `__verbose__` missing from shared store → MCP nodes lose verbose mode. Fixed: inject in `_initialize_shared_store()`.
+4. `output_error()` called with nonexistent `errors=` kwarg. Fixed: pass `result=result` and `ctx`.
+5. `display.show_execution_start()` wrong args (takes int, not ir+name). Fixed.
+6. `WorkflowValidationError(errors)` passes list as `summary` string. Fixed: use `validation_errors=` kwarg.
+7. Source `"saved"` → `"library"` breaks `ctx.obj["workflow_source"]` check. Fixed throughout CLI.
+8. LLM interception cleanup missing from Runner `finally`. Fixed: added `trace_collector.cleanup_llm_interception()`.
+9. `Registry.get_node_info()` doesn't exist + `format_node_not_found_error` takes `list[str]` not `Registry`. Fixed.
+10. `execution_id=""` breaks `read_fields` MCP caching. Fixed: generate via `ExecutionCache`.
+11. Registry run synthetic IR: all params flagged as "unknown workflow inputs". Fixed: pass `{}` as Runner params.
+12. `_build_error_text` missing `trace_path` param in new MCP code. Fixed.
+
+**Test migration additions** (from review):
+- `test_validate_only.py` JSON shape tests moved to Tier 1 (will break, not just "verify")
+- `test_api_warning_system.py` added to Tier 1 (3 direct instantiations, was missing)
+- `test_registry_run_mcp.py` added to Tier 4 (stale mocks after registry run rewrite)
+- `test_nested_workflow_cli.py` added to Tier 3 (patches old resolver path)
+- `"saved"` → `"library"` assertion updates noted for `test_workflow_resolution.py`
+
+**New test improvements** (from review):
+- Parity test: assert output values, not just key presence
+- Validator guard: test behavior (compilation blocked on error), not call count
+- Registry template: correct namespace (workflow params, not duplicated in node params)
+
+### Implementation Plan
+
+Full atomic plan at `.taskmaster/tasks/task_138/implementation/implementation-plan.md` — 10 phases, all code snippets review-corrected, ready for implementing agent.
+
+### Status: Implementation in progress (handed off to implementing agent)
