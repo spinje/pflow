@@ -208,14 +208,20 @@ class ExecutionService(BaseService):
         except Exception as e:
             raise ValueError(str(e)) from e
 
-        # Inject file path for sub-workflow relative path resolution
+        # Inject file path for sub-workflow relative path resolution.
+        # Why this is needed: We pass resolved.ir (a dict) to the Runner to avoid
+        # double-resolution. The Runner's _resolve() sees a dict → returns
+        # ResolvedWorkflow(source="direct", file_path=None). So the Runner can't
+        # derive file_path from resolution — we must inject it into params here.
         if resolved.file_path:
             validated_params["_pflow_workflow_file"] = resolved.file_path
 
         workflow_name = str(workflow) if resolved.source == "library" else None
         wm = WorkflowManager()
 
-        # Execute via Runner — pass resolved.ir (dict) to avoid double-resolution
+        # Pass resolved.ir (dict) to avoid double-resolution. The Runner sees a
+        # dict and skips its own resolve_workflow() call. normalize_ir() runs
+        # twice (harmless, idempotent) but resolution hits the filesystem only once.
         runner = WorkflowRunner()
         result = runner.run(
             resolved.ir,

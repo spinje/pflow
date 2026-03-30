@@ -111,3 +111,27 @@ def test_declared_defaults_applied_without_user_params():
 
     assert result.success is True, f"Expected success, got errors: {result.errors}"
     assert "hello-from-default" in result.shared_after["greet"]["stdout"]
+
+
+def test_user_params_override_declared_defaults():
+    """User-provided values must not be clobbered by declared defaults.
+
+    _fill_declared_defaults has an `if name not in params` guard. This test
+    ensures a user's explicit value survives through the full pipeline.
+    """
+    workflow_ir = {
+        "inputs": {
+            "greeting": {"type": "str", "default": "hello-from-default", "description": "A greeting"},
+        },
+        "nodes": [
+            {"id": "greet", "type": "shell", "params": {"command": "echo ${greeting}"}},
+        ],
+        "edges": [],
+    }
+
+    # User provides their own value — should override the default
+    result = WorkflowRunner().run(workflow_ir, {"greeting": "user-override"}, RunnerConfig())
+
+    assert result.success is True, f"Expected success, got errors: {result.errors}"
+    assert "user-override" in result.shared_after["greet"]["stdout"]
+    assert "hello-from-default" not in result.shared_after["greet"]["stdout"]

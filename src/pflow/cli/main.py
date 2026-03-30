@@ -281,7 +281,7 @@ def execute_json_workflow(  # noqa: C901
 
     # Suppress PocketFlow "Flow ends" warnings in non-verbose mode
     if not effective_verbose:
-        warnings.filterwarnings("ignore", message="Flow ends:*", module="pflow.pocketflow")
+        warnings.filterwarnings("ignore", message="Flow ends:.*", module="pflow.pocketflow")
 
     # Suppress logging in JSON mode (except CRITICAL) to keep output clean
     if output_format == "json":
