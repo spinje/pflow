@@ -158,7 +158,6 @@ class WorkflowExecutor(BaseNode):
                 workflow_ir,
                 registry=registry,  # type: ignore[arg-type]
                 initial_params=child_params,
-                validate=True,
                 trace_collector=child_trace,
             )
         except CompilationError as e:

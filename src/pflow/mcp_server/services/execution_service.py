@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.workflow_resolver import resolve_workflow as _unified_resolve
 from pflow.registry import Registry
@@ -66,7 +67,7 @@ def _format_success_result(
         workflow_metadata=workflow_metadata,
         trace_path=trace_path,
         status=result.status,
-        warnings=result.warnings,
+        warnings=result.warnings + result.validation_warnings,
     )
 
     return formatted
@@ -199,6 +200,11 @@ class ExecutionService(BaseService):
         # Pre-resolve to get source/file_path for metadata
         try:
             resolved = _unified_resolve(workflow)
+        except WorkflowNotFoundError as e:
+            hint = str(e)
+            if e.similar_names:
+                hint += f"\nDid you mean: {', '.join(e.similar_names[:5])}"
+            raise ValueError(hint) from e
         except Exception as e:
             raise ValueError(str(e)) from e
 
@@ -522,10 +528,13 @@ class ExecutionService(BaseService):
                     raise TypeError(f"Expected str from structure format, got {type(formatted)}")
                 return formatted
             else:
-                error_msg = result.errors[0].get("message", "Unknown error") if result.errors else "Unknown error"
+                # Pass full error dict to _build_error_text for rich context
+                # (shell command, stderr, exit code) instead of just the message
+                error_dict = result.errors[0] if result.errors else {"message": "Unknown error"}
+                error_text = _build_error_text(error_dict)
                 from pflow.execution.formatters.registry_run_formatter import format_execution_error
 
-                return format_execution_error(node_type, RuntimeError(error_msg), verbose=False)
+                return format_execution_error(node_type, RuntimeError(error_text), verbose=False)
 
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)

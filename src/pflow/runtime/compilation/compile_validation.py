@@ -131,7 +131,6 @@ def _prepare_compilation(
     ir_dict: dict[str, Any],
     registry: Registry,
     initial_params: dict[str, Any],
-    validate_templates: bool,
 ) -> tuple[dict[str, Any], list[Any]]:
     """Prepare IR for compilation: validate structure, check data flow, resolve inputs.
 

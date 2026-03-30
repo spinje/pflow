@@ -595,7 +595,7 @@ class TestWorkflowIntegration:
             "edges": [{"from": "source", "to": "transform"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry, validate=False)
+        flow = compile_ir_to_flow(workflow_ir, registry)
         shared: dict = {}
         flow.run(shared)
 

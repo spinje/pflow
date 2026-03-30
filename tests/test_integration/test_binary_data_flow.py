@@ -88,9 +88,7 @@ class TestBinaryDataRoundtrip:
 
             # Compile workflow with template parameter
             registry = Registry()
-            flow = compile_ir_to_flow(
-                workflow_ir, registry=registry, initial_params={"temp_file": str(temp_file)}, validate=True
-            )
+            flow = compile_ir_to_flow(workflow_ir, registry=registry, initial_params={"temp_file": str(temp_file)})
 
             # Execute workflow
             shared = {}
@@ -156,9 +154,7 @@ class TestBinaryDataRoundtrip:
 
         # Compile and execute
         registry = Registry()
-        flow = compile_ir_to_flow(
-            workflow_ir, registry=registry, initial_params={"temp_file": str(temp_file)}, validate=True
-        )
+        flow = compile_ir_to_flow(workflow_ir, registry=registry, initial_params={"temp_file": str(temp_file)})
 
         shared = {}
         flow.run(shared)
@@ -206,7 +202,7 @@ class TestBinaryDataRoundtrip:
 
             # Compile and execute
             registry = Registry()
-            flow = compile_ir_to_flow(workflow_ir, registry=registry, validate=True)
+            flow = compile_ir_to_flow(workflow_ir, registry=registry)
 
             shared = {}
             flow.run(shared)

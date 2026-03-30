@@ -60,7 +60,7 @@ def format_execution_errors(
         # Apply sanitization if requested
         if sanitize:
             # Lazy import to avoid circular dependencies
-            from pflow.mcp_server.utils.errors import sanitize_parameters
+            from pflow.core.security_utils import sanitize_parameters
 
             # Sanitize sensitive fields
             if "raw_response" in formatted_error:

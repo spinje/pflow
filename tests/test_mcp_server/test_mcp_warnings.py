@@ -59,8 +59,8 @@ class TestValidationWarningsPropagateToResult:
         result = runner.run(NESTED_ACCESS_IR, {}, RunnerConfig())
 
         # Regardless of execution success/failure, validation warnings must be present
-        assert len(result.validation_warnings) >= 1, (
-            f"Expected at least 1 validation warning for nested access on str output, "
+        assert len(result.validation_warnings) == 1, (
+            f"Expected exactly 1 validation warning for nested access on str output, "
             f"got {len(result.validation_warnings)}: {result.validation_warnings}"
         )
 

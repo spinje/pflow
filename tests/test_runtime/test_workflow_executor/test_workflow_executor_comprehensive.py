@@ -269,7 +269,7 @@ class TestWorkflowExecutorComprehensive:
                 return "default"
 
         with self._setup_mock_imports(CaptureNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"value": "resolved", "obj": {"field": "nested_value"}, "__registry__": mock_registry}
             flow.run(shared)
 
@@ -321,7 +321,7 @@ class TestWorkflowExecutorComprehensive:
                 return "default"
 
         with self._setup_mock_imports(CaptureNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {
                 "api": {"url": "https://example.com"},
                 "category": "production",
@@ -423,7 +423,7 @@ class TestWorkflowExecutorComprehensive:
             return mock
 
         with patch("importlib.import_module", side_effect=side_effect):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"SECRET": "leaked", "__registry__": mock_registry}
             flow.run(shared)
 
@@ -638,7 +638,7 @@ class TestWorkflowExecutorComprehensive:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"present": "value", "__registry__": mock_registry}
 
             with pytest.raises(ValueError, match="not_there"):

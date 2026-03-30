@@ -111,7 +111,8 @@ class WorkflowRunner:
             raise
 
         except Exception as e:
-            return self._exception_to_result(e, start_time, trace_collector)
+            vw = validation_warnings if "validation_warnings" in locals() else []
+            return self._exception_to_result(e, start_time, trace_collector, vw)
 
         finally:
             self._cleanup(mcp_pool, trace_collector, metrics_collector)
@@ -135,11 +136,11 @@ class WorkflowRunner:
 
         self._resolve_file_references(resolved.ir, params)
 
-        # Enrich params with input defaults before validation.
-        # Without this, templates referencing default-only inputs produce
-        # false validation errors. prepare_inputs() is idempotent -- the
-        # compiler calls it again inside _prepare_compilation(), harmless.
-        self._enrich_params_with_defaults(resolved.ir, params)
+        # Fill declared input names so validation doesn't flag them as missing.
+        # Only needs to know WHICH inputs will be available, not their final values.
+        # The real prepare_inputs() (type coercion, env resolution) runs once
+        # in the compiler's _prepare_compilation().
+        self._fill_declared_defaults(resolved.ir, params)
 
         validation_warnings = self._validate(resolved.ir, params)
 
@@ -169,6 +170,11 @@ class WorkflowRunner:
         from pflow.registry import Registry
         from pflow.runtime import compile_ir_to_flow
 
+        # Strip validation placeholders BEFORE seeding shared store — a KeyError
+        # on direct shared["input"] access is more honest than a placeholder string.
+        # Template access (${input}) works regardless (uses initial_params override).
+        self._strip_placeholders(params)
+
         shared_store = self._initialize_shared_store(params, config.verbose, output, mcp_pool, cache, trace_collector)
 
         registry = Registry()
@@ -176,7 +182,6 @@ class WorkflowRunner:
             resolved.ir,
             registry=registry,
             initial_params=params,
-            validate=True,
             metrics_collector=metrics_collector,
             trace_collector=trace_collector,
             only_node=config.only_node,
@@ -191,7 +196,6 @@ class WorkflowRunner:
         duration = time.perf_counter() - start_time
         self._update_metadata(success, workflow_manager, workflow_name, params, duration)
 
-        # Re-read trace collector from shared store (may have been replaced by sub-workflow)
         trace_collector = shared_store.get("_trace_collector", trace_collector)
         if trace_collector:
             trace_collector.set_warnings(runtime_warnings)
@@ -202,7 +206,7 @@ class WorkflowRunner:
             shared_after=shared_store,
             errors=errors,
             warnings=runtime_warnings,
-            validation_warnings=[self._warning_to_dict(w) for w in validation_warnings],
+            validation_warnings=self._deduplicate_warnings([self._warning_to_dict(w) for w in validation_warnings]),
             trace=trace_collector,
             metrics=metrics_collector,
         )
@@ -263,12 +267,34 @@ class WorkflowRunner:
                 warnings=[self._warning_to_dict(w) for w in warnings],
             )
 
-        except Exception as e:
+        except (
+            WorkflowNotFoundError,
+            ValueError,
+            PermissionError,
+            FileNotFoundError,
+        ) as e:
+            # Expected validation-phase errors → structured result
             return ValidationResult(
                 valid=False,
                 errors=[str(e)],
                 warnings=[],
             )
+        except Exception as e:
+            # Check for pflow-specific exceptions via lazy imports to avoid circular deps
+            from pflow.core.exceptions import WorkflowValidationError
+            from pflow.core.ir_schema import ValidationError as IRValidationError
+            from pflow.core.markdown_parser import MarkdownParseError
+            from pflow.runtime import CompilationError
+
+            if isinstance(e, (WorkflowValidationError, MarkdownParseError, CompilationError, IRValidationError)):
+                return ValidationResult(
+                    valid=False,
+                    errors=[str(e)],
+                    warnings=[],
+                )
+            # Unexpected errors (programming bugs) — let them propagate.
+            # Callers (CLI, MCP) have their own exception handlers.
+            raise
 
     # --- Internal helpers ---
 
@@ -277,8 +303,9 @@ class WorkflowRunner:
         if isinstance(workflow, dict):
             from pflow.core import normalize_ir
 
-            normalize_ir(workflow)
-            return ResolvedWorkflow(ir=workflow, source="direct", file_path=None)
+            ir = dict(workflow)  # Copy — never mutate caller's dict
+            normalize_ir(ir)
+            return ResolvedWorkflow(ir=ir, source="direct", file_path=None)
         return resolve_workflow(workflow)
 
     def _resolve_file_references(self, ir: dict[str, Any], params: dict[str, Any]) -> None:
@@ -347,23 +374,35 @@ class WorkflowRunner:
 
         return shared_store
 
-    def _enrich_params_with_defaults(self, ir: dict[str, Any], params: dict[str, Any]) -> None:
-        """Enrich params with input defaults before validation.
+    _PLACEHOLDER_PREFIX = "__pflow_declared_"
 
-        Without this, WorkflowValidator.validate() sees params without defaults.
-        Templates referencing default-only inputs produce false validation errors.
-        This is idempotent -- _prepare_compilation() calls prepare_inputs() again
-        inside compile_ir_to_flow(), which is harmless (same inputs, same outputs).
+    def _fill_declared_defaults(self, ir: dict[str, Any], params: dict[str, Any]) -> None:
+        """Fill declared input names so validation doesn't flag them as missing.
+
+        The validator checks template variables against params. Without inputs
+        filled in, ${name} produces a false "unresolved template" error.
+
+        Adds real defaults for optional inputs, and placeholders for required/env
+        inputs. Placeholders are stripped before compilation so prepare_inputs()
+        correctly catches truly missing required inputs with (msg, path, suggestion).
         """
-        from pflow.runtime.compilation.compile_validation import _load_settings_env
-        from pflow.runtime.compilation.ir_preparation import prepare_inputs
+        for name, decl in ir.get("inputs", {}).items():
+            if name not in params:
+                if "default" in decl:
+                    params[name] = decl["default"]
+                else:
+                    params[name] = f"{self._PLACEHOLDER_PREFIX}{name}__"
 
-        settings_env = _load_settings_env()
-        _errors, defaults, env_param_names = prepare_inputs(ir, params, settings_env=settings_env)
-        # Don't raise on errors here -- let WorkflowValidator catch them with better messages
-        params.update(defaults)
-        if env_param_names:
-            params["__env_param_names__"] = list(env_param_names)
+    def _strip_placeholders(self, params: dict[str, Any]) -> None:
+        """Remove declared-input placeholders before compilation.
+
+        Placeholders were added by _fill_declared_defaults to satisfy the validator.
+        The compiler's prepare_inputs() needs them absent to detect truly missing
+        required inputs with full (msg, path, suggestion) error tuples.
+        """
+        to_remove = [k for k, v in params.items() if isinstance(v, str) and v.startswith(self._PLACEHOLDER_PREFIX)]
+        for k in to_remove:
+            del params[k]
 
     def _determine_status(self, action_result: Any, shared_store: dict[str, Any]) -> tuple[bool, WorkflowStatus]:
         """Map action result + store state to (success, status)."""
@@ -409,7 +448,7 @@ class WorkflowRunner:
         try:
             from datetime import datetime
 
-            from pflow.mcp_server.utils.errors import sanitize_parameters
+            from pflow.core.security_utils import sanitize_parameters
 
             env_param_names_list = params.get("__env_param_names__", [])
             env_param_names = set(env_param_names_list) if env_param_names_list else set()
@@ -428,7 +467,13 @@ class WorkflowRunner:
         except Exception:
             logger.debug("Metadata update failed", exc_info=True)
 
-    def _exception_to_result(self, exception: Exception, start_time: float, trace_collector: Any) -> ExecutionResult:
+    def _exception_to_result(  # noqa: C901
+        self,
+        exception: Exception,
+        start_time: float,
+        trace_collector: Any,
+        validation_warnings: list[Any] | None = None,
+    ) -> ExecutionResult:
         """Convert any exception to ExecutionResult."""
         from pflow.core.exceptions import MaxNodeVisitsError, WorkflowValidationError
         from pflow.core.markdown_parser import MarkdownParseError
@@ -456,22 +501,42 @@ class WorkflowRunner:
                 "max_visits": exception.max_visits,
             })
         elif isinstance(exception, WorkflowValidationError):
-            # Include the actual validation errors, not just the summary
+            # Preserve full structure: (msg, path, suggestion) tuples or plain strings
             validation_msgs = []
             for err in exception.validation_errors:
-                if isinstance(err, tuple):
-                    validation_msgs.append(err[0])  # (msg, path, suggestion) -> msg
+                if isinstance(err, tuple) and len(err) >= 3:
+                    validation_msgs.append(err[0])
                 else:
                     validation_msgs.append(str(err))
             message = "\n".join(validation_msgs) if validation_msgs else str(exception)
+
+            # Preserve path and suggestion from first tuple error (for structured output)
+            first_err = exception.validation_errors[0] if exception.validation_errors else None
             error_dict.update({
                 "source": "validation",
                 "category": "validation",
                 "message": message,
                 "validation_errors": validation_msgs,
             })
+            if isinstance(first_err, tuple) and len(first_err) >= 3:
+                if first_err[1]:
+                    error_dict["path"] = first_err[1]
+                if first_err[2]:
+                    error_dict["suggestion"] = first_err[2]
         elif isinstance(exception, (MarkdownParseError, ValueError)):
             error_dict.update({"category": "validation"})
+        elif type(exception).__name__ == "ValidationError" and hasattr(exception, "path"):
+            # ir_schema.ValidationError — has path and suggestion from prepare_inputs
+            error_dict.update({
+                "source": "validation",
+                "category": "validation",
+            })
+            path = getattr(exception, "path", None)
+            suggestion = getattr(exception, "suggestion", None)
+            if path:
+                error_dict["path"] = path
+            if suggestion:
+                error_dict["suggestion"] = suggestion
         elif isinstance(exception, WorkflowNotFoundError):
             error_dict.update({
                 "category": "not_found",
@@ -487,6 +552,7 @@ class WorkflowRunner:
             success=False,
             status=WorkflowStatus.FAILED,
             errors=[error_dict],
+            validation_warnings=[self._warning_to_dict(w) for w in (validation_warnings or [])],
             trace=trace_collector,
         )
 
@@ -519,3 +585,15 @@ class WorkflowRunner:
             "template": getattr(warning, "template", None),
             "message": str(warning) if not hasattr(warning, "reason") else warning.reason,
         }
+
+    @staticmethod
+    def _deduplicate_warnings(warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Deduplicate validation warnings by (node, template)."""
+        seen: set[tuple[str | None, str | None]] = set()
+        result: list[dict[str, Any]] = []
+        for w in warnings:
+            key = (w.get("node"), w.get("template"))
+            if key not in seen:
+                seen.add(key)
+                result.append(w)
+        return result

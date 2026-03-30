@@ -128,16 +128,16 @@ class TestCompilerIntegration:
         )
         assert any("required_param" in e for e in errors)
 
-    def test_validation_can_be_skipped(self, mock_registry):
-        """Test that compile-time validation can be skipped, but runtime still validates.
+    def test_unresolved_templates_fail_at_runtime(self, mock_registry):
+        """Unresolved templates raise ValueError at runtime even without pre-execution validation.
 
-        Updated as part of Task 85: Even with validate=False at compile time,
-        unresolved templates still raise ValueError at runtime (preventing Issue #95).
+        Template validation moved from compiler to WorkflowValidator (Task 138).
+        Runtime TemplateAwareNodeWrapper still catches unresolved templates (Issue #95).
         """
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${missing}"}}], "edges": []}
 
         # Should not raise during compilation with validate=False
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params={}, validate=False)
+        flow = compile_ir_to_flow(ir, mock_registry, initial_params={})
 
         # But should raise during execution due to runtime template validation
         shared = {}
@@ -532,7 +532,7 @@ class TestEdgeCases:
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "${a.b.c.d.e.f.g}"}}], "edges": []}
 
         nested_data = {"b": {"c": {"d": {"e": {"f": {"g": "deeply_nested_value"}}}}}}
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params={"a": nested_data}, validate=False)
+        flow = compile_ir_to_flow(ir, mock_registry, initial_params={"a": nested_data})
 
         shared = {}
 

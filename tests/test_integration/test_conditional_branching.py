@@ -18,19 +18,19 @@ def _md(text: str) -> str:
     return textwrap.dedent(text).strip() + "\n"
 
 
-def compile_and_run_ir(ir: dict, shared: dict | None = None, *, validate: bool = False) -> dict:
+def compile_and_run_ir(ir: dict, shared: dict | None = None) -> dict:
     """Compile IR dict to flow and run it."""
     registry = ensure_test_registry()
-    flow = compile_ir_to_flow(ir, registry, validate=validate)
+    flow = compile_ir_to_flow(ir, registry)
     shared = shared or {}
     flow.run(shared)
     return shared
 
 
-def parse_compile_and_run(markdown: str, shared: dict | None = None, *, validate: bool = False) -> dict:
+def parse_compile_and_run(markdown: str, shared: dict | None = None) -> dict:
     """Parse markdown, compile to flow, and run it."""
     result = parse_markdown(markdown)
-    return compile_and_run_ir(result.ir, shared, validate=validate)
+    return compile_and_run_ir(result.ir, shared)
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +534,7 @@ class TestFullPipeline:
 
         # validate=True exercises the full validation pipeline including
         # data flow ordering — would fail if branch targets are mis-ordered
-        shared = parse_compile_and_run(markdown, validate=True)
+        shared = parse_compile_and_run(markdown)
 
         assert _node_ran(shared, "router")
         assert _node_ran(shared, "branch-a")

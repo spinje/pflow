@@ -6,6 +6,7 @@ workflow runs through the full pipeline producing structured results.
 
 from unittest.mock import patch
 
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import ExecutionResult, RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 
@@ -66,3 +67,23 @@ def test_successful_workflow_runs_through_full_pipeline():
     assert "runner-test" in result.shared_after["test"]["stdout"]
     assert result.trace is not None
     assert result.metrics is not None
+
+
+def test_validator_called_exactly_once():
+    """WorkflowValidator.validate must be called exactly once per runner.run().
+
+    Task 138 eliminated dual validation (CLI + compiler both validating).
+    This guards against regression — if validate is called twice, this fails.
+    """
+    workflow_ir = {
+        "nodes": [
+            {"id": "test", "type": "shell", "params": {"command": "echo once"}},
+        ],
+        "edges": [],
+    }
+
+    with patch.object(WorkflowValidator, "validate", wraps=WorkflowValidator.validate) as mock_validate:
+        result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
+
+    assert result.success is True
+    assert mock_validate.call_count == 1, f"Expected exactly 1 validation call, got {mock_validate.call_count}"

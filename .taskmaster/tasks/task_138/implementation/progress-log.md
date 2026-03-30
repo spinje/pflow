@@ -1507,4 +1507,157 @@ Fixed:
 
 All other files clean: zero unused imports, zero dead functions, zero dead exports across all 7 modified production files.
 
-### Status: Task 138 Phase 1 fully complete. Ready for commit.
+---
+
+## Post-Implementation Code Review (2026-03-30)
+
+7 specialized review agents audited the full branch (`git diff main...HEAD`, 76 files). 5 confirmed actionable findings, all fixed.
+
+### Fixes applied
+
+**1. `validation_warnings` never surfaced to display** (found by: agent-ux, verified by searcher)
+The `ExecutionResult.validation_warnings` field was populated by the Runner but zero display paths read it — CLI `_display_execution_result`, MCP `_format_success_result`, and all formatters only read `result.warnings` (runtime). The entire Gap 1 / Q7 design work was incomplete.
+- CLI: added `validation_warnings` display to stderr in `_display_execution_result`
+- MCP: merged `result.validation_warnings` into `warnings=` passed to `format_execution_success()`
+
+**2. `validation_warnings` lost on execution failure** (found by: 4/6 agents)
+`_exception_to_result()` created fresh `ExecutionResult` without warnings from `_prepare_workflow()`.
+- Added `validation_warnings` parameter to `_exception_to_result()`, passed through from `except` handler
+
+**3. MCP `similar_names` stripped** (found by: agent-ux)
+`except Exception as e: raise ValueError(str(e))` lost `WorkflowNotFoundError.similar_names`.
+- Split into specific `except WorkflowNotFoundError` with "Did you mean" appended to message
+
+**4. Missing validator-called-once regression guard** (found by: test-fidelity)
+Task 138's core promise had no test.
+- Added `test_validator_called_exactly_once` with `patch(..., wraps=...)` + `assert call_count == 1`
+
+**5. Stale `cli/CLAUDE.md`** (found by: silent-failures)
+Lines 202-204 referenced deleted `_prepare_execution_environment` and `enhanced_params["__only_node__"]`.
+- Updated to `RunnerConfig.only_node`, `RunnerConfig.cache_enabled`, removed `workflow_trace` row
+
+### Additional cleanup from review suggestions
+
+| # | Fix | Files |
+|---|-----|-------|
+| 6 | Removed misleading `_trace_collector` re-read comment (sub-workflows don't replace it) | `runner.py` |
+| 7 | `test_mcp_warnings.py`: `>= 1` → `== 1` exact assertion | `test_mcp_warnings.py` |
+| 8 | Removed dead `_wm_for_test` from test fixture | `test_executor_service.py` |
+| 9 | Deduplicated `_load_settings_env` — CLI delegates to `compile_validation`'s copy | `cli/main.py` |
+| 10 | MCP registry run error path passes full error dict through `_build_error_text` (preserves shell command/stderr/exit code) | `execution_service.py` |
+| 11 | Warning deduplication by `(node, template)` in Runner | `runner.py` |
+| 12 | `compile_ir_to_flow` docstring updated — no longer claims `ValueError` for template errors | `compiler.py` |
+| 13 | `sanitize_parameters` moved from `mcp_server/utils/errors.py` to `core/security_utils.py` — fixes architectural inversion. Old location re-exports for backward compat. | `security_utils.py`, `errors.py`, `runner.py`, `error_formatter.py`, `workflow_errors.py` |
+| 14 | Dead `validate` / `validate_templates` parameter removed from `compile_ir_to_flow()` and `_prepare_compilation()` — signatures, 3 production callers, ~80 test call sites across 18 files | `compiler.py`, `compile_validation.py`, `runner.py`, `workflow_executor.py`, 18 test files |
+
+### Verification
+
+- 4,676 passed, 0 failed
+- `make check` fully clean (ruff, mypy, deptry)
+
+---
+
+## Post-Review Simplification (2026-03-30)
+
+Three structural improvements to make the Runner simpler and more honest.
+
+### 1. `_enrich_params_with_defaults` replaced with `_fill_declared_defaults` + `_strip_placeholders`
+
+**Problem**: `prepare_inputs()` was called 3 times per CLI execution (CLI early call, Runner, compiler) and 2 times per MCP (Runner, compiler). The Runner's call discarded errors. The CLI's call was redundant insurance.
+
+**Solution**: Replace `_enrich_params_with_defaults` (which called `prepare_inputs`) with `_fill_declared_defaults` — a lightweight method that only marks which inputs will be available at runtime:
+- Inputs with defaults → fill with the actual default value
+- Required/env inputs without defaults → fill with `__pflow_declared_X__` placeholder
+
+Placeholders are stripped before shared store seeding (a `KeyError` on direct `shared["input"]` access is more honest than a placeholder string leaking). Template access `${input}` works regardless (uses `initial_params` override from compiler's `prepare_inputs`).
+
+`prepare_inputs` now runs exactly **once** — in the compiler's `_prepare_compilation`. Same path for CLI, MCP, and sub-workflows.
+
+**CLI `_validate_and_prepare_workflow_params`** stripped of its `prepare_inputs` block — now only parses CLI args, validates key names, routes stdin. `_load_settings_env` removed from CLI (no callers left).
+
+**`ir_schema.ValidationError` added to `_exception_to_result` dispatch** — preserves `path` and `suggestion` fields from compiler's `prepare_inputs` errors. Previously these fell through to `category: "execution_failure"`.
+
+### 2. `validate()` narrow exception catch
+
+**Problem**: `except Exception` caught programming bugs (`AttributeError`, `ImportError`) and returned them as `ValidationResult(valid=False, errors=["'NoneType' object has no attribute 'ir'"])`. Agents got validation failures for internal bugs.
+
+**Solution**: Catch specific expected exceptions (`WorkflowNotFoundError`, `ValueError`, `PermissionError`, `FileNotFoundError`, `WorkflowValidationError`, `MarkdownParseError`, `CompilationError`, `ir_schema.ValidationError`). Unexpected errors propagate to callers (CLI/MCP), which have their own handlers.
+
+### 3. `_resolve()` copies dict input
+
+`normalize_ir(dict(workflow))` instead of `normalize_ir(workflow)` — never mutates caller's dict.
+
+### Test updates
+
+5 tests adapted to new error path:
+- `test_parameter_validation_with_missing_required_inputs` — asserts input names appear in error (not specific `prepare_inputs` message format)
+- `test_parameter_defaults_applied` — verifies user params passed through (defaults applied by Runner, not CLI)
+- `test_missing_required_input_preserves_path_and_suggestion` — `path` and `suggestion` now come from compiler's `ValidationError`, not CLI's `WorkflowValidationError`
+- `test_multiple_stdin_error_json_output` / `test_multiple_stdin_error_text_output` — `WorkflowValidator` catches multiple-stdin before `prepare_inputs`; error is correct but without tuple-format `path`/`suggestion`
+
+### Verification
+
+- 4,676 passed, 0 failed
+- `make check` fully clean
+
+### Status: Task 138 Phase 1 complete. Ready for commit.
+
+---
+
+## Key Decisions and Constraints for Future Work
+
+This section extracts decisions that matter for future tasks — especially Task 135 (compile-once) and wrapper chain refactoring. These are NOT derivable from reading the current code.
+
+### Why `prepare_inputs` runs once (compiler only)
+
+`prepare_inputs()` does 5-tier input resolution: CLI params → shell env → settings.env → workflow defaults → error. It was called 3 times per CLI execution before Task 138. We considered three approaches:
+
+- **Option A**: Make the Runner's call raise on errors, remove CLI's early call. Still 2 calls (Runner + compiler). Simpler than before but still redundant.
+- **Option B** (chosen): Replace with `_fill_declared_defaults` — a 6-line method that fills declared input names with defaults or placeholders. `prepare_inputs` runs once in the compiler's `_prepare_compilation`. No redundancy, no error discarding.
+- **Option C**: Teach `WorkflowValidator` to understand declared inputs. Cleanest architecturally but changes a separate component.
+
+Option B won because validation only needs to know WHICH inputs will exist at runtime, not their resolved values. The compiler is the single authority for input resolution.
+
+### Why template validation left the compiler but structure/data-flow stayed
+
+Phase 3 initially kept all validation in `_prepare_compilation` for "defense-in-depth." This was wrong — it negated the task's purpose. The revised approach:
+
+- **Structure validation** (`validate_ir_structure`): Compiler prerequisite. Without it, `ir_dict["nodes"]` crashes with `KeyError`. KEPT.
+- **Data flow validation** (`_validate_data_flow_at_compile_time`): Compiler prerequisite. Without it, the compiler produces Flows with cycles that hang at runtime. KEPT.
+- **Template validation** (`validate_workflow_templates`): Pre-execution UX check. The compiler produces a valid Flow regardless — bad templates fail at runtime with clear errors from `TemplateAwareNodeWrapper`. REMOVED (now in WorkflowValidator, called by Runner).
+
+The distinction: compiler prerequisites protect the compiler's own code from crashing. Template validation protects the user from runtime surprises. Only the latter moved.
+
+### Why `validate()` narrows exceptions but `run()` catches everything
+
+`run()` catches all exceptions because `flow.run()` can fail in unpredictable ways (network errors, disk full, third-party library bugs). Always returning `ExecutionResult` is the right contract.
+
+`validate()` has bounded failure modes: not found, parse error, validation error. An `AttributeError` here is a programming bug, not a user error. Catching it returns `ValidationResult(valid=False, errors=["'NoneType' object has no attribute 'ir'"])` — the agent tries to fix their workflow for something that isn't a workflow problem. Both CLI and MCP have their own exception handlers at the caller level, so bugs that escape `validate()` are still caught.
+
+### Placeholder/strip pattern and its limitations
+
+`_fill_declared_defaults` adds real defaults for optional inputs and `__pflow_declared_X__` placeholders for required/env inputs. `_strip_placeholders` removes them before shared store seeding.
+
+**Why strip before store seeding**: Strip after seeding → placeholder strings leak into `shared_after` → agents see `__pflow_declared_api_key__` in error results. Strip before → keys are simply absent → honest `KeyError` on direct access.
+
+**Known limitation**: After stripping, env-sourced required inputs are absent from the shared store. The compiler's `prepare_inputs` resolves them into `initial_params`, and template resolution uses `initial_params` override (`context.update(initial_params)`). So `${api_key}` works. But `shared["api_key"]` in a Python code node would fail with `KeyError`. This is the same behavior MCP had before Task 138. Task 135 (seed store after compilation) properly fixes this.
+
+### Constraints for Task 135 (compile-once)
+
+1. **Shared store seeded BEFORE `prepare_inputs` mutates `initial_params`**. Defaults end up in `initial_params` but NOT in the shared store. The `context.update(initial_params)` override in `_build_resolution_context()` is what makes defaults available to template resolution. Task 135 must seed the store AFTER preparation, or defaults break.
+
+2. **`_prepare_compilation` still runs for sub-workflows**. `WorkflowExecutor` calls `compile_ir_to_flow()` directly — not through the Runner. Mutations (`__template_resolution_mode__`, defaults, `__env_param_names__`) must be preserved for child workflows.
+
+3. **`PflowBatchNode` instance state not reset between executions**. `self._shared`, `self._errors`, `self._item_timings` are set during execution and NOT reset. Safe for Task 138 (recompiles per execution). Dangerous for compile-once (reuse flows) — these accumulate across executions.
+
+4. **`validation_warnings` from child workflow compilation are not surfaced**. `compile_ir_to_flow()` returns `Flow`, not `(Flow, warnings)`. Fixing this requires a return type change — scope for wrapper chain refactor, not Task 138.
+
+### Lessons that prevent regression
+
+1. **"Defense-in-depth" is not a blanket excuse.** Phase 3 initially kept template validation in the compiler "for safety." This preserved the dual-validation bug Task 138 exists to fix. When the plan says strip, strip. If you think the plan is wrong, present specific evidence — not a generic safety argument.
+
+2. **Mock patches must target the SOURCE module for lazy imports.** When `run_registry_node` does `from pflow.execution.runner import WorkflowRunner` inside the method body, patching `pflow.mcp_server.services.execution_service.WorkflowRunner` fails silently. The correct target is `pflow.execution.runner.WorkflowRunner`.
+
+3. **Resources must live in the scope that has the `finally`.** Phase 4's initial decomposition put resource creation inside `_execute_workflow`. If that method raised after creating `MCPConnectionPool`, the tuple assignment never completed, and the outer `finally` saw `mcp_pool = None`. Server subprocesses leaked. Fix: create resources in `run()` scope, pass them to helpers.
+
+4. **`WorkflowExecutorService` was deleted because the name actively misled agents.** An AI agent reading `executor_service.py` built a wrong mental model ("this is the service that executes workflows"). The 7 alive methods were stateless — extracted as standalone functions. The indirection of creating a throwaway instance just to call `_build_error_list` was replaced with a direct function call.

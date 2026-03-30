@@ -196,13 +196,12 @@ Most keys are straightforward (`verbose`, `output_format`, `print_flag`, `trace`
 | Key | Notes |
 |-----|-------|
 | `output_controller` | `OutputController` instance — created once, reused by `_echo_trace` and output handling |
-| `workflow_source` | `"file"`, `"saved"`, or `None` — gates whether WorkflowManager is passed to execution |
-| `source_file_path` | Set for file and saved workflows — used for relative path resolution in nested workflows |
-| `workflow_metadata` | Action field: `"reused"` (saved) or `"unsaved"` (file) — drives execution summary display |
-| `workflow_trace` | `WorkflowTraceCollector` — set during `_prepare_execution_environment`, not at context init |
-| `cache` | Boolean from `--cache/--no-cache` (default True). Flows to `enhanced_params["__no_cache__"]` in `_prepare_execution_environment` |
-| `only_node` | String from `--only` (default None). Flows to `enhanced_params["__only_node__"]` in `_prepare_execution_environment` |
-| `total_nodes` | Total node count from IR (set during execution). Used by `--report` to show `N/M (--only, K skipped)` |
+| `workflow_source` | `"file"`, `"library"`, or `None` — gates whether WorkflowManager is passed to Runner |
+| `source_file_path` | Set for file and library workflows — injected as `_pflow_workflow_file` for nested workflow relative path resolution |
+| `workflow_metadata` | Action field: `"reused"` (library) or `"unsaved"` (file) — drives execution summary display |
+| `cache` | Boolean from `--cache/--no-cache` (default True). Flows to `RunnerConfig.cache_enabled` |
+| `only_node` | String from `--only` (default None). Flows to `RunnerConfig.only_node` → `compile_ir_to_flow(only_node=...)` |
+| `total_nodes` | Total node count from IR (set before Runner call). Used by `--report` to show `N/M (--only, K skipped)` |
 
 Full list readable in `_initialize_context` and `_setup_workflow_execution` in main.py.
 

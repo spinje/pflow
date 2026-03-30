@@ -1168,7 +1168,7 @@ class TestShellCommandValidationTiming:
             workflow_ir,
             registry=registry,
             initial_params={"data": {"msg": "it's broken"}},  # Apostrophe in data
-            validate=False,  # Bypass validation
+            # Bypass validation
         )
 
         # Execution fails at shell level with cryptic error

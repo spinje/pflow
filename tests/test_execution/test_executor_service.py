@@ -38,9 +38,7 @@ def workflow_manager(temp_workflow_dir):
 @pytest.fixture
 def executor_service(workflow_manager):
     """Create WorkflowRunner with a workflow_manager for _update_metadata calls."""
-    runner = WorkflowRunner()
-    runner._wm_for_test = workflow_manager  # Store for test access
-    return runner
+    return WorkflowRunner()
 
 
 # Shared IR dict for tests — a minimal valid workflow

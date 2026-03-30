@@ -92,7 +92,7 @@ def test_namespacing_prevents_collisions(tmp_path):
         }
 
         # Compile the workflow
-        flow = compile_ir_to_flow(workflow_ir, registry, validate=False)
+        flow = compile_ir_to_flow(workflow_ir, registry)
 
         # Execute the workflow
         shared = {}
@@ -162,7 +162,7 @@ def test_namespacing_enabled_by_default(tmp_path):
         }
 
         # Compile and run
-        flow = compile_ir_to_flow(workflow_ir, registry, validate=False)
+        flow = compile_ir_to_flow(workflow_ir, registry)
         shared = {}
         flow.run(shared)
 
@@ -224,7 +224,7 @@ def test_namespacing_with_cli_inputs_via_template(tmp_path):
             "edges": [],  # Empty edges array required
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry, validate=False)
+        flow = compile_ir_to_flow(workflow_ir, registry)
 
         # Simulate CLI putting data at root level (with different name to avoid any confusion)
         shared = {"cli_output": "cli_data"}

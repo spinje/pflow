@@ -357,6 +357,11 @@ def _display_execution_result(
     from pflow.cli.error_output import output_error
     from pflow.core.workflow.status import WorkflowStatus
 
+    # Surface validation warnings (pre-execution diagnostics from WorkflowValidator)
+    if result.validation_warnings and output_format != "json":
+        for w in result.validation_warnings:
+            click.echo(f"  ⚠ {w.get('template', '?')}: {w.get('message', '')}", err=True)
+
     if result.success:
         _handle_workflow_success(
             ctx=ctx,
@@ -590,24 +595,6 @@ def _route_stdin_to_params(
         params[target_input] = stdin_text
 
 
-def _load_settings_env() -> dict[str, str]:
-    """Load environment variables from settings.
-
-    Returns:
-        Dict of environment variables from settings, empty dict on error
-    """
-    try:
-        from pflow.core.settings import SettingsManager
-
-        manager = SettingsManager()
-        settings = manager.load()
-        return settings.env
-    except Exception as e:
-        # Non-fatal - continue with empty settings
-        logger.warning(f"Failed to load settings.env: {e}")
-        return {}
-
-
 def _validate_and_prepare_workflow_params(
     ctx: click.Context,
     workflow_ir: dict[str, Any],
@@ -649,27 +636,6 @@ def _validate_and_prepare_workflow_params(
 
     # Route stdin to workflow input marked with stdin: true
     _route_stdin_to_params(ctx, stdin_data, workflow_ir, params)
-
-    # Skip input validation if --validate-only (handled separately with dummy values)
-    validate_only = ctx.obj.get("validate_only", False)
-    if not validate_only:
-        from pflow.runtime.compilation import prepare_inputs
-
-        settings_env = _load_settings_env()
-        errors, defaults, env_param_names = prepare_inputs(workflow_ir, params, settings_env=settings_env)
-        if errors:
-            from pflow.core.exceptions import WorkflowValidationError
-
-            validation_errors: list[str | tuple[str, str, str]] = list(errors)
-            raise WorkflowValidationError(summary="Input validation failed", validation_errors=validation_errors)
-
-        # Apply defaults
-        if defaults:
-            params.update(defaults)
-
-        # Store env param names as internal param (for consistency with compiler.py)
-        if env_param_names:
-            params["__env_param_names__"] = list(env_param_names)
 
     return params
 

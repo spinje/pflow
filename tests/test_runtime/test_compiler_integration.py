@@ -259,7 +259,6 @@ class TestEndToEndCompilation:
         flow = compile_ir_to_flow(
             ir_with_templates,
             test_registry,
-            validate=False,
             initial_params={"user_input": "test", "count": 1},
         )
 

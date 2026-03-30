@@ -667,7 +667,6 @@ def compile_ir_to_flow(
     ir_json: Union[str, dict[str, Any]],
     registry: Registry,
     initial_params: Optional[dict[str, Any]] = None,
-    validate: bool = True,
     metrics_collector: Optional[Any] = None,
     trace_collector: Optional[Any] = None,
     only_node: Optional[str] = None,
@@ -688,8 +687,6 @@ def compile_ir_to_flow(
         initial_params: Parameters provided before execution
                        Example: {"issue_number": "1234", "repo": "pflow"}
                        from user saying "fix github issue 1234 in pflow repo"
-        validate: Whether to validate templates (default: True)
-                 Set to False only for testing template resolution in isolation
         metrics_collector: Optional MetricsCollector for cost tracking
         trace_collector: Optional WorkflowTraceCollector for debugging
 
@@ -698,8 +695,11 @@ def compile_ir_to_flow(
 
     Raises:
         CompilationError: With rich context about what failed
-        ValueError: If template validation fails
         json.JSONDecodeError: If JSON string is malformed
+
+    Note:
+        Template validation has moved to WorkflowValidator (called by WorkflowRunner).
+        This function no longer raises for template errors even with ``validate=True``.
     """
     logger.debug("Starting IR compilation", extra={"phase": "init"})
     initial_params = initial_params or {}
@@ -729,7 +729,7 @@ def compile_ir_to_flow(
         ) from e
 
     # Steps 2-5: Prepare compilation (validate structure, resolve inputs, set template mode)
-    initial_params, _comp_warnings = _prepare_compilation(ir_dict, registry, initial_params, validate)
+    initial_params, _comp_warnings = _prepare_compilation(ir_dict, registry, initial_params)
 
     # Step 6: Log compilation steps
     logger.info(

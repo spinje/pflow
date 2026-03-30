@@ -3008,7 +3008,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        flow = compile_ir_to_flow(parent_ir, registry=registry)
         shared: dict = {}
 
         # All items fail → batch raises RuntimeError (all-fail = step failure).
@@ -3076,7 +3076,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        flow = compile_ir_to_flow(parent_ir, registry=registry)
         shared: dict = {}
 
         # Partial failure with continue mode should NOT raise.
@@ -3169,7 +3169,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        flow = compile_ir_to_flow(parent_ir, registry=registry)
         shared: dict = {}
 
         flow.run(shared)
@@ -3254,7 +3254,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry, validate=False)
+        flow = compile_ir_to_flow(parent_ir, registry=registry)
         shared: dict = {}
 
         # All-fail with continue raises RuntimeError — no usable results to pass downstream.

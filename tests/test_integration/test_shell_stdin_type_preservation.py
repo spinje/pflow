@@ -56,7 +56,6 @@ class TestShellStdinTypePreservation:
                 "config": {"name": "MyApp", "version": "1.0"},
                 "data": {"items": [1, 2, 3], "count": 3},
             },
-            validate=False,
         )
 
         shared = {}
@@ -112,7 +111,6 @@ class TestShellStdinTypePreservation:
                 "flag": True,
                 "items": ["a", "b", "c"],
             },
-            validate=False,
         )
 
         shared = {}
@@ -156,7 +154,6 @@ class TestShellStdinTypePreservation:
                 "user": {"name": "Alice", "email": "alice@example.com"},
                 "settings": {"theme": "dark", "notifications": True},
             },
-            validate=False,
         )
 
         shared = {}
@@ -202,7 +199,6 @@ class TestShellStdinTypePreservation:
                 "name": "World",
                 "data": {"key": "value"},
             },
-            validate=False,
         )
 
         shared = {}

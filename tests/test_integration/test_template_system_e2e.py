@@ -126,7 +126,7 @@ def test_template_fallback_to_shared_store():
 
         # Compile (validation disabled since dynamic_content not in initial_params)
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry, initial_params=initial_params, validate=False)
+        flow = compile_ir_to_flow(workflow_ir, registry, initial_params=initial_params)
 
         # Run with shared store containing the dynamic content
         shared = {"dynamic_content": "Content from shared store!"}

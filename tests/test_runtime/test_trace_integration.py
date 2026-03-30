@@ -475,7 +475,6 @@ class TestSubWorkflowTraceTree:
         flow = compile_ir_to_flow(
             ir_json=parent_ir,
             registry=registry,
-            validate=False,
             trace_collector=collector,
         )
 
