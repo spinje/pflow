@@ -14,7 +14,7 @@ Exposes pflow's workflow building and execution capabilities as MCP tools for AI
 │      Services Layer (7 services)        │  ← Business logic, stateless pattern
 │      Fresh instances per request        │
 ├─────────────────────────────────────────┤
-│   Core pflow (sync components)          │  ← Registry, WorkflowManager, execute_workflow
+│   Core pflow (sync components)          │  ← Registry, WorkflowManager, WorkflowRunner
 │   Shared formatters (CLI/MCP parity)    │
 └─────────────────────────────────────────┘
 ```
@@ -50,7 +50,6 @@ src/pflow/mcp_server/
 └── utils/
     ├── __init__.py
     ├── errors.py            - sanitize_parameters() for sensitive data redaction
-    ├── resolver.py          - Workflow resolution (dict/content/file/library → IR)
     └── validation.py        - Parameter security, path validation, dummy params
 ```
 
@@ -111,7 +110,7 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 
 - **BaseService** — `@ensure_stateless` decorator (logs instance creation), `validate_stateless()` checks
 - **DiscoveryService** — Wraps `discover_workflow()` and `discover_components()` plain functions for LLM-powered discovery.
-- **ExecutionService** — Execute (NullOutput), validate (8-step + dummy params), save (parse markdown → validate → store), run_registry_node (import_node_class, MCP metadata injection, env var resolution, execution caching)
+- **ExecutionService** — All three execution methods (`execute_workflow`, `validate_workflow`, `run_registry_node`) delegate to `WorkflowRunner` from `pflow.execution.runner`. Save workflow stays self-contained. Each method is ~20 lines: validate params at boundary → call Runner → format result. `run_registry_node` builds synthetic single-node IR, resolves `${ENV_VAR}` from env/settings, routes through Runner with `cache_enabled=False`.
 - **FieldService** — Reads cached fields from previous `registry_run` via ExecutionCache + TemplateResolver. Supports `result[0].title` path syntax. **Not exported from services/__init__.py** — imported directly in execution_tools.py.
 - **RegistryService** — `describe_nodes()` uses `build_component_context()`, `list_all_nodes()` supports filter via Registry.search()
 - **WorkflowService** — List/describe with shared formatters, raises ValueError with "did you mean" suggestions
@@ -121,7 +120,6 @@ All inherit from `BaseService`. All methods are `@classmethod` with `@ensure_sta
 
 See `utils/CLAUDE.md` for details. Quick reference:
 
-- **resolver.py** — `resolve_workflow()`: dict → markdown content (newline) → .pflow.md file → library name → file path → suggestions. See utils/CLAUDE.md for full resolution order.
 - **validation.py** — `validate_execution_parameters()` (shell-safe names, 1MB limit, code injection detection), `validate_file_path()` (exists but **never called** — design decision: local MCP = trusted), `generate_dummy_parameters()` (re-exported from `core.validation_utils`)
 - **errors.py** — `sanitize_parameters()` redacts SENSITIVE_KEYS recursively. **Currently never called in any service** — security gap for error messages.
 

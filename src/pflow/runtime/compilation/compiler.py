@@ -446,7 +446,7 @@ def _instantiate_nodes(
     if enable_namespacing:
         logger.debug("Automatic namespacing enabled for workflow", extra={"phase": "node_instantiation"})
 
-    # Get template resolution mode from initial_params (set in _validate_workflow)
+    # Get template resolution mode from initial_params (set in _prepare_compilation)
     template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
 
     for node_data in ir_dict["nodes"]:

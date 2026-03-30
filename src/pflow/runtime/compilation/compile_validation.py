@@ -6,74 +6,16 @@ validation. Called once from compile_ir_to_flow() as a single orchestration poin
 """
 
 import logging
-import sys
 from typing import Any
 
 from pflow.core.ir_schema import ValidationError
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.registry import Registry
 
-from ..template_validation import ValidationWarning, extract_node_outputs
+from ..template_validation import extract_node_outputs
 from .ir_preparation import prepare_inputs, validate_ir_structure
 
 logger = logging.getLogger(__name__)
-
-# Display limits for warning output
-MAX_DISPLAYED_WARNINGS_PER_NODE = 10  # Limit to avoid overwhelming terminal output
-
-
-def display_validation_warnings(warnings: list[ValidationWarning]) -> None:
-    """Display validation warnings in a user-friendly format.
-
-    Warnings are grouped by node for cleaner output and displayed to stderr
-    so they don't interfere with JSON output mode.
-
-    Args:
-        warnings: List of validation warnings to display
-    """
-    # Group warnings by node for cleaner output
-    by_node: dict[str, list[ValidationWarning]] = {}
-    for w in warnings:
-        if w.node_id not in by_node:
-            by_node[w.node_id] = []
-        by_node[w.node_id].append(w)
-
-    # Display grouped warnings
-    print(file=sys.stderr)  # Blank line for separation
-    print(f"Note: {len(warnings)} template(s) use runtime validation:", file=sys.stderr)
-    print(file=sys.stderr)
-
-    for node_id, node_warnings in by_node.items():
-        # Show node context once
-        first = node_warnings[0]
-
-        # Format node type (shorten MCP types)
-        node_type_display = first.node_type
-        if node_type_display.startswith("mcp-"):
-            # Remove 'mcp-' prefix and replace first '-composio-' with '/'
-            node_type_display = node_type_display[4:]  # Remove 'mcp-'
-            if "-composio-" in node_type_display:
-                node_type_display = node_type_display.replace("-composio-", "/", 1)
-
-        print(f"  Node '{node_id}' ({node_type_display}):", file=sys.stderr)
-        print(f"    Output type: {first.output_type} (structure unknown at validation time)", file=sys.stderr)
-        print(file=sys.stderr)
-
-        # Show each template (limit to avoid overwhelming)
-        display_count = min(len(node_warnings), MAX_DISPLAYED_WARNINGS_PER_NODE)
-        for w in node_warnings[:display_count]:
-            print(f"    \u2022 {w.template}", file=sys.stderr)
-            print(f"      Accessing: {w.output_key}.{w.nested_path}", file=sys.stderr)
-            print(file=sys.stderr)
-
-        if len(node_warnings) > MAX_DISPLAYED_WARNINGS_PER_NODE:
-            remaining = len(node_warnings) - MAX_DISPLAYED_WARNINGS_PER_NODE
-            print(f"    ... and {remaining} more template(s)", file=sys.stderr)
-            print(file=sys.stderr)
-
-    print("  These templates will be validated during workflow execution.", file=sys.stderr)
-    print("  If the nested paths don't exist, the workflow will fail at runtime.", file=sys.stderr)
-    print(file=sys.stderr)
 
 
 def _load_settings_env() -> dict[str, str]:
@@ -249,10 +191,6 @@ def _prepare_compilation(
         raise
 
     return initial_params, []
-
-
-# Backward-compatible alias — external callers may reference the old name
-_validate_workflow = _prepare_compilation
 
 
 def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:

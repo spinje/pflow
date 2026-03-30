@@ -376,11 +376,10 @@ class WorkflowRunner:
         return True, WorkflowStatus.SUCCESS
 
     def _build_errors(self, success: bool, action_result: Any, shared_store: dict[str, Any]) -> list[dict[str, Any]]:
-        """Build error list from execution result. Delegates to executor_service logic."""
-        from .executor_service import WorkflowExecutorService
+        """Build error list from execution result."""
+        from .executor_service import build_error_list
 
-        svc = WorkflowExecutorService()
-        return svc._build_error_list(success, action_result, shared_store)
+        return build_error_list(success, action_result, shared_store)
 
     def _extract_runtime_warnings(self, shared_store: dict[str, Any]) -> list[dict[str, Any]]:
         """Extract runtime warnings from shared store."""

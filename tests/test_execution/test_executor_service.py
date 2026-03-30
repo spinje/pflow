@@ -1,10 +1,15 @@
-"""Tests for WorkflowExecutorService, especially parameter sanitization."""
+"""Tests for metadata sanitization during workflow execution.
+
+These tests verify that sensitive parameters (API keys, tokens, passwords)
+are redacted before being stored in workflow metadata. The sanitization
+is performed by WorkflowRunner._update_metadata().
+"""
 
 import pytest
 import yaml
 
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.execution.executor_service import WorkflowExecutorService
+from pflow.execution.runner import WorkflowRunner
 from tests.shared.markdown_utils import ir_to_markdown
 
 
@@ -32,10 +37,10 @@ def workflow_manager(temp_workflow_dir):
 
 @pytest.fixture
 def executor_service(workflow_manager):
-    """Create WorkflowExecutorService."""
-    return WorkflowExecutorService(
-        workflow_manager=workflow_manager,
-    )
+    """Create WorkflowRunner with a workflow_manager for _update_metadata calls."""
+    runner = WorkflowRunner()
+    runner._wm_for_test = workflow_manager  # Store for test access
+    return runner
 
 
 # Shared IR dict for tests — a minimal valid workflow
@@ -72,10 +77,11 @@ class TestParameterSanitization:
         }
 
         # Update metadata via executor service
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=1.5,
         )
 
@@ -117,10 +123,11 @@ class TestParameterSanitization:
         }
 
         # Update metadata
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=2.0,
         )
 
@@ -145,10 +152,11 @@ class TestParameterSanitization:
         _save_test_workflow(workflow_manager, workflow_name)
 
         # Update with empty params
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={},
+            params={},
             duration=0.5,
         )
 
@@ -188,10 +196,11 @@ class TestParameterSanitization:
         }
 
         # Update metadata
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=1.0,
         )
 
@@ -227,10 +236,11 @@ class TestParameterSanitization:
         }
 
         # Update metadata
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=1.2,
         )
 
@@ -266,10 +276,11 @@ class TestParameterSanitization:
         assert "last_execution_success" not in initial_frontmatter
 
         # Try to update with failure
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=False,  # Failure - should not update
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"param": "value"},
+            params={"param": "value"},
             duration=1.0,
         )
 
@@ -286,10 +297,11 @@ class TestParameterSanitization:
         workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
 
         # First execution
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "1"},
+            params={"run": "1"},
             duration=1.0,
         )
 
@@ -297,10 +309,11 @@ class TestParameterSanitization:
         assert frontmatter1["execution_count"] == 1
 
         # Second execution
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "2"},
+            params={"run": "2"},
             duration=2.0,
         )
 
@@ -308,10 +321,11 @@ class TestParameterSanitization:
         assert frontmatter2["execution_count"] == 2
 
         # Third execution
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "3"},
+            params={"run": "3"},
             duration=3.0,
         )
 
@@ -335,10 +349,11 @@ class TestEnvParameterSanitization:
             "__env_param_names__": ["safe_name", "another_param", "channel"],  # Mark as from env
         }
 
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=1.5,
         )
 
@@ -364,10 +379,11 @@ class TestEnvParameterSanitization:
             # No __env_param_names__ key - nothing from env
         }
 
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=0.8,
         )
 
@@ -390,10 +406,11 @@ class TestEnvParameterSanitization:
             "__env_param_names__": [],  # Empty - nothing from env
         }
 
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=0.9,
         )
 
@@ -417,10 +434,11 @@ class TestEnvParameterSanitization:
             "__env_param_names__": ["api_key", "safe_from_env"],  # From env
         }
 
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=1.1,
         )
 
@@ -443,10 +461,11 @@ class TestEnvParameterSanitization:
             "__env_param_names__": [],  # Explicitly empty
         }
 
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params=execution_params,
+            params=execution_params,
             duration=0.7,
         )
 
@@ -466,10 +485,11 @@ class TestDurationTracking:
         _save_test_workflow(workflow_manager, workflow_name)
 
         # Update metadata with a specific duration
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"param": "value"},
+            params={"param": "value"},
             duration=1.567,  # 1.567 seconds
         )
 
@@ -486,10 +506,11 @@ class TestDurationTracking:
         _save_test_workflow(workflow_manager, workflow_name)
 
         # Try to update with failure
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=False,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"param": "value"},
+            params={"param": "value"},
             duration=2.5,
         )
 
@@ -507,20 +528,22 @@ class TestDurationTracking:
         workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
 
         # First execution
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "1"},
+            params={"run": "1"},
             duration=1.0,
         )
         frontmatter1 = _read_frontmatter(workflow_file)
         assert frontmatter1["last_execution_duration_seconds"] == 1.0
 
         # Second execution with different duration
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "2"},
+            params={"run": "2"},
             duration=3.5,
         )
         frontmatter2 = _read_frontmatter(workflow_file)
@@ -534,40 +557,44 @@ class TestDurationTracking:
         workflow_file = temp_workflow_dir / workflow_name / f"{workflow_name}.pflow.md"
 
         # First execution: 1.0s
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "1"},
+            params={"run": "1"},
             duration=1.0,
         )
         frontmatter1 = _read_frontmatter(workflow_file)
         assert frontmatter1["average_execution_duration_seconds"] == 1.0  # First run = duration
 
         # Second execution: 3.0s -> avg = (1.0 + 3.0) / 2 = 2.0
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "2"},
+            params={"run": "2"},
             duration=3.0,
         )
         frontmatter2 = _read_frontmatter(workflow_file)
         assert frontmatter2["average_execution_duration_seconds"] == 2.0
 
         # Third execution: 2.0s -> avg = (1.0 + 3.0 + 2.0) / 3 = 2.0
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "3"},
+            params={"run": "3"},
             duration=2.0,
         )
         frontmatter3 = _read_frontmatter(workflow_file)
         assert frontmatter3["average_execution_duration_seconds"] == 2.0
 
         # Fourth execution: 6.0s -> avg = (1.0 + 3.0 + 2.0 + 6.0) / 4 = 3.0
-        executor_service._update_workflow_metadata(
+        executor_service._update_metadata(
             success=True,
+            workflow_manager=workflow_manager,
             workflow_name=workflow_name,
-            execution_params={"run": "4"},
+            params={"run": "4"},
             duration=6.0,
         )
         frontmatter4 = _read_frontmatter(workflow_file)

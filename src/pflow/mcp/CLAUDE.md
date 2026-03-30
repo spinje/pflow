@@ -36,9 +36,9 @@ mcp-servers.json   lists tools+schemas   registry entries         for stateful s
 |-------------|-----------|-----------|
 | Auto-sync at startup | `cli/main.py` → `MCPDiscovery` + `MCPRegistrar` | Smart sync on mtime+hash change; cleans ALL old `mcp-` entries before re-syncing |
 | Compiler param injection | `runtime/compilation/compiler.py:inject_special_parameters` → MCPNode params | Parses node type string with greedy longest-match against known servers. Does **NOT** use `mcp_metadata` from registry |
-| Pool creation | `execution/executor_service.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
+| Pool creation | `execution/runner.py:_initialize_shared_store` → `shared["__mcp_pool__"]` | Created unconditionally for every workflow, but background thread starts lazily on first `call_tool()` |
 | Pool consumption | `nodes/mcp/node.py:prep()` → `pool.call_tool()` | Falls back to `asyncio.run()` if no pool (e.g., `pflow registry run`) |
-| Pool shutdown | `execution/executor_service.py` finally block | Always runs; safe to call multiple times |
+| Pool shutdown | `execution/runner.py:_cleanup()` | Always runs; safe to call multiple times |
 | Nested workflows | `__mcp_pool__` propagated from parent | Child workflows reuse parent's pool via `WorkflowExecutor._PROPAGATED_KEYS` (thread-safe, no shutdown risk) |
 
 ## Critical Details

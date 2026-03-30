@@ -21,7 +21,7 @@ src/pflow/runtime/
 
 The `compilation/` package transforms workflow IR into executable PocketFlow Flow objects. See `compilation/CLAUDE.md` for full details including function-level documentation, call graph, and non-obvious behaviors.
 
-`compile_ir_to_flow()` is the main entry point (called by `execution/executor_service.py` and internally by `workflow_executor.py` for nested workflows):
+`compile_ir_to_flow()` is the main entry point (called by `execution/runner.py` and internally by `workflow_executor.py` for nested workflows):
 
 1. Parse IR dict
 2. Validate structure, inputs, outputs (`ir_preparation.py`)
@@ -109,7 +109,7 @@ Persistent cross-run caching of node outputs. When an AI agent iterates on a wor
 - **Graceful degradation**: All SQLite/zlib/JSON operations wrapped in try/except with debug logging. Cache failures never crash workflows.
 - **Test isolation**: `tests/conftest.py::isolate_pflow_config` monkey-patches `MemoizationCache.__init__` to use temp paths. Without this, tests pollute the real cache DB and cause cross-test hits.
 
-**Integration point**: Created by `execution/executor_service.py::_initialize_shared_store()`, stored as `shared["__memoization_cache__"]`. Consumed by `InstrumentedNodeWrapper._run()` (see wrappers/CLAUDE.md). Propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`.
+**Integration point**: Created by `execution/runner.py::_initialize_shared_store()`, stored as `shared["__memoization_cache__"]`. Consumed by `InstrumentedNodeWrapper._run()` (see wrappers/CLAUDE.md). Propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`.
 
 **What the config hash includes** (from `InstrumentedNodeWrapper._compute_node_config()`):
 - Node type (class name of innermost actual node)

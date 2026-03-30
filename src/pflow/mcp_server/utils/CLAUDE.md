@@ -1,35 +1,11 @@
 # MCP Server Utils
 
-Security and convenience layer between MCP services and core pflow. Three modules with single responsibilities:
+Security and convenience layer between MCP services and core pflow. Two modules with single responsibilities:
 
 - **errors.py** — Sanitize sensitive data (API keys, tokens) before returning to LLMs
-- **resolver.py** — Unified workflow loading (handles dict/content/library name/file path)
 - **validation.py** — Security validation (parameters, paths, dummy values for testing)
 
-## resolver.py — Workflow Resolution
-
-```python
-resolve_workflow(workflow) -> (workflow_ir | None, error | None, source)
-
-# 1. Dict → Use as IR directly
-workflow = {"nodes": [...]}  # → (ir, None, "direct")
-
-# 2. String with newline → Raw markdown content → parse
-workflow = "# My Workflow\n## Steps\n..."  # → (ir, None, "content")
-
-# 3. String ending .pflow.md → File path → read and parse
-workflow = "./my-workflow.pflow.md"  # → (ir, None, "file")
-
-# 4. Single-line string → Try as library name, then file path
-workflow = "fix-issue"  # → (ir, None, "library")
-
-# 5. Not found → Return suggestions
-workflow = "fx"  # → (None, "Not found: 'fx'\n\nDid you mean:\n  - fix-issue", "")
-```
-
-**Suggestion mechanism**: Uses `find_similar_items()` from core (substring matching, not fuzzy). Returns top 5 sorted by length.
-
-**Security note**: File reads have NO path validation. Design decision: local MCP server = trusted environment. `validate_file_path()` exists in validation.py but is never called here. Re-evaluate if adding remote MCP support.
+**Note**: `resolver.py` was removed — workflow resolution is now handled by the unified `pflow.execution.workflow_resolver` module.
 
 ## validation.py — Security Boundaries
 
@@ -41,7 +17,7 @@ Three-layer protection:
 2. **Size limits** — 1MB max (DoS prevention via `json.dumps()` length check)
 3. **Code injection detection** — Blocks patterns: `__import__`, `eval(`, `exec(`, `compile(`, `globals(`, `locals(`
 
-**Used by**: `_resolve_and_validate_workflow()` in execution_service.py. **Only the execution path validates parameters** — check if new service entry points need validation too.
+**Used by**: `execute_workflow()` and `run_registry_node()` in execution_service.py (called at system boundary before passing to WorkflowRunner). **Only the execution path validates parameters** — check if new service entry points need validation too.
 
 ### generate_dummy_parameters()
 
@@ -69,7 +45,7 @@ Path traversal prevention: blocks `..`, null bytes, optionally absolute paths. R
 Current implementation has three gaps:
 
 1. **`sanitize_parameters()` unused** — Never called in services. Error messages may contain API keys.
-2. **`validate_file_path()` unused** — Never called in resolver.py. File reads have no traversal protection.
+2. **`validate_file_path()` unused** — Never called anywhere. File reads have no traversal protection.
 3. **Partial parameter validation** — Only the execution path validates. Validation and save paths may not.
 
 **Impact**: Low (MCP runs locally on user's machine), but should be addressed if adding remote MCP support.
@@ -79,9 +55,9 @@ Current implementation has three gaps:
 ## Execution Path Security (What's Actually Wired)
 
 ```
-ExecutionService._resolve_and_validate_workflow()
-  1. resolve_workflow()              → source validation
-  2. validate_execution_parameters() → injection protection
+ExecutionService.execute_workflow() / run_registry_node()
+  1. validate_execution_parameters() → injection protection (system boundary)
+  2. WorkflowRunner.run()            → resolution + validation + execution
   3. sanitize on error               → NOT IMPLEMENTED
 ```
 

@@ -152,13 +152,17 @@ class TestBranchConvergenceIR:
         with pytest.raises(ValueError, match="Unresolved variables"):
             compile_and_run_ir(ir)
 
-    @pytest.mark.xfail(reason="Task 138: template validation moved from compiler to WorkflowValidator")
     def test_typo_in_field_still_errors_despite_optional(self) -> None:
         """A typo in the template path errors even when the input is optional.
 
         When the source node DID execute but the referenced field doesn't exist,
-        the template validator catches the typo at compile time. This verifies
+        the template resolver catches the typo at runtime. This verifies
         that optional annotations do NOT suppress typo detection.
+
+        Note: After Task 138, template validation moved from the compiler to
+        WorkflowValidator. When called via compile_and_run_ir (compiler only),
+        the error manifests at runtime as "Unresolved variables" from
+        TemplateAwareNodeWrapper instead of a compile-time validation error.
         """
         merge_code = 'high: str | None\nlow: str | None\nresult: str = high or low or "nothing"'
         # Typo: 'stddout' instead of 'stdout' -- branch-high DID run in
@@ -172,9 +176,8 @@ class TestBranchConvergenceIR:
             },
         )
 
-        # The typo is caught at template validation time (compile stage),
-        # not at runtime -- the error message references the wrong field name
-        with pytest.raises(ValueError, match=r"does not output.*stddout"):
+        # The typo is caught at runtime — error message contains the misspelled field
+        with pytest.raises(ValueError, match=r"Unresolved variables.*stddout"):
             compile_and_run_ir(ir)
 
 

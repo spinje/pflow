@@ -17,13 +17,12 @@ workflow_command (main.py) ← the default path
     ↓ _read_stdin_data, _validate_workflow_flags
     ↓ _try_execute_named_workflow
         ↓ is_likely_workflow_name (workflow_resolution.py)
-        ↓ resolve_workflow (workflow_resolution.py)
+        ↓ resolve_workflow (execution/workflow_resolver.py)
         ↓ _validate_and_prepare_workflow_params
             ↓ parse_workflow_params (param_parsing.py)
             ↓ _route_stdin_to_params
         ↓ execute_json_workflow
-            ↓ _validate_before_execution
-            ↓ execute_workflow() (from pflow.execution)
+            ↓ WorkflowRunner().run() (from pflow.execution.runner)
             ├─→ success: _handle_workflow_success → _handle_workflow_output (workflow_output.py)
             └─→ error: output_error() (error_output.py) → JSON or text
 ```
@@ -73,12 +72,14 @@ Contains the Click command definition (`workflow_command`) and everything that c
 
 **What's here**:
 - The Click command and its startup sequence (signals, env injection, context init)
-- Execution pipeline: `execute_json_workflow` → prepare → validate → execute → success/error handling
+- Execution pipeline: `execute_json_workflow` → `WorkflowRunner().run()` → success/error handling
 - Success routing: `_handle_workflow_success` → `workflow_output.py`
 - Error routing: `output_error()` from `error_output.py` (unified JSON + text for all error types)
-- Validation: static workflow validation, validate-only mode
+- Validate-only mode: `WorkflowRunner().validate()` → `_display_validation_result()`
 - Stdin routing: detects piped input, routes to workflow inputs marked `stdin: true`
 - Named workflow handling: parameter preparation, workflow help display
+
+**Task 138 thinning**: `execute_json_workflow` was rewritten from ~130 to ~55 lines. 8 functions removed (~250 lines): `_prepare_execution_environment`, `_cleanup_workflow_resources`, `_setup_execution_context`, `_perform_validation`, `_display_validation_results`, `_handle_validate_only_mode`, `_resolve_file_refs`, `_validate_before_execution`. All absorbed by `WorkflowRunner`.
 
 **If you need to extract more from main.py**: Functions that call `_echo_trace` or `ctx.exit()` can't move to `workflow_output.py` or `workflow_errors.py` without creating circular imports. Those modules import from each other but never back to main.py.
 
@@ -138,22 +139,19 @@ Unified error output for ALL error types (Task 137). Single entry point: `output
 - `display_exception_text()` — text-mode display using `format_for_cli()` protocol
 - `output_error()` — THE single error output function (JSON delegates to `_serialize_json_result`, text delegates to `display_exception_text` or `_display_text_error_details`)
 
-## Workflow Resolution (workflow_resolution.py)
+## Workflow Resolution
 
-`resolve_workflow(identifier)` resolves user input to workflow IR. Returns `(ir_dict, source)` or `(None, None)`. Raises on errors (never returns error sentinels):
-1. Path detection (`_is_path_like`): file separators or `.pflow.md`/`.json`/`.md` extension
-2. File loading (`_try_load_workflow_from_file`): parse markdown, normalize IR. `.json` → raises `WorkflowNotFoundError` with migration hint. `MarkdownParseError`/`PermissionError`/`UnicodeDecodeError` propagate.
-3. Registry lookup (`_try_load_workflow_from_registry`): exact name, then strip `.pflow.md` extension and retry.
+**Unified resolver**: `execution/workflow_resolver.py:resolve_workflow()` — used by both CLI and MCP. Returns `ResolvedWorkflow(ir, source, file_path)`. Raises `WorkflowNotFoundError` on not-found.
 
-`is_likely_workflow_name(text, remaining_args)` heuristics:
+**CLI-only heuristic**: `workflow_resolution.py:is_likely_workflow_name(text, remaining_args)` — determines if a CLI arg is a workflow name vs a subcommand. Used for routing, not resolution.
+
+`is_likely_workflow_name` heuristics:
 - Has file extension or path separators → file path
 - Followed by `key=value` args → workflow name with params
 - Contains hyphens (kebab-case) → likely workflow name
 - Single word without params → NOT treated as workflow name (prevents false positives)
 
 Also: `pflow run my-workflow` silently strips the `run` prefix (`_preprocess_run_prefix` in main.py).
-
-Note: The MCP server has its own independent `resolve_workflow` in `mcp_server/utils/resolver.py` with a different signature. They share no code.
 
 ## Parameter Handling (param_parsing.py)
 
@@ -270,7 +268,7 @@ pflow instructions usage                   # Agent guide
 
 ## Known Issues
 
-1. **MCP connection cleanup** — handled by `MCPConnectionPool.shutdown()` in `executor_service.py` finally block; `pflow registry run` still creates ephemeral connections
+1. **MCP connection cleanup** — handled by `MCPConnectionPool.shutdown()` in `runner.py:_cleanup()`; `pflow registry run` still creates ephemeral connections
 2. **Click testing limitation** — `CliRunner` always returns `False` for `isatty()`, preventing interactive mode testing in unit tests
 3. **Registry format inconsistency** — two save methods create format confusion, pattern matching checks multiple fields
 

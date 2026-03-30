@@ -443,25 +443,13 @@ class ExecutionService(BaseService):
 
             return format_node_not_found_error(node_type, list(nodes.keys()))
 
-        # Validate and resolve env vars at system boundary (MCP concern)
+        # Validate parameters at system boundary (MCP concern)
         node_params: dict[str, Any] = {}
         if parameters:
             is_valid, error = validate_execution_parameters(parameters)
             if not is_valid:
                 return f"❌ Invalid parameters: {error}"
             node_params = dict(parameters)
-
-            # Resolve ${ENV_VAR} from os.environ and settings.json
-            # (the compiler's template resolver only resolves from shared store)
-            from pflow.mcp.auth_utils import expand_env_vars_nested
-
-            node_params = expand_env_vars_nested(node_params, include_settings=True, raise_on_missing=True)
-
-        # Build synthetic single-node IR
-        synthetic_ir: dict[str, Any] = {
-            "nodes": [{"id": node_type, "type": node_type, "params": node_params}],
-            "edges": [],
-        }
 
         # Generate execution_id for read_fields two-phase pattern
         from pflow.core.execution_cache import ExecutionCache
@@ -470,6 +458,18 @@ class ExecutionService(BaseService):
         execution_id = cache.generate_execution_id()
 
         try:
+            # Resolve ${ENV_VAR} from os.environ and settings.json
+            # (the compiler's template resolver only resolves from shared store)
+            if node_params:
+                from pflow.mcp.auth_utils import expand_env_vars_nested
+
+                node_params = expand_env_vars_nested(node_params, include_settings=True, raise_on_missing=True)
+
+            # Build synthetic single-node IR
+            synthetic_ir: dict[str, Any] = {
+                "nodes": [{"id": node_type, "type": node_type, "params": node_params}],
+                "edges": [],
+            }
             # Execute via Runner with cache disabled (registry run is for discovery)
             # Pass {} as Runner params — all user params are in node.params only.
             # Passing them as Runner params causes WorkflowValidator Step 7

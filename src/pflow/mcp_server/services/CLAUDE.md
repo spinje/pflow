@@ -69,14 +69,9 @@ This pattern appears in discovery_service.py and is required anywhere formatters
 
 Service methods must return one type consistently. Never return dict from one branch and str from another when the signature says `-> str`.
 
-### Use `import_node_class()` for Node Loading
+### Node Execution via WorkflowRunner
 
-Registry stores `{"module": "path.to.file", "class_name": "NodeClass"}`. Don't try raw `importlib` — use the proven helper:
-
-```python
-from pflow.runtime import import_node_class
-NodeClass = import_node_class(node_type, registry)
-```
+Service methods no longer import node classes directly. All execution routes through `WorkflowRunner().run()` with synthetic IR. For `run_registry_node()`, build a single-node IR dict and call the Runner — the compilation pipeline handles node loading internally.
 
 ### Dummy Parameters for Validation
 

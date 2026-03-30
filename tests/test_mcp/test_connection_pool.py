@@ -514,95 +514,74 @@ class TestMCPNodePoolIntegration:
         assert exec_res["result"] == {"key": "structured_value"}
 
 
-class TestExecutorServicePoolLifecycle:
-    """Test that executor_service creates and shuts down the pool."""
+class TestRunnerPoolLifecycle:
+    """Test that WorkflowRunner creates and shuts down the MCP pool."""
 
-    def test_executor_creates_pool_in_shared_store(self):
-        """_initialize_shared_store should add __mcp_pool__ to shared store.
+    def test_runner_creates_pool_in_shared_store(self):
+        """Runner should create MCPConnectionPool for every execution.
 
         Every workflow execution needs a pool, even if no MCP nodes are present
         (the pool is lazy — no cost if unused).
         """
-        from pflow.execution.executor_service import WorkflowExecutorService
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
 
-        service = WorkflowExecutorService()
-        shared = service._initialize_shared_store(
-            shared_store=None,
-            execution_params={},
-            stdin_data=None,
-            metrics_collector=None,
-        )
+        workflow_ir = {
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+        }
 
-        assert "__mcp_pool__" in shared
-        assert isinstance(shared["__mcp_pool__"], MCPConnectionPool)
+        result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
 
-        # Clean up the pool (it was never started, but good practice)
-        shared["__mcp_pool__"].shutdown()
+        assert result.success
+        assert "__mcp_pool__" in result.shared_after
+        assert isinstance(result.shared_after["__mcp_pool__"], MCPConnectionPool)
 
-    def test_executor_shuts_down_pool_on_success(self):
-        """Pool shutdown() should be called after successful workflow execution.
-
-        Without this, MCP server subprocesses would leak.
-        """
-        from pflow.execution.executor_service import WorkflowExecutorService
+    def test_runner_shuts_down_pool_on_success(self):
+        """Pool shutdown() should be called after successful execution."""
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
 
         mock_pool = MagicMock()
-
         mock_flow = MagicMock()
         mock_flow.run.return_value = "default"
 
-        service = WorkflowExecutorService()
         workflow_ir = {
             "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hi"}}],
             "edges": [],
         }
 
-        # Registry and compile_ir_to_flow are imported locally inside execute_workflow,
-        # so we patch them at their source module.
         with (
-            patch("pflow.registry.Registry"),
             patch("pflow.runtime.compile_ir_to_flow", return_value=mock_flow),
             patch("pflow.mcp.pool.MCPConnectionPool", return_value=mock_pool),
         ):
-            service.execute_workflow(
-                workflow_ir=workflow_ir,
-                execution_params={},
-            )
+            WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
 
         mock_pool.shutdown.assert_called_once()
 
-    def test_executor_shuts_down_pool_on_failure(self):
-        """Pool shutdown() should be called even when execution raises.
+    def test_runner_shuts_down_pool_on_failure(self):
+        """Pool shutdown() should be called even when compilation raises.
 
-        The finally block in execute_workflow must always clean up the pool.
+        The finally block in run() must always clean up the pool.
         """
-        from pflow.execution.executor_service import WorkflowExecutorService
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
 
         mock_pool = MagicMock()
 
-        service = WorkflowExecutorService()
         workflow_ir = {
             "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hi"}}],
             "edges": [],
         }
 
-        # Registry and compile_ir_to_flow are imported locally inside execute_workflow,
-        # so we patch them at their source module.
         with (
-            patch("pflow.registry.Registry"),
             patch(
                 "pflow.runtime.compile_ir_to_flow",
                 side_effect=ValueError("compilation failed"),
             ),
             patch("pflow.mcp.pool.MCPConnectionPool", return_value=mock_pool),
         ):
-            result = service.execute_workflow(
-                workflow_ir=workflow_ir,
-                execution_params={},
-            )
+            result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
 
-        # Execution should have failed
         assert not result.success
-
-        # Pool should still have been shut down
         mock_pool.shutdown.assert_called_once()

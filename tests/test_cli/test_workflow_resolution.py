@@ -14,23 +14,25 @@ from unittest.mock import MagicMock, patch
 import click.testing
 
 from pflow.cli.main import main
-from pflow.cli.workflow_resolution import find_similar_workflows, resolve_workflow
+from pflow.core.exceptions import WorkflowNotFoundError
+from pflow.execution.workflow_resolver import resolve_workflow
 from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 
 class TestResolveWorkflowFunction:
-    """Test the resolve_workflow function directly."""
+    """Test the unified resolve_workflow function."""
 
     def test_resolve_saved_workflow_exact_name(self):
         """Test resolution of saved workflow by exact name."""
         mock_wm = MagicMock()
         mock_wm.exists.side_effect = lambda name: name == "my-workflow"
         mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
+        mock_wm.get_path.return_value = "/fake/path/my-workflow.pflow.md"
 
-        workflow_ir, source = resolve_workflow("my-workflow", mock_wm)
+        resolved = resolve_workflow("my-workflow", mock_wm)
 
-        assert workflow_ir == {"nodes": [], "edges": [], "ir_version": "1.0"}
-        assert source == "saved"
+        assert resolved.ir == {"nodes": [], "edges": [], "ir_version": "1.0"}
+        assert resolved.source == "library"
         mock_wm.exists.assert_called_with("my-workflow")
         mock_wm.load_ir.assert_called_once_with("my-workflow")
 
@@ -39,11 +41,13 @@ class TestResolveWorkflowFunction:
         mock_wm = MagicMock()
         mock_wm.exists.side_effect = lambda name: name == "my-workflow"
         mock_wm.load_ir.return_value = {"nodes": [], "edges": [], "ir_version": "1.0"}
+        mock_wm.get_path.return_value = "/fake/path/my-workflow.pflow.md"
+        mock_wm.list_all.return_value = []
 
-        workflow_ir, source = resolve_workflow("my-workflow.pflow.md", mock_wm)
+        resolved = resolve_workflow("my-workflow.pflow.md", mock_wm)
 
-        assert workflow_ir == {"nodes": [], "edges": [], "ir_version": "1.0"}
-        assert source == "saved"
+        assert resolved.ir == {"nodes": [], "edges": [], "ir_version": "1.0"}
+        assert resolved.source == "library"
         mock_wm.load_ir.assert_called_once_with("my-workflow")
 
     def test_resolve_file_path_with_slash(self):
@@ -58,15 +62,11 @@ class TestResolveWorkflowFunction:
             wf_file = Path(tmpdir) / "workflow.pflow.md"
             write_workflow_file(workflow_data, wf_file)
 
-            mock_wm = MagicMock()
-            mock_wm.exists.return_value = False
+            resolved = resolve_workflow(str(wf_file))
 
-            workflow_ir, source = resolve_workflow(str(wf_file), mock_wm)
-
-            assert workflow_ir is not None
-            assert source == "file"
-            # Should not check saved workflows for paths
-            mock_wm.exists.assert_not_called()
+            assert resolved.ir is not None
+            assert resolved.source == "file"
+            assert resolved.file_path == str(wf_file.resolve())
 
     def test_resolve_file_path_relative(self):
         """Test resolution of relative file path."""
@@ -79,23 +79,21 @@ class TestResolveWorkflowFunction:
             workflow_file = Path(tmpdir) / "workflow.pflow.md"
             write_workflow_file(workflow_data, workflow_file)
 
-            mock_wm = MagicMock()
-            mock_wm.exists.return_value = False
+            resolved = resolve_workflow(str(workflow_file))
 
-            workflow_ir, source = resolve_workflow(str(workflow_file), mock_wm)
-
-            assert workflow_ir is not None
-            assert source == "file"
+            assert resolved.ir is not None
+            assert resolved.source == "file"
 
     def test_resolve_workflow_not_found(self):
-        """Test resolution when workflow doesn't exist."""
+        """Test resolution raises WorkflowNotFoundError when not found."""
         mock_wm = MagicMock()
         mock_wm.exists.return_value = False
+        mock_wm.list_all.return_value = []
 
-        workflow_ir, source = resolve_workflow("nonexistent", mock_wm)
+        import pytest
 
-        assert workflow_ir is None
-        assert source is None
+        with pytest.raises(WorkflowNotFoundError):
+            resolve_workflow("nonexistent", mock_wm)
 
     def test_resolve_with_home_expansion(self):
         """Test resolution expands ~ in file paths."""
@@ -108,59 +106,14 @@ class TestResolveWorkflowFunction:
             wf_file = Path(tmpdir) / "workflow.pflow.md"
             write_workflow_file(workflow_data, wf_file)
 
-            mock_wm = MagicMock()
-            # Create a path with ~ that will expand to the actual file
-            with patch("pathlib.Path.expanduser") as mock_expand:
+            with patch("pflow.execution.workflow_resolver.Path.expanduser") as mock_expand:
                 mock_expand.return_value = wf_file
 
-                workflow_ir, source = resolve_workflow("~/workflow.pflow.md", mock_wm)
+                resolved = resolve_workflow("~/workflow.pflow.md")
 
-                assert workflow_ir is not None
-                assert source == "file"
+                assert resolved.ir is not None
+                assert resolved.source == "file"
                 mock_expand.assert_called_once()
-
-
-class TestFindSimilarWorkflows:
-    """Test the find_similar_workflows function."""
-
-    def test_find_similar_by_substring(self):
-        """Test finding workflows by substring match."""
-        mock_wm = MagicMock()
-        mock_wm.list_all.return_value = [
-            {"name": "analyze-text"},
-            {"name": "text-summary"},
-            {"name": "process-data"},
-            {"name": "text-to-speech"},
-        ]
-
-        similar = find_similar_workflows("text", mock_wm)
-
-        assert len(similar) == 3
-        assert "analyze-text" in similar
-        assert "text-summary" in similar
-        assert "text-to-speech" in similar
-
-    def test_find_similar_case_insensitive(self):
-        """Test finding workflows is case insensitive."""
-        mock_wm = MagicMock()
-        mock_wm.list_all.return_value = [
-            {"name": "GitHub-Sync"},
-            {"name": "github-backup"},
-            {"name": "sync-github"},
-        ]
-
-        similar = find_similar_workflows("GITHUB", mock_wm)
-
-        assert len(similar) == 3
-
-    def test_find_similar_max_results(self):
-        """Test that max_results limits the number of suggestions."""
-        mock_wm = MagicMock()
-        mock_wm.list_all.return_value = [{"name": f"workflow-{i}"} for i in range(10)]
-
-        similar = find_similar_workflows("workflow", mock_wm, max_results=3)
-
-        assert len(similar) == 3
 
 
 class TestWorkflowResolutionCLI:

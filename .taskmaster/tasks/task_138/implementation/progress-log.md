@@ -1185,3 +1185,315 @@ A new agent implementing Phase 8-10 should read, in order:
 5. **Validate-only JSON shape changed.** Old: `{"success": true, "status": "valid", "message": "..."}`. New: `{"success": true, "validated_only": true, "errors": [], "warnings": []}`. One test already updated (`test_validate_only.py:285`).
 
 ### Status: Phases 1-7 complete. Context reset safe. Next agent: Phase 8 (test migration).
+
+---
+
+## Phase 8 Implementation — Test Migration (2026-03-30)
+
+### What was done
+
+Fixed all 11 failing tests and resolved all 4 xfailed tests. Total: 15 test issues resolved.
+
+| Group | Tests | Fix |
+|-------|-------|-----|
+| `_build_error_text` signature | 2 in `test_agent_ux_fixes.py` | Removed second arg (trace_path), now derived from dict |
+| Mock target (old executor) | 2 in `test_agent_ux_fixes.py` | `pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow` → `pflow.execution.runner.WorkflowRunner.run` |
+| Import + mock target | 1 in `test_checkpoint_tracking.py` | Import `WorkflowRunner` + `RunnerConfig`, mock `_compile_and_execute`, call `WorkflowRunner().run()` |
+| xfail: typo detection | 1 in `test_branch_convergence.py` | Removed xfail, updated regex from `does not output.*stddout` to `Unresolved variables.*stddout` (error now from runtime TemplateAwareNodeWrapper, not compile-time validation) |
+| xfail: missing params | 1 in `test_template_integration.py` | Removed xfail, changed from `compile_ir_to_flow()` with `pytest.raises(ValueError)` to `WorkflowValidator.validate()` with assertion on errors list |
+| xfail: dict/list in shell | 2 in `test_types.py` | Removed xfails, changed from `compile_ir_to_flow()` to `WorkflowValidator.validate()` with `"stdin" in e.lower()` assertion |
+| Registry run rewrite | 6 in `test_registry_run_mcp.py` | Full rewrite: mock `pflow.execution.runner.WorkflowRunner` instead of `import_node_class`. Verify synthetic IR structure, env var resolution in params, and error handling. |
+
+### Deviations from plan
+
+1. **Bug fix in production code: `expand_env_vars_nested` was outside try/except.** In `execution_service.py:run_registry_node`, the `expand_env_vars_nested(raise_on_missing=True)` call was before the `try` block, so missing env var errors propagated as uncaught `ValueError`. Moved inside the `try` block so `test_missing_variable_raises_helpful_error` works (returns formatted error string, doesn't raise).
+
+2. **Mock target for WorkflowRunner in lazy imports.** Tests needed `patch("pflow.execution.runner.WorkflowRunner")` not `patch("pflow.mcp_server.services.execution_service.WorkflowRunner")` because the import is lazy (inside the method body). The patch must target the module where the class is defined.
+
+3. **ruff SIM117 required combining `with` statements** in `test_missing_variable_raises_helpful_error`.
+
+### Verification
+- 4,670 passed, 0 failed, 0 xfailed
+- `make check` fully clean (ruff, mypy, deptry)
+
+### Test count note
+Pre-Phase-8: 4,655 passed, 11 failed, 4 xfailed = 4,670 total
+Post-Phase-8: 4,670 passed, 0 failed, 0 xfailed = 4,670 total
+One test was lost vs the original 4,671 — this was the `test_nonexistent_workflow_raises_value_error` which was updated during Phase 6 to expect `RuntimeError` instead of `ValueError` (pre-existing contract change documented in the progress log). The count is correct.
+
+### Key insights for future agents
+
+1. **All xfailed tests were fixable by routing through `WorkflowValidator.validate()` instead of `compile_ir_to_flow()`.** The behaviors (catching missing params, type mismatches, typos) are all preserved in the validation pipeline — they just moved from the compiler to the validator as part of the Phase 3 `_prepare_compilation` changes.
+
+2. **The `test_typo_in_field_still_errors_despite_optional` test is the one case where the error comes from runtime, not validation.** The typo `stddout` is NOT caught by `WorkflowValidator` because the branch-high node's output type is `Any` (the node is dynamically typed). The runtime `TemplateAwareNodeWrapper` catches it when the actual dict key doesn't exist. The test was updated to match this new error source.
+
+3. **Registry run tests now mock at the Runner level.** This is more robust — they test that `run_registry_node` builds correct synthetic IR and handles env var resolution, without depending on internal node execution details.
+
+### Decision rationale for each xfail fix approach
+
+Each xfailed test was originally guarding against a compile-time error. Phase 3 stripped template validation from the compiler (moved to WorkflowValidator). The fix strategy depended on WHERE the error now manifests:
+
+| Test | Old error source | New error source | Fix approach | Why this approach |
+|------|-----------------|-----------------|--------------|-------------------|
+| `test_typo_in_field_still_errors_despite_optional` | Compiler template validation: `"does not output 'stddout'"` | Runtime `TemplateAwareNodeWrapper`: `"Unresolved variables...stddout"` | Updated regex match | Can't route through WorkflowValidator because the validator can't detect this typo — the source node (`branch-high`) has output type `Any`, so nested access validation is skipped. Only runtime resolution reveals the error when the actual dict doesn't have key `stddout`. |
+| `test_validation_fails_missing_params` | Compiler template validation: `"Template validation failed...required_param"` | WorkflowValidator Step 4: template variable check | Changed to call `WorkflowValidator.validate()` directly | Compiler no longer raises, but WorkflowValidator catches the same missing variable. Test should verify the validation layer, not the compiler. Used `skip_node_types=True` because the test uses `"mock-node"` which isn't in the registry. |
+| `test_dict_in_shell_command_fails_at_compile_time` | Compiler template validation: detects dict value in shell command | WorkflowValidator Step 4: type-aware template validation | Changed to call `WorkflowValidator.validate()` directly | Same logic — type validation moved from compiler to validator. Used real Registry (not mock) because shell node type checking needs real metadata. Asserted `"stdin" in e.lower()` to verify the fix suggestion is preserved. |
+| `test_list_in_shell_command_fails_at_compile_time` | Same as dict case | Same | Same | Same |
+
+**Key distinction**: The typo test is fundamentally different from the other three. The other three test *static* validation (detectable without running the workflow). The typo test requires *runtime* context (which branch ran, what fields exist in the output). This is why it couldn't be routed through WorkflowValidator — the validator doesn't know which branches will execute.
+
+### Registry run rewrite strategy
+
+**Why mock at Runner level instead of end-to-end**: The old tests mocked `import_node_class` — a low-level function that loaded Python classes. This tested implementation details (how the old `run_registry_node` found and instantiated nodes). The new `run_registry_node` builds synthetic IR and calls `WorkflowRunner().run()`. Testing end-to-end (real shell execution) would work for the simple cases but:
+- MCP node tests (`test_mcp_node_parameter_injection`) can't run real MCP servers
+- Settings mock tests (`test_template_resolution_from_settings_json`) need controlled env
+- The missing variable test needs guaranteed failure without real HTTP calls
+
+Mocking at the Runner level is the sweet spot: it verifies that `run_registry_node` correctly builds the synthetic IR, resolves env vars, and handles errors — without depending on actual node execution.
+
+**Lazy import mock target pitfall**: When `run_registry_node` does `from pflow.execution.runner import WorkflowRunner` inside the method body, patching `pflow.mcp_server.services.execution_service.WorkflowRunner` fails with `AttributeError` because the name never exists on the module — it's only a local variable inside the function. The correct target is `pflow.execution.runner.WorkflowRunner` (the defining module). This intercepted ALL lazy imports of the class regardless of where they happen. Lesson: for lazy imports, always patch the *source* module, not the *consuming* module.
+
+---
+
+## Phase 9 Implementation — New Tests (2026-03-30)
+
+### What was done
+
+Created 4 new test files with 8 tests total:
+
+| File | Tests | What it guards |
+|------|-------|----------------|
+| `tests/test_integration/test_cli_mcp_parity.py` | 1 | CLI and MCP produce equivalent `ExecutionResult` through the same Runner |
+| `tests/test_execution/test_runner.py` | 2 | (1) Validation error prevents compilation, (2) Successful end-to-end pipeline |
+| `tests/test_mcp_server/test_registry_template.py` | 1 | Template resolution works for single-node synthetic IR (registry run path) |
+| `tests/test_mcp_server/test_mcp_warnings.py` | 4 | Validation warnings propagate to `ExecutionResult.validation_warnings` |
+
+### Deviations from plan
+
+1. **MCP warnings test expanded to 4 tests.** Plan specified 1 test. Added: real warning with correct metadata, mock plumbing test, and negative case (no warnings when no nested access). This gives more diagnostic power if something breaks.
+
+2. **Registry template test needed `inputs` declaration.** The plan spec omitted `inputs` in the IR. `WorkflowValidator.validate()` (via `validate_data_flow(check_inputs=True)`) requires declared inputs for template references. Added `"inputs": {"greeting": {"type": "str", "description": "A greeting word"}}`.
+
+3. **MCP warnings test uses JSON-producing shell command.** `printf '%s' '{"nested_field": "hello"}'` ensures runtime succeeds so `validation_warnings` are preserved. If the workflow fails with an exception, `_exception_to_result()` creates a fresh `ExecutionResult` without the warnings from the `try` block.
+
+### Subagent findings (non-obvious issues discovered during test writing)
+
+**9a (CLI/MCP parity)**: `OutputController` constructor signature doesn't match what the plan assumed. Actual: `OutputController(print_flag, output_format, stdin_tty, stdout_tty)` — no `interactive` or `verbose` params. Interactive is computed internally from TTY detection.
+
+**9b (validator guard)**: The cycle detection test uses `{"from": "a", "to": "b"}, {"from": "b", "to": "a"}` edges. The error message is `"Circular dependency detected involving nodes: a, b"` from `CycleError`. The mock on `compile_ir_to_flow` must use `patch("pflow.execution.runner.compile_ir_to_flow")` — the Runner imports it inside `_compile_and_execute`, so the patch must target the module where the name is looked up (the runner module's local namespace).
+
+**9c (registry template)**: `validate_data_flow(check_inputs=True)` (called by WorkflowValidator) requires template references like `${greeting}` to be declared in `workflow_ir["inputs"]`. Without the declaration, validation fails with "undefined input parameter" before the template even gets resolved. This means the plan's spec (`synthetic_ir` without `inputs`) would have failed at validation time. Real workflows always declare their inputs.
+
+**9d (MCP warnings)**: Critical finding — if a workflow fails with an exception AFTER validation (e.g., during `flow.run()`), `_exception_to_result()` creates a fresh `ExecutionResult` that does NOT carry forward the `validation_warnings` collected during `_prepare_workflow()`. The warnings are only preserved when execution completes normally (success or degraded). This means a workflow that triggers validation warnings AND also fails at runtime will lose those warnings. The test works around this by ensuring the workflow succeeds at runtime (using JSON-producing shell output). This is a known gap — not a bug per se, since a failing workflow's validation warnings are less useful than its errors, but worth documenting.
+
+### Verification
+- 4,678 passed, 0 failed, 0 xfailed
+- `make check` fully clean
+
+---
+
+## Phase 10 Implementation — Final Verification (2026-03-30)
+
+### What was done
+
+1. **Full test suite**: 4,678 passed, 0 failed, 0 xfailed
+2. **`make check`**: ruff, mypy, deptry all clean
+3. **Smoke tests**: All 6 manual tests pass:
+   - `uv run pflow examples/simple-workflow.pflow.md` — basic execution ✅
+   - `uv run pflow examples/simple-workflow.pflow.md --validate-only` — validate mode ✅
+   - `uv run pflow examples/simple-workflow.pflow.md --validate-only --output-format json` — JSON validate ✅ (new format: `validated_only`, `errors`, `warnings`)
+   - `uv run pflow examples/simple-workflow.pflow.md --output-format json` — JSON execution ✅
+   - `uv run pflow registry run shell command="echo hello"` — registry run ✅
+4. **CLAUDE.md files updated**: `execution/CLAUDE.md` (complete rewrite for Runner-centric architecture), `cli/CLAUDE.md` (thinned main.py, unified resolver), `mcp_server/CLAUDE.md` (Runner delegation, legacy resolver note)
+
+### Test count summary
+
+| Phase | Passed | Failed | Xfailed | Total |
+|-------|--------|--------|---------|-------|
+| Pre-Phase-1 | 4,666 | 0 | 0 | 4,666 |
+| After MCP baseline tests (pre-Phase-1 audit) | 4,671 | 0 | 0 | 4,671 |
+| After Phase 3 | 4,664 | 0 | 7 | 4,671 |
+| After Phase 7 | 4,655 | 11 | 4 | 4,670 |
+| After Phase 8 | 4,670 | 0 | 0 | 4,670 |
+| After Phase 9 | 4,678 | 0 | 0 | 4,678 |
+
+Net: +12 tests (5 MCP baseline + 8 Phase 9 regression guards - 1 test absorbed during Phase 7 rewrite)
+
+### Production bug fix discovered during Phase 8
+
+`expand_env_vars_nested(raise_on_missing=True)` in `execution_service.py:run_registry_node` was outside the `try/except` block. Missing env var errors propagated as uncaught `ValueError` to MCP callers instead of being caught and formatted as an error string. Fixed by moving the call inside the `try` block. This was a Phase 6 implementation bug, not a pre-existing issue.
+
+---
+
+## Post-Phase-10 Audit — Dead Code and Misleading Structure (2026-03-30)
+
+After Phases 1-10, a thorough codebase search revealed leftover dead code and confusing indirection that undermine Task 138's goal of making the codebase intuitive for AI agents.
+
+### Dead resolver files
+
+**`src/pflow/mcp_server/utils/resolver.py`** — Entirely dead. Zero production consumers, zero test consumers. The unified resolver at `execution/workflow_resolver.py` replaced it in Phase 2.
+
+**`src/pflow/cli/workflow_resolution.py`** — Partially dead. Only `is_likely_workflow_name()` is still imported by production code (`cli/main.py:22`). The other functions (`resolve_workflow`, `find_similar_workflows`, `_is_path_like`, `_try_load_workflow_from_file`, `_try_load_workflow_from_registry`) are dead — replaced by the unified resolver in Phase 2. Test file `test_workflow_resolution.py` still imports `resolve_workflow` and `find_similar_workflows`, but these test dead paths.
+
+### `WorkflowExecutorService` — the misleading class
+
+**The problem**: The class name `WorkflowExecutorService` strongly implies "the service that executes workflows." Its docstring says "Reusable workflow execution service." Both are now wrong — `WorkflowRunner` does all execution. An AI agent reading `executor_service.py` will build a wrong mental model.
+
+**Alive methods (7)** — all in the error extraction chain rooted at `_build_error_list`:
+- `_build_error_list` → called by `runner._build_errors()` via throwaway instance
+- `_extract_error_info`, `_get_failed_node_from_execution`, `_extract_root_level_error`, `_extract_node_level_error`, `_extract_error_from_mcp_result`, `_determine_error_category`
+
+**Dead methods (8)** — duplicated/replaced by the Runner:
+- `execute_workflow` → Runner's `_compile_and_execute`
+- `_initialize_shared_store` → Runner line 323
+- `_determine_workflow_status` → Runner's `_determine_status`
+- `_extract_warnings` → Runner's `_extract_runtime_warnings`
+- `_update_workflow_metadata` → Runner's `_update_metadata`
+- `_handle_execution_exception` → Runner's `_exception_to_result`
+- `_build_execution_result` → inlined in Runner
+- `__init__` parameters (`output_interface`, `workflow_manager`) never used by the Runner
+
+**The indirection**: `runner._build_errors()` creates a throwaway `WorkflowExecutorService()` instance just to call `svc._build_error_list()`. All 7 alive methods are stateless — none use `self` for anything meaningful.
+
+### Tests testing dead paths
+
+| File | What it tests | Status |
+|------|---------------|--------|
+| `test_executor_service.py` | `_update_workflow_metadata` sanitization | Dead — metadata logic now in Runner's `_update_metadata` |
+| `test_agent_ux_fixes.py:281-334` | `_handle_execution_exception` categorization | Dead — Runner uses `_exception_to_result` |
+| `test_connection_pool.py:517-604` | `_initialize_shared_store`, `execute_workflow` pool lifecycle | Dead — Runner creates resources itself |
+| `test_workflow_executor_comprehensive.py:812-823` | `_initialize_shared_store` param flow | Dead — Runner has own version |
+
+### CLAUDE.md files referencing old architecture
+
+At least 7 CLAUDE.md files still attribute execution concerns to `executor_service`:
+- `runtime/CLAUDE.md` (compiler caller, cache creation)
+- `runtime/compilation/CLAUDE.md` (`__only_node__` handling)
+- `mcp/CLAUDE.md` (pool creation/shutdown)
+- `cli/CLAUDE.md` (connection cleanup)
+- `cli/commands/CLAUDE.md` (pool creation)
+
+### Decision: Full cleanup (Option A)
+
+Three cleanup actions, approved by user:
+
+1. **Delete `mcp_server/utils/resolver.py`** — zero consumers
+2. **Strip `cli/workflow_resolution.py`** to just `is_likely_workflow_name` — delete dead functions
+3. **Extract error helpers from `executor_service.py` into standalone functions, delete the class** — the 7 alive methods become plain functions. Runner calls them directly. ~400 lines of dead code removed.
+
+Then: fix ~5 test files testing dead methods, update ~7 CLAUDE.md files.
+
+**Rationale**: The class name `WorkflowExecutorService` actively misleads AI agents. The error helpers are stateless (no `self` usage). Deferring means another agent rebuilds all this context. Risk is low — same functions, same logic, just not wrapped in a class.
+
+### Status: Phases 1-10 complete. Cleanup phase next.
+
+---
+
+## Cleanup Implementation (2026-03-30)
+
+### Action 1: Delete dead resolver files
+
+- **Deleted `src/pflow/mcp_server/utils/resolver.py`** — zero consumers (verified by grep across src/ and tests/)
+- **Stripped `src/pflow/cli/workflow_resolution.py`** from 180 lines to 68 lines. Kept only `is_likely_workflow_name()`. Deleted: `resolve_workflow`, `find_similar_workflows`, `_is_path_like`, `_try_load_workflow_from_file`, `_try_load_workflow_from_registry` and their imports (`Path`, `WorkflowNotFoundError`, `WorkflowManager`). Updated module docstring to point to `execution/workflow_resolver.py` for actual resolution.
+
+### Action 2: Extract error helpers, delete class
+
+Rewrote `src/pflow/execution/executor_service.py`:
+- **Before**: 624 lines, `WorkflowExecutorService` class with 15 methods (8 dead, 7 alive)
+- **After**: 230 lines, 2 public functions + 6 private helpers, no class
+- **Public API**: `build_error_list(success, action_result, shared_store)` and `determine_error_category(error_message)`
+- **Private helpers**: `_extract_error_info`, `_get_failed_node`, `_extract_root_level_error`, `_extract_node_level_error`, `_extract_error_from_mcp_result`, `_enrich_error_from_node_output`
+- **Dead code removed**: `execute_workflow`, `_initialize_shared_store`, `_determine_workflow_status`, `_extract_warnings`, `_update_workflow_metadata`, `_handle_execution_exception`, `_build_execution_result`, `__init__` (~400 lines)
+- Updated `runner.py:_build_errors()` from `WorkflowExecutorService()._build_error_list(...)` to `build_error_list(...)`
+
+### Action 3: Fix tests
+
+| File | Tests affected | Fix |
+|------|---------------|-----|
+| `test_agent_ux_fixes.py` | 4 tests (lines 281-334) | Changed from `WorkflowExecutorService._handle_execution_exception()` to `determine_error_category()` for 3 categorization tests + `WorkflowRunner._exception_to_result()` for 1 integration test |
+| `test_workflow_resolution.py` | 9 tests (TestResolveWorkflowFunction + TestFindSimilarWorkflows) | Rewrote to test unified `resolve_workflow()` from `execution.workflow_resolver`. New return type `ResolvedWorkflow` (not tuple). Not-found now raises `WorkflowNotFoundError` (not returns None). Deleted `TestFindSimilarWorkflows` (tested dead `find_similar_workflows`). Fixed macOS `/var` vs `/private/var` symlink in path assertion. |
+| `test_api_warning_system.py` | 3 tests | Changed `WorkflowExecutorService()._build_error_list(...)` to `build_error_list(...)` |
+| `test_executor_service.py` | 22 tests | Changed fixture from `WorkflowExecutorService(workflow_manager=wm)` to `WorkflowRunner()`. Changed `_update_workflow_metadata(success, workflow_name, execution_params, duration)` to `_update_metadata(success, workflow_manager, workflow_name, params, duration)` |
+| `test_connection_pool.py` | 3 tests (TestExecutorServicePoolLifecycle) | Renamed to `TestRunnerPoolLifecycle`. Changed from `WorkflowExecutorService._initialize_shared_store` to `WorkflowRunner().run()`. Mock target `pflow.runtime.compile_ir_to_flow` (not `pflow.execution.runner.compile_ir_to_flow` — lazy import pitfall). |
+| `test_workflow_executor_comprehensive.py` | 1 test | Changed from `WorkflowExecutorService()._initialize_shared_store()` to `WorkflowRunner().run()` with real execution |
+
+### Action 4: Update CLAUDE.md files
+
+8 CLAUDE.md files updated to replace all stale `executor_service` / `WorkflowExecutorService` references with `runner.py` / `WorkflowRunner`. Removed deleted `resolver.py` from MCP server docs.
+
+### Verification
+- 4,675 passed, 0 failed
+- `make check` fully clean (ruff, mypy, deptry)
+
+### Test count delta
+Pre-cleanup: 4,678 (from Phase 9)
+Post-cleanup: 4,675 (-3)
+- Lost 3 tests: `TestFindSimilarWorkflows` (3 tests deleted — tested dead `find_similar_workflows` function that was removed)
+
+### Key insight: lazy import mock targets
+
+The pool lifecycle tests originally mocked `pflow.execution.runner.compile_ir_to_flow` — which fails because the Runner uses a lazy import (`from pflow.runtime import compile_ir_to_flow` inside `_compile_and_execute`). The correct mock target is `pflow.runtime.compile_ir_to_flow`. This is the same lazy import pitfall documented in Phase 8 for WorkflowRunner — always patch the **source module** for lazy imports.
+
+### Post-cleanup audit: 4 remaining loose ends (2026-03-30)
+
+After cleanup, a final audit found 4 stale references that survived all previous passes:
+
+1. **`display_validation_warnings()` was dead code.** Function defined in `compile_validation.py`, exported from `compilation/__init__.py`, zero callers. Deleted function (~55 lines), removed from `__init__.py` exports. Also removed `sys` import and `MAX_DISPLAYED_WARNINGS_PER_NODE` constant (only used by deleted function). Ruff auto-removed `ValidationWarning` import that became unused.
+
+2. **`runtime/workflow_executor.py` comment table (lines 79-92)** attributed shared store key origins to `executor_service._initialize_shared_store()` and `executor_service.execute_workflow()`. Updated to `runner._initialize_shared_store()` and `runner._compile_and_execute()`.
+
+3. **`mcp_server/services/CLAUDE.md`** documented `import_node_class()` as a pattern for MCP services. Stale — `run_registry_node` no longer imports node classes directly. Updated to describe the Runner-based synthetic IR approach.
+
+4. **`runtime/compilation/CLAUDE.md`** had 5 stale references to `display_validation_warnings` and `executor_service` as a consumer. Updated all: function marked as removed, consumer list corrected, known debt entry updated.
+
+### Verification
+- 4,675 passed, 0 failed
+- `make check` fully clean
+
+### Final state
+
+**Test count progression:**
+| State | Passed |
+|-------|--------|
+| Pre-Task-138 | 4,666 |
+| After MCP baseline tests | 4,671 |
+| After Phase 10 | 4,678 |
+| After cleanup | 4,675 |
+
+Net change: +9 tests (5 MCP baselines + 8 Phase 9 regression guards - 3 dead-path tests deleted - 1 absorbed in Phase 7)
+
+**Lines removed** (approximate, across all phases):
+- Phase 0: ~620 (dead code cleanup)
+- Phase 7: ~430 (deleted workflow_execution.py + 8 dead functions from main.py)
+- Cleanup: ~690 (resolver files + WorkflowExecutorService class + display_validation_warnings)
+- **Total removed: ~1,740 lines**
+
+**Lines added** (approximate):
+- `execution/runner.py`: ~520 (WorkflowRunner)
+- `execution/result.py`: ~60 (4 new types)
+- `execution/workflow_resolver.py`: ~200 (unified resolver)
+- Phase 9 tests: ~200
+- **Total added: ~980 lines**
+
+**Net: ~760 fewer lines of production + test code.**
+
+### Final stale reference sweep (2026-03-30)
+
+3 audit agents cross-referenced cleanup results. Found 6 remaining stale references that survived all previous passes:
+
+| # | File | What was stale | Fix |
+|---|------|---------------|-----|
+| 1 | `compile_validation.py:195-197` | `_validate_workflow = _prepare_compilation` alias — zero consumers | Deleted alias |
+| 2 | `compiler.py:449` | Comment: `set in _validate_workflow` | Changed to `_prepare_compilation` |
+| 3 | `architecture/features/api-key-management.md:164-165` | `compiler.py:_validate_workflow()` and `workflow_validator.py:prepare_inputs()` | Changed to `compile_validation.py:_prepare_compilation()` and `ir_preparation.py:prepare_inputs()` |
+| 4 | `runtime/compilation/CLAUDE.md:45-47` | `_validate_workflow()` described as current name | Changed to `_prepare_compilation()` with updated description |
+| 5 | `runtime/compilation/CLAUDE.md:82` | Dependency graph: `compile_validation._validate_workflow` | Changed to `_prepare_compilation` |
+| 6 | `mcp_server/utils/CLAUDE.md:20,58` | References `_resolve_and_validate_workflow()` (deleted in Phase 6) | Updated to describe current flow through `execute_workflow()` / `run_registry_node()` → `WorkflowRunner` |
+
+Also verified clean:
+- All `_validate_workflow` references in `src/` are unrelated functions (`_validate_workflow_flags`, `_validate_workflow_name`, `load_and_validate_workflow`)
+- `executor_service` references in CLAUDE.md files correctly describe current role (internal utility)
+- `runtime/CLAUDE.md` and `mcp/CLAUDE.md` — already updated by cleanup phase (zero stale `executor_service` references)
+- `template_validation/CLAUDE.md:62` reference to `executor_service.py` for `MAX_DISPLAYED_FIELDS` — still accurate (function exists in extracted standalone code)
+
+### Status: Task 138 Phase 1 fully complete. Ready for commit.
