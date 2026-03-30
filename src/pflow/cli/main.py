@@ -143,7 +143,8 @@ def _handle_workflow_success(
 
     # Extract status and warnings from ExecutionResult (Phase 2-5 integration)
     status = getattr(result, "status", None)
-    result_warnings = getattr(result, "warnings", [])
+    # Merge runtime + validation warnings for unified output (matches MCP behavior)
+    result_warnings = getattr(result, "warnings", []) + getattr(result, "validation_warnings", [])
 
     output_produced = _handle_workflow_output(
         shared_storage,
@@ -360,7 +361,8 @@ def _display_execution_result(
     # Surface validation warnings (pre-execution diagnostics from WorkflowValidator)
     if result.validation_warnings and output_format != "json":
         for w in result.validation_warnings:
-            click.echo(f"  ⚠ {w.get('template', '?')}: {w.get('message', '')}", err=True)
+            node = w.get("node", "?")
+            click.echo(f"  ⚠ [{node}] {w.get('template', '?')}: {w.get('message', '')}", err=True)
 
     if result.success:
         _handle_workflow_success(

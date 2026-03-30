@@ -136,7 +136,7 @@ class TestCompilerIntegration:
         """
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${missing}"}}], "edges": []}
 
-        # Should not raise during compilation with validate=False
+        # Compilation succeeds — template validation now in WorkflowValidator, not compiler
         flow = compile_ir_to_flow(ir, mock_registry, initial_params={})
 
         # But should raise during execution due to runtime template validation

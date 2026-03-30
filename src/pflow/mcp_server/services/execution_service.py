@@ -183,8 +183,8 @@ class ExecutionService(BaseService):
             Formatted text output matching CLI (success or error)
 
         Raises:
-            ValueError: If workflow not found or parameters invalid
-            RuntimeError: If execution fails
+            ValueError: If workflow not found (with suggestions) or parameters fail security validation
+            RuntimeError: All other failures (validation, compilation, execution)
         """
         from pflow.execution.result import RunnerConfig
         from pflow.execution.runner import WorkflowRunner
@@ -528,10 +528,9 @@ class ExecutionService(BaseService):
                     raise TypeError(f"Expected str from structure format, got {type(formatted)}")
                 return formatted
             else:
-                # Pass full error dict to _build_error_text for rich context
-                # (shell command, stderr, exit code) instead of just the message
-                error_dict = result.errors[0] if result.errors else {"message": "Unknown error"}
-                error_text = _build_error_text(error_dict)
+                # Format through _format_error_result (same shape _build_error_text expects)
+                formatted_error = _format_error_result(result, synthetic_ir)
+                error_text = _build_error_text(formatted_error)
                 from pflow.execution.formatters.registry_run_formatter import format_execution_error
 
                 return format_execution_error(node_type, RuntimeError(error_text), verbose=False)

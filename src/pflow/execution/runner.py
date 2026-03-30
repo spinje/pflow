@@ -70,6 +70,7 @@ class WorkflowRunner:
         mcp_pool = None
         trace_collector = None
         metrics_collector = None
+        validation_warnings: list[Any] = []
         start_time = time.perf_counter()
 
         try:
@@ -111,8 +112,7 @@ class WorkflowRunner:
             raise
 
         except Exception as e:
-            vw = validation_warnings if "validation_warnings" in locals() else []
-            return self._exception_to_result(e, start_time, trace_collector, vw)
+            return self._exception_to_result(e, start_time, trace_collector, validation_warnings)
 
         finally:
             self._cleanup(mcp_pool, trace_collector, metrics_collector)
@@ -187,7 +187,15 @@ class WorkflowRunner:
             only_node=config.only_node,
         )
 
-        action_result = flow.run(shared_store)
+        try:
+            action_result = flow.run(shared_store)
+        except Exception as e:
+            # Annotate with failed_node from shared store before propagating —
+            # _exception_to_result doesn't have shared_store access.
+            failed_node = shared_store.get("__execution__", {}).get("failed_node")
+            if failed_node and not hasattr(e, "_pflow_node_id"):
+                e._pflow_node_id = failed_node  # type: ignore[attr-defined]
+            raise
 
         success, status = self._determine_status(action_result, shared_store)
         errors = self._build_errors(success, action_result, shared_store) if not success else []
@@ -236,9 +244,9 @@ class WorkflowRunner:
             resolved = self._resolve(workflow)
             file_path = source_file_path or resolved.file_path
 
+            params = dict(params)  # Copy at boundary (consistent with run())
             ir = resolved.ir
             if file_path:
-                params = dict(params)
                 params["_pflow_workflow_file"] = file_path
 
             self._resolve_file_references(ir, params)
@@ -481,6 +489,9 @@ class WorkflowRunner:
 
         error_dict: dict[str, Any] = {"source": "runtime", "message": str(exception)}
 
+        # Extract node_id annotated by _compile_and_execute's flow.run() wrapper
+        annotated_node_id = getattr(exception, "_pflow_node_id", None)
+
         if isinstance(exception, CompilationError):
             error_dict.update({
                 "source": "compilation",
@@ -525,6 +536,8 @@ class WorkflowRunner:
                     error_dict["suggestion"] = first_err[2]
         elif isinstance(exception, (MarkdownParseError, ValueError)):
             error_dict.update({"category": "validation"})
+            if annotated_node_id:
+                error_dict["node_id"] = annotated_node_id
         elif type(exception).__name__ == "ValidationError" and hasattr(exception, "path"):
             # ir_schema.ValidationError — has path and suggestion from prepare_inputs
             error_dict.update({
@@ -547,6 +560,8 @@ class WorkflowRunner:
                 "category": "execution_failure",
                 "exception_type": type(exception).__name__,
             })
+            if annotated_node_id:
+                error_dict["node_id"] = annotated_node_id
 
         return ExecutionResult(
             success=False,

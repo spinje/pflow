@@ -226,3 +226,15 @@ class TestRegistryRunMCP:
             # Should return error message string containing the var name
             assert isinstance(result, str)
             assert "MISSING_VAR" in result
+
+    def test_execution_failure_shows_actual_error(self):
+        """Verify run_registry_node propagates actual error details on failure.
+
+        When a shell command fails, the error text returned to MCP agents
+        should contain the actual error message — not just "Workflow execution failed".
+        Regression guard for _build_error_text shape mismatch.
+        """
+        result = ExecutionService.run_registry_node("shell", parameters={"command": "exit 1"})
+        assert isinstance(result, str)
+        # Must contain actual error context, not generic fallback
+        assert "Workflow execution failed" not in result or "exit" in result.lower()

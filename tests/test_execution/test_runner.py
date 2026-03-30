@@ -87,3 +87,27 @@ def test_validator_called_exactly_once():
 
     assert result.success is True
     assert mock_validate.call_count == 1, f"Expected exactly 1 validation call, got {mock_validate.call_count}"
+
+
+def test_declared_defaults_applied_without_user_params():
+    """Workflow with declared input defaults should use them when user provides nothing.
+
+    Tests the full novel pipeline: _fill_declared_defaults (placeholders for validation)
+    → _strip_placeholders (clean before compilation) → prepare_inputs (applies real defaults).
+    If any step is wrong, the default value won't appear in the output.
+    """
+    workflow_ir = {
+        "inputs": {
+            "greeting": {"type": "str", "default": "hello-from-default", "description": "A greeting"},
+        },
+        "nodes": [
+            {"id": "greet", "type": "shell", "params": {"command": "echo ${greeting}"}},
+        ],
+        "edges": [],
+    }
+
+    # Empty params — the default should be applied by the Runner/compiler pipeline
+    result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
+
+    assert result.success is True, f"Expected success, got errors: {result.errors}"
+    assert "hello-from-default" in result.shared_after["greet"]["stdout"]

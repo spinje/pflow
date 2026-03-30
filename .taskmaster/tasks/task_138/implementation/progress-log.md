@@ -1600,7 +1600,44 @@ Placeholders are stripped before shared store seeding (a `KeyError` on direct `s
 - 4,676 passed, 0 failed
 - `make check` fully clean
 
-### Status: Task 138 Phase 1 complete. Ready for commit.
+---
+
+## Final Branch Review (2026-03-30)
+
+7 specialized review agents audited the full branch (`git diff main...HEAD`). Found 3 bugs, all fixed.
+
+### Bugs found and fixed
+
+**1. `run_registry_node` error text always showed "Workflow execution failed".**
+`_build_error_text(result.errors[0])` passed a flat error dict but the function expects the nested structure from `_format_error_result()`. Shell command, stderr, and exit code silently discarded. Fixed: route through `_format_error_result(result, synthetic_ir)` first (same as `execute_workflow` already does). Added regression test.
+
+**2. `node_id` lost from runtime exceptions.**
+Old `_handle_execution_exception` extracted `failed_node` from `shared_store["__execution__"]`. New `_exception_to_result` didn't have `shared_store` access — `node_id` was null for all `ValueError`/`RuntimeError` from node execution (e.g., unresolved templates). Fixed: `_compile_and_execute` now catches exceptions from `flow.run()`, annotates with `_pflow_node_id` from shared store, then re-raises. `_exception_to_result` reads the annotation.
+
+**3. `validation_warnings` missing from CLI JSON output.**
+MCP merged `result.warnings + result.validation_warnings` (correct). CLI JSON only passed `result.warnings` — validation warnings silently dropped for `--output-format json`. Fixed: CLI now merges both, matching MCP behavior.
+
+### Additional cleanup
+
+| Fix | What |
+|-----|------|
+| `validation_warnings = []` init before try | Replaced `"validation_warnings" in locals()` pattern |
+| `validate()` unconditional params copy | Consistency with `run()` boundary copy |
+| Warning display: `[node_id]` prefix | `⚠ [process-data] ${fetch.response}: ...` — agents can locate which node |
+| Stale `validate=False` comments | Updated 2 test comments referencing removed parameter |
+| `execute_workflow` docstring | Corrected exception contract: `ValueError` for not-found only, `RuntimeError` for everything else |
+
+### High-value regression test added
+
+`test_declared_defaults_applied_without_user_params`: workflow with `inputs: {greeting: {default: "hello-from-default"}}`, empty user params, through `WorkflowRunner().run()`, asserts default appears in shell output. Tests the full novel `_fill_declared_defaults` → validate → `_strip_placeholders` → `prepare_inputs` pipeline. If any step breaks, defaults stop working for all users.
+
+### Final state
+
+- **4,678 passed**, 0 failed, 0 xfailed
+- `make check` fully clean (ruff, mypy, deptry)
+- Net vs pre-Task-138: +12 tests, ~760 fewer lines
+
+### Status: Task 138 Phase 1 complete. Ready for PR.
 
 ---
 
@@ -1661,3 +1698,5 @@ The distinction: compiler prerequisites protect the compiler's own code from cra
 3. **Resources must live in the scope that has the `finally`.** Phase 4's initial decomposition put resource creation inside `_execute_workflow`. If that method raised after creating `MCPConnectionPool`, the tuple assignment never completed, and the outer `finally` saw `mcp_pool = None`. Server subprocesses leaked. Fix: create resources in `run()` scope, pass them to helpers.
 
 4. **`WorkflowExecutorService` was deleted because the name actively misled agents.** An AI agent reading `executor_service.py` built a wrong mental model ("this is the service that executes workflows"). The 7 alive methods were stateless — extracted as standalone functions. The indirection of creating a throwaway instance just to call `_build_error_list` was replaced with a direct function call.
+
+5. **Runtime exceptions carry `_pflow_node_id` via annotation.** `_compile_and_execute` catches exceptions from `flow.run()`, reads `shared_store["__execution__"]["failed_node"]`, and attaches it as `exception._pflow_node_id` before re-raising. `_exception_to_result` reads this attribute for exception types that don't natively carry `node_id` (`ValueError`, `RuntimeError`, etc.). `CompilationError` and `MaxNodeVisitsError` carry their own `node_id` attribute and don't need annotation.

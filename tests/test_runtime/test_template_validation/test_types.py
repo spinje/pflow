@@ -1163,7 +1163,7 @@ class TestShellCommandValidationTiming:
 
         registry = Registry()
 
-        # Compilation succeeds with validate=False
+        # Compilation succeeds — template validation now in WorkflowValidator, not compiler
         flow = compile_ir_to_flow(
             workflow_ir,
             registry=registry,
