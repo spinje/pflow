@@ -218,17 +218,13 @@ Historical examples where manual testing caught what unit tests missed:
 - Running doc examples as real workflows caught missing comma in JSON (Task 104)
 - User's chorus generation pipeline found 3 interacting bugs (Task 131)
 
-#### Review Checkpoints
+#### Code Review and Review Checkpoints
 
-For implementations with 3+ phases or significant scope, the plan should include code review checkpoints using the `/review` skill — not just at the end, but at key phase boundaries.
+All plans of significant scope should include code review phase at the end of the implementation, and include instructions for invoking the `/code-review` skill at the beginning of the code review phase.
 
-If the plan has no review checkpoints, flag it. Mid-implementation reviews catch bugs before they compound:
-- Task 92: 5 review rounds across phases caught formatter data shape mismatch, dead code, repair terminology
-- Task 106: Review Wave 1 caught critical stale `_resolved` bug
-- Task 108: Phase 1 review caught 28 issues including truthiness bug
-- Task 130: Round 1 review caught path traversal vulnerability, wrong base directory, silent exception swallowing
+For implementations where an individual phase is significant in scope, the plan should include code review checkpoint using the `/code-review` skill — not just at the end, but at key phase boundaries. Think hard about if this is necessary or not. Only suggest if you think the phase is likely to introduce significant new bugs that will be difficult to catch later or compound as the implementation progresses.
 
-Suggest review points after phases that:
+Consider review points after phases that:
 - Complete a major feature boundary (e.g., "core implementation done, before integration")
 - Touch critical paths (validation, compilation, execution)
 - Involve cross-layer changes (multiple directories affected)
