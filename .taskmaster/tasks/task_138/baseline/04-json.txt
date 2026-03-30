@@ -1,0 +1,38 @@
+{
+  "success": true,
+  "result": {
+    "hello": {
+      "written": "Successfully wrote to '/Users/andfal/projects/pflow-feat-shared-execution-pipeline/hello.txt'"
+    }
+  },
+  "status": "success",
+  "workflow": {
+    "action": "unsaved",
+    "name": "examples/core/minimal.pflow.md"
+  },
+  "duration_ms": 15.98,
+  "total_cost_usd": 0.0,
+  "nodes_executed": 0,
+  "metrics": {
+    "total": {
+      "tokens_input": 0,
+      "tokens_output": 0,
+      "tokens_total": 0,
+      "cost_usd": 0.0
+    }
+  },
+  "execution": {
+    "duration_ms": 15.98,
+    "nodes_executed": 1,
+    "nodes_total": 1,
+    "steps": [
+      {
+        "node_id": "hello",
+        "status": "completed",
+        "duration_ms": 0,
+        "cached": true
+      }
+    ],
+    "cache_hits": 1
+  }
+}

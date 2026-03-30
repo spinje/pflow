@@ -19,11 +19,7 @@ from pflow.cli.workflow_output import (
     _create_workflow_metadata,
     _handle_workflow_output,
 )
-from pflow.cli.workflow_resolution import (
-    find_similar_workflows,
-    is_likely_workflow_name,
-    resolve_workflow,
-)
+from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
@@ -35,7 +31,7 @@ from pflow.core.shell_integration import (
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution import DisplayManager
-from pflow.runtime.compilation import display_validation_warnings
+from pflow.execution.workflow_resolver import resolve_workflow
 
 # Import MCP CLI commands
 
@@ -125,68 +121,6 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
                 click.echo(f"cli: Warning - could not clean up temp file: {stdin_data.temp_path}", err=True)
 
 
-def _prepare_execution_environment(
-    ctx: click.Context,
-    ir_data: dict[str, Any],
-    output_format: str,
-    verbose: bool,
-    execution_params: dict[str, Any] | None,
-    cache_chunks: list[dict[str, Any]] | None = None,
-) -> tuple[Any, Any, Any, dict[str, Any], bool]:
-    """Prepare the execution environment for workflow execution.
-
-    Returns:
-        Tuple of (cli_output, display, workflow_trace, enhanced_params, effective_verbose)
-    """
-    from pflow.cli.cli_output import CliOutput
-
-    # Extract context values
-    print_flag = ctx.obj.get("print_flag", False)
-
-    # Determine effective verbose flag for nodes
-    # MCP server output should only show when -v is set AND not in print mode or JSON output
-    effective_verbose = verbose and not print_flag and output_format != "json"
-
-    # Create output interface
-    cli_output = CliOutput(
-        output_controller=_get_output_controller(ctx),
-        verbose=verbose,
-        output_format=output_format,
-    )
-
-    # Create display manager
-    display = DisplayManager(output=cli_output)
-
-    # Always create trace collector — cost tracking needs it regardless of --no-trace.
-    # The --no-trace flag only skips the file save (gated in _save_trace_and_report).
-    from pflow.runtime.workflow_trace import WorkflowTraceCollector
-
-    workflow_trace = WorkflowTraceCollector(ctx.obj.get("workflow_name", "workflow"))
-    ctx.obj["workflow_trace"] = workflow_trace
-
-    # Prepare execution params with verbose flag
-    enhanced_params = execution_params or {}
-    enhanced_params["__verbose__"] = effective_verbose
-    if cache_chunks:
-        enhanced_params["__cache_chunks__"] = cache_chunks
-
-    # Set workflow file path for relative path resolution in nested workflows
-    source_file_path = ctx.obj.get("source_file_path")
-    if source_file_path:
-        enhanced_params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
-
-    # Pass --no-cache flag to execution (controls memoization cache reads)
-    if not ctx.obj.get("cache", True):
-        enhanced_params["__no_cache__"] = True
-
-    # Pass --only node target to execution (controls flow termination)
-    only_node = ctx.obj.get("only_node")
-    if only_node:
-        enhanced_params["__only_node__"] = only_node
-
-    return cli_output, display, workflow_trace, enhanced_params, effective_verbose
-
-
 def _handle_workflow_success(
     ctx: click.Context,
     result: Any,  # ExecutionResult
@@ -209,7 +143,8 @@ def _handle_workflow_success(
 
     # Extract status and warnings from ExecutionResult (Phase 2-5 integration)
     status = getattr(result, "status", None)
-    result_warnings = getattr(result, "warnings", [])
+    # Merge runtime + validation warnings for unified output (matches MCP behavior)
+    result_warnings = getattr(result, "warnings", []) + getattr(result, "validation_warnings", [])
 
     output_produced = _handle_workflow_output(
         shared_storage,
@@ -240,261 +175,6 @@ def _handle_workflow_success(
                 click.echo("Workflow executed successfully")
         else:
             click.echo("Workflow executed successfully")
-
-
-def _cleanup_workflow_resources(
-    workflow_trace: Any | None,
-    stdin_data: str | StdinData | None,
-    verbose: bool,
-) -> None:
-    """Clean up workflow resources with robust error handling.
-
-    Args:
-        workflow_trace: Optional workflow trace collector
-        stdin_data: Optional stdin data that may have temp files
-        verbose: Whether to show verbose output
-    """
-    cleanup_errors = []
-
-    # Ensure LLM interception is cleaned up
-    if workflow_trace:
-        try:
-            if hasattr(workflow_trace, "cleanup_llm_interception"):
-                workflow_trace.cleanup_llm_interception()
-                if verbose:
-                    logger.debug("LLM interception cleaned up successfully")
-            else:
-                logger.warning(
-                    f"WorkflowTrace object missing cleanup_llm_interception method: {type(workflow_trace).__name__}"
-                )
-        except Exception as e:
-            cleanup_errors.append(f"LLM cleanup failed: {e}")
-            logger.error(f"Failed to cleanup LLM interception: {e}", exc_info=True)
-
-    # Clean up temp files
-    try:
-        _cleanup_temp_files(stdin_data, verbose)
-        if verbose and stdin_data:
-            logger.debug("Temporary files cleaned up successfully")
-    except Exception as e:
-        cleanup_errors.append(f"Temp file cleanup failed: {e}")
-        logger.error(f"Failed to cleanup temp files: {e}", exc_info=True)
-
-    # Report any cleanup failures to user in verbose mode
-    if cleanup_errors and verbose:
-        click.echo("⚠️  Some cleanup operations failed:", err=True)
-        for error in cleanup_errors:
-            click.echo(f"   - {error}", err=True)
-
-
-def _setup_execution_context(
-    ctx: click.Context,
-    ir_data: dict[str, Any],
-    output_format: str,
-    metrics_collector: Any | None,
-) -> tuple[bool, Any | None]:
-    """Setup execution context and return configuration values.
-
-    Args:
-        ctx: Click context
-        ir_data: Workflow IR data
-        output_format: Output format
-        metrics_collector: Optional metrics collector
-
-    Returns:
-        Tuple of (verbose, metrics_collector)
-    """
-    verbose = ctx.obj.get("verbose", False)
-
-    # Set up metrics collector if not provided (for both text and JSON mode)
-    if not metrics_collector:
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-
-    # Note: Validation now happens after _prepare_execution_environment()
-    # with real enhanced_params, in execute_json_workflow()
-
-    return verbose, metrics_collector
-
-
-def _perform_validation(
-    ir_data: dict[str, Any],
-    output_format: str,
-    source_file_path: str | None = None,
-) -> tuple[list[str], list[Any]]:
-    """Perform static workflow validation.
-
-    Args:
-        ir_data: Workflow IR data
-        output_format: Output format for error display
-        source_file_path: Optional path to the workflow file (for sub-workflow resolution)
-
-    Returns:
-        Tuple of (errors, warnings):
-        - errors: List of validation errors (empty if valid)
-        - warnings: List of ValidationWarning objects
-
-    """
-    from pathlib import Path
-
-    from pflow.core.workflow.validator import WorkflowValidator
-    from pflow.registry.registry import Registry
-
-    registry = Registry()
-
-    # Generate dummy values for declared inputs to enable structural template validation
-    dummy_params = {}
-    declared_inputs = ir_data.get("inputs", {})
-    for input_name in declared_inputs:
-        dummy_params[input_name] = "__validation_placeholder__"
-
-    # Inject file path for sub-workflow resolution
-    if source_file_path:
-        dummy_params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
-
-    errors, warnings = WorkflowValidator.validate(
-        workflow_ir=ir_data,
-        extracted_params=dummy_params,  # Dummy values enable structural validation
-        registry=registry,  # Pass Registry object, not metadata dict
-        skip_node_types=False,
-    )
-
-    return (errors, warnings)
-
-
-def _display_validation_results(
-    errors: list[str],
-    warnings: list[Any],
-    output_format: str,
-) -> None:
-    """Display validation results and exit.
-
-    Args:
-        errors: List of validation errors (empty if valid)
-        warnings: List of ValidationWarning objects
-        output_format: Output format (text or json)
-
-    Note:
-        This function calls sys.exit() and never returns
-    """
-    import sys
-
-    # Use shared formatter for validation display
-    from pflow.execution.formatters.validation_formatter import (
-        format_validation_failure,
-        format_validation_success,
-    )
-
-    if not errors:
-        if output_format == "json":
-            click.echo(json.dumps({"success": True, "status": "valid", "message": "Workflow structure is valid"}))
-        else:
-            # Use formatter for success display
-            success_text = format_validation_success()
-            click.echo(success_text)
-
-            # Display warnings if present (complex, CLI-specific)
-            if warnings:
-                display_validation_warnings(warnings)
-        sys.exit(0)
-    else:
-        # Display validation errors
-        if output_format == "json":
-            error_output: dict[str, Any] = {
-                "success": False,
-                "status": "failed",
-                "error": "Workflow validation failed",
-                "errors": [{"message": e, "category": "validation"} for e in errors],
-                "workflow": {"action": "unsaved"},
-            }
-            click.echo(json.dumps(error_output))
-        else:
-            # Use formatter for error display (auto-generates suggestions)
-            error_text = format_validation_failure(errors)
-            click.echo(error_text, err=True)
-        sys.exit(1)
-
-
-def _handle_validate_only_mode(
-    ctx: click.Context,
-    ir_data: dict[str, Any],
-    output_format: str,
-) -> None:
-    """Handle --validate-only flag by performing static validation and exiting.
-
-    Args:
-        ctx: Click context
-        ir_data: Workflow IR data (will be normalized in-place)
-        output_format: Output format (text or json)
-
-    Note:
-        This function calls sys.exit() and never returns
-    """
-    if output_format != "json":
-        click.echo("Validating workflow (static validation)...")
-
-    # Note: Normalization already happened in _try_load_workflow_from_file()
-    # No need to normalize again here
-
-    # Resolve external file references before validation
-    _resolve_file_refs(ctx, ir_data)
-
-    # Perform static validation
-    source_file_path = ctx.obj.get("source_file_path")
-    errors, warnings = _perform_validation(ir_data, output_format, source_file_path=source_file_path)
-
-    # Display results and exit
-    _display_validation_results(errors, warnings, output_format)
-
-
-def _resolve_file_refs(
-    ctx: click.Context,
-    ir_data: dict[str, Any],
-) -> None:
-    """Resolve external file references in workflow IR before validation/execution.
-
-    FileNotFoundError and yaml.YAMLError propagate to the caller's catch block.
-    """
-    from pflow.core.file_resolver import resolve_file_references
-
-    source_file = ctx.obj.get("source_file_path")
-    if source_file:
-        base_dir = Path(source_file).resolve().parent
-        resolve_file_references(ir_data, base_dir)
-
-
-def _validate_before_execution(
-    ir_data: dict[str, Any],
-    execution_params: dict[str, Any],
-    output_format: str,
-    verbose: bool,
-) -> None:
-    """Validate workflow before execution using full WorkflowValidator."""
-    from pflow.core.workflow.validator import WorkflowValidator
-    from pflow.registry.registry import Registry
-
-    registry = Registry()
-
-    errors, warnings = WorkflowValidator.validate(
-        workflow_ir=ir_data,
-        extracted_params=execution_params,  # Real params for full validation
-        registry=registry,
-        skip_node_types=False,
-    )
-
-    if errors:
-        from pflow.core.exceptions import WorkflowValidationError
-
-        raise WorkflowValidationError(
-            summary="Workflow validation failed",
-            validation_errors=[(e, "", "") for e in errors],
-        )
-
-    # Warnings are non-blocking, just display them in verbose mode
-    if warnings and output_format != "json" and verbose:
-        for warning in warnings:
-            click.echo(f"⚠️  {warning}", err=True)
 
 
 def _save_trace_and_report(ctx: click.Context, workflow_trace: Any | None) -> None:
@@ -562,130 +242,184 @@ def execute_json_workflow(  # noqa: C901
     output_key: str | None = None,
     execution_params: dict[str, Any] | None = None,
     output_format: str = "text",
-    metrics_collector: Any | None = None,
-    cache_chunks: list[dict[str, Any]] | None = None,
 ) -> None:
-    """Thin CLI wrapper for workflow execution.
-
-    All logic delegated to WorkflowExecutorService.
-    """
+    """Execute a workflow through the shared Runner."""
     from pflow.cli.error_output import output_error
-    from pflow.core.workflow.manager import WorkflowManager
-    from pflow.execution.workflow_execution import execute_workflow
+    from pflow.execution.result import RunnerConfig
+    from pflow.execution.runner import WorkflowRunner
 
-    # Setup execution context
-    verbose, metrics_collector = _setup_execution_context(ctx, ir_data, output_format, metrics_collector)
+    params = dict(execution_params or {})
+
+    # Route stdin to params (CLI concern -- Runner never knows about stdin)
+    if stdin_data:
+        _route_stdin_to_params(ctx, stdin_data, ir_data, params)
+
+    # Inject workflow file path for relative path resolution in nested workflows.
+    # The Runner handles this for string inputs (via resolver), but CLI always
+    # passes pre-parsed IR dicts, so we must inject it from ctx.obj.
+    source_file_path = ctx.obj.get("source_file_path")
+    if source_file_path:
+        params["_pflow_workflow_file"] = str(Path(source_file_path).resolve())
+
+    # Validate-only mode -- separate method, separate result type
+    if ctx.obj.get("validate_only"):
+        runner = WorkflowRunner()
+        vresult = runner.validate(ir_data, params, source_file_path=ctx.obj.get("source_file_path"))
+        _display_validation_result(ctx, vresult, output_format)
+        return
+
+    # Build config
+    verbose = ctx.obj.get("verbose", False)
+    print_flag = ctx.obj.get("print_flag", False)
+    effective_verbose = verbose and not print_flag and output_format != "json"
+    config = RunnerConfig(
+        trace_enabled=ctx.obj.get("trace", True),
+        cache_enabled=ctx.obj.get("cache", True),
+        verbose=effective_verbose,
+        only_node=ctx.obj.get("only_node"),
+    )
+
+    # Suppress PocketFlow "Flow ends" warnings in non-verbose mode
+    if not effective_verbose:
+        warnings.filterwarnings("ignore", message="Flow ends:.*", module="pflow.pocketflow")
 
     # Suppress logging in JSON mode (except CRITICAL) to keep output clean
     if output_format == "json":
         logging.getLogger().setLevel(logging.CRITICAL)
 
-    # Check for validate-only flag
-    validate_only = ctx.obj.get("validate_only", False)
-    if validate_only:
-        _handle_validate_only_mode(ctx, ir_data, output_format)
-        # Never reaches here - _handle_validate_only_mode calls sys.exit()
+    # Store total nodes for --report
+    ctx.obj["total_nodes"] = len(ir_data.get("nodes", []))
 
-    # Extract additional context values
-    workflow_name = ctx.obj.get("workflow_name")
+    # Build output interface
+    from pflow.cli.cli_output import CliOutput
 
-    # Prepare execution environment
-    cli_output, display, workflow_trace, enhanced_params, effective_verbose = _prepare_execution_environment(
-        ctx, ir_data, output_format, verbose, execution_params, cache_chunks
-    )
-
-    _resolve_file_refs(ctx, ir_data)
-    _validate_before_execution(ir_data, enhanced_params, output_format, verbose)
+    output_controller = _get_output_controller(ctx)
+    # CliOutput gets raw verbose (not effective_verbose) — it controls its own
+    # JSON/interactive suppression internally. effective_verbose is for CLI-level
+    # messages (echo) and the Runner's shared store __verbose__ flag.
+    cli_output = CliOutput(output_controller, verbose, output_format)
 
     # Show execution starting
-    node_count = len(ir_data.get("nodes", []))
-    ctx.obj["total_nodes"] = node_count
-    if verbose and output_format != "json":
-        click.echo(f"cli: Starting workflow execution with {node_count} node(s)")
-    display.show_execution_start(node_count)
+    if effective_verbose:
+        click.echo(f"cli: Starting workflow execution with {ctx.obj['total_nodes']} node(s)")
+    display = DisplayManager(cli_output)
+    display.show_execution_start(len(ir_data.get("nodes", [])))
 
-    # Hide PocketFlow warnings in non-verbose mode
-    if not verbose:
-        warnings.filterwarnings("ignore", message="Flow ends:*", module="pflow.pocketflow")
+    workflow_name = ctx.obj.get("workflow_name")
+    result = None
 
     try:
-        # Execute workflow with unified function
-        result = execute_workflow(
-            workflow_ir=ir_data,
-            execution_params=enhanced_params,
+        runner = WorkflowRunner()
+        result = runner.run(
+            ir_data,
+            params,
+            config,
             output=cli_output,
-            workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "saved" else None,
+            workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
             workflow_name=workflow_name,
-            stdin_data=stdin_data,
-            output_key=output_key,
-            metrics_collector=metrics_collector,
-            trace_collector=workflow_trace,
         )
+        _display_execution_result(ctx, result, output_key, ir_data, output_format, effective_verbose)
 
-        # Clean up LLM interception after execution
-        if workflow_trace and hasattr(workflow_trace, "cleanup_llm_interception"):
-            workflow_trace.cleanup_llm_interception()
-
-        if result.success:
-            _handle_workflow_success(
-                ctx=ctx,
-                result=result,
-                workflow_trace=workflow_trace,
-                shared_storage=result.shared_after,
-                output_key=output_key,
-                ir_data=ir_data,
-                output_format=output_format,
-                metrics_collector=metrics_collector,
-                verbose=verbose,
-            )
-            from pflow.core.workflow.status import WorkflowStatus
-
-            if result.status == WorkflowStatus.DEGRADED:
-                ctx.exit(2)
-        else:
-            output_error(
-                ctx,
-                result=result,
-                output_format=output_format,
-                verbose=verbose,
-                workflow_metadata=ctx.obj.get("workflow_metadata") if ctx.obj else None,
-                metrics_collector=metrics_collector,
-                shared_storage=result.shared_after,
-                ir_data=ir_data,
-            )
-            ctx.exit(1)
-
+    except click.exceptions.Exit:
+        raise
+    except KeyboardInterrupt:
+        click.echo("\n✗ Workflow execution interrupted", err=True)
+        ctx.exit(130)
     except Exception as e:
-        if isinstance(e, click.exceptions.Exit):
-            raise
-
-        if verbose:
-            logger.exception(f"Workflow execution failed: {e}")  # noqa: TRY401
-        else:
-            logger.error(f"Workflow execution failed: {e}")  # noqa: TRY400
-
-        # Clean up LLM interception on error
-        if workflow_trace:
-            try:
-                if hasattr(workflow_trace, "cleanup_llm_interception"):
-                    workflow_trace.cleanup_llm_interception()
-            except Exception:
-                logger.debug("LLM interception cleanup failed", exc_info=True)
-
         output_error(
             ctx,
             exception=e,
             output_format=output_format,
-            verbose=verbose,
+            verbose=effective_verbose,
             workflow_metadata=ctx.obj.get("workflow_metadata") if ctx.obj else None,
-            metrics_collector=metrics_collector,
-            shared_storage=result.shared_after if "result" in locals() else {},
+            metrics_collector=result.metrics if result else None,
+            shared_storage=result.shared_after if result else {},
         )
         ctx.exit(1)
 
     finally:
-        _save_trace_and_report(ctx, workflow_trace)
-        _cleanup_workflow_resources(workflow_trace, stdin_data, verbose)
+        trace = result.trace if result else None
+        if trace and config.trace_enabled:
+            _save_trace_and_report(ctx, trace)
+        _cleanup_temp_files(stdin_data, effective_verbose)
+        if output_format == "json":
+            logging.getLogger().setLevel(logging.WARNING)
+
+
+def _display_execution_result(
+    ctx: click.Context,
+    result: Any,  # ExecutionResult
+    output_key: str | None,
+    ir_data: dict[str, Any],
+    output_format: str,
+    verbose: bool,
+) -> None:
+    """Display execution result and set exit code."""
+    from pflow.cli.error_output import output_error
+    from pflow.core.workflow.status import WorkflowStatus
+
+    # Surface validation warnings (pre-execution diagnostics from WorkflowValidator)
+    if result.validation_warnings and output_format != "json":
+        for w in result.validation_warnings:
+            node = w.get("node", "?")
+            click.echo(f"  ⚠ [{node}] {w.get('template', '?')}: {w.get('message', '')}", err=True)
+
+    if result.success:
+        _handle_workflow_success(
+            ctx=ctx,
+            result=result,
+            workflow_trace=result.trace,
+            shared_storage=result.shared_after,
+            output_key=output_key,
+            ir_data=ir_data,
+            output_format=output_format,
+            metrics_collector=result.metrics,
+            verbose=verbose,
+        )
+        if result.status == WorkflowStatus.DEGRADED:
+            ctx.exit(2)
+    else:
+        output_error(
+            ctx,
+            result=result,
+            output_format=output_format,
+            verbose=verbose,
+            workflow_metadata=ctx.obj.get("workflow_metadata") if ctx.obj else None,
+            metrics_collector=result.metrics,
+            shared_storage=result.shared_after,
+            ir_data=ir_data,
+        )
+        ctx.exit(1)
+
+
+def _display_validation_result(
+    ctx: click.Context,
+    vresult: Any,  # ValidationResult
+    output_format: str,
+) -> None:
+    """Display validation result and exit with appropriate code."""
+    if output_format == "json":
+        output = {
+            "success": vresult.valid,
+            "validated_only": True,
+            "errors": [{"message": e, "category": "validation"} for e in vresult.errors],
+            "warnings": vresult.warnings,
+        }
+        click.echo(json.dumps(output, indent=2, default=str))
+    else:
+        if vresult.valid:
+            from pflow.execution.formatters.validation_formatter import format_validation_success
+
+            click.echo(format_validation_success())
+            if vresult.warnings:
+                for w in vresult.warnings:
+                    click.echo(f"  ⚠ {w.get('template', '?')}: {w.get('message', '')}", err=True)
+        else:
+            from pflow.execution.formatters.validation_formatter import format_validation_failure
+
+            click.echo(format_validation_failure(vresult.errors))
+
+    ctx.exit(0 if vresult.valid else 1)
 
 
 def _setup_signals() -> None:
@@ -863,24 +597,6 @@ def _route_stdin_to_params(
         params[target_input] = stdin_text
 
 
-def _load_settings_env() -> dict[str, str]:
-    """Load environment variables from settings.
-
-    Returns:
-        Dict of environment variables from settings, empty dict on error
-    """
-    try:
-        from pflow.core.settings import SettingsManager
-
-        manager = SettingsManager()
-        settings = manager.load()
-        return settings.env
-    except Exception as e:
-        # Non-fatal - continue with empty settings
-        logger.warning(f"Failed to load settings.env: {e}")
-        return {}
-
-
 def _validate_and_prepare_workflow_params(
     ctx: click.Context,
     workflow_ir: dict[str, Any],
@@ -923,27 +639,6 @@ def _validate_and_prepare_workflow_params(
     # Route stdin to workflow input marked with stdin: true
     _route_stdin_to_params(ctx, stdin_data, workflow_ir, params)
 
-    # Skip input validation if --validate-only (handled separately with dummy values)
-    validate_only = ctx.obj.get("validate_only", False)
-    if not validate_only:
-        from pflow.runtime.compilation import prepare_inputs
-
-        settings_env = _load_settings_env()
-        errors, defaults, env_param_names = prepare_inputs(workflow_ir, params, settings_env=settings_env)
-        if errors:
-            from pflow.core.exceptions import WorkflowValidationError
-
-            validation_errors: list[str | tuple[str, str, str]] = list(errors)
-            raise WorkflowValidationError(summary="Input validation failed", validation_errors=validation_errors)
-
-        # Apply defaults
-        if defaults:
-            params.update(defaults)
-
-        # Store env param names as internal param (for consistency with compiler.py)
-        if env_param_names:
-            params["__env_param_names__"] = list(env_param_names)
-
     return params
 
 
@@ -957,7 +652,7 @@ def _show_workflow_help(
     Args:
         first_arg: First workflow argument (name or path)
         workflow_ir: Workflow IR data
-        source: Workflow source ("saved", "file", etc.)
+        source: Workflow source ("library", "file", etc.)
     """
     # Use shared formatter (same as workflow describe command)
     from pflow.execution.formatters.workflow_describe_formatter import format_workflow_interface
@@ -972,7 +667,7 @@ def _show_workflow_help(
 
     # Display workflow information header
     click.echo(f"\nWorkflow: {name}")
-    if source == "saved":
+    if source == "library":
         click.echo("Source: Saved workflow")
     else:
         click.echo(f"Source: {first_arg}")
@@ -988,28 +683,18 @@ def _setup_workflow_execution(
     first_arg: str,
     source: str | None,
     output_format: str,
-) -> Any | None:
-    """Setup workflow execution context and metrics.
+) -> None:
+    """Setup workflow execution context (source, name, file path).
 
     Args:
         ctx: Click context
         first_arg: First workflow argument (name or path)
-        source: Workflow source ("saved", "file", etc.)
+        source: Workflow source ("library", "file", etc.)
         output_format: Output format
-
-    Returns:
-        Metrics collector if JSON output, otherwise None
     """
-    # Create metrics collector if needed
-    metrics_collector = None
-    if output_format == "json":
-        from pflow.core.metrics import MetricsCollector
-
-        metrics_collector = MetricsCollector()
-
     # Set workflow metadata based on source
     # This ensures proper action field in JSON output
-    if source == "saved":
+    if source == "library":
         # Workflow from registry - it's being reused
         ctx.obj["workflow_metadata"] = _create_workflow_metadata(first_arg, "reused")
     else:
@@ -1024,7 +709,7 @@ def _setup_workflow_execution(
         # Derive workflow name from filename for traces/display
         file_stem = Path(first_arg).stem
         ctx.obj["workflow_name"] = file_stem[:-6] if file_stem.endswith(".pflow") else file_stem
-    elif source == "saved":
+    elif source == "library":
         # Extract clean workflow name (strip file extension if present)
         workflow_name = first_arg[:-9] if first_arg.lower().endswith(".pflow.md") else first_arg
         ctx.obj["workflow_name"] = workflow_name
@@ -1038,8 +723,6 @@ def _setup_workflow_execution(
             ctx.obj["source_file_path"] = wm.get_path(workflow_name)
         except Exception:
             logger.debug("Could not resolve saved workflow path for '%s'", workflow_name, exc_info=True)
-
-    return metrics_collector
 
 
 def _handle_named_workflow(
@@ -1068,7 +751,13 @@ def _handle_named_workflow(
         True if workflow was executed, False otherwise
     """
     if workflow_ir is None:
-        workflow_ir, source = resolve_workflow(first_arg)
+        from pflow.core.exceptions import WorkflowNotFoundError as _WNF
+
+        try:
+            resolved = resolve_workflow(first_arg)
+        except _WNF:
+            return False
+        workflow_ir, source = resolved.ir, resolved.source
     if not workflow_ir:
         return False
 
@@ -1087,7 +776,7 @@ def _handle_named_workflow(
 
     # Show what we're doing if verbose (but not in JSON mode)
     if verbose and output_format != "json":
-        if source == "saved":
+        if source == "library":
             click.echo(f"cli: Loading workflow '{first_arg}' from registry")
         else:
             click.echo(f"cli: Loading workflow from file: {first_arg}")
@@ -1095,10 +784,10 @@ def _handle_named_workflow(
             click.echo(f"cli: With parameters: {params}")
 
     # Setup workflow execution context
-    metrics_collector = _setup_workflow_execution(ctx, first_arg, source, output_format)
+    _setup_workflow_execution(ctx, first_arg, source, output_format)
 
     # Execute workflow
-    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, output_format, metrics_collector)
+    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, output_format)
     return True
 
 
@@ -1135,20 +824,18 @@ def _try_execute_named_workflow(
     if not is_likely_workflow_name(first_arg, workflow[1:]):
         return False
 
-    # Resolve once to avoid duplicate calls
-    workflow_ir, source = resolve_workflow(first_arg)
+    # Resolve once to avoid duplicate calls — raises WorkflowNotFoundError if not found
+    resolved = resolve_workflow(first_arg)
+    workflow_ir, source = resolved.ir, resolved.source
     # Try to execute as named workflow
     if _handle_named_workflow(
         ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
     ):
         return True
-    # Workflow not found — raise with similar names for suggestions
-    wm = WorkflowManager()
-    similar = find_similar_workflows(first_arg, wm)
-
+    # Should not reach here — resolve_workflow raises if not found
     from pflow.core.exceptions import WorkflowNotFoundError
 
-    raise WorkflowNotFoundError(first_arg, similar_names=similar)
+    raise WorkflowNotFoundError(first_arg, similar_names=[])
 
 
 def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:

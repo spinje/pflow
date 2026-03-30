@@ -1,0 +1,15 @@
+
+✓ Workflow completed in 0.163s
+Nodes executed (6):
+  ✓ fetch-data (8ms)
+  ✓ classify (1ms)
+  ✓ process-small (6ms)
+  ○ process-large (<1ms)
+  ○ handle-error (<1ms)
+  ✓ done (6ms)
+cli: No outputs declared — showing auto-detected key 'result'. Declare outputs for reliable results.
+
+Workflow output:
+
+{'status': 'ok', 'items': [1, 2, 3]}
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-conditional-branching-20260329-225549.json

@@ -5,23 +5,15 @@ and node testing operations.
 """
 
 import logging
-import time
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.ir_schema import normalize_ir
-from pflow.core.metrics import MetricsCollector
+from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.core.workflow.validator import WorkflowValidator
-from pflow.execution.null_output import NullOutput
-from pflow.execution.workflow_execution import execute_workflow
+from pflow.execution.workflow_resolver import resolve_workflow as _unified_resolve
 from pflow.registry import Registry
-from pflow.runtime import import_node_class
 
-from ..utils.resolver import resolve_workflow
 from ..utils.validation import (
-    generate_dummy_parameters,
     validate_execution_parameters,
 )
 from .base_service import BaseService, ensure_stateless
@@ -29,136 +21,67 @@ from .base_service import BaseService, ensure_stateless
 logger = logging.getLogger(__name__)
 
 
-def _resolve_and_validate_workflow(
-    workflow: Any, parameters: dict[str, Any] | None
-) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any], str]:
-    """Resolve workflow to IR and validate parameters.
-
-    Args:
-        workflow: Workflow name, path, or IR dict
-        parameters: Execution parameters
-
-    Returns:
-        Tuple of (workflow_ir, error_response, validated_parameters, source)
-        If error_response is not None, workflow_ir will be None
-    """
-    # Resolve workflow to IR
-    workflow_ir, error, source = resolve_workflow(workflow)
-    if error or workflow_ir is None:
-        return (
-            None,
-            {
-                "success": False,
-                "error": {
-                    "type": "not_found",
-                    "message": error or "Workflow not found",
-                },
-            },
-            {},
-            source or "",
-        )
-
-    # Normalize the workflow IR
-    normalize_ir(workflow_ir)  # Modifies in-place
-
-    # Validate parameters
-    validated_params = parameters or {}
-    if parameters:
-        is_valid, error = validate_execution_parameters(parameters)
-        if not is_valid:
-            return (
-                None,
-                {
-                    "success": False,
-                    "error": {
-                        "type": "validation",
-                        "message": f"Invalid parameters: {error}",
-                    },
-                },
-                {},
-                source,
-            )
-
-    return workflow_ir, None, validated_params, source
-
-
-def _build_workflow_metadata(
-    workflow_ir: dict[str, Any], workflow: Any, source: str, workflow_manager: Any
-) -> dict[str, Any] | None:
-    """Build workflow metadata from execution context.
-
-    Args:
-        workflow_ir: Workflow IR dictionary (not used, kept for API compatibility)
-        workflow: Original workflow parameter
-        source: Workflow source type (file, library, direct)
-        workflow_manager: Workflow manager instance
-
-    Returns:
-        Workflow metadata dictionary or None
-    """
-    # Determine workflow status based on source
-    # Note: IR should never contain metadata field (violates schema)
-    if source == "library":
-        # Workflow loaded from library - mark as reused
-        return {"action": "reused", "name": str(workflow)}
-    elif source == "file":
-        # Workflow loaded from file - mark as unsaved
-        return {"action": "unsaved", "name": str(workflow)}
-    else:
-        # Direct IR dict - unsaved
-        return {"action": "unsaved"}
-
-
 def _format_success_result(
     result: Any,
-    workflow_ir: dict[str, Any],
-    workflow: Any,
-    source: str,
-    workflow_manager: Any,
-    metrics_collector: Any,
-    trace_path: Path,
+    resolved: Any,
+    workflow_name_display: str | None,
 ) -> dict[str, Any]:
-    """Format successful execution result.
+    """Format successful execution result for MCP text output.
 
     Args:
-        result: Execution result object
-        workflow_ir: Workflow IR dictionary
-        workflow: Original workflow parameter
-        source: Workflow source type
-        workflow_manager: Workflow manager instance
-        metrics_collector: Metrics collector instance
-        trace_path: Path to trace file
+        result: ExecutionResult from WorkflowRunner
+        resolved: ResolvedWorkflow from resolver
+        workflow_name_display: User-facing name (e.g., "my-workflow"), not file path
 
     Returns:
         Formatted success dictionary
     """
     from pflow.execution.formatters.success_formatter import format_execution_success
 
-    workflow_metadata = _build_workflow_metadata(workflow_ir, workflow, source, workflow_manager)
+    # Build workflow metadata from resolution source
+    # Note: "name" must be user-facing (e.g., "my-workflow"), NOT file_path
+    # (which is an absolute path like /Users/.../my-workflow.pflow.md).
+    # The formatter displays "{name} was executed" in MCP output.
+    if resolved.source == "library":
+        workflow_metadata: dict[str, Any] | None = {
+            "action": "reused",
+            "name": workflow_name_display or str(resolved.file_path),
+        }
+    elif resolved.source == "file":
+        workflow_metadata = {
+            "action": "unsaved",
+            "name": workflow_name_display or str(resolved.file_path),
+        }
+    else:
+        workflow_metadata = {"action": "unsaved"}
+
+    # Derive trace path from trace collector
+    trace_path = ""
+    if result.trace and hasattr(result.trace, "trace_path"):
+        trace_path = str(result.trace.trace_path)
 
     formatted = format_execution_success(
         shared_storage=result.shared_after,
-        workflow_ir=workflow_ir,
-        metrics_collector=metrics_collector,
+        workflow_ir=resolved.ir,
+        metrics_collector=result.metrics,
         workflow_metadata=workflow_metadata,
-        trace_path=str(trace_path),
-        status=result.status,  # Task 85: Tri-state status (SUCCESS/DEGRADED/FAILED)
-        warnings=result.warnings,  # Task 85: Warnings for degraded workflows
+        trace_path=trace_path,
+        status=result.status,
+        warnings=result.warnings + result.validation_warnings,
     )
 
     return formatted
 
 
 def _format_error_result(
-    result: Any, workflow_ir: dict[str, Any], metrics_collector: Any, trace_path: Path
+    result: Any,
+    workflow_ir: dict[str, Any],
 ) -> dict[str, Any]:
-    """Format failed execution result.
+    """Format failed execution result for MCP error text.
 
     Args:
-        result: Execution result object
+        result: ExecutionResult from WorkflowRunner
         workflow_ir: Workflow IR dictionary
-        metrics_collector: Metrics collector instance
-        trace_path: Path to trace file
 
     Returns:
         Formatted error dictionary
@@ -169,12 +92,12 @@ def _format_error_result(
         result,
         shared_storage=result.shared_after,
         ir_data=workflow_ir,
-        metrics_collector=metrics_collector,
+        metrics_collector=result.metrics,
         sanitize=True,
     )
 
     # Build error response
-    error_details = {
+    error_details: dict[str, Any] = {
         "type": "execution",
         "message": "Workflow execution failed",
         "checkpoint": formatted["checkpoint"],
@@ -187,10 +110,14 @@ def _format_error_result(
         error_details["node"] = first_error.get("node_id")
         error_details["category"] = first_error.get("category")
 
-        # Include all other fields from first error
         for key, value in first_error.items():
             if key not in ["message", "node_id", "category"]:
                 error_details[key] = value
+
+    # Derive trace path
+    trace_path = ""
+    if result.trace and hasattr(result.trace, "trace_path"):
+        trace_path = str(result.trace.trace_path)
 
     return {
         "success": False,
@@ -198,16 +125,15 @@ def _format_error_result(
         "errors": formatted["errors"],
         "execution": formatted.get("execution"),
         "metrics": formatted.get("metrics"),
-        "trace_path": str(trace_path),
+        "trace_path": trace_path,
     }
 
 
-def _build_error_text(error_dict: dict[str, Any], trace_path: Path) -> str:
+def _build_error_text(error_dict: dict[str, Any]) -> str:
     """Build detailed error text from error dict for MCP agent consumption.
 
     Args:
         error_dict: Formatted error dictionary from _format_error_result
-        trace_path: Path to trace file
 
     Returns:
         Human-readable error text with shell details for agent diagnosis
@@ -221,7 +147,6 @@ def _build_error_text(error_dict: dict[str, Any], trace_path: Path) -> str:
             node_id = err.get("node_id", "unknown")
             msg = err.get("message", "Unknown error")
             lines.append(f"  • {node_id}: {msg}")
-            # Include shell details for agent diagnosis
             if err.get("shell_command"):
                 cmd = err["shell_command"]
                 cmd_display = cmd[:200] + "..." if len(cmd) > 200 else cmd
@@ -231,39 +156,11 @@ def _build_error_text(error_dict: dict[str, Any], trace_path: Path) -> str:
                 stderr_display = stderr[:300] + "..." if len(stderr) > 300 else stderr
                 lines.append(f"    Stderr: {stderr_display}")
 
-    if trace_path.exists():
+    trace_path = error_dict.get("trace_path", "")
+    if trace_path and Path(trace_path).exists():
         lines.append(f"\nTrace: {trace_path}")
 
     return "\n".join(lines)
-
-
-def _inject_workflow_file_path(params: dict[str, Any], source: str, workflow: Any) -> None:
-    """Set _pflow_workflow_file in params for file reference resolution."""
-    if source == "file":
-        params["_pflow_workflow_file"] = str(Path(str(workflow)).resolve())
-    elif source == "library":
-        wm = WorkflowManager()
-        params["_pflow_workflow_file"] = wm.get_path(str(workflow))
-
-
-def _check_inline_file_references(workflow_ir: dict[str, Any], source: str) -> None:
-    """Raise ValueError if inline workflow contains file references.
-
-    File references require a file path to resolve from, which inline
-    workflows don't have.
-    """
-    if source not in ("content", "direct"):
-        return
-    from pflow.core.file_resolver import has_file_references
-
-    file_refs = has_file_references(workflow_ir)
-    if file_refs:
-        examples = ", ".join(file_refs[:3])
-        raise ValueError(
-            f"Workflow contains file references ({examples}) but was provided as inline content. "
-            f"File references require a workflow file path to resolve relative paths from. "
-            f"Save the workflow to a file and reference it by path or saved name."
-        )
 
 
 class ExecutionService(BaseService):
@@ -278,12 +175,6 @@ class ExecutionService(BaseService):
     def execute_workflow(cls, workflow: Any, parameters: dict[str, Any] | None = None) -> str:
         """Execute a workflow with agent-optimized defaults.
 
-        Built-in behaviors (no flags needed):
-        - Text output format (LLMs parse better than JSON)
-        - Explicit error reporting
-        - Trace saved to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
-        - Auto-normalization of workflow IR
-
         Args:
             workflow: Workflow name, path, or IR dict
             parameters: Execution parameters
@@ -292,85 +183,68 @@ class ExecutionService(BaseService):
             Formatted text output matching CLI (success or error)
 
         Raises:
-            ValueError: If workflow not found or parameters invalid
-            RuntimeError: If execution fails
+            ValueError: If workflow not found (with suggestions) or parameters fail security validation
+            RuntimeError: All other failures (validation, compilation, execution)
         """
-        # Resolve and validate workflow
-        workflow_ir, error_response, validated_params, source = _resolve_and_validate_workflow(workflow, parameters)
-        if error_response or workflow_ir is None:
-            # Extract error message and raise
-            error_msg = (
-                error_response.get("error", {}).get("message", "Unknown error") if error_response else "Unknown error"
-            )
-            raise ValueError(error_msg)
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
 
-        # Check for file references in inline workflows (no file path to resolve from)
-        _check_inline_file_references(workflow_ir, source)
+        # Validate parameters at system boundary (security check stays in MCP)
+        validated_params: dict[str, Any] = {}
+        if parameters:
+            is_valid, error = validate_execution_parameters(parameters)
+            if not is_valid:
+                raise ValueError(f"Invalid parameters: {error}")
+            validated_params = dict(parameters)
 
-        # Setup execution environment
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        trace_path = Path.home() / ".pflow" / "debug" / f"workflow-trace-{timestamp}.json"
+        # Pre-resolve to get source/file_path for metadata
+        try:
+            resolved = _unified_resolve(workflow)
+        except WorkflowNotFoundError as e:
+            hint = str(e)
+            if e.similar_names:
+                hint += f"\nDid you mean: {', '.join(e.similar_names[:5])}"
+            raise ValueError(hint) from e
+        except Exception as e:
+            raise ValueError(str(e)) from e
+
+        # Inject file path for sub-workflow relative path resolution.
+        # Why this is needed: We pass resolved.ir (a dict) to the Runner to avoid
+        # double-resolution. The Runner's _resolve() sees a dict → returns
+        # ResolvedWorkflow(source="direct", file_path=None). So the Runner can't
+        # derive file_path from resolution — we must inject it into params here.
+        if resolved.file_path:
+            validated_params["_pflow_workflow_file"] = resolved.file_path
+
+        workflow_name = str(workflow) if resolved.source == "library" else None
+        wm = WorkflowManager()
+
+        # Pass resolved.ir (dict) to avoid double-resolution. The Runner sees a
+        # dict and skips its own resolve_workflow() call. normalize_ir() runs
+        # twice (harmless, idempotent) but resolution hits the filesystem only once.
+        runner = WorkflowRunner()
+        result = runner.run(
+            resolved.ir,
+            validated_params,
+            RunnerConfig(),
+            workflow_manager=wm,
+            workflow_name=workflow_name,
+        )
 
         try:
-            # Set workflow file path for file reference resolution
-            _inject_workflow_file_path(validated_params, source, workflow)
-
-            # Validate workflow (structural, data flow, templates, sub-workflows)
-            # Must be after _inject_workflow_file_path so step 8 (sub-workflow
-            # validation) can resolve relative child workflow paths.
-            registry = Registry()
-            validation_errors, _warnings = WorkflowValidator.validate(
-                workflow_ir=workflow_ir,
-                extracted_params=validated_params or {},
-                registry=registry,
-                skip_node_types=False,
-            )
-            if validation_errors:
-                lines = [f"  - {e}" for e in validation_errors[:5]]
-                if len(validation_errors) > 5:
-                    lines.append(f"  ... and {len(validation_errors) - 5} more errors")
-                error_msg = "Workflow validation failed:\n" + "\n".join(lines)
-                raise ValueError(error_msg)
-
-            # Create fresh instances
-            workflow_manager = WorkflowManager()
-            metrics_collector = MetricsCollector()
-
-            # Execute with agent defaults (mypy now knows workflow_ir is not None)
-            # Note: workflow_name derived from source, not IR metadata (which violates schema)
-            workflow_name = str(workflow) if source == "library" else None
-            result = execute_workflow(
-                workflow_ir=workflow_ir,
-                execution_params=validated_params,
-                output=NullOutput(),  # Silent execution
-                workflow_manager=workflow_manager,
-                workflow_name=workflow_name,
-                metrics_collector=metrics_collector,
-            )
-
             if result.success:
-                # Format success as text (LLMs parse this better)
-                success_dict = _format_success_result(
-                    result, workflow_ir, workflow, source, workflow_manager, metrics_collector, trace_path
-                )
-
+                success_dict = _format_success_result(result, resolved, str(workflow))
                 from pflow.execution.formatters.success_formatter import format_success_as_text
 
                 return format_success_as_text(success_dict)
             else:
-                # Format error as text and raise
-                error_dict = _format_error_result(result, workflow_ir, metrics_collector, trace_path)
-                raise RuntimeError(_build_error_text(error_dict, trace_path))
-
+                error_dict = _format_error_result(result, resolved.ir)
+                raise RuntimeError(_build_error_text(error_dict))
         except RuntimeError:
-            # Re-raise our formatted errors
             raise
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}", exc_info=True)
-            error_msg = f"❌ Workflow execution failed: {e}"
-            if trace_path.exists():
-                error_msg += f"\nTrace: {trace_path}"
-            raise RuntimeError(error_msg) from e
+            raise RuntimeError(f"❌ Workflow execution failed: {e}") from e
 
     @classmethod
     @ensure_stateless
@@ -383,74 +257,25 @@ class ExecutionService(BaseService):
         Returns:
             Formatted text with validation results (same as CLI output)
         """
-        # Resolve workflow to IR
-        workflow_ir, error, source = resolve_workflow(workflow)
-        if error or workflow_ir is None:
-            return f"✗ Workflow not found: {error or 'Unknown error'}"
+        from pflow.execution.runner import WorkflowRunner
 
-        # Normalize the workflow IR (mypy now knows workflow_ir is not None)
-        normalize_ir(workflow_ir)  # Modifies in-place
+        runner = WorkflowRunner()
+        vresult = runner.validate(workflow, {})
 
-        # Check for file references in inline workflows (no file path to resolve from)
-        try:
-            _check_inline_file_references(workflow_ir, source)
-        except ValueError as e:
-            return f"✗ {e}"
+        if vresult.valid:
+            from pflow.execution.formatters.validation_formatter import format_validation_success
 
-        # Resolve external file references before validation
-        import yaml
+            msg = format_validation_success()
+            if vresult.warnings:
+                warning_text = "\n".join(
+                    f"  ⚠ {w.get('template', '?')}: {w.get('message', '')}" for w in vresult.warnings
+                )
+                msg += f"\n\nWarnings:\n{warning_text}"
+            return msg
+        else:
+            from pflow.execution.formatters.validation_formatter import format_validation_failure
 
-        from pflow.core.file_resolver import resolve_file_references
-
-        try:
-            if source == "file":
-                base_dir = Path(str(workflow)).resolve().parent
-                resolve_file_references(workflow_ir, base_dir)
-            elif source == "library":
-                wm = WorkflowManager()
-                base_dir = Path(wm.get_path(str(workflow))).parent
-                resolve_file_references(workflow_ir, base_dir)
-        except (FileNotFoundError, yaml.YAMLError) as e:
-            return f"✗ File reference error: {e}"
-
-        # Generate dummy parameters for validation
-        inputs = workflow_ir.get("inputs", {})
-        dummy_params = generate_dummy_parameters(inputs)
-
-        # Inject file path for sub-workflow resolution
-        if source == "file":
-            dummy_params["_pflow_workflow_file"] = str(Path(str(workflow)).resolve())
-        elif source == "library":
-            dummy_params["_pflow_workflow_file"] = wm.get_path(str(workflow))
-
-        # Use comprehensive validator (same as CLI)
-        try:
-            registry = Registry()
-
-            # Run all validation checks (same as CLI)
-            errors, _warnings = WorkflowValidator.validate(
-                workflow_ir=workflow_ir,
-                extracted_params=dummy_params,
-                registry=registry,
-                skip_node_types=False,
-            )
-
-            # Use shared formatter for validation display
-            from pflow.execution.formatters.validation_formatter import (
-                format_validation_failure,
-                format_validation_success,
-            )
-
-            if errors:
-                # Return formatted text (auto-generates suggestions)
-                return format_validation_failure(errors)
-            else:
-                # Return simple success message
-                return format_validation_success()
-
-        except Exception as e:
-            logger.error(f"Validation failed: {e}", exc_info=True)
-            return f"✗ Validation error: {e!s}"
+            return format_validation_failure(vresult.errors)
 
     @classmethod
     @ensure_stateless
@@ -579,97 +404,6 @@ class ExecutionService(BaseService):
             raise ValueError(f"Failed to save workflow: {e}") from e
 
     @classmethod
-    def _configure_node_parameters(
-        cls, node_type: str, node_instance: Any, parameters: dict[str, Any] | None
-    ) -> dict[str, Any] | None:
-        """Configure node parameters including MCP metadata and environment variable resolution.
-
-        Args:
-            node_type: Node type identifier
-            node_instance: Node instance to configure
-            parameters: Optional parameters for the node
-
-        Returns:
-            Configured parameters (may be modified for MCP nodes)
-        """
-        # Check if this is an MCP node and inject special parameters
-        # MCP nodes require __mcp_server__ and __mcp_tool__ to be set
-        # (normally injected by compiler during workflow compilation)
-        if node_type.startswith("mcp-"):
-            # Import the parser function (same logic as compiler uses)
-            from pflow.runtime.compilation.mcp_resolution import _parse_mcp_node_type
-
-            # Parse node type to extract server and tool names
-            # This will raise CompilationError if format is invalid or server not found
-            server_name, tool_name = _parse_mcp_node_type(node_type)
-
-            # Inject special parameters (same as compiler does)
-            if parameters is None:
-                parameters = {}
-
-            # These special parameters tell MCPNode which server/tool to execute
-            parameters["__mcp_server__"] = server_name
-            parameters["__mcp_tool__"] = tool_name
-
-            logger.debug(
-                f"Injected MCP metadata for {node_type}",
-                extra={"server": server_name, "tool": tool_name},
-            )
-
-        # Resolve ${var} templates from environment and settings.json
-        # This allows agents to use ${API_KEY} without exposing actual tokens
-        # Checks both os.environ and settings.json (where `pflow settings set-env` stores values)
-        if parameters:
-            from pflow.mcp.auth_utils import expand_env_vars_nested
-
-            parameters = expand_env_vars_nested(
-                parameters,
-                include_settings=True,
-                raise_on_missing=True,
-            )
-
-            logger.debug(
-                f"Resolved environment variables in parameters for {node_type}",
-                extra={"param_keys": list(parameters.keys()) if isinstance(parameters, dict) else None},
-            )
-
-        # Set parameters (now includes __mcp_server__ and __mcp_tool__ for MCP nodes,
-        # and all ${var} templates resolved from environment)
-        if parameters:
-            node_instance.set_params(parameters)
-
-        return parameters
-
-    @classmethod
-    def _extract_node_outputs(
-        cls, shared: dict[str, Any], node_type: str, parameters: dict[str, Any] | None
-    ) -> dict[str, Any]:
-        """Extract outputs from shared store after node execution.
-
-        Args:
-            shared: Shared store after node execution
-            node_type: Node type identifier
-            parameters: Parameters used for execution
-
-        Returns:
-            Extracted outputs dictionary
-        """
-        # Extract outputs (same logic as CLI)
-        node_outputs = shared.get(node_type, {})
-
-        # Type narrow for mypy (shared store values can be any type)
-        if isinstance(node_outputs, dict):
-            outputs: dict[str, Any] = node_outputs
-        else:
-            outputs = {}
-
-        if not outputs:
-            # Fallback: collect any non-input keys as outputs
-            param_keys = set(parameters.keys()) if parameters else set()
-            outputs = {k: v for k, v in shared.items() if k not in param_keys and not k.startswith("__")}
-        return outputs
-
-    @classmethod
     def _cache_execution_result(
         cls,
         execution_id: str,
@@ -701,10 +435,7 @@ class ExecutionService(BaseService):
     @classmethod
     @ensure_stateless
     def run_registry_node(cls, node_type: str, parameters: dict[str, Any] | None = None) -> str:
-        """Execute a single node to reveal output structure.
-
-        This is critical for MCP nodes where documentation shows "Any"
-        but actual output is deeply nested.
+        """Execute a single node via synthetic IR through the Runner.
 
         Args:
             node_type: Node type to run
@@ -713,78 +444,105 @@ class ExecutionService(BaseService):
         Returns:
             Formatted string with node output structure or error message
         """
-        # Create fresh registry
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
+
+        # Check registry first (before Runner, for fast "not found" response)
         registry = Registry()
         nodes = registry.load()
-
         if node_type not in nodes:
-            # Use shared formatter for CLI/MCP parity
             from pflow.execution.formatters.registry_run_formatter import format_node_not_found_error
 
             return format_node_not_found_error(node_type, list(nodes.keys()))
 
-        # Node exists in registry
+        # Validate parameters at system boundary (MCP concern)
+        node_params: dict[str, Any] = {}
+        if parameters:
+            is_valid, error = validate_execution_parameters(parameters)
+            if not is_valid:
+                return f"❌ Invalid parameters: {error}"
+            node_params = dict(parameters)
+
+        # Generate execution_id for read_fields two-phase pattern
+        from pflow.core.execution_cache import ExecutionCache
+
+        cache = ExecutionCache()
+        execution_id = cache.generate_execution_id()
+
         try:
-            # Import node class using CLI's proven logic (reuses single source of truth)
-            node_class = import_node_class(node_type, registry)
+            # Resolve ${ENV_VAR} from os.environ and settings.json
+            # (the compiler's template resolver only resolves from shared store)
+            if node_params:
+                from pflow.mcp.auth_utils import expand_env_vars_nested
 
-            # Create node instance
-            node_instance = node_class()
+                node_params = expand_env_vars_nested(node_params, include_settings=True, raise_on_missing=True)
 
-            # Configure node parameters (MCP metadata + env var resolution)
-            parameters = cls._configure_node_parameters(node_type, node_instance, parameters)
+            # Build synthetic single-node IR
+            synthetic_ir: dict[str, Any] = {
+                "nodes": [{"id": node_type, "type": node_type, "params": node_params}],
+                "edges": [],
+            }
+            # Execute via Runner with cache disabled (registry run is for discovery)
+            # Pass {} as Runner params — all user params are in node.params only.
+            # Passing them as Runner params causes WorkflowValidator Step 7
+            # to flag all node params as "unknown workflow inputs".
+            runner = WorkflowRunner()
+            result = runner.run(synthetic_ir, {}, RunnerConfig(cache_enabled=False))
 
-            # Generate execution ID for structure-only mode (Task 89)
-            from pflow.core.execution_cache import ExecutionCache
+            if result.success:
+                # Extract node output from shared store
+                outputs = result.shared_after.get(node_type, {})
+                if not isinstance(outputs, dict):
+                    outputs = {"result": outputs}
 
-            cache = ExecutionCache()
-            execution_id = cache.generate_execution_id()
+                # Cache for read_fields pattern
+                cls._cache_execution_result(
+                    execution_id=execution_id,
+                    node_type=node_type,
+                    parameters=parameters,
+                    outputs=outputs,
+                    action=None,
+                )
 
-            # Run node with test shared store and timing
-            shared: dict[str, Any] = {}
-            start_time = time.perf_counter()
-            action = node_instance.run(shared)
-            execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+                # Extract execution time from metrics
+                exec_time_ms = 0
+                if result.metrics:
+                    total_ms, _wf_ms = result.metrics._calculate_durations()
+                    exec_time_ms = int(total_ms)
 
-            # Extract outputs from shared store
-            outputs = cls._extract_node_outputs(shared, node_type, parameters)
+                # Format output
+                from pflow.core.settings import SettingsManager
+                from pflow.execution.formatters.node_output_formatter import format_node_output
 
-            # Cache execution results
-            cls._cache_execution_result(execution_id, node_type, parameters, outputs, action)
+                settings = SettingsManager().load()
+                output_mode = settings.registry.output_mode
 
-            # Load settings to get output mode
-            from pflow.core.settings import SettingsManager
+                formatted = format_node_output(
+                    node_type=node_type,
+                    action="default",
+                    outputs=outputs,
+                    shared_store=result.shared_after,
+                    execution_time_ms=exec_time_ms,
+                    registry=registry,
+                    format_type="structure",
+                    verbose=True,
+                    execution_id=execution_id,
+                    output_mode=output_mode,
+                )
 
-            settings_manager = SettingsManager()
-            settings = settings_manager.load()
-            output_mode = settings.registry.output_mode
+                if not isinstance(formatted, str):
+                    raise TypeError(f"Expected str from structure format, got {type(formatted)}")
+                return formatted
+            else:
+                # Format through _format_error_result (same shape _build_error_text expects)
+                formatted_error = _format_error_result(result, synthetic_ir)
+                error_text = _build_error_text(formatted_error)
+                from pflow.execution.formatters.registry_run_formatter import format_execution_error
 
-            # Format result using shared formatter (CLI's structure mode)
-            from pflow.execution.formatters.node_output_formatter import format_node_output
-
-            result = format_node_output(
-                node_type=node_type,
-                action=action,
-                outputs=outputs,
-                shared_store=shared,
-                execution_time_ms=execution_time_ms,
-                registry=registry,
-                format_type="structure",  # CLI's --show-structure mode
-                verbose=True,
-                execution_id=execution_id,  # Task 89: pass execution_id
-                output_mode=output_mode,  # Smart output display mode
-            )
-
-            # format_node_output with format_type="structure" always returns str
-            # Verify type and return (mypy needs this check)
-            if not isinstance(result, str):
-                raise TypeError(f"Expected str from structure format, got {type(result)}")
-            return result
+                return format_execution_error(node_type, RuntimeError(error_text), verbose=False)
 
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)
-
-            # Use shared formatter for CLI/MCP parity
             from pflow.execution.formatters.registry_run_formatter import format_execution_error
 
             return format_execution_error(node_type, e, verbose=False)

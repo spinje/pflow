@@ -6,74 +6,16 @@ validation. Called once from compile_ir_to_flow() as a single orchestration poin
 """
 
 import logging
-import sys
 from typing import Any
 
 from pflow.core.ir_schema import ValidationError
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.registry import Registry
 
-from ..template_validation import ValidationWarning, extract_node_outputs, validate_workflow_templates
+from ..template_validation import extract_node_outputs
 from .ir_preparation import prepare_inputs, validate_ir_structure
 
 logger = logging.getLogger(__name__)
-
-# Display limits for warning output
-MAX_DISPLAYED_WARNINGS_PER_NODE = 10  # Limit to avoid overwhelming terminal output
-
-
-def display_validation_warnings(warnings: list[ValidationWarning]) -> None:
-    """Display validation warnings in a user-friendly format.
-
-    Warnings are grouped by node for cleaner output and displayed to stderr
-    so they don't interfere with JSON output mode.
-
-    Args:
-        warnings: List of validation warnings to display
-    """
-    # Group warnings by node for cleaner output
-    by_node: dict[str, list[ValidationWarning]] = {}
-    for w in warnings:
-        if w.node_id not in by_node:
-            by_node[w.node_id] = []
-        by_node[w.node_id].append(w)
-
-    # Display grouped warnings
-    print(file=sys.stderr)  # Blank line for separation
-    print(f"Note: {len(warnings)} template(s) use runtime validation:", file=sys.stderr)
-    print(file=sys.stderr)
-
-    for node_id, node_warnings in by_node.items():
-        # Show node context once
-        first = node_warnings[0]
-
-        # Format node type (shorten MCP types)
-        node_type_display = first.node_type
-        if node_type_display.startswith("mcp-"):
-            # Remove 'mcp-' prefix and replace first '-composio-' with '/'
-            node_type_display = node_type_display[4:]  # Remove 'mcp-'
-            if "-composio-" in node_type_display:
-                node_type_display = node_type_display.replace("-composio-", "/", 1)
-
-        print(f"  Node '{node_id}' ({node_type_display}):", file=sys.stderr)
-        print(f"    Output type: {first.output_type} (structure unknown at validation time)", file=sys.stderr)
-        print(file=sys.stderr)
-
-        # Show each template (limit to avoid overwhelming)
-        display_count = min(len(node_warnings), MAX_DISPLAYED_WARNINGS_PER_NODE)
-        for w in node_warnings[:display_count]:
-            print(f"    \u2022 {w.template}", file=sys.stderr)
-            print(f"      Accessing: {w.output_key}.{w.nested_path}", file=sys.stderr)
-            print(file=sys.stderr)
-
-        if len(node_warnings) > MAX_DISPLAYED_WARNINGS_PER_NODE:
-            remaining = len(node_warnings) - MAX_DISPLAYED_WARNINGS_PER_NODE
-            print(f"    ... and {remaining} more template(s)", file=sys.stderr)
-            print(file=sys.stderr)
-
-    print("  These templates will be validated during workflow execution.", file=sys.stderr)
-    print("  If the nested paths don't exist, the workflow will fail at runtime.", file=sys.stderr)
-    print(file=sys.stderr)
 
 
 def _load_settings_env() -> dict[str, str]:
@@ -185,44 +127,40 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], CompilationErro
         )
 
 
-def _validate_workflow(
-    ir_dict: dict[str, Any], registry: Registry, initial_params: dict[str, Any], validate_templates: bool
-) -> dict[str, Any]:
-    """Validate workflow IR and prepare parameters.
+def _prepare_compilation(
+    ir_dict: dict[str, Any],
+    registry: Registry,
+    initial_params: dict[str, Any],
+) -> tuple[dict[str, Any], list[Any]]:
+    """Prepare IR for compilation: validate structure, check data flow, resolve inputs.
 
-    This function consolidates all validation steps to reduce complexity
-    in the main compile_ir_to_flow function.
+    Structure and data flow validation are compiler prerequisites — without them
+    the compiler crashes (KeyError on missing 'nodes') or produces broken Flows
+    (cycles that hang at runtime). These are NOT pre-execution checks.
 
-    Args:
-        ir_dict: The workflow IR dictionary
-        registry: Registry instance for node metadata lookup
-        initial_params: Initial parameters for the workflow
-        validate_templates: Whether to validate template variables
+    Template validation is handled by WorkflowValidator in the Runner and is
+    not duplicated here. The display_validation_warnings() call that previously
+    printed directly to stderr is removed — warnings route through the Runner.
 
     Returns:
-        Updated initial_params with defaults applied
-
-    Raises:
-        CompilationError: If structure validation fails
-        ValidationError: If input/output validation fails
-        ValueError: If template validation fails
+        (mutated initial_params, validation_warnings)
+        Warnings are currently always [] — template warnings come from
+        WorkflowValidator, not the compiler.
     """
     from .compiler import CompilationError
 
-    # Step 2: Validate structure
+    # Structure validation — compiler prerequisite (prevents KeyError on ir_dict["nodes"])
     try:
         validate_ir_structure(ir_dict)
     except CompilationError:
         logger.debug("IR validation failed", extra={"phase": "validation"}, exc_info=True)
         raise
 
-    # Step 2.1: Validate data flow (cycles, forward refs, non-existent node refs)
+    # Data flow validation — prevents compiler producing Flows with cycles
     _validate_data_flow_at_compile_time(ir_dict, CompilationError)
 
-    # Step 2.5: Get and validate template resolution mode
+    # Template resolution mode (reads IR or settings, writes to initial_params)
     template_resolution_mode = _get_template_resolution_mode(ir_dict)
-
-    # Store in initial_params for access during node creation
     initial_params["__template_resolution_mode__"] = template_resolution_mode
 
     logger.debug(
@@ -230,50 +168,28 @@ def _validate_workflow(
         extra={"phase": "validation", "mode": template_resolution_mode},
     )
 
-    # Step 3: Validate inputs and apply defaults
+    # Input validation and defaults (5-tier resolution, writes defaults to initial_params)
     try:
-        # Load settings.env once per compilation
         settings_env = _load_settings_env()
-
-        # Pass settings_env to prepare_inputs
         errors, defaults, env_param_names = prepare_inputs(ir_dict, initial_params, settings_env=settings_env)
         if errors:
             _raise_input_validation_errors(errors)
-        initial_params.update(defaults)  # Explicit mutation
+        initial_params.update(defaults)
 
-        # Store env param names as internal param (for sanitization at metadata storage time)
         if env_param_names:
             initial_params["__env_param_names__"] = list(env_param_names)
     except ValidationError:
         logger.debug("Input validation failed", extra={"phase": "input_validation"}, exc_info=True)
         raise
 
-    # Step 4: Validate outputs
+    # Output validation (validates output names can trace to node outputs)
     try:
         _validate_outputs(ir_dict, registry)
     except ValidationError:
         logger.debug("Output validation failed", extra={"phase": "output_validation"}, exc_info=True)
         raise
 
-    # Step 5: Validate templates if requested
-    if validate_templates:
-        logger.debug("Validating template variables", extra={"phase": "template_validation"})
-        template_errors, template_warnings = validate_workflow_templates(ir_dict, initial_params, registry)
-
-        # Display warnings if present (non-blocking)
-        if template_warnings:
-            display_validation_warnings(template_warnings)
-
-        # Fail only on errors
-        if template_errors:
-            error_msg = "Template validation failed:\n" + "\n".join(f"  - {e}" for e in template_errors)
-            logger.error(
-                "Template validation failed",
-                extra={"phase": "template_validation", "error_count": len(template_errors), "errors": template_errors},
-            )
-            raise ValueError(error_msg)
-
-    return initial_params
+    return initial_params, []
 
 
 def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:

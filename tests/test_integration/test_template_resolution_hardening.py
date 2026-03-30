@@ -29,7 +29,13 @@ FIX HISTORY:
 import pytest
 
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.execution.workflow_execution import execute_workflow
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
+
+
+def execute_workflow(workflow_ir: dict, execution_params: dict, **_kwargs: object) -> object:
+    """Compatibility shim: routes old execute_workflow() calls through WorkflowRunner."""
+    return WorkflowRunner().run(workflow_ir, execution_params, RunnerConfig())
 
 
 class TestIssue95Prevention:

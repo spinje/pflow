@@ -251,9 +251,8 @@ class TestCheckpointIntegration:
     def test_repair_and_resume_with_mocked_flow(self):
         """Test that checkpoint tracking works during execution."""
 
-        from pflow.execution.executor_service import ExecutionResult
-        from pflow.execution.null_output import NullOutput
-        from pflow.execution.workflow_execution import execute_workflow
+        from pflow.execution.result import ExecutionResult, RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
 
         # Simple test: verify that when repair is disabled, execution doesn't attempt repair
         workflow_ir = {
@@ -273,12 +272,9 @@ class TestCheckpointIntegration:
             },
         )
 
-        # Mock execution to succeed (validation removed from execute_workflow)
-        with patch("pflow.execution.executor_service.WorkflowExecutorService.execute_workflow") as mock_execute:
-            mock_execute.return_value = success_result
-
-            # Execute
-            result = execute_workflow(workflow_ir=workflow_ir, execution_params={}, output=NullOutput())
+        # Mock _compile_and_execute to return controlled result
+        with patch.object(WorkflowRunner, "_compile_and_execute", return_value=success_result) as mock_execute:
+            result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
 
             # Verify execution happened
             assert mock_execute.called

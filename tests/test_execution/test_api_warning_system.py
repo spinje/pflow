@@ -3,7 +3,7 @@
 import json
 from unittest.mock import Mock
 
-from pflow.execution.executor_service import WorkflowExecutorService
+from pflow.execution.executor_service import build_error_list
 from pflow.runtime.wrappers.api_warning_detector import detect_api_warning
 from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
 
@@ -162,7 +162,6 @@ class TestErrorFormattingSurfacesWarnings:
         Bug: _extract_error_info never checked __warnings__, so GraphQL 200-with-errors
         produced "Workflow failed with action: error" instead of "API error: Repository not found".
         """
-        svc = WorkflowExecutorService()
 
         shared = {
             "__execution__": {
@@ -178,7 +177,7 @@ class TestErrorFormattingSurfacesWarnings:
             },
         }
 
-        errors = svc._build_error_list(False, "error", shared)
+        errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
         assert "Repository not found" in errors[0]["message"]
 
@@ -188,7 +187,6 @@ class TestErrorFormattingSurfacesWarnings:
         Bug: "error" key present but null → str(None) → user saw "None" as error message.
         After fix for null, nested data.error was still not unwrapped → generic fallback.
         """
-        svc = WorkflowExecutorService()
 
         mcp_response = json.dumps({
             "successful": True,
@@ -206,7 +204,7 @@ class TestErrorFormattingSurfacesWarnings:
             "send": {"result": mcp_response},
         }
 
-        errors = svc._build_error_list(False, "error", shared)
+        errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
         assert "channel_not_found" in errors[0]["message"]
         assert "None" not in errors[0]["message"]
@@ -218,7 +216,6 @@ class TestErrorFormattingSurfacesWarnings:
         (e.g., "API error: Repository not found"). The node-level error may be
         a less useful raw message. Priority ordering in _extract_error_info matters.
         """
-        svc = WorkflowExecutorService()
 
         shared = {
             "__execution__": {
@@ -231,7 +228,7 @@ class TestErrorFormattingSurfacesWarnings:
             "api-call": {"error": "HTTP request failed"},  # Less actionable
         }
 
-        errors = svc._build_error_list(False, "error", shared)
+        errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
         assert "Rate limit exceeded" in errors[0]["message"]
         assert "HTTP request failed" not in errors[0]["message"]

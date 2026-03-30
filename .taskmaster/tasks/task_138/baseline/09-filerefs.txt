@@ -1,0 +1,10 @@
+
+✓ Workflow completed in 0.025s
+Nodes executed (1):
+  ✓ greet (6ms)
+cli: No outputs declared — showing auto-detected key 'stdout'. Declare outputs for reliable results.
+
+Workflow output:
+
+Hello from external script!
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-command-file-ref-20260329-225551.json

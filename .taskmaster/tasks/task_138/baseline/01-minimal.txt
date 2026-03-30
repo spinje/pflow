@@ -1,0 +1,10 @@
+
+✓ Workflow completed in 0.022s (1 cached, 0 executed)
+Nodes executed (1):
+  ✓ hello (<1ms) [cached]
+cli: No outputs declared — showing auto-detected key 'hello'. Declare outputs for reliable results.
+
+Workflow output:
+
+{'written': "Successfully wrote to '/Users/andfal/projects/pflow-feat-shared-execution-pipeline/hello.txt'"}
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-minimal-20260329-225531.json

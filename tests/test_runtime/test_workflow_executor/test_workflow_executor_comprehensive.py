@@ -269,7 +269,7 @@ class TestWorkflowExecutorComprehensive:
                 return "default"
 
         with self._setup_mock_imports(CaptureNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"value": "resolved", "obj": {"field": "nested_value"}, "__registry__": mock_registry}
             flow.run(shared)
 
@@ -321,7 +321,7 @@ class TestWorkflowExecutorComprehensive:
                 return "default"
 
         with self._setup_mock_imports(CaptureNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {
                 "api": {"url": "https://example.com"},
                 "category": "production",
@@ -423,7 +423,7 @@ class TestWorkflowExecutorComprehensive:
             return mock
 
         with patch("importlib.import_module", side_effect=side_effect):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"SECRET": "leaked", "__registry__": mock_registry}
             flow.run(shared)
 
@@ -638,7 +638,7 @@ class TestWorkflowExecutorComprehensive:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"present": "value", "__registry__": mock_registry}
 
             with pytest.raises(ValueError, match="not_there"):
@@ -810,17 +810,19 @@ class TestWorkflowExecutorComprehensive:
     # --- Test 32: _pflow_workflow_file flows to shared store ---
 
     def test_pflow_workflow_file_flows_to_shared_store(self):
-        """_pflow_workflow_file in execution_params flows to shared store."""
-        from pflow.execution.executor_service import WorkflowExecutorService
+        """_pflow_workflow_file in params flows to shared store via Runner."""
+        from pflow.execution.result import RunnerConfig
+        from pflow.execution.runner import WorkflowRunner
 
-        service = WorkflowExecutorService()
-        shared = service._initialize_shared_store(
-            shared_store=None,
-            execution_params={"_pflow_workflow_file": "/path/to/workflow.pflow.md"},
-            stdin_data=None,
-            metrics_collector=None,
-        )
-        assert shared["_pflow_workflow_file"] == "/path/to/workflow.pflow.md"
+        workflow_ir = {
+            "nodes": [{"id": "test", "type": "shell", "params": {"command": "echo hi"}}],
+            "edges": [],
+        }
+        params = {"_pflow_workflow_file": "/path/to/workflow.pflow.md"}
+
+        result = WorkflowRunner().run(workflow_ir, params, RunnerConfig())
+
+        assert result.shared_after["_pflow_workflow_file"] == "/path/to/workflow.pflow.md"
 
     # --- NEW: test_params_as_inputs_basic ---
 

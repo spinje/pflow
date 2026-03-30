@@ -161,8 +161,8 @@ Creates `~/.pflow/settings.json` with default configuration.
 - `pflow settings list-env` - Listing command
 
 **3. Workflow Integration** (`src/pflow/runtime/`):
-- `compiler.py:_validate_workflow()` - Loads settings.env once
-- `workflow_validator.py:prepare_inputs()` - Populates workflow inputs from multiple sources
+- `compile_validation.py:_prepare_compilation()` - Loads settings.env once
+- `ir_preparation.py:prepare_inputs()` - Populates workflow inputs from multiple sources
 - Precedence: CLI params → shell env vars → settings.env → workflow defaults
 
 ### Data Flow

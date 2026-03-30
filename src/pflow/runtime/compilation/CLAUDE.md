@@ -16,7 +16,7 @@ compilation/
 
 ## Public API (via `__init__.py`)
 
-`CompilationError`, `compile_ir_to_flow`, `inject_special_parameters`, `display_validation_warnings`, `import_node_class`, `prepare_inputs`, `validate_ir_structure`
+`CompilationError`, `compile_ir_to_flow`, `inject_special_parameters`, `import_node_class`, `prepare_inputs`, `validate_ir_structure`
 
 Also re-exported through `runtime/__init__.py`: `CompilationError`, `compile_ir_to_flow`, `import_node_class`.
 
@@ -38,14 +38,14 @@ The orchestrator. `compile_ir_to_flow()` is the main entry point: parse IR dict,
 - LLM nodes without `model` get auto-injected default from `get_default_workflow_model()`.
 - Source lines from markdown parser are threaded into params as `_<key>_source_line` for error reporting.
 - Template resolution mode: from IR `template_resolution_mode` field OR global settings fallback.
-- **`__only_node__`** is read from `initial_params` (passed through from CLI). It stays in `initial_params` (the compiler needs it) but is filtered from the shared store update in `executor_service.py` to avoid polluting template resolution context. This is asymmetric with `__no_cache__` which is popped from `execution_params` before shared store update.
+- **`only_node`** is passed as an explicit parameter to `compile_ir_to_flow()` by the Runner. The compiler passes it through to `_apply_run_hooks()` and `_apply_only_node_stop()`. It never enters `initial_params` or the shared store.
 
 ## compile_validation.py
 
-Pre-compilation validation. Called once from `compile_ir_to_flow()` via `_validate_workflow()`.
+Pre-compilation validation. Called once from `compile_ir_to_flow()` via `_prepare_compilation()`.
 
-- `_validate_workflow()` — orchestrates: structure validation -> template mode -> input prep -> output validation -> template validation.
-- `display_validation_warnings()` — groups warnings by node, prints to stderr. Used by both normal compilation AND `--validate-only` CLI mode (direct import from `cli/main.py`).
+- `_prepare_compilation()` — orchestrates: structure validation -> template mode -> input prep -> output validation. Returns `(initial_params, [])` — template warnings are empty (template validation moved to WorkflowValidator in Task 138).
+- ~~`display_validation_warnings()`~~ — Removed (Task 138). Validation warnings now route through `ExecutionResult.validation_warnings` via the Runner.
 - `_validate_outputs()` — validates output declarations trace to node outputs.
 - Lazy imports `CompilationError` from `compiler.py` to avoid circular dep.
 
@@ -79,7 +79,7 @@ IR structure validation and input preparation. Renamed from `workflow_validator.
 
 ```
 compiler.py
-  ├── compile_validation._validate_workflow
+  ├── compile_validation._prepare_compilation
   ├── mcp_resolution.{_check_registry_for_mcp, _create_mcp_error_suggestion, _parse_mcp_node_type}
   ├── node_loader.import_node_class
   ├── ../template_resolver.TemplateResolver
@@ -100,10 +100,10 @@ Lazy imports (break cycles):
 
 | Consumer | Symbols used |
 |----------|-------------|
-| `cli/main.py` | `display_validation_warnings`, `prepare_inputs` |
+| `cli/main.py` | `prepare_inputs` |
 | `cli/commands/registry_run.py` | `inject_special_parameters`, `import_node_class` |
-| `execution/executor_service.py` | `compile_ir_to_flow`, `CompilationError` (via `runtime/__init__.py`) |
-| `mcp_server/services/execution_service.py` | `import_node_class`, `_parse_mcp_node_type` (lazy import, boundary violation) |
+| `execution/runner.py` | `compile_ir_to_flow`, `CompilationError` (via `runtime/__init__.py`) |
+| `mcp_server/services/execution_service.py` | (none — routes through WorkflowRunner now) |
 
 ## Testing
 
@@ -119,10 +119,10 @@ Tests live in `tests/test_runtime/`:
 ## Known Issues
 
 - **`_parse_mcp_node_type` placement**: Conceptually belongs in `mcp/` but raises `CompilationError`, anchoring it here.
-- **`display_validation_warnings` placement**: Display/UX logic living in the compilation pipeline rather than in `execution/`.
+- **Template validation stripped from compiler (Task 138)**: `validate_workflow_templates()` + `display_validation_warnings()` removed from `_prepare_compilation()`. Template validation now runs in WorkflowValidator (called by the Runner before compilation).
 
 ## Gotchas
 
 - All four leaf modules (`compile_validation`, `mcp_resolution`, `node_loader`, `ir_preparation`) lazy-import `CompilationError` from `compiler.py` — moving `CompilationError` elsewhere would require updating all four.
 - `inject_special_parameters` is a public name (no underscore) despite being prefixed with `_` pre-decomposition — renamed during extraction.
-- `display_validation_warnings` is also underscore-dropped — was `_display_validation_warnings`.
+- `display_validation_warnings` was removed in Task 138 (validation warnings now in `ExecutionResult.validation_warnings`).

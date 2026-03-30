@@ -182,7 +182,7 @@ class TestWorkflowExecutorIntegration:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {}
             result = flow.run(shared)
 
@@ -210,7 +210,7 @@ class TestWorkflowExecutorIntegration:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -232,7 +232,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(TrackingExampleNode):
-            flow = compile_ir_to_flow(nested_workflow_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(nested_workflow_ir, registry=mock_registry)
             shared = {"outer_input": "test_value", "__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -264,7 +264,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(FailingExampleNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -315,7 +315,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(StorageCapturingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"parent_data": "should_not_leak", "__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -373,7 +373,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(InputCapturingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 
@@ -475,7 +475,7 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(OutputProducingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared = {"__registry__": mock_registry}
             result = flow.run(shared)
 

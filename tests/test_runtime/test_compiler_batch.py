@@ -82,7 +82,7 @@ class TestBatchWrapperChain:
             "edges": [{"from": "data_source", "to": "batch_processor"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
 
         # Find the batch_processor node in the flow
         batch_node = flow.start_node.successors.get("default")
@@ -103,7 +103,7 @@ class TestBatchWrapperChain:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
 
         node = flow.start_node
         assert isinstance(node, InstrumentedNodeWrapper)
@@ -132,7 +132,7 @@ class TestBatchWrapperChain:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         batch_node = flow.start_node.successors.get("default")
 
         # Layer 1 (outermost): InstrumentedNodeWrapper
@@ -179,7 +179,7 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         batch_wrapper = flow.start_node.successors.get("default").inner_node
 
         assert isinstance(batch_wrapper, PflowBatchNode)
@@ -200,7 +200,7 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         batch_wrapper = flow.start_node.successors.get("default").inner_node
 
         assert batch_wrapper.item_alias == "record"
@@ -220,7 +220,7 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         batch_wrapper = flow.start_node.successors.get("default").inner_node
 
         assert batch_wrapper.error_handling == "continue"
@@ -240,7 +240,7 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         batch_wrapper = flow.start_node.successors.get("default").inner_node
 
         assert batch_wrapper.item_alias == "item"  # Default
@@ -270,7 +270,7 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -305,7 +305,7 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -336,7 +336,7 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -369,7 +369,7 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -397,7 +397,7 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -425,7 +425,7 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -456,7 +456,7 @@ class TestBatchEdgeCases:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -496,7 +496,7 @@ class TestBatchEdgeCases:
             ],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -532,7 +532,7 @@ class TestBatchEdgeCases:
             "edges": [{"from": "source", "to": "multi-op"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -591,7 +591,7 @@ class TestInputsAsTemplateContext:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -622,7 +622,7 @@ class TestInputsAsTemplateContext:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=test_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 

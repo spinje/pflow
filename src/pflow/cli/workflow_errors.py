@@ -81,14 +81,14 @@ def _display_single_error(
 
     # Show raw API response if available (SECURITY FIX: Sanitize before display)
     if (raw := error.get("raw_response")) and isinstance(raw, dict):
-        from pflow.mcp_server.utils.errors import sanitize_parameters
+        from pflow.core.security_utils import sanitize_parameters
 
         sanitized_raw = sanitize_parameters(raw)
         _display_api_error_response(sanitized_raw)
 
     # Show MCP error details (SECURITY FIX: Sanitize before display)
     if (mcp := error.get("mcp_error")) and isinstance(mcp, dict):
-        from pflow.mcp_server.utils.errors import sanitize_parameters
+        from pflow.core.security_utils import sanitize_parameters
 
         sanitized_mcp = sanitize_parameters(mcp)
         _display_mcp_error_details(sanitized_mcp)

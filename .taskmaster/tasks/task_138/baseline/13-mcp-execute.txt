@@ -1,0 +1,7 @@
+✓ Workflow completed in 0.013s (1 cached, 0 executed)
+Nodes executed (1):
+  ✓ hello (0ms) [cached]
+
+Workflow output:
+
+{'written': "Successfully wrote to '/Users/andfal/projects/pflow-feat-shared-execution-pipeline/hello.txt'"}

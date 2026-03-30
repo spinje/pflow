@@ -8,7 +8,7 @@ import logging
 from typing import Any
 
 from pflow.execution.execution_state import build_execution_steps
-from pflow.execution.executor_service import ExecutionResult
+from pflow.execution.result import ExecutionResult
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def format_execution_errors(
         # Apply sanitization if requested
         if sanitize:
             # Lazy import to avoid circular dependencies
-            from pflow.mcp_server.utils.errors import sanitize_parameters
+            from pflow.core.security_utils import sanitize_parameters
 
             # Sanitize sensitive fields
             if "raw_response" in formatted_error:

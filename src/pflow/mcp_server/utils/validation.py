@@ -1,7 +1,6 @@
 """Input validation utilities for MCP server.
 
-This module provides validation functions for security and correctness,
-including path traversal prevention and workflow name validation.
+This module provides validation functions for security and correctness.
 
 Note: generate_dummy_parameters has been moved to pflow.core.validation_utils
 for reuse across CLI and MCP.
@@ -9,79 +8,11 @@ for reuse across CLI and MCP.
 
 import logging
 import re
-from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.validation_utils import generate_dummy_parameters  # noqa: F401 - Re-export for compatibility
 
 logger = logging.getLogger(__name__)
-
-# Path traversal patterns to block (always dangerous)
-ALWAYS_DANGEROUS_PATTERNS = [
-    r"\.\.",  # Parent directory
-    # Tilde expansion is safe for local MCP servers (Python's Path.expanduser() handles it)
-    r"[\x00]",  # Null bytes
-]
-
-# Absolute path patterns (only dangerous if allow_absolute=False)
-ABSOLUTE_PATH_PATTERNS = [
-    r"^/",  # Absolute paths (Unix)
-    r"^[A-Z]:",  # Absolute paths (Windows)
-]
-
-
-def validate_file_path(path_str: str, allow_absolute: bool = False) -> tuple[bool, Optional[str]]:
-    """Validate a file path for security.
-
-    Prevents path traversal attacks and validates path safety.
-
-    Args:
-        path_str: The path string to validate
-        allow_absolute: Whether to allow absolute paths
-
-    Returns:
-        Tuple of (is_valid, error_message)
-    """
-    # Check for always-dangerous patterns
-    for pattern in ALWAYS_DANGEROUS_PATTERNS:
-        if re.search(pattern, path_str):
-            return False, f"Path contains dangerous pattern: {pattern}"
-
-    # Check for absolute path patterns only if not allowed
-    if not allow_absolute:
-        for pattern in ABSOLUTE_PATH_PATTERNS:
-            if re.search(pattern, path_str):
-                return False, f"Path contains dangerous pattern: {pattern}"
-
-    try:
-        path = Path(path_str)
-
-        # Check if absolute when not allowed
-        if path.is_absolute() and not allow_absolute:
-            return False, "Absolute paths not allowed"
-
-        # Resolve the path to check for traversal
-        # This will resolve .. and symlinks
-        resolved = path.resolve()
-
-        # Check if the resolved path is still under expected directory
-        # For relative paths, ensure they don't escape
-        if not path.is_absolute():
-            cwd = Path.cwd()
-            try:
-                # Check if resolved path is under current directory
-                resolved.relative_to(cwd)
-            except ValueError:
-                return False, "Path escapes current directory"
-
-        return True, None
-
-    except Exception as e:
-        return False, f"Invalid path: {e!s}"
-
-
-# generate_dummy_parameters is now imported from pflow.core.validation_utils above
-# (removed duplicate definition)
 
 
 def validate_execution_parameters(params: dict[str, Any]) -> tuple[bool, Optional[str]]:

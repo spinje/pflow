@@ -59,7 +59,7 @@ def test_namespacing_with_workflow_inputs(tmp_path):
 
     try:
         # Compile with initial params
-        flow = compile_ir_to_flow(workflow, registry, initial_params={"input_data": "custom_value"}, validate=False)
+        flow = compile_ir_to_flow(workflow, registry, initial_params={"input_data": "custom_value"})
 
         # Execute
         shared = {}
@@ -78,7 +78,6 @@ def test_namespacing_with_workflow_inputs(tmp_path):
             workflow,
             registry,
             initial_params={},  # No params, should use default
-            validate=False,
         )
 
         shared = {}
@@ -152,7 +151,7 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
     compiler_module.import_node_class = mock_import
 
     try:
-        flow = compile_ir_to_flow(workflow, registry, validate=False)
+        flow = compile_ir_to_flow(workflow, registry)
         shared = {}
         flow.run(shared)
 

@@ -22,7 +22,7 @@ from pflow.registry import Registry
 from ..template_resolver import TemplateResolver
 from ..wrappers.namespaced_wrapper import NamespacedNodeWrapper
 from ..wrappers.template_wrapper import TemplateAwareNodeWrapper
-from .compile_validation import _validate_workflow
+from .compile_validation import _prepare_compilation
 from .mcp_resolution import _check_registry_for_mcp, _create_mcp_error_suggestion, _parse_mcp_node_type
 from .node_loader import import_node_class
 
@@ -446,7 +446,7 @@ def _instantiate_nodes(
     if enable_namespacing:
         logger.debug("Automatic namespacing enabled for workflow", extra={"phase": "node_instantiation"})
 
-    # Get template resolution mode from initial_params (set in _validate_workflow)
+    # Get template resolution mode from initial_params (set in _prepare_compilation)
     template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
 
     for node_data in ir_dict["nodes"]:
@@ -667,9 +667,9 @@ def compile_ir_to_flow(
     ir_json: Union[str, dict[str, Any]],
     registry: Registry,
     initial_params: Optional[dict[str, Any]] = None,
-    validate: bool = True,
     metrics_collector: Optional[Any] = None,
     trace_collector: Optional[Any] = None,
+    only_node: Optional[str] = None,
 ) -> Flow:
     """Compile JSON IR to executable pocketflow.Flow object with template support.
 
@@ -687,8 +687,6 @@ def compile_ir_to_flow(
         initial_params: Parameters provided before execution
                        Example: {"issue_number": "1234", "repo": "pflow"}
                        from user saying "fix github issue 1234 in pflow repo"
-        validate: Whether to validate templates (default: True)
-                 Set to False only for testing template resolution in isolation
         metrics_collector: Optional MetricsCollector for cost tracking
         trace_collector: Optional WorkflowTraceCollector for debugging
 
@@ -697,8 +695,11 @@ def compile_ir_to_flow(
 
     Raises:
         CompilationError: With rich context about what failed
-        ValueError: If template validation fails
         json.JSONDecodeError: If JSON string is malformed
+
+    Note:
+        Template validation has moved to WorkflowValidator (called by WorkflowRunner).
+        This function no longer raises for template errors even with ``validate=True``.
     """
     logger.debug("Starting IR compilation", extra={"phase": "init"})
     initial_params = initial_params or {}
@@ -727,8 +728,8 @@ def compile_ir_to_flow(
             suggestion="Check that the file path is correct and relative to the workflow file.",
         ) from e
 
-    # Steps 2-5: Validate workflow and prepare parameters
-    initial_params = _validate_workflow(ir_dict, registry, initial_params, validate)
+    # Steps 2-5: Prepare compilation (validate structure, resolve inputs, set template mode)
+    initial_params, _comp_warnings = _prepare_compilation(ir_dict, registry, initial_params)
 
     # Step 6: Log compilation steps
     logger.info(
@@ -767,7 +768,7 @@ def compile_ir_to_flow(
     flow = Flow(start=start_node)
 
     # Step 10b: Apply --only monkey-patch to stop flow after target node
-    only_node_id = initial_params.get("__only_node__") if initial_params else None
+    only_node_id = only_node
     if only_node_id:
         _apply_only_node_stop(flow, only_node_id, nodes)
 

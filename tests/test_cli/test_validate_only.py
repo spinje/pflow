@@ -282,7 +282,7 @@ class TestValidateOnlyJSONOutput:
         # Parse JSON output
         output_data = json.loads(result.output)
         assert output_data["success"] is True
-        assert "valid" in output_data.get("message", "").lower()
+        assert output_data.get("validated_only") is True
 
     def test_validate_only_json_failure(self, tmp_path: Path) -> None:
         """JSON output should contain structured errors."""

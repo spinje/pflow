@@ -1,128 +1,15 @@
-"""Workflow resolution — file path and saved name to IR."""
+"""CLI workflow routing heuristic.
+
+Determines whether a CLI argument is likely a workflow name (to be resolved
+and executed) vs natural language or a subcommand.
+
+Note: Actual workflow resolution (file, library, markdown, dict → IR) lives
+in execution/workflow_resolver.py. This module is CLI-only routing logic.
+"""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
-
-from pflow.core.exceptions import WorkflowNotFoundError
-from pflow.core.workflow.manager import WorkflowManager
-
-
-def _is_path_like(identifier: str) -> bool:
-    """Heuristic to determine if identifier looks like a file path or workflow file."""
-    lower = identifier.lower()
-    return (
-        (os.sep in identifier)
-        or (os.altsep is not None and os.altsep in identifier)
-        or lower.endswith(".pflow.md")
-        or lower.endswith(".json")  # Recognized as path-like for rejection error
-        or lower.endswith(".md")  # Recognized as path-like for extension hint
-    )
-
-
-def _try_load_workflow_from_file(path: Path) -> dict | None:
-    """Attempt to load a workflow from a file path.
-
-    Returns workflow IR dict on success, None if file doesn't exist.
-    Raises WorkflowNotFoundError for wrong extensions,
-    MarkdownParseError/PermissionError/UnicodeDecodeError propagate.
-    """
-    path_str = str(path).lower()
-
-    # Reject .json files with a clear migration message (before existence check)
-    if path_str.endswith(".json"):
-        raise WorkflowNotFoundError(
-            str(path),
-            hint=f"JSON workflow format is no longer supported: {path}\n"
-            "Workflow files use .pflow.md format.\n"
-            "Example: pflow ./my-workflow.pflow.md",
-        )
-
-    # Reject .md files that aren't .pflow.md
-    if path_str.endswith(".md") and not path_str.endswith(".pflow.md"):
-        suggested = str(path).rsplit(".md", 1)[0] + ".pflow.md"
-        raise WorkflowNotFoundError(
-            str(path),
-            hint=f"Wrong file extension: {path}\nWorkflow files use .pflow.md extension.\nRename to: {suggested}",
-        )
-
-    if not path.exists():
-        return None
-
-    from pflow.core.markdown_parser import parse_markdown
-
-    content = path.read_text(encoding="utf-8")
-    result = parse_markdown(content)
-    workflow_ir = result.ir
-
-    # Auto-normalize: add missing boilerplate fields
-    from pflow.core import normalize_ir
-
-    normalize_ir(workflow_ir)
-
-    return workflow_ir
-
-
-def _try_load_workflow_from_registry(identifier: str, wm: WorkflowManager) -> tuple[dict | None, str | None]:
-    """Attempt to load a workflow from registry by name, including stripping file extension."""
-    from pflow.core import normalize_ir
-
-    if wm.exists(identifier):
-        ir = wm.load_ir(identifier)
-        normalize_ir(ir)
-        return ir, "saved"
-    # Strip .pflow.md extension and try again
-    if identifier.lower().endswith(".pflow.md"):
-        name = identifier[:-9]  # len(".pflow.md") == 9
-        if wm.exists(name):
-            ir = wm.load_ir(name)
-            normalize_ir(ir)
-            return ir, "saved"
-    return None, None
-
-
-def resolve_workflow(identifier: str, wm: WorkflowManager | None = None) -> tuple[dict | None, str | None]:
-    """Resolve workflow from file path or saved name.
-
-    Resolution order:
-    1. File paths (contains / or ends with .pflow.md/.json)
-    2. Exact saved workflow name
-    3. Saved workflow without .pflow.md extension
-
-    Returns (ir_dict, source) or (None, None) if not found.
-    Raises WorkflowNotFoundError for wrong extensions,
-    MarkdownParseError for parse failures,
-    PermissionError/UnicodeDecodeError propagate.
-    """
-    if not wm:
-        wm = WorkflowManager()
-
-    # 1. File path detection (platform separators or workflow file extension)
-    if _is_path_like(identifier):
-        path = Path(identifier).expanduser().resolve()
-        ir = _try_load_workflow_from_file(path)
-        if ir is not None:
-            return ir, "file"
-        # File not found — fall through to registry
-
-    # 2/3. Saved workflow (exact name or extension-stripped)
-    ir, source = _try_load_workflow_from_registry(identifier, wm)
-    if ir is not None:
-        return ir, source
-
-    return None, None
-
-
-def find_similar_workflows(name: str, wm: WorkflowManager, max_results: int = 3) -> list[str]:
-    """Find similar workflow names using substring matching."""
-    all_names = [w["name"] for w in wm.list_all()]
-    # Simple substring matching (existing pattern)
-    matches = [n for n in all_names if name.lower() in n.lower()]
-    if not matches:
-        # Try reverse
-        matches = [n for n in all_names if n.lower() in name.lower()]
-    return matches[:max_results]
 
 
 def is_likely_workflow_name(text: str, remaining_args: tuple[str, ...]) -> bool:

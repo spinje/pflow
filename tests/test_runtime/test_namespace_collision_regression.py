@@ -252,7 +252,7 @@ class TestNodeIDCollisionRegression:
             "edges": [{"from": "images", "to": "analyze"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -284,7 +284,7 @@ class TestNodeIDCollisionRegression:
             "edges": [{"from": "url", "to": "fetch"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -318,7 +318,7 @@ class TestNodeIDCollisionRegression:
             "edges": [{"from": "prompt", "to": "llm"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -382,7 +382,6 @@ class TestWorkflowInputCollisionRegression:
             workflow,
             mock_registry,
             initial_params={"url": "https://example.com"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)
@@ -419,7 +418,6 @@ class TestWorkflowInputCollisionRegression:
             workflow,
             mock_registry,
             initial_params={"prompt": "user input"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)
@@ -467,7 +465,6 @@ class TestStaticParamNotOverridden:
             workflow,
             mock_registry,
             initial_params={"url": "https://override.com"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)
@@ -498,7 +495,6 @@ class TestStaticParamNotOverridden:
             workflow,
             mock_registry,
             initial_params={"url": "https://default.com"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)
@@ -537,7 +533,7 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -557,7 +553,7 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -577,7 +573,7 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -597,7 +593,7 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -634,7 +630,6 @@ class TestFalsyValuePreservation:
             workflow,
             mock_registry,
             initial_params={"count": 999, "message": "default msg"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)
@@ -680,7 +675,6 @@ class TestTemplateResolutionStillWorks:
             workflow,
             mock_registry,
             initial_params={"target": "https://resolved.com"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)
@@ -706,7 +700,7 @@ class TestTemplateResolutionStillWorks:
             "edges": [{"from": "prepare", "to": "fetch"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry, validate=False)
+        flow = compile_ir_to_flow(workflow, mock_registry)
         shared = {}
         flow.run(shared)
 
@@ -735,7 +729,6 @@ class TestTemplateResolutionStillWorks:
             workflow,
             mock_registry,
             initial_params={"path": "users/123"},
-            validate=False,
         )
         shared = {}
         flow.run(shared)

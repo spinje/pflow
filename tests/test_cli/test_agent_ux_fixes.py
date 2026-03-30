@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from pflow.cli.workflow_errors import _display_single_error
 from pflow.core.workflow.status import WorkflowStatus
-from pflow.execution.executor_service import ExecutionResult, WorkflowExecutorService
-from pflow.execution.null_output import NullOutput
+from pflow.execution.executor_service import determine_error_category
+from pflow.execution.result import ExecutionResult
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
@@ -196,9 +196,7 @@ def test_degraded_workflow_exits_with_code_2(tmp_path) -> None:
     degraded_result = ExecutionResult(success=True, status=WorkflowStatus.DEGRADED, shared_after={"result": "ok"})
 
     runner = CliRunner()
-    with patch(
-        "pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow", return_value=degraded_result
-    ):
+    with patch("pflow.execution.runner.WorkflowRunner.run", return_value=degraded_result):
         result = runner.invoke(main, [str(wf_path)])
 
     assert result.exit_code == 2
@@ -221,9 +219,7 @@ def test_successful_workflow_does_not_exit_with_code_2(tmp_path) -> None:
     success_result = ExecutionResult(success=True, status=WorkflowStatus.SUCCESS, shared_after={"result": "ok"})
 
     runner = CliRunner()
-    with patch(
-        "pflow.execution.workflow_execution.WorkflowExecutorService.execute_workflow", return_value=success_result
-    ):
+    with patch("pflow.execution.runner.WorkflowRunner.run", return_value=success_result):
         result = runner.invoke(main, [str(wf_path)])
 
     assert result.exit_code == 0
@@ -281,60 +277,32 @@ def test_extract_child_error_fallback_no_error_in_node_data() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_handle_execution_exception_categorizes_template_error() -> None:
-    """ValueError containing '${' should be categorized as template_error.
-
-    Previously, _handle_execution_exception hardcoded category as 'exception'.
-    Now it delegates to _determine_error_category for proper classification.
-    """
-    service = WorkflowExecutorService(output_interface=NullOutput())
-
-    # ValueError with template reference in message
-    exception = ValueError("Failed to resolve template ${node.output} in params")
-
-    result = service._handle_execution_exception(exception)
-
-    assert result["success"] is False
-    assert len(result["errors"]) == 1
-    assert result["errors"][0]["category"] == "template_error"
+def test_determine_error_category_template_error() -> None:
+    """Message containing '${' should be categorized as template_error."""
+    assert determine_error_category("Failed to resolve template ${node.output} in params") == "template_error"
 
 
-def test_handle_execution_exception_categorizes_generic_error() -> None:
-    """A generic ValueError without template references should be execution_failure."""
-    service = WorkflowExecutorService(output_interface=NullOutput())
-
-    exception = ValueError("Something went wrong during processing")
-
-    result = service._handle_execution_exception(exception)
-
-    assert result["success"] is False
-    assert result["errors"][0]["category"] == "execution_failure"
+def test_determine_error_category_generic_error() -> None:
+    """A generic message without template references should be execution_failure."""
+    assert determine_error_category("Something went wrong during processing") == "execution_failure"
 
 
-def test_handle_execution_exception_categorizes_api_validation() -> None:
-    """ValueError with API validation patterns should be categorized as api_validation."""
-    service = WorkflowExecutorService(output_interface=NullOutput())
-
-    exception = ValueError("Invalid request data: field required for 'title'")
-
-    result = service._handle_execution_exception(exception)
-
-    assert result["errors"][0]["category"] == "api_validation"
+def test_determine_error_category_api_validation() -> None:
+    """Message with API validation patterns should be categorized as api_validation."""
+    assert determine_error_category("Invalid request data: field required for 'title'") == "api_validation"
 
 
-def test_handle_execution_exception_includes_failed_node() -> None:
-    """When shared_store has a failed_node, it should appear in the error dict."""
-    service = WorkflowExecutorService(output_interface=NullOutput())
+def test_runner_exception_to_result_includes_category() -> None:
+    """WorkflowRunner._exception_to_result preserves error categorization."""
+    from pflow.execution.runner import WorkflowRunner
 
+    runner = WorkflowRunner()
     exception = ValueError("Template ${step1.output} could not be resolved")
-    shared_store: dict[str, Any] = {
-        "__execution__": {"failed_node": "step2"},
-    }
 
-    result = service._handle_execution_exception(exception, shared_store=shared_store)
+    result = runner._exception_to_result(exception, 0.0, None)
 
-    assert result["errors"][0]["node_id"] == "step2"
-    assert result["errors"][0]["category"] == "template_error"
+    assert result.success is False
+    assert result.errors[0]["category"] == "validation"  # ValueError → validation category
 
 
 # ---------------------------------------------------------------------------
@@ -342,13 +310,10 @@ def test_handle_execution_exception_includes_failed_node() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mcp_build_error_text_includes_shell_details(tmp_path: Any) -> None:
+def test_mcp_build_error_text_includes_shell_details() -> None:
     """MCP error text should include shell command and stderr for agent diagnosis."""
-    from pathlib import Path
-
     from pflow.mcp_server.services.execution_service import _build_error_text
 
-    trace_path = Path(tmp_path / "trace.json")
     error_dict = {
         "error": {"message": "Shell command failed"},
         "errors": [
@@ -360,7 +325,7 @@ def test_mcp_build_error_text_includes_shell_details(tmp_path: Any) -> None:
             }
         ],
     }
-    text = _build_error_text(error_dict, trace_path)
+    text = _build_error_text(error_dict)
     assert "npm run build" in text
     assert "Cannot find module" in text
     assert "build" in text
@@ -368,11 +333,8 @@ def test_mcp_build_error_text_includes_shell_details(tmp_path: Any) -> None:
 
 def test_mcp_build_error_text_truncates_long_values(tmp_path: Any) -> None:
     """MCP error text truncates long commands and stderr."""
-    from pathlib import Path
-
     from pflow.mcp_server.services.execution_service import _build_error_text
 
-    trace_path = Path(tmp_path / "trace.json")
     error_dict = {
         "error": {"message": "Failed"},
         "errors": [
@@ -384,5 +346,5 @@ def test_mcp_build_error_text_truncates_long_values(tmp_path: Any) -> None:
             }
         ],
     }
-    text = _build_error_text(error_dict, trace_path)
+    text = _build_error_text(error_dict)
     assert "..." in text  # Truncation happened

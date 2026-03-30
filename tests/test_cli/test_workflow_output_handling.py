@@ -82,14 +82,13 @@ def mock_registry():
 @pytest.fixture
 def mock_compile():
     """Mock the workflow execution to bypass validation."""
-    # Patch at the execution level to bypass all validation
-    with patch("pflow.execution.workflow_execution.execute_workflow") as mock_execute:
-        # Shared storage for IR data
+    # Patch at the Runner level to bypass all resolution/validation/compilation
+    with patch("pflow.execution.runner.WorkflowRunner.run") as mock_run:
         shared_data = {"last_ir": None}
 
-        def execute_mock(workflow_ir, execution_params, **kwargs):
+        def run_mock(workflow, params, config, **kwargs):
             # Store the IR for reference
-            shared_data["last_ir"] = workflow_ir
+            shared_data["last_ir"] = workflow
 
             # Create result with our test node's output
             shared_storage = {}
@@ -97,18 +96,18 @@ def mock_compile():
             # Create and run our test node
             node = MockOutputNode()
             # Extract params from the IR if available
-            if workflow_ir:
-                node_params = workflow_ir.get("nodes", [{}])[0].get("params", {})
+            if isinstance(workflow, dict):
+                node_params = workflow.get("nodes", [{}])[0].get("params", {})
                 node.set_params(node_params)
             node.run(shared_storage)
 
             # Create a successful result
-            from pflow.execution.executor_service import ExecutionResult
+            from pflow.execution.result import ExecutionResult
 
             return ExecutionResult(success=True, errors=[], shared_after=shared_storage)
 
-        mock_execute.side_effect = execute_mock
-        yield mock_execute
+        mock_run.side_effect = run_mock
+        yield mock_run
 
 
 @pytest.fixture

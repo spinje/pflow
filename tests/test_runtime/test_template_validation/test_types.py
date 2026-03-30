@@ -1065,12 +1065,14 @@ class TestShellCommandValidationTiming:
     """
 
     def test_dict_in_shell_command_fails_at_compile_time(self):
-        """Dict in shell command should fail during compilation, not runtime.
+        """Dict in shell command should fail during pre-execution validation.
 
-        This tests the full compilation path to ensure the error is caught early.
+        After Task 138, type validation moved from the compiler to
+        WorkflowValidator. The behavior (catching dict-in-shell-command
+        before execution) is preserved, just at a different stage.
         """
+        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "inputs": {"data": {"type": "object", "required": True}},
@@ -1088,22 +1090,25 @@ class TestShellCommandValidationTiming:
 
         registry = Registry()
 
-        # Should fail during compile_ir_to_flow, not later during flow.run()
-        with pytest.raises(ValueError) as exc_info:
-            compile_ir_to_flow(
-                workflow_ir,
-                registry=registry,
-                initial_params={"data": {"key": "value"}},
-                validate=True,  # Validation enabled
-            )
+        # WorkflowValidator catches type-incompatible templates
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=workflow_ir,
+            extracted_params={"data": {"key": "value"}},
+            registry=registry,
+            skip_node_types=False,
+        )
 
-        # Error should mention stdin as the solution
-        assert "stdin" in str(exc_info.value).lower()
+        # Error should mention stdin as the solution for dict-in-shell
+        assert any("stdin" in e.lower() for e in errors)
 
     def test_list_in_shell_command_fails_at_compile_time(self):
-        """List in shell command should fail during compilation, not runtime."""
+        """List in shell command should fail during pre-execution validation.
+
+        After Task 138, type validation moved from the compiler to
+        WorkflowValidator. The behavior is preserved at the validation stage.
+        """
+        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
 
         workflow_ir = {
             "inputs": {"items": {"type": "array", "required": True}},
@@ -1121,15 +1126,14 @@ class TestShellCommandValidationTiming:
 
         registry = Registry()
 
-        with pytest.raises(ValueError) as exc_info:
-            compile_ir_to_flow(
-                workflow_ir,
-                registry=registry,
-                initial_params={"items": [1, 2, 3]},
-                validate=True,
-            )
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=workflow_ir,
+            extracted_params={"items": [1, 2, 3]},
+            registry=registry,
+            skip_node_types=False,
+        )
 
-        assert "stdin" in str(exc_info.value).lower()
+        assert any("stdin" in e.lower() for e in errors)
 
     def test_dict_in_shell_command_without_validation_fails_at_runtime(self):
         """Without validation, dict in command causes runtime shell error.
@@ -1159,12 +1163,12 @@ class TestShellCommandValidationTiming:
 
         registry = Registry()
 
-        # Compilation succeeds with validate=False
+        # Compilation succeeds — template validation now in WorkflowValidator, not compiler
         flow = compile_ir_to_flow(
             workflow_ir,
             registry=registry,
             initial_params={"data": {"msg": "it's broken"}},  # Apostrophe in data
-            validate=False,  # Bypass validation
+            # Bypass validation
         )
 
         # Execution fails at shell level with cryptic error

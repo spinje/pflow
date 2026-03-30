@@ -194,7 +194,7 @@ class TestLLMCallsViaTrace:
         trace = WorkflowTraceCollector("test")
 
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False, trace_collector=trace)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, trace_collector=trace)
             shared: dict = {"_trace_collector": trace}
             flow.run(shared)
 
@@ -262,7 +262,7 @@ class TestLLMCallsViaTrace:
         trace = WorkflowTraceCollector("test")
 
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False, trace_collector=trace)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, trace_collector=trace)
             shared: dict = {"_trace_collector": trace}
             flow.run(shared)
 
@@ -314,7 +314,7 @@ class TestProgressCallbackPropagation:
         }
 
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, validate=False)
+            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
             shared: dict = {"__progress_callback__": callback}
             flow.run(shared)
 

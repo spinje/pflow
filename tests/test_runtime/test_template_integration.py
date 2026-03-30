@@ -111,28 +111,33 @@ class TestCompilerIntegration:
     def test_validation_fails_missing_params(self, mock_registry):
         """Test that validation catches missing parameters.
 
-        Template validation (Step 5) catches undefined inputs when the variable
-        has no valid source. The compiler's data flow step only checks structural
-        issues (cycles, forward refs) — undefined input checking is a semantic
-        concern for WorkflowValidator.
+        After Task 138, template validation moved from the compiler to
+        WorkflowValidator. The compiler no longer raises for missing params.
+        WorkflowValidator catches undefined template references as errors.
         """
+        from pflow.core.workflow.validator import WorkflowValidator
+
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}], "edges": []}
 
-        # Try to compile without providing required parameter
-        # Template validation catches it as ValueError
-        with pytest.raises(ValueError, match=r"(?s)Template validation failed.*required_param"):
-            compile_ir_to_flow(ir, mock_registry, initial_params={})
+        # WorkflowValidator catches missing template variables as errors
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=ir,
+            extracted_params={},
+            registry=mock_registry,
+            skip_node_types=True,
+        )
+        assert any("required_param" in e for e in errors)
 
-    def test_validation_can_be_skipped(self, mock_registry):
-        """Test that compile-time validation can be skipped, but runtime still validates.
+    def test_unresolved_templates_fail_at_runtime(self, mock_registry):
+        """Unresolved templates raise ValueError at runtime even without pre-execution validation.
 
-        Updated as part of Task 85: Even with validate=False at compile time,
-        unresolved templates still raise ValueError at runtime (preventing Issue #95).
+        Template validation moved from compiler to WorkflowValidator (Task 138).
+        Runtime TemplateAwareNodeWrapper still catches unresolved templates (Issue #95).
         """
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${missing}"}}], "edges": []}
 
-        # Should not raise during compilation with validate=False
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params={}, validate=False)
+        # Compilation succeeds — template validation now in WorkflowValidator, not compiler
+        flow = compile_ir_to_flow(ir, mock_registry, initial_params={})
 
         # But should raise during execution due to runtime template validation
         shared = {}
@@ -527,7 +532,7 @@ class TestEdgeCases:
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "${a.b.c.d.e.f.g}"}}], "edges": []}
 
         nested_data = {"b": {"c": {"d": {"e": {"f": {"g": "deeply_nested_value"}}}}}}
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params={"a": nested_data}, validate=False)
+        flow = compile_ir_to_flow(ir, mock_registry, initial_params={"a": nested_data})
 
         shared = {}
 

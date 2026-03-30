@@ -197,7 +197,7 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -251,7 +251,7 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -297,7 +297,7 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -338,7 +338,7 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -393,7 +393,7 @@ class TestPerItemParamOverrideParallel:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -448,7 +448,7 @@ class TestPerItemParamOverrideParallel:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 
@@ -507,7 +507,7 @@ class TestPerItemParamOverrideWithUpstreamData:
             "edges": [{"from": "source", "to": "processor"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=two_node_registry, validate=False)
+        flow = compile_ir_to_flow(ir, registry=two_node_registry)
         shared: dict[str, Any] = {}
         flow.run(shared)
 

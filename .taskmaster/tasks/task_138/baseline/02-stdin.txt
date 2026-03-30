@@ -1,0 +1,9 @@
+
+✓ Workflow completed in 0.038s (1 cached, 0 executed)
+Nodes executed (1):
+  ✓ echo-it (<1ms) [cached]
+
+Workflow output (The echoed output confirming what was received.):
+
+Received: hello world
+📊 Workflow trace saved: /Users/andfal/.pflow/debug/workflow-trace-stdin-echo-20260329-225532.json

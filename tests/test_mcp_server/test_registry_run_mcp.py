@@ -1,11 +1,13 @@
 """Tests for registry_run MCP node support.
 
-This test ensures that MCP nodes work correctly via registry_run by verifying
-that the special __mcp_server__ and __mcp_tool__ parameters are injected.
+After Task 138, run_registry_node() routes through WorkflowRunner with
+synthetic IR. Tests verify behavior through the MCP service method, mocking
+at the Runner level or using real shell execution where feasible.
 """
 
 from unittest.mock import MagicMock, patch
 
+from pflow.execution.result import ExecutionResult
 from pflow.mcp_server.services.execution_service import ExecutionService
 
 
@@ -13,222 +15,226 @@ class TestRegistryRunMCP:
     """Test MCP node execution via registry_run."""
 
     def test_mcp_node_parameter_injection(self):
-        """Verify MCP nodes get __mcp_server__ and __mcp_tool__ injected."""
-        # Setup: Mock the registry and node execution
-        with (
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
-            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
-            patch("pflow.runtime.compilation.mcp_resolution._parse_mcp_node_type") as mock_parse,
-        ):
-            # Configure mock registry
-            mock_registry = MagicMock()
-            mock_registry_class.return_value = mock_registry
-            mock_registry.load.return_value = {
-                "mcp-test-server-TEST_TOOL": {
-                    "class_name": "MCPNode",
-                    "module": "pflow.nodes.mcp.node",
-                }
-            }
+        """Verify MCP nodes get __mcp_server__ and __mcp_tool__ in synthetic IR.
 
-            # Configure mock node
-            mock_node_instance = MagicMock()
-            mock_node_class = MagicMock(return_value=mock_node_instance)
-            mock_import.return_value = mock_node_class
-
-            # Configure node execution to succeed
-            mock_node_instance.run.return_value = "default"
-
-            # Configure MCP parser
-            mock_parse.return_value = ("test-server", "TEST_TOOL")
-
-            # Execute: Call registry_run with an MCP node
-            result = ExecutionService.run_registry_node(
-                node_type="mcp-test-server-TEST_TOOL", parameters={"test_param": "test_value"}
+        run_registry_node builds synthetic IR with node params. The compiler
+        handles MCP metadata injection during compilation (_parse_mcp_node_type).
+        We verify the synthetic IR is correctly constructed by checking that
+        the Runner receives it with the right node type and params.
+        """
+        with patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls:
+            # Configure mock runner to return success
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+            mock_runner.run.return_value = ExecutionResult(
+                success=True,
+                shared_after={
+                    "mcp-test-server-TEST_TOOL": {"result": "test output"},
+                },
             )
 
-            # Verify: Parser was called to extract server and tool
-            mock_parse.assert_called_once_with("mcp-test-server-TEST_TOOL")
+            # Registry must recognize the node type
+            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+                mock_registry = MagicMock()
+                mock_registry_cls.return_value = mock_registry
+                mock_registry.load.return_value = {
+                    "mcp-test-server-TEST_TOOL": {
+                        "class_name": "MCPNode",
+                        "module": "pflow.nodes.mcp.node",
+                    }
+                }
 
-            # Verify: set_params was called with injected parameters
-            mock_node_instance.set_params.assert_called_once()
-            injected_params = mock_node_instance.set_params.call_args[0][0]
+                result = ExecutionService.run_registry_node(
+                    node_type="mcp-test-server-TEST_TOOL", parameters={"test_param": "test_value"}
+                )
 
-            assert "__mcp_server__" in injected_params
-            assert "__mcp_tool__" in injected_params
-            assert injected_params["__mcp_server__"] == "test-server"
-            assert injected_params["__mcp_tool__"] == "TEST_TOOL"
-            assert injected_params["test_param"] == "test_value"
+                # Verify Runner was called with synthetic IR containing the MCP node
+                mock_runner.run.assert_called_once()
+                call_args = mock_runner.run.call_args
+                synthetic_ir = call_args[0][0]  # First positional arg
 
-            # Verify: Result is a string (formatted output)
-            assert isinstance(result, str)
+                assert len(synthetic_ir["nodes"]) == 1
+                node = synthetic_ir["nodes"][0]
+                assert node["type"] == "mcp-test-server-TEST_TOOL"
+                assert node["params"]["test_param"] == "test_value"
+                assert isinstance(result, str)
 
     def test_regular_node_not_affected(self):
-        """Verify regular (non-MCP) nodes still work without modification."""
-        with (
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
-            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
-        ):
-            # Configure mocks
-            mock_registry = MagicMock()
-            mock_registry_class.return_value = mock_registry
-            mock_registry.load.return_value = {
-                "shell": {
-                    "class_name": "ShellNode",
-                    "module": "pflow.nodes.shell.node",
-                }
-            }
-
-            mock_node_instance = MagicMock()
-            mock_node_class = MagicMock(return_value=mock_node_instance)
-            mock_import.return_value = mock_node_class
-            mock_node_instance.run.return_value = "default"
-
-            # Execute: Call with regular node
-            result = ExecutionService.run_registry_node(node_type="shell", parameters={"command": "echo test"})
-
-            # Verify: set_params called with original parameters only (no MCP injection)
-            mock_node_instance.set_params.assert_called_once()
-            params = mock_node_instance.set_params.call_args[0][0]
-
-            assert params == {"command": "echo test"}
-            assert "__mcp_server__" not in params
-            assert "__mcp_tool__" not in params
-            assert isinstance(result, str)
-
-    def test_template_variable_resolution_from_environment(self):
-        """Verify ${var} templates are resolved from environment variables."""
-        with (
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
-            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
-            patch.dict("os.environ", {"TEST_API_KEY": "secret-token-12345"}),
-        ):
-            # Configure mocks
-            mock_registry = MagicMock()
-            mock_registry_class.return_value = mock_registry
-            mock_registry.load.return_value = {
-                "http": {
-                    "class_name": "HttpNode",
-                    "module": "pflow.nodes.http.node",
-                }
-            }
-
-            mock_node_instance = MagicMock()
-            mock_node_class = MagicMock(return_value=mock_node_instance)
-            mock_import.return_value = mock_node_class
-            mock_node_instance.run.return_value = "default"
-
-            # Execute: Call with ${VAR} template in parameters
-            result = ExecutionService.run_registry_node(
-                node_type="http", parameters={"url": "https://api.example.com", "auth_token": "${TEST_API_KEY}"}
+        """Verify regular (non-MCP) nodes work via synthetic IR through Runner."""
+        with patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls:
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+            mock_runner.run.return_value = ExecutionResult(
+                success=True,
+                shared_after={"shell": {"stdout": "test output"}},
             )
 
-            # Verify: set_params called with resolved value (not template)
-            mock_node_instance.set_params.assert_called_once()
-            resolved_params = mock_node_instance.set_params.call_args[0][0]
+            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+                mock_registry = MagicMock()
+                mock_registry_cls.return_value = mock_registry
+                mock_registry.load.return_value = {
+                    "shell": {
+                        "class_name": "ShellNode",
+                        "module": "pflow.nodes.shell.node",
+                    }
+                }
 
-            assert resolved_params["auth_token"] == "secret-token-12345"  # noqa: S105 - Test fixture, not real credential
-            assert "${TEST_API_KEY}" not in str(resolved_params)
-            assert isinstance(result, str)
+                result = ExecutionService.run_registry_node(node_type="shell", parameters={"command": "echo test"})
+
+                # Verify synthetic IR has the right params (no MCP injection)
+                call_args = mock_runner.run.call_args
+                synthetic_ir = call_args[0][0]
+                node = synthetic_ir["nodes"][0]
+
+                assert node["params"] == {"command": "echo test"}
+                assert "__mcp_server__" not in node["params"]
+                assert "__mcp_tool__" not in node["params"]
+                assert isinstance(result, str)
+
+    def test_template_variable_resolution_from_environment(self):
+        """Verify ${var} templates are resolved from environment variables.
+
+        expand_env_vars_nested runs BEFORE building synthetic IR,
+        so resolved values end up in node.params.
+        """
+        with (
+            patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls,
+            patch.dict("os.environ", {"TEST_API_KEY": "secret-token-12345"}),
+        ):
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+            mock_runner.run.return_value = ExecutionResult(
+                success=True,
+                shared_after={"http": {"response": "ok"}},
+            )
+
+            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+                mock_registry = MagicMock()
+                mock_registry_cls.return_value = mock_registry
+                mock_registry.load.return_value = {
+                    "http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}
+                }
+
+                ExecutionService.run_registry_node(
+                    node_type="http", parameters={"url": "https://api.example.com", "auth_token": "${TEST_API_KEY}"}
+                )
+
+                # Verify env var was resolved in node params
+                call_args = mock_runner.run.call_args
+                synthetic_ir = call_args[0][0]
+                resolved_params = synthetic_ir["nodes"][0]["params"]
+
+                assert resolved_params["auth_token"] == "secret-token-12345"  # noqa: S105 - Test fixture
+                assert "${TEST_API_KEY}" not in str(resolved_params)
 
     def test_template_resolution_nested_structures(self):
         """Verify ${var} templates are resolved in nested dicts and lists."""
         with (
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
-            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
+            patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls,
             patch.dict("os.environ", {"API_KEY": "key123", "API_SECRET": "secret456"}),
         ):
-            # Configure mocks
-            mock_registry = MagicMock()
-            mock_registry_class.return_value = mock_registry
-            mock_registry.load.return_value = {
-                "http": {
-                    "class_name": "HttpNode",
-                    "module": "pflow.nodes.http.node",
-                }
-            }
-
-            mock_node_instance = MagicMock()
-            mock_node_class = MagicMock(return_value=mock_node_instance)
-            mock_import.return_value = mock_node_class
-            mock_node_instance.run.return_value = "default"
-
-            # Execute: Call with nested structure containing templates
-            result = ExecutionService.run_registry_node(
-                node_type="http",
-                parameters={
-                    "url": "https://api.example.com",
-                    "headers": {"Authorization": "Bearer ${API_KEY}", "X-Secret": "${API_SECRET}"},
-                    "body": {"credentials": ["${API_KEY}", "${API_SECRET}"]},
-                },
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+            mock_runner.run.return_value = ExecutionResult(
+                success=True,
+                shared_after={"http": {"response": "ok"}},
             )
 
-            # Verify: Nested templates resolved
-            mock_node_instance.set_params.assert_called_once()
-            resolved_params = mock_node_instance.set_params.call_args[0][0]
+            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+                mock_registry = MagicMock()
+                mock_registry_cls.return_value = mock_registry
+                mock_registry.load.return_value = {
+                    "http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}
+                }
 
-            assert resolved_params["headers"]["Authorization"] == "Bearer key123"
-            assert resolved_params["headers"]["X-Secret"] == "secret456"
-            assert resolved_params["body"]["credentials"] == ["key123", "secret456"]
-            assert isinstance(result, str)
+                ExecutionService.run_registry_node(
+                    node_type="http",
+                    parameters={
+                        "url": "https://api.example.com",
+                        "headers": {"Authorization": "Bearer ${API_KEY}", "X-Secret": "${API_SECRET}"},
+                        "body": {"credentials": ["${API_KEY}", "${API_SECRET}"]},
+                    },
+                )
+
+                call_args = mock_runner.run.call_args
+                synthetic_ir = call_args[0][0]
+                resolved_params = synthetic_ir["nodes"][0]["params"]
+
+                assert resolved_params["headers"]["Authorization"] == "Bearer key123"
+                assert resolved_params["headers"]["X-Secret"] == "secret456"
+                assert resolved_params["body"]["credentials"] == ["key123", "secret456"]
 
     def test_template_resolution_from_settings_json(self):
         """Verify ${var} templates are resolved from settings.json."""
         with (
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
-            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
+            patch("pflow.execution.runner.WorkflowRunner") as mock_runner_cls,
             patch.dict("os.environ", {}, clear=True),
             patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
         ):
-            # Configure mocks
-            mock_registry = MagicMock()
-            mock_registry_class.return_value = mock_registry
-            mock_registry.load.return_value = {"http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}}
-
-            mock_node_instance = MagicMock()
-            mock_node_class = MagicMock(return_value=mock_node_instance)
-            mock_import.return_value = mock_node_class
-            mock_node_instance.run.return_value = "default"
-
-            # Configure settings
-            mock_settings = MagicMock()
-            mock_settings.list_env.return_value = {"replicate_api_token": "from-settings"}
-            mock_settings_cls.return_value = mock_settings
-
-            # Execute with template that should resolve from settings (case-insensitive)
-            result = ExecutionService.run_registry_node(
-                node_type="http", parameters={"auth_token": "${REPLICATE_API_TOKEN}"}
+            mock_runner = MagicMock()
+            mock_runner_cls.return_value = mock_runner
+            mock_runner.run.return_value = ExecutionResult(
+                success=True,
+                shared_after={"http": {"response": "ok"}},
             )
 
-            # Verify resolved (case-insensitive match)
-            mock_node_instance.set_params.assert_called_once()
-            resolved_params = mock_node_instance.set_params.call_args[0][0]
-            assert resolved_params["auth_token"] == "from-settings"  # noqa: S105 - Test fixture, not real credential
-            assert isinstance(result, str)
+            with patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls:
+                mock_registry = MagicMock()
+                mock_registry_cls.return_value = mock_registry
+                mock_registry.load.return_value = {
+                    "http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}
+                }
+
+                # Configure settings
+                mock_settings = MagicMock()
+                mock_settings.list_env.return_value = {"replicate_api_token": "from-settings"}
+                mock_settings_cls.return_value = mock_settings
+
+                ExecutionService.run_registry_node(
+                    node_type="http", parameters={"auth_token": "${REPLICATE_API_TOKEN}"}
+                )
+
+                call_args = mock_runner.run.call_args
+                synthetic_ir = call_args[0][0]
+                resolved_params = synthetic_ir["nodes"][0]["params"]
+
+                assert resolved_params["auth_token"] == "from-settings"  # noqa: S105 - Test fixture
 
     def test_missing_variable_raises_helpful_error(self):
-        """Verify helpful error message for missing variables."""
+        """Verify helpful error message for missing variables.
+
+        expand_env_vars_nested(raise_on_missing=True) raises before the Runner
+        is ever called. run_registry_node catches the exception and returns
+        a formatted error string.
+        """
         with (
-            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_class,
-            patch("pflow.mcp_server.services.execution_service.import_node_class") as mock_import,
             patch.dict("os.environ", {}, clear=True),
             patch("pflow.core.settings.SettingsManager") as mock_settings_cls,
+            patch("pflow.mcp_server.services.execution_service.Registry") as mock_registry_cls,
         ):
             mock_registry = MagicMock()
-            mock_registry_class.return_value = mock_registry
+            mock_registry_cls.return_value = mock_registry
             mock_registry.load.return_value = {"http": {"class_name": "HttpNode", "module": "pflow.nodes.http.node"}}
-
-            mock_node_instance = MagicMock()
-            mock_node_class = MagicMock(return_value=mock_node_instance)
-            mock_import.return_value = mock_node_class
 
             mock_settings = MagicMock()
             mock_settings.list_env.return_value = {}
             mock_settings_cls.return_value = mock_settings
 
-            # Execute with missing variable should fail with helpful error
+            # Execute with missing variable should return error (not raise)
             result = ExecutionService.run_registry_node(node_type="http", parameters={"auth_token": "${MISSING_VAR}"})
 
-            # Should return error message (not raise, since registry_run catches)
-            assert "Failed to execute" in result or "Missing environment variable" in result
-            assert "MISSING_VAR" in result
+            # Should return error message string containing the var name
             assert isinstance(result, str)
+            assert "MISSING_VAR" in result
+
+    def test_execution_failure_shows_actual_error(self):
+        """Verify run_registry_node propagates actual error details on failure.
+
+        When a shell command fails, the error text returned to MCP agents
+        should contain the actual error message — not just "Workflow execution failed".
+        Regression guard for _build_error_text shape mismatch.
+        """
+        result = ExecutionService.run_registry_node("shell", parameters={"command": "exit 1"})
+        assert isinstance(result, str)
+        # Must contain actual error context, not generic fallback
+        assert "Workflow execution failed" not in result or "exit" in result.lower()

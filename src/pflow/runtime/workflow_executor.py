@@ -76,17 +76,17 @@ class WorkflowExecutor(BaseNode):
     #               | via shared store for grandchildren  | reads from self.params (direct),
     #               |                                    | shared store copy is for grandchild
     #               |                                    | propagation only.
-    # __progress__  | executor_service._initialize_      | No progress display (silent).
-    #   _callback__ | shared_store()                     | MCP server always None (NullOutput).
-    # __mcp_pool__  | executor_service._initialize_      | No connection reuse — each MCP call
-    #               | shared_store()                     | creates a fresh connection.
-    # __warnings__  | executor_service._initialize_      | Self-healing: consumers create {} if
-    #               | shared_store()                     | missing. NOTE: parent and child share
+    # __progress__  | runner._initialize_shared_store()  | No progress display (silent).
+    #   _callback__ |                                    | MCP server always None (NullOutput).
+    # __mcp_pool__  | runner._initialize_shared_store()  | No connection reuse — each MCP call
+    #               |                                    | creates a fresh connection.
+    # __warnings__  | runner._initialize_shared_store()  | Self-healing: consumers create {} if
+    #               |                                    | missing. NOTE: parent and child share
     #               |                                    | the SAME dict — child warnings appear
     #               |                                    | in parent's status determination.
-    # __memo...__   | executor_service._initialize_      | Memoization skipped (no caching).
-    #               | shared_store()                     |
-    # _trace_       | executor_service.execute_workflow() | No child trace collector created;
+    # __memo...__   | runner._initialize_shared_store()  | Memoization skipped (no caching).
+    #               |                                    |
+    # _trace_       | runner._compile_and_execute()      | No child trace collector created;
     #   collector   |                                    | sub-workflow events not captured.
     #               |                                    | NOTE: propagated for truthiness check
     #               |                                    | only — child creates its OWN collector
@@ -158,7 +158,6 @@ class WorkflowExecutor(BaseNode):
                 workflow_ir,
                 registry=registry,  # type: ignore[arg-type]
                 initial_params=child_params,
-                validate=True,
                 trace_collector=child_trace,
             )
         except CompilationError as e:
