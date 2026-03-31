@@ -9,13 +9,24 @@
 - **Net diff (tests only)**: 89 files changed, +6,388 / -9,614 lines
 - **Net diff (markdown/docs)**: 64 files changed, +2,915 / -3,732 lines
 - **Architecture delta**: Deleted ~4,200 lines (wrappers 3,924 + pocketflow 205 + dead compiler code) → Created ~2,100 lines (engine 2,021 + core/node.py 89) → Net ~2,100 lines of production code eliminated
-- **Tests**: 4,679 → 4,629 (deleted wrapper-internal + pocketflow tests, added 18 regression/behavioral tests across 5 new files + 1 existing)
+- **Tests**: 4,679 → 4,630 (deleted wrapper-internal + pocketflow tests, added 19 regression/behavioral tests across 5 new files + 1 existing)
 - **Subsumes**: Task 140 (Wrapper Chain Refactoring)
 - **GitHub issues created**: #185 (exception placement), #188 (sub-workflow coercion), #189 (permissive batch errors)
 
 ## Executive Summary
 
-Replaced pflow's 4-layer wrapper chain (3,924 lines) with a standalone orchestration engine (2,021 lines across 6 modules). Slimmed PocketFlow from 205 lines (10 classes) to 85 lines (3 classes), then moved node primitives to `src/pflow/core/node.py` and deleted the `pocketflow/` directory entirely. Sub-workflows now compile once per batch (O(1) vs O(N) at 20-50ms each). Shared store is the single source of runtime data — the `initial_params` dual-data-path that caused every downstream hack is eliminated.
+Replaced pflow's 4-layer wrapper chain (3,924 lines) with a standalone orchestration engine (2,021 lines across 6 modules). Slimmed PocketFlow from 205 lines (10 classes) to 85 lines (3 classes), then moved node primitives to `src/pflow/core/node.py` and deleted the `pocketflow/` directory entirely. Sub-workflows now compile once per batch — both sequential and parallel — at O(1) vs O(N) at ~25ms per compilation. Shared store is the single source of runtime data — the `initial_params` dual-data-path that caused every downstream hack is eliminated.
+
+### Measured Performance (parallel batch over 5-node file-based sub-workflow)
+
+| Items | Compile-once | No cache (old O(N)) | Speedup |
+|-------|-------------|---------------------|---------|
+| 20    | 146ms (1 compile) | 716ms (21 compiles) | 4.9x |
+| 50    | 425ms (1 compile) | 1,885ms (51 compiles) | 4.4x |
+| 100   | 686ms (1 compile) | 4,635ms (101 compiles) | 6.8x |
+| 500   | 3,696ms (1 compile) | 26,556ms (501 compiles) | 7.2x |
+
+Compilation overhead is now constant regardless of batch size. At 500 items the old model spent ~12.5s on compilation alone; the new model spends 25ms.
 
 ## Implementation Overview
 

@@ -54,7 +54,7 @@ class TestLLMModelInjection:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
-                _create_node_and_config(node_data, mock_registry, {}, False, "strict")
+                _create_node_and_config(node_data, mock_registry, False, "strict")
 
                 # get_default_workflow_model should NOT be called since model is specified
                 mock_get.assert_not_called()
@@ -70,7 +70,7 @@ class TestLLMModelInjection:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
-                _create_node_and_config(node_data, mock_registry, {}, False, "strict")
+                _create_node_and_config(node_data, mock_registry, False, "strict")
 
                 # Verify get_default_workflow_model was called
                 mock_get.assert_called_once()
@@ -83,7 +83,7 @@ class TestLLMModelInjection:
             mock_get.return_value = None  # Nothing configured
 
             with pytest.raises(CompilationError) as exc_info:
-                _create_node_and_config(node_data, mock_registry, {}, False, "strict")
+                _create_node_and_config(node_data, mock_registry, False, "strict")
 
             error = exc_info.value
             assert "my-llm" in str(error)
@@ -102,7 +102,7 @@ class TestLLMModelInjection:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
-                _create_node_and_config(node_data, mock_read_file_registry, {}, False, "strict")
+                _create_node_and_config(node_data, mock_read_file_registry, False, "strict")
 
                 # Should not call get_default_workflow_model for non-llm nodes
                 mock_get.assert_not_called()
@@ -119,7 +119,7 @@ class TestLLMModelInjection:
                 mock_node = MagicMock()
                 mock_import.return_value = lambda: mock_node
 
-                _create_node_and_config(node_data, mock_registry, {}, False, "strict")
+                _create_node_and_config(node_data, mock_registry, False, "strict")
 
                 # Original params should NOT be mutated
                 assert "model" not in original_params
@@ -132,7 +132,7 @@ class TestLLMModelInjection:
             mock_get.return_value = None
 
             with pytest.raises(CompilationError) as exc_info:
-                _create_node_and_config(node_data, mock_registry, {}, False, "strict")
+                _create_node_and_config(node_data, mock_registry, False, "strict")
 
             suggestion = exc_info.value.suggestion
 

@@ -28,10 +28,10 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  1. setup_llm_interception
         │  2. initialize_execution_state
         │  3. enforce_loop_guard
-        │  5. compute_config_hash (for both cache checks)
+        │  4. compute_config_hash (doesn't need resolved params)
         │
         ├─ INSIDE try (template errors get trace recording):
-        │  4. resolve_templates (SKIP for batch nodes — per-item in callback)
+        │  5. resolve_templates (SKIP for batch nodes — per-item in callback)
         │  6. check_memo_cache → early return via handle_cached_execution
         │  7. check_cache_validity → early return via handle_cached_execution
         │  8. call_start_callback
@@ -46,7 +46,7 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
            set failed_node, annotate e._pflow_node_id, re-raise
 ```
 
-**Note**: Steps are numbered to match code comments. Step 5 runs before step 4 — config hash is computed outside the try block because it doesn't depend on template resolution, but template resolution is inside try so errors get trace recording.
+**Note**: Steps 1-4 run outside the try block (always execute). Steps 5-17 are inside try so template errors get trace recording. Config hash (step 4) is computed before template resolution (step 5) because it doesn't depend on resolved params.
 
 ## Key Design Decisions
 
@@ -229,7 +229,7 @@ Error message formatting for template resolution failures. Key functions:
 
 ## Gotchas
 
-- **Step numbering in `_execute_node`**: Step 5 (config hash) runs BEFORE step 4 (template resolution) because hash doesn't need resolved params but template resolution needs to be inside the try block.
+- **Steps 1-4 are outside try, 5-17 inside try** in `_execute_node`. Config hash (step 4) runs before template resolution (step 5) because it doesn't need resolved params.
 - **Batch nodes skip top-level template resolution** — per-item resolution in callback instead.
 - **`_source_line` keys NOT filtered in `split_params()`** — `python_code.py` reads them. Filtered only in `compute_node_config()` for cache hashing.
 - **`._partial_resolutions` on exceptions** — non-standard Python pattern. `resolve_templates` attaches this to `ValueError` so the engine can include partial template data in error traces.

@@ -5,9 +5,10 @@ If a node sets self.X in exec() or post(), that state leaks to the next item.
 Communication between lifecycle methods must use return values (prep_res, exec_res)
 or the shared store — never instance attributes.
 
-This test parses the AST of every production node and fails if any self.X = ...
-assignment is found inside exec(), post(), or exec_fallback() methods, unless
-explicitly allowlisted.
+Two checks:
+1. Direct assignment: self.X = ... (catches most cases)
+2. In-place mutation: self.X.append/extend/update/clear/pop/remove/insert(...)
+   (catches self.some_list.append(item) which is equally dangerous)
 
 See: src/pflow/nodes/CLAUDE.md "Common Mistakes" #6
 """
@@ -20,7 +21,8 @@ from pathlib import Path
 
 import pflow.nodes
 
-# Allowlist: (module_path, class_name, method_name, attribute_name, reason)
+# Allowlist for self.X = ... assignments
+# (module_path, class_name, method_name, attribute_name, reason)
 ALLOWLIST: list[tuple[str, str, str, str, str]] = [
     (
         "pflow.nodes.file.read_file",
@@ -68,6 +70,52 @@ def _find_self_assignments(method_node: ast.FunctionDef) -> list[tuple[str, int]
     return assignments
 
 
+# Methods that mutate a container in-place. self.X.append(...) is as dangerous as self.X = ...
+_MUTATING_METHODS = frozenset({
+    "append",
+    "extend",
+    "insert",
+    "remove",
+    "pop",
+    "clear",  # list
+    "update",
+    "setdefault",
+    "popitem",  # dict
+    "add",
+    "discard",  # set
+})
+
+# Allowlist for self.X.<method>(...) mutations
+# (module_path, class_name, method_name, attribute_name, mutating_method, reason)
+MUTATION_ALLOWLIST: list[tuple[str, str, str, str, str, str]] = []
+
+
+def _build_mutation_allowlist_set() -> set[tuple[str, str, str, str, str]]:
+    """Build a lookup set from the mutation allowlist (without reason)."""
+    return {(mod, cls, method, attr, mut) for mod, cls, method, attr, mut, _ in MUTATION_ALLOWLIST}
+
+
+def _find_self_mutations(method_node: ast.FunctionDef) -> list[tuple[str, str, int]]:
+    """Find all self.X.<mutating_method>(...) calls in a method body.
+
+    Returns list of (attribute_name, mutating_method_name, line_number).
+    Catches patterns like self.results.append(item), self.cache.update({...}), etc.
+    """
+    mutations: list[tuple[str, str, int]] = []
+    for node in ast.walk(method_node):
+        # Pattern: self.X.method(...)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in _MUTATING_METHODS
+            and isinstance(node.func.value, ast.Attribute)
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == "self"
+        ):
+            mutations.append((node.func.value.attr, node.func.attr, node.lineno))
+    return mutations
+
+
 def _get_node_classes() -> list[tuple[str, str, type]]:
     """Discover all Node subclasses in src/pflow/nodes/ subdirectories.
 
@@ -112,13 +160,44 @@ def _get_workflow_executor() -> tuple[str, str, type]:
 DANGEROUS_METHODS = {"exec", "post", "exec_fallback"}
 
 
+def _check_method_violations(
+    module_path: str,
+    class_name: str,
+    method: ast.FunctionDef,
+    allowed: set[tuple[str, str, str, str]],
+    mutation_allowed: set[tuple[str, str, str, str, str]],
+) -> list[str]:
+    """Check a single method for self.X assignments and mutations."""
+    violations: list[str] = []
+    for attr_name, lineno in _find_self_assignments(method):
+        if (module_path, class_name, method.name, attr_name) not in allowed:
+            violations.append(
+                f"  {module_path}.{class_name}.{method.name}(): "
+                f"self.{attr_name} = ... (line {lineno})\n"
+                f"    Nodes must not store execution state on self — "
+                f"use return values or shared store instead.\n"
+                f"    If this is intentionally safe, add to ALLOWLIST in this test."
+            )
+    for attr_name, mut_method, lineno in _find_self_mutations(method):
+        if (module_path, class_name, method.name, attr_name, mut_method) not in mutation_allowed:
+            violations.append(
+                f"  {module_path}.{class_name}.{method.name}(): "
+                f"self.{attr_name}.{mut_method}(...) (line {lineno})\n"
+                f"    In-place mutation of instance state breaks compile-once — "
+                f"state leaks between sequential batch items.\n"
+                f"    If this is intentionally safe, add to MUTATION_ALLOWLIST in this test."
+            )
+    return violations
+
+
 def _scan_class_for_violations(
     module_path: str,
     class_name: str,
     cls: type,
     allowed: set[tuple[str, str, str, str]],
+    mutation_allowed: set[tuple[str, str, str, str, str]],
 ) -> list[str]:
-    """Scan a single class for self.X assignments in dangerous methods."""
+    """Scan a single class for self.X assignments and mutations in dangerous methods."""
     try:
         source = inspect.getsource(cls)
         tree = ast.parse(source)
@@ -130,19 +209,8 @@ def _scan_class_for_violations(
         if not isinstance(node, ast.ClassDef) or node.name != class_name:
             continue
         for item in node.body:
-            if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if item.name not in DANGEROUS_METHODS:
-                continue
-            for attr_name, lineno in _find_self_assignments(item):
-                if (module_path, class_name, item.name, attr_name) not in allowed:
-                    violations.append(
-                        f"  {module_path}.{class_name}.{item.name}(): "
-                        f"self.{attr_name} = ... (line {lineno})\n"
-                        f"    Nodes must not store execution state on self — "
-                        f"use return values or shared store instead.\n"
-                        f"    If this is intentionally safe, add to ALLOWLIST in this test."
-                    )
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name in DANGEROUS_METHODS:
+                violations.extend(_check_method_violations(module_path, class_name, item, allowed, mutation_allowed))
     return violations
 
 
@@ -175,20 +243,24 @@ def test_no_self_assignments_in_exec_or_post():
 
     This enforces the compile-once invariant: the same node instance may be reused
     across sequential batch items. State set in exec() would leak to the next item.
+
+    Checks both direct assignment (self.X = ...) and in-place mutation
+    (self.X.append/extend/update/...) — both break compile-once equally.
     """
     allowed = _build_allowlist_set()
+    mutation_allowed = _build_mutation_allowlist_set()
     violations: list[str] = []
 
     classes = _get_node_classes()
     classes.append(_get_workflow_executor())
 
     for module_path, class_name, cls in classes:
-        violations.extend(_scan_class_for_violations(module_path, class_name, cls, allowed))
+        violations.extend(_scan_class_for_violations(module_path, class_name, cls, allowed, mutation_allowed))
 
     if violations:
         msg = (
-            f"Found {len(violations)} self.X assignment(s) in exec/post/exec_fallback "
-            f"(compile-once invariant violation):\n\n"
+            f"Found {len(violations)} instance state violation(s) in exec/post/exec_fallback "
+            f"(compile-once invariant):\n\n"
             + "\n\n".join(violations)
             + "\n\nSee src/pflow/nodes/CLAUDE.md 'Common Mistakes' #6."
         )

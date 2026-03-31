@@ -255,7 +255,6 @@ def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
 def _create_node_and_config(
     node_data: dict[str, Any],
     registry: Registry,
-    initial_params: dict[str, Any],
     enable_namespacing: bool,
     template_resolution_mode: str,
 ) -> tuple[Any, NodeConfig]:
@@ -442,7 +441,7 @@ def _instantiate_nodes_for_workflow(
         (nodes_dict, configs_dict)
     """
     nodes: dict[str, Any] = {}
-    configs: dict[str, Any] = {}
+    configs: dict[str, NodeConfig] = {}
     initial_params = initial_params or {}
 
     enable_namespacing = ir_dict.get("enable_namespacing", True)
@@ -454,7 +453,6 @@ def _instantiate_nodes_for_workflow(
             node_instance, node_config = _create_node_and_config(
                 node_data,
                 registry,
-                initial_params,
                 enable_namespacing,
                 template_resolution_mode,
             )

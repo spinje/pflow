@@ -126,7 +126,7 @@ class WorkflowEngine:
         # 3. Loop guard
         visit_counts = enforce_loop_guard(config.node_id, shared)
 
-        # 5. Compute config hash (for both cache checks)
+        # 4. Compute config hash (for both cache checks — doesn't need resolved params)
         config_hash = compute_config_hash(
             compute_node_config(
                 config.node_type_name,
@@ -136,7 +136,7 @@ class WorkflowEngine:
             )
         )
 
-        # 4-8 are inside try so template errors get recorded in trace
+        # Steps 5-11 are inside try so template errors get recorded in trace
         last_resolutions: dict = {}
         template_errors: list = []
         resolved_params: Optional[dict] = None
@@ -144,7 +144,8 @@ class WorkflowEngine:
         child_trace_events: Optional[list] = None
 
         try:
-            # 4. Resolve templates EARLY — needed for both cache key and execution
+            # 5. Resolve templates — needed for both cache key and execution.
+            #    Inside try so strict-mode ValueError gets trace recording.
             #    SKIP for batch nodes: templates are resolved per-item in _execute_single_node
             if config.template_config and not config.batch_config:
                 resolved_params, last_resolutions, template_errors = resolve_templates(
@@ -199,9 +200,11 @@ class WorkflowEngine:
                 # Set resolved params on node and execute
                 if resolved_params is not None:
                     node.params = resolved_params
-                    # Write permissive-mode errors to shared store
-                    for err in template_errors:
-                        shared.setdefault("__template_errors__", {})[config.node_id] = err
+                    # Write permissive-mode errors to shared store (last error per node,
+                    # matching old TemplateAwareNodeWrapper behavior — multiple errors
+                    # per node would require changing the consumer in runner.py)
+                    if template_errors:
+                        shared.setdefault("__template_errors__", {})[config.node_id] = template_errors[-1]
 
                 store = NamespacedSharedStore(shared, config.node_id) if config.namespaced else shared
                 action = node._run(store)
@@ -319,8 +322,8 @@ class WorkflowEngine:
                 config.template_config, shared, config.node_id
             )
             node.params = merged_params
-            for err in template_errors:
-                shared.setdefault("__template_errors__", {})[config.node_id] = err
+            if template_errors:
+                shared.setdefault("__template_errors__", {})[config.node_id] = template_errors[-1]
 
         store = NamespacedSharedStore(shared, config.node_id) if config.namespaced else shared
         action = node._run(store)

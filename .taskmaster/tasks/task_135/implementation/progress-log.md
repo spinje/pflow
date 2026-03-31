@@ -752,3 +752,98 @@ All 10 `.claude/agents/*.md` files updated to remove PocketFlow/pocketflow refer
 - `architecture/historical/` — 10 files with extensive references. Historical documents, not updated.
 - `core/ir_schema.py` docstring — "inspired by pocketflow's execution model". Attribution.
 - `architecture/CLAUDE.md` — filename `pflow-pocketflow-integration-guide.md` in tree listing for the historical/ directory. The file was deleted from its original location; the historical references are in other files that link to it.
+
+---
+
+## Parallel Batch Compile-Once Fix — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4630 passed, 9 skipped. `make check` clean.
+
+### Problem
+
+Task 135 delivered compile-once for sequential batch (O(1) compiles) but parallel batch still did O(N) compiles. Each deep-copied `WorkflowExecutor` started with `_cached_workflow = None` because the deep copy happened before any thread executed. The original Task 135 spec targeted "1 compilation + N × deep-copy" for both sequential and parallel.
+
+### Fix
+
+Two changes:
+
+**1. Pre-warm compile cache before parallel dispatch** (`batch_executor.py`): Added `_pre_warm_compile_cache()` that runs `prep()` + `_compile_sub_workflow()` on the original node before `_execute_parallel` submits thread pool futures. After pre-warm, `deepcopy(node)` inherits both `_cached_loaded_ir` and `_cached_workflow`.
+
+Pre-warm only fires for file/name-based sub-workflows (where `_cached_loaded_ir` is set by `prep()`). For inline workflows, `_cached_loaded_ir` is not set, so pre-warm bails out early — inline IR with templates (e.g., `${item}` in the IR) must recompile per item because the IR dict changes per item.
+
+**2. Two-tier cache gate in `_compile_sub_workflow`** (`workflow_executor.py`):
+- Non-inline (`_cached_loaded_ir` exists): return cache unconditionally. After deepcopy, the IR dict has a new `id()` but the content is identical. `_cached_loaded_ir` signals the workflow came from a file/name source.
+- Inline (`_cached_loaded_ir` absent): check `id(workflow_ir)` match. Inline IR may change per item due to parent template resolution.
+
+The initial attempt used an unconditional cache gate (`if cached is not None: return cached`). This broke the `test_each_batch_item_produces_distinct_output` test — inline IR with `${item}` templates got stale compiled workflows from the cache. The two-tier gate correctly distinguishes the two cases.
+
+### Performance measurements
+
+Measured with real pflow workflows: parallel batch over a 5-node file-based child workflow.
+
+| Items | Compile-once | No cache (old O(N)) | Speedup |
+|-------|-------------|---------------------|---------|
+| 20    | 146ms (1 compile) | 716ms (21 compiles) | 4.9x |
+| 50    | 425ms (1 compile) | 1,885ms (51 compiles) | 4.4x |
+| 100   | 686ms (1 compile) | 4,635ms (101 compiles) | 6.8x |
+| 500   | 3,696ms (1 compile) | 26,556ms (501 compiles) | 7.2x |
+
+Compilation cost per call: ~25ms (5-node child). At 500 items, the old model spent ~12.5 seconds on compilation overhead alone. The new model spends 25ms. Speedup grows with batch size because compile overhead is now O(1) while actual node work stays O(N).
+
+### Files modified
+
+- `src/pflow/runtime/engine/batch_executor.py` — added `_pre_warm_compile_cache()` (~40 lines), called before `_execute_parallel`
+- `src/pflow/runtime/workflow_executor.py` — two-tier cache gate in `_compile_sub_workflow`, removed unconditional return
+
+### Test added
+
+- `test_compile_once_regression.py::test_compile_workflow_called_once_for_parallel_batch` — file-based child workflow, parallel batch with 3 items, asserts `compile_workflow` called exactly once
+
+---
+
+## Fourth Code Review Fixes — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4630 passed, 9 skipped. `make check` clean.
+
+### Review source
+
+External code review on PR #191 (comment #4163229094). 10 findings evaluated.
+
+### Fixes applied (4 confirmed)
+
+1. **Template errors overwrite instead of accumulating** (Critical, different fix than proposed): The `for err in template_errors` loop at `engine.py:203-204` and `engine.py:322-323` overwrote `shared["__template_errors__"][config.node_id]` on each iteration — only the last error survived per node. Pre-existing behavior (old `TemplateAwareNodeWrapper` had the same overwrite), but the loop was misleading. Fix: replaced with `if template_errors: ... = template_errors[-1]` — makes intent explicit (last error per node). Accumulating into a list would be better but requires changing the consumer in `runner.py:440-446` which calls `.get("message")` on each value.
+
+2. **Dead `initial_params` parameter in `_create_node_and_config`** (Warning): Function signature accepted `initial_params: dict[str, Any]` but never used it. Removed from signature + caller + 6 test callsites in `test_compiler_llm_model.py`.
+
+3. **Type annotation mismatch in `_instantiate_nodes_for_workflow`** (Suggestion): `configs: dict[str, Any] = {}` should be `dict[str, NodeConfig]` to match return type. Fixed.
+
+4. **Step numbering out of order in `_execute_node`** (Warning): Step 5 (config hash) appeared before step 4 (template resolution). Renumbered to actual execution order: 4=config hash, 5=template resolution. Updated `engine/CLAUDE.md` diagram and gotchas section.
+
+### Disputed findings (3)
+
+- **`handle_api_warning` adds to `completed_nodes`**: Intentional — API-warned nodes ran successfully (got a response), should be skipped on resume. The old `InstrumentedNodeWrapper._handle_api_warning` had identical behavior.
+- **`completed_nodes` duplicate accumulation**: Proved impossible — `enforce_loop_guard` removes the single entry before each revisit, `cache_result` appends once. The list cycles between 0 and 1 entries per node.
+- **`_execute_single_node` naming**: The docstring is clear and prominent. Renaming adds churn with no clarity gain.
+
+### Suggestions implemented (2)
+
+5. **Threading comment at shallow copy** (Suggestion): Added comment at `batch_executor.py` `_execute_parallel` explaining that `dict(shared)` is a shallow copy and nested dicts are shared across threads (GIL-protected for CPython).
+
+6. **AST mutation detection in `test_node_stateless_invariant.py`** (Suggestion): Extended the meta-test to catch `self.X.<mutating_method>(...)` patterns (append, extend, update, clear, pop, remove, insert, add, discard, setdefault, popitem) in exec/post/exec_fallback. Added `_find_self_mutations()` function and `MUTATION_ALLOWLIST` (currently empty — no production nodes trigger it). This closes a gap where `self.results.append(item)` would break compile-once just as badly as `self.results = [item]` but wasn't caught.
+
+### Suggestions not implemented (3)
+
+- `NamespacedSharedStore` returns `set`/`list` instead of `KeysView`/`ItemsView` — zero practical risk
+- Type annotation in local variable — already fixed (finding #3)
+- `_execute_single_node` naming — disputed
+
+### Files modified
+
+- `src/pflow/runtime/engine/engine.py` — template error storage fix, step renumbering
+- `src/pflow/runtime/compilation/compiler.py` — removed dead `initial_params` param, fixed type annotation
+- `src/pflow/runtime/engine/batch_executor.py` — threading comment
+- `src/pflow/runtime/engine/CLAUDE.md` — step numbering in diagram + gotchas
+- `tests/test_runtime/test_compiler_llm_model.py` — removed `initial_params` arg from 6 callsites
+- `tests/test_nodes/test_node_stateless_invariant.py` — added mutation detection
