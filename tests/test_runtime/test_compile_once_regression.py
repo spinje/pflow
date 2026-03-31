@@ -1,24 +1,18 @@
 """Regression tests for compile-once caching in WorkflowExecutor.
 
 WorkflowExecutor._compile_sub_workflow() caches the CompiledWorkflow on the
-instance via _cached_workflow. For sequential batch processing, compile_workflow
-should be called EXACTLY ONCE -- subsequent batch items reuse the cached result.
+instance via _cached_workflow. For both sequential and parallel batch processing,
+compile_workflow should be called EXACTLY ONCE.
+
+Sequential: the same WorkflowExecutor instance handles all items, caching on first call.
+Parallel: the batch executor pre-warms the compile cache on the original node before
+deep-copying for thread dispatch, so each deep copy inherits _cached_workflow.
 
 These tests verify:
-1. compile_workflow is called once (not N times) for N sequential batch items
-2. Each batch item still produces distinct output (cache does not cause stale data)
-3. File-based sub-workflows also get compile-once (IR cached in prep())
-
-Implementation context:
-  The compile-once cache uses id(workflow_ir) to detect whether the same
-  IR dict is passed. For inline static IR, split_params preserves the same
-  dict reference. For file/saved-name sources, prep() caches the loaded IR
-  so the same dict object is reused across batch items.
-
-  When workflow_ir DOES contain templates (e.g., ${item} for parent-level
-  resolution), resolve_nested creates a new dict each time, producing a
-  different id() per item. In that case, recompilation is correct because
-  the child workflow structure differs per item.
+1. compile_workflow is called once for N sequential batch items
+2. compile_workflow is called once for N parallel batch items (pre-warm)
+3. Each batch item still produces distinct output (cache does not cause stale data)
+4. File-based sub-workflows also get compile-once (IR cached in prep())
 """
 
 from pathlib import Path
@@ -178,6 +172,156 @@ def test_compile_workflow_called_once_for_static_child_ir():
     process_data = shared.get("process", {})
     results = process_data.get("results", [])
     assert len(results) == 3, f"Expected 3 batch results, got {len(results)}"
+
+
+def test_compile_workflow_called_once_for_parallel_batch(tmp_path: Path):
+    """compile_workflow is invoked exactly once for parallel batch over file-based sub-workflows.
+
+    The batch executor pre-warms the compile cache on the original node before
+    deep-copying for parallel dispatch. Each deep-copied WorkflowExecutor inherits
+    _cached_workflow (via _cached_loaded_ir which signals non-inline source),
+    so no thread recompiles.
+
+    This is the key parallel performance improvement: O(1) compilation instead of O(N).
+    Without pre-warming, each of the N deep-copied threads starts with _cached_workflow=None
+    and independently calls compile_workflow().
+
+    Uses a file-based child workflow (not inline IR) because pre-warm only works for
+    file/name sources. Inline IR can't survive deepcopy's id() change, and inline IR
+    with templates (${item}) MUST recompile per item anyway.
+    """
+    from pflow.runtime.compilation.compiler import compile_workflow as real_compile_workflow
+
+    # Write child workflow to a file
+    child_md = tmp_path / "child.pflow.md"
+    child_md.write_text(
+        "# Child\n\nA child workflow.\n\n## Steps\n\n### echo\n\nRun echo.\n\n- type: shell\n- command: echo hello\n",
+        encoding="utf-8",
+    )
+
+    call_count = 0
+
+    def counting_compile_workflow(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return real_compile_workflow(*args, **kwargs)
+
+    parent_ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "source",
+                "type": "shell",
+                "params": {"command": 'echo \'["alpha", "beta", "gamma"]\''},
+            },
+            {
+                "id": "process",
+                "type": "workflow",
+                "batch": {
+                    "items": "${source.stdout}",
+                    "as": "item",
+                    "parallel": True,
+                    "max_concurrent": 3,
+                },
+                "params": {"workflow": str(child_md)},
+            },
+        ],
+        "edges": [{"from": "source", "to": "process"}],
+    }
+
+    registry = Registry()
+
+    with patch(
+        "pflow.runtime.workflow_executor.compile_workflow",
+        side_effect=counting_compile_workflow,
+    ):
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
+
+    assert result == "default", (
+        f"Parallel batch workflow failed with result: {result}. "
+        f"Error: {shared.get('process', {}).get('error', shared.get('error', 'N/A'))}"
+    )
+
+    # The sub-workflow should be compiled exactly once (pre-warm), not 3 times.
+    assert call_count == 1, (
+        f"Expected compile_workflow called once (pre-warm before parallel dispatch), "
+        f"but it was called {call_count} time(s). "
+        f"The batch executor's _pre_warm_compile_cache may not be working."
+    )
+
+    # Verify all 3 items produced results
+    process_data = shared.get("process", {})
+    results = process_data.get("results", [])
+    assert len(results) == 3, f"Expected 3 parallel batch results, got {len(results)}"
+
+
+def test_parallel_batch_items_produce_distinct_output(tmp_path: Path):
+    """Each parallel batch item gets its own resolved params — no cross-thread contamination.
+
+    This is the correctness complement to compile-once. The pre-warm deep-copies
+    the WorkflowExecutor (including _cached_workflow) per thread. If the deep copy
+    somehow shares node instances (params dict references, successor references),
+    threads clobber each other's resolved params and items get wrong output.
+
+    The failure mode is SILENT: no crash, just item A's text appearing in item B's
+    result. This test catches it by verifying each result contains its own unique marker.
+    """
+    child_md = tmp_path / "child.pflow.md"
+    child_md.write_text(
+        "# Child\n\nA child workflow.\n\n"
+        "## Inputs\n\n### text\n\nText input.\n\n- type: str\n- required: true\n\n"
+        "## Steps\n\n### echo\n\nEcho the text.\n\n- type: shell\n- command: echo MARKER_${text}_END\n",
+        encoding="utf-8",
+    )
+
+    parent_ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "source",
+                "type": "shell",
+                "params": {"command": 'echo \'["alpha", "beta", "gamma", "delta", "epsilon"]\''},
+            },
+            {
+                "id": "process",
+                "type": "workflow",
+                "batch": {
+                    "items": "${source.stdout}",
+                    "as": "item",
+                    "parallel": True,
+                    "max_concurrent": 5,
+                },
+                "params": {
+                    "workflow": str(child_md),
+                    "text": "${item}",
+                },
+            },
+        ],
+        "edges": [{"from": "source", "to": "process"}],
+    }
+
+    registry = Registry()
+    workflow = compile_workflow(parent_ir, registry=registry)
+    shared: dict[str, Any] = dict(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    result = engine.run(workflow, shared)
+
+    assert result == "default", f"Workflow failed: {shared.get('error', 'N/A')}"
+
+    results = shared["process"]["results"]
+    assert len(results) == 5, f"Expected 5 results, got {len(results)}"
+
+    # Each result must contain its OWN unique marker, not another item's
+    expected = ["alpha", "beta", "gamma", "delta", "epsilon"]
+    for i, text in enumerate(expected):
+        stdout = results[i]["echo"]["stdout"].strip()
+        assert f"MARKER_{text}_END" == stdout, (
+            f"Item {i}: expected 'MARKER_{text}_END', got '{stdout}'. "
+            f"If another item's marker appears, deep-copied compiled workflows share state between threads."
+        )
 
 
 def test_each_batch_item_produces_distinct_output():

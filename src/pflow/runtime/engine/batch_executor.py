@@ -101,6 +101,66 @@ def _collect_batch_trace(shared: dict[str, Any], node_id: str) -> list[dict[str,
     return batch_trace_items
 
 
+def _pre_warm_compile_cache(
+    node: Any,
+    config: NodeConfig,
+    shared: dict[str, Any],
+    execute_single_fn: Callable,
+    batch_config: BatchConfig,
+    first_item: Any,
+) -> None:
+    """Pre-compile sub-workflows so parallel deep copies inherit the cache.
+
+    Only useful for WorkflowExecutor nodes (which have _compile_sub_workflow).
+    For regular nodes, this is a no-op.
+
+    Runs prep() + _compile_sub_workflow() on the original node instance without
+    executing the sub-workflow. After this, deepcopy(node) inherits both
+    _cached_loaded_ir (file loading cache) and _cached_workflow (compiled flow).
+    """
+    if not hasattr(node, "_compile_sub_workflow"):
+        return  # Not a WorkflowExecutor — nothing to pre-warm
+
+    # Create a temporary item context with the first item
+    temp_shared = dict(shared)
+    temp_shared[config.node_id] = {}
+    temp_shared[batch_config.item_alias] = first_item
+    temp_shared["__index__"] = 0
+
+    # Resolve templates to get concrete params (like the engine does per-item)
+    original_params = node.params
+    try:
+        if config.template_config:
+            from .template_resolution import resolve_templates
+
+            merged_params, _, _ = resolve_templates(config.template_config, temp_shared, config.node_id)
+            node.params = merged_params
+
+        # Run prep() to populate _cached_loaded_ir (file loading cache)
+        prep_res = node.prep(temp_shared)
+
+        # Only proceed if the workflow came from a file/name source (_cached_loaded_ir set).
+        # For inline workflows, prep() doesn't set _cached_loaded_ir, so the compile cache
+        # can't survive deepcopy (id() mismatch on the copied IR dict). Inline workflows
+        # with templates (e.g., ${item} in the IR) MUST recompile per item anyway.
+        if getattr(node, "_cached_loaded_ir", None) is None:
+            return
+
+        # Run _compile_sub_workflow() to populate _cached_workflow
+        node._compile_sub_workflow(
+            prep_res["workflow_ir"],
+            prep_res["workflow_path"],
+            prep_res["child_params"],
+        )
+
+        logger.debug(
+            f"Pre-warmed compile cache for parallel batch node '{config.node_id}'",
+            extra={"node_id": config.node_id},
+        )
+    finally:
+        node.params = original_params
+
+
 def execute_batch(
     node: Any,
     config: NodeConfig,
@@ -135,6 +195,10 @@ def execute_batch(
         errors: list[dict[str, Any]] = []
         item_timings: list[float] = []
     elif batch_config.parallel:
+        # Pre-warm compile cache for WorkflowExecutor nodes so deep copies inherit it.
+        # Without this, each thread independently compiles the sub-workflow (O(N)).
+        # With this, compilation happens once and deep copies get the cached result (O(1)).
+        _pre_warm_compile_cache(node, config, shared, execute_single_fn, batch_config, items[0])
         exec_res, errors, item_timings = _execute_parallel(items, node, config, shared, execute_single_fn, batch_config)
     else:
         exec_res, errors, item_timings = _execute_sequential(
@@ -404,6 +468,8 @@ def _execute_parallel(
 
     def process_item(idx: int, item: Any) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None, float]:
         """Process single item in thread."""
+        # THREADING: shallow copy — nested dicts (_batch_trace, __execution__)
+        # are shared across threads. Writes to nested keys are GIL-protected (CPython).
         item_shared = dict(shared)
         item_shared[config.node_id] = {}
         item_shared[batch_config.item_alias] = item

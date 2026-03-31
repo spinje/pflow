@@ -157,21 +157,36 @@ class WorkflowExecutor(BaseNode):
         """Compile the sub-workflow with compile-once caching.
 
         First call compiles and caches. Subsequent calls (batch items) reuse
-        the cached CompiledWorkflow. Safe for sequential batch because
-        node.params is reset per-item by the engine. For parallel batch,
-        each deep-copied WorkflowExecutor compiles independently.
+        the cached CompiledWorkflow. For parallel batch, the batch executor
+        pre-warms this cache before deep-copying, so each thread inherits
+        the compiled workflow.
+
+        Cache gate:
+        - Non-inline workflows (_cached_loaded_ir exists): return cache unconditionally.
+          After deepcopy, the IR dict has a new id() but the content is identical.
+          _cached_loaded_ir is the signal that the workflow came from a file/name source.
+        - Inline workflows (_cached_loaded_ir absent): check id(workflow_ir) match.
+          Inline IR may contain parent-resolved templates (e.g., ${item}) that produce
+          a different dict per batch item. id() match means the same dict object,
+          which means sequential reuse is safe. Different id() means recompile.
 
         CompilationError always propagates — it means the workflow definition
         is broken, not the data.
         """
         from pflow.runtime.engine.types import CompiledWorkflow
 
-        # Check compile-once cache
-        ir_id = id(workflow_ir)
+        # Compile-once cache
         cached: Optional[CompiledWorkflow] = getattr(self, "_cached_workflow", None)
-        cached_ir_id: Optional[int] = getattr(self, "_cached_workflow_ir_id", None)
-        if cached is not None and cached_ir_id == ir_id:
-            return cached
+        if cached is not None:
+            # Non-inline (file/name): always reuse. _cached_loaded_ir is set only for
+            # non-inline sources. Content is identical across items — only the dict
+            # object identity differs after deepcopy.
+            if getattr(self, "_cached_loaded_ir", None) is not None:
+                return cached
+            # Inline: reuse only if same dict object (id match).
+            cached_ir_id: Optional[int] = getattr(self, "_cached_workflow_ir_id", None)
+            if cached_ir_id is not None and cached_ir_id == id(workflow_ir):
+                return cached
 
         registry = self.params.get("__registry__")
         if registry is not None and not isinstance(registry, Registry):
@@ -198,7 +213,7 @@ class WorkflowExecutor(BaseNode):
 
         # Cache for compile-once
         self._cached_workflow = compiled
-        self._cached_workflow_ir_id = ir_id
+        self._cached_workflow_ir_id = id(workflow_ir)
         return compiled
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
