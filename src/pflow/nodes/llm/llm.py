@@ -10,12 +10,11 @@ from typing import Any, Optional
 
 from pydantic import ValidationError
 
-# Add pocketflow to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent.parent))
 
 import llm
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 logger = logging.getLogger(__name__)
 

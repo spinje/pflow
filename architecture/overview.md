@@ -4,7 +4,7 @@
 
 ## What pflow Is
 
-pflow is a CLI-first workflow execution system that enables AI agents to create, save, and execute workflows defined in markdown (`.pflow.md`). Built on PocketFlow (~200 lines of Python), it provides the infrastructure for workflows to persist, be discovered, reused, and composed.
+pflow is a CLI-first workflow execution system that enables AI agents to create, save, and execute workflows defined in markdown (`.pflow.md`). Its node system is built on `BaseNode`/`Node` (~90 lines in `src/pflow/core/node.py`), providing the lifecycle and wiring primitives. pflow provides the infrastructure for workflows to persist, be discovered, reused, and composed.
 
 **The core value proposition:**
 > "Your agent solves the same problem from scratch. Full cost. Same latency. Same risk of failure. Every time. pflow turns that reasoning into workflows your agent can reuse. Plan once, run forever."
@@ -377,7 +377,7 @@ The faster a task completes, the less time for context to diverge. A 10-minute t
 ## Related Documents
 
 - **Implementation details:** `architecture.md`
-- **Node development:** `pflow-pocketflow-integration-guide.md`
+- **Node development:** `src/pflow/nodes/CLAUDE.md` (node authoring patterns)
 - **Shared store pattern:** `core-concepts/shared-store.md`
 - **CLI reference:** Run `pflow --help`
 - **Agent instructions:** Run `pflow instructions usage`

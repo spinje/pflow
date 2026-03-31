@@ -10,7 +10,7 @@ import importlib.util
 import logging
 from typing import cast
 
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.registry import Registry
 
 logger = logging.getLogger(__name__)
@@ -135,7 +135,7 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
                 phase="node_validation",
                 node_type=node_type,
                 details={"class_name": class_name, "actual_bases": base_classes},
-                suggestion=f"Ensure '{class_name}' inherits from pocketflow.BaseNode or pocketflow.Node",
+                suggestion=f"Ensure '{class_name}' inherits from pflow.core.node.BaseNode or pflow.core.node.Node",
             )
     except TypeError:
         # Handle case where node_class is not actually a class

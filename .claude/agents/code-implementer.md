@@ -1,6 +1,6 @@
 ---
 name: code-implementer
-description: "Implement small, focused tasks in the pflow project: new functions/files, bug fixes, refactoring, or component integration. Caller MUST provide comprehensive context (requirements, file paths, patterns to follow, definition of done). Bigger tasks need bigger context. Do NOT use for: entire features, tasks requiring deep pflow/PocketFlow knowledge, or primary test writing (use test-writer-fixer instead)."
+description: "Implement small, focused tasks in the pflow project: new functions/files, bug fixes, refactoring, or component integration. Caller MUST provide comprehensive context (requirements, file paths, patterns to follow, definition of done). Bigger tasks need bigger context. Do NOT use for: entire features, tasks requiring deep node/engine knowledge, or primary test writing (use test-writer-fixer instead)."
 model: opus
 color: green
 ---
@@ -51,8 +51,8 @@ Write tests alongside your code:
 - Keep tests simple — if mock setup exceeds 5 lines, reconsider your approach
 
 **Three sacred rules** (violating these causes real failures):
-1. **Never mock PocketFlow components** — use simple test nodes instead
-2. **Never catch exceptions in `node.exec()` tests** — this breaks PocketFlow's retry mechanism
+1. **Never mock node primitives** (BaseNode, Node) — use simple test nodes instead
+2. **Never catch exceptions in `node.exec()` tests** — this breaks the retry mechanism
 3. **Never write tests that can't fail** — if a test passes with the implementation deleted, it's useless
 
 ### 6. Verify
@@ -122,7 +122,7 @@ Read the relevant one before working in any directory:
 | `src/pflow/cli/` | CLI routing, subcommands, pre-parsing, agent features |
 | `src/pflow/core/` | Workflow management, parsing, validation, settings, error handling |
 | `src/pflow/execution/` | Execution/repair system, checkpoint-based resume, display |
-| `src/pflow/nodes/` | Node implementation patterns, PocketFlow retry, wrapper chain |
+| `src/pflow/nodes/` | Node implementation patterns, retry logic, engine runtime concerns |
 | `src/pflow/runtime/` | Compilation, wrapper order, templating, instrumentation |
 | `src/pflow/mcp_server/` | Three-layer stateless architecture, tool registration |
 

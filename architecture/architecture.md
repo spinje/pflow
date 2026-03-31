@@ -5,7 +5,7 @@
 
 ## Overview
 
-pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line Python framework in `src/pflow/pocketflow/__init__.py`). It enables AI agents and users to create, save, and execute workflows defined in markdown files (`.pflow.md`).
+pflow is a CLI-first workflow execution system. Its node system is built on `BaseNode`/`Node` (~90 lines in `src/pflow/core/node.py`), which provide the lifecycle (prep/exec/post) and graph wiring operators. It enables AI agents and users to create, save, and execute workflows defined in markdown files (`.pflow.md`).
 
 ### Primary Interfaces
 
@@ -13,7 +13,7 @@ pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line 
 2. **MCP Server** - AI agents can interact via Model Context Protocol (`src/pflow/mcp_server/`)
 3. **Natural language (Removed)** - Previously supported quoted requests for workflow generation
 
-> **Important:** Users and AI agents ALWAYS interact via these interfaces using `.pflow.md` workflows. Direct PocketFlow usage (creating `Node` subclasses, `Flow` objects) is reserved for pflow internal development only. See `pflow-pocketflow-integration-guide.md` for internal development patterns.
+> **Important:** Users and AI agents ALWAYS interact via these interfaces using `.pflow.md` workflows. Direct Node subclassing is reserved for pflow internal development only. See `src/pflow/nodes/CLAUDE.md` for node authoring and `src/pflow/runtime/CLAUDE.md` for engine internals.
 
 ### Core Principle
 
@@ -447,11 +447,11 @@ The markdown body is never modified by metadata updates — `update_metadata()` 
 
 ## Design Decisions
 
-### Why PocketFlow?
+### Why BaseNode/Node?
 
-- Minimal (~150 lines) with clear semantics
+- Minimal (~90 lines) with clear semantics
 - Node lifecycle (prep/exec/post) separates concerns
-- Flow orchestration with `>>` operator
+- Graph wiring with `>>` operator
 - Shared store pattern for communication
 
 ### Why Markdown Workflows (`.pflow.md`)?
@@ -536,7 +536,7 @@ Users simply specify `type: "workflow"` — they don't need to know about Workfl
 
 ## Related Documents
 
-- **PocketFlow**: `src/pflow/pocketflow/CLAUDE.md` - Framework documentation
-- **Integration Guide**: `architecture/pflow-pocketflow-integration-guide.md`
+- **Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators
+- **Engine internals**: `src/pflow/runtime/CLAUDE.md` — compiler, engine, template resolution, batch
 - **Node Interface Format**: `architecture/reference/enhanced-interface-format.md`
 - **Shared Store**: `architecture/core-concepts/shared-store.md`

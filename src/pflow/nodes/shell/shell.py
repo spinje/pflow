@@ -6,7 +6,7 @@ import os
 import subprocess
 from typing import Any, ClassVar
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 logger = logging.getLogger(__name__)
 

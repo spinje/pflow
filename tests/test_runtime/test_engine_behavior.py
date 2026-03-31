@@ -7,7 +7,7 @@ would leave users with no diagnostic information.
 Covers: unmatched action warnings, --only + output resolution, custom error_action.
 """
 
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.runtime.engine.engine import WorkflowEngine
 from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
 

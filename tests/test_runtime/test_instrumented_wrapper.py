@@ -15,7 +15,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from pflow.runtime.engine.instrumentation import (
     call_completion_callback,
     call_start_callback,

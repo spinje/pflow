@@ -1,8 +1,11 @@
-"""PocketFlow — minimal node execution framework.
+"""Node lifecycle primitives for pflow workflows.
 
-BaseNode + Node provide the lifecycle (prep → exec → post) and wiring (>> and -).
+BaseNode + Node provide the lifecycle (prep -> exec -> post) and graph wiring (>> and -).
 WorkflowEngine (in pflow.runtime.engine) handles graph traversal and all runtime
 concerns (template resolution, batching, instrumentation, caching).
+
+Originally derived from PocketFlow (github.com/The-Pocket/PocketFlow, MIT license).
+Rewritten from scratch in Task 135 (Execution Core Redesign, 2026-03-31).
 """
 
 import time
@@ -18,7 +21,7 @@ class BaseNode:
 
     def next(self, node, action="default"):
         if action in self.successors:
-            warnings.warn(f"Overwriting successor for action '{action}'")
+            warnings.warn(f"Overwriting successor for action '{action}'", stacklevel=2)
         self.successors[action] = node
         return node
 
@@ -41,7 +44,7 @@ class BaseNode:
 
     def run(self, shared):
         if self.successors:
-            warnings.warn("Node won't run successors. Use WorkflowEngine.")
+            warnings.warn("Node won't run successors. Use WorkflowEngine.", stacklevel=2)
         return self._run(shared)
 
     def __rshift__(self, other):
@@ -76,7 +79,7 @@ class Node(BaseNode):
         raise exc
 
     def _exec(self, prep_res):
-        for self.cur_retry in range(self.max_retries):
+        for self.cur_retry in range(self.max_retries):  # noqa: B020
             try:
                 return self.exec(prep_res)
             except Exception as e:

@@ -11,7 +11,7 @@ import logging
 import re
 from typing import Any, cast
 
-from pflow import pocketflow
+from pflow.core.node import BaseNode
 
 # Set up module logger
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class PflowMetadataExtractor:
         Extract metadata from a node class.
 
         Args:
-            node_class: A class that should inherit from pocketflow.BaseNode
+            node_class: A class that should inherit from BaseNode
 
         Returns:
             Dictionary containing:
@@ -61,13 +61,13 @@ class PflowMetadataExtractor:
 
         # Phase 2: Validate node inheritance
         try:
-            if not issubclass(node_class, pocketflow.BaseNode):
+            if not issubclass(node_class, BaseNode):
                 logger.error(
                     "Class does not inherit from BaseNode",
                     extra={"phase": "validation", "class_name": node_class.__name__},
                 )
                 raise ValueError(  # noqa: TRY004
-                    f"metadata_extractor: Class {node_class.__name__} does not inherit from pocketflow.BaseNode"
+                    f"metadata_extractor: Class {node_class.__name__} does not inherit from BaseNode (pflow.core.node)"
                 )
         except TypeError as e:
             # issubclass can raise TypeError for non-class arguments

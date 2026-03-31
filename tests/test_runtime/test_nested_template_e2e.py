@@ -9,7 +9,7 @@ import os
 import tempfile
 from unittest.mock import Mock
 
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine

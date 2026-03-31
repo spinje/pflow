@@ -71,7 +71,7 @@ class TestUserNodes:
 """Test calculator node for integration testing."""
 
 import json
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 
 class TestCalculatorNode(Node):
@@ -348,7 +348,7 @@ class TestCalculatorNode(Node):
             broken_node.write_text('''
 """Broken node with syntax error."""
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class BrokenNode(Node):
     """This node has a syntax error.
@@ -389,7 +389,7 @@ class BrokenNode(Node):
             import_error_node.write_text('''
 """Node with import that fails at runtime."""
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 # This import will fail when the module is loaded
 import nonexistent_module_xyz123
@@ -452,7 +452,7 @@ Interface:
 - Reads: shared["data"]: str  # This is in module docstring - WRONG!
 """
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class WrongLocationNode(Node):
     """This node has Interface in the wrong place."""
@@ -466,7 +466,7 @@ class WrongLocationNode(Node):
             # Create node with malformed Interface syntax
             malformed = node_dir / "malformed_interface.py"
             malformed.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class MalformedNode(Node):
     """Node with malformed Interface.
@@ -510,7 +510,7 @@ class MalformedNode(Node):
             # Create two files with circular imports
             node_a = node_dir / "node_a.py"
             node_a.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from node_b import NodeB  # Circular import!
 
 class NodeA(Node):
@@ -529,7 +529,7 @@ class NodeA(Node):
 
             node_b = node_dir / "node_b.py"
             node_b.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from node_a import NodeA  # Circular import!
 
 class NodeB(Node):
@@ -563,7 +563,7 @@ class NodeB(Node):
             # Create two nodes with the SAME name
             node1 = node_dir / "calc_v1.py"
             node1.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class CalcV1(Node):
     """First calculator.
@@ -581,7 +581,7 @@ class CalcV1(Node):
 
             node2 = node_dir / "calc_v2.py"
             node2.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class CalcV2(Node):
     """Second calculator.
@@ -636,7 +636,7 @@ class CalcV2(Node):
             # Create a user node trying to override a core node
             override_attempt = node_dir / "fake_core.py"
             override_attempt.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class FakeReadFileNode(Node):
     """User node with same name as core node.
@@ -686,7 +686,7 @@ class FakeReadFileNode(Node):
             # Create a node that tries to access parent directories
             traversal_node = node_dir / "traversal.py"
             traversal_node.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 import os
 
 class TraversalNode(Node):
@@ -752,7 +752,7 @@ class TraversalNode(Node):
             # Create file with multiple classes, only one is a Node
             mixed_file = node_dir / "mixed_classes.py"
             mixed_file.write_text('''
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 class NotANode:
     """Regular class, not a node.

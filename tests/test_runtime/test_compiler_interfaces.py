@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.ir_schema import ValidationError
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.runtime import compile_workflow
 
 

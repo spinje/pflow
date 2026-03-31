@@ -7,7 +7,7 @@ This tests the integration between:
 3. Context builder formatting
 """
 
-from pflow import pocketflow
+from pflow.core.node import Node
 from pflow.registry.context_builder import _format_node_section_enhanced
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
@@ -18,7 +18,7 @@ class TestMetadataFlow:
     def test_enhanced_format_flow_simple_types(self):
         """Test flow with simple type annotations."""
 
-        class ReadFileNode(pocketflow.Node):
+        class ReadFileNode(Node):
             """
             Read content from a file.
 
@@ -68,7 +68,7 @@ class TestMetadataFlow:
     def test_enhanced_format_flow_complex_structure(self):
         """Test flow with complex nested structures."""
 
-        class GitHubGetIssueNode(pocketflow.Node):
+        class GitHubGetIssueNode(Node):
             """
             Get GitHub issue details.
 
@@ -111,7 +111,7 @@ class TestMetadataFlow:
     def test_exclusive_params_in_flow(self):
         """Test that exclusive params pattern works through the flow."""
 
-        class WriteFileNode(pocketflow.Node):
+        class WriteFileNode(Node):
             """
             Write content to a file.
 
@@ -156,7 +156,7 @@ class TestMetadataFlow:
     def test_backward_compatibility_flow(self):
         """Test that old format still works through the flow."""
 
-        class OldNode(pocketflow.Node):
+        class OldNode(Node):
             """
             Old style node.
 
@@ -198,7 +198,7 @@ class TestMetadataFlow:
     def test_multi_line_format_flow(self):
         """Test multi-line enhanced format through the flow."""
 
-        class MultiLineNode(pocketflow.Node):
+        class MultiLineNode(Node):
             """
             Node using multi-line format.
 
@@ -249,7 +249,7 @@ class TestMetadataFlow:
     def test_punctuation_in_descriptions(self):
         """Test that complex punctuation in descriptions is preserved."""
 
-        class PunctuationNode(pocketflow.Node):
+        class PunctuationNode(Node):
             """
             Node with complex punctuation.
 

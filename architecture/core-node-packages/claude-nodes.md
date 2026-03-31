@@ -251,7 +251,7 @@ The super node handles Claude Agent SDK specific errors:
 - **Security Automation**: Automated security review and remediation
 - **Performance Intelligence**: AI-driven performance optimization workflows
 
-This Claude Code super node provides comprehensive AI-assisted development capabilities through a unified interface that leverages sophisticated generated instructions and the full power of Claude Agent SDK while following proper pocketflow patterns.
+This Claude Code super node provides comprehensive AI-assisted development capabilities through a unified interface that leverages sophisticated generated instructions and the full power of Claude Agent SDK while following proper node lifecycle patterns.
 
 ## See Also
 

@@ -9,7 +9,8 @@ Foundational components for workflow parsing, validation, management, shell inte
 ```
 src/pflow/core/
 ├── __init__.py              # Public API exports
-├── exceptions.py            # Exception hierarchy
+├── node.py                  # Node lifecycle primitives (BaseNode, Node, wiring operators)
+├── exceptions.py            # Exception hierarchy (incl. CompilationError, MaxNodeVisitsError)
 ├── ir_schema.py             # IR schema definition and validation
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection

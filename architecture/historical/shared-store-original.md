@@ -9,13 +9,13 @@
 - **Architecture**: [PRD](../historical/prd.md) | [Architecture](../architecture.md) | [MVP Implementation Guide](../historical/mvp-implementation-guide.md)
 - **Components**: Historical workflow-generation spec | [Execution Reference](../historical/execution-reference-original.md) | [CLI Runtime](../historical/cli-runtime-original.md)
 - **Node Design**: [Simple Nodes](../features/simple-nodes.md) | [Node Packages](../core-node-packages/llm-nodes.md)
-- **Implementation**: [PocketFlow Integration](../architecture/pflow-pocketflow-integration-guide.md)
+- **Implementation**: [Runtime CLAUDE.md](../../src/pflow/runtime/CLAUDE.md) | [Nodes CLAUDE.md](../../src/pflow/nodes/CLAUDE.md)
 
 ## Overview
 
 This document defines a core architectural principle in `pflow`: the coordination of logic and memory through a **shared store** with an optional **proxy layer** that enables standalone, reusable nodes without imposing binding complexity on node writers.
 
-This pattern is implemented using the lightweight **pocketflow framework** (~200 lines of Python), leveraging its existing `params` system and flow orchestration capabilities.
+This pattern is implemented using the node lifecycle primitives (`BaseNode`/`Node` in `src/pflow/core/node.py`), leveraging the `params` system and the `WorkflowEngine` for orchestration.
 
 ## Shared Store vs Params Guidelines
 
@@ -220,7 +220,7 @@ validator - "complete" >> finalizer
 - Node-local parameters that don't affect shared store
 - Simple access via `self.params.get("temperature", 0.7)`
 
-> **Framework Integration**: See [Enhanced Interface Format](../reference/enhanced-interface-format.md) for pocketflow integration details
+> **Framework Integration**: See [Enhanced Interface Format](../reference/enhanced-interface-format.md) for node interface details
 
 ## The Standalone Node Pattern
 
@@ -424,7 +424,7 @@ Key change: Mappings are flow-level concern in IR, nodes just declare natural in
 - **Validated** — schemas and flow constraints (e.g. node types, mapping checks) can be enforced statically
 - **Future-proof** — IR can be converted to/from code, GUI flows, or CLI scripts without ambiguity
 
-Agents author `.pflow.md` files, which the markdown parser converts to an IR dict. The IR is compiled into flow orchestration code using `set_params()` and pocketflow's flow wiring operators. Node logic lives in pre-written static classes.
+Agents author `.pflow.md` files, which the markdown parser converts to an IR dict. The IR is compiled into a `CompiledWorkflow` using `set_params()` and the wiring operators from `core/node.py` (`>>`, `-`). Node logic lives in pre-written static classes.
 
 ## Developer Experience Benefits
 
@@ -492,8 +492,8 @@ The round-trip cognitive architecture enhances developer experience through desc
 
 ### Framework Integration Benefits
 
-- **Minimal overhead**: Leverages existing 100-line pocketflow framework
-- **Backward compatibility**: Existing pocketflow code works unchanged
+- **Minimal overhead**: Leverages ~90-line node primitives in `core/node.py`
+- **Backward compatibility**: Existing node code works unchanged
 - **Clean separation**: Node logic vs flow orchestration vs CLI integration
 - **Proven patterns**: Uses established `prep()`/`exec()`/`post()` model
 - **No framework modifications**: Pure pattern implementation using existing APIs
@@ -525,9 +525,9 @@ The round-trip cognitive architecture enhances developer experience through desc
 - Agents make fewer errors when emitting structured data
 - Code generation remains possible via `pflow export` once the flow is stable
 
-### Why not modify the pocketflow framework?
+### Why not modify the node primitives?
 
-- Keeps framework minimal and focused
+- Keeps node lifecycle minimal and focused
 - Leverages existing, proven patterns
 - Maintains backward compatibility
 - Pattern works within existing APIs
@@ -610,7 +610,7 @@ This design enables `pflow` to:
 - Support both simple flows (direct access) and complex flows (proxy mapping)
 - Provide a clear, testable, and auditable execution model
 - Leverage JSON IR as the control plane for flow assembly, editing, and inspection
-- Build on the proven pocketflow framework without modifications
+- Build on the proven node lifecycle primitives without modifications
 
 The power is in simplicity. This pattern makes node development intuitive while preserving all the flexibility needed for complex orchestration scenarios.
 

@@ -643,3 +643,112 @@ Added two tests for fixes that had zero dedicated coverage:
 - **Files deleted**: `examples/github/create_pr_example.py` (imported removed `Flow`)
 - **Tests added**: 7 (node stateless invariant 2, resolved_defaults leak 1, storage_mode shared 1, file-based compile-once 1, custom error_action 2)
 - **Docs updated**: 8 files (runtime/CLAUDE.md, compilation/CLAUDE.md, pflow-pocketflow-integration-guide.md, testing-quick-reference.md, shared-store.md, tests/CLAUDE.md, nodes/CLAUDE.md, tests/shared/README.md)
+
+---
+
+## Post-Implementation: PocketFlow Directory Removal — COMPLETE
+
+**Date**: 2026-03-31
+
+### Context
+
+After the execution core redesign, `src/pflow/pocketflow/` was a vestige: 28 files (24 docs for removed classes, a LICENSE for the original library, CLAUDE.md, PFLOW_MODIFICATIONS.md) wrapping ~85 lines of code that now belongs in pflow's core. The "pocketflow" name no longer describes what the code does — it's pflow's own node lifecycle primitives.
+
+### What was done
+
+**1. Created `src/pflow/core/node.py`** — BaseNode, _ConditionalTransition, Node (~90 lines). Same code, proper home alongside `core/exceptions.py`, `core/ir_schema.py`, and other foundational types. Added module docstring with PocketFlow attribution.
+
+**2. Updated all imports** (~54 sites across production + test code):
+- 25 node files: `from pflow.pocketflow import Node` → `from pflow.core.node import Node`
+- 2 runtime files: `workflow_executor.py`, `compilation/node_loader.py`
+- 1 CLI file: `cli/main.py` warnings filter module path
+- 24 test files: top-level and lazy imports
+- 2 registry files: `metadata_extractor.py` (used `from pflow import pocketflow` → `from pflow.core.node import BaseNode`), `scanner.py` (same + removed dead `pocketflow_path` sys.path addition)
+
+**3. Deleted `src/pflow/pocketflow/` directory** — 28 files, including:
+- `__init__.py` (the actual code, replaced by `core/node.py`)
+- `LICENSE` (MIT for original PocketFlow — no longer applicable, code was rewritten)
+- `CLAUDE.md`, `PFLOW_MODIFICATIONS.md`
+- `docs/` (24 files documenting Flow, BatchFlow, async patterns, RAG, agents — all removed classes)
+
+**4. Fixed lint issues in `core/node.py`**:
+- Added `stacklevel=2` to `warnings.warn` calls (ruff B028)
+- Added `# noqa: B020` to `for self.cur_retry in range(...)` (intentional instance state for retry count exposure)
+
+**5. Cleaned up dead comments** — Removed `# Add pocketflow to path for imports` from 19 node files.
+
+**6. Updated documentation** (~50 files total):
+- Root `CLAUDE.md` — "PocketFlow Foundation" section → "Node Lifecycle Primitives"
+- `architecture/CLAUDE.md`, `architecture.md`, `overview.md`, `shared-store.md` — updated references, kept `pflow-pocketflow-integration-guide.md` filename for link stability
+- `architecture/pflow-pocketflow-integration-guide.md` — content updated to reference `core/node.py` and `WorkflowEngine`
+- 6 more architecture docs (testing-quick-reference, ir-schema, enhanced-interface-format, metadata-extraction, simple-nodes, claude-nodes)
+- 10 `.claude/agents/` definition files — updated codebase descriptions, import paths, test directory references
+- `architecture/historical/` — NOT updated (historical documents preserved as-is)
+
+### Key decisions
+
+1. **`core/node.py` not `core/base.py`** — "node" describes what the module provides. Consistent with `core/exceptions.py` naming pattern.
+2. **No re-export shim** — Initially created a backward-compat re-export in `pocketflow/__init__.py`, then deleted the entire directory. All imports updated directly. Clean break, no lingering indirection.
+3. **Historical docs preserved** — `architecture/historical/` files (10 files) reference "pocketflow" extensively. These describe the system as it was and should not be modified.
+4. **Integration guide filename kept** — `pflow-pocketflow-integration-guide.md` retains its name for link stability (referenced from ~8 locations). Content fully updated.
+5. **PocketFlow attribution** — Module docstring in `core/node.py` notes: "Originally derived from PocketFlow (github.com/The-Pocket/PocketFlow, MIT license). Rewritten from scratch in Task 135."
+
+### Verification
+
+- 4629 tests pass, 9 skipped
+- `ruff check` clean
+- Zero `from pflow.pocketflow import` in production or test code
+- One historical mention in `core/ir_schema.py` docstring ("inspired by pocketflow's execution model") — attribution, kept intentionally
+
+---
+
+## Post-Implementation: Documentation Cleanup — COMPLETE
+
+**Date**: 2026-03-31
+
+### Stale architecture files moved to historical
+
+- `architecture/core-concepts/shared-store.md` → `architecture/historical/shared-store-original.md` — mostly stale content (proxy mapping never built, `=>` pipe syntax never implemented, planner removed). The one valuable piece ("Shared Store vs Params" guideline) was added to `src/pflow/nodes/CLAUDE.md`.
+- `architecture/guides/json-workflows.md` → `architecture/historical/json-workflows-original.md` — already self-marked as historical (JSON workflows replaced by .pflow.md in Task 107).
+- `architecture/pflow-pocketflow-integration-guide.md` — deleted entirely. Content was redundant with `nodes/CLAUDE.md`, `runtime/CLAUDE.md`, and `runtime/engine/CLAUDE.md`. The filename with "pocketflow" was misleading. 4 living references in architecture docs updated to point to the CLAUDE.md files instead.
+
+### CLAUDE.md files refined
+
+**`runtime/CLAUDE.md`** — Trimmed from 247 → ~130 lines. Removed content duplicated in child CLAUDE.md files (engine architecture, compilation pipeline details, MCP handling, registry integration, testing). Kept: file structure, template resolver details (unique to this file), component summaries, shared store keys (canonical reference), gotchas. Added back: cache invalidation behavioral rules and error categorization patterns (cross-cutting runtime behaviors that don't belong in child files).
+
+**`runtime/compilation/CLAUDE.md`** — Rewritten with focus on unintuitive behaviors:
+- `_create_node_and_config()` step ordering documented (order is load-bearing — e.g., special params must be injected before `split_params()`)
+- `resolved_defaults` vs `initial_params` distinction explained (critical for shared store seeding)
+- Batch config coercion is fail-fast (behavioral change from old code)
+- `node.node_id` is a dynamic attribute (not in `BaseNode.__init__`)
+- MCP behavioral details added (format, greedy match, virtual path, validation skip)
+- Stale content removed (CompilationError lazy import gotcha was wrong, `cli/main.py` consumer was stale)
+
+**`runtime/engine/CLAUDE.md`** — Rewritten with focus on error handling and non-obvious data flows:
+- Architecture diagram shows try/except boundary (which steps are inside/outside try)
+- Error path fully documented (~30% of `_execute_node`): `_partial_resolutions` extraction, `_pflow_node_id` annotation, completion callback
+- `_execute_single_node` dual context documented (direct call + batch callback contract)
+- `handle_cached_execution` serves both cache levels (memo + in-process)
+- Batch trace accumulator lifecycle (init → append → transfer)
+- Utility files documented with line counts and key functions
+- `NamespacedSharedStore.update()` noted as Task 135 addition
+
+**`core/CLAUDE.md`** — Added `node.py` to module structure (was missing).
+
+**`nodes/CLAUDE.md`** — Added "Shared Store vs Params" section (salvaged from deleted shared-store.md). Updated engine reference.
+
+**Root `CLAUDE.md`** — Fixed "Compilation, wrappers, tracing" → "Compilation, engine, tracing" in project structure.
+
+**`architecture/CLAUDE.md`** — Removed deleted files from tree, updated reading paths and prerequisites to point to CLAUDE.md files instead of deleted integration guide.
+
+**`tests/CLAUDE.md`** — Removed stale `test_pocketflow/` directory reference, updated `test_runtime/` description.
+
+### Agent definition files updated
+
+All 10 `.claude/agents/*.md` files updated to remove PocketFlow/pocketflow references. Zero remaining occurrences.
+
+### Remaining pocketflow references (intentional)
+
+- `architecture/historical/` — 10 files with extensive references. Historical documents, not updated.
+- `core/ir_schema.py` docstring — "inspired by pocketflow's execution model". Attribution.
+- `architecture/CLAUDE.md` — filename `pflow-pocketflow-integration-guide.md` in tree listing for the historical/ directory. The file was deleted from its original location; the historical references are in other files that link to it.

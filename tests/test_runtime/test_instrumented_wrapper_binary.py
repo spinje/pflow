@@ -12,7 +12,7 @@ engine (Task 135/138).
 
 from typing import Any
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from pflow.runtime.engine.api_warning_detector import (
     detect_api_warning,
     extract_error_code,

@@ -49,7 +49,7 @@ import os
 import re
 from typing import Any, Optional
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 # Import Claude Agent SDK (renamed from Claude Code SDK)
 try:

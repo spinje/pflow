@@ -100,7 +100,7 @@ Tests mirror source: `src/pflow/X/Y.py` → `tests/test_X/test_Y.py`
 | `tests/test_execution/` | 6 | Execution services, formatters |
 | `tests/test_registry/` | 6+ | Registry, scanner, metadata extraction, smart filter, discovery |
 | `tests/test_docs/` | 2 | Documentation validation |
-| `tests/pocketflow/` | 10 | PocketFlow framework (async, batch, flow composition) |
+| `tests/test_runtime/test_engine_behavior.py` | 3 | Engine behavior (action routing, --only flag) |
 
 ### Auto-Applied Fixtures (from `tests/conftest.py`)
 
@@ -140,11 +140,11 @@ Tests in `tests/*/llm/` directories require real LLM API calls. They only run wh
 
 These cause real failures when violated:
 
-1. **Never mock PocketFlow components** (Node, Flow, BaseNode) — create simple test nodes instead
+1. **Never mock node primitives** (BaseNode, Node from `pflow.core.node`) — create simple test nodes instead
 2. **Never mock the shared store** — use a real `{}` dict
-3. **Never catch exceptions in node `exec()` tests** — this breaks PocketFlow's retry mechanism; nodes should raise, the runtime handles errors
+3. **Never catch exceptions in node `exec()` tests** — this breaks the retry mechanism; nodes should raise, the runtime handles errors
 4. **Test behavior, not structure** — don't assert on internal state, private attributes, or mock call counts
-5. **Never mock core abstractions** — shared store, Node, Flow are sacred; mock only at external boundaries (LLM APIs, network, filesystem when justified)
+5. **Never mock core abstractions** — shared store, BaseNode, Node are sacred; mock only at external boundaries (LLM APIs, network, filesystem when justified)
 6. **3+ mocks is a design smell** — if a test needs more than 3 mocks, the code under test likely has too many hard dependencies; consider refactoring the code, not adding more mocks
 
 ## pflow Test Patterns

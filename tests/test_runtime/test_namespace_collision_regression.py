@@ -13,7 +13,7 @@ The fix: nodes read only from `self.params`. Templates handle all data wiring.
 
 import pytest
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine

@@ -9,7 +9,6 @@ tests/
 │   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for .pflow.md test files
 │   ├── registry_utils.py # ensure_test_registry() helper
 │   └── README.md         # Docs for shared utilities
-├── test_pocketflow/       # PocketFlow framework tests (BaseNode, Node lifecycle)
 ├── test_cli/              # CLI command tests (CliRunner-based)
 ├── test_core/             # IR schema, shell integration, settings, workflow manager
 ├── test_docs/             # Documentation validation
@@ -25,7 +24,7 @@ tests/
 │   ├── test_claude/       # Claude Code node tests
 │   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
 ├── test_registry/         # Registry, scanner, smart filter, and component discovery tests
-└── test_runtime/          # Compiler, flow construction, dynamic imports
+└── test_runtime/          # Compiler, engine, template resolution, batch, caching, tracing
 ```
 
 **Mapping convention**: `src/pflow/X/Y/module.py` → `tests/test_X/test_Y/test_module.py`

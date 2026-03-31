@@ -74,7 +74,7 @@ def _get_node_classes() -> list[tuple[str, str, type]]:
     Returns list of (module_path, class_name, class_obj).
     Only includes classes in subdirectories (production nodes), not root-level test fixtures.
     """
-    from pflow.pocketflow import BaseNode
+    from pflow.core.node import BaseNode
 
     nodes_dir = Path(pflow.nodes.__file__).parent
     result: list[tuple[str, str, type]] = []

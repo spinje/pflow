@@ -6,8 +6,8 @@ from typing import Any, Optional
 
 from pflow.core.file_resolver import is_workflow_file_reference
 from pflow.core.markdown_parser import parse_markdown
+from pflow.core.node import BaseNode
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_workflow
 

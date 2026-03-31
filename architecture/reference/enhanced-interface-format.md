@@ -442,7 +442,7 @@ The following features are planned for future versions:
 ### Complete Node Example
 
 ```python
-class ProcessDataNode(pocketflow.Node):
+class ProcessDataNode(Node):
     """
     Process data with configurable options.
 

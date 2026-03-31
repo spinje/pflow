@@ -3,11 +3,10 @@
 import sys
 from pathlib import Path
 
-# Add pocketflow to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 
 class StructuredExampleNode(Node):

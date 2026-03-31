@@ -4,7 +4,7 @@
 
 **Start here**: [architecture.md](./architecture.md) — current system architecture, accurately reflects the codebase.
 
-**PocketFlow docs**: `src/pflow/pocketflow/docs/` — read these when working on pflow internals built on PocketFlow.
+**Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators. Read when working on pflow node internals.
 
 **Agent usage guide**: Run `pflow instructions usage` for the authoritative CLI guide for AI agents.
 
@@ -15,12 +15,9 @@ architecture/
 ├── CLAUDE.md                  # This file (navigation)
 ├── overview.md                # Why pflow exists (conceptual, not technical)
 ├── architecture.md            # Current system architecture (accurate)
-├── pflow-pocketflow-integration-guide.md  # For pflow developers (node authoring, internals)
 ├── guides/
-│   ├── json-workflows.md      # ⚠️ Historical — superseded by .pflow.md format
 │   └── mcp-guide.md           # MCP server integration guide
 ├── core-concepts/
-│   ├── shared-store.md        # Node communication via shared store
 │   └── data-type-coercion.md  # JSON auto-parsing and type coercion
 ├── features/
 │   ├── shell-pipes.md         # Unix pipe/stdin support
@@ -37,15 +34,9 @@ architecture/
 ├── implementation-details/
 │   └── metadata-extraction.md # Node metadata extraction system
 ├── vision/                    # ⚠️ Future directions, NOT current implementation
-│   ├── CLAUDE.md
-│   ├── AI-Agents-Need-Hands.md
-│   ├── mcp-as-extension-api.md
-│   └── north-star-examples.md
 ├── best-practices/
 │   └── testing-quick-reference.md
 └── historical/                # ⚠️ Design-time docs, may be outdated
-    ├── CLAUDE.md              # Index and context for all historical docs
-    └── (19 documents)         # PRD, original specs, deprecated features
 ```
 
 ## File Guide — Non-Obvious Routing Signals
@@ -56,13 +47,13 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 **overview.md** — The "why", not the "what". Read for design rationale and product philosophy. Does NOT describe the current system — `architecture.md` does that.
 
-**pflow-pocketflow-integration-guide.md** — For **pflow internal developers** writing platform nodes or extending compiler/runtime internals. NOT for users building workflows. Key insight: complexity belongs in the compiler/engine layer, not in nodes.
+**Node authoring**: `src/pflow/nodes/CLAUDE.md` — how to write platform nodes. **Engine internals**: `src/pflow/runtime/CLAUDE.md` — compiler, engine, template resolution, batch. Key insight: complexity belongs in the compiler/engine layer, not in nodes.
 
 ### Core Concepts
 
-**shared-store.md** — Core pattern: nodes are isolated "dumb pipes" that communicate only through the shared store. Template variables (`${var}`) create implicit node dependencies. All conditional logic at flow level, never in nodes.
-
 **data-type-coercion.md** — Inventories all 6 auto-parse/coercion points in the system with assessments. Read when debugging "why was this value parsed/not parsed" issues. Design principle: producers store raw data, consumers declare types.
+
+**Shared store pattern** — Documented in `src/pflow/runtime/CLAUDE.md` (reserved keys, canonical reference) and `src/pflow/nodes/CLAUDE.md` (shared store vs params guidelines). Nodes are isolated "dumb pipes" that communicate only through the shared store.
 
 ### Guides
 
@@ -92,9 +83,9 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 | Goal | Reading Path |
 |------|--------------|
-| **Conceptual understanding** | `overview.md` → `architecture.md` → `core-concepts/shared-store.md` |
-| **System implementation** | `architecture.md` → `shared-store.md` → `pflow-pocketflow-integration-guide.md` |
-| **Writing new nodes** | `pflow-pocketflow-integration-guide.md` → `features/simple-nodes.md` → `reference/enhanced-interface-format.md` |
+| **Conceptual understanding** | `overview.md` → `architecture.md` |
+| **System implementation** | `architecture.md` → `src/pflow/runtime/CLAUDE.md` |
+| **Writing new nodes** | `src/pflow/nodes/CLAUDE.md` → `features/simple-nodes.md` → `reference/enhanced-interface-format.md` |
 | **Building workflows** | Run `pflow instructions usage` for the authoritative agent guide |
 | **CLI development** | `pflow --help` → `features/shell-pipes.md` → `reference/template-variables.md` |
 | **JSON/type debugging** | `core-concepts/data-type-coercion.md` |
@@ -111,12 +102,12 @@ These `CLAUDE.md` files in the source tree provide implementation-level guidance
 | CLI commands | `src/pflow/cli/CLAUDE.md` | Routing, subcommands |
 | Core components | `src/pflow/core/CLAUDE.md` | Workflow manager, validation, settings |
 | MCP server | `src/pflow/mcp_server/CLAUDE.md` | 3-layer architecture, tools |
-| PocketFlow framework | `src/pflow/pocketflow/CLAUDE.md` | Framework basics and docs |
+| Node lifecycle primitives | `src/pflow/core/node.py` | BaseNode, Node, wiring operators |
 
 ## Important Notes
 
 **Single source of truth**: Each concept has ONE canonical document. If you see duplication, find the canonical source.
 
-**Prerequisites**: Node implementation docs assume you've read `pflow-pocketflow-integration-guide.md` and understand the shared store pattern. CLI docs build on the architecture overview.
+**Prerequisites**: Node implementation docs assume you've read `src/pflow/nodes/CLAUDE.md` and understand the shared store pattern (see "Shared Store vs Params" section there). CLI docs build on the architecture overview.
 
 **Current vs future**: Check root `CLAUDE.md` for authoritative project status. Features marked "v2.0" or "Future:" are not implemented.

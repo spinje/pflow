@@ -1,17 +1,24 @@
 # Node Implementation Guide
 
-This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the PocketFlow retry pattern.
+This directory contains all pflow nodes. **CRITICAL**: All nodes MUST follow the Node retry pattern.
 
-> **Note:** Template resolution, namespacing, and instrumentation wrappers are applied automatically by the compiler at runtime. Node implementations should focus only on business logic - never implement these concerns yourself. See `src/pflow/runtime/CLAUDE.md` for details.
+> **Note:** Template resolution, namespacing, and instrumentation are applied automatically by the engine at runtime. Node implementations should focus only on business logic — never implement these concerns yourself. See `src/pflow/runtime/engine/CLAUDE.md` for details.
 
-## 🚨 Critical Pattern: PocketFlow Node Error Handling
+## Shared Store vs Params
+
+- **Params** (`self.params`): Static configuration — model name, temperature, timeout, file format. Set by the engine from the workflow IR before each `_run()`.
+- **Shared store** (`shared`): Dynamic data flowing between nodes — user inputs, API responses, generated content. Read in `prep()`, written in `post()`.
+
+Rule of thumb: if the value changes between workflow runs, it's shared store data. If it's the same regardless of input, it's a param.
+
+## Critical Pattern: Node Error Handling
 
 **This is non-negotiable** - violating this pattern disables automatic retries, severely impacting reliability.
 
 ### The Pattern
 
 ```python
-from pflow.pocketflow import Node  # NOT BaseNode!
+from pflow.core.node import Node  # NOT BaseNode!
 from .exceptions import NonRetriableError
 
 class ExampleNode(Node):
@@ -243,10 +250,10 @@ You can write this in a node's docstring:
 
 ## References
 
-- Full pattern documentation: `/.taskmaster/knowledge/patterns.md` - "PocketFlow Node Error Handling"
+- Full pattern documentation: `/.taskmaster/knowledge/patterns.md` - "Node Error Handling"
 - Anti-pattern to avoid: `/.taskmaster/knowledge/pitfalls.md` - "Catching Exceptions in exec()"
-- Architectural decision: `/.taskmaster/knowledge/decisions.md` - "All pflow Nodes Must Follow PocketFlow Retry Pattern"
-- PocketFlow documentation: `src/pflow/pocketflow/docs/core_abstraction/node.md`
+- Architectural decision: `/.taskmaster/knowledge/decisions.md` - "All pflow Nodes Must Follow Node Retry Pattern"
+- Node lifecycle primitives: `src/pflow/core/node.py`
 
 ## Quick Checklist
 

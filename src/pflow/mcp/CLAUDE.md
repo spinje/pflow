@@ -57,7 +57,7 @@ All MCP tools create registry entries pointing to the **same** `MCPNode` class (
 **Known inconsistency**: `registrar.py:get_tool_info()` uses a naive `split("-", 2)` that breaks for multi-hyphen server names.
 
 ### Connection Pool Threading Model
-PocketFlow nodes are **synchronous**. MCP protocol is **async**. The pool bridges this:
+pflow nodes are **synchronous**. MCP protocol is **async**. The pool bridges this:
 - Background daemon thread runs `asyncio.new_event_loop()` + `run_forever()`
 - `call_tool()` submits via `run_coroutine_threadsafe()`, blocks on future
 - All async state (`_sessions`, `_stacks`) accessed only from the background loop
@@ -66,7 +66,7 @@ PocketFlow nodes are **synchronous**. MCP protocol is **async**. The pool bridge
 **Why it exists**: Without pooling, each MCPNode.exec() spawns a new server subprocess. Stateful servers (Playwright, databases) lose ALL state between workflow steps.
 
 ### Retry Behavior
-- **MCPNode**: `max_retries=1` (= 1 total attempt, 0 retries — PocketFlow's naming is misleading). Each retry spawns a NEW server subprocess, causing resource conflicts.
+- **MCPNode**: `max_retries=1` (= 1 total attempt, 0 retries — Node's naming is misleading). Each retry spawns a NEW server subprocess, causing resource conflicts.
 - **Pool**: One automatic retry on transport errors (`BrokenPipeError`, `ConnectionError`, `OSError`). Evicts dead session, creates fresh one.
 - **TimeoutError is NOT a transport error** even on Python 3.11+ (where it's an `OSError` subclass). Timeout = server is alive but slow; retrying would destroy stateful sessions for no benefit.
 

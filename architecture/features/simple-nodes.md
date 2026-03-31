@@ -7,7 +7,7 @@ pflow implements a **simple, single-purpose node architecture** that dramaticall
 ## Architecture Comparison
 
 > **Note on Syntax**: The `>>` syntax below illustrates data flow between nodes conceptually.
-> This is PocketFlow's Python operator for node chaining (used internally by the compiler).
+> This is the `>>` Python operator for node chaining (defined in `core/node.py`, used internally by the compiler).
 > To run workflows, use `.pflow.md` workflow files: `pflow workflow.pflow.md` or `pflow saved-name param=value`
 
 ### Before: Complex Action-Based Nodes
@@ -66,7 +66,7 @@ The `llm` node is our general-purpose solution for all text processing tasks:
 
 ### Node Implementation Pattern
 
-Nodes follow the interface patterns defined in our [metadata schema](../reference/ir-schema.md#node-metadata-schema). All nodes inherit from `pocketflow.BaseNode` (or `pocketflow.Node`) and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
+Nodes follow the interface patterns defined in our [metadata schema](../reference/ir-schema.md#node-metadata-schema). All nodes inherit from `BaseNode` or `Node` (in `pflow.core.node`) and use the [shared store pattern](../core-concepts/shared-store.md) for communication.
 
 ```python
 class ReadFileNode(Node):  # Use Node for retry support

@@ -3,7 +3,7 @@
 import logging
 from typing import Any, Optional
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 # Set up logging
 logger = logging.getLogger(__name__)

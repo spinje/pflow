@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.compilation.compiler import (

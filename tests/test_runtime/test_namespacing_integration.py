@@ -30,7 +30,7 @@ def test_namespacing_with_workflow_inputs(tmp_path):
     }
 
     # Mock the echo node
-    from pflow.pocketflow import Node
+    from pflow.core.node import Node
 
     class EchoNode(Node):
         """Simple echo node for testing."""
@@ -111,7 +111,7 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
         },
     }
 
-    from pflow.pocketflow import Node
+    from pflow.core.node import Node
 
     class ApiCallNode(Node):
         def prep(self, shared):

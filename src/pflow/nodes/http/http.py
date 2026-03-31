@@ -6,7 +6,7 @@ from typing import Any
 
 import requests
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 
 class HttpNode(Node):
