@@ -136,10 +136,17 @@ class TestWorkflowSavedName:
             assert "Loading workflow by name: test-workflow" in caplog.text
 
         # Verify execution logging too
-        with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
-            mock_flow = Mock()
-            mock_flow.run.return_value = "success"
-            mock_compile.return_value = mock_flow
+        with (
+            patch("pflow.runtime.workflow_executor.compile_workflow") as mock_compile,
+            patch("pflow.runtime.engine.WorkflowEngine") as mock_engine_class,
+        ):
+            mock_compiled = Mock()
+            mock_compiled.resolved_defaults = {}
+            mock_compile.return_value = mock_compiled
+
+            mock_engine = Mock()
+            mock_engine.run.return_value = "default"
+            mock_engine_class.return_value = mock_engine
 
             node.exec(prep_res)
 
@@ -186,15 +193,22 @@ class TestWorkflowSavedName:
             assert prep_res["child_params"]["test_param"] == "value123"
 
             # Mock compilation for exec phase
-            with patch("pflow.runtime.workflow_executor.compile_ir_to_flow") as mock_compile:
-                mock_flow = Mock()
-                mock_flow.run.return_value = "success"
-                mock_compile.return_value = mock_flow
+            with (
+                patch("pflow.runtime.workflow_executor.compile_workflow") as mock_compile,
+                patch("pflow.runtime.engine.WorkflowEngine") as mock_engine_class,
+            ):
+                mock_compiled = Mock()
+                mock_compiled.resolved_defaults = {}
+                mock_compile.return_value = mock_compiled
+
+                mock_engine = Mock()
+                mock_engine.run.return_value = "default"
+                mock_engine_class.return_value = mock_engine
 
                 exec_res = node.exec(prep_res)
 
                 assert exec_res["success"] is True
-                assert exec_res["result"] == "success"
+                assert exec_res["result"] == "default"
 
                 # Verify compile was called with correct parameters
                 mock_compile.assert_called_once()

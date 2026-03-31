@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.ir_schema import ValidationError
-from pflow.pocketflow import BaseNode
-from pflow.runtime import compile_ir_to_flow
+from pflow.core.node import BaseNode
+from pflow.runtime import compile_workflow
 
 
 class MockNode(BaseNode):
@@ -113,8 +113,8 @@ class TestCompilerInterfaces:
         initial_params = {"file_path": "test.txt"}
 
         # Should compile successfully
-        flow = compile_ir_to_flow(ir, registry_with_nodes, initial_params)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes, initial_params)
+        assert workflow is not None
 
     def test_missing_required_input_raises_error(self, registry_with_nodes, mock_node_import):
         """Test that missing required inputs raise ValidationError with description."""
@@ -127,7 +127,7 @@ class TestCompilerInterfaces:
 
         # No initial_params provided
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {})
+            compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
         assert "file_path" in error.message
@@ -159,9 +159,9 @@ class TestCompilerInterfaces:
 
         # Should compile successfully and apply default
         with caplog.at_level(logging.DEBUG):
-            flow = compile_ir_to_flow(ir, registry_with_nodes, initial_params)
+            workflow = compile_workflow(ir, registry_with_nodes, initial_params)
 
-        assert flow is not None
+        assert workflow is not None
 
         # Check logging to verify default was applied
         assert any(
@@ -189,7 +189,7 @@ class TestCompilerInterfaces:
 
         # Only provide one of the required inputs
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {"source_file": "source.txt"})
+            compile_workflow(ir, registry_with_nodes, {"source_file": "source.txt"})
 
         error = exc_info.value
         assert "target_file" in error.message
@@ -216,8 +216,10 @@ class TestCompilerInterfaces:
         }
 
         # Should compile successfully now
-        flow = compile_ir_to_flow(ir, registry_with_nodes, {"api-key": "test_value", "user-email": "test@example.com"})
-        assert flow is not None  # Compilation succeeded
+        workflow = compile_workflow(
+            ir, registry_with_nodes, {"api-key": "test_value", "user-email": "test@example.com"}
+        )
+        assert workflow is not None  # Compilation succeeded
 
     def test_shell_special_chars_in_input_name_raises_error(self, registry_with_nodes, mock_node_import):
         """Test that input names with shell special characters raise errors."""
@@ -235,7 +237,7 @@ class TestCompilerInterfaces:
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {"my$input": "value"})
+            compile_workflow(ir, registry_with_nodes, {"my$input": "value"})
 
         error = exc_info.value
         assert "Invalid input name 'my$input'" in error.message
@@ -251,7 +253,7 @@ class TestCompilerInterfaces:
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {})
+            compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
         assert "api_key" in error.message
@@ -269,8 +271,8 @@ class TestCompilerInterfaces:
         }
 
         # Should compile successfully
-        flow = compile_ir_to_flow(ir, registry_with_nodes)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes)
+        assert workflow is not None
 
     def test_outputs_that_cannot_be_traced_log_warning(self, registry_with_nodes, mock_node_import, caplog):
         """Test that outputs that can't be traced to nodes log warnings, not errors."""
@@ -286,8 +288,8 @@ class TestCompilerInterfaces:
         caplog.set_level("WARNING", logger="pflow.runtime.compilation.compiler")
 
         # Should compile successfully but log warning
-        flow = compile_ir_to_flow(ir, registry_with_nodes)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes)
+        assert workflow is not None
 
         # Check for warning
         warning_found = False
@@ -319,8 +321,8 @@ class TestCompilerInterfaces:
         }
 
         # Should compile successfully now
-        flow = compile_ir_to_flow(ir, registry_with_nodes)
-        assert flow is not None  # Compilation succeeded
+        workflow = compile_workflow(ir, registry_with_nodes)
+        assert workflow is not None  # Compilation succeeded
 
     def test_shell_special_chars_in_output_name_raises_error(self, registry_with_nodes, mock_node_import):
         """Test that output names with shell special characters raise errors."""
@@ -337,7 +339,7 @@ class TestCompilerInterfaces:
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes)
+            compile_workflow(ir, registry_with_nodes)
 
         error = exc_info.value
         assert "Invalid output name 'my$output'" in error.message
@@ -390,8 +392,8 @@ class TestCompilerInterfaces:
 
         with patch.object(mock_node_import, "return_value", WorkflowExecutor):
             # Should compile successfully - output_mapping makes final_result available
-            flow = compile_ir_to_flow(ir, registry_with_nodes)
-            assert flow is not None
+            workflow = compile_workflow(ir, registry_with_nodes)
+            assert workflow is not None
 
     # === Backward Compatibility Tests ===
 
@@ -404,8 +406,8 @@ class TestCompilerInterfaces:
         }
 
         # Should compile successfully
-        flow = compile_ir_to_flow(ir, registry_with_nodes)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes)
+        assert workflow is not None
 
     def test_empty_inputs_outputs_objects_work(self, registry_with_nodes, mock_node_import):
         """Test that empty inputs/outputs objects are valid."""
@@ -418,8 +420,8 @@ class TestCompilerInterfaces:
         }
 
         # Should compile successfully
-        flow = compile_ir_to_flow(ir, registry_with_nodes)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes)
+        assert workflow is not None
 
     # === Integration Tests ===
 
@@ -450,8 +452,8 @@ class TestCompilerInterfaces:
         initial_params = {"input_file": "input.txt", "output_file": "output.txt"}
 
         # Should compile successfully
-        flow = compile_ir_to_flow(ir, registry_with_nodes, initial_params)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes, initial_params)
+        assert workflow is not None
 
     def test_default_values_are_accessible_in_nodes(self, registry_with_nodes, mock_node_import, caplog):
         """Test that default values are applied and accessible during compilation."""
@@ -468,9 +470,9 @@ class TestCompilerInterfaces:
 
         # Test that defaults are applied when no initial_params are provided
         with caplog.at_level(logging.DEBUG):
-            flow = compile_ir_to_flow(ir, registry_with_nodes)
+            workflow = compile_workflow(ir, registry_with_nodes)
 
-        assert flow is not None
+        assert workflow is not None
 
         # Verify default was applied via logging
         assert any("Applying default value for optional input 'mode'" in record.message for record in caplog.records)
@@ -496,8 +498,8 @@ class TestCompilerInterfaces:
         initial_params = {"prefix": "file"}
 
         # Should compile and apply default suffix
-        flow = compile_ir_to_flow(ir, registry_with_nodes, initial_params)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry_with_nodes, initial_params)
+        assert workflow is not None
         assert initial_params["suffix"] == ".txt"
 
     # === Error Message Quality Tests ===
@@ -518,7 +520,7 @@ class TestCompilerInterfaces:
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {})
+            compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
         assert "GitHub personal access token for API calls" in error.message
@@ -533,7 +535,7 @@ class TestCompilerInterfaces:
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {})
+            compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
         assert error.path == "inputs.issue_number"
@@ -550,7 +552,7 @@ class TestCompilerInterfaces:
         }
 
         with pytest.raises(ValidationError) as exc_info:
-            compile_ir_to_flow(ir, registry_with_nodes, {})
+            compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
         # Suggestions removed for agent-friendly errors (Task 71)

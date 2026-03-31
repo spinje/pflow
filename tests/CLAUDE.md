@@ -9,7 +9,6 @@ tests/
 │   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for .pflow.md test files
 │   ├── registry_utils.py # ensure_test_registry() helper
 │   └── README.md         # Docs for shared utilities
-├── test_pocketflow/       # PocketFlow framework tests (sync/async, batch, flow composition)
 ├── test_cli/              # CLI command tests (CliRunner-based)
 ├── test_core/             # IR schema, shell integration, settings, workflow manager
 ├── test_docs/             # Documentation validation
@@ -25,7 +24,7 @@ tests/
 │   ├── test_claude/       # Claude Code node tests
 │   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
 ├── test_registry/         # Registry, scanner, smart filter, and component discovery tests
-└── test_runtime/          # Compiler, flow construction, dynamic imports
+└── test_runtime/          # Compiler, engine, template resolution, batch, caching, tracing
 ```
 
 **Mapping convention**: `src/pflow/X/Y/module.py` → `tests/test_X/test_Y/test_module.py`
@@ -170,13 +169,13 @@ node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
 
 ### 1. Testing Framework Instead of Your Code
 ```python
-# ❌ Don't create PocketFlow flows with loops to test retry
-flow = Flow(start=generator)
+# ❌ Don't hand-build complex node graphs to test retry
+generator >> validator
 validator - "retry" >> generator
 
 # ✅ Test that nodes return correct action strings
 action = validator.run(shared)
-assert action == "retry"  # PocketFlow handles routing
+assert action == "retry"  # WorkflowEngine handles routing
 ```
 
 ### 2. Import Errors

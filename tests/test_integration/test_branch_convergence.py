@@ -11,7 +11,8 @@ from typing import Any
 import pytest
 
 from pflow.core.markdown_parser import parse_markdown
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 from tests.shared.registry_utils import ensure_test_registry
 
 
@@ -26,11 +27,15 @@ def compile_and_run_ir(
     *,
     initial_params: dict[str, Any] | None = None,
 ) -> dict:
-    """Compile IR dict to flow and run it."""
+    """Compile IR dict to workflow and run it via WorkflowEngine."""
     registry = ensure_test_registry()
-    flow = compile_ir_to_flow(ir, registry, initial_params=initial_params)
+    workflow = compile_workflow(ir, registry, initial_params=initial_params)
     shared = shared or {}
-    flow.run(shared)
+    if initial_params:
+        shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
     return shared
 
 

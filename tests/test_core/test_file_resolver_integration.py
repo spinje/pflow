@@ -251,7 +251,7 @@ Run external script.
         assert ir["nodes"][0]["params"]["command"] == 'echo "hello from file"'
 
     def test_compile_ir_detects_templates_in_file_content(self, tmp_path: Path) -> None:
-        """Template variables in external files are detected by compile_ir_to_flow().
+        """Template variables in external files are detected by compile_workflow().
 
         This is THE critical integration test. If file resolution happens but template
         detection doesn't see the resolved content, ${var} in external files becomes
@@ -260,7 +260,7 @@ Run external script.
         Uses shell nodes (not LLM) to avoid needing API keys in tests.
         """
         from pflow.registry.registry import Registry
-        from pflow.runtime.compilation.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
 
         # External command file with template variable referencing an upstream node
         scripts_dir = tmp_path / "scripts"
@@ -298,14 +298,14 @@ Process the fetched data using an external command file.
         # Compile with the workflow file path so file resolution works
         registry = Registry()
         initial_params = {"_pflow_workflow_file": str(workflow_file)}
-        flow = compile_ir_to_flow(ir, registry, initial_params=initial_params)
+        workflow = compile_workflow(ir, registry, initial_params=initial_params)
 
         # If we get here, compilation succeeded — template validation found
         # ${fetch.stdout} in the resolved file content and validated it against
         # the 'fetch' node's outputs. If file resolution failed silently,
         # template validation would report "fetch.stdout has no valid source"
         # because it would see "./scripts/process.sh" as the literal command.
-        assert flow is not None
+        assert workflow is not None
 
     def test_nested_workflow_file_refs_resolve_from_child_dir(self, tmp_path: Path) -> None:
         """File references in child workflows resolve relative to the child, not parent.
@@ -314,7 +314,7 @@ Process the fetched data using an external command file.
         child file references silently resolve from the wrong directory.
         """
         from pflow.registry.registry import Registry
-        from pflow.runtime.compilation.compiler import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
 
         # Create child workflow in a subdirectory with its own command file
         child_dir = tmp_path / "child"
@@ -356,8 +356,8 @@ Greet by name using external command.
             "name": "World",
             "_pflow_workflow_file": str(child_file),
         }
-        flow = compile_ir_to_flow(ir, registry, initial_params=child_params)
-        assert flow is not None
+        workflow = compile_workflow(ir, registry, initial_params=child_params)
+        assert workflow is not None
 
         # Now verify it FAILS when resolved from the wrong directory
         # (parent dir, which doesn't have scripts/greet.sh)
@@ -369,7 +369,7 @@ Greet by name using external command.
             "_pflow_workflow_file": str(tmp_path / "fake-parent.pflow.md"),
         }
         with pytest.raises(Exception, match="not found"):
-            compile_ir_to_flow(ir2, registry, initial_params=wrong_params)
+            compile_workflow(ir2, registry, initial_params=wrong_params)
 
     def test_no_file_refs_unchanged(self, tmp_path: Path) -> None:
         """Workflow with no file references is completely unchanged."""

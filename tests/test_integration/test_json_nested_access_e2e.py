@@ -10,7 +10,8 @@ JSON auto-parsing at runtime), so validation is enabled by default.
 import pytest
 
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 @pytest.fixture
@@ -41,9 +42,10 @@ class TestJsonNestedAccessE2E:
         }
 
         # Validation enabled - nested access on str allowed with warning
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify the nested access worked
         assert "iso value: 2026-01-01" in shared["test-nested"]["stdout"]
@@ -66,9 +68,10 @@ class TestJsonNestedAccessE2E:
             "edges": [{"from": "deep-json", "to": "use-deep"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert "Name: Alice" in shared["use-deep"]["stdout"]
 
@@ -90,9 +93,10 @@ class TestJsonNestedAccessE2E:
             "edges": [{"from": "array-json", "to": "use-array"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert "First ID: 1" in shared["use-array"]["stdout"]
 
@@ -116,9 +120,10 @@ class TestJsonNestedAccessE2E:
             "edges": [{"from": "mixed-json", "to": "use-mixed"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert "First: Alice" in shared["use-mixed"]["stdout"]
         assert "Count: 2" in shared["use-mixed"]["stdout"]
@@ -141,9 +146,10 @@ class TestJsonNestedAccessE2E:
             "edges": [{"from": "json-output", "to": "use-raw"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Raw string includes the JSON as-is
         assert '{"field": "value"}' in shared["use-raw"]["stdout"]
@@ -167,13 +173,14 @@ class TestJsonNestedAccessE2E:
             "edges": [{"from": "not-json", "to": "try-access"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
 
         # The flow will fail because the template can't be resolved at runtime
         # (the string is not valid JSON, so JSON auto-parsing fails)
         with pytest.raises(ValueError, match="Unresolved variables"):
-            flow.run(shared)
+            engine.run(workflow, shared)
 
 
 class TestRealWorldPatterns:
@@ -199,9 +206,10 @@ class TestRealWorldPatterns:
             "edges": [{"from": "api-call", "to": "process-response"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         output = shared["process-response"]["stdout"]
         assert "User Alice" in output
@@ -229,9 +237,10 @@ class TestRealWorldPatterns:
             "edges": [{"from": "jq-format", "to": "use-jq"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert "Date: 2026-01-01" in shared["use-jq"]["stdout"]
 
@@ -256,8 +265,9 @@ class TestRealWorldPatterns:
             "edges": [{"from": "nested-json", "to": "access-deep"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert "Inner: deep value" in shared["access-deep"]["stdout"]

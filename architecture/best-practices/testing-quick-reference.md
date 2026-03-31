@@ -175,14 +175,16 @@ def test_node_handles_missing_input():
 ```python
 def test_nodes_work_together_in_workflow():
     """Test nodes communicate via shared store."""
-    # Build workflow
-    flow = Flow() >> ProducerNode() >> ConsumerNode()
-
-    # Run with input
-    result = flow.run({"initial_data": "test"})
+    # Build workflow IR and compile
+    ir = {"nodes": [...], "edges": [...]}
+    workflow = compile_workflow(ir, registry)
+    shared = {"initial_data": "test"}
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
 
     # Verify end result
-    assert result["final_output"] == "processed: test"
+    assert shared["consumer"]["final_output"] == "processed: test"
 ```
 
 ## 📝 Test Patterns by Implementation Type
@@ -216,14 +218,14 @@ def test_node_validates_input():
     shared = {"invalid_data": None}
     node = YourNode()
 
-    # Let exception bubble up (PocketFlow will retry)
+    # Let exception bubble up (Node retry mechanism will handle it)
     with pytest.raises(ValueError):
         node.exec(shared)
 ```
 
 #### ⚠️ NEVER Test Retry Behavior
 ```python
-# ❌ DON'T DO THIS - PocketFlow handles retries
+# ❌ DON'T DO THIS - Node retry mechanism handles retries
 def test_node_retries_on_failure():
     # Don't test the framework!
 
@@ -508,10 +510,10 @@ def test_handles_empty_input():
 
 ### The Sacred Rules - NEVER VIOLATE THESE
 
-1. **Never Mock PocketFlow Components**
+1. **Never Mock Node Primitives**
    ```python
    # ❌ NEVER DO THIS
-   with patch('pocketflow.Node'):
+   with patch('pflow.core.node.Node'):
        # This breaks everything!
 
    # ✅ Create simple test nodes
@@ -527,11 +529,11 @@ def test_handles_empty_input():
        try:
            risky_operation()
        except Exception:
-           pass  # PocketFlow can't retry!
+           pass  # Node retry mechanism can't retry!
 
    # ✅ LET EXCEPTIONS BUBBLE UP
    def exec(self, shared, **kwargs):
-       risky_operation()  # PocketFlow handles retries
+       risky_operation()  # Node retry mechanism handles retries
    ```
 
 3. **Use Descriptive Shared Store Keys**
@@ -627,9 +629,9 @@ Should I mock this?
 │  ├─ Database → Yes (mock connection)
 │  └─ Time → Yes (use freezegun)
 │
-├─ Is it a PocketFlow component?
+├─ Is it a Node/engine component?
 │  ├─ Node → NO! Never mock
-│  ├─ Flow → NO! Never mock
+│  ├─ WorkflowEngine → NO! Never mock
 │  └─ Shared store → NO! Never mock
 │
 ├─ Is it your own code?
@@ -656,7 +658,7 @@ If ANY of these are true, revise your test:
 - [ ] Can't understand test purpose from its name
 - [ ] More than 3 assertions testing different things
 - [ ] Using `time.sleep()` anywhere
-- [ ] Mocking PocketFlow components
+- [ ] Mocking Node primitives (BaseNode, Node)
 - [ ] Catching exceptions in node tests
 
 ## ✅ MANDATORY Quality Checklist

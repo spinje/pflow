@@ -39,7 +39,7 @@ class WorkflowRunner:
 3. `_fill_declared_defaults()` — fills declared inputs with defaults or placeholders so validation doesn't flag them as missing. Stripped before compilation.
 4. `_validate()` — `WorkflowValidator.validate()`, once per execution
 5. Create per-execution resources (MetricsCollector, TraceCollector, MCPConnectionPool, MemoizationCache)
-6. `_compile_and_execute()` — `compile_ir_to_flow()` + `flow.run()`
+6. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`
 7. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
@@ -120,7 +120,7 @@ Implementations: `CliOutput` (cli/cli_output.py), `NullOutput` (null_output.py f
 
 ## Testing
 
-**Mock points**: `WorkflowRunner.run` (CLI/MCP tests), `WorkflowRunner._compile_and_execute` (bypass resolution/validation), `compile_ir_to_flow()` (compilation tests), `WorkflowValidator.validate` (warning plumbing).
+**Mock points**: `WorkflowRunner.run` (CLI/MCP tests), `WorkflowRunner._compile_and_execute` (bypass resolution/validation), `compile_workflow()` (compilation tests), `WorkflowValidator.validate` (warning plumbing).
 
 **Key test files**:
 - `tests/test_execution/test_runner.py` — Runner pipeline behavior

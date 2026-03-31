@@ -279,7 +279,7 @@ class TestWorkflowResolutionCLI:
     def test_parameter_defaults_applied(self):
         """Test that user params are passed through and defaults are declared in IR.
 
-        Defaults are applied by the Runner (inside compile_ir_to_flow), not by the CLI.
+        Defaults are applied by the Runner (inside compile_workflow), not by the CLI.
         The CLI passes user-provided params; the Runner's prepare_inputs applies defaults.
         """
         runner = click.testing.CliRunner()

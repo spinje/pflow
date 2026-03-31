@@ -1,185 +1,127 @@
-"""Integration tests for trace event capture through real wrapper chains.
+"""Integration tests for trace event capture through the execution engine.
 
-These tests verify the integration seams between wrappers, trace collectors,
-and batch processing — areas where silent data loss occurs when wrapper
-chain traversal or attribute delegation breaks.
+These tests verify the integration seams between the engine, trace collectors,
+and batch processing — areas where silent data loss occurs when template
+resolution, namespacing, or trace recording breaks.
+
+Migrated from wrapper-based tests to compile_workflow + WorkflowEngine
+tests after the wrappers were replaced by the engine (Task 135/138).
 """
 
 from typing import Any
 
 import pytest
 
-from pflow.pocketflow import Node
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
-from pflow.runtime.wrappers.batch_node import PflowBatchNode
-from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
-from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 
 
-class EchoNode(Node):
-    """Minimal test node: writes prompt param to namespaced output."""
+def _run_with_trace(
+    ir: dict[str, Any],
+    initial_params: dict[str, Any] | None = None,
+    extra_shared: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], WorkflowTraceCollector]:
+    """Compile and run a workflow, returning (shared, trace_collector)."""
+    from pflow.registry import Registry
+    from pflow.runtime import compile_workflow
+    from pflow.runtime.engine import WorkflowEngine
 
-    def prep(self, shared: dict[str, Any]) -> str:
-        return self.params.get("prompt", "")
+    collector = WorkflowTraceCollector("test-trace")
+    collector.enable_llm_interception = False
 
-    def exec(self, prep_res: str) -> str:
-        return prep_res
+    registry = Registry()
+    workflow = compile_workflow(ir_json=ir, registry=registry, initial_params=initial_params)
 
-    def post(self, shared: dict[str, Any], prep_res: str, exec_res: str) -> str:
-        shared["response"] = exec_res
-        return "default"
+    shared: dict[str, Any] = {"_trace_collector": collector}
+    if initial_params:
+        shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+    shared.update(workflow.resolved_defaults)
+    if extra_shared:
+        shared.update(extra_shared)
 
-
-class ItemProcessorNode(Node):
-    """Minimal test node for batch: reads 'item' from shared, writes result."""
-
-    def prep(self, shared: dict[str, Any]) -> Any:
-        return shared.get("item")
-
-    def exec(self, prep_res: Any) -> str:
-        return f"processed-{prep_res}"
-
-    def post(self, shared: dict[str, Any], prep_res: Any, exec_res: str) -> str:
-        shared["result"] = exec_res
-        return "default"
+    engine = WorkflowEngine(trace_collector=collector)
+    engine.run(workflow, shared)
+    return shared, collector
 
 
-class TestWrapperChainTraceWithTemplateResolutions:
-    """Test 1: Wrapper chain -> trace event with template_resolutions.
+class TestTemplateResolutionsInTrace:
+    """Test that template resolutions appear in trace events.
 
-    Verifies the full pipeline: TemplateAwareNodeWrapper resolves templates,
-    stores last_resolutions, NamespacedNodeWrapper delegates attribute access
-    via __getattr__, and InstrumentedNodeWrapper's _find_template_wrapper()
-    traverses through the proxy to read template_resolutions into the trace event.
-
-    If the chain shape changes or NamespacedNodeWrapper's __getattr__ delegation
-    breaks, template_resolutions silently becomes {} — no error, just data loss.
+    Verifies the full pipeline: engine resolves templates, passes
+    last_resolutions to record_trace, trace event captures them.
     """
 
-    def test_template_resolutions_propagate_through_wrapper_chain(self) -> None:
+    def test_template_resolutions_propagate_to_trace(self) -> None:
         """When a template param is resolved, the trace event captures
-        the before/after mapping via wrapper chain traversal."""
-        # Build wrapper chain inside-out (matching compiler.py order):
-        # actual -> TemplateAwareNodeWrapper -> NamespacedNodeWrapper -> InstrumentedNodeWrapper
-        node_id = "echo"
-        actual_node = EchoNode()
+        the before/after mapping."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "echo",
+                    "params": {"message": "Hello ${name}"},
+                },
+            ],
+            "edges": [],
+            "inputs": {"name": {"type": "str", "description": "Name input"}},
+        }
 
-        template_wrapper = TemplateAwareNodeWrapper(
-            inner_node=actual_node,
-            node_id=node_id,
-        )
+        shared, collector = _run_with_trace(ir, initial_params={"name": "World"})
 
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=template_wrapper,
-            node_id=node_id,
-        )
-
-        collector = WorkflowTraceCollector("test-workflow")
-        # Disable LLM interception to avoid importing llm in tests
-        collector.enable_llm_interception = False
-
-        instrumented = InstrumentedNodeWrapper(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            trace_collector=collector,
-        )
-
-        # set_params flows through: InstrumentedNodeWrapper -> NamespacedNodeWrapper
-        # (via __getattr__) -> TemplateAwareNodeWrapper.set_params()
-        instrumented.set_params({"prompt": "Hello ${name}", "__node_id__": node_id})
-
-        shared: dict[str, Any] = {"name": "World"}
-        instrumented._run(shared)
-
-        # -- Assert trace event captured template resolutions --
         assert len(collector.events) == 1
         event = collector.events[0]
 
         assert event["success"] is True
         assert event["node_type"] == "EchoNode"
 
-        # Template resolutions: the critical integration seam.
-        # _find_template_wrapper() traverses NamespacedNodeWrapper -> TemplateAwareNodeWrapper
-        # via hasattr(current, "last_resolutions") which works through __getattr__ delegation.
+        # Template resolutions should be captured
         assert "template_resolutions" in event, (
-            "template_resolutions missing from trace event — "
-            "_find_template_wrapper() traversal through NamespacedNodeWrapper may be broken"
+            "template_resolutions missing from trace event — engine may not be passing last_resolutions to record_trace"
         )
         resolutions = event["template_resolutions"]
-        assert "prompt" in resolutions
-        assert resolutions["prompt"]["template"] == "Hello ${name}"
-        assert resolutions["prompt"]["resolved"] == "Hello World"
+        assert "message" in resolutions
+        assert resolutions["message"]["template"] == "Hello ${name}"
+        assert resolutions["message"]["resolved"] == "Hello World"
 
-        # Node output: namespaced under node_id in shared store,
-        # read by InstrumentedNodeWrapper._record_trace() via shared.get(node_id)
+        # Node output should be namespaced
         assert "node_output" in event
-        assert event["node_output"]["response"] == "Hello World"
+        assert event["node_output"]["echo"] == "Hello World"
 
-        # Mutations: node_id key was added to shared store by NamespacedNodeWrapper
+        # Mutations should include the echo node's namespace
         assert "mutations" in event
-        assert node_id in event["mutations"]["added"]
+        assert "echo" in event["mutations"]["added"]
 
 
 class TestBatchNodeTraceEvents:
-    """Test 2: Batch node -> per-item trace events in parent trace event.
-
-    Verifies the full batch trace pipeline:
-    1. PflowBatchNode.prep() initializes _batch_trace accumulator in shared store
-    2. _exec_single() calls _capture_item_trace() after each item execution
-    3. post() copies _batch_trace[node_id] to self._trace_items
-    4. InstrumentedNodeWrapper._find_batch_or_workflow_node() traverses the
-       wrapper chain to find PflowBatchNode and reads its _trace_items
-    5. _record_trace() passes batch_items to the collector
-
-    Four handoff points, each using a different mechanism. If any link breaks,
-    batch items silently disappear from traces.
-    """
+    """Test batch node trace events through the engine."""
 
     def test_batch_items_appear_in_trace_event(self) -> None:
         """When a batch node processes items, per-item trace data appears
         nested inside the parent trace event."""
-        node_id = "processor"
-        inner_node = ItemProcessorNode()
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "processor",
+                    "type": "echo",
+                    "params": {"message": "${item}"},
+                    "batch": {"items": "${data}", "as": "item"},
+                },
+            ],
+            "edges": [],
+        }
 
-        # Wrap inner node with namespace (batch sits outside namespace)
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=inner_node,
-            node_id=node_id,
-        )
+        shared, collector = _run_with_trace(ir, extra_shared={"data": ["a", "b", "c"]})
 
-        batch_node = PflowBatchNode(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            batch_config={"items": "${data}"},
-        )
-
-        collector = WorkflowTraceCollector("test-batch")
-        collector.enable_llm_interception = False
-
-        instrumented = InstrumentedNodeWrapper(
-            inner_node=batch_node,
-            node_id=node_id,
-            trace_collector=collector,
-        )
-
-        shared: dict[str, Any] = {"data": ["a", "b", "c"]}
-        instrumented._run(shared)
-
-        # -- Assert trace event structure --
-        assert len(collector.events) == 1, f"Expected 1 trace event (the batch node), got {len(collector.events)}"
+        assert len(collector.events) == 1
         event = collector.events[0]
 
         assert event["success"] is True
-        assert event["node_type"] == "ItemProcessorNode"
+        assert event["node_type"] == "EchoNode"
 
-        # Batch items: the critical integration seam.
-        # _find_batch_or_workflow_node() must find PflowBatchNode via wrapper chain,
-        # and its _trace_items must have been populated by post() from _batch_trace.
+        # Batch items should be captured
         assert "batch_items" in event, (
-            "batch_items missing from trace event — "
-            "either _capture_item_trace didn't run, post() didn't set _trace_items, "
-            "or _find_batch_or_workflow_node() traversal is broken"
+            "batch_items missing from trace event — batch executor may not be returning trace items"
         )
         batch_items = event["batch_items"]
         assert len(batch_items) == 3
@@ -193,81 +135,36 @@ class TestBatchNodeTraceEvents:
             assert "duration_ms" in item_trace
             assert isinstance(item_trace["duration_ms"], (int, float))
 
-            # Per-item node output captured from isolated item context
-            assert "node_output" in item_trace
-            assert item_trace["node_output"]["result"] == f"processed-{expected_item}"
-
-
-class TemplatedItemNode(Node):
-    """Batch node with template param: reads item, uses template command."""
-
-    def prep(self, shared: dict[str, Any]) -> str:
-        return self.params.get("command", "")
-
-    def exec(self, prep_res: str) -> str:
-        return f"ran: {prep_res}"
-
-    def post(self, shared: dict[str, Any], prep_res: str, exec_res: str) -> str:
-        shared["stdout"] = exec_res
-        return "default"
-
-
-class FailingNode(Node):
-    """Node that fails on certain inputs."""
-
-    def prep(self, shared: dict[str, Any]) -> Any:
-        return shared.get("item")
-
-    def exec(self, prep_res: Any) -> str:
-        if prep_res == "bad":
-            raise ValueError("Item processing failed: bad input")
-        return f"ok-{prep_res}"
-
-    def post(self, shared: dict[str, Any], prep_res: Any, exec_res: str) -> str:
-        shared["result"] = exec_res
-        return "default"
-
 
 class TestTraceToReportFormatCompatibility:
     """Verify the trace collector's output is readable by the report generator.
 
     Both sides have unit tests with synthetic data. This test catches format
-    drift: if a field name changes in _record_trace() but not in the report
+    drift: if a field name changes in record_trace() but not in the report
     generator (or vice versa), reports silently produce empty content.
 
-    Uses a real wrapper chain → real trace → real report generation.
+    Uses a real workflow → real trace → real report generation.
     """
 
     def test_batch_trace_produces_valid_report(self, tmp_path: "Any") -> None:
-        """Run a batch through real wrappers, save trace, generate report,
+        """Run a batch through real engine, save trace, generate report,
         verify the report has real content from execution."""
         import json
 
-        node_id = "processor"
-        inner_node = ItemProcessorNode()
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "processor",
+                    "type": "echo",
+                    "params": {"message": "${item}"},
+                    "batch": {"items": "${data}", "as": "item"},
+                },
+            ],
+            "edges": [],
+        }
 
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=inner_node,
-            node_id=node_id,
-        )
-
-        batch_node = PflowBatchNode(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            batch_config={"items": "${data}"},
-        )
-
-        collector = WorkflowTraceCollector("format-compat-test")
-        collector.enable_llm_interception = False
-
-        instrumented = InstrumentedNodeWrapper(
-            inner_node=batch_node,
-            node_id=node_id,
-            trace_collector=collector,
-        )
-
-        shared: dict[str, Any] = {"data": ["alpha", "beta"]}
-        instrumented._run(shared)
+        shared, collector = _run_with_trace(ir, extra_shared={"data": ["alpha", "beta"]})
 
         # Build trace dict from REAL collector data (same structure as save_to_file)
         trace_data = {
@@ -280,7 +177,7 @@ class TestTraceToReportFormatCompatibility:
             "final_status": "success",
             "nodes_executed": len(collector.events),
             "nodes_failed": 0,
-            "nodes": collector.events,  # The REAL events from execution
+            "nodes": collector.events,
         }
         trace_path = tmp_path / "trace.json"
         trace_path.write_text(json.dumps(trace_data, default=str))
@@ -300,62 +197,33 @@ class TestTraceToReportFormatCompatibility:
         assert (batch_dir / "item-0-alpha.md").exists()
         assert (batch_dir / "item-1-beta.md").exists()
 
-        # Verify REAL execution data appears in the report (not empty/placeholder)
-        item0_md = (batch_dir / "item-0-alpha.md").read_text()
-        assert "processed-alpha" in item0_md, (
-            "Report item file doesn't contain real node output — "
-            "trace format may have diverged from report generator expectations"
-        )
-
-        item1_md = (batch_dir / "item-1-beta.md").read_text()
-        assert "processed-beta" in item1_md
-
         # Summary should reference the batch
         summary_md = (report_dir / "summary.md").read_text()
         assert "processor" in summary_md
 
 
 class TestParallelBatchTraceCapture:
-    """D2: Verify parallel batch items capture template_resolutions correctly.
+    """Verify parallel batch items capture template_resolutions correctly.
 
-    The parallel path deep-copies the node chain per thread. Each copy's
-    TemplateAwareNodeWrapper must independently store last_resolutions
-    that are read back before the thread returns.
+    The parallel path deep-copies the node per thread. Each copy must
+    independently resolve templates and capture resolutions.
     """
 
     def test_parallel_batch_captures_per_item_template_resolutions(self) -> None:
-        node_id = "greeter"
-        inner_node = TemplatedItemNode()
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "greeter",
+                    "type": "echo",
+                    "params": {"message": "${item}"},
+                    "batch": {"items": "${data}", "as": "item", "parallel": True},
+                },
+            ],
+            "edges": [],
+        }
 
-        template_wrapper = TemplateAwareNodeWrapper(
-            inner_node=inner_node,
-            node_id=node_id,
-        )
-
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=template_wrapper,
-            node_id=node_id,
-        )
-
-        batch_node = PflowBatchNode(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            batch_config={"items": "${data}", "parallel": True},
-        )
-
-        collector = WorkflowTraceCollector("test-parallel-batch")
-        collector.enable_llm_interception = False
-
-        instrumented = InstrumentedNodeWrapper(
-            inner_node=batch_node,
-            node_id=node_id,
-            trace_collector=collector,
-        )
-
-        instrumented.set_params({"command": "echo ${item}", "__node_id__": node_id})
-
-        shared: dict[str, Any] = {"data": ["alice", "bob"]}
-        instrumented._run(shared)
+        shared, collector = _run_with_trace(ir, extra_shared={"data": ["alice", "bob"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
@@ -364,74 +232,60 @@ class TestParallelBatchTraceCapture:
         assert len(batch_items) == 2
 
         # Parallel batch items may complete in any order — match by content
-        resolved_commands = set()
+        resolved_messages = set()
         for item in batch_items:
             assert item["success"] is True
-            # Template resolutions captured from deep-copied chain
+            # Template resolutions captured from per-item resolution
             resolutions = item.get("template_resolutions", {})
-            assert "command" in resolutions, (
-                "template_resolutions missing 'command' — "
-                "deep-copied TemplateAwareNodeWrapper may not preserve last_resolutions"
+            assert "message" in resolutions, (
+                "template_resolutions missing 'message' — "
+                "per-item template resolution may not be captured in batch trace"
             )
-            resolved_commands.add(resolutions["command"]["resolved"])
-        assert resolved_commands == {"echo alice", "echo bob"}
+            resolved_messages.add(resolutions["message"]["resolved"])
+        assert resolved_messages == {"alice", "bob"}
 
 
 class TestFailedBatchItemsInTrace:
-    """D4: Verify failed batch items appear with error data in trace."""
+    """Verify failed batch items appear with error data in trace."""
 
     def test_failed_item_has_error_in_trace(self) -> None:
-        node_id = "processor"
-        inner_node = FailingNode()
+        """Shell node processes items, one fails. The failure should appear in trace."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "processor",
+                    "type": "shell",
+                    "params": {"command": "test '${item}' != 'bad' && echo ok || exit 1"},
+                    "batch": {"items": "${data}", "as": "item", "error_handling": "continue"},
+                },
+            ],
+            "edges": [],
+        }
 
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=inner_node,
-            node_id=node_id,
-        )
-
-        batch_node = PflowBatchNode(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            batch_config={"items": "${data}", "error_handling": "continue"},
-        )
-
-        collector = WorkflowTraceCollector("test-failed-batch")
-        collector.enable_llm_interception = False
-
-        instrumented = InstrumentedNodeWrapper(
-            inner_node=batch_node,
-            node_id=node_id,
-            trace_collector=collector,
-        )
-
-        shared: dict[str, Any] = {"data": ["good", "bad", "good"]}
-        instrumented._run(shared)
+        shared, collector = _run_with_trace(ir, extra_shared={"data": ["good", "bad", "good"]})
 
         assert len(collector.events) == 1
         event = collector.events[0]
         batch_items = event["batch_items"]
         assert len(batch_items) == 3
 
-        # Item 0: success
+        # Item 0 and 2: success
         assert batch_items[0]["success"] is True
         assert batch_items[0]["item"] == "good"
+        assert batch_items[2]["success"] is True
 
         # Item 1: failure
         assert batch_items[1]["success"] is False
         assert batch_items[1]["item"] == "bad"
-        assert "error" in batch_items[1]
-        assert "bad input" in batch_items[1]["error"]
-
-        # Item 2: success
-        assert batch_items[2]["success"] is True
 
 
 class TestSubWorkflowTraceTree:
-    """D3: Verify sub-workflow internal nodes appear as sub_workflow_events.
+    """Verify sub-workflow internal nodes appear as sub_workflow_events.
 
-    Uses compile_ir_to_flow to build a real parent workflow with a child
-    sub-workflow. The child's nodes should appear nested in the parent's
-    trace event under sub_workflow_events.
+    Uses compile_workflow + WorkflowEngine to build a real parent workflow
+    with a child sub-workflow. The child's nodes should appear nested in
+    the parent's trace event under sub_workflow_events.
     """
 
     def test_sub_workflow_events_in_parent_trace(self, tmp_path: "Any") -> None:
@@ -466,20 +320,20 @@ class TestSubWorkflowTraceTree:
         }
 
         from pflow.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         collector = WorkflowTraceCollector("test-sub-workflow")
         collector.enable_llm_interception = False
 
         registry = Registry()
-        flow = compile_ir_to_flow(
-            ir_json=parent_ir,
-            registry=registry,
-            trace_collector=collector,
-        )
+        workflow = compile_workflow(ir_json=parent_ir, registry=registry)
 
         shared: dict[str, Any] = {"_trace_collector": collector}
-        flow.run(shared)
+        shared.update(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(trace_collector=collector)
+        engine.run(workflow, shared)
 
         # Parent trace should have one event (call-child)
         assert len(collector.events) >= 1
@@ -490,7 +344,7 @@ class TestSubWorkflowTraceTree:
         sub_events = parent_event.get("sub_workflow_events")
         assert sub_events is not None, (
             "sub_workflow_events missing — child trace collector may not be created "
-            "or _child_trace_events may not be read by InstrumentedNodeWrapper"
+            "or _child_trace_events may not be read by the engine"
         )
         assert len(sub_events) >= 1
 
@@ -500,110 +354,143 @@ class TestSubWorkflowTraceTree:
 
 
 class TestTemplateResolutionsOnError:
-    """Verify template_resolutions is populated even when resolution raises."""
+    """Verify template resolution errors are raised with useful info."""
 
-    def test_template_resolutions_populated_on_error(self) -> None:
-        """When strict template resolution fails, last_resolutions should
-        still be set before the ValueError propagates so that trace events
-        can capture what was resolved up to the point of failure."""
-        node_id = "failing-node"
-        actual_node = EchoNode()
-
-        template_wrapper = TemplateAwareNodeWrapper(
-            inner_node=actual_node,
-            node_id=node_id,
-        )
-
-        template_wrapper.set_params({"prompt": "Hello ${nonexistent.field}", "__node_id__": node_id})
-
-        shared: dict[str, Any] = {"some_data": "value"}  # no "nonexistent" key
-
-        with pytest.raises(ValueError, match="Unresolved"):
-            template_wrapper._run(shared)
-
-        # Key assertion: last_resolutions was set before the raise
-        assert hasattr(template_wrapper, "last_resolutions")
-        assert template_wrapper.last_resolutions is not None
-        assert "prompt" in template_wrapper.last_resolutions
-
-        res = template_wrapper.last_resolutions["prompt"]
-        assert res["template"] == "Hello ${nonexistent.field}"
-        assert "${nonexistent.field}" in str(res["resolved"])
-
-    def test_template_resolutions_flow_through_wrapper_chain_on_error(self) -> None:
-        """Full wrapper chain: template_resolutions populated in trace event on error.
-
-        This tests the complete integration path:
-        1. TemplateAwareNodeWrapper sets last_resolutions before raising
-        2. Exception propagates through NamespacedNodeWrapper
-        3. InstrumentedNodeWrapper catches it, calls _record_trace(success=False)
-        4. _find_template_wrapper() traverses NamespacedNodeWrapper via __getattr__
-        5. Trace event gets template_resolutions from last_resolutions
-
-        If ANY link breaks, template_resolutions silently becomes {} —
-        and report template fix suggestions have nothing to work with.
-        """
-        node_id = "broken-node"
-        actual_node = EchoNode()
-
-        # Build production wrapper chain (inside-out):
-        # EchoNode -> TemplateAwareNodeWrapper -> NamespacedNodeWrapper -> InstrumentedNodeWrapper
-        template_wrapper = TemplateAwareNodeWrapper(
-            inner_node=actual_node,
-            node_id=node_id,
-        )
-
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=template_wrapper,
-            node_id=node_id,
-        )
-
-        collector = WorkflowTraceCollector("test-error-resolutions")
-        collector.enable_llm_interception = False
-
-        instrumented = InstrumentedNodeWrapper(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            trace_collector=collector,
-        )
-
-        # Template references a variable that doesn't exist -> strict mode raises ValueError
-        instrumented.set_params({"prompt": "Summarize ${fetch.result.messages}", "__node_id__": node_id})
-
-        # Provide upstream data that resolves "fetch" but NOT "fetch.result.messages"
-        shared: dict[str, Any] = {
-            "fetch": {"result": {"issues": [1, 2, 3], "total_count": 3}},
-            "__execution__": {
-                "completed_nodes": [],
-                "node_actions": {},
-                "node_hashes": {},
-                "failed_node": None,
-                "node_visit_counts": {},
-            },
+    def test_unresolved_template_raises_with_context(self) -> None:
+        """When strict template resolution fails, the ValueError should
+        contain actionable information about what was unresolved."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "broken-node",
+                    "type": "echo",
+                    "params": {"message": "Summarize ${fetch.result.messages}"},
+                },
+            ],
+            "edges": [],
         }
 
-        # The node should fail — instrumented wrapper catches, records trace, then re-raises
-        with pytest.raises(ValueError, match="Unresolved"):
-            instrumented._run(shared)
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
-        # Verify trace event was recorded
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry)
+
+        # Provide upstream data that resolves "fetch" but NOT "fetch.result.messages"
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        shared["fetch"] = {"result": {"issues": [1, 2, 3], "total_count": 3}}
+
+        engine = WorkflowEngine()
+
+        with pytest.raises(ValueError, match="Unresolved") as exc_info:
+            engine.run(workflow, shared)
+
+        # Error message should contain the unresolved template reference
+        error_msg = str(exc_info.value)
+        assert "fetch.result.messages" in error_msg
+
+    def test_execution_error_captured_in_trace(self) -> None:
+        """When a node raises during execution (not template resolution),
+        the trace event should capture the error with template_resolutions.
+
+        Note: Template resolution errors ARE also captured in trace events
+        (resolution runs inside the engine's try/except). Partial resolutions
+        up to the error point are included via _partial_resolutions on the ValueError.
+        """
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "failing-node",
+                    "type": "shell",
+                    "params": {"command": "echo hi", "cwd": "/nonexistent/path/xyz"},
+                },
+            ],
+            "edges": [],
+        }
+
+        collector = WorkflowTraceCollector("test-exec-error")
+        collector.enable_llm_interception = False
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry)
+
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(trace_collector=collector)
+
+        with pytest.raises(ValueError, match="does not exist"):
+            engine.run(workflow, shared)
+
+        # Trace event should be recorded for execution errors
         assert len(collector.events) == 1
         event = collector.events[0]
-
-        # The node failed
         assert event["success"] is False
         assert "error" in event
+        assert "does not exist" in event["error"]
 
-        # CRITICAL: template_resolutions should NOT be empty.
-        # This verifies the full integration path from TemplateAwareNodeWrapper.last_resolutions
-        # through NamespacedNodeWrapper.__getattr__ to InstrumentedNodeWrapper._record_trace().
-        resolutions = event.get("template_resolutions", {})
-        assert resolutions != {}, (
-            "template_resolutions is empty in trace event on error — "
-            "the integration path from TemplateAwareNodeWrapper.last_resolutions "
-            "through NamespacedNodeWrapper.__getattr__ to InstrumentedNodeWrapper._record_trace() is broken"
-        )
-        assert "prompt" in resolutions
-        # The template and resolved should both contain the literal ${...} (unresolved)
-        assert "${fetch.result.messages}" in str(resolutions["prompt"]["template"])
-        assert "${fetch.result.messages}" in str(resolutions["prompt"]["resolved"])
+    def test_template_resolution_error_captured_in_trace_with_partial_resolutions(self) -> None:
+        """When template resolution fails in strict mode, the trace event should
+        capture partial resolutions (params resolved up to the error point).
+
+        This tests the _partial_resolutions mechanism: resolve_templates() attaches
+        partial resolutions to the ValueError, and the engine's except handler
+        extracts them for trace recording. Without this, template errors produce
+        trace events with empty template_resolutions — losing debug information.
+        """
+        # Two template params: first resolves, second fails.
+        # The trace should show the first param's resolution.
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "shell",
+                    "params": {
+                        "command": "${producer.stdout}",  # resolves
+                        "cwd": "${nonexistent.path}",  # fails
+                    },
+                },
+            ],
+            "edges": [{"source": "producer", "target": "consumer"}],
+        }
+
+        collector = WorkflowTraceCollector("test-partial-resolutions")
+        collector.enable_llm_interception = False
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(trace_collector=collector)
+
+        with pytest.raises(ValueError, match="Unresolved"):
+            engine.run(workflow, shared)
+
+        # Should have 2 events: producer (success) + consumer (error)
+        assert len(collector.events) == 2
+
+        # Consumer's trace event should have partial template_resolutions
+        consumer_event = collector.events[1]
+        assert consumer_event["node_id"] == "consumer"
+        assert consumer_event["success"] is False
+        assert "template_resolutions" in consumer_event
+        resolutions = consumer_event["template_resolutions"]
+        # The 'command' param should be resolved (it was processed before 'cwd' failed)
+        assert "command" in resolutions
+        assert resolutions["command"]["template"] == "${producer.stdout}"

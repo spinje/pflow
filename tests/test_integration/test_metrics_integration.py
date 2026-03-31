@@ -485,7 +485,8 @@ class TestWrapperIntegration:
         - Node namespacing works
         """
         from pflow.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -498,12 +499,11 @@ class TestWrapperIntegration:
         metrics = MetricsCollector()
         trace = WorkflowTraceCollector("wrapper-test")
 
-        # Compile with metrics and trace - this tests that wrappers integrate properly
-        flow = compile_ir_to_flow(workflow_ir, registry, metrics_collector=metrics, trace_collector=trace)
-
-        # Execute and verify behavior
-        shared = {}
-        result = flow.run(shared)
+        # Compile workflow and run with engine (metrics/trace are engine args)
+        workflow = compile_workflow(workflow_ir, registry)
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine(metrics_collector=metrics, trace_collector=trace)
+        result = engine.run(workflow, shared)
 
         # Test 1: Workflow executed successfully
         assert result is not None
@@ -533,7 +533,8 @@ class TestWrapperIntegration:
         - Token counts accumulate properly
         """
         from pflow.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         workflow_ir = {
             "ir_version": "0.1.0",
@@ -592,9 +593,11 @@ class TestWrapperIntegration:
         trace = WorkflowTraceCollector("test")
 
         with patch("llm.get_model", mock_get_model_with_responses):
-            flow = compile_ir_to_flow(workflow_ir, registry, metrics_collector=metrics, trace_collector=trace)
-            shared = {"_trace_collector": trace}
-            flow.run(shared)
+            workflow = compile_workflow(workflow_ir, registry)
+            shared: dict[str, Any] = dict(workflow.resolved_defaults)
+            shared["_trace_collector"] = trace
+            engine = WorkflowEngine(metrics_collector=metrics, trace_collector=trace)
+            engine.run(workflow, shared)
 
         # Test behavior: All three LLM nodes executed
         assert "llm1" in metrics.workflow_nodes

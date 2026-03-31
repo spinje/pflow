@@ -5,7 +5,7 @@
 
 ## Overview
 
-pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line Python framework in `src/pflow/pocketflow/__init__.py`). It enables AI agents and users to create, save, and execute workflows defined in markdown files (`.pflow.md`).
+pflow is a CLI-first workflow execution system. Its node system is built on `BaseNode`/`Node` (~90 lines in `src/pflow/core/node.py`), which provide the lifecycle (prep/exec/post) and graph wiring operators. It enables AI agents and users to create, save, and execute workflows defined in markdown files (`.pflow.md`).
 
 ### Primary Interfaces
 
@@ -13,7 +13,7 @@ pflow is a CLI-first workflow execution system built on PocketFlow (a ~200-line 
 2. **MCP Server** - AI agents can interact via Model Context Protocol (`src/pflow/mcp_server/`)
 3. **Natural language (Removed)** - Previously supported quoted requests for workflow generation
 
-> **Important:** Users and AI agents ALWAYS interact via these interfaces using `.pflow.md` workflows. Direct PocketFlow usage (creating `Node` subclasses, `Flow` objects) is reserved for pflow internal development only. See `pflow-pocketflow-integration-guide.md` for internal development patterns.
+> **Important:** Users and AI agents ALWAYS interact via these interfaces using `.pflow.md` workflows. Direct Node subclassing is reserved for pflow internal development only. See `src/pflow/nodes/CLAUDE.md` for node authoring and `src/pflow/runtime/CLAUDE.md` for engine internals.
 
 ### Core Principle
 
@@ -123,16 +123,15 @@ Validation Pipeline (6 layers)
     ▼
 Compilation (runtime/compilation/)
     │
-    ├── IR → PocketFlow Flow object
-    ├── Wrapper chain applied per node
+    ├── IR → CompiledWorkflow (bare nodes + per-node configs)
     └── Shared store initialized
     │
     ▼
-Execution (runtime/workflow_executor.py)
+Execution (runtime/engine/)
     │
-    ├── Nodes execute: prep() → exec() → post()
+    ├── WorkflowEngine walks node graph: prep() → exec() → post()
     ├── Data flows through namespaced shared store
-    └── Metrics/tracing captured
+    └── Metrics/tracing/caching handled per node
     │
     ▼
 Output
@@ -164,27 +163,24 @@ workflow.pflow.md → parse_markdown() → dict (IR) → normalize_ir() → vali
 
 See [shared-store.md](./core-concepts/shared-store.md) for the shared store pattern.
 
-### Wrapper Chain
+### Orchestration Engine
 
-Each node is wrapped for instrumentation and namespacing:
+The `WorkflowEngine` walks the compiled node graph and handles all runtime concerns per node:
 
 ```
-InstrumentedWrapper (metrics, cache, trace)
+WorkflowEngine._execute_single_node()
     │
-    ▼
-BatchWrapper (if configured - iteration)
-    │
-    ▼
-NamespacedWrapper (collision prevention)
-    │
-    ▼
-TemplateAwareWrapper (${var} resolution)
+    ├── Template resolution (${var} → values)
+    ├── Memoization cache check/store
+    ├── Namespaced shared store (collision prevention)
+    ├── Batch execution (if configured — iteration)
+    ├── Metrics, tracing, progress callbacks
     │
     ▼
 ActualNode (prep → exec → post)
 ```
 
-> **Implementation details:** See `src/pflow/runtime/CLAUDE.md` for wrapper application order, set_params flow, and _run() interception chain.
+> **Implementation details:** See `src/pflow/runtime/engine/CLAUDE.md` for the engine architecture and per-node execution pipeline.
 
 ### Template System
 
@@ -451,11 +447,11 @@ The markdown body is never modified by metadata updates — `update_metadata()` 
 
 ## Design Decisions
 
-### Why PocketFlow?
+### Why BaseNode/Node?
 
-- Minimal (~150 lines) with clear semantics
+- Minimal (~90 lines) with clear semantics
 - Node lifecycle (prep/exec/post) separates concerns
-- Flow orchestration with `>>` operator
+- Graph wiring with `>>` operator
 - Shared store pattern for communication
 
 ### Why Markdown Workflows (`.pflow.md`)?
@@ -492,7 +488,7 @@ Internal infrastructure that executes workflows:
 - Not exposed in the registry
 - Handle workflow execution infrastructure
 - Users don't interact with them directly
-- Examples: `WorkflowExecutor`, `Compiler`, wrappers
+- Examples: `WorkflowExecutor`, `Compiler`, `WorkflowEngine`
 
 ### Example: WorkflowExecutor
 
@@ -527,20 +523,20 @@ Users simply specify `type: "workflow"` — they don't need to know about Workfl
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| **Compiler** | `runtime/compilation/` | Transforms workflow IR → executable PocketFlow objects |
+| **Compiler** | `runtime/compilation/` | Transforms workflow IR → CompiledWorkflow |
 | **WorkflowExecutor** | `runtime/workflow_executor.py` | Handles nested workflow execution |
-| **Wrappers** | `runtime/wrappers/` | Add instrumentation, namespacing, templates |
+| **Engine** | `runtime/engine/` | Orchestration, instrumentation, namespacing, templates |
 | **TemplateResolver** | `runtime/template_resolver.py` | Resolves `${var}` syntax |
 
 ### When to Create What?
 
 - **User-facing feature?** → Create a node in `nodes/`
 - **Execution infrastructure?** → Create a runtime component in `runtime/`
-- **Cross-cutting concern?** → Consider a wrapper
+- **Cross-cutting concern?** → Consider adding to the engine pipeline
 
 ## Related Documents
 
-- **PocketFlow**: `src/pflow/pocketflow/CLAUDE.md` - Framework documentation
-- **Integration Guide**: `architecture/pflow-pocketflow-integration-guide.md`
+- **Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators
+- **Engine internals**: `src/pflow/runtime/CLAUDE.md` — compiler, engine, template resolution, batch
 - **Node Interface Format**: `architecture/reference/enhanced-interface-format.md`
 - **Shared Store**: `architecture/core-concepts/shared-store.md`

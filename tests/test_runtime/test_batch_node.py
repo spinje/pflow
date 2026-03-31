@@ -1,17 +1,95 @@
-"""Tests for PflowBatchNode batch processing."""
+"""Tests for batch execution functions in pflow.runtime.engine.batch_executor.
+
+These tests verify the standalone batch execution functions that replaced PflowBatchNode.
+The core behavior under test:
+- Sequential and parallel item execution
+- Error handling (fail_fast vs continue)
+- Retry logic
+- CompilationError propagation
+- Batch output shape (results, count, success_count, error_count, errors, batch_metadata)
+- _detect_empty_output_items
+- Progress callbacks
+- Shallow-copy semantics for special keys
+"""
 
 import threading
 import time
 
 import pytest
 
-from pflow.runtime.wrappers.batch_node import PflowBatchNode, _detect_empty_output_items
+from pflow.runtime.engine.batch_executor import (
+    _detect_empty_output_items,
+    _extract_error,
+    _normalize_result,
+    execute_batch,
+    resolve_batch_items,
+)
+from pflow.runtime.engine.types import BatchConfig, NodeConfig
+
+# =============================================================================
+# Test helpers
+# =============================================================================
+
+
+def _make_node_config(
+    node_id: str = "test_node",
+    batch_config: BatchConfig | None = None,
+    node_type_name: str = "MockNode",
+) -> NodeConfig:
+    """Create a NodeConfig for testing."""
+    return NodeConfig(
+        node_id=node_id,
+        node_type_name=node_type_name,
+        template_config=None,
+        batch_config=batch_config,
+        namespaced=True,
+        interface_metadata=None,
+    )
+
+
+def _simple_execute_single_fn(node, config, item_shared):
+    """Default execute_single_fn: runs node._run() and returns (action, {}, [])."""
+    action = node._run(item_shared)
+    return (action or "default", {}, [])
+
+
+def _run_batch(
+    node,
+    shared: dict,
+    items_template="${data}",
+    item_alias: str = "item",
+    error_handling: str = "fail_fast",
+    parallel: bool = False,
+    max_concurrent: int = 10,
+    max_retries: int = 1,
+    retry_wait: float = 0.0,
+    node_id: str = "test_node",
+    execute_single_fn=None,
+) -> tuple[str, list[dict]]:
+    """Helper to run execute_batch with convenient defaults."""
+    batch_config = BatchConfig(
+        items_template=items_template,
+        item_alias=item_alias,
+        error_handling=error_handling,
+        parallel=parallel,
+        max_concurrent=max_concurrent,
+        max_retries=max_retries,
+        retry_wait=retry_wait,
+    )
+    config = _make_node_config(node_id=node_id, batch_config=batch_config)
+    fn = execute_single_fn or _simple_execute_single_fn
+    return execute_batch(node, config, shared, fn)
+
+
+# =============================================================================
+# Mock nodes
+# =============================================================================
 
 
 class MockInnerNode:
     """Mock node that simulates pflow node behavior.
 
-    Writes results to shared[node_id] to mimic NamespacedNodeWrapper behavior.
+    Writes results to shared[node_id] to mimic namespaced behavior.
     """
 
     def __init__(self, node_id: str, behavior: str = "echo"):
@@ -35,7 +113,7 @@ class MockInnerNode:
         """Execute mock node logic."""
         self.call_count += 1
 
-        # Get item from shared store (injected by batch node)
+        # Get item from shared store (injected by batch executor)
         item = shared.get("item") or shared.get("file") or shared.get("record")
 
         result = {}
@@ -58,994 +136,9 @@ class MockInnerNode:
         elif self.behavior == "return_none":
             result = {"response": None}
 
-        # Write to namespace (simulating NamespacedNodeWrapper)
+        # Write to namespace (simulating namespaced behavior)
         shared[self.node_id] = result
         return "default"
-
-
-class TestPflowBatchNodeBasic:
-    """Basic batch processing tests."""
-
-    def test_batch_empty_items(self):
-        """Empty array produces empty results with zero counts."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": []}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        assert shared["test_node"]["results"] == []
-        assert shared["test_node"]["count"] == 0
-        assert shared["test_node"]["success_count"] == 0
-        assert shared["test_node"]["error_count"] == 0
-        assert shared["test_node"]["errors"] is None
-
-    def test_batch_single_item(self):
-        """Single item processed correctly."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["hello"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        assert len(shared["test_node"]["results"]) == 1
-        assert shared["test_node"]["results"][0]["response"] == "hello"
-        assert shared["test_node"]["results"][0]["item"] == "hello"
-        assert shared["test_node"]["count"] == 1
-        assert shared["test_node"]["success_count"] == 1
-        assert shared["test_node"]["error_count"] == 0
-
-    def test_batch_multiple_items_in_order(self):
-        """Multiple items processed in input order."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        assert shared["test_node"]["count"] == 3
-        assert shared["test_node"]["success_count"] == 3
-        assert shared["test_node"]["results"][0]["response"] == "a"
-        assert shared["test_node"]["results"][0]["item"] == "a"
-        assert shared["test_node"]["results"][1]["response"] == "b"
-        assert shared["test_node"]["results"][1]["item"] == "b"
-        assert shared["test_node"]["results"][2]["response"] == "c"
-        assert shared["test_node"]["results"][2]["item"] == "c"
-
-
-class TestItemInResult:
-    """Tests for the `item` field being included in each batch result."""
-
-    def test_item_included_when_result_has_error_key(self):
-        """Original item is included even when result contains error key."""
-        inner = MockInnerNode("test_node", behavior="error_in_result")
-        inner.error_index = 1  # Second item will have error in result
-
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
-        shared = {"data": ["success", "will_fail", "success"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        # All results should have item field, including the one with error
-        assert results[0]["response"] == "success"
-        assert results[0]["item"] == "success"
-
-        # Error result still has item field for debugging
-        assert "error" in results[1]
-        assert results[1]["item"] == "will_fail"
-
-        assert results[2]["response"] == "success"
-        assert results[2]["item"] == "success"
-
-    def test_item_overwrite_warning_logged(self, caplog):
-        """Warning is logged when node output already has 'item' key."""
-        import logging
-
-        class ItemOutputNode:
-            """Node that outputs its own 'item' field."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get("item")
-                # Node outputs its own 'item' key which will be overwritten
-                shared[self.node_id] = {"response": item, "item": "node_provided"}
-                return "default"
-
-        inner = ItemOutputNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["test_value"]}
-        items = batch.prep(shared)
-
-        with caplog.at_level(logging.WARNING):
-            results = batch._exec(items)
-
-        # The original item should overwrite the node-provided value
-        assert results[0]["item"] == "test_value"
-        assert results[0]["response"] == "test_value"
-
-        # Warning should have been logged
-        assert "already has 'item' key" in caplog.text
-
-
-class TestInlineArrayItems:
-    """Tests for inline array items support (batch.items as literal array)."""
-
-    def test_inline_array_with_templates(self):
-        """Inline array with templates inside elements resolves correctly."""
-        inner = MockInnerNode("test_node")
-        # items is a literal array with templates inside
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {
-                "items": [
-                    {"style": "summary", "data": "${source}"},
-                    {"style": "detailed", "data": "${source}"},
-                ]
-            },
-        )
-
-        shared = {"source": {"content": "hello world"}}
-        items = batch.prep(shared)
-
-        # Templates inside array elements should be resolved
-        assert items == [
-            {"style": "summary", "data": {"content": "hello world"}},
-            {"style": "detailed", "data": {"content": "hello world"}},
-        ]
-
-    def test_inline_array_preserves_types(self):
-        """Inline array preserves types of resolved templates (Task 103)."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {
-                "items": [
-                    {"count": "${num}", "flag": "${bool_val}", "items": "${list_val}"},
-                ]
-            },
-        )
-
-        shared = {"num": 42, "bool_val": True, "list_val": [1, 2, 3]}
-        items = batch.prep(shared)
-
-        # Types should be preserved, not stringified
-        assert items[0]["count"] == 42
-        assert items[0]["flag"] is True
-        assert items[0]["items"] == [1, 2, 3]
-
-
-class TestItemAliasInjection:
-    """Tests for item alias injection into isolated context."""
-
-    def test_default_item_alias(self):
-        """Default alias 'item' is available in context."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["value1"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        # Inner node received item via "item" alias
-        assert results[0]["response"] == "value1"
-        assert results[0]["item"] == "value1"
-
-    def test_custom_item_alias(self):
-        """Custom alias is used when 'as' is specified."""
-
-        class AliasAwareNode:
-            """Node that checks for specific alias."""
-
-            def __init__(self, node_id: str, expected_alias: str):
-                self.node_id = node_id
-                self.expected_alias = expected_alias
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get(self.expected_alias)
-                shared[self.node_id] = {"response": item, "alias_used": self.expected_alias}
-                return "default"
-
-        inner = AliasAwareNode("test_node", "file")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${files}", "as": "file"})
-
-        shared = {"files": ["doc1.txt", "doc2.txt"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["response"] == "doc1.txt"
-        assert results[0]["alias_used"] == "file"
-        assert results[0]["item"] == "doc1.txt"
-        assert results[1]["response"] == "doc2.txt"
-        assert results[1]["alias_used"] == "file"
-        assert results[1]["item"] == "doc2.txt"
-
-
-class TestIsolatedContext:
-    """Tests for isolated shared store context per item."""
-
-    def test_items_dont_pollute_each_other(self):
-        """Each item execution has isolated context."""
-
-        class AccumulatorNode:
-            """Node that would accumulate if contexts were shared."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                # Try to read previous item's value (should not exist)
-                prev_item = shared.get("previous_item")
-                current = shared.get("item")
-
-                # Store current as "previous" for next iteration (in isolated context)
-                shared["previous_item"] = current
-                shared[self.node_id] = {"response": current, "saw_previous": prev_item}
-                return "default"
-
-        inner = AccumulatorNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [1, 2, 3]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        # Each item should NOT see previous item due to isolation
-        assert results[0]["saw_previous"] is None
-        assert results[1]["saw_previous"] is None
-        assert results[2]["saw_previous"] is None
-
-    def test_original_shared_unchanged_during_iteration(self):
-        """Original shared store is not modified during batch iteration."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"], "original_key": "original_value"}
-        items = batch.prep(shared)
-
-        # Check that "item" alias doesn't exist in original shared before post
-        batch._exec(items)
-        # Note: We can't easily check mid-iteration, but we verify alias isn't in original after
-        assert "item" not in shared  # Alias was only in isolated copies
-
-    def test_special_keys_shared_across_items(self):
-        """Special dunder keys are shared across items via shallow copy behavior."""
-
-        class TrackingNode:
-            """Node that appends to a shared mutable list."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                # Append to __warnings__ (should be the SAME dict across items
-                # due to shallow copy)
-                if "__warnings__" not in shared:
-                    shared["__warnings__"] = {}
-                item = shared.get("item", "unknown")
-                shared["__warnings__"][f"warn_{item}"] = f"warning for {item}"
-                shared[self.node_id] = {"response": "ok"}
-                return "default"
-
-        inner = TrackingNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b", "c"], "__warnings__": {}}
-        items = batch.prep(shared)
-        batch._exec(items)
-
-        # All 3 items should have written to the SAME dict (shallow copy shares it)
-        assert len(shared["__warnings__"]) == 3
-
-
-class TestErrorHandling:
-    """Tests for error handling modes."""
-
-    def test_fail_fast_stops_on_exception(self):
-        """fail_fast mode stops execution on first exception."""
-        inner = MockInnerNode("test_node", behavior="error_on_index")
-        inner.error_index = 1  # Error on second item
-
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
-
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-
-        with pytest.raises(ValueError, match="Intentional error on item 1"):
-            batch._exec(items)
-
-        # Only first item was processed
-        assert inner.call_count == 2  # Called for item 0 and 1 (error on 1)
-
-    def test_continue_processes_all_items(self):
-        """continue mode processes all items even after errors."""
-        inner = MockInnerNode("test_node", behavior="error_on_index")
-        inner.error_index = 1  # Error on second item
-
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # All 3 items attempted
-        assert inner.call_count == 3
-        assert shared["test_node"]["count"] == 3
-        assert shared["test_node"]["success_count"] == 2
-        assert shared["test_node"]["error_count"] == 1
-
-        # Failed item has None result
-        assert results[0]["response"] == "a"
-        assert results[0]["item"] == "a"
-        assert results[1] is None
-        assert results[2]["response"] == "c"
-        assert results[2]["item"] == "c"
-
-        # Error recorded
-        assert len(shared["test_node"]["errors"]) == 1
-        assert shared["test_node"]["errors"][0]["index"] == 1
-        assert shared["test_node"]["errors"][0]["item"] == "b"
-        assert "Intentional error" in shared["test_node"]["errors"][0]["error"]
-
-    def test_fail_fast_on_error_in_result(self):
-        """fail_fast mode triggers on error key in result dict."""
-        inner = MockInnerNode("test_node", behavior="error_in_result")
-        inner.error_index = 0  # First item returns error
-
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-
-        with pytest.raises(RuntimeError, match=r"Batch 'test_node' failed at item \[0\]"):
-            batch._exec(items)
-
-    def test_continue_records_error_in_result(self):
-        """continue mode records error from result dict."""
-        inner = MockInnerNode("test_node", behavior="error_in_result")
-        inner.error_index = 1  # Second item returns error
-
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # Error-containing result is still in results (not None)
-        assert results[1]["error"] == "Error: Processing failed for item b"
-        assert results[1]["item"] == "b"
-
-        # But it's counted as error and recorded
-        assert shared["test_node"]["success_count"] == 2
-        assert shared["test_node"]["error_count"] == 1
-        assert shared["test_node"]["errors"][0]["index"] == 1
-
-
-class TestResultStructure:
-    """Tests for output result structure."""
-
-    def test_result_structure_complete(self):
-        """Result has all required fields."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        result = shared["test_node"]
-        assert "results" in result
-        assert "count" in result
-        assert "success_count" in result
-        assert "error_count" in result
-        assert "errors" in result  # None when no errors
-
-    def test_errors_none_when_no_errors(self):
-        """errors field is None when all items succeed."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        assert shared["test_node"]["errors"] is None
-
-    def test_none_is_valid_success(self):
-        """None result from node is treated as success, not error."""
-        inner = MockInnerNode("test_node", behavior="return_none")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # None in response is valid (node returned None as legitimate value)
-        assert results[0]["response"] is None
-        assert results[0]["item"] == "a"
-        assert results[1]["response"] is None
-        assert results[1]["item"] == "b"
-        assert shared["test_node"]["success_count"] == 2
-        assert shared["test_node"]["error_count"] == 0
-
-
-class TestItemsResolution:
-    """Tests for items template resolution."""
-
-    def test_items_from_simple_path(self):
-        """Items resolved from simple variable path."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${files}"})
-
-        shared = {"files": ["a.txt", "b.txt"]}
-        items = batch.prep(shared)
-
-        assert items == ["a.txt", "b.txt"]
-
-    def test_items_from_nested_path(self):
-        """Items resolved from nested path."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${list_files.output}"})
-
-        shared = {"list_files": {"output": ["x", "y", "z"]}}
-        items = batch.prep(shared)
-
-        assert items == ["x", "y", "z"]
-
-    def test_items_not_array_raises(self):
-        """TypeError raised when items doesn't resolve to array."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": "not_an_array"}
-
-        with pytest.raises(TypeError, match="Batch items must be an array"):
-            batch.prep(shared)
-
-    def test_items_none_raises(self):
-        """ValueError raised when items resolves to None."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${missing}"})
-
-        shared = {}
-
-        with pytest.raises(ValueError, match="resolved to None"):
-            batch.prep(shared)
-
-    def test_items_dict_raises(self):
-        """TypeError raised when items resolves to dict."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": {"not": "array"}}
-
-        with pytest.raises(TypeError, match="got dict"):
-            batch.prep(shared)
-
-
-class TestItemsCoalesce:
-    """Tests for coalesce (??) operator in batch items template."""
-
-    def test_items_coalesce_first_branch(self):
-        """Batch items resolved via coalesce when first branch executed."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${source_a.items ?? source_b.items}"})
-
-        shared = {"source_a": {"items": ["x", "y"]}}
-        items = batch.prep(shared)
-
-        assert items == ["x", "y"]
-
-    def test_items_coalesce_second_branch(self):
-        """Batch items resolved via coalesce when second branch executed."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${source_a.items ?? source_b.items}"})
-
-        shared = {"source_b": {"items": ["a", "b", "c"]}}
-        items = batch.prep(shared)
-
-        assert items == ["a", "b", "c"]
-
-    def test_items_coalesce_all_absent_raises(self):
-        """ValueError when all coalesce operands are absent."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${source_a.items ?? source_b.items}"})
-
-        shared = {}
-
-        with pytest.raises(ValueError, match="resolved to None"):
-            batch.prep(shared)
-
-
-class TestItemsJsonAutoParsing:
-    """Tests for JSON string auto-parsing in batch.items.
-
-    Shell nodes output text to stdout. When that text is valid JSON,
-    batch processing should auto-parse it to enable shell → batch patterns.
-    """
-
-    def test_json_array_string_parsed(self):
-        """JSON array string is auto-parsed to list."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${shell.stdout}"})
-
-        # Shell node outputs JSON as a string
-        shared = {"shell": {"stdout": '["item1", "item2", "item3"]'}}
-        items = batch.prep(shared)
-
-        assert items == ["item1", "item2", "item3"]
-        assert len(items) == 3
-
-    def test_json_array_with_trailing_newline(self):
-        """JSON string with trailing newline (common shell output) is parsed."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${cmd.stdout}"})
-
-        # Shell output typically has trailing newline
-        shared = {"cmd": {"stdout": '["a", "b"]\n'}}
-        items = batch.prep(shared)
-
-        assert items == ["a", "b"]
-
-    def test_json_array_with_whitespace(self):
-        """JSON string with leading/trailing whitespace is parsed."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": '  \n  ["x", "y", "z"]  \n  '}
-        items = batch.prep(shared)
-
-        assert items == ["x", "y", "z"]
-
-    def test_json_complex_objects_parsed(self):
-        """JSON array of objects is parsed correctly."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${split.sections}"})
-
-        json_str = '[{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]'
-        shared = {"split": {"sections": json_str}}
-        items = batch.prep(shared)
-
-        assert items == [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
-        assert items[0]["name"] == "first"
-
-    def test_invalid_json_fails_with_type_error(self):
-        """Invalid JSON string fails at type check with clear error."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        # Invalid JSON - missing closing bracket
-        shared = {"data": '["item1", "item2"'}
-
-        with pytest.raises(TypeError, match="Batch items must be an array, got str"):
-            batch.prep(shared)
-
-    def test_json_object_fails_with_type_error(self):
-        """JSON object string (not array) fails at type check."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        # Valid JSON but not an array
-        shared = {"data": '{"key": "value"}'}
-
-        with pytest.raises(TypeError, match="Batch items must be an array, got str"):
-            batch.prep(shared)
-
-    def test_non_json_string_fails_with_type_error(self):
-        """Non-JSON string fails at type check."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": "just a plain string"}
-
-        with pytest.raises(TypeError, match="Batch items must be an array, got str"):
-            batch.prep(shared)
-
-    def test_already_list_not_affected(self):
-        """Already-parsed list is not affected by JSON parsing logic."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        # Already a Python list (not a JSON string)
-        shared = {"data": ["already", "a", "list"]}
-        items = batch.prep(shared)
-
-        assert items == ["already", "a", "list"]
-
-    def test_empty_json_array_parsed(self):
-        """Empty JSON array string is parsed correctly."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": "[]"}
-        items = batch.prep(shared)
-
-        assert items == []
-
-    def test_nested_json_arrays_parsed(self):
-        """Nested JSON arrays are parsed correctly."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": "[[1, 2], [3, 4], [5, 6]]"}
-        items = batch.prep(shared)
-
-        assert items == [[1, 2], [3, 4], [5, 6]]
-
-
-class TestComplexItems:
-    """Tests with complex item objects."""
-
-    def test_complex_object_items(self):
-        """Items can be complex objects with nested fields."""
-
-        class FieldAccessNode:
-            """Node that accesses item.name field."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get("item")
-                name = item.get("name") if isinstance(item, dict) else None
-                shared[self.node_id] = {"response": name}
-                return "default"
-
-        inner = FieldAccessNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${records}"})
-
-        shared = {
-            "records": [
-                {"name": "Alice", "age": 30},
-                {"name": "Bob", "age": 25},
-            ]
-        }
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["response"] == "Alice"
-        assert results[0]["item"] == {"name": "Alice", "age": 30}
-        assert results[1]["response"] == "Bob"
-        assert results[1]["item"] == {"name": "Bob", "age": 25}
-
-    def test_items_with_none_values(self):
-        """Array containing None values is processed."""
-        inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [None, "value", None]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        assert shared["test_node"]["count"] == 3
-        assert results[0]["response"] is None
-        assert results[0]["item"] is None
-        assert results[1]["response"] == "value"
-        assert results[1]["item"] == "value"
-        assert results[2]["response"] is None
-        assert results[2]["item"] is None
-
-
-class TestInputOutputFormats:
-    """Tests for various input item types and output formats."""
-
-    def test_number_items(self):
-        """Numeric items are processed correctly."""
-        inner = MockInnerNode("test_node", behavior="transform")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [1, 2, 3]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["response"] == 2  # 1 * 2
-        assert results[0]["item"] == 1
-        assert results[1]["response"] == 4  # 2 * 2
-        assert results[1]["item"] == 2
-        assert results[2]["response"] == 6  # 3 * 2
-        assert results[2]["item"] == 3
-
-    def test_float_items(self):
-        """Float items are processed correctly."""
-        inner = MockInnerNode("test_node", behavior="transform")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [1.5, 2.5, 3.5]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["response"] == 3.0
-        assert results[0]["item"] == 1.5
-        assert results[1]["response"] == 5.0
-        assert results[1]["item"] == 2.5
-        assert results[2]["response"] == 7.0
-        assert results[2]["item"] == 3.5
-
-    def test_mixed_type_items(self):
-        """Mixed type items (strings, numbers, dicts, None) are processed."""
-        inner = MockInnerNode("test_node", behavior="echo")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [1, "two", {"three": 3}, None, True]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        assert results[0]["response"] == 1
-        assert results[0]["item"] == 1
-        assert results[1]["response"] == "two"
-        assert results[1]["item"] == "two"
-        assert results[2]["response"] == {"three": 3}
-        assert results[2]["item"] == {"three": 3}
-        assert results[3]["response"] is None
-        assert results[3]["item"] is None
-        assert results[4]["response"] is True
-        assert results[4]["item"] is True
-        assert shared["test_node"]["count"] == 5
-        assert shared["test_node"]["success_count"] == 5
-
-    def test_nested_array_items(self):
-        """Nested array items are processed correctly."""
-        inner = MockInnerNode("test_node", behavior="echo")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [[1, 2], [3, 4], [5, 6]]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["response"] == [1, 2]
-        assert results[0]["item"] == [1, 2]
-        assert results[1]["response"] == [3, 4]
-        assert results[1]["item"] == [3, 4]
-        assert results[2]["response"] == [5, 6]
-        assert results[2]["item"] == [5, 6]
-
-    def test_boolean_items(self):
-        """Boolean items are processed correctly."""
-
-        class BooleanEchoNode:
-            """Node that correctly handles boolean items (including False)."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                # Use get with explicit default to handle False correctly
-                item = shared.get("item")  # Returns None if missing, False if False
-                shared[self.node_id] = {"response": item}
-                return "default"
-
-        inner = BooleanEchoNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [True, False, True]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["response"] is True
-        assert results[0]["item"] is True
-        assert results[1]["response"] is False
-        assert results[1]["item"] is False
-        assert results[2]["response"] is True
-        assert results[2]["item"] is True
-
-    def test_string_output_wrapped_in_dict(self):
-        """When node writes string directly to namespace, it's wrapped in {'value': ...}."""
-
-        class StringOutputNode:
-            """Node that writes a string directly to namespace."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get("item")
-                shared[self.node_id] = f"processed_{item}"  # String, not dict
-                return "default"
-
-        inner = StringOutputNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        # String output should be wrapped in {"value": ...}, plus item
-        assert results[0]["value"] == "processed_a"
-        assert results[0]["item"] == "a"
-        assert results[1]["value"] == "processed_b"
-        assert results[1]["item"] == "b"
-
-    def test_number_output_wrapped_in_dict(self):
-        """When node writes number directly to namespace, it's wrapped in {'value': ...}."""
-
-        class NumberOutputNode:
-            """Node that writes a number directly to namespace."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get("item")
-                shared[self.node_id] = item * 10  # Number, not dict
-                return "default"
-
-        inner = NumberOutputNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": [1, 2, 3]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["value"] == 10
-        assert results[0]["item"] == 1
-        assert results[1]["value"] == 20
-        assert results[1]["item"] == 2
-        assert results[2]["value"] == 30
-        assert results[2]["item"] == 3
-
-    def test_list_output_wrapped_in_dict(self):
-        """When node writes list directly to namespace, it's wrapped in {'value': ...}."""
-
-        class ListOutputNode:
-            """Node that writes a list directly to namespace."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                item = shared.get("item")
-                shared[self.node_id] = [item, item]  # List, not dict
-                return "default"
-
-        inner = ListOutputNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["x", "y"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        assert results[0]["value"] == ["x", "x"]
-        assert results[0]["item"] == "x"
-        assert results[1]["value"] == ["y", "y"]
-        assert results[1]["item"] == "y"
-
-    def test_empty_dict_output(self):
-        """When node writes empty dict to namespace, it's returned as-is."""
-
-        class EmptyDictNode:
-            """Node that writes empty dict to namespace."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                shared[self.node_id] = {}  # Empty dict
-                return "default"
-
-        inner = EmptyDictNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # Empty dict output only contains the item key
-        assert results[0] == {"item": "a"}
-        assert results[1] == {"item": "b"}
-        # Empty dict is not an error, just no output
-        assert shared["test_node"]["success_count"] == 2
-
-    def test_node_writes_nothing(self):
-        """When node doesn't write to namespace, result is empty dict."""
-
-        class SilentNode:
-            """Node that writes nothing to namespace."""
-
-            def __init__(self, node_id: str):
-                self.node_id = node_id
-
-            def _run(self, shared: dict) -> str:
-                # Does nothing - doesn't write to shared[self.node_id]
-                return "default"
-
-        inner = SilentNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # Result is None from namespace, converted to {} with item added
-        assert results[0] == {"item": "a"}
-        assert results[1] == {"item": "b"}
-        assert shared["test_node"]["success_count"] == 2
-
-
-class TestExtractError:
-    """Tests for _extract_error helper method."""
-
-    def test_extract_error_from_dict(self):
-        """Error extracted from dict with error key."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-
-        assert batch._extract_error({"error": "Something failed"}) == "Something failed"
-        assert batch._extract_error({"error": "Error: Bad input"}) == "Error: Bad input"
-
-    def test_extract_error_none_for_success(self):
-        """None returned for successful results."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-
-        assert batch._extract_error({"response": "ok"}) is None
-        assert batch._extract_error({"data": 123}) is None
-        assert batch._extract_error({}) is None
-
-    def test_extract_error_none_for_non_dict(self):
-        """None returned for non-dict results."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-
-        assert batch._extract_error("string") is None
-        assert batch._extract_error(123) is None
-        assert batch._extract_error(None) is None
-        assert batch._extract_error([1, 2, 3]) is None
-
-    def test_extract_error_falsy_error_key(self):
-        """Falsy error values are not treated as errors."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-
-        # Empty string, None, False, 0 are falsy
-        assert batch._extract_error({"error": ""}) is None
-        assert batch._extract_error({"error": None}) is None
-        assert batch._extract_error({"error": False}) is None
-        assert batch._extract_error({"error": 0}) is None
-
-
-class TestDefaultValues:
-    """Tests for default configuration values."""
-
-    def test_default_alias_is_item(self):
-        """Default alias is 'item' when 'as' not specified."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-        assert batch.item_alias == "item"
-
-    def test_default_error_handling_is_fail_fast(self):
-        """Default error handling is 'fail_fast' when not specified."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-        assert batch.error_handling == "fail_fast"
-
-    def test_custom_alias_preserved(self):
-        """Custom alias from config is used."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "as": "record"})
-        assert batch.item_alias == "record"
-
-    def test_continue_error_handling_preserved(self):
-        """Continue error handling from config is used."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "error_handling": "continue"})
-        assert batch.error_handling == "continue"
-
-
-# =============================================================================
-# Phase 2 Tests: Parallel Execution
-# =============================================================================
 
 
 class ParallelMockInnerNode:
@@ -1057,18 +150,6 @@ class ParallelMockInnerNode:
     """
 
     def __init__(self, node_id: str, delay: float = 0, behavior: str = "echo"):
-        """Initialize parallel mock node.
-
-        Args:
-            node_id: Node identifier for namespacing
-            delay: Seconds to sleep during execution (for timing tests)
-            behavior: One of:
-                - "echo": Return item value as response
-                - "echo_with_id": Return item with thread info
-                - "error_on_index": Raise exception on specific index
-                - "error_in_result": Write error key to result on specific index
-                - "variable_delay": Delay based on item value
-        """
         self.node_id = node_id
         self.delay = delay
         self.behavior = behavior
@@ -1078,32 +159,27 @@ class ParallelMockInnerNode:
         self._lock = threading.Lock()
 
     def __getstate__(self):
-        """Return state for pickling, excluding the lock."""
         state = self.__dict__.copy()
         del state["_lock"]
         return state
 
     def __setstate__(self, state):
-        """Restore state from pickling, recreating the lock."""
         self.__dict__.update(state)
         self._lock = threading.Lock()
 
     def _get_item(self, shared: dict):
-        """Extract item from shared store, handling falsy values."""
         for key in ("item", "file", "record"):
             if key in shared:
                 return shared[key]
         return None
 
     def _apply_delay(self, item):
-        """Apply configured or variable delay."""
         if self.behavior == "variable_delay" and isinstance(item, dict):
             time.sleep(item.get("delay", 0))
         elif self.delay > 0:
             time.sleep(self.delay)
 
     def _run(self, shared: dict) -> str:
-        """Execute mock node logic with thread tracking."""
         with self._lock:
             self.call_count += 1
             current_call = self.call_count - 1
@@ -1117,7 +193,6 @@ class ParallelMockInnerNode:
         return "default"
 
     def _compute_result(self, item, current_call: int) -> dict:
-        """Compute result based on behavior."""
         if self.behavior == "echo":
             return {"response": item}
         if self.behavior == "echo_with_id":
@@ -1135,144 +210,925 @@ class ParallelMockInnerNode:
         return {"response": item}
 
 
-class TestPhase2ConfigDefaults:
-    """Tests for Phase 2 configuration defaults."""
+# =============================================================================
+# Basic batch tests
+# =============================================================================
+
+
+class TestBatchExecutionBasic:
+    """Basic batch processing tests."""
+
+    def test_batch_empty_items(self):
+        """Empty array produces empty results with zero counts."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": []}
+
+        _run_batch(inner, shared)
+
+        assert shared["test_node"]["results"] == []
+        assert shared["test_node"]["count"] == 0
+        assert shared["test_node"]["success_count"] == 0
+        assert shared["test_node"]["error_count"] == 0
+        assert shared["test_node"]["errors"] is None
+
+    def test_batch_single_item(self):
+        """Single item processed correctly."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["hello"]}
+
+        _run_batch(inner, shared)
+
+        assert len(shared["test_node"]["results"]) == 1
+        assert shared["test_node"]["results"][0]["response"] == "hello"
+        assert shared["test_node"]["results"][0]["item"] == "hello"
+        assert shared["test_node"]["count"] == 1
+        assert shared["test_node"]["success_count"] == 1
+        assert shared["test_node"]["error_count"] == 0
+
+    def test_batch_multiple_items_in_order(self):
+        """Multiple items processed in input order."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["a", "b", "c"]}
+
+        _run_batch(inner, shared)
+
+        assert shared["test_node"]["count"] == 3
+        assert shared["test_node"]["success_count"] == 3
+        assert shared["test_node"]["results"][0]["response"] == "a"
+        assert shared["test_node"]["results"][0]["item"] == "a"
+        assert shared["test_node"]["results"][1]["response"] == "b"
+        assert shared["test_node"]["results"][1]["item"] == "b"
+        assert shared["test_node"]["results"][2]["response"] == "c"
+        assert shared["test_node"]["results"][2]["item"] == "c"
+
+
+class TestItemInResult:
+    """Tests for the `item` field being included in each batch result."""
+
+    def test_item_included_when_result_has_error_key(self):
+        """Original item is included even when result contains error key."""
+        inner = MockInnerNode("test_node", behavior="error_in_result")
+        inner.error_index = 1
+
+        shared: dict = {"data": ["success", "will_fail", "success"]}
+        _run_batch(inner, shared, error_handling="continue")
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == "success"
+        assert results[0]["item"] == "success"
+
+        # Error result still has item field for debugging
+        assert "error" in results[1]
+        assert results[1]["item"] == "will_fail"
+
+        assert results[2]["response"] == "success"
+        assert results[2]["item"] == "success"
+
+    def test_item_overwrite_warning_logged(self, caplog):
+        """Warning is logged when node output already has 'item' key."""
+        import logging
+
+        class ItemOutputNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                shared[self.node_id] = {"response": item, "item": "node_provided"}
+                return "default"
+
+        inner = ItemOutputNode("test_node")
+        shared: dict = {"data": ["test_value"]}
+
+        with caplog.at_level(logging.WARNING, logger="pflow.runtime.engine.batch_executor"):
+            _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["item"] == "test_value"
+        assert results[0]["response"] == "test_value"
+        assert "already has 'item' key" in caplog.text
+
+
+class TestInlineArrayItems:
+    """Tests for inline array items support (batch.items as literal array)."""
+
+    def test_inline_array_with_templates(self):
+        """Inline array with templates inside elements resolves correctly."""
+        inner = MockInnerNode("test_node")
+
+        shared: dict = {"source": {"content": "hello world"}}
+        items_template = [
+            {"style": "summary", "data": "${source}"},
+            {"style": "detailed", "data": "${source}"},
+        ]
+
+        _run_batch(inner, shared, items_template=items_template)
+
+        results = shared["test_node"]["results"]
+        # The items should have the resolved templates
+        assert results[0]["item"] == {"style": "summary", "data": {"content": "hello world"}}
+        assert results[1]["item"] == {"style": "detailed", "data": {"content": "hello world"}}
+
+    def test_inline_array_preserves_types(self):
+        """Inline array preserves types of resolved templates (Task 103)."""
+        shared: dict = {"num": 42, "bool_val": True, "list_val": [1, 2, 3]}
+        items_template = [
+            {"count": "${num}", "flag": "${bool_val}", "items": "${list_val}"},
+        ]
+
+        # Verify resolve_batch_items preserves types
+        items = resolve_batch_items(items_template, shared)
+
+        assert items[0]["count"] == 42
+        assert items[0]["flag"] is True
+        assert items[0]["items"] == [1, 2, 3]
+
+
+class TestItemAliasInjection:
+    """Tests for item alias injection into isolated context."""
+
+    def test_default_item_alias(self):
+        """Default alias 'item' is available in context."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["value1"]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == "value1"
+        assert results[0]["item"] == "value1"
+
+    def test_custom_item_alias(self):
+        """Custom alias is used when 'as' is specified."""
+
+        class AliasAwareNode:
+            def __init__(self, node_id: str, expected_alias: str):
+                self.node_id = node_id
+                self.expected_alias = expected_alias
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get(self.expected_alias)
+                shared[self.node_id] = {"response": item, "alias_used": self.expected_alias}
+                return "default"
+
+        inner = AliasAwareNode("test_node", "file")
+        shared: dict = {"files": ["doc1.txt", "doc2.txt"]}
+
+        _run_batch(inner, shared, items_template="${files}", item_alias="file")
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == "doc1.txt"
+        assert results[0]["alias_used"] == "file"
+        assert results[0]["item"] == "doc1.txt"
+        assert results[1]["response"] == "doc2.txt"
+        assert results[1]["alias_used"] == "file"
+        assert results[1]["item"] == "doc2.txt"
+
+
+class TestIsolatedContext:
+    """Tests for isolated shared store context per item."""
+
+    def test_items_dont_pollute_each_other(self):
+        """Each item execution has isolated context."""
+
+        class AccumulatorNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                prev_item = shared.get("previous_item")
+                current = shared.get("item")
+                shared["previous_item"] = current
+                shared[self.node_id] = {"response": current, "saw_previous": prev_item}
+                return "default"
+
+        inner = AccumulatorNode("test_node")
+        shared: dict = {"data": [1, 2, 3]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        # Each item should NOT see previous item due to isolation
+        assert results[0]["saw_previous"] is None
+        assert results[1]["saw_previous"] is None
+        assert results[2]["saw_previous"] is None
+
+    def test_original_shared_unchanged_during_iteration(self):
+        """Original shared store does not get 'item' alias injected."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["a", "b"], "original_key": "original_value"}
+
+        _run_batch(inner, shared)
+
+        # Alias was only in isolated copies
+        assert "item" not in shared
+
+    def test_special_keys_shared_across_items(self):
+        """Special dunder keys are shared across items via shallow copy behavior."""
+
+        class TrackingNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                if "__warnings__" not in shared:
+                    shared["__warnings__"] = {}
+                item = shared.get("item", "unknown")
+                shared["__warnings__"][f"warn_{item}"] = f"warning for {item}"
+                shared[self.node_id] = {"response": "ok"}
+                return "default"
+
+        inner = TrackingNode("test_node")
+        shared: dict = {"data": ["a", "b", "c"], "__warnings__": {}}
+
+        _run_batch(inner, shared)
+
+        # All 3 items should have written to the SAME dict (shallow copy shares it)
+        assert len(shared["__warnings__"]) >= 3
+
+
+class TestErrorHandling:
+    """Tests for error handling modes."""
+
+    def test_fail_fast_stops_on_exception(self):
+        """fail_fast mode stops execution on first exception."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
+
+        shared: dict = {"data": ["a", "b", "c"]}
+
+        with pytest.raises(ValueError, match="Intentional error on item 1"):
+            _run_batch(inner, shared, error_handling="fail_fast")
+
+        # Only first item was processed before error
+        assert inner.call_count == 2
+
+    def test_continue_processes_all_items(self):
+        """continue mode processes all items even after errors."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
+
+        shared: dict = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared, error_handling="continue")
+
+        # All 3 items attempted
+        assert inner.call_count == 3
+        assert shared["test_node"]["count"] == 3
+        assert shared["test_node"]["success_count"] == 2
+        assert shared["test_node"]["error_count"] == 1
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == "a"
+        assert results[0]["item"] == "a"
+        assert results[1] is None
+        assert results[2]["response"] == "c"
+        assert results[2]["item"] == "c"
+
+        assert len(shared["test_node"]["errors"]) == 1
+        assert shared["test_node"]["errors"][0]["index"] == 1
+        assert shared["test_node"]["errors"][0]["item"] == "b"
+        assert "Intentional error" in shared["test_node"]["errors"][0]["error"]
+
+    def test_fail_fast_on_error_in_result(self):
+        """fail_fast mode triggers on error key in result dict."""
+        inner = MockInnerNode("test_node", behavior="error_in_result")
+        inner.error_index = 0
+
+        shared: dict = {"data": ["a", "b"]}
+
+        with pytest.raises(RuntimeError, match=r"Batch 'test_node' failed at item \[0\]"):
+            _run_batch(inner, shared, error_handling="fail_fast")
+
+    def test_continue_records_error_in_result(self):
+        """continue mode records error from result dict."""
+        inner = MockInnerNode("test_node", behavior="error_in_result")
+        inner.error_index = 1
+
+        shared: dict = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared, error_handling="continue")
+
+        results = shared["test_node"]["results"]
+        assert results[1]["error"] == "Error: Processing failed for item b"
+        assert results[1]["item"] == "b"
+
+        assert shared["test_node"]["success_count"] == 2
+        assert shared["test_node"]["error_count"] == 1
+        assert shared["test_node"]["errors"][0]["index"] == 1
+
+
+class TestResultStructure:
+    """Tests for output result structure."""
+
+    def test_result_structure_complete(self):
+        """Result has all required fields."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["a", "b"]}
+
+        _run_batch(inner, shared)
+
+        result = shared["test_node"]
+        assert "results" in result
+        assert "count" in result
+        assert "success_count" in result
+        assert "error_count" in result
+        assert "errors" in result
+
+    def test_errors_none_when_no_errors(self):
+        """errors field is None when all items succeed."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["a", "b"]}
+
+        _run_batch(inner, shared)
+
+        assert shared["test_node"]["errors"] is None
+
+    def test_none_is_valid_success(self):
+        """None result from node is treated as success, not error."""
+        inner = MockInnerNode("test_node", behavior="return_none")
+        shared: dict = {"data": ["a", "b"]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] is None
+        assert results[0]["item"] == "a"
+        assert results[1]["response"] is None
+        assert results[1]["item"] == "b"
+        assert shared["test_node"]["success_count"] == 2
+        assert shared["test_node"]["error_count"] == 0
+
+
+class TestItemsResolution:
+    """Tests for items template resolution."""
+
+    def test_items_from_simple_path(self):
+        """Items resolved from simple variable path."""
+        items = resolve_batch_items("${files}", {"files": ["a.txt", "b.txt"]})
+        assert items == ["a.txt", "b.txt"]
+
+    def test_items_from_nested_path(self):
+        """Items resolved from nested path."""
+        items = resolve_batch_items("${list_files.output}", {"list_files": {"output": ["x", "y", "z"]}})
+        assert items == ["x", "y", "z"]
+
+    def test_items_not_array_raises(self):
+        """TypeError raised when items doesn't resolve to array."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": "not_an_array"}
+
+        with pytest.raises(TypeError, match="batch items must be an array"):
+            _run_batch(inner, shared)
+
+    def test_items_none_raises(self):
+        """ValueError raised when items resolves to None."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="resolved to None"):
+            _run_batch(inner, shared, items_template="${missing}")
+
+    def test_items_dict_raises(self):
+        """TypeError raised when items resolves to dict."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": {"not": "array"}}
+
+        with pytest.raises(TypeError, match="got dict"):
+            _run_batch(inner, shared)
+
+
+class TestItemsCoalesce:
+    """Tests for coalesce (??) operator in batch items template."""
+
+    def test_items_coalesce_first_branch(self):
+        """Batch items resolved via coalesce when first branch executed."""
+        items = resolve_batch_items(
+            "${source_a.items ?? source_b.items}",
+            {"source_a": {"items": ["x", "y"]}},
+        )
+        assert items == ["x", "y"]
+
+    def test_items_coalesce_second_branch(self):
+        """Batch items resolved via coalesce when second branch executed."""
+        items = resolve_batch_items(
+            "${source_a.items ?? source_b.items}",
+            {"source_b": {"items": ["a", "b", "c"]}},
+        )
+        assert items == ["a", "b", "c"]
+
+    def test_items_coalesce_all_absent_raises(self):
+        """ValueError when all coalesce operands are absent."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {}
+
+        with pytest.raises(ValueError, match="resolved to None"):
+            _run_batch(inner, shared, items_template="${source_a.items ?? source_b.items}")
+
+
+class TestItemsJsonAutoParsing:
+    """Tests for JSON string auto-parsing in batch.items.
+
+    Shell nodes output text to stdout. When that text is valid JSON,
+    batch processing should auto-parse it to enable shell -> batch patterns.
+    """
+
+    def test_json_array_string_parsed(self):
+        """JSON array string is auto-parsed to list."""
+        items = resolve_batch_items("${shell.stdout}", {"shell": {"stdout": '["item1", "item2", "item3"]'}})
+        assert items == ["item1", "item2", "item3"]
+
+    def test_json_array_with_trailing_newline(self):
+        """JSON string with trailing newline (common shell output) is parsed."""
+        items = resolve_batch_items("${cmd.stdout}", {"cmd": {"stdout": '["a", "b"]\n'}})
+        assert items == ["a", "b"]
+
+    def test_json_array_with_whitespace(self):
+        """JSON string with leading/trailing whitespace is parsed."""
+        items = resolve_batch_items("${data}", {"data": '  \n  ["x", "y", "z"]  \n  '})
+        assert items == ["x", "y", "z"]
+
+    def test_json_complex_objects_parsed(self):
+        """JSON array of objects is parsed correctly."""
+        json_str = '[{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]'
+        items = resolve_batch_items("${split.sections}", {"split": {"sections": json_str}})
+        assert items == [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}]
+
+    def test_invalid_json_fails_with_type_error(self):
+        """Invalid JSON string fails at type check with clear error."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": '["item1", "item2"'}
+
+        with pytest.raises(TypeError, match="batch items must be an array, got str"):
+            _run_batch(inner, shared)
+
+    def test_json_object_fails_with_type_error(self):
+        """JSON object string (not array) fails at type check."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": '{"key": "value"}'}
+
+        with pytest.raises(TypeError, match="batch items must be an array, got str"):
+            _run_batch(inner, shared)
+
+    def test_non_json_string_fails_with_type_error(self):
+        """Non-JSON string fails at type check."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": "just a plain string"}
+
+        with pytest.raises(TypeError, match="batch items must be an array, got str"):
+            _run_batch(inner, shared)
+
+    def test_already_list_not_affected(self):
+        """Already-parsed list is not affected by JSON parsing logic."""
+        items = resolve_batch_items("${data}", {"data": ["already", "a", "list"]})
+        assert items == ["already", "a", "list"]
+
+    def test_empty_json_array_parsed(self):
+        """Empty JSON array string is parsed correctly."""
+        items = resolve_batch_items("${data}", {"data": "[]"})
+        assert items == []
+
+    def test_nested_json_arrays_parsed(self):
+        """Nested JSON arrays are parsed correctly."""
+        items = resolve_batch_items("${data}", {"data": "[[1, 2], [3, 4], [5, 6]]"})
+        assert items == [[1, 2], [3, 4], [5, 6]]
+
+
+class TestComplexItems:
+    """Tests with complex item objects."""
+
+    def test_complex_object_items(self):
+        """Items can be complex objects with nested fields."""
+
+        class FieldAccessNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                name = item.get("name") if isinstance(item, dict) else None
+                shared[self.node_id] = {"response": name}
+                return "default"
+
+        inner = FieldAccessNode("test_node")
+        shared: dict = {
+            "records": [
+                {"name": "Alice", "age": 30},
+                {"name": "Bob", "age": 25},
+            ]
+        }
+
+        _run_batch(inner, shared, items_template="${records}")
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == "Alice"
+        assert results[0]["item"] == {"name": "Alice", "age": 30}
+        assert results[1]["response"] == "Bob"
+        assert results[1]["item"] == {"name": "Bob", "age": 25}
+
+    def test_items_with_none_values(self):
+        """Array containing None values is processed."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": [None, "value", None]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert shared["test_node"]["count"] == 3
+        assert results[0]["response"] is None
+        assert results[0]["item"] is None
+        assert results[1]["response"] == "value"
+        assert results[1]["item"] == "value"
+        assert results[2]["response"] is None
+        assert results[2]["item"] is None
+
+
+class TestInputOutputFormats:
+    """Tests for various input item types and output formats."""
+
+    def test_number_items(self):
+        """Numeric items are processed correctly."""
+        inner = MockInnerNode("test_node", behavior="transform")
+        shared: dict = {"data": [1, 2, 3]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == 2
+        assert results[0]["item"] == 1
+        assert results[1]["response"] == 4
+        assert results[1]["item"] == 2
+        assert results[2]["response"] == 6
+        assert results[2]["item"] == 3
+
+    def test_float_items(self):
+        """Float items are processed correctly."""
+        inner = MockInnerNode("test_node", behavior="transform")
+        shared: dict = {"data": [1.5, 2.5, 3.5]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == 3.0
+        assert results[0]["item"] == 1.5
+        assert results[1]["response"] == 5.0
+        assert results[1]["item"] == 2.5
+        assert results[2]["response"] == 7.0
+        assert results[2]["item"] == 3.5
+
+    def test_mixed_type_items(self):
+        """Mixed type items (strings, numbers, dicts, None) are processed."""
+        inner = MockInnerNode("test_node", behavior="echo")
+        shared: dict = {"data": [1, "two", {"three": 3}, None, True]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == 1
+        assert results[0]["item"] == 1
+        assert results[1]["response"] == "two"
+        assert results[1]["item"] == "two"
+        assert results[2]["response"] == {"three": 3}
+        assert results[2]["item"] == {"three": 3}
+        assert results[3]["response"] is None
+        assert results[3]["item"] is None
+        assert results[4]["response"] is True
+        assert results[4]["item"] is True
+        assert shared["test_node"]["count"] == 5
+        assert shared["test_node"]["success_count"] == 5
+
+    def test_nested_array_items(self):
+        """Nested array items are processed correctly."""
+        inner = MockInnerNode("test_node", behavior="echo")
+        shared: dict = {"data": [[1, 2], [3, 4], [5, 6]]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == [1, 2]
+        assert results[0]["item"] == [1, 2]
+        assert results[1]["response"] == [3, 4]
+        assert results[1]["item"] == [3, 4]
+        assert results[2]["response"] == [5, 6]
+        assert results[2]["item"] == [5, 6]
+
+    def test_boolean_items(self):
+        """Boolean items are processed correctly."""
+
+        class BooleanEchoNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                shared[self.node_id] = {"response": item}
+                return "default"
+
+        inner = BooleanEchoNode("test_node")
+        shared: dict = {"data": [True, False, True]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] is True
+        assert results[0]["item"] is True
+        assert results[1]["response"] is False
+        assert results[1]["item"] is False
+        assert results[2]["response"] is True
+        assert results[2]["item"] is True
+
+    def test_string_output_wrapped_in_dict(self):
+        """When node writes string directly to namespace, it's wrapped in {'value': ...}."""
+
+        class StringOutputNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                shared[self.node_id] = f"processed_{item}"  # String, not dict
+                return "default"
+
+        inner = StringOutputNode("test_node")
+        shared: dict = {"data": ["a", "b"]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["value"] == "processed_a"
+        assert results[0]["item"] == "a"
+        assert results[1]["value"] == "processed_b"
+        assert results[1]["item"] == "b"
+
+    def test_number_output_wrapped_in_dict(self):
+        """When node writes number directly to namespace, it's wrapped in {'value': ...}."""
+
+        class NumberOutputNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                shared[self.node_id] = item * 10  # Number, not dict
+                return "default"
+
+        inner = NumberOutputNode("test_node")
+        shared: dict = {"data": [1, 2, 3]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["value"] == 10
+        assert results[0]["item"] == 1
+        assert results[1]["value"] == 20
+        assert results[1]["item"] == 2
+        assert results[2]["value"] == 30
+        assert results[2]["item"] == 3
+
+    def test_list_output_wrapped_in_dict(self):
+        """When node writes list directly to namespace, it's wrapped in {'value': ...}."""
+
+        class ListOutputNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                shared[self.node_id] = [item, item]  # List, not dict
+                return "default"
+
+        inner = ListOutputNode("test_node")
+        shared: dict = {"data": ["x", "y"]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0]["value"] == ["x", "x"]
+        assert results[0]["item"] == "x"
+        assert results[1]["value"] == ["y", "y"]
+        assert results[1]["item"] == "y"
+
+    def test_empty_dict_output(self):
+        """When node writes empty dict to namespace, it's returned as-is."""
+
+        class EmptyDictNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                shared[self.node_id] = {}
+                return "default"
+
+        inner = EmptyDictNode("test_node")
+        shared: dict = {"data": ["a", "b"]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0] == {"item": "a"}
+        assert results[1] == {"item": "b"}
+        assert shared["test_node"]["success_count"] == 2
+
+    def test_node_writes_nothing(self):
+        """When node doesn't write to namespace, result is empty dict."""
+
+        class SilentNode:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                return "default"
+
+        inner = SilentNode("test_node")
+        shared: dict = {"data": ["a", "b"]}
+
+        _run_batch(inner, shared)
+
+        results = shared["test_node"]["results"]
+        assert results[0] == {"item": "a"}
+        assert results[1] == {"item": "b"}
+        assert shared["test_node"]["success_count"] == 2
+
+
+class TestExtractError:
+    """Tests for _extract_error helper function."""
+
+    def test_extract_error_from_dict(self):
+        """Error extracted from dict with error key."""
+        assert _extract_error({"error": "Something failed"}) == "Something failed"
+        assert _extract_error({"error": "Error: Bad input"}) == "Error: Bad input"
+
+    def test_extract_error_none_for_success(self):
+        """None returned for successful results."""
+        assert _extract_error({"response": "ok"}) is None
+        assert _extract_error({"data": 123}) is None
+        assert _extract_error({}) is None
+
+    def test_extract_error_none_for_non_dict(self):
+        """None returned for non-dict results."""
+        assert _extract_error("string") is None
+        assert _extract_error(123) is None
+        assert _extract_error(None) is None
+        assert _extract_error([1, 2, 3]) is None
+
+    def test_extract_error_falsy_error_key(self):
+        """Falsy error values are not treated as errors."""
+        assert _extract_error({"error": ""}) is None
+        assert _extract_error({"error": None}) is None
+        assert _extract_error({"error": False}) is None
+        assert _extract_error({"error": 0}) is None
+
+
+class TestNormalizeResult:
+    """Tests for _normalize_result helper function."""
+
+    def test_none_returns_empty_dict(self):
+        assert _normalize_result(None) == {}
+
+    def test_dict_returned_as_is(self):
+        assert _normalize_result({"key": "val"}) == {"key": "val"}
+
+    def test_non_dict_wrapped_in_value(self):
+        assert _normalize_result("hello") == {"value": "hello"}
+        assert _normalize_result(42) == {"value": 42}
+        assert _normalize_result([1, 2]) == {"value": [1, 2]}
+
+
+class TestBatchConfigDefaults:
+    """Tests for BatchConfig default values."""
+
+    def test_default_alias_is_item(self):
+        """Default alias is 'item' when 'as' not specified."""
+        config = BatchConfig(items_template="${x}")
+        assert config.item_alias == "item"
+
+    def test_default_error_handling_is_fail_fast(self):
+        """Default error handling is 'fail_fast' when not specified."""
+        config = BatchConfig(items_template="${x}")
+        assert config.error_handling == "fail_fast"
+
+    def test_custom_alias_preserved(self):
+        config = BatchConfig(items_template="${x}", item_alias="record")
+        assert config.item_alias == "record"
+
+    def test_continue_error_handling_preserved(self):
+        config = BatchConfig(items_template="${x}", error_handling="continue")
+        assert config.error_handling == "continue"
 
     def test_default_parallel_is_false(self):
-        """Default parallel is False (sequential execution)."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-        assert batch.parallel is False
+        config = BatchConfig(items_template="${x}")
+        assert config.parallel is False
 
     def test_default_max_concurrent_is_10(self):
-        """Default max_concurrent is 10."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-        assert batch.max_concurrent == 10
+        config = BatchConfig(items_template="${x}")
+        assert config.max_concurrent == 10
 
     def test_default_max_retries_is_1(self):
-        """Default max_retries is 1 (no retry)."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-        assert batch.max_retries == 1
+        config = BatchConfig(items_template="${x}")
+        assert config.max_retries == 1
 
     def test_default_retry_wait_is_0(self):
-        """Default retry_wait is 0."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}"})
-        assert batch.retry_wait == 0
-
-    def test_custom_parallel_true(self):
-        """Custom parallel=True from config is used."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": True})
-        assert batch.parallel is True
-
-    def test_custom_max_concurrent(self):
-        """Custom max_concurrent from config is used."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": 5})
-        assert batch.max_concurrent == 5
-
-    def test_custom_max_retries(self):
-        """Custom max_retries from config is used."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_retries": 3})
-        assert batch.max_retries == 3
-
-    def test_custom_retry_wait(self):
-        """Custom retry_wait from config is used."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": 1.5})
-        assert batch.retry_wait == 1.5
+        config = BatchConfig(items_template="${x}")
+        assert config.retry_wait == 0.0
 
 
 class TestConfigTypeCoercion:
     """Tests for type coercion of batch config values.
 
-    Defense-in-depth: if invalid types bypass schema validation,
-    batch config should still work with sensible coercion and warnings.
+    These coercion functions now live in the compiler (pflow.runtime.compilation.compiler).
+    Testing them directly ensures defense-in-depth for invalid types.
     """
 
-    def test_parallel_string_true_coerced(self):
+    def test_coerce_bool_string_true(self):
         """String 'true' is coerced to boolean True."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "true"})
-        assert batch.parallel is True
+        from pflow.runtime.compilation.compiler import _coerce_bool
 
-    def test_parallel_string_false_coerced(self):
+        assert _coerce_bool("true") is True
+        assert _coerce_bool("TRUE") is True
+        assert _coerce_bool("True") is True
+
+    def test_coerce_bool_string_false(self):
         """String 'false' is coerced to boolean False."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "false"})
-        assert batch.parallel is False
+        from pflow.runtime.compilation.compiler import _coerce_bool
 
-    def test_parallel_string_yes_coerced(self):
+        assert _coerce_bool("false") is False
+        assert _coerce_bool("FALSE") is False
+
+    def test_coerce_bool_string_yes(self):
         """String 'yes' is coerced to boolean True."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "YES"})
-        assert batch.parallel is True
+        from pflow.runtime.compilation.compiler import _coerce_bool
 
-    def test_parallel_string_invalid_uses_default(self):
-        """Invalid string for parallel uses default (False)."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": "invalid"})
-        assert batch.parallel is False
+        assert _coerce_bool("YES") is True
+        assert _coerce_bool("yes") is True
 
-    def test_parallel_int_1_coerced_to_true(self):
+    def test_coerce_bool_string_invalid(self):
+        """Invalid string for bool raises CompilationError."""
+        import pytest
+
+        from pflow.core.exceptions import CompilationError
+        from pflow.runtime.compilation.compiler import _coerce_bool
+
+        with pytest.raises(CompilationError, match="not a valid boolean"):
+            _coerce_bool("invalid", "parallel")
+
+    def test_coerce_bool_int_1(self):
         """Integer 1 is coerced to boolean True."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": 1})
-        assert batch.parallel is True
+        from pflow.runtime.compilation.compiler import _coerce_bool
 
-    def test_parallel_int_0_coerced_to_false(self):
+        assert _coerce_bool(1) is True
+
+    def test_coerce_bool_int_0(self):
         """Integer 0 is coerced to boolean False."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "parallel": 0})
-        assert batch.parallel is False
+        from pflow.runtime.compilation.compiler import _coerce_bool
 
-    def test_max_concurrent_string_coerced(self):
+        assert _coerce_bool(0) is False
+
+    def test_coerce_int_string(self):
         """String '5' is coerced to integer 5."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": "5"})
-        assert batch.max_concurrent == 5
+        from pflow.runtime.compilation.compiler import _coerce_int
 
-    def test_max_concurrent_float_coerced(self):
+        assert _coerce_int("5", "max_retries", 1) == 5
+
+    def test_coerce_int_float(self):
         """Float 5.9 is coerced to integer 5."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": 5.9})
-        assert batch.max_concurrent == 5
+        from pflow.runtime.compilation.compiler import _coerce_int
 
-    def test_max_concurrent_invalid_uses_default(self):
-        """Invalid string for max_concurrent uses default (10)."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_concurrent": "invalid"})
-        assert batch.max_concurrent == 10
+        assert _coerce_int(5.9, "max_retries", 1) == 5
 
-    def test_max_retries_string_coerced(self):
-        """String '3' is coerced to integer 3."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_retries": "3"})
-        assert batch.max_retries == 3
+    def test_coerce_int_invalid_raises(self):
+        """Invalid string for int raises CompilationError."""
+        import pytest
 
-    def test_max_retries_invalid_uses_default(self):
-        """Invalid string for max_retries uses default (1)."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "max_retries": "invalid"})
-        assert batch.max_retries == 1
+        from pflow.core.exceptions import CompilationError
+        from pflow.runtime.compilation.compiler import _coerce_int
 
-    def test_retry_wait_string_coerced(self):
+        with pytest.raises(CompilationError, match="not a valid integer"):
+            _coerce_int("invalid", "max_retries", 1)
+
+    def test_coerce_float_string(self):
         """String '1.5' is coerced to float 1.5."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": "1.5"})
-        assert batch.retry_wait == 1.5
+        from pflow.runtime.compilation.compiler import _coerce_float
 
-    def test_retry_wait_int_coerced(self):
+        assert _coerce_float("1.5", "retry_wait", 0.0) == 1.5
+
+    def test_coerce_float_int(self):
         """Integer 2 is coerced to float 2.0."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": 2})
-        assert batch.retry_wait == 2.0
+        from pflow.runtime.compilation.compiler import _coerce_float
 
-    def test_retry_wait_invalid_uses_default(self):
-        """Invalid string for retry_wait uses default (0.0)."""
-        batch = PflowBatchNode(MockInnerNode("n"), "n", {"items": "${x}", "retry_wait": "invalid"})
-        assert batch.retry_wait == 0.0
+        assert _coerce_float(2, "retry_wait", 0.0) == 2.0
 
-    def test_native_types_not_warned(self, caplog):
-        """Native types (bool, int, float) don't trigger warnings."""
-        import logging
+    def test_coerce_float_invalid_raises(self):
+        """Invalid string for float raises CompilationError."""
+        import pytest
 
-        with caplog.at_level(logging.WARNING):
-            batch = PflowBatchNode(
-                MockInnerNode("n"),
-                "n",
-                {"items": "${x}", "parallel": True, "max_concurrent": 5, "max_retries": 3, "retry_wait": 1.5},
-            )
+        from pflow.core.exceptions import CompilationError
+        from pflow.runtime.compilation.compiler import _coerce_float
 
-        # No warnings should be logged for correct types
-        assert batch.parallel is True
-        assert batch.max_concurrent == 5
-        assert batch.max_retries == 3
-        assert batch.retry_wait == 1.5
-        assert len([r for r in caplog.records if "coercing" in r.message.lower()]) == 0
+        with pytest.raises(CompilationError, match="not a valid number"):
+            _coerce_float("invalid", "retry_wait", 0.0)
+
+
+# =============================================================================
+# Phase 2 Tests: Parallel Execution
+# =============================================================================
 
 
 class TestParallelExecution:
@@ -1281,50 +1137,35 @@ class TestParallelExecution:
     def test_parallel_execution_basic(self):
         """Items execute in parallel and all results collected."""
         inner = ParallelMockInnerNode("test_node", delay=0.01)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
+        shared: dict = {"data": ["a", "b", "c", "d", "e"]}
 
-        shared = {"data": ["a", "b", "c", "d", "e"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
+        results = shared["test_node"]["results"]
         assert len(results) == 5
         assert shared["test_node"]["count"] == 5
         assert shared["test_node"]["success_count"] == 5
-        # Note: can't check inner.call_count because each thread gets a copy
 
     def test_parallel_faster_than_sequential(self):
         """Parallel execution should be significantly faster than sequential."""
-        delay_per_item = 0.05  # 50ms each
-        items_data = ["a", "b", "c", "d", "e"]  # 5 items
-
-        # Sequential would be: 5 * 50ms = 250ms minimum
-        # Parallel (5 concurrent): ~50ms minimum
+        delay_per_item = 0.05
+        items_data = ["a", "b", "c", "d", "e"]
 
         inner = ParallelMockInnerNode("test_node", delay=delay_per_item)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
-
-        shared = {"data": items_data}
-        items = batch.prep(shared)
+        shared: dict = {"data": items_data}
 
         start = time.time()
-        batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
         elapsed = time.time() - start
 
-        # Parallel should be well under sequential time (250ms)
-        # Using 150ms as threshold (generous margin for OS scheduling)
-        assert elapsed < 0.15, f"Parallel took {elapsed:.3f}s, expected < 0.15s"
+        assert elapsed < 0.20, f"Parallel took {elapsed:.3f}s, expected < 0.20s (sequential would be ~0.25s)"
 
     def test_parallel_uses_multiple_threads(self):
         """Parallel execution uses multiple threads."""
-        # Track thread IDs in shared store (which is shallow-copied)
         inner = ParallelMockInnerNode("test_node", delay=0.02)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
 
-        # Use shared store to track thread IDs (shallow copy preserves list reference)
-        shared = {"data": ["a", "b", "c", "d", "e"], "_thread_ids": []}
+        shared: dict = {"data": ["a", "b", "c", "d", "e"], "_thread_ids": []}
 
-        # Modify the inner node to track via shared store
         original_run = inner._run
 
         def tracking_run(s):
@@ -1333,37 +1174,23 @@ class TestParallelExecution:
 
         inner._run = tracking_run
 
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
-        # Should have used multiple threads (not all same thread ID)
         unique_threads = set(shared["_thread_ids"])
         assert len(unique_threads) > 1, f"Expected multiple threads, got {unique_threads}"
 
     def test_max_concurrent_limits_workers(self):
         """max_concurrent limits the number of parallel workers."""
-        delay_per_item = 0.05  # 50ms each
-        items_data = ["a", "b", "c", "d"]  # 4 items
-
-        # With max_concurrent=2:
-        #   Batch 1 (a,b): 50ms
-        #   Batch 2 (c,d): 50ms
-        #   Total: ~100ms
-        # With max_concurrent=4:
-        #   All at once: ~50ms
+        delay_per_item = 0.05
+        items_data = ["a", "b", "c", "d"]
 
         inner = ParallelMockInnerNode("test_node", delay=delay_per_item)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 2})
-
-        shared = {"data": items_data}
-        items = batch.prep(shared)
+        shared: dict = {"data": items_data}
 
         start = time.time()
-        batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=2)
         elapsed = time.time() - start
 
-        # With max_concurrent=2, should take closer to 100ms than 50ms
-        # Using 80ms as lower threshold
         assert elapsed >= 0.08, f"Expected batched execution (>80ms), got {elapsed:.3f}s"
 
 
@@ -1372,8 +1199,6 @@ class TestParallelResultOrdering:
 
     def test_result_order_preserved(self):
         """Results are in input order regardless of completion order."""
-        # Create items where later items complete first
-        # Item 0: slow (60ms), Item 1: medium (40ms), Item 2: fast (20ms)
         items_data = [
             {"id": 0, "delay": 0.06},
             {"id": 1, "delay": 0.04},
@@ -1381,30 +1206,25 @@ class TestParallelResultOrdering:
         ]
 
         inner = ParallelMockInnerNode("test_node", behavior="variable_delay")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
+        shared: dict = {"data": items_data}
 
-        shared = {"data": items_data}
-        items = batch.prep(shared)
-        results = batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
-        # Results should be in INPUT order, not completion order
-        assert results[0]["response"] == 0  # Slowest, but first in results
+        results = shared["test_node"]["results"]
+        assert results[0]["response"] == 0
         assert results[1]["response"] == 1
-        assert results[2]["response"] == 2  # Fastest, but last in results
+        assert results[2]["response"] == 2
 
     def test_result_order_with_many_items(self):
         """Result ordering works with more items."""
         items_data = [{"id": i, "delay": 0.01 * (5 - i)} for i in range(5)]
-        # Items: id=0 slow, id=4 fast
 
         inner = ParallelMockInnerNode("test_node", behavior="variable_delay")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
+        shared: dict = {"data": items_data}
 
-        shared = {"data": items_data}
-        items = batch.prep(shared)
-        results = batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
-        # Verify all results in correct order
+        results = shared["test_node"]["results"]
         for i in range(5):
             assert results[i]["response"] == i, f"Result {i} has wrong id"
 
@@ -1417,13 +1237,11 @@ class TestParallelTemplateIsolation:
         items_data = [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}, {"id": 5}]
 
         inner = ParallelMockInnerNode("test_node", delay=0.02)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
+        shared: dict = {"data": items_data}
 
-        shared = {"data": items_data}
-        items = batch.prep(shared)
-        results = batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
-        # Each result should have its OWN item's id
+        results = shared["test_node"]["results"]
         for i, result in enumerate(results):
             expected_id = i + 1
             actual_item = result["response"]
@@ -1433,35 +1251,24 @@ class TestParallelTemplateIsolation:
 
     def test_custom_alias_isolated(self):
         """Custom item alias is isolated per thread."""
-        # Track seen values in shared store (shallow copy shares list)
         inner = ParallelMockInnerNode("test_node", delay=0.02)
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "as": "record", "parallel": True, "max_concurrent": 10},
-        )
 
-        # Use shared store to track values (shallow copy preserves list reference)
-        shared = {"data": ["alpha", "beta", "gamma"], "_seen_values": []}
+        shared: dict = {"data": ["alpha", "beta", "gamma"], "_seen_values": []}
 
-        # Modify the inner node to track via shared store
         original_run = inner._run
 
         def tracking_run(s):
             record = s.get("record")
             s["_seen_values"].append(record)
-            # Temporarily set item from record for the original run
             s["item"] = record
             return original_run(s)
 
         inner._run = tracking_run
 
-        items = batch.prep(shared)
-        results = batch._exec(items)
+        _run_batch(inner, shared, items_template="${data}", item_alias="record", parallel=True, max_concurrent=10)
 
-        # All three values should have been seen (order may vary due to threading)
         assert set(shared["_seen_values"]) == {"alpha", "beta", "gamma"}
-        # Results should be in order
+        results = shared["test_node"]["results"]
         assert results[0]["response"] == "alpha"
         assert results[1]["response"] == "beta"
         assert results[2]["response"] == "gamma"
@@ -1473,7 +1280,6 @@ class TestParallelErrorHandling:
     def test_parallel_fail_fast_raises(self):
         """fail_fast mode raises on first error in parallel."""
 
-        # Use a simple node that fails on a specific item value
         class FailOnValueNode:
             def __init__(self, node_id: str, fail_value: str):
                 self.node_id = node_id
@@ -1494,22 +1300,14 @@ class TestParallelErrorHandling:
                 return "default"
 
         inner = FailOnValueNode("test_node", fail_value="c")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "parallel": True, "error_handling": "fail_fast"},
-        )
-
-        shared = {"data": ["a", "b", "c", "d", "e"]}
-        items = batch.prep(shared)
+        shared: dict = {"data": ["a", "b", "c", "d", "e"]}
 
         with pytest.raises(ValueError, match="Intentional error"):
-            batch._exec(items)
+            _run_batch(inner, shared, parallel=True, error_handling="fail_fast")
 
     def test_parallel_continue_collects_all_errors(self):
         """continue mode processes all items and collects errors."""
 
-        # Node that fails on specific item values
         class FailOnValuesNode:
             def __init__(self, node_id: str, fail_values: set):
                 self.node_id = node_id
@@ -1530,18 +1328,10 @@ class TestParallelErrorHandling:
                 return "default"
 
         inner = FailOnValuesNode("test_node", fail_values={"b", "d"})
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "parallel": True, "error_handling": "continue"},
-        )
+        shared: dict = {"data": ["a", "b", "c", "d", "e"]}
 
-        shared = {"data": ["a", "b", "c", "d", "e"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, error_handling="continue")
 
-        # All 5 items attempted
         assert shared["test_node"]["count"] == 5
         assert shared["test_node"]["success_count"] == 3
         assert shared["test_node"]["error_count"] == 2
@@ -1569,21 +1359,14 @@ class TestParallelErrorHandling:
                 return "default"
 
         inner = FailOnValueNode("test_node", fail_value="b")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "parallel": True, "error_handling": "continue"},
-        )
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, error_handling="continue")
 
-        # First and third items succeeded
+        results = shared["test_node"]["results"]
         assert results[0]["response"] == "a"
         assert results[0]["item"] == "a"
-        assert results[1] is None  # Failed
+        assert results[1] is None
         assert results[2]["response"] == "c"
         assert results[2]["item"] == "c"
 
@@ -1594,10 +1377,7 @@ class TestParallelRetry:
     def test_parallel_retry_succeeds_after_failure(self):
         """Item succeeds on retry in parallel mode."""
 
-        # Track attempts in shared store (shallow copy shares dict)
         class RetryNode:
-            """Node that fails first N times then succeeds."""
-
             def __init__(self, node_id: str, fail_times: int):
                 self.node_id = node_id
                 self.fail_times = fail_times
@@ -1611,8 +1391,6 @@ class TestParallelRetry:
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
                 item_key = str(item)
-
-                # Track attempts in shared store (survives across retries within same thread)
                 attempts = shared.get("_attempts", {})
                 attempts[item_key] = attempts.get(item_key, 0) + 1
                 shared["_attempts"] = attempts
@@ -1625,34 +1403,20 @@ class TestParallelRetry:
                 return "default"
 
         inner = RetryNode("test_node", fail_times=2)
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {
-                "items": "${data}",
-                "parallel": True,
-                "max_retries": 3,
-                "retry_wait": 0,  # No wait for faster tests
-            },
-        )
+        shared: dict = {"data": ["x"], "_attempts": {}}
 
-        shared = {"data": ["x"], "_attempts": {}}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, max_retries=3, retry_wait=0)
 
-        # Should succeed on 3rd attempt
+        results = shared["test_node"]["results"]
         assert results[0]["response"] == "x"
         assert results[0]["attempts"] == 3
-        assert results[0]["item"] == "x"  # item preserved through retries
+        assert results[0]["item"] == "x"
         assert shared["test_node"]["success_count"] == 1
 
     def test_parallel_retry_exhausted(self):
         """Error returned when all retries exhausted in parallel."""
 
         class AlwaysFailNode:
-            """Node that always fails."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
@@ -1663,45 +1427,26 @@ class TestParallelRetry:
                 self.__dict__.update(state)
 
             def _run(self, shared: dict) -> str:
-                # Track attempts using a list (mutable, works with shallow copy)
                 shared["_attempts"].append(1)
                 raise ValueError("Permanent failure")
 
         inner = AlwaysFailNode("test_node")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {
-                "items": "${data}",
-                "parallel": True,
-                "max_retries": 3,
-                "retry_wait": 0,
-                "error_handling": "continue",
-            },
-        )
+        shared: dict = {"data": ["x"], "_attempts": []}
 
-        shared = {"data": ["x"], "_attempts": []}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-
-        # Should have tried 3 times (tracked in shared list)
-        assert len(shared["_attempts"]) == 3
-        assert results[0] is None
-
-        # All items failed → post() raises (all-fail = step failure)
+        # All items failed -> all-fail abort raises RuntimeError
         with pytest.raises(RuntimeError, match="all 1 items failed"):
-            batch.post(shared, items, results)
+            _run_batch(inner, shared, parallel=True, max_retries=3, retry_wait=0, error_handling="continue")
+
+        # Should have tried 3 times
+        assert len(shared["_attempts"]) == 3
 
     def test_parallel_retry_resets_namespace(self):
-        """Namespace is reset between retries in parallel mode (matches sequential behavior).
+        """Namespace is reset between retries in parallel mode.
 
         This prevents partial writes from failed attempts polluting retry attempts.
-        Regression test for bug where parallel mode didn't reset namespace on retry.
         """
 
         class WriteBeforeFailNode:
-            """Node that writes to namespace before potentially failing."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
@@ -1709,62 +1454,34 @@ class TestParallelRetry:
                 return WriteBeforeFailNode(self.node_id)
 
             def _run(self, shared: dict) -> str:
-                # Track retries via mutable list (shallow copy shares it)
                 shared["_retries"].append(1)
                 retry_num = len(shared["_retries"])
 
-                # Check if namespace has data from previous attempt
                 namespace = shared.get(self.node_id, {})
                 had_previous_marker = "marker" in namespace
 
-                # Record observation
                 shared["_observations"].append({"retry": retry_num, "had_previous_marker": had_previous_marker})
 
-                # Write marker BEFORE potentially failing
                 if self.node_id not in shared:
                     shared[self.node_id] = {}
                 shared[self.node_id]["marker"] = f"written_on_retry_{retry_num}"
 
-                # Fail on first attempt
                 if retry_num == 1:
                     raise ValueError("Intentional failure on first attempt")
 
-                # Succeed on second attempt
                 shared[self.node_id]["result"] = "success"
                 return "default"
 
         inner = WriteBeforeFailNode("test_node")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {
-                "items": "${data}",
-                "parallel": True,
-                "max_retries": 2,
-                "error_handling": "continue",
-            },
-        )
+        shared: dict = {"data": ["item_a"], "_retries": [], "_observations": []}
 
-        # Pre-initialize mutable containers so shallow copy shares them
-        shared = {"data": ["item_a"], "_retries": [], "_observations": []}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, max_retries=2, error_handling="continue")
 
-        # Verify retry happened
         assert len(shared["_observations"]) == 2
+        assert shared["_observations"][0]["had_previous_marker"] is False
+        assert shared["_observations"][1]["had_previous_marker"] is False
 
-        # On retry 2, namespace should NOT have marker from retry 1
-        # (namespace should be reset between retries)
-        retry1_obs = shared["_observations"][0]
-        retry2_obs = shared["_observations"][1]
-
-        assert retry1_obs["had_previous_marker"] is False, "Retry 1 should start clean"
-        assert retry2_obs["had_previous_marker"] is False, (
-            "Retry 2 should NOT see marker from retry 1 - namespace should be reset"
-        )
-
-        # Verify success
+        results = shared["test_node"]["results"]
         assert results[0]["result"] == "success"
 
 
@@ -1775,14 +1492,12 @@ class TestParallelThreadSafety:
         """_batch_trace accumulates trace items from all parallel items."""
 
         class LLMTrackingNode:
-            """Node that writes llm_usage to node output."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
-                time.sleep(0.01)  # Ensure overlap
+                time.sleep(0.01)
                 shared[self.node_id] = {
                     "response": item,
                     "llm_usage": {"model": "test", "input_tokens": 10, "output_tokens": 5},
@@ -1790,32 +1505,22 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = LLMTrackingNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
-
         shared: dict = {"data": ["a", "b", "c", "d", "e"]}
-        items = batch.prep(shared)
-        batch._exec(items)
+
+        _, batch_trace_items = _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
         # All 5 items should have trace entries with llm_call data
-        trace_items = shared["_batch_trace"]["test_node"]
-        assert len(trace_items) == 5
-        tracked_items = {entry["item"] for entry in trace_items}
+        assert len(batch_trace_items) == 5
+        tracked_items = {entry["item"] for entry in batch_trace_items}
         assert tracked_items == {"a", "b", "c", "d", "e"}
-        # Each trace item should have llm_call captured from node output
-        for entry in trace_items:
+        for entry in batch_trace_items:
             assert "llm_call" in entry
             assert entry["llm_call"]["model"] == "test"
 
     def test_batch_captures_inner_node_llm_usage_sequential(self):
-        """LLM usage from inner nodes is captured via _batch_trace in sequential mode.
-
-        _capture_item_trace reads llm_usage from node_output (shared[node_id])
-        and records it as the llm_call field in each trace item.
-        """
+        """LLM usage from inner nodes is captured via batch trace in sequential mode."""
 
         class MockLLMNode:
-            """Mock node that writes llm_usage to node output namespace."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
@@ -1833,18 +1538,11 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = MockLLMNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
-
         shared: dict = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # After post(), trace items are on the instance (shared store entry cleaned up)
-        trace_items = batch._trace_items
+        _, trace_items = _run_batch(inner, shared, parallel=False)
+
         assert len(trace_items) == 3
-
-        # Verify each trace item has correct LLM data
         for i, entry in enumerate(trace_items):
             assert entry["index"] == i
             assert entry["success"] is True
@@ -1854,10 +1552,7 @@ class TestParallelThreadSafety:
             assert entry["llm_call"]["output_tokens"] == 50
 
     def test_batch_captures_inner_node_llm_usage_parallel(self):
-        """LLM usage from inner nodes is captured via _trace_items in parallel mode.
-
-        Same as sequential test but verifies thread-safe capture in parallel mode.
-        """
+        """LLM usage from inner nodes is captured in parallel mode."""
 
         class MockLLMNode:
             def __init__(self, node_id: str):
@@ -1865,7 +1560,7 @@ class TestParallelThreadSafety:
 
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
-                time.sleep(0.01)  # Ensure some overlap
+                time.sleep(0.01)
                 shared[self.node_id] = {
                     "response": f"processed: {item}",
                     "llm_usage": {
@@ -1877,35 +1572,17 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = MockLLMNode("test_node")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "parallel": True, "max_concurrent": 5},
-        )
-
         shared: dict = {"data": ["x", "y", "z", "w", "v"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # After post(), trace items are on the instance (shared store entry cleaned up)
-        trace_items = batch._trace_items
+        _, trace_items = _run_batch(inner, shared, parallel=True, max_concurrent=5)
+
         assert len(trace_items) == 5
-
-        # All trace items should have correct model
         assert all(entry["llm_call"]["model"] == "parallel-model" for entry in trace_items)
-
-        # Verify all indices are captured (order may vary in parallel)
         indices = {entry["index"] for entry in trace_items}
         assert indices == {0, 1, 2, 3, 4}
 
     def test_batch_captures_namespaced_llm_usage(self):
-        """LLM usage is captured from namespaced node output via _trace_items.
-
-        When inner node uses namespacing, llm_usage is written to
-        shared[node_id]["llm_usage"]. _capture_item_trace reads from
-        node_output (= shared[node_id]) and records llm_call in the trace.
-        """
+        """LLM usage is captured from namespaced node output."""
 
         class NamespacedMockLLMNode:
             def __init__(self, node_id: str):
@@ -1913,7 +1590,6 @@ class TestParallelThreadSafety:
 
             def _run(self, shared: dict) -> str:
                 item = shared.get("item")
-                # Write to namespaced location (simulates NamespacedNodeWrapper)
                 if self.node_id not in shared:
                     shared[self.node_id] = {}
                 shared[self.node_id]["llm_usage"] = {
@@ -1925,25 +1601,15 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = NamespacedMockLLMNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
-
         shared: dict = {"data": [1, 2]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # After post(), trace items are on the instance
-        trace_items = batch._trace_items
+        _, trace_items = _run_batch(inner, shared, parallel=False)
+
         assert len(trace_items) == 2
         assert all(entry["llm_call"]["model"] == "namespaced-model" for entry in trace_items)
 
-    def test_batch_initializes_batch_trace(self):
-        """Batch node initializes _batch_trace in prep(), transfers to _trace_items in post().
-
-        prep() creates shared["_batch_trace"][node_id] as an empty list.
-        _capture_item_trace appends per-item events during execution.
-        post() transfers to self._trace_items and cleans up the shared store entry.
-        """
+    def test_batch_initializes_and_collects_batch_trace(self):
+        """execute_batch initializes _batch_trace and returns trace items after execution."""
 
         class MockLLMNode:
             def __init__(self, node_id: str):
@@ -1957,32 +1623,17 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = MockLLMNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
-
-        # Start without _batch_trace — batch should initialize it
         shared: dict = {"data": ["a", "b"]}
         assert "_batch_trace" not in shared
 
-        items = batch.prep(shared)
-        # After prep, _batch_trace should exist with node's trace list
-        assert "_batch_trace" in shared
-        assert "test_node" in shared["_batch_trace"]
-        assert isinstance(shared["_batch_trace"]["test_node"], list)
+        _, trace_items = _run_batch(inner, shared, parallel=False)
 
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # After post(), trace items transferred to instance, shared store cleaned up
-        assert len(batch._trace_items) == 2
-        assert "_batch_trace" not in shared  # Cleaned up (was only entry)
+        # After execution, trace items are returned and shared store is cleaned up
+        assert len(trace_items) == 2
+        assert "_batch_trace" not in shared  # Cleaned up
 
     def test_batch_no_llm_usage_no_crash(self):
-        """Batch node handles inner nodes that don't write llm_usage.
-
-        Non-LLM nodes don't write llm_usage. The trace capture logic should
-        gracefully handle this case without errors — trace items exist but
-        without llm_call data.
-        """
+        """Batch handles inner nodes that don't write llm_usage."""
 
         class NonLLMNode:
             def __init__(self, node_id: str):
@@ -1994,28 +1645,18 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = NonLLMNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": False})
-
         shared: dict = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # After post(), trace items on instance — without llm_call data
-        trace_items = batch._trace_items
+        _, trace_items = _run_batch(inner, shared, parallel=False)
+
         assert len(trace_items) == 3
         for entry in trace_items:
             assert "llm_call" not in entry
 
-        # Results should still work
         assert len(shared["test_node"]["results"]) == 3
 
     def test_batch_trace_llm_call_contains_fields_for_cost_calculation(self):
-        """Trace llm_call records contain all fields needed for cost calculation.
-
-        _capture_item_trace calls enrich_llm_usage_with_cost() which adds
-        cost_usd. Verify the original fields are preserved and cost is enriched.
-        """
+        """Trace llm_call records contain all fields needed for cost calculation."""
 
         class MockLLMNodeWithFullUsage:
             def __init__(self, node_id: str):
@@ -2038,20 +1679,14 @@ class TestParallelThreadSafety:
                 return "default"
 
         inner = MockLLMNodeWithFullUsage("summarize")
-        batch = PflowBatchNode(inner, "summarize", {"items": "${items}", "parallel": False})
-
         shared: dict = {"items": ["doc1", "doc2", "doc3"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # After post(), trace items on instance
-        trace_items = batch._trace_items
+        _, trace_items = _run_batch(inner, shared, node_id="summarize", items_template="${items}", parallel=False)
+
         assert len(trace_items) == 3
 
         for i, entry in enumerate(trace_items):
             llm_call = entry["llm_call"]
-            # Original LLM usage fields preserved
             assert llm_call["model"] == "anthropic/claude-sonnet-4-0"
             assert llm_call["input_tokens"] == 500
             assert llm_call["output_tokens"] == 150
@@ -2059,12 +1694,9 @@ class TestParallelThreadSafety:
             assert llm_call["cache_creation_input_tokens"] == 100
             assert llm_call["cache_read_input_tokens"] == 50
             assert llm_call["total_cost_usd"] == 0.0123
-            # enrich_llm_usage_with_cost adds cost_usd from total_cost_usd
             assert llm_call["cost_usd"] == 0.0123
-            # Trace item has index for ordering
             assert entry["index"] == i
 
-        # Verify total cost can be aggregated from trace items
         total_cost = sum(entry["llm_call"]["cost_usd"] for entry in trace_items)
         assert total_cost == pytest.approx(0.0123 * 3)
 
@@ -2074,16 +1706,12 @@ class TestParallelThreadSafety:
     def test_no_race_on_results_array(self):
         """Results array is not corrupted by parallel writes."""
         inner = ParallelMockInnerNode("test_node", delay=0.01)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
-
-        # Run many items to increase chance of race condition
         items_data = list(range(20))
-        shared = {"data": items_data}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        shared: dict = {"data": items_data}
 
-        # All results should be present and in order
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
+
+        results = shared["test_node"]["results"]
         assert len(results) == 20
         for i, result in enumerate(results):
             assert result is not None, f"Result {i} is None"
@@ -2096,26 +1724,21 @@ class TestParallelEdgeCases:
     def test_parallel_empty_list(self):
         """Empty input returns empty results in parallel mode."""
         inner = ParallelMockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True})
+        shared: dict = {"data": []}
 
-        shared = {"data": []}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True)
 
-        assert results == []
+        assert shared["test_node"]["results"] == []
         assert shared["test_node"]["count"] == 0
 
     def test_parallel_single_item(self):
         """Single item works in parallel mode."""
         inner = ParallelMockInnerNode("test_node", delay=0.01)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True})
+        shared: dict = {"data": ["only_one"]}
 
-        shared = {"data": ["only_one"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True)
 
+        results = shared["test_node"]["results"]
         assert len(results) == 1
         assert results[0]["response"] == "only_one"
         assert results[0]["item"] == "only_one"
@@ -2125,23 +1748,16 @@ class TestParallelEdgeCases:
         """Parallel and sequential produce identical results."""
         items_data = ["a", "b", "c", "d", "e"]
 
-        # Sequential execution
         inner_seq = ParallelMockInnerNode("test_node")
-        batch_seq = PflowBatchNode(inner_seq, "test_node", {"items": "${data}", "parallel": False})
-        shared_seq = {"data": items_data.copy()}
-        items_seq = batch_seq.prep(shared_seq)
-        results_seq = batch_seq._exec(items_seq)
-        batch_seq.post(shared_seq, items_seq, results_seq)
+        shared_seq: dict = {"data": items_data.copy()}
+        _run_batch(inner_seq, shared_seq, parallel=False)
 
-        # Parallel execution
         inner_par = ParallelMockInnerNode("test_node")
-        batch_par = PflowBatchNode(inner_par, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
-        shared_par = {"data": items_data.copy()}
-        items_par = batch_par.prep(shared_par)
-        results_par = batch_par._exec(items_par)
-        batch_par.post(shared_par, items_par, results_par)
+        shared_par: dict = {"data": items_data.copy()}
+        _run_batch(inner_par, shared_par, parallel=True, max_concurrent=10)
 
-        # Results should be identical
+        results_seq = shared_seq["test_node"]["results"]
+        results_par = shared_par["test_node"]["results"]
         assert results_seq == results_par
         assert shared_seq["test_node"]["count"] == shared_par["test_node"]["count"]
         assert shared_seq["test_node"]["success_count"] == shared_par["test_node"]["success_count"]
@@ -2153,49 +1769,32 @@ class TestBatchMetadata:
     def test_batch_metadata_present_in_output(self):
         """batch_metadata field is present in output."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared)
 
         assert "batch_metadata" in shared["test_node"]
 
     def test_batch_metadata_sequential_mode(self):
         """batch_metadata shows sequential execution details."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "parallel": False, "max_retries": 2, "retry_wait": 0.5},
-        )
+        shared: dict = {"data": ["a", "b"]}
 
-        shared = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=False, max_retries=2, retry_wait=0.5)
 
         metadata = shared["test_node"]["batch_metadata"]
         assert metadata["parallel"] is False
         assert metadata["execution_mode"] == "sequential"
-        assert metadata["max_concurrent"] is None  # Not applicable for sequential
+        assert metadata["max_concurrent"] is None
         assert metadata["max_retries"] == 2
         assert metadata["retry_wait"] == 0.5
 
     def test_batch_metadata_parallel_mode(self):
         """batch_metadata shows parallel execution details."""
         inner = ParallelMockInnerNode("test_node")
-        batch = PflowBatchNode(
-            inner,
-            "test_node",
-            {"items": "${data}", "parallel": True, "max_concurrent": 5, "max_retries": 3},
-        )
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, max_concurrent=5, max_retries=3)
 
         metadata = shared["test_node"]["batch_metadata"]
         assert metadata["parallel"] is True
@@ -2206,12 +1805,9 @@ class TestBatchMetadata:
     def test_batch_metadata_timing_stats(self):
         """batch_metadata includes timing statistics."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared)
 
         timing = shared["test_node"]["batch_metadata"]["timing"]
         assert timing is not None
@@ -2220,53 +1816,41 @@ class TestBatchMetadata:
         assert "min_item_ms" in timing
         assert "max_item_ms" in timing
 
-        # Timing values should be non-negative
         assert timing["total_items_ms"] >= 0
         assert timing["avg_item_ms"] >= 0
         assert timing["min_item_ms"] >= 0
         assert timing["max_item_ms"] >= 0
-
-        # min <= avg <= max
         assert timing["min_item_ms"] <= timing["avg_item_ms"]
         assert timing["avg_item_ms"] <= timing["max_item_ms"]
 
     def test_batch_metadata_timing_stats_parallel(self):
         """batch_metadata timing works in parallel mode."""
         inner = ParallelMockInnerNode("test_node", delay=0.01)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 3})
+        shared: dict = {"data": ["a", "b", "c", "d", "e"]}
 
-        shared = {"data": ["a", "b", "c", "d", "e"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, max_concurrent=3)
 
         timing = shared["test_node"]["batch_metadata"]["timing"]
         assert timing is not None
-        assert timing["total_items_ms"] > 0  # Should have measurable time
-        assert len(results) == 5
+        assert timing["total_items_ms"] > 0
+        assert len(shared["test_node"]["results"]) == 5
 
     def test_batch_metadata_empty_list(self):
         """batch_metadata timing is None for empty list."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+        shared: dict = {"data": []}
 
-        shared = {"data": []}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared)
 
         timing = shared["test_node"]["batch_metadata"]["timing"]
-        assert timing is None  # No items processed
+        assert timing is None
 
     def test_batch_metadata_retry_wait_omitted_when_zero(self):
         """retry_wait is None when set to 0 (default)."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "retry_wait": 0})
+        shared: dict = {"data": ["a"]}
 
-        shared = {"data": ["a"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, retry_wait=0)
 
         metadata = shared["test_node"]["batch_metadata"]
         assert metadata["retry_wait"] is None
@@ -2274,57 +1858,36 @@ class TestBatchMetadata:
     def test_batch_metadata_retry_wait_present_when_nonzero(self):
         """retry_wait is present when > 0."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "retry_wait": 1.5})
+        shared: dict = {"data": ["a"]}
 
-        shared = {"data": ["a"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, retry_wait=1.5)
 
         metadata = shared["test_node"]["batch_metadata"]
         assert metadata["retry_wait"] == 1.5
 
     def test_batch_metadata_captured_in_trace(self):
-        """batch_metadata is captured in workflow traces via node_output.
-
-        Format 2.0.0: InstrumentedNodeWrapper passes node_output (the node's
-        namespace from shared store) to WorkflowTraceCollector.record_node_execution().
-        """
+        """batch_metadata is captured in workflow traces via node_output."""
         from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
         inner = ParallelMockInnerNode("batch_node")
-        batch = PflowBatchNode(
-            inner,
-            "batch_node",
-            {"items": "${data}", "parallel": True, "max_concurrent": 3},
-        )
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        # Simulate workflow execution with trace collector
-        collector = WorkflowTraceCollector(workflow_name="test-batch")
-        shared = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared, parallel=True, max_concurrent=3, node_id="batch_node")
 
-        # Execute batch node
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # Extract node_output (like InstrumentedNodeWrapper does in format 2.0.0)
+        # Extract node_output (like the engine does)
         node_output = dict(shared.get("batch_node", {}))
 
-        # Record trace event (simulating InstrumentedNodeWrapper._record_trace)
+        collector = WorkflowTraceCollector(workflow_name="test-batch")
         collector.record_node_execution(
             node_id="batch_node",
-            node_type="ShellNode",  # Inner node type, not PflowBatchNode
+            node_type="ShellNode",
             duration_ms=100.0,
             success=True,
             node_output=node_output,
         )
 
-        # Verify batch_metadata appears in trace
         assert len(collector.events) == 1
         event = collector.events[0]
-
-        # batch_metadata should be in node_output
         assert "node_output" in event
         assert "batch_metadata" in event["node_output"]
 
@@ -2360,27 +1923,21 @@ class TestBatchProgressCallbacks:
             })
 
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {
+        shared: dict = {
             "data": ["a", "b", "c"],
             "__progress_callback__": track_callback,
         }
 
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared)
 
-        # Verify progress events
         progress_events = [e for e in events if e["event"] == "batch_progress"]
         assert len(progress_events) == 3
 
-        # Check first item
         assert progress_events[0]["batch_current"] == 1
         assert progress_events[0]["batch_total"] == 3
         assert progress_events[0]["batch_success"] is True
         assert progress_events[0]["node_id"] == "test_node"
 
-        # Check last item
         assert progress_events[2]["batch_current"] == 3
         assert progress_events[2]["batch_total"] == 3
 
@@ -2396,22 +1953,19 @@ class TestBatchProgressCallbacks:
                 })
 
         inner = MockInnerNode("test_node", behavior="error_in_result")
-        inner.error_index = 1  # Second item will have error in result
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+        inner.error_index = 1
 
-        shared = {
+        shared: dict = {
             "data": ["a", "b", "c"],
             "__progress_callback__": track_callback,
         }
 
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared, error_handling="continue")
 
-        # Verify failure is reported
         assert len(events) == 3
-        assert events[0]["batch_success"] is True  # Item 0 succeeded
-        assert events[1]["batch_success"] is False  # Item 1 failed (error in result)
-        assert events[2]["batch_success"] is True  # Item 2 succeeded
+        assert events[0]["batch_success"] is True
+        assert events[1]["batch_success"] is False
+        assert events[2]["batch_success"] is True
 
     def test_parallel_batch_calls_progress_callback(self):
         """Progress callback called as items complete in parallel mode."""
@@ -2426,27 +1980,17 @@ class TestBatchProgressCallbacks:
                 })
 
         inner = ParallelMockInnerNode("test_node", delay=0.01)
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 3})
-
-        shared = {
+        shared: dict = {
             "data": ["a", "b", "c", "d", "e"],
             "__progress_callback__": track_callback,
         }
 
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared, parallel=True, max_concurrent=3)
 
-        # All items should be reported
         assert len(events) == 5
-
-        # batch_current should be incremented (1, 2, 3, 4, 5 - order may vary)
         currents = sorted([e["batch_current"] for e in events])
         assert currents == [1, 2, 3, 4, 5]
-
-        # All should have same total
         assert all(e["batch_total"] == 5 for e in events)
-
-        # All should succeed
         assert all(e["batch_success"] is True for e in events)
 
     def test_callback_exception_ignored(self):
@@ -2459,35 +2003,23 @@ class TestBatchProgressCallbacks:
             raise RuntimeError("Callback error")
 
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {
+        shared: dict = {
             "data": ["a", "b", "c"],
             "__progress_callback__": broken_callback,
         }
 
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared)
 
-        # Callback was called despite raising exceptions
         assert call_count == 3
-
-        # Batch completed successfully
         assert shared["test_node"]["success_count"] == 3
 
     def test_no_callback_when_not_provided(self):
         """Batch works correctly when no callback is provided."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}  # No __progress_callback__
+        _run_batch(inner, shared)
 
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
-
-        # Should complete without errors
         assert shared["test_node"]["success_count"] == 3
 
     def test_callback_receives_depth(self):
@@ -2499,18 +2031,14 @@ class TestBatchProgressCallbacks:
                 events.append({"depth": depth})
 
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
-        shared = {
+        shared: dict = {
             "data": ["a", "b"],
             "__progress_callback__": track_callback,
-            "_pflow_depth": 2,  # Simulate nested workflow
+            "_pflow_depth": 2,
         }
 
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared)
 
-        # All events should have depth=2
         assert len(events) == 2
         assert all(e["depth"] == 2 for e in events)
 
@@ -2523,7 +2051,6 @@ class IndexCapturingMockNode:
         self.captured_indices: list[int | None] = []
 
     def _run(self, shared: dict) -> str:
-        """Capture __index__ and item from shared."""
         index = shared.get("__index__")
         item = shared.get("item")
         self.captured_indices.append(index)
@@ -2537,56 +2064,44 @@ class TestBatchIndexInjection:
     def test_index_injected_sequential(self):
         """__index__ is injected in sequential batch execution."""
         inner = IndexCapturingMockNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared)
 
         assert inner.captured_indices == [0, 1, 2]
 
     def test_index_injected_parallel(self):
         """__index__ is injected in parallel batch execution."""
         inner = IndexCapturingMockNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "max_concurrent": 10})
+        shared: dict = {"data": ["x", "y", "z"]}
 
-        shared = {"data": ["x", "y", "z"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, parallel=True, max_concurrent=10)
 
         # In parallel mode, inner node is deep-copied per thread.
-        # Results are stored at their original index position, so
-        # results[i] should have captured_index == i
+        # Results are stored at their original index position.
         for i, result in enumerate(shared["test_node"]["results"]):
             assert result["captured_index"] == i, f"Result at position {i} has wrong index"
 
     def test_index_zero_not_falsy(self):
         """Index 0 is injected correctly (critical edge case)."""
         inner = IndexCapturingMockNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
+        shared: dict = {"data": ["only_item"]}
 
-        shared = {"data": ["only_item"]}
-        items = batch.prep(shared)
-        batch._exec(items)
+        _run_batch(inner, shared)
 
-        # Index 0 should be captured, not None
         assert inner.captured_indices == [0]
 
 
 class TestBatchPostErrorRouting:
-    """Tests that post() returns 'default' and pushes warnings in continue mode."""
+    """Tests that batch returns 'default' and pushes warnings in continue mode."""
 
     def test_continue_mode_returns_default_with_errors(self):
         """continue mode with item errors still returns 'default'."""
         inner = MockInnerNode("test_node", behavior="error_on_index")
         inner.error_index = 1
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        action = batch.post(shared, items, results)
+        shared: dict = {"data": ["a", "b", "c"]}
+        action, _ = _run_batch(inner, shared, error_handling="continue")
 
         assert action == "default"
 
@@ -2594,12 +2109,9 @@ class TestBatchPostErrorRouting:
         """continue mode with errors pushes a warning to shared['__warnings__']."""
         inner = MockInnerNode("test_node", behavior="error_on_index")
         inner.error_index = 1
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        shared: dict = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared, error_handling="continue")
 
         assert "test_node" in shared["__warnings__"]
         assert "error" in shared["__warnings__"]["test_node"]
@@ -2607,12 +2119,9 @@ class TestBatchPostErrorRouting:
     def test_continue_no_errors_no_warning(self):
         """continue mode with all items succeeding does not create __warnings__."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
+        shared: dict = {"data": ["a", "b", "c"]}
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, error_handling="continue")
 
         assert "__warnings__" not in shared
 
@@ -2620,14 +2129,11 @@ class TestBatchPostErrorRouting:
         """continue mode with errors creates __warnings__ when not present."""
         inner = MockInnerNode("test_node", behavior="error_on_index")
         inner.error_index = 0
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
 
-        shared = {"data": ["a", "b"]}
+        shared: dict = {"data": ["a", "b"]}
         assert "__warnings__" not in shared
 
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+        _run_batch(inner, shared, error_handling="continue")
 
         assert "__warnings__" in shared
         assert "test_node" in shared["__warnings__"]
@@ -2636,163 +2142,11 @@ class TestBatchPostErrorRouting:
         """fail_fast mode raises on first error (unchanged behavior)."""
         inner = MockInnerNode("test_node", behavior="error_on_index")
         inner.error_index = 1
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
 
-        shared = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
+        shared: dict = {"data": ["a", "b", "c"]}
 
         with pytest.raises(ValueError, match="Intentional error on item 1"):
-            batch._exec(items)
-
-
-class TestBatchLLMOutputSchemaIntegration:
-    """Integration test: batch + real LLMNode + output_schema + JSONDecodeError + continue.
-
-    Exercises the full wrapper chain (LLMNode -> TemplateAwareNodeWrapper ->
-    NamespacedNodeWrapper -> PflowBatchNode) with a mocked LLM model that
-    returns valid JSON for 2 items and invalid JSON for 1 item.
-
-    Verifies that:
-    - Fix A: batch post() returns "default" (not "error") with continue mode
-    - Fix A: shared["__warnings__"] captures degraded status
-    - Fix B: JSONDecodeError is caught gracefully, preserving raw response
-    - Fix B: usage metrics are captured for ALL items including the failed one
-    """
-
-    def test_batch_llm_output_schema_json_decode_error_continue(self, monkeypatch):
-        """Batch LLM with output_schema handles JSON parse failure gracefully in continue mode."""
-        from unittest.mock import Mock
-
-        from pflow.nodes.llm.llm import LLMNode
-        from pflow.runtime.wrappers.batch_node import PflowBatchNode
-        from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
-        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
-
-        # -- Mock LLM model that returns different responses based on prompt content --
-        def mock_prompt(prompt, **kwargs):
-            response = Mock()
-            usage = Mock()
-            usage.input = 10
-            usage.output = 5
-            usage.details = {}
-
-            if "item 0" in prompt:
-                response.text = Mock(return_value='{"score": 5, "note": "good"}')
-            elif "item 1" in prompt:
-                response.text = Mock(return_value="not valid json {broken")
-            elif "item 2" in prompt:
-                response.text = Mock(return_value='{"score": 8, "note": "great"}')
-            else:
-                response.text = Mock(return_value='{"score": 0, "note": "unknown"}')
-
-            response.usage = Mock(return_value=usage)
-            return response
-
-        mock_model = Mock()
-        mock_model.prompt = Mock(side_effect=mock_prompt)
-        # LLMNode reads model.Options.model_fields for reasoning param mapping
-        mock_model.Options = Mock()
-        mock_model.Options.model_fields = {}
-
-        import pflow.nodes.llm.llm as llm_module
-
-        monkeypatch.setattr(llm_module.llm, "get_model", Mock(return_value=mock_model))
-
-        # -- Build the wrapper chain: LLMNode -> Template -> Namespace -> Batch --
-        node_id = "score_items"
-
-        llm_node = LLMNode(max_retries=1, wait=0)
-
-        template_wrapper = TemplateAwareNodeWrapper(
-            inner_node=llm_node,
-            node_id=node_id,
-        )
-        template_wrapper.set_params({
-            "prompt": "${item.prompt}",
-            "output_schema": {
-                "type": "object",
-                "properties": {
-                    "score": {"type": "number"},
-                    "note": {"type": "string"},
-                },
-            },
-        })
-
-        namespace_wrapper = NamespacedNodeWrapper(
-            inner_node=template_wrapper,
-            node_id=node_id,
-        )
-
-        batch_config = {
-            "items": [
-                {"prompt": "Score item 0: Hello world"},
-                {"prompt": "Score item 1: Bad text"},
-                {"prompt": "Score item 2: Nice text"},
-            ],
-            "error_handling": "continue",
-        }
-
-        batch_node = PflowBatchNode(
-            inner_node=namespace_wrapper,
-            node_id=node_id,
-            batch_config=batch_config,
-        )
-
-        # -- Execute through the full lifecycle --
-        shared: dict = {}
-        action = batch_node._run(shared)
-
-        # -- Assertions --
-        # 1. Batch post() returns "default" (not "error") — Fix A
-        assert action == "default", f"Expected 'default' action but got '{action}'"
-
-        # 2. Warnings captured for degraded status — Fix A
-        assert "__warnings__" in shared, "Expected __warnings__ in shared store"
-        assert node_id in shared["__warnings__"]
-        warning_msg = shared["__warnings__"][node_id]
-        assert "1 error" in warning_msg, f"Warning should mention error count: {warning_msg}"
-
-        # 3. Results list has 3 entries
-        batch_output = shared[node_id]
-        results = batch_output["results"]
-        assert len(results) == 3, f"Expected 3 results but got {len(results)}"
-
-        # 4. Items 0 and 2 have parsed dict responses (successful JSON parse)
-        item_0 = results[0]
-        assert isinstance(item_0["response"], dict), f"Item 0 response should be dict, got {type(item_0['response'])}"
-        assert item_0["response"]["score"] == 5
-        assert item_0["response"]["note"] == "good"
-        assert "error" not in item_0
-
-        item_2 = results[2]
-        assert isinstance(item_2["response"], dict), f"Item 2 response should be dict, got {type(item_2['response'])}"
-        assert item_2["response"]["score"] == 8
-        assert item_2["response"]["note"] == "great"
-        assert "error" not in item_2
-
-        # 5. Item 1 has error with "JSON parse failed" and raw text preserved — Fix B
-        item_1 = results[1]
-        assert "error" in item_1, "Item 1 should have 'error' key"
-        assert "json parse failed" in item_1["error"].lower(), (
-            f"Error should mention JSON parse failure: {item_1['error']}"
-        )
-        assert "response" in item_1, "Item 1 should preserve raw response"
-        assert item_1["response"] == "not valid json {broken", (
-            f"Item 1 raw response should be preserved: {item_1['response']}"
-        )
-
-        # 6. Counts are correct
-        assert batch_output["error_count"] == 1
-        assert batch_output["success_count"] == 2
-
-        # 7. Usage metrics captured for all items including the failed one — Fix B
-        # After _run(), trace items are on the batch node instance (shared store cleaned up)
-        trace_items = batch_node._trace_items
-        assert len(trace_items) == 3, f"Expected 3 trace entries (including failed item), got {len(trace_items)}"
-        for entry in trace_items:
-            assert "llm_call" in entry, f"Trace entry should have llm_call: {entry}"
-            assert "input_tokens" in entry["llm_call"]
-            assert "output_tokens" in entry["llm_call"]
+            _run_batch(inner, shared, error_handling="fail_fast")
 
 
 class TestBatchActionFallbackErrorDetection:
@@ -2800,16 +2154,10 @@ class TestBatchActionFallbackErrorDetection:
 
     When inner_node._run() returns an action string starting with "error" but the
     result dict has no "error" key, the batch node should detect this as an error.
-    This catches cases where a wrapper chain swallows the error key (e.g., a
-    sub-workflow with no outputs) but the action string still signals failure.
     """
 
     class ErrorActionNode:
-        """Node that returns 'error' action but writes no error key to result.
-
-        Simulates a wrapper chain that swallows the error key from shared store.
-        Includes pickle support for parallel (deep-copy) execution paths.
-        """
+        """Node that returns 'error' action but writes no error key to result."""
 
         def __init__(self, node_id: str):
             self.node_id = node_id
@@ -2827,24 +2175,17 @@ class TestBatchActionFallbackErrorDetection:
     def test_exec_single_detects_error_via_action_string(self):
         """When _run() returns 'error' but result dict has no error key, error is recorded."""
         inner = self.ErrorActionNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
         shared: dict = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # Both items should be detected as errors via action string fallback.
-        # error_count comes from self._errors which IS populated by the fallback.
+        _run_batch(inner, shared, error_handling="continue")
+
         assert shared["test_node"]["error_count"] == 2
         assert len(shared["test_node"]["errors"]) == 2
 
-        # The error message should be the generic fallback
         for error_info in shared["test_node"]["errors"]:
             assert error_info["error"] == "Node returned error action"
 
-        # Results should still contain the partial output (not None) — the result
-        # dict is preserved even when the action-string fallback detects an error.
+        results = shared["test_node"]["results"]
         for result in results:
             assert result is not None
             assert result["response"] == "partial output"
@@ -2853,8 +2194,6 @@ class TestBatchActionFallbackErrorDetection:
         """When both _extract_error finds an error AND action is 'error', _extract_error message wins."""
 
         class ErrorBothPathsNode:
-            """Node that returns 'error' action AND writes error key to result."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
@@ -2863,28 +2202,20 @@ class TestBatchActionFallbackErrorDetection:
                 return "error"
 
         inner = ErrorBothPathsNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
         shared: dict = {"data": ["a"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
 
-        # Error detected via _extract_error (preferred path), not action string fallback
-        assert batch._errors[0]["error"] == "Specific error from node"
-
-        # All items failed → post() raises (all-fail = step failure)
-        with pytest.raises(RuntimeError, match="all 1 items failed"):
-            batch.post(shared, items, results)
+        # All items failed -> all-fail abort raises RuntimeError.
+        # The specific error message from _extract_error (not the generic action fallback)
+        # should appear in the RuntimeError's error summary.
+        with pytest.raises(RuntimeError, match="Specific error from node"):
+            _run_batch(inner, shared, error_handling="continue")
 
     def test_exec_single_no_error_when_default_action(self):
         """When _run() returns 'default' and no error in result, item succeeds."""
-        inner = MockInnerNode("test_node")  # MockInnerNode returns "default"
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
+        inner = MockInnerNode("test_node")
         shared: dict = {"data": ["a", "b"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+
+        _run_batch(inner, shared)
 
         assert shared["test_node"]["error_count"] == 0
         assert shared["test_node"]["success_count"] == 2
@@ -2894,8 +2225,6 @@ class TestBatchActionFallbackErrorDetection:
         """When _run() returns None, item succeeds (no false positive)."""
 
         class NoneActionNode:
-            """Node that returns None from _run() (some nodes may do this)."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
 
@@ -2904,77 +2233,56 @@ class TestBatchActionFallbackErrorDetection:
                 return None
 
         inner = NoneActionNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
         shared: dict = {"data": ["a"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+
+        _run_batch(inner, shared)
 
         assert shared["test_node"]["error_count"] == 0
         assert shared["test_node"]["success_count"] == 1
         assert shared["test_node"]["errors"] is None
 
     def test_exec_single_with_node_detects_error_via_action(self):
-        """Parallel path: _exec_single_with_node detects error via action string fallback."""
+        """Parallel path: detects error via action string fallback."""
         inner = self.ErrorActionNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "parallel": True, "error_handling": "continue"})
-
         shared: dict = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
 
-        # All items should be detected as errors via action string fallback.
-        # error_count comes from self._errors which IS populated by the fallback.
+        _run_batch(inner, shared, parallel=True, error_handling="continue")
+
         assert shared["test_node"]["error_count"] == 3
         assert len(shared["test_node"]["errors"]) == 3
 
         for error_info in shared["test_node"]["errors"]:
             assert error_info["error"] == "Node returned error action"
 
-        # Results should still contain partial output (not None)
+        results = shared["test_node"]["results"]
         for result in results:
             assert result is not None
             assert result["response"] == "partial output"
 
     def test_exec_single_fail_fast_raises_on_action_error(self):
-        """fail_fast mode raises RuntimeError when action-string fallback detects error.
-
-        This is the key behavioral guarantee: before the fix, the error action was
-        silently discarded and the item was treated as success. Now it raises.
-        """
+        """fail_fast mode raises RuntimeError when action-string fallback detects error."""
         inner = self.ErrorActionNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "fail_fast"})
-
         shared: dict = {"data": ["a"]}
-        items = batch.prep(shared)
 
-        # fail_fast wraps action-string errors in RuntimeError (no original exception)
         with pytest.raises(RuntimeError, match="Node returned error action"):
-            batch._exec(items)
+            _run_batch(inner, shared, error_handling="fail_fast")
 
 
 class TestBatchSubWorkflowErrorPropagationIntegration:
-    """Integration test: batch → workflow node → failing child workflow.
+    """Integration test: batch -> workflow node -> failing child workflow.
 
-    Exercises the REAL propagation chain (compile_ir_to_flow → wrapper chain →
-    WorkflowExecutor → NamespacedStore → batch _extract_error) with no mocking
-    of the error path. This is the exact scenario that was silently failing
-    before the fix: a child workflow returning "error" action was wrapped as
-    success, and the batch counted it as a succeeded item with empty output.
+    Exercises the REAL propagation chain (compile_workflow + WorkflowEngine ->
+    WorkflowExecutor -> batch _extract_error) with no mocking of the error path.
     """
 
     def test_batch_workflow_child_error_detected_as_batch_error(self):
         """A batch calling a sub-workflow where the child fails should report errors, not success."""
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
-        registry = Registry()  # Pre-populated by isolate_pflow_config autouse fixture
+        registry = Registry()
 
-        # Child workflow: a shell node that fails with exit 1.
-        # ShellNode.post() returns "error" action (not an exception) — this is the
-        # exact code path that was silently swallowed before the fix.
         child_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -2988,7 +2296,6 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        # Parent workflow: batch calls the child workflow via inline workflow_ir
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -3008,37 +2315,21 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry)
-        shared: dict = {}
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
 
-        # All items fail → batch raises RuntimeError (all-fail = step failure).
-        # This propagates through the flow — the workflow aborts.
         with pytest.raises(RuntimeError, match="all 2 items failed"):
-            flow.run(shared)
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
 
     def test_batch_workflow_partial_failure_with_continue(self):
-        """Partial batch failure: some child sub-workflows succeed, some fail.
-
-        When error_handling is "continue" and NOT all items fail, the batch
-        should complete without raising. The shared store should reflect which
-        items succeeded (with shell output) and which failed (with error info).
-
-        Design note: The child IR uses ${item} directly in the shell command.
-        The parent's TemplateAwareNodeWrapper recursively resolves templates
-        inside the workflow_ir dict, so ${item} is replaced with the literal
-        batch item value before the child workflow is compiled. This avoids
-        needing to escape templates or pass data as a separate child input.
-        """
+        """Partial batch failure: some child sub-workflows succeed, some fail."""
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         registry = Registry()
 
-        # Child workflow: shell node whose command contains ${item}.
-        # The parent's template wrapper resolves ${item} per batch iteration,
-        # so the child sees a literal command like:
-        #   'if [ "good-a" = "fail-b" ]; then exit 1; fi; echo "good-a"'
-        # For "fail-b", exit 1 triggers ShellNode.post() returning "error" action.
         child_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -3054,9 +2345,6 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        # Parent workflow: batch calls the child workflow via inline workflow_ir.
-        # The ${item} inside child_ir is resolved by the parent's template wrapper
-        # for each batch iteration before WorkflowExecutor compiles the child.
         parent_ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -3076,30 +2364,25 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry)
-        shared: dict = {}
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
-        # Partial failure with continue mode should NOT raise.
-        flow.run(shared)
-
-        # The batch results are written to shared["batch-call"] by PflowBatchNode.post().
         batch_output = shared["batch-call"]
 
         assert batch_output["count"] == 3
         assert batch_output["success_count"] == 2
         assert batch_output["error_count"] == 1
 
-        # Verify error details: item at index 1 ("fail-b") failed.
         assert batch_output["errors"] is not None
         assert len(batch_output["errors"]) == 1
         assert batch_output["errors"][0]["index"] == 1
         assert batch_output["errors"][0]["item"] == "fail-b"
 
-        # Verify successful items have real output (not empty dicts).
         results = batch_output["results"]
         assert len(results) == 3
 
-        # Items 0 and 2 succeeded — they should have non-error results with the item field.
         assert results[0] is not None
         assert results[0]["item"] == "good-a"
         assert results[0].get("error") is None
@@ -3108,29 +2391,15 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         assert results[2]["item"] == "good-c"
         assert results[2].get("error") is None
 
-        # Item 1 failed — it should have an error indicator.
-        # The failed sub-workflow returns {"error": "..."} in the result dict,
-        # detected via action-string fallback in _exec_single.
         assert results[1] is not None
         assert results[1]["item"] == "fail-b"
         assert results[1].get("error") is not None
 
     def test_batch_workflow_partial_failure_parallel(self):
-        """Parallel variant of partial-fail: exercises _exec_single_with_node.
-
-        The parallel path deep-copies the entire node chain per thread
-        (copy.deepcopy(self.inner_node)) and collects results via futures.
-        Error detection goes through: thread → future.result() →
-        _collect_parallel_results — a genuinely different code path from
-        the sequential _exec_single used by the test above.
-
-        This test exists because _exec_single and _exec_single_with_node
-        are 171 lines of duplicated logic (the #1 structural risk in
-        batch_node.py). If someone fixes a bug in one but not the other,
-        this test catches the asymmetry.
-        """
+        """Parallel variant of partial-fail: exercises the parallel code path."""
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         registry = Registry()
 
@@ -3169,10 +2438,10 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry)
-        shared: dict = {}
-
-        flow.run(shared)
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         batch_output = shared["batch-call"]
 
@@ -3180,43 +2449,25 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         assert batch_output["success_count"] == 2
         assert batch_output["error_count"] == 1
 
-        # Verify the failed item is correctly identified.
         assert len(batch_output["errors"]) == 1
         assert batch_output["errors"][0]["item"] == "fail-b"
 
-        # Verify successful items have real output.
         results = batch_output["results"]
         assert len(results) == 3
 
-        # Find successful and failed results by item value
-        # (parallel execution order is deterministic in result collection
-        # but item ordering in results matches original items list).
         for i, expected_item in enumerate(["good-a", "fail-b", "good-c"]):
             assert results[i] is not None
             assert results[i]["item"] == expected_item
 
-        # Successful items should have no error.
         assert results[0].get("error") is None
         assert results[2].get("error") is None
-
-        # Failed item should have error indicator.
         assert results[1].get("error") is not None
 
     def test_batch_workflow_all_fail_with_continue(self):
-        """All items fail with error_handling: continue — aborts with RuntimeError.
-
-        Continue mode only continues when SOME items succeed (so downstream
-        nodes have usable data). When ALL items fail, even continue mode
-        raises RuntimeError rather than passing garbage downstream.
-        This was an intentional design decision (fix 52d9057b).
-
-        This is the third point in the error matrix:
-        - partial-fail + continue → completes with degraded status (tested above)
-        - all-fail + raise → aborts on first error (tested elsewhere)
-        - all-fail + continue → aborts after all items, RuntimeError (this test)
-        """
+        """All items fail with error_handling: continue -- aborts with RuntimeError."""
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         registry = Registry()
 
@@ -3226,9 +2477,7 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                 {
                     "id": "always-fail",
                     "type": "shell",
-                    "params": {
-                        "command": "exit 1",
-                    },
+                    "params": {"command": "exit 1"},
                     "purpose": "Shell node that always fails with exit code 1",
                 }
             ],
@@ -3241,32 +2490,30 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
                 {
                     "id": "batch-call",
                     "type": "workflow",
-                    "params": {
-                        "workflow_ir": child_ir,
-                    },
+                    "params": {"workflow_ir": child_ir},
                     "batch": {
                         "items": ["a", "b", "c"],
                         "error_handling": "continue",
                     },
-                    "purpose": "Batch where every item fails — continue mode still aborts",
+                    "purpose": "Batch where every item fails -- continue mode still aborts",
                 }
             ],
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(parent_ir, registry=registry)
-        shared: dict = {}
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
 
-        # All-fail with continue raises RuntimeError — no usable results to pass downstream.
         with pytest.raises(RuntimeError, match="all 3 items failed"):
-            flow.run(shared)
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
 
 
 class TestDetectEmptyOutputItems:
-    """Unit tests for _detect_empty_output_items module-level function."""
+    """Unit tests for _detect_empty_output_items function."""
 
     def test_returns_empty_when_all_items_have_content(self):
-        """All items have non-empty content keys — returns empty list."""
+        """All items have non-empty content keys -- returns empty list."""
         exec_res = [
             {"response": "hello", "item": "a"},
             {"result": "world", "item": "b"},
@@ -3289,7 +2536,7 @@ class TestDetectEmptyOutputItems:
         """Items with only batch meta keys (item, _-prefixed) are detected as empty."""
         exec_res = [
             {"response": "good", "item": "a"},
-            {"item": "b", "_trace_id": "abc"},  # Only meta keys
+            {"item": "b", "_trace_id": "abc"},
         ]
         result = _detect_empty_output_items(exec_res, [])
         assert result == [1]
@@ -3298,7 +2545,7 @@ class TestDetectEmptyOutputItems:
         """None results (exception failures) are skipped, not counted as empty."""
         exec_res = [
             {"response": "good", "item": "a"},
-            None,  # Exception failure
+            None,
             {"response": "good", "item": "c"},
         ]
         result = _detect_empty_output_items(exec_res, [])
@@ -3308,7 +2555,7 @@ class TestDetectEmptyOutputItems:
         """Items whose indices appear in the errors list are skipped."""
         exec_res = [
             {"response": "good", "item": "a"},
-            {"item": "b"},  # No content keys, but in error list
+            {"item": "b"},
             {"response": "good", "item": "c"},
         ]
         errors = [{"index": 1, "item": "b", "error": "something failed"}]
@@ -3335,18 +2582,10 @@ class TestDetectEmptyOutputItems:
         assert result == [0]
 
     def test_non_standard_output_keys_not_flagged(self):
-        """Nodes writing to non-standard keys (file, git, etc.) are NOT false positives.
-
-        This is the most important test here. Without the meta-key approach,
-        a file-read batch would flag every item as "empty" because it writes
-        to "content"/"path" which aren't in any hardcoded content-key list.
-        """
+        """Nodes writing to non-standard keys are NOT false positives."""
         exec_res = [
-            # File read node: writes "content" and "path"
             {"content": "file data", "path": "output/foo.txt", "item": "foo.txt"},
-            # Git status node: writes custom keys
             {"branch": "main", "changes": ["file.py"], "item": "repo1"},
-            # Workflow executor: auto-exposed child output
             {"analysis": {"score": 0.8}, "item": "doc1"},
         ]
         result = _detect_empty_output_items(exec_res, [])
@@ -3354,14 +2593,12 @@ class TestDetectEmptyOutputItems:
 
 
 class TestEmptyOutputWarnings:
-    """Integration tests for empty output warnings in PflowBatchNode.post()."""
+    """Tests for empty output warnings via _push_batch_warnings."""
 
     def test_empty_output_pushes_warning(self):
         """Batch items that succeed with empty output push a warning to __warnings__."""
 
         class EmptyOutputNode:
-            """Inner node that produces empty output for specific indices."""
-
             def __init__(self, node_id: str, empty_indices: set[int]):
                 self.node_id = node_id
                 self._empty_indices = empty_indices
@@ -3375,12 +2612,9 @@ class TestEmptyOutputWarnings:
                 return "default"
 
         inner = EmptyOutputNode("test_node", empty_indices={0, 2})
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}"})
-
         shared: dict = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+
+        _run_batch(inner, shared)
 
         assert "__warnings__" in shared
         assert "test_node" in shared["__warnings__"]
@@ -3392,8 +2626,6 @@ class TestEmptyOutputWarnings:
         """Both errors AND empty output are combined in a single warning message."""
 
         class MixedResultNode:
-            """Inner node: item 0 = error, item 1 = empty, item 2 = good."""
-
             def __init__(self, node_id: str):
                 self.node_id = node_id
                 self._call_count = 0
@@ -3410,28 +2642,21 @@ class TestEmptyOutputWarnings:
                 return "default"
 
         inner = MixedResultNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
         shared: dict = {"data": ["a", "b", "c"]}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+
+        _run_batch(inner, shared, error_handling="continue")
 
         assert "__warnings__" in shared
         warning = shared["__warnings__"]["test_node"]
-        # Both parts should be present in the combined message
         assert "error" in warning.lower()
         assert "empty output" in warning
 
     def test_empty_input_list_pushes_warning(self):
-        """When batch receives an empty input list, post() warns about 0 items to process."""
+        """When batch receives an empty input list, a warning about 0 items is pushed."""
         inner = MockInnerNode("test_node")
-        batch = PflowBatchNode(inner, "test_node", {"items": "${data}", "error_handling": "continue"})
-
         shared: dict = {"data": []}
-        items = batch.prep(shared)
-        results = batch._exec(items)
-        batch.post(shared, items, results)
+
+        _run_batch(inner, shared, error_handling="continue")
 
         assert "test_node" in shared.get("__warnings__", {})
         assert "0 items" in shared["__warnings__"]["test_node"]

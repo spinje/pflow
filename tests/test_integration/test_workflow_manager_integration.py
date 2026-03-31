@@ -18,11 +18,11 @@ import pytest
 
 from pflow.core.exceptions import WorkflowExistsError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.markdown_parser import MarkdownParseError
+from pflow.core.node import Node
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.pocketflow import Node
 from pflow.registry.context_builder import build_component_context
 from pflow.registry.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import WorkflowEngine, compile_workflow
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from tests.shared.markdown_utils import ir_to_markdown
 
@@ -191,9 +191,13 @@ class TestWorkflowLifecycleIntegration:
         current_module.EchoTestNode = EchoTestNode
 
         try:
-            flow = compile_ir_to_flow(loaded_ir, registry=test_registry, initial_params={"text": "World"})
-            shared = {"text": "World"}
-            _ = flow.run(shared)
+            initial_params = {"text": "World"}
+            workflow = compile_workflow(loaded_ir, registry=test_registry, initial_params=initial_params)
+            shared: dict[str, Any] = {"text": "World"}
+            shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+            shared.update(workflow.resolved_defaults)
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
 
             # Verify execution - TestEchoNode uses params["message"] when available
             # The template ${text} will be resolved to "World"
@@ -508,7 +512,6 @@ def test_real_workflow_execution_with_errors(tmp_path):
     """Test workflow execution with nodes that can actually fail."""
     from pflow.core.workflow.manager import WorkflowManager
     from pflow.registry import Registry
-    from pflow.runtime import compile_ir_to_flow
 
     # Create a workflow that includes error conditions
     workflow_ir = {
@@ -528,11 +531,11 @@ def test_real_workflow_execution_with_errors(tmp_path):
 
     # This should compile but fail during execution
     loaded_ir = workflow_manager.load_ir("error-workflow")
-    flow = compile_ir_to_flow(loaded_ir, registry)
+    workflow = compile_workflow(loaded_ir, registry)
 
-    shared = {}
-    # The read-file node doesn't raise an exception, it sets an error in shared
-    _ = flow.run(shared)
+    shared: dict[str, Any] = dict(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
 
     # Verify the error was set in shared store
     # With namespacing enabled, error is stored under node ID
@@ -599,7 +602,6 @@ def test_nested_workflow_with_real_nodes(tmp_path):
     """Test nested workflow execution with actual file operations."""
     from pflow.core.workflow.manager import WorkflowManager
     from pflow.registry import Registry
-    from pflow.runtime import compile_ir_to_flow
 
     workflow_manager = WorkflowManager(tmp_path / "workflows")
 
@@ -642,10 +644,11 @@ def test_nested_workflow_with_real_nodes(tmp_path):
     with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_wm_class:
         mock_wm_class.return_value = workflow_manager
 
-        flow = compile_ir_to_flow(outer_workflow, registry)
+        workflow = compile_workflow(outer_workflow, registry)
 
-        shared = {}
-        _ = flow.run(shared)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify the file was actually written
         assert (tmp_path / "output.txt").exists()

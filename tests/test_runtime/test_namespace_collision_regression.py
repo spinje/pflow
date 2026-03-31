@@ -13,9 +13,10 @@ The fix: nodes read only from `self.params`. Templates handle all data wiring.
 
 import pytest
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 # =============================================================================
 # Test Nodes (simulating real node behavior)
@@ -252,9 +253,9 @@ class TestNodeIDCollisionRegression:
             "edges": [{"from": "images", "to": "analyze"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # Verify the namespace dict exists (this is what caused the bug)
         assert "images" in shared, "Node 'images' namespace should exist"
@@ -284,9 +285,9 @@ class TestNodeIDCollisionRegression:
             "edges": [{"from": "url", "to": "fetch"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # Namespace dict exists
         assert "url" in shared
@@ -318,9 +319,9 @@ class TestNodeIDCollisionRegression:
             "edges": [{"from": "prompt", "to": "llm"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # Namespace exists
         assert "prompt" in shared
@@ -378,13 +379,15 @@ class TestWorkflowInputCollisionRegression:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"url": "https://example.com"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"url": "https://example.com"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         # The input exists at root level (this is what caused the bug)
         # Note: After template resolution, initial_params may or may not persist at root
@@ -414,13 +417,15 @@ class TestWorkflowInputCollisionRegression:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"prompt": "user input"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"prompt": "user input"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         # LLM used transformed prompt, not raw input
         assert "llm" in shared
@@ -461,13 +466,15 @@ class TestStaticParamNotOverridden:
         }
 
         # Provide input that would have overridden in old behavior
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"url": "https://override.com"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"url": "https://override.com"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         # Static param should win
         assert "fetch" in shared
@@ -491,13 +498,15 @@ class TestStaticParamNotOverridden:
         }
 
         # Provide the default via initial_params (simulating what executor does)
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"url": "https://default.com"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"url": "https://default.com"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         # Static param wins
         assert shared["fetch"]["response"] == "Fetched: https://hardcoded.com"
@@ -533,9 +542,9 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["echo"]["result"]["count"] == 0
 
@@ -553,9 +562,9 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["echo"]["result"]["enabled"] is False
 
@@ -573,9 +582,9 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["echo"]["result"]["message"] == ""
 
@@ -593,9 +602,9 @@ class TestFalsyValuePreservation:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["echo"]["result"]["data"] is None
 
@@ -626,13 +635,15 @@ class TestFalsyValuePreservation:
         }
 
         # Provide defaults via initial_params (simulating executor behavior)
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"count": 999, "message": "default msg"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"count": 999, "message": "default msg"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         # Falsy params should be preserved, not overridden by input defaults
         # In old code: shared.get("count") or params.get("count") would return 999
@@ -671,13 +682,15 @@ class TestTemplateResolutionStillWorks:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"target": "https://resolved.com"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"target": "https://resolved.com"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["fetch"]["response"] == "Fetched: https://resolved.com"
 
@@ -700,9 +713,9 @@ class TestTemplateResolutionStillWorks:
             "edges": [{"from": "prepare", "to": "fetch"}],
         }
 
-        flow = compile_ir_to_flow(workflow, mock_registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, mock_registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # Note: MockShellNode returns different output, so we just check it ran
         assert "fetch" in shared
@@ -725,12 +738,14 @@ class TestTemplateResolutionStillWorks:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(
-            workflow,
-            mock_registry,
-            initial_params={"path": "users/123"},
-        )
-        shared = {}
-        flow.run(shared)
+        initial_params = {"path": "users/123"}
+
+        compiled = compile_workflow(workflow, mock_registry, initial_params=initial_params)
+
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+
+        shared.update(compiled.resolved_defaults)
+
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["fetch"]["response"] == "Fetched: https://api.example.com/users/123?format=json"

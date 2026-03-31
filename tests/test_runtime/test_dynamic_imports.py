@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, import_node_class
 
@@ -151,7 +151,7 @@ def test_import_node_class_invalid_inheritance():
         assert error.node_type == "test-node"
         assert error.details["class_name"] == "InvalidNode"
         assert "object" in error.details["actual_bases"]  # MockInvalidNode inherits from object
-        assert "Ensure 'InvalidNode' inherits from pocketflow.BaseNode" in error.suggestion
+        assert "Ensure 'InvalidNode' inherits from pflow.core.node.BaseNode" in error.suggestion
 
 
 def test_import_node_class_not_a_class():

@@ -9,7 +9,7 @@ REFACTOR HISTORY:
 
 import pytest
 
-from pflow import pocketflow
+from pflow.core.node import BaseNode, Node
 from pflow.registry.metadata_extractor import PflowMetadataExtractor
 
 
@@ -23,7 +23,7 @@ class TestMetadataExtractorBehavior:
     def test_extracts_description_from_docstring(self):
         """Test that node descriptions are extracted from docstrings."""
 
-        class DocumentedNode(pocketflow.Node):
+        class DocumentedNode(Node):
             """This is a test node for validation."""
 
             pass
@@ -35,9 +35,15 @@ class TestMetadataExtractorBehavior:
         assert result["description"] != "No description"
 
     def test_handles_missing_docstring_gracefully(self):
-        """Test that nodes without docstrings are handled gracefully."""
+        """Test that nodes without docstrings are handled gracefully.
 
-        class UndocumentedNode(pocketflow.Node):
+        FIX HISTORY:
+        - Previously used Node, but Node now has a docstring
+          ("BaseNode with retry...") which inspect.getdoc() inherits.
+        - Use BaseNode (no docstring) to test the "no description" path.
+        """
+
+        class UndocumentedNode(BaseNode):
             pass
 
         result = self.extractor.extract_metadata(UndocumentedNode)
@@ -53,7 +59,7 @@ class TestMetadataExtractorBehavior:
     def test_extracts_interface_components_from_docstring(self):
         """Test that Interface sections are parsed into structured data."""
 
-        class InterfaceNode(pocketflow.Node):
+        class InterfaceNode(Node):
             """
             Node with complete Interface section.
 
@@ -86,7 +92,7 @@ class TestMetadataExtractorBehavior:
     def test_extracts_type_information_from_enhanced_format(self):
         """Test that enhanced format with types is correctly parsed."""
 
-        class EnhancedNode(pocketflow.Node):
+        class EnhancedNode(Node):
             """
             Node with enhanced Interface format.
 
@@ -115,7 +121,7 @@ class TestMetadataExtractorBehavior:
     def test_handles_complex_nested_structures(self):
         """Test that complex nested structures are parsed correctly."""
 
-        class StructuredNode(pocketflow.Node):
+        class StructuredNode(Node):
             """
             Node with nested structure.
 
@@ -166,7 +172,7 @@ class TestMetadataExtractorBehavior:
     def test_backward_compatibility_with_simple_format(self):
         """Test that simple format is converted to rich format."""
 
-        class SimpleNode(pocketflow.Node):
+        class SimpleNode(Node):
             """
             Node with simple Interface format.
 
@@ -197,7 +203,7 @@ class TestMetadataExtractorBehavior:
 
             pass
 
-        with pytest.raises(ValueError, match=r"does not inherit from pocketflow.BaseNode"):
+        with pytest.raises(ValueError, match=r"does not inherit from BaseNode"):
             self.extractor.extract_metadata(NotANode)
 
     def test_validates_input_is_class(self):
@@ -212,7 +218,7 @@ class TestMetadataExtractorBehavior:
     def test_handles_malformed_interface_gracefully(self):
         """Test that malformed Interface sections don't crash the extractor."""
 
-        class MalformedNode(pocketflow.Node):
+        class MalformedNode(Node):
             """Node with malformed Interface.
 
             Interface:
@@ -236,7 +242,7 @@ class TestMetadataExtractorBehavior:
     def test_handles_unicode_content(self):
         """Test that unicode in docstrings is handled correctly."""
 
-        class UnicodeNode(pocketflow.Node):
+        class UnicodeNode(Node):
             """
             Node with unicode → symbols.
 
@@ -255,7 +261,7 @@ class TestMetadataExtractorBehavior:
     def test_extracts_from_basenode_subclasses(self):
         """Test that BaseNode subclasses are handled correctly."""
 
-        class TestBaseNode(pocketflow.BaseNode):
+        class TestBaseNode(BaseNode):
             """BaseNode test implementation."""
 
             def prep(self):

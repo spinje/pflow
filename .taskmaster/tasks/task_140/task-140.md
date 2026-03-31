@@ -1,12 +1,14 @@
 # Task 140: Wrapper Chain Refactoring
 
+> NOTE: This task was subsumed by Task 135 (Execution Core Compile-Once Redesign).
+
 ## Description
 
 Simplify the 3,920-line execution wrapper chain that wraps 205 lines of PocketFlow. The chain has accumulated multiple concerns per wrapper, cross-wrapper coupling, and duplicated boilerplate. Task 138 (shared runner) created a single compilation callsite making this refactoring safe. Task 135 (compile-once) may change batch patterns and should land first.
 
 ## Status
 
-not started
+done
 
 ## Priority
 

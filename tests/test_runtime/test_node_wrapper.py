@@ -1,57 +1,39 @@
-"""Tests for template-aware node wrapper."""
+"""Tests for template resolution standalone functions.
 
-from unittest.mock import Mock
+Migrated from TemplateAwareNodeWrapper tests to use the standalone functions
+in pflow.runtime.engine.template_resolution. The wrapper class is removed;
+template resolution is now a pure function called by the engine.
+"""
 
 import pytest
 
-from pflow.pocketflow import Node
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.engine.template_resolution import (
+    build_type_cache,
+    contains_unresolved_template,
+    resolve_templates,
+    split_params,
+)
+from pflow.runtime.engine.types import TemplateConfig
 
 
-class WrapperTestNode(Node):
-    """Simple test node for wrapper testing."""
-
-    def __init__(self):
-        super().__init__()
-        self.prep_called = False
-        self.exec_called = False
-        self.post_called = False
-
-    def prep(self, shared):
-        self.prep_called = True
-        return {"prep_data": "test"}
-
-    def exec(self, prep_res):
-        self.exec_called = True
-        return f"Executed with params: {self.params}"
-
-    def post(self, shared, prep_res, exec_res):
-        self.post_called = True
-        shared["result"] = exec_res
-        return "default"
-
-
-class TestWrapperInitialization:
-    """Test wrapper initialization and setup."""
-
-    def test_basic_initialization(self):
-        """Test basic wrapper initialization."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        assert wrapper.inner_node is node
-        assert wrapper.node_id == "test_node"
-        assert wrapper.initial_params == {}
-        assert wrapper.template_params == {}
-        assert wrapper.static_params == {}
-
-    def test_initialization_with_initial_params(self):
-        """Test initialization with initial parameters."""
-        node = WrapperTestNode()
-        initial_params = {"url": "https://example.com", "count": 5}
-        wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
-
-        assert wrapper.initial_params == initial_params
+def _resolve(
+    params: dict,
+    shared: dict,
+    node_id: str = "test_node",
+    interface_metadata: dict | None = None,
+    resolution_mode: str = "strict",
+) -> dict:
+    """Helper: split params, build config, resolve templates, return merged_params."""
+    expected_types = build_type_cache(interface_metadata)
+    template_params, static_params = split_params(params, expected_types)
+    config = TemplateConfig(
+        template_params=template_params,
+        static_params=static_params,
+        expected_types=expected_types,
+        resolution_mode=resolution_mode,
+    )
+    merged_params, _last_resolutions, _template_errors = resolve_templates(config, shared, node_id)
+    return merged_params
 
 
 class TestParameterSeparation:
@@ -59,57 +41,44 @@ class TestParameterSeparation:
 
     def test_separates_template_params(self):
         """Test that params with templates are separated."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
         params = {"url": "${endpoint}", "format": "json", "message": "Processing ${count} items"}
+        expected_types = build_type_cache(None)
+        template_params, static_params = split_params(params, expected_types)
 
-        wrapper.set_params(params)
-
-        assert wrapper.template_params == {"url": "${endpoint}", "message": "Processing ${count} items"}
-        assert wrapper.static_params == {"format": "json"}
-
-        # Inner node should only have static params initially
-        assert node.params == {"format": "json"}
+        assert template_params == {"url": "${endpoint}", "message": "Processing ${count} items"}
+        assert static_params == {"format": "json"}
 
     def test_all_static_params(self):
         """Test handling when all params are static."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
         params = {"format": "json", "count": 10, "enabled": True}
-        wrapper.set_params(params)
+        expected_types = build_type_cache(None)
+        template_params, static_params = split_params(params, expected_types)
 
-        assert wrapper.template_params == {}
-        assert wrapper.static_params == params
-        assert node.params == params
+        assert template_params == {}
+        assert static_params == params
 
     def test_all_template_params(self):
         """Test handling when all params have templates."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
         params = {"url": "${endpoint}", "token": "${auth_token}", "id": "${item_id}"}
-        wrapper.set_params(params)
+        expected_types = build_type_cache(None)
+        template_params, static_params = split_params(params, expected_types)
 
-        assert wrapper.template_params == params
-        assert wrapper.static_params == {}
-        assert node.params == {}
+        assert template_params == params
+        assert static_params == {}
 
     def test_updates_params_on_subsequent_calls(self):
-        """Test that set_params updates parameters correctly."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
+        """Test that split_params can be called with different params."""
+        expected_types = build_type_cache(None)
 
         # First set
-        wrapper.set_params({"a": "${var1}", "b": "static1"})
-        assert wrapper.template_params == {"a": "${var1}"}
-        assert wrapper.static_params == {"b": "static1"}
+        tp1, sp1 = split_params({"a": "${var1}", "b": "static1"}, expected_types)
+        assert tp1 == {"a": "${var1}"}
+        assert sp1 == {"b": "static1"}
 
-        # Second set (should replace)
-        wrapper.set_params({"c": "${var2}", "d": "static2"})
-        assert wrapper.template_params == {"c": "${var2}"}
-        assert wrapper.static_params == {"d": "static2"}
+        # Second set (independent call)
+        tp2, sp2 = split_params({"c": "${var2}", "d": "static2"}, expected_types)
+        assert tp2 == {"c": "${var2}"}
+        assert sp2 == {"d": "static2"}
 
 
 class TestTemplateResolution:
@@ -117,164 +86,53 @@ class TestTemplateResolution:
 
     def test_no_templates_bypasses_resolution(self):
         """Test that execution without templates bypasses resolution."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        # Set only static params
-        wrapper.set_params({"format": "json", "count": 10})
-
-        shared = {"some_data": "value"}
-        result = wrapper._run(shared)
-
-        assert node.prep_called
-        assert node.exec_called
-        assert node.post_called
-        assert result == "default"  # post() returns "default"
-        assert "Executed with params: {'format': 'json', 'count': 10}" in shared["result"]
+        result = _resolve({"format": "json", "count": 10}, {"some_data": "value"})
+        assert result == {"format": "json", "count": 10}
 
     def test_resolves_simple_templates(self):
         """Test resolution of simple template variables."""
-        node = WrapperTestNode()
-        initial_params = {"endpoint": "https://api.example.com"}
-        wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
+        shared = {"endpoint": "https://api.example.com"}
+        result = _resolve({"url": "${endpoint}", "format": "json"}, shared)
 
-        wrapper.set_params({"url": "${endpoint}", "format": "json"})
-
-        shared = {}
-        result = wrapper._run(shared)
-
-        # Check that params were resolved during execution
-        expected_params = "{'format': 'json', 'url': 'https://api.example.com'}"
-        assert result == "default"
-        assert expected_params in shared["result"]
+        assert result["url"] == "https://api.example.com"
+        assert result["format"] == "json"
 
     def test_shared_store_resolution(self):
         """Test resolution from shared store."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        wrapper.set_params({"message": "Processing ${item_name}"})
-
         shared = {"item_name": "Document.pdf"}
-        result = wrapper._run(shared)
+        result = _resolve({"message": "Processing ${item_name}"}, shared)
 
-        assert result == "default"
-        assert "'message': 'Processing Document.pdf'" in shared["result"]
+        assert result["message"] == "Processing Document.pdf"
 
-    def test_priority_initial_over_shared(self):
-        """Test that initial params have priority over shared store."""
-        node = WrapperTestNode()
-        initial_params = {"count": "100"}  # From planner
-        wrapper = TemplateAwareNodeWrapper(node, "test_node", initial_params)
+    def test_shared_store_values_resolved(self):
+        """Test that values in shared store are resolved correctly.
 
-        wrapper.set_params({"message": "Count: ${count}"})
+        initial_params override behavior is removed. Values come from shared store only.
+        """
+        shared = {"count": "50"}
+        result = _resolve({"message": "Count: ${count}"}, shared)
 
-        shared = {"count": "50"}  # Different value in shared
-        result = wrapper._run(shared)
-
-        # Should use initial_params value (100), not shared (50)
-        assert result == "default"
-        assert "'message': 'Count: 100'" in shared["result"]
+        assert result["message"] == "Count: 50"
 
     def test_path_resolution(self):
         """Test resolution of nested paths."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        wrapper.set_params({"title": "${video.title}", "author": "${video.metadata.author}"})
-
         shared = {"video": {"title": "Python Tutorial", "metadata": {"author": "TechTeacher", "duration": 3600}}}
+        result = _resolve(
+            {"title": "${video.title}", "author": "${video.metadata.author}"},
+            shared,
+        )
 
-        result = wrapper._run(shared)
-
-        assert result == "default"
-        assert "'title': 'Python Tutorial'" in shared["result"]
-        assert "'author': 'TechTeacher'" in shared["result"]
+        assert result["title"] == "Python Tutorial"
+        assert result["author"] == "TechTeacher"
 
     def test_unresolved_templates_raise_error(self):
         """Test that unresolved templates raise ValueError (Issue #95 fix).
 
-        This test was updated as part of Task 85 (Runtime Template Resolution Hardening).
-        Previously, unresolved templates were left as-is for "debugging visibility",
-        which caused literal ${...} text to propagate to production (e.g., Slack messages).
-
-        Now, unresolved templates correctly raise ValueError to prevent data corruption.
+        Unresolved templates correctly raise ValueError to prevent data corruption.
         """
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        wrapper.set_params({"found": "${existing}", "missing": "${undefined}"})
-
         shared = {"existing": "value"}
-
-        # Should raise ValueError because ${undefined} cannot be resolved
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared)
-
-    def test_params_restored_after_execution(self):
-        """Test that original params are restored after execution."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node", {"var": "resolved"})
-
-        wrapper.set_params({"param": "${var}"})
-
-        # Check initial state
-        assert node.params == {}
-
-        # Run with resolution
-        shared = {}
-        wrapper._run(shared)
-
-        # After execution, params should be restored (though node copy is discarded)
-        assert node.params == {}
-
-
-class TestAttributeDelegation:
-    """Test attribute delegation to inner node."""
-
-    def test_getattr_delegation(self):
-        """Test that attribute access is delegated to inner node."""
-        node = WrapperTestNode()
-        node.custom_attr = "test_value"
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        # Access custom attribute through wrapper
-        assert wrapper.custom_attr == "test_value"
-
-        # Access node methods
-        assert hasattr(wrapper, "prep")
-        assert hasattr(wrapper, "exec")
-        assert hasattr(wrapper, "post")
-
-    def test_setattr_delegation(self):
-        """Test that attribute setting is delegated correctly."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        # Set attribute through wrapper
-        wrapper.custom_value = 42
-        assert node.custom_value == 42
-
-        # Wrapper's own attributes should not be delegated
-        wrapper.initial_params = {"test": "value"}
-        assert not hasattr(node, "initial_params")
-
-    def test_wrapper_transparency(self):
-        """Test that wrapper is transparent to PocketFlow."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        # Wrapper should look like a Node to PocketFlow
-        assert hasattr(wrapper, "set_params")
-        assert hasattr(wrapper, "_run")
-        assert hasattr(wrapper, "prep")
-        assert hasattr(wrapper, "exec")
-        assert hasattr(wrapper, "post")
-
-        # Should be able to set successors
-        mock_successor = Mock()
-        wrapper.successors = {"default": mock_successor}
-        assert node.successors["default"] is mock_successor
+            _resolve({"found": "${existing}", "missing": "${undefined}"}, shared)
 
 
 class TestComplexScenarios:
@@ -282,87 +140,83 @@ class TestComplexScenarios:
 
     def test_multiple_template_resolution(self):
         """Test resolution of multiple templates in one parameter."""
-        node = WrapperTestNode()
-        initial_params = {"repo": "pflow", "issue": "123"}
-        wrapper = TemplateAwareNodeWrapper(node, "github_node", initial_params)
+        shared = {"repo": "pflow", "issue": "123", "status": "in_progress"}
+        result = _resolve(
+            {
+                "message": "Working on ${repo} issue #${issue}",
+                "url": "https://github.com/${repo}/issues/${issue}",
+            },
+            shared,
+        )
 
-        wrapper.set_params({
-            "message": "Working on ${repo} issue #${issue}",
-            "url": "https://github.com/${repo}/issues/${issue}",
-        })
-
-        shared = {"status": "in_progress"}  # Additional shared data
-        result = wrapper._run(shared)
-
-        assert result == "default"
-        assert "'message': 'Working on pflow issue #123'" in shared["result"]
-        assert "'url': 'https://github.com/pflow/issues/123'" in shared["result"]
+        assert result["message"] == "Working on pflow issue #123"
+        assert result["url"] == "https://github.com/pflow/issues/123"
 
     def test_complete_vs_embedded_templates(self):
         """Test that complete value templates work same as embedded."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test", {"video_id": "xyz123"})
+        shared = {"video_id": "xyz123"}
+        result = _resolve(
+            {
+                "id": "${video_id}",  # Complete value
+                "message": "Processing video ${video_id}",  # Embedded in string
+            },
+            shared,
+        )
 
-        wrapper.set_params({
-            "id": "${video_id}",  # Complete value
-            "message": "Processing video ${video_id}",  # Embedded in string
-        })
-
-        shared = {}
-        result = wrapper._run(shared)
-
-        # Both forms should resolve identically
-        assert result == "default"
-        assert "'id': 'xyz123'" in shared["result"]
-        assert "'message': 'Processing video xyz123'" in shared["result"]
+        assert result["id"] == "xyz123"
+        assert result["message"] == "Processing video xyz123"
 
     def test_type_conversion_in_templates(self):
         """Test type conversion during template resolution."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test")
-
-        wrapper.set_params({"none_val": "Value: ${none}", "zero_val": "Count: ${zero}", "bool_val": "Flag: ${flag}"})
-
         shared = {"none": None, "zero": 0, "flag": False}
+        result = _resolve(
+            {"none_val": "Value: ${none}", "zero_val": "Count: ${zero}", "bool_val": "Flag: ${flag}"},
+            shared,
+        )
 
-        result = wrapper._run(shared)
-
-        assert result == "default"
-        assert "'none_val': 'Value: '" in shared["result"]  # None -> ""
-        assert "'zero_val': 'Count: 0'" in shared["result"]
-        assert "'bool_val': 'Flag: False'" in shared["result"]
+        assert result["none_val"] == "Value: "  # None -> ""
+        assert result["zero_val"] == "Count: 0"
+        assert result["bool_val"] == "Flag: False"
 
 
 class TestErrorHandling:
-    """Test error handling in the wrapper."""
-
-    def test_node_execution_error_propagates(self):
-        """Test that node execution errors propagate through wrapper."""
-        node = WrapperTestNode()
-
-        # Make node raise an error
-        def failing_exec(prep_res):
-            raise ValueError("Node execution failed")
-
-        node.exec = failing_exec
-
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-        wrapper.set_params({"param": "value"})
-
-        shared = {}
-        with pytest.raises(ValueError, match="Node execution failed"):
-            wrapper._run(shared)
+    """Test error handling in template resolution."""
 
     def test_handles_non_string_param_values(self):
         """Test handling of non-string parameter values."""
-        node = WrapperTestNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test_node")
-
-        # Mix of types including non-strings
         params = {"string": "${var}", "number": 42, "boolean": True, "list": [1, 2, 3], "dict": {"key": "value"}}
-
-        wrapper.set_params(params)
+        expected_types = build_type_cache(None)
+        template_params, static_params = split_params(params, expected_types)
 
         # Only string should be in template_params
-        assert wrapper.template_params == {"string": "${var}"}
-        assert len(wrapper.static_params) == 4
+        assert template_params == {"string": "${var}"}
+        assert len(static_params) == 4
+
+
+class TestContainsUnresolvedTemplate:
+    """Test the contains_unresolved_template helper function."""
+
+    def test_fully_resolved(self):
+        """Fully resolved string should return False."""
+        assert contains_unresolved_template("hello world", "hello world") is False
+
+    def test_unresolved_simple(self):
+        """Unresolved simple template should return True."""
+        assert contains_unresolved_template("${missing}", "${missing}") is True
+
+    def test_partially_resolved(self):
+        """Partially resolved string should return True if original vars remain."""
+        # resolved_value still has ${count} which was in the original
+        assert (
+            contains_unresolved_template(
+                "Hello Alice, you have ${count} items",
+                "Hello ${name}, you have ${count} items",
+            )
+            is True
+        )
+
+    def test_resolved_data_with_dollar_sign(self):
+        """Data containing ${...} from resolved content should NOT be flagged."""
+        # The resolved value has a different ${...} than the original template
+        mcp_result = {"message": "The old format used ${OLD_VAR} syntax"}
+        assert contains_unresolved_template(mcp_result, "${mcp.result}") is False

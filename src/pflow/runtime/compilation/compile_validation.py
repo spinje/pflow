@@ -2,7 +2,7 @@
 
 Consolidates all validation steps that run before IR-to-Flow compilation:
 structure validation, input preparation, output validation, and template
-validation. Called once from compile_ir_to_flow() as a single orchestration point.
+validation. Called once from compile_workflow() as a single orchestration point.
 """
 
 import logging
@@ -131,7 +131,7 @@ def _prepare_compilation(
     ir_dict: dict[str, Any],
     registry: Registry,
     initial_params: dict[str, Any],
-) -> tuple[dict[str, Any], list[Any]]:
+) -> tuple[dict[str, Any], list[Any], dict[str, Any], set[str]]:
     """Prepare IR for compilation: validate structure, check data flow, resolve inputs.
 
     Structure and data flow validation are compiler prerequisites — without them
@@ -169,12 +169,16 @@ def _prepare_compilation(
     )
 
     # Input validation and defaults (5-tier resolution, writes defaults to initial_params)
+    resolved_defaults: dict[str, Any] = {}
+    resolved_env_param_names: set[str] = set()
     try:
         settings_env = _load_settings_env()
         errors, defaults, env_param_names = prepare_inputs(ir_dict, initial_params, settings_env=settings_env)
         if errors:
             _raise_input_validation_errors(errors)
         initial_params.update(defaults)
+        resolved_defaults = defaults
+        resolved_env_param_names = env_param_names
 
         if env_param_names:
             initial_params["__env_param_names__"] = list(env_param_names)
@@ -189,7 +193,7 @@ def _prepare_compilation(
         logger.debug("Output validation failed", extra={"phase": "output_validation"}, exc_info=True)
         raise
 
-    return initial_params, []
+    return initial_params, [], resolved_defaults, resolved_env_param_names
 
 
 def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:

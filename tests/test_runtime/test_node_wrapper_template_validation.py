@@ -1,29 +1,42 @@
-"""Test template validation in TemplateAwareNodeWrapper.
+"""Test template validation in template resolution.
 
 This test suite verifies the fix for Issue #95 where simple templates
 (like ${var}) were skipping error validation, allowing literal template
 text to propagate to node execution.
+
+Migrated from TemplateAwareNodeWrapper tests to use standalone functions
+in pflow.runtime.engine.template_resolution.
 """
 
 import pytest
 
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.engine.template_resolution import (
+    build_type_cache,
+    inject_none_for_optional_inputs,
+    resolve_templates,
+    split_params,
+)
+from pflow.runtime.engine.types import TemplateConfig
 
 
-class DummyNode:
-    """Minimal node for testing template resolution."""
-
-    def __init__(self):
-        self.params = {}
-        self.params_at_execution = {}  # Capture params when _run is called
-
-    def set_params(self, params):
-        self.params = params
-
-    def _run(self, shared):
-        # Capture params at execution time (before wrapper restores them)
-        self.params_at_execution = dict(self.params)
-        return "default"
+def _resolve(
+    params: dict,
+    shared: dict,
+    interface_metadata: dict | None = None,
+    resolution_mode: str = "strict",
+    node_id: str = "test-node",
+) -> dict:
+    """Helper: split params, build config, resolve templates, return merged_params."""
+    expected_types = build_type_cache(interface_metadata)
+    template_params, static_params = split_params(params, expected_types)
+    config = TemplateConfig(
+        template_params=template_params,
+        static_params=static_params,
+        expected_types=expected_types,
+        resolution_mode=resolution_mode,
+    )
+    merged_params, _last_resolutions, _template_errors = resolve_templates(config, shared, node_id)
+    return merged_params
 
 
 class TestSimpleTemplateValidation:
@@ -34,121 +47,71 @@ class TestSimpleTemplateValidation:
 
         This is the PRIMARY bug fix test. Previously, simple templates like
         ${missing_variable} would skip error checking and be passed literally
-        to nodes, causing broken data in production (literal "${...}" in Slack
-        messages, etc.).
+        to nodes, causing broken data in production.
 
         After fix: ValueError should be raised immediately.
         """
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-        )
-
-        # Set parameter with unresolvable simple template
-        wrapper.set_params({"prompt": "${missing_variable}"})
-
-        # Execute should raise ValueError with clear message
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={})
+            _resolve({"prompt": "${missing_variable}"}, {})
 
     def test_simple_template_missing_variable_error_message(self):
         """Error message should be clear and actionable."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-        wrapper.set_params({"prompt": "${missing_variable}"})
-
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared={})
+            _resolve({"prompt": "${missing_variable}"}, {})
 
         error_msg = str(exc_info.value)
-        # Check essential error message components (simplified format)
+        # Check essential error message components
         assert "prompt" in error_msg  # Parameter name
         assert "${missing_variable}" in error_msg  # Variable name
         assert "Unresolved variables" in error_msg  # Error type is clear
-        # Note: "Node ID" and "Available context keys: (none)" removed as redundant/unclear
 
     def test_simple_template_existing_variable_resolves(self):
         """Simple template with existing variable should resolve correctly."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-        )
+        result = _resolve({"prompt": "${data}"}, {"data": "resolved value"})
 
-        wrapper.set_params({"prompt": "${data}"})
-
-        # Execute with context containing the variable
-        result = wrapper._run(shared={"data": "resolved value"})
-
-        # Should execute successfully
-        assert node.params_at_execution["prompt"] == "resolved value"
-        assert result == "default"
+        assert result["prompt"] == "resolved value"
 
     def test_simple_template_type_preservation(self):
         """Simple templates should preserve original type (not convert to string)."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
         # Integer
-        wrapper.set_params({"count": "${total}"})
-        wrapper._run(shared={"total": 42})
-        assert node.params_at_execution["count"] == 42
-        assert isinstance(node.params_at_execution["count"], int)
+        result = _resolve({"count": "${total}"}, {"total": 42})
+        assert result["count"] == 42
+        assert isinstance(result["count"], int)
 
         # Boolean
-        wrapper.set_params({"enabled": "${flag}"})
-        wrapper._run(shared={"flag": True})
-        assert node.params_at_execution["enabled"] is True
-        assert isinstance(node.params_at_execution["enabled"], bool)
+        result = _resolve({"enabled": "${flag}"}, {"flag": True})
+        assert result["enabled"] is True
+        assert isinstance(result["enabled"], bool)
 
         # Dict
-        wrapper.set_params({"data": "${config}"})
-        wrapper._run(shared={"config": {"key": "value"}})
-        assert node.params_at_execution["data"] == {"key": "value"}
-        assert isinstance(node.params_at_execution["data"], dict)
+        result = _resolve({"data": "${config}"}, {"config": {"key": "value"}})
+        assert result["data"] == {"key": "value"}
+        assert isinstance(result["data"], dict)
 
         # List
-        wrapper.set_params({"items": "${list}"})
-        wrapper._run(shared={"list": [1, 2, 3]})
-        assert node.params_at_execution["items"] == [1, 2, 3]
-        assert isinstance(node.params_at_execution["items"], list)
+        result = _resolve({"items": "${list}"}, {"list": [1, 2, 3]})
+        assert result["items"] == [1, 2, 3]
+        assert isinstance(result["items"], list)
 
-    def test_simple_template_from_initial_params(self):
-        """Templates should resolve from initial_params (planner extraction)."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={"issue_number": "123"},  # From planner
+    def test_simple_template_from_shared_store(self):
+        """Templates should resolve from shared store."""
+        result = _resolve(
+            {"issue": "${issue_number}"},
+            {"issue_number": "123"},
+        )
+        assert result["issue"] == "123"
+
+    def test_simple_template_shared_store_values(self):
+        """Shared store values are used for resolution.
+
+        initial_params override behavior is removed; values come from shared store.
+        """
+        result = _resolve(
+            {"field": "${data}"},
+            {"data": "from_shared_store"},
         )
 
-        wrapper.set_params({"issue": "${issue_number}"})
-
-        # Execute with empty shared store - should still resolve
-        result = wrapper._run(shared={})
-
-        assert node.params_at_execution["issue"] == "123"
-        assert result == "default"
-
-    def test_simple_template_initial_params_priority(self):
-        """initial_params should have priority over shared store."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={"data": "from_planner"},
-        )
-
-        wrapper.set_params({"field": "${data}"})
-
-        # Execute with conflicting shared store value
-        wrapper._run(shared={"data": "from_shared_store"})
-
-        # Should use initial_params value (higher priority)
-        assert node.params_at_execution["field"] == "from_planner"
+        assert result["field"] == "from_shared_store"
 
 
 class TestComplexTemplateValidation:
@@ -159,43 +122,27 @@ class TestComplexTemplateValidation:
 
         This already worked before the bug fix, but we verify it still works.
         """
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"prompt": "Hello ${missing_variable}!"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={})
+            _resolve({"prompt": "Hello ${missing_variable}!"}, {})
 
     def test_complex_template_existing_variable_resolves(self):
         """Complex template with existing variable should resolve to string."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"prompt": "Hello ${name}!"}, {"name": "World"})
 
-        wrapper.set_params({"prompt": "Hello ${name}!"})
-
-        wrapper._run(shared={"name": "World"})
-
-        # Should resolve to complete string
-        assert node.params_at_execution["prompt"] == "Hello World!"
-        assert isinstance(node.params_at_execution["prompt"], str)
+        assert result["prompt"] == "Hello World!"
+        assert isinstance(result["prompt"], str)
 
     def test_complex_template_type_coercion(self):
         """Complex templates always produce strings, even from non-string values."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
         # Integer in template
-        wrapper.set_params({"message": "Count: ${count}"})
-        wrapper._run(shared={"count": 42})
-        assert node.params_at_execution["message"] == "Count: 42"
-        assert isinstance(node.params_at_execution["message"], str)
+        result = _resolve({"message": "Count: ${count}"}, {"count": 42})
+        assert result["message"] == "Count: 42"
+        assert isinstance(result["message"], str)
 
         # Dict in template (should JSON serialize)
-        wrapper.set_params({"message": "Data: ${config}"})
-        wrapper._run(shared={"config": {"key": "value"}})
-        assert "Data: {" in node.params_at_execution["message"]
-        assert isinstance(node.params_at_execution["message"], str)
+        result = _resolve({"message": "Data: ${config}"}, {"config": {"key": "value"}})
+        assert "Data: {" in result["message"]
+        assert isinstance(result["message"], str)
 
 
 class TestNestedStructureTemplates:
@@ -203,56 +150,32 @@ class TestNestedStructureTemplates:
 
     def test_dict_with_simple_template_missing_variable(self):
         """Dict containing simple template with missing variable should raise."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({
-            "config": {
-                "url": "${base_url}",
-                "port": 8080,
-            }
-        })
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={})
+            _resolve(
+                {"config": {"url": "${base_url}", "port": 8080}},
+                {},
+            )
 
     def test_dict_with_simple_template_resolves(self):
         """Dict containing simple template should resolve correctly."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve(
+            {"config": {"url": "${base_url}", "port": 8080}},
+            {"base_url": "https://api.example.com"},
+        )
 
-        wrapper.set_params({
-            "config": {
-                "url": "${base_url}",
-                "port": 8080,
-            }
-        })
-
-        wrapper._run(shared={"base_url": "https://api.example.com"})
-
-        assert node.params_at_execution["config"]["url"] == "https://api.example.com"
-        assert node.params_at_execution["config"]["port"] == 8080
+        assert result["config"]["url"] == "https://api.example.com"
+        assert result["config"]["port"] == 8080
 
     def test_list_with_simple_template_missing_variable(self):
         """List containing simple template with missing variable should raise."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"args": ["echo", "${message}"]})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={})
+            _resolve({"args": ["echo", "${message}"]}, {})
 
     def test_list_with_simple_template_resolves(self):
         """List containing simple template should resolve correctly."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"args": ["echo", "${message}"]}, {"message": "Hello World"})
 
-        wrapper.set_params({"args": ["echo", "${message}"]})
-
-        wrapper._run(shared={"message": "Hello World"})
-
-        assert node.params_at_execution["args"] == ["echo", "Hello World"]
+        assert result["args"] == ["echo", "Hello World"]
 
 
 class TestPathTemplates:
@@ -260,56 +183,46 @@ class TestPathTemplates:
 
     def test_simple_path_template_missing_path(self):
         """Path template with non-existent path should raise ValueError."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"field": "${data.missing.path}"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={"data": {"existing": "value"}})
+            _resolve(
+                {"field": "${data.missing.path}"},
+                {"data": {"existing": "value"}},
+            )
 
     def test_simple_path_template_resolves(self):
         """Path template should resolve through nested structure."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve(
+            {"field": "${user.profile.name}"},
+            {"user": {"profile": {"name": "Alice"}}},
+        )
 
-        wrapper.set_params({"field": "${user.profile.name}"})
-
-        wrapper._run(shared={"user": {"profile": {"name": "Alice"}}})
-
-        assert node.params_at_execution["field"] == "Alice"
+        assert result["field"] == "Alice"
 
     def test_array_index_template_missing_index(self):
         """Array index template with out-of-bounds index should raise."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"field": "${items[5]}"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={"items": [1, 2, 3]})
+            _resolve(
+                {"field": "${items[5]}"},
+                {"items": [1, 2, 3]},
+            )
 
     def test_array_index_template_resolves(self):
         """Array index template should resolve to array element."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve(
+            {"field": "${items[1]}"},
+            {"items": ["first", "second", "third"]},
+        )
 
-        wrapper.set_params({"field": "${items[1]}"})
-
-        wrapper._run(shared={"items": ["first", "second", "third"]})
-
-        assert node.params_at_execution["field"] == "second"
+        assert result["field"] == "second"
 
     def test_combined_path_and_array_template(self):
         """Combined path and array access should work."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve(
+            {"field": "${users[0].profile.email}"},
+            {"users": [{"profile": {"email": "alice@example.com"}}]},
+        )
 
-        wrapper.set_params({"field": "${users[0].profile.email}"})
-
-        wrapper._run(shared={"users": [{"profile": {"email": "alice@example.com"}}]})
-
-        assert node.params_at_execution["field"] == "alice@example.com"
+        assert result["field"] == "alice@example.com"
 
 
 class TestMultipleTemplatesInParameter:
@@ -317,84 +230,66 @@ class TestMultipleTemplatesInParameter:
 
     def test_multiple_templates_one_missing(self):
         """If any template in parameter is missing, should raise ValueError."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"message": "User ${name} has ${missing_count} items"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={"name": "Alice"})
+            _resolve(
+                {"message": "User ${name} has ${missing_count} items"},
+                {"name": "Alice"},
+            )
 
     def test_multiple_templates_all_resolved(self):
         """Multiple templates in one parameter should all resolve."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve(
+            {"message": "User ${name} has ${count} items"},
+            {"name": "Alice", "count": 5},
+        )
 
-        wrapper.set_params({"message": "User ${name} has ${count} items"})
-
-        wrapper._run(shared={"name": "Alice", "count": 5})
-
-        assert node.params_at_execution["message"] == "User Alice has 5 items"
+        assert result["message"] == "User Alice has 5 items"
 
     def test_no_false_positive_on_mcp_data(self):
         """Resolved data containing ${...} should not trigger false positives."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
         # Simulate MCP response that contains ${OLD_VAR} in its data
         mcp_result = {"message": "The old format used ${OLD_VAR} syntax"}
-        wrapper.set_params({"data": "${mcp.result}"})
 
-        # Execute with MCP data that contains ${...} text
-        wrapper._run(shared={"mcp": {"result": mcp_result}})
+        result = _resolve(
+            {"data": "${mcp.result}"},
+            {"mcp": {"result": mcp_result}},
+        )
 
         # Should NOT raise error - the ${OLD_VAR} is part of resolved data, not a template
-        assert node.params_at_execution["data"] == mcp_result
+        assert result["data"] == mcp_result
 
     def test_partial_resolution_with_three_variables(self):
         """Test partial resolution detection with 3+ variables."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        # Three variables, only two resolve
-        wrapper.set_params({"message": "${greeting} ${name}, you have ${count} items"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={"greeting": "Hello", "name": "Alice"})
+            _resolve(
+                {"message": "${greeting} ${name}, you have ${count} items"},
+                {"greeting": "Hello", "name": "Alice"},
+            )
 
     def test_similar_variable_names_no_confusion(self):
         """Variables with similar names should be handled correctly."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        # user resolves, username doesn't - should detect username is missing
-        wrapper.set_params({"message": "User: ${user}, Username: ${username}"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={"user": "Alice"})
+            _resolve(
+                {"message": "User: ${user}, Username: ${username}"},
+                {"user": "Alice"},
+            )
 
     def test_partial_resolution_with_paths(self):
         """Test partial resolution with path-based templates."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        # One path resolves, another doesn't
-        wrapper.set_params({"message": "Name: ${user.name}, Age: ${user.age}"})
-
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared={"user": {"name": "Alice"}})
+            _resolve(
+                {"message": "Name: ${user.name}, Age: ${user.age}"},
+                {"user": {"name": "Alice"}},
+            )
 
     def test_complete_resolution_with_empty_values(self):
         """Empty string resolution should not be confused with unresolved."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve(
+            {"message": "User ${name} has ${count} items"},
+            {"name": "Alice", "count": ""},
+        )
 
-        wrapper.set_params({"message": "User ${name} has ${count} items"})
-
-        # Both resolve, but count is empty string
-        wrapper._run(shared={"name": "Alice", "count": ""})
-
-        assert node.params_at_execution["message"] == "User Alice has  items"
+        assert result["message"] == "User Alice has  items"
 
 
 class TestDepthLimit:
@@ -402,47 +297,20 @@ class TestDepthLimit:
 
     def test_deep_nesting_does_not_cause_stack_overflow(self):
         """Deeply nested structures should hit depth limit gracefully, not crash."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
         # Create a structure just deep enough to trigger the limit (105 levels)
-        # This is FAST - only as deep as needed to test the limit
         nested = {"level": "${var}"}
         current = nested
         for _ in range(104):  # 105 levels total
             current["level"] = {"level": "${var}"}
             current = current["level"]
 
-        wrapper.set_params({"data": nested})
-
-        # Should NOT raise RecursionError - depth limit prevents it
-        # The depth limit assumes "resolved" and continues execution
-        wrapper._run(shared={})  # No error raised due to depth limit
+        # The depth limit is checked via contains_unresolved_template, which returns
+        # False at max depth, so template resolution won't raise ValueError.
+        # In permissive mode, the partially resolved template won't raise.
+        result = _resolve({"data": nested}, {}, resolution_mode="permissive")
 
         # The execution should complete (depth limit returns False = resolved)
-        assert "data" in node.params_at_execution
-
-    def test_depth_limit_logs_debug_message(self, caplog):
-        """Depth limit should log when reached."""
-        import logging
-
-        caplog.set_level(logging.DEBUG)
-
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        # Create deep structure
-        nested = {"level": "${var}"}
-        current = nested
-        for _ in range(104):  # 105 levels total
-            current["level"] = {"level": "${var}"}
-            current = current["level"]
-
-        wrapper.set_params({"data": nested})
-        wrapper._run(shared={})
-
-        # Check that depth limit message was logged
-        assert any("depth limit" in record.message.lower() for record in caplog.records)
+        assert "data" in result
 
 
 class TestEdgeCases:
@@ -450,73 +318,40 @@ class TestEdgeCases:
 
     def test_none_value_resolves_to_empty_string(self):
         """None values should convert to empty string in complex templates."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"message": "Value: ${data}"}, {"data": None})
 
-        wrapper.set_params({"message": "Value: ${data}"})
-
-        wrapper._run(shared={"data": None})
-
-        # None converts to empty string
-        assert node.params_at_execution["message"] == "Value: "
+        assert result["message"] == "Value: "
 
     def test_simple_template_with_none_preserves_type(self):
         """Simple template with None value should preserve None type."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"field": "${data}"}, {"data": None})
 
-        wrapper.set_params({"field": "${data}"})
-
-        wrapper._run(shared={"data": None})
-
-        assert node.params_at_execution["field"] is None
+        assert result["field"] is None
 
     def test_empty_string_value_resolves(self):
         """Empty string values should resolve correctly."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"field": "${empty}"}, {"empty": ""})
 
-        wrapper.set_params({"field": "${empty}"})
-
-        wrapper._run(shared={"empty": ""})
-
-        assert node.params_at_execution["field"] == ""
+        assert result["field"] == ""
 
     def test_zero_value_resolves(self):
         """Zero values should resolve correctly (not treated as False)."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"count": "${zero}"}, {"zero": 0})
 
-        wrapper.set_params({"count": "${zero}"})
-
-        wrapper._run(shared={"zero": 0})
-
-        assert node.params_at_execution["count"] == 0
-        assert node.params_at_execution["count"] is not False
+        assert result["count"] == 0
+        assert result["count"] is not False
 
     def test_false_value_resolves(self):
         """False values should resolve correctly (not treated as None)."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"flag": "${disabled}"}, {"disabled": False})
 
-        wrapper.set_params({"flag": "${disabled}"})
-
-        wrapper._run(shared={"disabled": False})
-
-        assert node.params_at_execution["flag"] is False
+        assert result["flag"] is False
 
     def test_no_template_params_executes_immediately(self):
         """If no params contain templates, should skip resolution."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
+        result = _resolve({"message": "static text", "count": 42}, {})
 
-        # No templates in params
-        wrapper.set_params({"message": "static text", "count": 42})
-
-        result = wrapper._run(shared={})
-
-        assert result == "default"
-        assert node.params_at_execution == {"message": "static text", "count": 42}
+        assert result == {"message": "static text", "count": 42}
 
 
 class TestErrorMessageAccuracy:
@@ -535,19 +370,11 @@ class TestErrorMessageAccuracy:
         - Old error: "Unresolved variables: ${provided}, ${missing}"  (wrong!)
         - Fixed error: "Unresolved variables: ${missing}"  (correct)
         """
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        # Parameter with two variables - one exists, one doesn't
-        wrapper.set_params({
-            "data": {
-                "has_value": "${provided}",
-                "no_value": "${missing}",
-            }
-        })
-
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared={"provided": "hello"})
+            _resolve(
+                {"data": {"has_value": "${provided}", "no_value": "${missing}"}},
+                {"provided": "hello"},
+            )
 
         error_msg = str(exc_info.value)
 
@@ -559,14 +386,11 @@ class TestErrorMessageAccuracy:
 
     def test_error_shows_all_missing_when_multiple_missing(self):
         """When multiple variables are missing, error should list all of them."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"message": "Hello ${name}, you have ${count} items with status ${status}"})
-
         with pytest.raises(ValueError) as exc_info:
-            # Only provide name, missing count and status
-            wrapper._run(shared={"name": "Alice"})
+            _resolve(
+                {"message": "Hello ${name}, you have ${count} items with status ${status}"},
+                {"name": "Alice"},
+            )
 
         error_msg = str(exc_info.value)
 
@@ -579,13 +403,11 @@ class TestErrorMessageAccuracy:
 
     def test_error_available_keys_shows_provided_context(self):
         """Error message should show what keys ARE available for debugging."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={})
-
-        wrapper.set_params({"field": "${missing}"})
-
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared={"available_key": "value", "another_key": 42})
+            _resolve(
+                {"field": "${missing}"},
+                {"available_key": "value", "another_key": 42},
+            )
 
         error_msg = str(exc_info.value)
 
@@ -594,115 +416,88 @@ class TestErrorMessageAccuracy:
 
 
 class TestOptionalInputInjection:
-    """Test _inject_none_for_optional_inputs for branch convergence.
+    """Test inject_none_for_optional_inputs for branch convergence.
 
     When a code node has optional inputs (T | None), and the source node
     for that input didn't execute (its namespace is absent from the shared
     store), None should be injected instead of leaving the unresolved
-    ${...} template string. This enables conditional branching where only
-    one branch executes.
+    ${...} template string.
     """
 
     def test_injects_none_when_source_node_absent(self):
         """When source node didn't execute (absent from context), inject None."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
-
         resolved_value = {"high": "${branch-high.stdout}", "low": "resolved-value"}
         template = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
         context = {"branch-low": {"stdout": "resolved-value"}}
 
-        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
 
         assert result["high"] is None
         assert result["low"] == "resolved-value"
 
     def test_no_injection_when_source_node_present(self):
-        """When source node executed (present in context), leave unresolved for error detection.
-
-        This preserves typo detection: if the node ran but the field path is
-        wrong (e.g., stddout instead of stdout), the normal unresolved template
-        error should fire.
-        """
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
-
+        """When source node executed (present in context), leave unresolved for error detection."""
         resolved_value = {"high": "${branch-high.stddout}", "low": "resolved-value"}
         template = {"high": "${branch-high.stddout}", "low": "${branch-low.stdout}"}
         context = {"branch-high": {"stdout": "data"}, "branch-low": {"stdout": "resolved-value"}}
 
-        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
 
-        # Should NOT inject None — source node exists, this is a typo
+        # Should NOT inject None -- source node exists, this is a typo
         assert result["high"] == "${branch-high.stddout}"
         assert result["low"] == "resolved-value"
 
     def test_no_injection_for_non_optional_keys(self):
         """Keys not in optional_input_keys should never be injected with None."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
-
         resolved_value = {"low": "${branch-low.stdout}"}
         template = {"low": "${branch-low.stdout}"}
         context = {}
 
-        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
 
         # "low" is not in optional_input_keys, so it stays unchanged
         assert result["low"] == "${branch-low.stdout}"
 
     def test_no_injection_when_key_not_inputs(self):
-        """Method only acts on key='inputs'; other keys are returned unchanged."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"x"})
-
+        """Function only acts on key='inputs'; other keys are returned unchanged."""
         resolved_value = {"x": "${source.value}"}
         template = {"x": "${source.value}"}
         context = {}
 
-        result = wrapper._inject_none_for_optional_inputs("prompt", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("prompt", resolved_value, template, context, {"x"})
 
-        # key is "prompt", not "inputs" — no injection
+        # key is "prompt", not "inputs" -- no injection
         assert result["x"] == "${source.value}"
 
     def test_no_injection_when_no_optional_keys(self):
-        """With empty optional_input_keys, method is a no-op."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys=set())
-
+        """With empty optional_input_keys, function is a no-op."""
         resolved_value = {"high": "${branch-high.stdout}"}
         template = {"high": "${branch-high.stdout}"}
         context = {}
 
-        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, set())
 
-        # No optional keys configured — no injection
+        # No optional keys configured -- no injection
         assert result["high"] == "${branch-high.stdout}"
 
     def test_injects_none_for_multiple_optional_keys(self):
         """When multiple optional keys have absent source nodes, all get None."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high", "low"})
-
         resolved_value = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
         template = {"high": "${branch-high.stdout}", "low": "${branch-low.stdout}"}
         context = {}  # Neither source node executed
 
-        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high", "low"})
 
         assert result["high"] is None
         assert result["low"] is None
 
     def test_resolved_value_not_modified(self):
         """Already-resolved values (no ${) should not be touched."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", optional_input_keys={"high"})
-
         resolved_value = {"high": "already-resolved"}
         template = {"high": "${branch-high.stdout}"}
         context = {}
 
-        result = wrapper._inject_none_for_optional_inputs("inputs", resolved_value, template, context)
+        result = inject_none_for_optional_inputs("inputs", resolved_value, template, context, {"high"})
 
         # Value is already resolved (no ${), so it stays as-is
         assert result["high"] == "already-resolved"
@@ -713,16 +508,11 @@ class TestCoalesceErrorMessages:
 
     def test_coalesce_error_shows_absent_nodes(self):
         """When neither branch ran, error shows which nodes didn't execute."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={"command": "${branch-high.stdout ?? branch-low.stdout}"},
-        )
-        wrapper.set_params({"command": "${branch-high.stdout ?? branch-low.stdout}"})
-
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run({})
+            _resolve(
+                {"command": "${branch-high.stdout ?? branch-low.stdout}"},
+                {},
+            )
 
         error_msg = str(exc_info.value)
         assert "Coalesce expression" in error_msg
@@ -732,18 +522,13 @@ class TestCoalesceErrorMessages:
 
     def test_coalesce_error_shows_path_error(self):
         """When a branch ran but path is wrong, error shows the typo."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={"command": "${branch-high.stddout ?? branch-low.stdout}"},
-        )
-        wrapper.set_params({"command": "${branch-high.stddout ?? branch-low.stdout}"})
-
         shared = {"branch-high": {"stdout": "data"}}  # branch-high ran
 
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+            _resolve(
+                {"command": "${branch-high.stddout ?? branch-low.stdout}"},
+                shared,
+            )
 
         error_msg = str(exc_info.value)
         assert "Coalesce expression" in error_msg

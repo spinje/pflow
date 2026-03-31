@@ -15,73 +15,17 @@ import json
 import logging
 from typing import Any, Optional, Union
 
+from pflow.core.exceptions import CompilationError
 from pflow.core.llm_config import get_default_workflow_model, get_model_not_configured_help
-from pflow.pocketflow import BaseNode, Flow
 from pflow.registry import Registry
+from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 
-from ..template_resolver import TemplateResolver
-from ..wrappers.namespaced_wrapper import NamespacedNodeWrapper
-from ..wrappers.template_wrapper import TemplateAwareNodeWrapper
 from .compile_validation import _prepare_compilation
 from .mcp_resolution import _check_registry_for_mcp, _create_mcp_error_suggestion, _parse_mcp_node_type
 from .node_loader import import_node_class
 
 # Set up module logger
 logger = logging.getLogger(__name__)
-
-
-class CompilationError(Exception):
-    """Error during IR compilation with rich context.
-
-    This exception provides detailed information about compilation failures
-    to help users quickly identify and fix issues in their workflow IR.
-
-    Attributes:
-        phase: The compilation phase where the error occurred
-        node_id: ID of the node being compiled (if applicable)
-        node_type: Type of the node being compiled (if applicable)
-        details: Additional context about the error
-        suggestion: Helpful suggestion for fixing the error
-    """
-
-    def __init__(
-        self,
-        message: str,
-        phase: str = "unknown",
-        node_id: Optional[str] = None,
-        node_type: Optional[str] = None,
-        details: Optional[dict[str, Any]] = None,
-        suggestion: Optional[str] = None,
-    ):
-        """Initialize compilation error with context.
-
-        Args:
-            message: The error message
-            phase: Compilation phase (e.g., "parsing", "validation", "node_creation")
-            node_id: ID of the problematic node
-            node_type: Type of the problematic node
-            details: Additional error context
-            suggestion: Helpful suggestion for resolution
-        """
-        self.raw_message = message
-        self.phase = phase
-        self.node_id = node_id
-        self.node_type = node_type
-        self.details = details or {}
-        self.suggestion = suggestion
-
-        # Build comprehensive error message
-        parts = [f"compiler: {message}"]
-        if phase != "unknown":
-            parts.append(f"Phase: {phase}")
-        if node_id:
-            parts.append(f"Node ID: {node_id}")
-        if node_type:
-            parts.append(f"Node Type: {node_type}")
-        if suggestion:
-            parts.append(f"Suggestion: {suggestion}")
-
-        super().__init__("\n".join(parts))
 
 
 def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
@@ -102,57 +46,6 @@ def _parse_ir_input(ir_json: Union[str, dict[str, Any]]) -> dict[str, Any]:
 
     logger.debug("IR provided as dictionary", extra={"phase": "parsing"})
     return ir_json
-
-
-def _apply_template_wrapping(
-    node_instance: Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper],
-    node_id: str,
-    params: dict[str, Any],
-    initial_params: dict[str, Any],
-    template_resolution_mode: str = "strict",
-    interface_metadata: Optional[dict[str, Any]] = None,
-    optional_input_keys: Optional[set[str]] = None,
-) -> Union[BaseNode, TemplateAwareNodeWrapper, NamespacedNodeWrapper]:
-    """Apply template wrapping to a node if it has template parameters.
-
-    Args:
-        node_instance: The node instance to potentially wrap
-        node_id: The ID of the node
-        params: The node's parameters
-        initial_params: Initial parameters for template resolution
-        template_resolution_mode: Template resolution mode ('strict' or 'permissive')
-        interface_metadata: Node interface metadata from registry (optional)
-                          Contains input/param type information for validation
-        optional_input_keys: Set of input keys annotated as optional in code node
-                           source. Enables None injection for branch convergence.
-
-    Returns:
-        The original node or a wrapped version if templates are detected
-    """
-    # Check if any parameters contain templates (including nested structures)
-    has_templates = any(TemplateResolver.has_templates(value) for value in params.values())
-
-    if has_templates:
-        # Wrap node for template support (runtime proxy)
-        logger.debug(
-            f"Wrapping node '{node_id}' for template resolution (mode: {template_resolution_mode})",
-            extra={
-                "phase": "node_instantiation",
-                "node_id": node_id,
-                "mode": template_resolution_mode,
-                "has_metadata": bool(interface_metadata),
-            },
-        )
-        return TemplateAwareNodeWrapper(
-            node_instance,
-            node_id,
-            initial_params,
-            template_resolution_mode,
-            interface_metadata,
-            optional_input_keys,
-        )
-
-    return node_instance
 
 
 def inject_special_parameters(
@@ -231,251 +124,6 @@ def inject_special_parameters(
         return params
 
     return params
-
-
-def _create_single_node(
-    node_data: dict[str, Any],
-    registry: Registry,
-    initial_params: dict[str, Any],
-    enable_namespacing: bool,
-    template_resolution_mode: str,
-    metrics_collector: Optional[Any] = None,
-    trace_collector: Optional[Any] = None,
-) -> Any:  # Can be any wrapper type
-    """Create and configure a single node instance.
-
-    Args:
-        node_data: Node definition from IR
-        registry: Registry instance for node class lookup
-        initial_params: Parameters for template resolution
-        enable_namespacing: Whether to apply namespace wrapping
-        template_resolution_mode: Template resolution mode ('strict' or 'permissive')
-        metrics_collector: Optional MetricsCollector for cost tracking
-        trace_collector: Optional WorkflowTraceCollector for debugging
-
-    Returns:
-        Configured node instance
-
-    Raises:
-        CompilationError: If node instantiation fails
-    """
-    node_id = node_data["id"]
-    node_type = node_data["type"]
-    params = node_data.get("params", {})
-
-    # Thread source-line metadata from the markdown parser into params so
-    # nodes can reference the .pflow.md file line in error messages.
-    source_lines = node_data.get("_source_lines")
-    if source_lines:
-        params = {**params, **{f"_{k}_source_line": v for k, v in source_lines.items()}}
-
-    # Inject default model for LLM nodes if not specified
-    if node_type == "llm" and "model" not in params:
-        default_model = get_default_workflow_model()
-
-        if default_model:
-            # Inject the configured default (create new dict to avoid mutating IR)
-            params = {**params, "model": default_model}
-            logger.info(
-                f"Injecting default model '{default_model}' for LLM node '{node_id}'",
-                extra={
-                    "phase": "node_instantiation",
-                    "node_id": node_id,
-                    "default_model": default_model,
-                    "source": "settings_or_llm_default",
-                },
-            )
-        else:
-            # No model configured anywhere - fail with helpful message
-            raise CompilationError(
-                message=f"No model configured for LLM node '{node_id}'",
-                phase="node_instantiation",
-                node_id=node_id,
-                node_type=node_type,
-                suggestion=get_model_not_configured_help(node_id),
-            )
-
-    logger.debug(
-        "Creating node instance",
-        extra={"phase": "node_instantiation", "node_id": node_id, "node_type": node_type},
-    )
-
-    # Get the node class using our import function
-    node_class = import_node_class(node_type, registry)
-
-    # Instantiate the node (no parameters to constructor)
-    # Use Any type since we'll be wrapping with various wrapper types
-    node_instance: Any = node_class()
-
-    # NEW: Extract interface metadata from registry for type validation
-    nodes = registry.load()
-    node_metadata = nodes.get(node_type, {})
-    interface_metadata = node_metadata.get("interface")
-
-    logger.debug(
-        f"Extracted interface metadata for node '{node_id}'",
-        extra={
-            "phase": "node_instantiation",
-            "node_id": node_id,
-            "has_metadata": bool(interface_metadata),
-            "input_count": len(interface_metadata.get("inputs", [])) if interface_metadata else 0,
-            "param_count": len(interface_metadata.get("params", [])) if interface_metadata else 0,
-        },
-    )
-
-    # Extract optional input keys for code nodes (enables branch convergence)
-    # When a code node declares inputs as Optional[T] or T | None, the template
-    # wrapper injects None instead of erroring when the source node didn't execute.
-    optional_input_keys: Optional[set[str]] = None
-    if node_type == "code" and "code" in params and isinstance(params.get("inputs"), dict):
-        from pflow.nodes.python.python_code import extract_optional_input_keys
-
-        input_keys = set(params["inputs"].keys())
-        optional_input_keys = extract_optional_input_keys(params["code"], input_keys) or None
-        if optional_input_keys:
-            logger.debug(
-                f"Code node '{node_id}' has optional inputs: {optional_input_keys}",
-                extra={"phase": "node_instantiation", "node_id": node_id},
-            )
-
-    # Apply template wrapping if needed (pass metadata for type validation)
-    node_instance = _apply_template_wrapping(
-        node_instance,
-        node_id,
-        params,
-        initial_params,
-        template_resolution_mode,
-        interface_metadata,
-        optional_input_keys,
-    )
-
-    # Apply namespace wrapping if enabled
-    if enable_namespacing:
-        logger.debug(
-            f"Wrapping node '{node_id}' for namespace isolation",
-            extra={"phase": "node_instantiation", "node_id": node_id},
-        )
-        node_instance = NamespacedNodeWrapper(node_instance, node_id)
-
-    # Apply batch wrapping if configured
-    # CRITICAL: Batch must be OUTSIDE namespace wrapper (between Namespace and Instrumented)
-    # This ensures item alias injection writes to root level: shared["item"] = x
-    # NOT to namespace: shared["node_id"]["item"] = x
-    batch_config = node_data.get("batch")
-    if batch_config:
-        from pflow.runtime.wrappers.batch_node import PflowBatchNode
-
-        logger.debug(
-            f"Wrapping node '{node_id}' for batch processing",
-            extra={
-                "phase": "node_instantiation",
-                "node_id": node_id,
-                "items_template": batch_config.get("items"),
-                "item_alias": batch_config.get("as", "item"),
-                "error_handling": batch_config.get("error_handling", "fail_fast"),
-            },
-        )
-        node_instance = PflowBatchNode(node_instance, node_id, batch_config)
-
-    # Always apply instrumentation wrapper to support all features:
-    # - Progress callbacks (if __progress_callback__ is in shared storage)
-    # - Metrics collection (if metrics_collector is provided)
-    # - Trace collection (if trace_collector is provided)
-    # The wrapper is lightweight and only adds overhead when features are actually used
-    from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
-
-    logger.debug(
-        f"Wrapping node '{node_id}' for instrumentation",
-        extra={
-            "phase": "node_instantiation",
-            "node_id": node_id,
-            "has_metrics": bool(metrics_collector),
-            "has_trace": bool(trace_collector),
-        },
-    )
-    node_instance = InstrumentedNodeWrapper(node_instance, node_id, metrics_collector, trace_collector)
-
-    # Inject special parameters for workflow and MCP nodes
-    params = inject_special_parameters(node_type, node_id, params, registry)
-
-    # Set parameters (wrapper will separate template vs static)
-    if params:
-        logger.debug(
-            "Setting node parameters",
-            extra={"phase": "node_instantiation", "node_id": node_id, "param_count": len(params)},
-        )
-        node_instance.set_params(params)
-
-    return node_instance
-
-
-def _instantiate_nodes(
-    ir_dict: dict[str, Any],
-    registry: Registry,
-    initial_params: Optional[dict[str, Any]] = None,
-    metrics_collector: Optional[Any] = None,
-    trace_collector: Optional[Any] = None,
-) -> dict[str, Any]:  # Can return nodes with various wrapper types
-    """Instantiate node objects from IR node definitions with template and namespace support.
-
-    This function creates pocketflow node instances for each node in the IR,
-    using the registry to look up node classes and setting any provided parameters.
-    Nodes with template parameters are wrapped for runtime resolution.
-    If namespacing is enabled, nodes are additionally wrapped to isolate their outputs.
-    If collectors are provided, nodes are also wrapped for instrumentation.
-
-    Args:
-        ir_dict: The IR dictionary containing nodes array and optional enable_namespacing flag
-        registry: Registry instance for node class lookup
-        initial_params: Parameters provided before execution (for template resolution)
-        metrics_collector: Optional MetricsCollector for cost tracking
-        trace_collector: Optional WorkflowTraceCollector for debugging
-
-    Returns:
-        Dictionary mapping node_id to instantiated node objects
-
-    Raises:
-        CompilationError: If node instantiation fails
-    """
-    logger.debug("Starting node instantiation", extra={"phase": "node_instantiation"})
-    nodes: dict[str, Any] = {}  # Can contain various wrapper types
-    initial_params = initial_params or {}
-
-    # Check if namespacing is enabled in the workflow (default: True for MVP)
-    enable_namespacing = ir_dict.get("enable_namespacing", True)
-    if enable_namespacing:
-        logger.debug("Automatic namespacing enabled for workflow", extra={"phase": "node_instantiation"})
-
-    # Get template resolution mode from initial_params (set in _prepare_compilation)
-    template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
-
-    for node_data in ir_dict["nodes"]:
-        node_id = node_data["id"]
-
-        try:
-            node_instance = _create_single_node(
-                node_data,
-                registry,
-                initial_params,
-                enable_namespacing,
-                template_resolution_mode,
-                metrics_collector,
-                trace_collector,
-            )
-            nodes[node_id] = node_instance
-
-        except CompilationError as e:
-            # Add node_id context if not already present
-            if not e.node_id:
-                e.node_id = node_id
-            raise
-
-    logger.debug(
-        "Node instantiation complete",
-        extra={"phase": "node_instantiation", "node_count": len(nodes)},
-    )
-
-    return nodes
 
 
 def _wire_nodes(nodes: dict[str, Any], edges: list[dict[str, Any]]) -> None:
@@ -599,120 +247,246 @@ def _get_start_node(nodes: dict[str, Any], ir_dict: dict[str, Any]) -> Any:
     return nodes[start_node_id]
 
 
-def _apply_run_hooks(flow: Any, ir_dict: dict[str, Any], only_node: Optional[str] = None) -> None:
-    """Wrap flow.run for per-execution setup and output population.
+# ---------------------------------------------------------------------------
+# New compilation pipeline: compile_workflow() + engine
+# ---------------------------------------------------------------------------
 
-    When ``only_node`` is set (``--only`` flag), declared output resolution is
-    skipped and the target node's output is promoted to ``shared["result"]``
-    so the existing extraction pipeline picks it up.
+
+def _create_node_and_config(
+    node_data: dict[str, Any],
+    registry: Registry,
+    enable_namespacing: bool,
+    template_resolution_mode: str,
+) -> tuple[Any, NodeConfig]:
+    """Create a bare node instance and its NodeConfig.
+
+    Unlike _create_single_node, this does NOT apply any wrappers.
+    The engine handles all runtime concerns directly.
+
+    Returns:
+        (bare_node, NodeConfig)
     """
-    has_outputs = bool(ir_dict.get("outputs"))
-    if has_outputs:
-        from pflow.runtime.output_resolver import populate_declared_outputs
+    from pflow.runtime.engine.template_resolution import build_type_cache, split_params
 
-    original_run = flow.run
+    node_id = node_data["id"]
+    node_type = node_data["type"]
+    params = node_data.get("params", {})
 
-    def run_with_hooks(shared_storage: dict[str, Any]) -> str:
-        """Run flow with per-execution setup and optional output population."""
-        # Reset node visit counts for this execution cycle.
-        if "__execution__" in shared_storage and "node_visit_counts" in shared_storage["__execution__"]:
-            shared_storage["__execution__"]["node_visit_counts"] = {}
+    # Thread source-line metadata into params
+    source_lines = node_data.get("_source_lines")
+    if source_lines:
+        params = {**params, **{f"_{k}_source_line": v for k, v in source_lines.items()}}
 
-        result = original_run(shared_storage)
+    # Inject default model for LLM nodes
+    if node_type == "llm" and "model" not in params:
+        default_model = get_default_workflow_model()
+        if default_model:
+            params = {**params, "model": default_model}
+        else:
+            raise CompilationError(
+                message=f"No model configured for LLM node '{node_id}'",
+                phase="node_instantiation",
+                node_id=node_id,
+                node_type=node_type,
+                suggestion=get_model_not_configured_help(node_id),
+            )
 
-        is_error = result and isinstance(result, str) and result.startswith("error")
+    # Import and instantiate bare node
+    node_class = import_node_class(node_type, registry)
+    node_instance: Any = node_class()
 
-        if only_node:
-            # Store --only metadata for execution summary display.
-            # Output extraction handled by namespace-aware auto-detection in the
-            # display layer (execution/formatters/output_utils.find_auto_output).
-            if "__execution__" in shared_storage:
-                shared_storage["__execution__"]["only_node"] = only_node
-        elif has_outputs and not is_error:
-            populate_declared_outputs(shared_storage, ir_dict)
+    # Set node_id on the bare node (engine needs this for config lookup)
+    node_instance.node_id = node_id
 
-        return str(result)
+    # Extract interface metadata from registry
+    nodes = registry.load()
+    node_metadata = nodes.get(node_type, {})
+    interface_metadata = node_metadata.get("interface")
 
-    flow.run = run_with_hooks
+    # Extract optional input keys for code nodes
+    optional_input_keys: set[str] = set()
+    if node_type == "code" and "code" in params and isinstance(params.get("inputs"), dict):
+        from pflow.nodes.python.python_code import extract_optional_input_keys
 
+        input_keys = set(params["inputs"].keys())
+        optional_input_keys = extract_optional_input_keys(params["code"], input_keys) or set()
 
-def _apply_only_node_stop(flow: Any, only_node_id: str, nodes: dict[str, Any]) -> None:
-    """Apply --only monkey-patch to stop flow after the target node.
+    # Inject special parameters
+    params = inject_special_parameters(node_type, node_id, params, registry)
 
-    Validates the target node exists, then overrides get_next_node to return None
-    after the target, terminating the flow.
-    """
-    if only_node_id not in nodes:
-        raise CompilationError(
-            f"Node '{only_node_id}' not found",
-            phase="only_node_resolution",
-            details={"available_nodes": sorted(nodes.keys())},
-            suggestion=f"Available nodes: {', '.join(sorted(nodes.keys()))}",
+    # Build type cache and split params
+    expected_types = build_type_cache(interface_metadata)
+    template_params, static_params = split_params(params, expected_types)
+
+    # Set ONLY static params on bare node at compile time
+    if static_params:
+        node_instance.set_params(static_params)
+
+    # Build template config (None if no templates)
+    template_config = None
+    if template_params:
+        template_config = TemplateConfig(
+            template_params=template_params,
+            static_params=static_params,
+            expected_types=expected_types,
+            resolution_mode=template_resolution_mode,
+            optional_input_keys=optional_input_keys,
         )
-    original_get_next = flow.get_next_node
 
-    def get_next_with_stop(curr: Any, action: Any) -> Any:
-        if getattr(curr, "node_id", None) == only_node_id:
-            return None  # Terminate flow after target node
-        return original_get_next(curr, action)
+    # Build batch config (None if not a batch node)
+    batch_config = None
+    batch_data = node_data.get("batch")
+    if batch_data:
+        batch_config = BatchConfig(
+            items_template=batch_data["items"],
+            item_alias=batch_data.get("as", "item"),
+            error_handling=batch_data.get("error_handling", "fail_fast"),
+            parallel=_coerce_bool(batch_data.get("parallel", False), "parallel"),
+            max_concurrent=_coerce_int(batch_data.get("max_concurrent", 10), "max_concurrent", 10),
+            max_retries=_coerce_int(batch_data.get("max_retries", 1), "max_retries", 1),
+            retry_wait=_coerce_float(batch_data.get("retry_wait", 0.0), "retry_wait", 0.0),
+        )
 
-    flow.get_next_node = get_next_with_stop
-    logger.info(
-        f"--only: flow will stop after node '{only_node_id}'",
-        extra={"phase": "flow_creation", "only_node": only_node_id},
+    # Build NodeConfig
+    node_config = NodeConfig(
+        node_id=node_id,
+        node_type_name=type(node_instance).__name__,
+        template_config=template_config,
+        batch_config=batch_config,
+        namespaced=enable_namespacing,
+        interface_metadata=interface_metadata,
+    )
+
+    return node_instance, node_config
+
+
+def _coerce_bool(value: Any, field: str = "parallel") -> bool:
+    """Coerce value to boolean. Accepts bool, common string patterns, int 0/1."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return bool(value)
+    if isinstance(value, str):
+        lower = value.lower().strip()
+        if lower in ("true", "1", "yes"):
+            return True
+        if lower in ("false", "0", "no", ""):
+            return False
+        raise CompilationError(
+            f"Invalid batch config '{field}': '{value}' is not a valid boolean",
+            phase="batch_config",
+            suggestion="Use true/false, yes/no, or 1/0",
+        )
+    raise CompilationError(
+        f"Invalid batch config '{field}': expected boolean, got {type(value).__name__}",
+        phase="batch_config",
+        suggestion="Use true or false",
     )
 
 
-def compile_ir_to_flow(
+def _coerce_int(value: Any, field: str, default: int) -> int:
+    """Coerce to int. Accepts int, float (truncates), numeric strings. Fails on garbage."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            raise CompilationError(
+                f"Invalid batch config '{field}': '{value}' is not a valid integer",
+                phase="batch_config",
+                suggestion=f"Use an integer value (default is {default})",
+            ) from None
+    raise CompilationError(
+        f"Invalid batch config '{field}': expected integer, got {type(value).__name__}",
+        phase="batch_config",
+        suggestion=f"Use an integer value (default is {default})",
+    )
+
+
+def _coerce_float(value: Any, field: str, default: float) -> float:
+    """Coerce to float. Accepts int, float, numeric strings. Fails on garbage."""
+    if isinstance(value, bool):
+        return float(value)
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            raise CompilationError(
+                f"Invalid batch config '{field}': '{value}' is not a valid number",
+                phase="batch_config",
+                suggestion=f"Use a numeric value (default is {default})",
+            ) from None
+    raise CompilationError(
+        f"Invalid batch config '{field}': expected number, got {type(value).__name__}",
+        phase="batch_config",
+        suggestion=f"Use a numeric value (default is {default})",
+    )
+
+
+def _instantiate_nodes_for_workflow(
+    ir_dict: dict[str, Any],
+    registry: Registry,
+    initial_params: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, NodeConfig]]:
+    """Instantiate bare nodes and build NodeConfigs.
+
+    Returns:
+        (nodes_dict, configs_dict)
+    """
+    nodes: dict[str, Any] = {}
+    configs: dict[str, NodeConfig] = {}
+    initial_params = initial_params or {}
+
+    enable_namespacing = ir_dict.get("enable_namespacing", True)
+    template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
+
+    for node_data in ir_dict["nodes"]:
+        node_id = node_data["id"]
+        try:
+            node_instance, node_config = _create_node_and_config(
+                node_data,
+                registry,
+                enable_namespacing,
+                template_resolution_mode,
+            )
+            nodes[node_id] = node_instance
+            configs[node_id] = node_config
+        except CompilationError as e:
+            if not e.node_id:
+                e.node_id = node_id
+            raise
+
+    return nodes, configs
+
+
+def compile_workflow(
     ir_json: Union[str, dict[str, Any]],
     registry: Registry,
     initial_params: Optional[dict[str, Any]] = None,
-    metrics_collector: Optional[Any] = None,
-    trace_collector: Optional[Any] = None,
-    only_node: Optional[str] = None,
-) -> Flow:
-    """Compile JSON IR to executable pocketflow.Flow object with template support.
-
-    This is the main entry point for the compiler. It takes a workflow
-    IR (as JSON string or dict) and produces an executable Flow object
-    that can be run by the pflow runtime. Supports template variables
-    that are resolved at runtime.
-
-    Note: This is a traditional function implementation, not a PocketFlow-based
-    compiler. We transform IR → Flow objects directly.
+) -> CompiledWorkflow:
+    """Compile IR to CompiledWorkflow. No runtime state baked in.
 
     Args:
         ir_json: JSON string or dict representing the workflow IR
         registry: Registry instance for node metadata lookup
         initial_params: Parameters provided before execution
-                       Example: {"issue_number": "1234", "repo": "pflow"}
-                       from user saying "fix github issue 1234 in pflow repo"
-        metrics_collector: Optional MetricsCollector for cost tracking
-        trace_collector: Optional WorkflowTraceCollector for debugging
 
     Returns:
-        Executable pocketflow.Flow object
-
-    Raises:
-        CompilationError: With rich context about what failed
-        json.JSONDecodeError: If JSON string is malformed
-
-    Note:
-        Template validation has moved to WorkflowValidator (called by WorkflowRunner).
-        This function no longer raises for template errors even with ``validate=True``.
+        CompiledWorkflow with bare nodes + per-node configs
     """
-    logger.debug("Starting IR compilation", extra={"phase": "init"})
     initial_params = initial_params or {}
 
-    # Step 1: Parse input (string → dict)
-    try:
-        ir_dict = _parse_ir_input(ir_json)
-    except json.JSONDecodeError:
-        # Let JSONDecodeError bubble up as specified
-        logger.debug("JSON parsing failed", extra={"phase": "parsing"}, exc_info=True)
-        raise
+    # Step 1: Parse input
+    ir_dict = _parse_ir_input(ir_json)
 
-    # Step 1b: Resolve external file references before validation
+    # Step 2: Resolve external file references
     import yaml
 
     from pflow.core.file_resolver import get_base_dir, resolve_file_references
@@ -728,60 +502,28 @@ def compile_ir_to_flow(
             suggestion="Check that the file path is correct and relative to the workflow file.",
         ) from e
 
-    # Steps 2-5: Prepare compilation (validate structure, resolve inputs, set template mode)
-    initial_params, _comp_warnings = _prepare_compilation(ir_dict, registry, initial_params)
-
-    # Step 6: Log compilation steps
-    logger.info(
-        "IR validated, ready for compilation",
-        extra={
-            "phase": "pre-compilation",
-            "nodes": len(ir_dict.get("nodes", [])),
-            "edges": len(ir_dict.get("edges", [])),
-            "has_initial_params": bool(initial_params),
-        },
+    # Step 3: Prepare compilation (validate, resolve inputs)
+    initial_params, _warnings, resolved_defaults, env_param_names = _prepare_compilation(
+        ir_dict, registry, initial_params
     )
 
-    # Step 7: Instantiate nodes with template support
-    try:
-        nodes = _instantiate_nodes(ir_dict, registry, initial_params, metrics_collector, trace_collector)
-    except CompilationError:
-        logger.debug("Node instantiation failed", extra={"phase": "node_instantiation"}, exc_info=True)
-        raise
+    template_resolution_mode = initial_params.get("__template_resolution_mode__", "strict")
 
-    # Step 8: Wire nodes together
-    try:
-        _wire_nodes(nodes, ir_dict.get("edges", []))
-    except CompilationError:
-        logger.debug("Node wiring failed", extra={"phase": "flow_wiring"}, exc_info=True)
-        raise
+    # Step 4: Instantiate bare nodes + configs
+    nodes, configs = _instantiate_nodes_for_workflow(ir_dict, registry, initial_params)
 
-    # Step 9: Get start node
-    try:
-        start_node = _get_start_node(nodes, ir_dict)
-    except CompilationError:
-        logger.debug("Start node detection failed", extra={"phase": "start_detection"}, exc_info=True)
-        raise
+    # Step 5: Wire nodes together
+    _wire_nodes(nodes, ir_dict.get("edges", []))
 
-    # Step 10: Create and return Flow
-    logger.debug("Creating Flow object", extra={"phase": "flow_creation"})
-    flow = Flow(start=start_node)
+    # Step 6: Get start node
+    start_node = _get_start_node(nodes, ir_dict)
 
-    # Step 10b: Apply --only monkey-patch to stop flow after target node
-    only_node_id = only_node
-    if only_node_id:
-        _apply_only_node_stop(flow, only_node_id, nodes)
-
-    # Step 11: Wrap flow.run for per-execution setup and output population
-    _apply_run_hooks(flow, ir_dict, only_node=only_node_id)
-
-    logger.info(
-        "Compilation successful",
-        extra={
-            "phase": "complete",
-            "node_count": len(nodes),
-            "edge_count": len(ir_dict.get("edges", [])),
-        },
+    # Step 7: Build CompiledWorkflow
+    return CompiledWorkflow(
+        start_node=start_node,
+        node_configs=configs,
+        outputs=ir_dict.get("outputs", {}),
+        resolved_defaults=resolved_defaults,
+        env_param_names=env_param_names,
+        template_resolution_mode=template_resolution_mode,
     )
-
-    return flow

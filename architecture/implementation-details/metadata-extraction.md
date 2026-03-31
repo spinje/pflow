@@ -23,7 +23,7 @@ This document defines the infrastructure for extracting structured metadata from
 
 1. **Zero Runtime Overhead** - Pre-extracted JSON for fast metadata access
 2. **Source of Truth** - Metadata extracted from actual node code
-3. **Framework Integration** - Works with established pocketflow patterns
+3. **Framework Integration** - Works with established node lifecycle patterns
 4. **Registry Compatible** - Integrates with versioning and discovery systems
 5. **Discovery Ready** - Enables metadata-driven LLM selection and validation
 6. **Type Aware** - Enhanced format provides type information for better workflow construction
@@ -155,7 +155,7 @@ The metadata extractor has been enhanced to support both simple and enhanced for
 import re
 import inspect
 from typing import Dict, Any, List
-import pocketflow
+from pflow.core.node import BaseNode
 
 class PflowMetadataExtractor:
     """Extract metadata from pflow node docstrings.
@@ -177,7 +177,7 @@ class PflowMetadataExtractor:
         Falls back gracefully for simple format nodes.
         """
         # Validate it's a node
-        if not issubclass(node_class, pocketflow.BaseNode):
+        if not issubclass(node_class, BaseNode):
             raise ValueError(f"{node_class.__name__} is not a pflow node")
 
         docstring = inspect.getdoc(node_class) or ""
@@ -554,7 +554,7 @@ The enhanced metadata extraction system has comprehensive test coverage:
 ```python
 def test_enhanced_format_comma_handling(self):
     """Test that commas in descriptions are preserved."""
-    class CommaNode(pocketflow.Node):
+    class CommaNode(Node):
         """
         Interface:
         - Reads: shared["encoding"]: str  # File encoding (optional, default: utf-8)
@@ -565,7 +565,7 @@ def test_enhanced_format_comma_handling(self):
 
 def test_exclusive_params_pattern(self):
     """Test that params already in Reads are filtered out."""
-    class ExclusiveNode(pocketflow.Node):
+    class ExclusiveNode(Node):
         """
         Interface:
         - Reads: shared["input"]: str

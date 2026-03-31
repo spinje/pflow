@@ -182,11 +182,8 @@ def _prepare_syspaths(directories: list[Path]) -> list[Path]:
         List of paths to add to sys.path
     """
     project_root = Path(__file__).parent.parent.parent.parent
-    pocketflow_path = project_root / "src" / "pflow" / "pocketflow"
 
     syspaths = [project_root]
-    if pocketflow_path.exists():
-        syspaths.append(pocketflow_path)
 
     # Add src directory to sys.path so Python can find the pflow package
     src_path = project_root / "src"
@@ -258,13 +255,11 @@ def scan_for_nodes(directories: list[Path]) -> list[dict[str, Any]]:
     syspaths = _prepare_syspaths(directories)
 
     with temporary_syspath(syspaths):
-        # Import pocketflow to get BaseNode reference
+        # Import BaseNode reference
         try:
-            from pflow import pocketflow
-
-            BaseNode = pocketflow.BaseNode
+            from pflow.core.node import BaseNode
         except ImportError:
-            logger.exception("Failed to import pocketflow")
+            logger.exception("Failed to import BaseNode from pflow.core.node")
             return []
 
         # Scan each directory

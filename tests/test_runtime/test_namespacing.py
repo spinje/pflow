@@ -1,8 +1,9 @@
 """Tests for automatic namespacing functionality."""
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class SimpleOutputNode(Node):
@@ -92,11 +93,11 @@ def test_namespacing_prevents_collisions(tmp_path):
         }
 
         # Compile the workflow
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        compiled = compile_workflow(workflow_ir, registry)
 
         # Execute the workflow
-        shared = {}
-        flow.run(shared)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # With namespacing, outputs should be isolated
         assert "node1" in shared, "Node1 namespace should exist"
@@ -162,9 +163,9 @@ def test_namespacing_enabled_by_default(tmp_path):
         }
 
         # Compile and run
-        flow = compile_ir_to_flow(workflow_ir, registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow_ir, registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # With namespacing enabled by default, outputs are isolated
         assert "node1" in shared, "Node1 namespace should exist"
@@ -224,11 +225,12 @@ def test_namespacing_with_cli_inputs_via_template(tmp_path):
             "edges": [],  # Empty edges array required
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry)
+        compiled = compile_workflow(workflow_ir, registry)
 
         # Simulate CLI putting data at root level (with different name to avoid any confusion)
-        shared = {"cli_output": "cli_data"}
-        flow.run(shared)
+        shared: dict = dict(compiled.resolved_defaults)
+        shared["cli_output"] = "cli_data"
+        WorkflowEngine().run(compiled, shared)
 
         # Reader should receive CLI input via template resolution
         assert shared["reader"]["result"] == "Read: cli_data", "Should read CLI data via template"
@@ -242,7 +244,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_keys_write_to_root(self):
         """Special (__*__) keys should be written to root, not namespaced."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -259,7 +261,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_multiple_special_keys_write_to_root(self):
         """Multiple special keys should all go to root."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -281,7 +283,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_regular_keys_still_namespaced(self):
         """Regular keys should still be namespaced after special key fix."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -302,7 +304,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_key_read_from_root(self):
         """Special keys should be read from root."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {
             "__execution__": {"root": "value"},
@@ -315,7 +317,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_key_contains_check(self):
         """Contains check should work for special keys at root."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {
             "__execution__": {"data": "value"},
@@ -330,7 +332,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_special_key_setdefault(self):
         """setdefault should work with special keys at root."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")
@@ -348,7 +350,7 @@ class TestSpecialKeysBypassNamespacing:
 
     def test_mixed_special_and_regular_keys(self):
         """Mix of special and regular keys should work correctly."""
-        from pflow.runtime.wrappers.namespaced_store import NamespacedSharedStore
+        from pflow.runtime.engine.namespaced_store import NamespacedSharedStore
 
         shared = {}
         proxy = NamespacedSharedStore(shared, "test-node")

@@ -15,9 +15,23 @@ After the fix:
 """
 
 import json
+from typing import Any
 
 from pflow.registry.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
+
+
+def _compile_and_run(workflow_ir: dict[str, Any], initial_params: dict[str, Any]) -> dict[str, Any]:
+    """Helper: compile workflow, seed shared store, run engine, return shared."""
+    registry = Registry()
+    workflow = compile_workflow(workflow_ir, registry, initial_params=initial_params)
+    shared: dict[str, Any] = {}
+    shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
+    return shared
 
 
 class TestShellStdinTypePreservation:
@@ -48,18 +62,13 @@ class TestShellStdinTypePreservation:
             "outputs": {},
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(
+        shared = _compile_and_run(
             workflow_ir,
-            registry=registry,
-            initial_params={
+            {
                 "config": {"name": "MyApp", "version": "1.0"},
                 "data": {"items": [1, 2, 3], "count": 3},
             },
         )
-
-        shared = {}
-        flow.run(shared)
 
         # Parse the shell output
         stdout = shared.get("process", {}).get("stdout", "")
@@ -101,20 +110,15 @@ class TestShellStdinTypePreservation:
             "outputs": {},
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(
+        shared = _compile_and_run(
             workflow_ir,
-            registry=registry,
-            initial_params={
+            {
                 "text": "hello",
                 "number": 42,
                 "flag": True,
                 "items": ["a", "b", "c"],
             },
         )
-
-        shared = {}
-        flow.run(shared)
 
         parsed = json.loads(shared["echo"]["stdout"])
 
@@ -146,18 +150,13 @@ class TestShellStdinTypePreservation:
             "outputs": {},
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(
+        shared = _compile_and_run(
             workflow_ir,
-            registry=registry,
-            initial_params={
+            {
                 "user": {"name": "Alice", "email": "alice@example.com"},
                 "settings": {"theme": "dark", "notifications": True},
             },
         )
-
-        shared = {}
-        flow.run(shared)
 
         # jq should successfully merge the objects
         result = json.loads(shared["merge"]["stdout"])
@@ -191,18 +190,13 @@ class TestShellStdinTypePreservation:
             "outputs": {},
         }
 
-        registry = Registry()
-        flow = compile_ir_to_flow(
+        shared = _compile_and_run(
             workflow_ir,
-            registry=registry,
-            initial_params={
+            {
                 "name": "World",
                 "data": {"key": "value"},
             },
         )
-
-        shared = {}
-        flow.run(shared)
 
         parsed = json.loads(shared["echo"]["stdout"])
 

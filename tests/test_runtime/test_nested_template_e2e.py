@@ -9,9 +9,10 @@ import os
 import tempfile
 from unittest.mock import Mock
 
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 from pflow.runtime.workflow_executor import WorkflowExecutor
 
 
@@ -108,16 +109,18 @@ class TestNestedTemplateE2E:
         }
 
         # Compile the workflow - will raise if there are errors
-        flow = compile_ir_to_flow(workflow_ir, mock_registry, initial_params=initial_params)
+        compiled = compile_workflow(workflow_ir, mock_registry, initial_params=initial_params)
 
         # Should compile without errors
-        assert flow is not None
+        assert compiled is not None
 
         # Execute the workflow
-        shared = {}
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+        shared.update(compiled.resolved_defaults)
 
         # Run the flow - the mock node's exec method will verify nested templates were resolved
-        action = flow.run(shared)
+        engine = WorkflowEngine()
+        action = engine.run(compiled, shared)
 
         # Verify execution succeeded
         assert action == "default"
@@ -295,9 +298,9 @@ class TestNestedTemplateE2E:
         }
 
         # Compile and verify
-        flow = compile_ir_to_flow(workflow_ir, mock_registry, initial_params=initial_params)
+        compiled = compile_workflow(workflow_ir, mock_registry, initial_params=initial_params)
 
-        assert flow is not None
+        assert compiled is not None
 
         # The deeply nested templates should be properly resolved during execution
 

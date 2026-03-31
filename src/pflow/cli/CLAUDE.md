@@ -200,7 +200,7 @@ Most keys are straightforward (`verbose`, `output_format`, `print_flag`, `trace`
 | `source_file_path` | Set for file and library workflows — injected as `_pflow_workflow_file` for nested workflow relative path resolution |
 | `workflow_metadata` | Action field: `"reused"` (library) or `"unsaved"` (file) — drives execution summary display |
 | `cache` | Boolean from `--cache/--no-cache` (default True). Flows to `RunnerConfig.cache_enabled` |
-| `only_node` | String from `--only` (default None). Flows to `RunnerConfig.only_node` → `compile_ir_to_flow(only_node=...)` |
+| `only_node` | String from `--only` (default None). Flows to `RunnerConfig.only_node` → `WorkflowEngine(only_node=...)` |
 | `total_nodes` | Total node count from IR (set before Runner call). Used by `--report` to show `N/M (--only, K skipped)` |
 
 Full list readable in `_initialize_context` and `_setup_workflow_execution` in main.py.

@@ -14,7 +14,7 @@ import click.testing
 import pytest
 
 from pflow.cli.main import main
-from pflow.pocketflow import BaseNode
+from pflow.core.node import BaseNode
 from tests.shared.markdown_utils import ir_to_markdown
 
 

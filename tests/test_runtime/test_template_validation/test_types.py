@@ -1145,7 +1145,8 @@ class TestShellCommandValidationTiming:
         This is why validation should always be enabled for user-facing workflows.
         """
         from pflow.registry.registry import Registry
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
 
         workflow_ir = {
             "inputs": {"data": {"type": "object", "required": True}},
@@ -1162,18 +1163,21 @@ class TestShellCommandValidationTiming:
         }
 
         registry = Registry()
+        initial_params = {"data": {"msg": "it's broken"}}  # Apostrophe in data
 
         # Compilation succeeds — template validation now in WorkflowValidator, not compiler
-        flow = compile_ir_to_flow(
+        workflow = compile_workflow(
             workflow_ir,
             registry=registry,
-            initial_params={"data": {"msg": "it's broken"}},  # Apostrophe in data
-            # Bypass validation
+            initial_params=initial_params,
         )
 
         # Execution fails at shell level with cryptic error
         shared = {}
-        result = flow.run(shared)
+        shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+        shared.update(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
         # Shell fails due to quote escaping issues
         assert result == "error"

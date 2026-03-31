@@ -9,7 +9,8 @@ as stdin to shell commands.
 """
 
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class TestMCPShellIntegration:
@@ -63,10 +64,10 @@ class TestMCPShellIntegration:
 
         # Compile and run
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared = {}
-
-        action = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        action = engine.run(workflow, shared)
 
         # Verify success
         assert action == "default"
@@ -93,10 +94,10 @@ class TestMCPShellIntegration:
         }
 
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared = {}
-
-        action = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        action = engine.run(workflow, shared)
 
         assert action == "default"
         assert "john@example.com" in shared["extract-email"]["stdout"]
@@ -122,10 +123,10 @@ class TestMCPShellIntegration:
         }
 
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared = {}
-
-        action = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        action = engine.run(workflow, shared)
 
         assert action == "default"
         assert "second" in shared["extract-second"]["stdout"]
@@ -145,10 +146,10 @@ class TestMCPShellIntegration:
         }
 
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared = {}
-
-        action = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        action = engine.run(workflow, shared)
 
         assert action == "default"
         assert "84" in shared["process-number"]["stdout"]
@@ -195,12 +196,13 @@ class TestMCPShellIntegration:
         }
 
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared = {}
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
 
         # This would have crashed before with:
         # AttributeError: 'dict' object has no attribute 'encode'
-        action = flow.run(shared)
+        action = engine.run(workflow, shared)
 
         # Now it should work!
         assert action == "default"

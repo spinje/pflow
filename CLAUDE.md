@@ -59,11 +59,11 @@ This file provides guidance to Claude Code when working with code and documentat
 
 **Core Principle**: Fight complexity at every step. Build minimal, purposeful components that extend without rewrites.
 
-### PocketFlow Foundation
+### Node Lifecycle Primitives
 
-pflow is built on **PocketFlow** (~200-line Python library in `src/pflow/pocketflow/__init__.py`).
+pflow's node system is built on `BaseNode` and `Node` (~90 lines in `src/pflow/core/node.py`). These provide the lifecycle (prep/exec/post), retry logic, and graph wiring operators (`>>`, `-`). The `WorkflowEngine` (in `src/pflow/runtime/engine/`) handles graph traversal and all runtime concerns.
 
-> When implementing features that use PocketFlow, always start by reading `src/pflow/pocketflow/__init__.py`, then `src/pflow/pocketflow/docs` as needed. See `src/pflow/pocketflow/CLAUDE.md` for navigation.
+> When implementing features that use nodes, start by reading `src/pflow/core/node.py`, then `src/pflow/nodes/CLAUDE.md` for node implementation patterns.
 
 ### Development Commands
 
@@ -102,12 +102,11 @@ pflow/
 ├── examples/                # Example workflows and usage patterns
 ├── scripts/                 # Development and debugging scripts
 ├── src/pflow/
-│   ├── pocketflow/          # Embedded PocketFlow framework (~200 lines)
 │   ├── cli/                 # CLI entrypoints and subcommands
 │   ├── core/                # Schemas, settings, validation, utilities, LLM/prompt utils
 │   │   └── workflow/        # Workflow lifecycle (manager, validator, save, skills, discovery)
 │   ├── execution/           # Execution UX, formatters
-│   ├── runtime/             # Compilation, wrappers, tracing
+│   ├── runtime/             # Compilation, engine, tracing
 │   ├── nodes/               # Platform node implementations
 │   │   └── (shell, http, llm, file, git, github, mcp, python, claude, test)
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
@@ -167,7 +166,7 @@ pflow/
 > Always read relevant docs before coding!
 
 - **Architecture & navigation**: `architecture/CLAUDE.md` — documentation index, reading paths, implementation CLAUDE.md table
-- **PocketFlow framework**: `src/pflow/pocketflow/CLAUDE.md`
+- **Node lifecycle primitives**: `src/pflow/core/node.py` — BaseNode, Node, wiring operators
 - **Agent usage guide**: Run `pflow instructions usage`
 
 Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading documentation and searching for code.
@@ -202,6 +201,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 136: Recursive Sub-Workflow Validation at Parse Time
 - ✅ Task 137: Unified CLI Output Pipeline
 - ✅ Task 138: Shared Execution Pipeline
+- ✅ Task 135: Execution Core Compile-Once Redesign
 
 ### Planned Features (in order of priority)
 
@@ -212,7 +212,6 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 134: Output Detection Unification
 - Task 117: JSON Error Output for CLI Subcommands (registry, workflow — narrowed, main.py done by Task 137)
 - Task 120: Strict Input Type Validation
-- Task 140: Wrapper Chain Refactoring
 
 **v0.12.0**
 - Task 46: Workflow Export to Zero-Dependency Code
@@ -224,7 +223,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 121: Workflow Testability
 
 **v0.13.0 - Performance:**
-- Task 135: Execution Core Compile-Once Redesign
+
 - Task 78: Save User Request History
 - Task 88: MCPMark Benchmarking
 - Task 133: Unified Per-Node Storage for Trace and Cache

@@ -69,10 +69,13 @@ def _display_single_error(
         header = "❌ Compilation failed" if category == "compilation" else "❌ Workflow execution failed"
         click.echo(header, err=True)
 
-    node_id = error.get("node_id") or "unknown"
+    node_id = error.get("node_id")
     message = error.get("message") or "Unknown error"
 
-    click.echo(f"\nError {error_number} at node '{node_id}':", err=True)
+    if node_id:
+        click.echo(f"\nError {error_number} at node '{node_id}':", err=True)
+    else:
+        click.echo(f"\nError {error_number}:", err=True)
     click.echo(f"  Category: {category}", err=True)
     click.echo(f"  Message: {message}", err=True)
 

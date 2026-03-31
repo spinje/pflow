@@ -1,18 +1,16 @@
 """Tests for per-item parameter overrides in batch nodes via template references.
 
 Verifies that when a batch node's params reference item fields via templates
-(e.g., `config: ${item.config_value}`), the template wrapper resolves them
-correctly per-item. This is the mechanism that would enable per-item LLM
-config overrides like `reasoning_effort: ${item.reasoning_effort}`.
+(e.g., `config: ${item.config_value}`), the engine resolves them correctly
+per-item. This is the mechanism that enables per-item LLM config overrides
+like `reasoning_effort: ${item.reasoning_effort}`.
 
 The critical behavior being tested:
-1. PflowBatchNode._exec_single() injects `item_shared[self.item_alias] = current_item`
-2. TemplateAwareNodeWrapper._run() builds context from shared store (which now includes item)
+1. batch_executor injects `item_shared[item_alias] = current_item`
+2. Engine's _execute_single_node resolves templates from shared store (which includes item)
 3. Template params referencing ${item.field} resolve to the current item's field value
 
-Tests use the compiler to build the full wrapper chain
-(Instrumented > Batch > Namespace > Template > ActualNode) to verify the
-integration works end-to-end, not just in isolation.
+Tests use compile_workflow + WorkflowEngine to verify the integration end-to-end.
 
 Verification strategy: ParamCaptureNode writes its resolved params to
 shared["captured_params"] during post(). The batch wrapper collects these
@@ -27,9 +25,10 @@ from typing import Any
 
 import pytest
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 from pflow.registry.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class ParamCaptureNode(Node):
@@ -46,7 +45,7 @@ class ParamCaptureNode(Node):
 
     def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
         # Capture a snapshot of params as they exist at prep time
-        # (after TemplateAwareNodeWrapper has resolved templates)
+        # (after the engine has resolved templates)
         return dict(self.params)
 
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
@@ -197,9 +196,10 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=param_capture_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify batch completed successfully
         assert shared["batch_node"]["count"] == 3
@@ -251,9 +251,10 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=param_capture_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["batch_node"]["count"] == 3
         assert shared["batch_node"]["success_count"] == 3
@@ -297,9 +298,10 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=param_capture_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["batch_node"]["count"] == 2
         assert shared["batch_node"]["success_count"] == 2
@@ -338,9 +340,10 @@ class TestPerItemParamOverride:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=param_capture_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["batch_node"]["count"] == 2
         assert shared["batch_node"]["success_count"] == 2
@@ -356,8 +359,8 @@ class TestPerItemParamOverride:
 class TestPerItemParamOverrideParallel:
     """Same tests but with parallel=True to verify thread safety of per-item param resolution.
 
-    In parallel mode, PflowBatchNode deep-copies the inner node chain per thread.
-    This ensures TemplateAwareNodeWrapper instances don't share state across threads,
+    In parallel mode, the batch executor deep-copies bare nodes per thread.
+    Each thread resolves templates independently via _execute_single_node,
     so per-item param resolution is isolated.
     """
 
@@ -393,9 +396,10 @@ class TestPerItemParamOverrideParallel:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=param_capture_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify batch completed successfully
         assert shared["batch_node"]["count"] == 4
@@ -448,9 +452,10 @@ class TestPerItemParamOverrideParallel:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=param_capture_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=param_capture_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["batch_node"]["count"] == 8
         assert shared["batch_node"]["success_count"] == 8
@@ -507,9 +512,10 @@ class TestPerItemParamOverrideWithUpstreamData:
             "edges": [{"from": "source", "to": "processor"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=two_node_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=two_node_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify source produced items
         assert shared["source"]["result"] == [

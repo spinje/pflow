@@ -43,8 +43,8 @@ class TestWorkflowExecution:
             "edges": [],
         }
 
-        # Patch compile_ir_to_flow where it's imported (lazy import in _compile_and_execute)
-        with patch("pflow.runtime.compile_ir_to_flow") as mock_compile:
+        # Patch compile_workflow where it's imported (lazy import in _compile_and_execute)
+        with patch("pflow.runtime.compile_workflow") as mock_compile:
             mock_compile.side_effect = CompilationError(
                 message="bad template",
                 phase="template_validation",

@@ -11,9 +11,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
 from pflow.runtime.compilation.compiler import CompilationError, _parse_ir_input
 from pflow.runtime.compilation.ir_preparation import validate_ir_structure
+from pflow.runtime.engine import WorkflowEngine
+from pflow.runtime.engine.types import CompiledWorkflow
 
 
 class TestCompilationError:
@@ -187,8 +189,8 @@ class TestValidateIrStructure:
         assert "got dict" in str(error)
 
 
-class TestCompileIrToFlow:
-    """Test the main compile_ir_to_flow function."""
+class TestCompileWorkflow:
+    """Test the main compile_workflow function."""
 
     def test_compile_with_dict_input(self):
         """Test compilation with dict input and empty nodes."""
@@ -197,7 +199,7 @@ class TestCompileIrToFlow:
 
         # Now that compilation is implemented, empty nodes should raise CompilationError
         with pytest.raises(CompilationError) as exc_info:
-            compile_ir_to_flow(ir_dict, registry)
+            compile_workflow(ir_dict, registry)
 
         assert exc_info.value.phase == "start_detection"
         assert "Cannot create flow with no nodes" in str(exc_info.value)
@@ -209,7 +211,7 @@ class TestCompileIrToFlow:
 
         # Now that compilation is implemented, empty nodes should raise CompilationError
         with pytest.raises(CompilationError) as exc_info:
-            compile_ir_to_flow(ir_string, registry)
+            compile_workflow(ir_string, registry)
 
         assert exc_info.value.phase == "start_detection"
         assert "Cannot create flow with no nodes" in str(exc_info.value)
@@ -220,7 +222,7 @@ class TestCompileIrToFlow:
         bad_json = '{"nodes": [}}'
 
         with pytest.raises(json.JSONDecodeError):
-            compile_ir_to_flow(bad_json, registry)
+            compile_workflow(bad_json, registry)
 
     def test_compile_with_missing_nodes(self):
         """Test compilation fails with proper error for missing nodes."""
@@ -228,7 +230,7 @@ class TestCompileIrToFlow:
         ir_dict = {"edges": []}
 
         with pytest.raises(CompilationError) as exc_info:
-            compile_ir_to_flow(ir_dict, registry)
+            compile_workflow(ir_dict, registry)
 
         error = exc_info.value
         assert error.phase == "validation"
@@ -240,19 +242,20 @@ class TestCompileIrToFlow:
         ir_dict = {"nodes": []}
 
         with pytest.raises(CompilationError) as exc_info:
-            compile_ir_to_flow(ir_dict, registry)
+            compile_workflow(ir_dict, registry)
 
         error = exc_info.value
         assert error.phase == "validation"
         assert "Missing 'edges' key" in str(error)
 
     def test_compile_single_node_workflow_succeeds(self):
-        """Test that compilation produces working flow for single node workflow.
+        """Test that compilation produces a CompiledWorkflow for single node workflow.
 
         FIX HISTORY:
         - Removed log message testing (brittle implementation details)
         - Use real ExampleNode instead of mock
-        - Focus on testing that compilation produces working flow
+        - Focus on testing that compilation produces working workflow
+        - Migrated from compile_ir_to_flow shim to compile_workflow + WorkflowEngine
         """
         import tempfile
         from pathlib import Path
@@ -279,17 +282,17 @@ class TestCompileIrToFlow:
             ir_dict = {"nodes": [{"id": "n1", "type": "test-node"}], "edges": []}
 
             # Compile the workflow
-            flow = compile_ir_to_flow(ir_dict, registry)
+            workflow = compile_workflow(ir_dict, registry)
 
-            # Test that compilation succeeded and produced working flow
-            assert flow is not None
-            from pflow.pocketflow import Flow
+            # Test that compilation succeeded and produced a CompiledWorkflow
+            assert workflow is not None
+            assert isinstance(workflow, CompiledWorkflow)
 
-            assert isinstance(flow, Flow)
-
-            # Test that the flow can actually execute
-            shared_store = {"test_input": "hello"}
-            flow.run(shared_store)
+            # Test that the workflow can actually execute
+            shared_store = dict(workflow.resolved_defaults)
+            shared_store["test_input"] = "hello"
+            engine = WorkflowEngine()
+            engine.run(workflow, shared_store)
 
             # Verify the node executed correctly (with namespacing)
             assert "n1" in shared_store
@@ -303,6 +306,7 @@ class TestCompileIrToFlow:
         - Removed mock import call counting (testing implementation details)
         - Use real ExampleNode instead of MockNode
         - Focus on testing actual workflow execution with multiple nodes
+        - Migrated from compile_ir_to_flow shim to compile_workflow + WorkflowEngine
         """
         import tempfile
         from pathlib import Path
@@ -343,12 +347,15 @@ class TestCompileIrToFlow:
             }
 
             # Compile the workflow
-            flow = compile_ir_to_flow(ir_dict, registry)
-            assert flow is not None
+            workflow = compile_workflow(ir_dict, registry)
+            assert workflow is not None
 
-            # Test that the multi-node flow executes correctly
-            shared_store = {"test_input": "start", "retry_input": "test data"}
-            flow.run(shared_store)
+            # Test that the multi-node workflow executes correctly
+            shared_store = dict(workflow.resolved_defaults)
+            shared_store["test_input"] = "start"
+            shared_store["retry_input"] = "test data"
+            engine = WorkflowEngine()
+            engine.run(workflow, shared_store)
 
             # Verify all nodes executed in sequence (with namespacing)
             # Each ExampleNode processes its input and passes to next
@@ -372,7 +379,7 @@ class TestCompilerLogging:
         registry = MagicMock()
 
         with pytest.raises(CompilationError):
-            compile_ir_to_flow({"nodes": [], "edges": []}, registry)
+            compile_workflow({"nodes": [], "edges": []}, registry)
 
         error_records = [
             r for r in caplog.records if r.levelno >= logging.ERROR and r.name == "pflow.runtime.compilation.compiler"

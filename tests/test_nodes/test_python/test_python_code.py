@@ -565,7 +565,8 @@ class TestWorkflowIntegration:
         ${source.echo} which must be resolved by the TemplateAwareNodeWrapper
         before the code node's prep() sees it as a native Python object.
         """
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
         from tests.shared.registry_utils import ensure_test_registry
 
         registry = ensure_test_registry()
@@ -595,9 +596,10 @@ class TestWorkflowIntegration:
             "edges": [{"from": "source", "to": "transform"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Code node output is namespaced under "transform"
         assert shared["transform"]["result"] == [1, 2, 3, 4, 5]

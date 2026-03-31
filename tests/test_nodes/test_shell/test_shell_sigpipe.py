@@ -28,7 +28,6 @@ import platform
 
 import pytest
 
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 from src.pflow.nodes.shell.shell import ShellNode
 
 # Size that reliably exceeds pipe buffer on all platforms
@@ -145,28 +144,26 @@ class TestShellNodeSigpipeHandling:
         assert "data line" in shared_true["stdout"]
         assert shared_true.get("exit_code", 0) == 0
 
-    def test_conditional_with_template_resolution(self):
-        """Test the full pattern with template variable resolution.
+    def test_conditional_with_resolved_template(self):
+        """Test SIGPIPE handling with a conditional command using a resolved value.
 
-        This tests the complete flow: template resolves to 'False' (capital F),
-        shell conditional matches it, and the non-consuming branch executes.
+        Simulates the result of template resolution: ${flag} resolved to "False"
+        (Python's str(False)). The shell pattern *[Ff]alse* should match it,
+        causing the non-consuming branch to execute with large stdin.
         """
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "conditional-shell")
+        node = ShellNode()
 
         # Data just above pipe buffer to trigger SIGPIPE
         large_data = "content\n" * 2500  # ~20KB
 
-        # The template ${flag} will resolve to "False" (Python's str(False))
-        # The shell pattern *[Ff]alse* should match it
+        # Pre-resolved: ${flag} -> "False" (as template resolution would produce)
         node.set_params({
-            "command": "case '${flag}' in *[Ff]alse*) echo 'skipped' ;; *) wc -l ;; esac",
+            "command": "case 'False' in *[Ff]alse*) echo 'skipped' ;; *) wc -l ;; esac",
             "stdin": large_data,
         })
 
-        # Test with flag=False (Python boolean)
-        shared = {"flag": False}
-        action = node._run(shared)
+        shared = {}
+        action = node.run(shared)
 
         assert action == "default"
         assert "skipped" in shared["stdout"]

@@ -11,7 +11,8 @@ from unittest.mock import patch
 from pflow.mcp import MCPServerManager
 from pflow.nodes.mcp.node import MCPNode
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class TestMCPRealIntegration:
@@ -23,7 +24,7 @@ class TestMCPRealIntegration:
         This test verifies the ACTUAL compiler logic by:
         1. NOT mocking any internal methods
         2. Only mocking true external boundaries (MCP server communication)
-        3. Testing through flow.run() for complete integration
+        3. Testing through engine.run() for complete integration
         4. Verifying metadata flows through actual compiler
 
         Real Bugs This Catches:
@@ -101,12 +102,13 @@ class TestMCPRealIntegration:
             ):
                 # Configure mock to return our test manager
                 MockManager.return_value = manager
-                # Step 5: Compile and run through REAL flow execution
-                flow = compile_ir_to_flow(workflow_ir, registry)
+                # Step 5: Compile and run through REAL workflow execution
+                workflow = compile_workflow(workflow_ir, registry)
 
-                # Run the actual flow (not manual node methods)
-                shared_store = {}
-                flow.run(shared_store)
+                # Run the actual workflow (not manual node methods)
+                shared_store = dict(workflow.resolved_defaults)
+                engine = WorkflowEngine()
+                engine.run(workflow, shared_store)
 
             # Step 6: Verify compiler correctly injected metadata
             assert len(exec_async_calls) == 1
@@ -211,8 +213,10 @@ class TestMCPRealIntegration:
             ):
                 # Configure mock to return our test manager
                 MockManager.return_value = manager
-                flow = compile_ir_to_flow(workflow_ir, registry)
-                flow.run({})
+                workflow = compile_workflow(workflow_ir, registry)
+                shared = dict(workflow.resolved_defaults)
+                engine = WorkflowEngine()
+                engine.run(workflow, shared)
 
             # Verify each node got correct metadata
             assert len(node_executions) == 2
@@ -291,8 +295,10 @@ class TestMCPRealIntegration:
                 ):
                     # Configure mock to return our test manager
                     MockManager.return_value = manager
-                    flow = compile_ir_to_flow(workflow_ir, registry)
-                    flow.run({})
+                    workflow = compile_workflow(workflow_ir, registry)
+                    shared = dict(workflow.resolved_defaults)
+                    engine = WorkflowEngine()
+                    engine.run(workflow, shared)
 
                 # Verify runtime expansion happened in prep()
                 assert captured_prep_res is not None

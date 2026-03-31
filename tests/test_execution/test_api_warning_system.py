@@ -1,24 +1,22 @@
 """High-value tests for API warning detection and error formatting system."""
 
 import json
-from unittest.mock import Mock
+import time
 
 from pflow.execution.executor_service import build_error_list
-from pflow.runtime.wrappers.api_warning_detector import detect_api_warning
-from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+from pflow.runtime.engine.api_warning_detector import detect_api_warning
+from pflow.runtime.engine.instrumentation import handle_api_warning
 
 
 class TestCriticalAPIWarningScenarios:
     """Test the most important real-world scenarios."""
 
     def test_slack_mcp_channel_not_found(self):
-        """Test the exact Slack MCP scenario that prompted this feature."""
-        mock_node = Mock()
-        mock_node._run = Mock(return_value="default")
-        mock_node.node_id = "send_response"
+        """Test the exact Slack MCP scenario that prompted this feature.
 
-        wrapper = InstrumentedNodeWrapper(mock_node, "send_response")
-
+        Verifies the full detection+handling pipeline: detect_api_warning finds
+        the error, handle_api_warning records it and returns 'error'.
+        """
         # Exact structure from user's trace file
         mcp_response = {"successful": True, "error": None, "data": {"ok": False, "error": "channel_not_found"}}
 
@@ -29,8 +27,22 @@ class TestCriticalAPIWarningScenarios:
             },
         }
 
-        # Execute the node
-        result = wrapper._run(shared)
+        # Step 1: Detect the API warning
+        warning = detect_api_warning("send_response", shared)
+        assert warning is not None, "Should detect channel_not_found as API error"
+
+        # Step 2: Handle the warning (records it and returns 'error')
+        result = handle_api_warning(
+            node_id="send_response",
+            shared=shared,
+            warning=warning,
+            metrics=None,
+            trace_collector=None,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(shared.keys()),
+            node_type_name="MCPNode",
+            node_params={},
+        )
 
         # Verify it stops workflow execution and records a warning
         assert result == "error", "Should stop workflow"

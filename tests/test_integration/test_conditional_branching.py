@@ -9,7 +9,8 @@ import pytest
 
 from pflow.core.exceptions import MaxNodeVisitsError
 from pflow.core.markdown_parser import parse_markdown
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 from tests.shared.registry_utils import ensure_test_registry
 
 
@@ -19,11 +20,13 @@ def _md(text: str) -> str:
 
 
 def compile_and_run_ir(ir: dict, shared: dict | None = None) -> dict:
-    """Compile IR dict to flow and run it."""
+    """Compile IR dict to workflow and run it via WorkflowEngine."""
     registry = ensure_test_registry()
-    flow = compile_ir_to_flow(ir, registry)
+    workflow = compile_workflow(ir, registry)
     shared = shared or {}
-    flow.run(shared)
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
     return shared
 
 
@@ -232,7 +235,7 @@ class TestLoopExecution:
     def test_loop_guard_raises_at_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """When a node always loops back to itself, MaxNodeVisitsError is raised."""
         # Lower the limit to keep the test fast
-        monkeypatch.setattr("pflow.runtime.wrappers.instrumented_wrapper.MAX_NODE_VISITS", 5)
+        monkeypatch.setattr("pflow.runtime.engine.instrumentation.MAX_NODE_VISITS", 5)
 
         ir = {
             "nodes": [
@@ -263,7 +266,7 @@ class TestLoopExecution:
         nodes would be cached after the first iteration and return stale
         actions forever — never reaching the exit condition.
         """
-        monkeypatch.setattr("pflow.runtime.wrappers.instrumented_wrapper.MAX_NODE_VISITS", 20)
+        monkeypatch.setattr("pflow.runtime.engine.instrumentation.MAX_NODE_VISITS", 20)
 
         ir = {
             "nodes": [

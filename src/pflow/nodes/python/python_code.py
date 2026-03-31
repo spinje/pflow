@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Optional
 
-from pflow.pocketflow import Node
+from pflow.core.node import Node
 
 logger = logging.getLogger(__name__)
 

@@ -6,10 +6,10 @@ from typing import Any, Optional
 
 from pflow.core.file_resolver import is_workflow_file_reference
 from pflow.core.markdown_parser import parse_markdown
+from pflow.core.node import BaseNode
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime import CompilationError, compile_ir_to_flow
+from pflow.runtime import CompilationError, compile_workflow
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ class WorkflowExecutor(BaseNode):
         "max_depth",
         "error_action",
         "__registry__",
-        "inputs",  # Framework key consumed by TemplateAwareNodeWrapper, not a child input
+        "inputs",  # Framework key consumed by engine's template resolution, not a child input
     })
 
     # Cross-cutting infrastructure keys propagated from parent to child storage.
@@ -116,11 +116,22 @@ class WorkflowExecutor(BaseNode):
 
         execution_stack = shared.get(f"{self.RESERVED_KEY_PREFIX}stack", [])
 
-        # Load the workflow (file, saved name, or inline IR)
-        workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
+        # Cache file/name loaded IR for compile-once: same dict object = same id() = compile cache hit.
+        # First batch item loads and caches. Subsequent items reuse the same IR object.
+        # For parallel batch, each deep-copied instance starts without cache and loads independently.
+        # DON'T cache inline IR — it comes from self.params["workflow_ir"] which may contain
+        # per-item resolved templates (e.g., ${item} inside the child IR), producing a different
+        # dict per item. Caching would freeze the first item's resolved values.
+        cached_ir = getattr(self, "_cached_loaded_ir", None)
+        if cached_ir is not None:
+            workflow_ir, workflow_path, workflow_source = cached_ir
+        else:
+            workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
+            if workflow_source != "inline":
+                self._cached_loaded_ir = (workflow_ir, workflow_path, workflow_source)
 
         # Extract child inputs: all non-reserved params
-        # Template resolution already handled by TemplateAwareNodeWrapper before prep() runs
+        # Template resolution already handled by engine's _execute_single_node before prep() runs
         child_params = self._extract_child_inputs()
 
         # Validate child params against declared inputs
@@ -142,23 +153,50 @@ class WorkflowExecutor(BaseNode):
         workflow_ir: dict[str, Any],
         workflow_path: str,
         child_params: dict[str, Any],
-        child_trace: Any,
     ) -> Any:
-        """Compile the sub-workflow, enriching errors with sub-workflow context.
+        """Compile the sub-workflow with compile-once caching.
+
+        First call compiles and caches. Subsequent calls (batch items) reuse
+        the cached CompiledWorkflow. For parallel batch, the batch executor
+        pre-warms this cache before deep-copying, so each thread inherits
+        the compiled workflow.
+
+        Cache gate:
+        - Non-inline workflows (_cached_loaded_ir exists): return cache unconditionally.
+          After deepcopy, the IR dict has a new id() but the content is identical.
+          _cached_loaded_ir is the signal that the workflow came from a file/name source.
+        - Inline workflows (_cached_loaded_ir absent): check id(workflow_ir) match.
+          Inline IR may contain parent-resolved templates (e.g., ${item}) that produce
+          a different dict per batch item. id() match means the same dict object,
+          which means sequential reuse is safe. Different id() means recompile.
 
         CompilationError always propagates — it means the workflow definition
-        is broken, not the data. Other exceptions are wrapped in CompilationError.
+        is broken, not the data.
         """
+        from pflow.runtime.engine.types import CompiledWorkflow
+
+        # Compile-once cache
+        cached: Optional[CompiledWorkflow] = getattr(self, "_cached_workflow", None)
+        if cached is not None:
+            # Non-inline (file/name): always reuse. _cached_loaded_ir is set only for
+            # non-inline sources. Content is identical across items — only the dict
+            # object identity differs after deepcopy.
+            if getattr(self, "_cached_loaded_ir", None) is not None:
+                return cached
+            # Inline: reuse only if same dict object (id match).
+            cached_ir_id: Optional[int] = getattr(self, "_cached_workflow_ir_id", None)
+            if cached_ir_id is not None and cached_ir_id == id(workflow_ir):
+                return cached
+
         registry = self.params.get("__registry__")
         if registry is not None and not isinstance(registry, Registry):
             registry = None
 
         try:
-            return compile_ir_to_flow(
+            compiled = compile_workflow(
                 workflow_ir,
-                registry=registry,  # type: ignore[arg-type]
-                initial_params=child_params,
-                trace_collector=child_trace,
+                registry=registry or Registry(),
+                initial_params=dict(child_params),  # Copy — don't mutate caller's dict
             )
         except CompilationError as e:
             if not e.details:
@@ -173,8 +211,15 @@ class WorkflowExecutor(BaseNode):
                 suggestion=getattr(e, "suggestion", None),
             ) from e
 
+        # Cache for compile-once
+        self._cached_workflow = compiled
+        self._cached_workflow_ir_id = id(workflow_ir)
+        return compiled
+
     def exec(self, prep_res: dict[str, Any]) -> dict[str, Any]:
         """Compile and execute the sub-workflow."""
+        from pflow.runtime.engine import WorkflowEngine
+
         workflow_ir = prep_res["workflow_ir"]
         workflow_path = prep_res["workflow_path"]
         workflow_source = prep_res.get("workflow_source", "unknown")
@@ -195,27 +240,43 @@ class WorkflowExecutor(BaseNode):
             from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
             child_trace = WorkflowTraceCollector(workflow_name=str(workflow_path or "sub-workflow"))
-            child_trace.enable_llm_interception = False  # Prompts captured via template_resolutions
+            child_trace.enable_llm_interception = False
 
-        sub_flow = self._compile_sub_workflow(workflow_ir, workflow_path, child_params, child_trace)
+        # Compile (with compile-once caching)
+        compiled = self._compile_sub_workflow(workflow_ir, workflow_path, child_params)
 
         # Create child storage
         child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)
 
-        # Initialize _child_trace_events (will be populated after sub-flow runs)
+        # Seed structural defaults (for inputs NOT provided by this item), then per-item values.
+        # Only seed resolved_defaults keys absent from child_params — resolved_defaults may
+        # contain coerced values from the first item's compilation (compile-once cache), and
+        # those per-item coerced values must NOT leak to subsequent items.
+        #
+        # KNOWN LIMITATION (see #188): Per-item type coercion is lost. The old model ran
+        # prepare_inputs() per item (via per-item recompilation), which coerced "7" → 7 for
+        # int-typed inputs. The new compile-once model skips per-item coercion — child_params
+        # contain raw values from template resolution (typically strings from CLI args).
+        # This matters for sub-workflow inputs with declared numeric types. Most inputs are
+        # strings in practice, and template resolution preserves upstream types.
+        for k, v in compiled.resolved_defaults.items():
+            if k not in child_params:
+                child_storage[k] = v
+        child_storage.update(child_params)
+
+        # Initialize _child_trace_events (will be populated after engine runs)
         self._child_trace_events: list[dict[str, Any]] | None = None
 
-        try:
-            result = sub_flow.run(child_storage)
+        engine = WorkflowEngine(trace_collector=child_trace)
 
-            # Store child trace events for parent InstrumentedNodeWrapper to embed
+        try:
+            result = engine.run(compiled, child_storage)
+
+            # Store child trace events for parent engine to embed in trace
             if child_trace and child_trace.events:
                 self._child_trace_events = child_trace.events
 
-            # Detect sub-workflow failure via action string (not just exceptions).
-            # When a child node returns "error" and the flow has no error successor,
-            # sub_flow.run() returns "error" without raising. We must treat this as
-            # a failure so batch error_handling can detect it via _extract_error().
+            # Detect sub-workflow failure via action string
             if isinstance(result, str) and result.startswith("error"):
                 error_msg = self._extract_child_error(child_storage, workflow_path)
                 return {
@@ -227,7 +288,6 @@ class WorkflowExecutor(BaseNode):
 
             return {"success": True, "result": result, "child_storage": child_storage, "storage_mode": storage_mode}
         except Exception as e:
-            # Still capture child trace events on failure
             if child_trace and child_trace.events:
                 self._child_trace_events = child_trace.events
             return {
