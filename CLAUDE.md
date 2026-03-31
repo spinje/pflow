@@ -209,6 +209,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 125: Human-in-the-Loop Approval Gates
 
 **Refactors:**
+- Task 141: Consolidate Exception Hierarchy
 - Task 134: Output Detection Unification
 - Task 117: JSON Error Output for CLI Subcommands (registry, workflow — narrowed, main.py done by Task 137)
 - Task 120: Strict Input Type Validation
