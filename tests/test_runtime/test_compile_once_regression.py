@@ -7,13 +7,13 @@ should be called EXACTLY ONCE -- subsequent batch items reuse the cached result.
 These tests verify:
 1. compile_workflow is called once (not N times) for N sequential batch items
 2. Each batch item still produces distinct output (cache does not cause stale data)
+3. File-based sub-workflows also get compile-once (IR cached in prep())
 
 Implementation context:
   The compile-once cache uses id(workflow_ir) to detect whether the same
-  IR dict is passed. For this to work, workflow_ir must be a STATIC param
-  (no ${...} templates inside it). When workflow_ir IS static, split_params
-  puts it in static_params, and the template resolver preserves the same
-  dict reference across batch iterations.
+  IR dict is passed. For inline static IR, split_params preserves the same
+  dict reference. For file/saved-name sources, prep() caches the loaded IR
+  so the same dict object is reused across batch items.
 
   When workflow_ir DOES contain templates (e.g., ${item} for parent-level
   resolution), resolve_nested creates a new dict each time, producing a
@@ -21,6 +21,7 @@ Implementation context:
   the child workflow structure differs per item.
 """
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
@@ -222,3 +223,189 @@ def test_each_batch_item_produces_distinct_output():
         assert f"MARKER_{expected_text}_END" in result_str, (
             f"Batch item {i}: expected 'MARKER_{expected_text}_END' in output, got: {item_result}"
         )
+
+
+def test_compile_once_for_file_based_sub_workflow(tmp_path: Path):
+    """File-based sub-workflows compile once per batch, not once per item.
+
+    prep() caches the loaded IR for non-inline sources so the same dict
+    object is reused across batch items. This makes id(workflow_ir) stable,
+    allowing the compile-once cache in _compile_sub_workflow to hit.
+
+    Without the IR caching in prep(), each batch item would re-parse the
+    file, producing a new dict object with a different id() — O(N) compiles.
+    """
+    from pflow.runtime.compilation.compiler import compile_workflow as real_compile_workflow
+
+    # Write child workflow to a file
+    child_md = tmp_path / "child.pflow.md"
+    child_md.write_text(
+        "# Child\n\nA child workflow.\n\n## Steps\n\n### echo\n\nRun echo.\n\n- type: shell\n- command: echo hello\n",
+        encoding="utf-8",
+    )
+
+    parent_ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "source",
+                "type": "shell",
+                "params": {"command": 'echo \'["a", "b", "c"]\''},
+            },
+            {
+                "id": "process",
+                "type": "workflow",
+                "batch": {"items": "${source.stdout}", "as": "item"},
+                "params": {"workflow": str(child_md)},
+            },
+        ],
+        "edges": [{"from": "source", "to": "process"}],
+    }
+
+    call_count = 0
+
+    def counting_compile(*args: Any, **kwargs: Any) -> Any:
+        nonlocal call_count
+        call_count += 1
+        return real_compile_workflow(*args, **kwargs)
+
+    registry = Registry()
+
+    with patch(
+        "pflow.runtime.workflow_executor.compile_workflow",
+        side_effect=counting_compile,
+    ):
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
+
+    assert result == "default", f"Workflow failed: {shared.get('error', 'N/A')}"
+    assert call_count == 1, (
+        f"File-based sub-workflow compiled {call_count} time(s), expected 1. "
+        f"prep() IR caching may not be working for file sources."
+    )
+    results = shared.get("process", {}).get("results", [])
+    assert len(results) == 3, f"Expected 3 batch results, got {len(results)}"
+
+
+def test_resolved_defaults_do_not_leak_between_batch_items(tmp_path: Path):
+    """Cached resolved_defaults must not leak per-item coerced values between items.
+
+    Scenario: file-based child workflow declares input 'text' (required) and 'prefix'
+    (optional, default: "DEFAULT"). Parent passes 'text' per-item via ${item}. The
+    child echoes both. Each item should get its own 'text' and the shared default 'prefix'.
+
+    Bug this catches: if resolved_defaults seeding doesn't filter keys present in
+    child_params, item 1's coerced 'text' value leaks to item 2 via the cached
+    resolved_defaults dict. The fix: only seed resolved_defaults keys NOT in child_params.
+
+    Uses a file-based child so child-level templates (${text}, ${prefix}) are isolated
+    from the parent's template resolver — the parent only sees the file path.
+    """
+    # Write child workflow with declared inputs + defaults
+    child_md = tmp_path / "child.pflow.md"
+    child_md.write_text(
+        "# Child\n\nA child workflow.\n\n"
+        "## Inputs\n\n"
+        "### text\n\nThe text to echo.\n\n"
+        "- type: str\n"
+        "- required: true\n\n"
+        "### prefix\n\nOptional prefix.\n\n"
+        "- type: str\n"
+        "- required: false\n"
+        "- default: DEFAULT\n\n"
+        "## Steps\n\n"
+        "### echo\n\nEcho with prefix.\n\n"
+        "- type: shell\n"
+        "- command: echo ${prefix}_${text}\n",
+        encoding="utf-8",
+    )
+
+    parent_ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "source",
+                "type": "shell",
+                "params": {"command": 'echo \'["aaa", "bbb", "ccc"]\''},
+            },
+            {
+                "id": "process",
+                "type": "workflow",
+                "batch": {"items": "${source.stdout}", "as": "item"},
+                "params": {
+                    "workflow": str(child_md),
+                    "text": "${item}",  # Per-item — must NOT leak between items
+                    # prefix NOT passed — child should use default "DEFAULT"
+                },
+            },
+        ],
+        "edges": [{"from": "source", "to": "process"}],
+    }
+
+    registry = Registry()
+    workflow = compile_workflow(parent_ir, registry=registry)
+    shared: dict[str, Any] = dict(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    result = engine.run(workflow, shared)
+
+    assert result == "default", f"Workflow failed: {shared.get('error', 'N/A')}"
+
+    results = shared["process"]["results"]
+    assert len(results) == 3
+
+    # Each item should have its OWN text value and the DEFAULT prefix
+    for i, expected_text in enumerate(["aaa", "bbb", "ccc"]):
+        stdout = results[i]["echo"]["stdout"].strip()
+        assert stdout == f"DEFAULT_{expected_text}", (
+            f"Item {i}: expected 'DEFAULT_{expected_text}', got '{stdout}'. "
+            f"If prefix is wrong, defaults leaked. If text is wrong, per-item values leaked."
+        )
+
+
+def test_storage_mode_shared_through_engine(tmp_path: Path):
+    """storage_mode: shared works through the full engine path with namespacing.
+
+    Bug this catches: NamespacedSharedStore didn't implement update(), so
+    child_storage.update(resolved_defaults) crashed with AttributeError when
+    the workflow node received a NamespacedSharedStore (namespacing default=True).
+
+    This test runs a workflow node with storage_mode: shared through the real
+    compile→engine pipeline, not just _create_child_storage() in isolation.
+    """
+    child_md = tmp_path / "child.pflow.md"
+    child_md.write_text(
+        "# Child\n\nA child workflow.\n\n"
+        "## Steps\n\n"
+        "### echo\n\nEcho shared data.\n\n"
+        "- type: shell\n"
+        "- command: echo shared_works\n",
+        encoding="utf-8",
+    )
+
+    parent_ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "child",
+                "type": "workflow",
+                "params": {
+                    "workflow": str(child_md),
+                    "storage_mode": "shared",
+                },
+            },
+        ],
+        "edges": [],
+    }
+
+    registry = Registry()
+    workflow = compile_workflow(parent_ir, registry=registry)
+    shared: dict[str, Any] = dict(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    result = engine.run(workflow, shared)
+
+    assert result == "default", (
+        f"Workflow with storage_mode: shared failed: {result}. "
+        f"If AttributeError on 'update', NamespacedSharedStore is missing update()."
+    )

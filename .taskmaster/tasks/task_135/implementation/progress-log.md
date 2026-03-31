@@ -617,11 +617,29 @@ Fully investigated "Deferred A: cached child workflows may reuse mutable node in
 - Second test validates allowlist entries still exist (prevents stale allowlist after refactors)
 - Allowlist: `ReadFileNode._is_binary` (anti-pattern but safe), `WorkflowExecutor._child_trace_events` (reset each exec)
 
+### Batch config coercion hardened
+
+Changed `_coerce_int`, `_coerce_float`, `_coerce_bool` in `compiler.py` from silent-fallback-to-default to fail-fast on invalid values. Invalid `max_concurrent: "abc"` now raises `CompilationError` with field name and suggestion, instead of silently becoming 10. Valid coercions (`"5"` → `5`, `5.9` → `5`) still work. Updated 3 tests from assert-default to assert-raises.
+
+### High-value regression tests
+
+Added two tests for fixes that had zero dedicated coverage:
+
+1. **`test_resolved_defaults_do_not_leak_between_batch_items`**: File-based child workflow with declared inputs (`text` required, `prefix` optional with default "DEFAULT"). Parent passes `text` per-item, relies on `prefix` default. Verifies each item gets its own `text` AND the shared default `prefix`. Catches the exact bug the `resolved_defaults` seeding fix addresses — without the "only seed missing keys" guard, item 1's coerced values would leak to subsequent items.
+
+2. **`test_storage_mode_shared_through_engine`**: Full compile→engine pipeline with `storage_mode: shared` and default namespacing enabled. Catches the `NamespacedSharedStore.update()` crash we fixed. The existing test only checked `_create_child_storage()` identity in isolation — it never called `exec()` through the engine, so the missing `update()` method was invisible.
+
+### GitHub issues created
+
+- #188: Sub-workflow per-item input type coercion lost after compile-once
+- #189: Permissive batch template errors not propagated to parent workflow
+
 ### Final metrics
 
-- **Tests**: 4624 passed, 9 skipped
+- **Tests**: 4629 passed, 9 skipped
 - **`make check`**: all clean (ruff, mypy, deptry)
-- **GitHub issues created**: #188 (sub-workflow type coercion)
-- **Files modified**: 5 production (`namespaced_store.py`, `workflow_executor.py`, `compiler.py`, `instrumentation.py`, `engine.py`), 1 formatter (`node_output_formatter.py`), 1 deleted (`examples/github/`)
-- **Tests added**: 2 (node stateless invariant meta-test + allowlist staleness check)
-- **Docs updated**: `src/pflow/nodes/CLAUDE.md` (compile-once constraint)
+- **GitHub issues created**: #188, #189
+- **Production files modified**: `namespaced_store.py` (added `update()`), `workflow_executor.py` (resolved_defaults seeding fix + IR caching for file sources), `compiler.py` (fail-fast coercion + CompilationError on invalid batch config), `instrumentation.py` (None action normalization + `startswith("error")` consistency), `engine.py` (`startswith("error")` consistency + mypy fix), `node_output_formatter.py` (`startswith("error")`), `nodes/CLAUDE.md` (stateless constraint)
+- **Files deleted**: `examples/github/create_pr_example.py` (imported removed `Flow`)
+- **Tests added**: 7 (node stateless invariant 2, resolved_defaults leak 1, storage_mode shared 1, file-based compile-once 1, custom error_action 2)
+- **Docs updated**: 8 files (runtime/CLAUDE.md, compilation/CLAUDE.md, pflow-pocketflow-integration-guide.md, testing-quick-reference.md, shared-store.md, tests/CLAUDE.md, nodes/CLAUDE.md, tests/shared/README.md)

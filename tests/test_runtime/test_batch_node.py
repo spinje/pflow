@@ -1060,10 +1060,14 @@ class TestConfigTypeCoercion:
         assert _coerce_bool("yes") is True
 
     def test_coerce_bool_string_invalid(self):
-        """Invalid string for bool uses default (False)."""
+        """Invalid string for bool raises CompilationError."""
+        import pytest
+
+        from pflow.core.exceptions import CompilationError
         from pflow.runtime.compilation.compiler import _coerce_bool
 
-        assert _coerce_bool("invalid") is False
+        with pytest.raises(CompilationError, match="not a valid boolean"):
+            _coerce_bool("invalid", "parallel")
 
     def test_coerce_bool_int_1(self):
         """Integer 1 is coerced to boolean True."""
@@ -1081,37 +1085,45 @@ class TestConfigTypeCoercion:
         """String '5' is coerced to integer 5."""
         from pflow.runtime.compilation.compiler import _coerce_int
 
-        assert _coerce_int("5") == 5
+        assert _coerce_int("5", "max_retries", 1) == 5
 
     def test_coerce_int_float(self):
         """Float 5.9 is coerced to integer 5."""
         from pflow.runtime.compilation.compiler import _coerce_int
 
-        assert _coerce_int(5.9) == 5
+        assert _coerce_int(5.9, "max_retries", 1) == 5
 
-    def test_coerce_int_invalid_returns_zero(self):
-        """Invalid string for int returns 0."""
+    def test_coerce_int_invalid_raises(self):
+        """Invalid string for int raises CompilationError."""
+        import pytest
+
+        from pflow.core.exceptions import CompilationError
         from pflow.runtime.compilation.compiler import _coerce_int
 
-        assert _coerce_int("invalid") == 0
+        with pytest.raises(CompilationError, match="not a valid integer"):
+            _coerce_int("invalid", "max_retries", 1)
 
     def test_coerce_float_string(self):
         """String '1.5' is coerced to float 1.5."""
         from pflow.runtime.compilation.compiler import _coerce_float
 
-        assert _coerce_float("1.5") == 1.5
+        assert _coerce_float("1.5", "retry_wait", 0.0) == 1.5
 
     def test_coerce_float_int(self):
         """Integer 2 is coerced to float 2.0."""
         from pflow.runtime.compilation.compiler import _coerce_float
 
-        assert _coerce_float(2) == 2.0
+        assert _coerce_float(2, "retry_wait", 0.0) == 2.0
 
-    def test_coerce_float_invalid_returns_zero(self):
-        """Invalid string for float returns 0.0."""
+    def test_coerce_float_invalid_raises(self):
+        """Invalid string for float raises CompilationError."""
+        import pytest
+
+        from pflow.core.exceptions import CompilationError
         from pflow.runtime.compilation.compiler import _coerce_float
 
-        assert _coerce_float("invalid") == 0.0
+        with pytest.raises(CompilationError, match="not a valid number"):
+            _coerce_float("invalid", "retry_wait", 0.0)
 
 
 # =============================================================================

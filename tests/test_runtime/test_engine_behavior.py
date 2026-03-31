@@ -3,6 +3,8 @@
 These test specific engine behaviors that are hard to trigger or verify
 through the full compilation pipeline, and where a silent regression
 would leave users with no diagnostic information.
+
+Covers: unmatched action warnings, --only + output resolution, custom error_action.
 """
 
 from pflow.pocketflow import BaseNode
@@ -168,3 +170,72 @@ class TestOnlyNodeWithOutputs:
         assert shared["__execution__"]["only_node"] == "first"
         # "result" output should NOT be in shared (resolution was skipped)
         assert "result" not in shared
+
+
+class TestCustomErrorAction:
+    """When a node returns a custom error action (e.g., 'error_child' instead of
+    'error'), all bookkeeping must treat it as a failure consistently.
+
+    The engine uses startswith("error") everywhere. Before this was fixed,
+    some sites used == "error" which would miss custom error actions — the
+    workflow would be marked failed but the node would appear successful in
+    trace, cache, and progress output.
+    """
+
+    def test_custom_error_action_marks_node_as_failed(self):
+        """Node returning 'error_child' sets failed_node and is NOT cached as completed."""
+        node = _ActionNode()
+        node.node_id = "failing"
+        node.set_params({"action": "error_child"})
+
+        configs = {
+            "failing": NodeConfig(
+                node_id="failing",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=node, node_configs=configs)
+        shared: dict = {}
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
+
+        # Workflow should report failure (startswith("error"))
+        assert result.startswith("error"), f"Expected error result, got: {result}"
+
+        # Node must be recorded as failed, not completed
+        execution = shared["__execution__"]
+        assert execution["failed_node"] == "failing", (
+            f"Expected failed_node='failing', got: {execution.get('failed_node')}"
+        )
+        assert "failing" not in execution["completed_nodes"], "Custom error action should NOT record node as completed"
+
+    def test_exact_error_also_works(self):
+        """Sanity check: the standard 'error' action still works correctly."""
+        node = _ActionNode()
+        node.node_id = "failing"
+        node.set_params({"action": "error"})
+
+        configs = {
+            "failing": NodeConfig(
+                node_id="failing",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=node, node_configs=configs)
+        shared: dict = {}
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
+
+        assert result == "error"
+        assert shared["__execution__"]["failed_node"] == "failing"
+        assert "failing" not in shared["__execution__"]["completed_nodes"]

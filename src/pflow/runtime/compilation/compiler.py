@@ -342,10 +342,10 @@ def _create_node_and_config(
             items_template=batch_data["items"],
             item_alias=batch_data.get("as", "item"),
             error_handling=batch_data.get("error_handling", "fail_fast"),
-            parallel=_coerce_bool(batch_data.get("parallel", False)),
-            max_concurrent=_coerce_int(batch_data.get("max_concurrent", 10), default=10),
-            max_retries=_coerce_int(batch_data.get("max_retries", 1), default=1),
-            retry_wait=_coerce_float(batch_data.get("retry_wait", 0.0), default=0.0),
+            parallel=_coerce_bool(batch_data.get("parallel", False), "parallel"),
+            max_concurrent=_coerce_int(batch_data.get("max_concurrent", 10), "max_concurrent", 10),
+            max_retries=_coerce_int(batch_data.get("max_retries", 1), "max_retries", 1),
+            retry_wait=_coerce_float(batch_data.get("retry_wait", 0.0), "retry_wait", 0.0),
         )
 
     # Build NodeConfig
@@ -361,33 +361,74 @@ def _create_node_and_config(
     return node_instance, node_config
 
 
-def _coerce_bool(value: Any) -> bool:
-    """Coerce value to boolean."""
+def _coerce_bool(value: Any, field: str = "parallel") -> bool:
+    """Coerce value to boolean. Accepts bool, common string patterns, int 0/1."""
     if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        return bool(value)
     if isinstance(value, str):
-        return value.lower().strip() in ("true", "1", "yes")
-    return bool(value)
+        lower = value.lower().strip()
+        if lower in ("true", "1", "yes"):
+            return True
+        if lower in ("false", "0", "no", ""):
+            return False
+        raise CompilationError(
+            f"Invalid batch config '{field}': '{value}' is not a valid boolean",
+            phase="batch_config",
+            suggestion="Use true/false, yes/no, or 1/0",
+        )
+    raise CompilationError(
+        f"Invalid batch config '{field}': expected boolean, got {type(value).__name__}",
+        phase="batch_config",
+        suggestion="Use true or false",
+    )
 
 
-def _coerce_int(value: Any, default: int = 0) -> int:
-    """Coerce value to integer. Returns default on failure."""
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    try:
+def _coerce_int(value: Any, field: str, default: int) -> int:
+    """Coerce to int. Accepts int, float (truncates), numeric strings. Fails on garbage."""
+    if isinstance(value, bool):
         return int(value)
-    except (ValueError, TypeError):
-        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            raise CompilationError(
+                f"Invalid batch config '{field}': '{value}' is not a valid integer",
+                phase="batch_config",
+                suggestion=f"Use an integer value (default is {default})",
+            ) from None
+    raise CompilationError(
+        f"Invalid batch config '{field}': expected integer, got {type(value).__name__}",
+        phase="batch_config",
+        suggestion=f"Use an integer value (default is {default})",
+    )
 
 
-def _coerce_float(value: Any, default: float = 0.0) -> float:
-    """Coerce value to float. Returns default on failure."""
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
+def _coerce_float(value: Any, field: str, default: float) -> float:
+    """Coerce to float. Accepts int, float, numeric strings. Fails on garbage."""
+    if isinstance(value, bool):
         return float(value)
-    try:
+    if isinstance(value, (int, float)):
         return float(value)
-    except (ValueError, TypeError):
-        return default
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            raise CompilationError(
+                f"Invalid batch config '{field}': '{value}' is not a valid number",
+                phase="batch_config",
+                suggestion=f"Use a numeric value (default is {default})",
+            ) from None
+    raise CompilationError(
+        f"Invalid batch config '{field}': expected number, got {type(value).__name__}",
+        phase="batch_config",
+        suggestion=f"Use a numeric value (default is {default})",
+    )
 
 
 def _instantiate_nodes_for_workflow(
