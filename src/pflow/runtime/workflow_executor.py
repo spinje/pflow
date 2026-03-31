@@ -1,5 +1,6 @@
 """Runtime component for executing workflows as sub-workflows."""
 
+import copy
 import logging
 from pathlib import Path
 from typing import Any, Optional
@@ -194,7 +195,7 @@ class WorkflowExecutor(BaseNode):
 
         try:
             compiled = compile_workflow(
-                workflow_ir,
+                copy.deepcopy(workflow_ir),  # Protect against concurrent mutation in parallel batch
                 registry=registry or Registry(),
                 initial_params=dict(child_params),  # Copy — don't mutate caller's dict
             )
