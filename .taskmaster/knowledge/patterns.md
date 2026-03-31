@@ -6,30 +6,6 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-## Pattern: Shared Store Proxy for Incompatible Nodes
-- **Date**: 2024-01-15
-- **Discovered in**: Task 1.2 (Example)
-- **Problem**: Two nodes need to communicate but have incompatible data formats
-- **Solution**: Create a proxy node that translates between formats using the shared store
-- **Example**:
-  ```python
-  class TranslatorNode(Node):
-      def exec(self, shared):
-          # Get data from Node A's format
-          raw_data = shared.get("node_a_output")
-
-          # Transform to Node B's expected format
-          transformed = {
-              "text": raw_data["content"],
-              "metadata": {"source": "node_a"}
-          }
-
-          # Put in format Node B expects
-          shared["node_b_input"] = transformed
-  ```
-- **When to use**: When integrating nodes from different sources or with different data contracts
-- **Benefits**: Maintains node independence while enabling communication
-
 ---
 
 ## Pattern: Test-As-You-Go Development
@@ -246,63 +222,6 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-## Pattern: PocketFlow for Complex AI Orchestration (Task 17 Only)
-- **Date**: 2025-06-29 (Revised)
-- **Discovered in**: Architecture analysis and refinement
-- **Problem**: Natural language planning with LLMs requires complex retry strategies, self-correcting loops, and branching paths that lead to deeply nested code
-- **Solution**: Use PocketFlow ONLY for Task 17 (Natural Language Planner) where complex orchestration genuinely adds value
-- **Example**:
-  ```python
-  # Task 17: Natural Language Planner needs complex orchestration
-  class GenerateWorkflowNode(Node):
-      def __init__(self):
-          super().__init__(max_retries=3)  # Built-in retry!
-
-      def exec(self, shared):
-          response = call_llm(shared["prompt"], shared["context"])
-          shared["workflow"] = response
-          return "validate"
-
-      def exec_fallback(self, shared, exc):
-          # Progressive enhancement on failure
-          shared["prompt"] = enhance_prompt(shared["prompt"], exc)
-          return "retry" if self.cur_retry < 3 else "error"
-
-  class ValidateWorkflowNode(Node):
-      def exec(self, shared):
-          if validate_workflow(shared["workflow"]):
-              return "success"
-          else:
-              # Self-correcting loop
-              shared["validation_errors"] = get_errors(shared["workflow"])
-              return "regenerate"
-
-  # Visual flow with complex branching
-  generate >> validate >> success
-  generate - "error" >> fallback_strategy
-  validate - "invalid" >> regenerate >> validate
-  ```
-- **When to use**: ONLY for components with ALL of these characteristics:
-  - Multiple LLM API calls with different retry strategies
-  - Self-correcting validation loops
-  - Complex branching based on external responses
-  - Progressive enhancement on failures
-  - Multiple fallback paths
-- **When NOT to use** (use traditional Python instead):
-  - Simple I/O operations (file reading, API calls)
-  - Linear execution flows
-  - Basic error handling
-  - Pure transformations (IR compilation, JSON parsing)
-  - User interactions (approval flows)
-  - Observability/tracing
-- **Benefits for Task 17**:
-  - Built-in retry mechanism for flaky LLM APIs
-  - Visual representation of complex planning flow
-  - Isolated nodes for testing different strategies
-  - Explicit paths for all failure modes
-  - Progressive prompt enhancement support
-- **Architectural Decision**: Originally planned for 6 tasks, refined to only Task 17 after recognizing that other tasks are straightforward enough for traditional Python patterns
-
 ---
 
 ## Pattern: Structured Logging with Phase Tracking
@@ -412,9 +331,9 @@ A consolidated collection of successful patterns and approaches discovered durin
 
 ---
 
-## Pattern: PocketFlow Node Error Handling for Automatic Retry
+## Pattern: Node Error Handling for Automatic Retry
 - **Date**: 2025-07-07
-- **Discovered in**: PocketFlow anti-pattern investigation
+- **Discovered in**: Node anti-pattern investigation
 - **Problem**: File operations and other nodes need robust retry behavior for transient errors (temporary locks, network issues, etc.)
 - **Solution**: Let exceptions bubble up in exec() method, handle final errors in exec_fallback() after retries exhausted
 - **Example**:
@@ -473,7 +392,7 @@ A consolidated collection of successful patterns and approaches discovered durin
           os.remove(file_path)
           return f"Successfully deleted '{file_path}'"
   ```
-- **When to use**: ALWAYS in every PocketFlow node implementation - this is the fundamental pattern
+- **When to use**: ALWAYS in every node implementation - this is the fundamental pattern
 - **Benefits**:
   - Automatic retry for transient errors (file locks, network issues, etc.)
   - Clean separation of success path from error handling
@@ -509,7 +428,7 @@ A consolidated collection of successful patterns and approaches discovered durin
           node.exec(node.prep(shared))
   ```
 - **Implementation Checklist**:
-  - [ ] Inherit from `Node` (not `BaseNode`) for retry support
+  - [ ] Inherit from `Node` (from `pflow.core.node`, not `BaseNode`) for retry support
   - [ ] NO try/except blocks in `exec()` method
   - [ ] Return only success values from `exec()`
   - [ ] Implement `exec_fallback()` for error messages
@@ -570,7 +489,7 @@ A consolidated collection of successful patterns and approaches discovered durin
 ## Pattern: Connection Tracking in Mock Nodes
 - **Date**: 2025-06-29
 - **Discovered in**: Task 4.3
-- **Problem**: Testing PocketFlow node wiring requires verifying connections without executing real node logic
+- **Problem**: Testing node wiring requires verifying connections without executing real node logic
 - **Solution**: Override >> and - operators in mock nodes to track connections in a list
 - **Example**:
   ```python
@@ -604,7 +523,7 @@ A consolidated collection of successful patterns and approaches discovered durin
   node_a - "error" >> node_c
   assert ("error", node_c) in node_a.connections
   ```
-- **When to use**: Testing any PocketFlow-based component that wires nodes together:
+- **When to use**: Testing any component that wires nodes together:
   - Flow compilers
   - Node orchestration logic
   - Dynamic flow builders
@@ -697,7 +616,7 @@ A consolidated collection of successful patterns and approaches discovered durin
           # Create test file with exact content needed
           test_file = Path(tmpdir) / "test.py"
           test_file.write_text('''
-  from pocketflow import BaseNode
+  from pflow.core.node import BaseNode
 
   class TestNode(BaseNode):
       """Test node with specific characteristics."""
@@ -1078,6 +997,56 @@ A consolidated collection of successful patterns and approaches discovered durin
   - Tests are more maintainable and less brittle
   - Aliases defined in one place
 - **Key Insight**: Test infrastructure is real infrastructure - it needs the same architectural care as production code
+
+---
+
+## Pattern: Return Tuples from Callbacks on Shared Instances (Thread Safety)
+- **Date**: 2026-03-30
+- **Discovered in**: Task 135 (Execution Core Redesign) — plan review, 5/8 agents flagged
+- **Problem**: When an engine/orchestrator instance provides a callback function that multiple threads call (e.g., parallel batch calling `_execute_single_node`), storing per-call results as instance state (`self._last_resolutions = result`) creates a data race. The last thread to write wins; other threads' results are lost.
+- **Solution**: Return results as tuple values from the callback. Callers receive their own copy via the return value, not shared mutable state.
+- **Example**:
+  ```python
+  # BAD — race condition in parallel batch
+  def _execute_single_node(self, node, config, shared):
+      resolved = resolve_templates(config, shared)
+      self._last_resolutions = resolved  # Thread B overwrites Thread A's data
+      return action
+
+  # GOOD — no shared state
+  def _execute_single_node(self, node, config, shared) -> tuple[str, dict, list]:
+      resolved, resolutions, errors = resolve_templates(config, shared)
+      return action, resolutions, errors  # Each thread gets its own tuple
+  ```
+- **When to use**: Any method on a shared instance (engine, orchestrator, service) that is called from multiple threads via callbacks, ThreadPoolExecutor, or similar. Applies beyond pflow — this is a general Python concurrency pattern.
+- **Benefits**: No locks needed, no race conditions, each caller gets their own data. The tuple contract is explicit and enforceable by type hints.
+- **Key Insight**: In pflow's engine, `WorkflowEngine` is a single instance shared across all parallel batch threads. Any `self.X = result` in a method called by those threads is a race. The engine should be effectively stateless per-node execution.
+
+---
+
+## Pattern: AST Meta-Test for Architectural Invariants
+- **Date**: 2026-03-31
+- **Discovered in**: Task 135 (Execution Core Redesign) — third code review
+- **Problem**: Compile-once reuses node instances across sequential batch items. If any node adds `self.X = result` in `exec()` or `post()`, that state leaks between items. This constraint is architectural — it's not enforced by the type system or linter.
+- **Solution**: An AST-based test that scans all node source files for `self.X = ...` assignments in `exec`, `post`, and `exec_fallback` methods. Violations must be in an explicit allowlist with justification.
+- **Example**:
+  ```python
+  # test_node_stateless_invariant.py
+  ALLOWLIST = {
+      ("ReadFileNode", "_is_binary"),     # Set on every exec path — safe
+      ("WorkflowExecutor", "_child_trace_events"),  # Reset each exec — intentional
+  }
+
+  def test_no_self_assignments_in_exec_or_post():
+      """Fail if any node adds self.X = ... in exec/post (compile-once safety)."""
+      for node_file in discover_node_files():
+          tree = ast.parse(node_file.read_text())
+          for class_def in ast.walk(tree):
+              # Find self.X = ... in exec/post/exec_fallback methods
+              # Fail if not in ALLOWLIST
+  ```
+- **When to use**: Any architectural constraint that can't be enforced by the type system but CAN be verified by static analysis. Examples: "no imports from X in Y", "no global mutable state", "all public methods have docstrings."
+- **Benefits**: Catches violations at test time, before code review. Prevents future regressions as new nodes are added. The allowlist documents known exceptions with their justification.
 
 ---
 

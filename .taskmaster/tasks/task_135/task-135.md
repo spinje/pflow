@@ -8,7 +8,7 @@ This task subsumes Task 140 (Wrapper Chain Refactoring). Both tasks target the s
 
 ## Status
 
-in progress (exploration/planning)
+done
 
 ## Priority
 

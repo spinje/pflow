@@ -84,16 +84,16 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
   # 3. Compiler: Check ALL param values for wrapping decision (most critical!)
   # 4. Node wrapper: Handle nested structures at runtime
   ```
-- **Critical insight**: The compiler's wrapping decision is the control point - if nodes don't get wrapped with TemplateAwareNodeWrapper, no resolution occurs regardless of other fixes
+- **Critical insight**: The compiler's template detection is the control point — if `split_params()` doesn't detect templates in a param value (e.g., nested in a dict), `NodeConfig.template_config` will be `None` and the engine skips resolution for that node entirely. *(Updated Task 135: was "compiler's wrapping decision" → "compiler's template detection via split_params()")*
 
 ---
 
-## Pitfall: Catching Exceptions in PocketFlow Node exec() Method
+## Pitfall: Catching Exceptions in Node exec() Method
 - **Date**: 2025-07-07
-- **Discovered in**: PocketFlow anti-pattern investigation
+- **Discovered in**: Node anti-pattern investigation
 - **What we tried**: Traditional try/except blocks in exec() methods to handle errors gracefully and provide user-friendly messages
 - **Why it seemed good**: Responsible error handling, prevents crashes, provides helpful error messages to users
-- **Why it failed**: Completely bypasses PocketFlow's automatic retry mechanism - the framework's most powerful feature
+- **Why it failed**: Completely bypasses `Node`'s automatic retry mechanism (inherited from `pflow.core.node.Node`)
 - **Symptoms**:
   - Transient errors (file locks, network issues) fail immediately instead of retrying
   - No automatic recovery from temporary failures
@@ -131,7 +131,7 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
               return "Error: File not found"
           # ... handle other final errors
   ```
-- **Critical Note**: This is PocketFlow's #1 anti-pattern from their official documentation. Every node in the codebase was violating this pattern, disabling retries for all file operations.
+- **Critical Note**: Every node in the early codebase was violating this pattern, disabling retries for all file operations. `Node._exec()` in `pflow.core.node` handles retry automatically — catching exceptions in `exec()` defeats it.
 
 ---
 
@@ -384,18 +384,18 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 
 ---
 
-## Pitfall: Wrappers That Change Output Structure Must Update Validation Systems
-- **Date**: 2025-12-29
+## Pitfall: Runtime Output Transformations Must Update Validation Systems
+- **Date**: 2025-12-29 (updated 2026-03-31)
 - **Discovered in**: Batch validation bug fix (GitHub #15)
-- **What we tried**: Added batch processing (Task 96) which wraps nodes and changes their output structure, without updating template validation
-- **Why it seemed good**: Batch wrapper worked correctly at runtime - tests passed, workflows executed properly
-- **Why it failed**: Template validation happens at compile-time using static analysis. It has no knowledge of runtime wrappers that transform output structures.
+- **What we tried**: Added batch processing (Task 96) which transforms node output structure at runtime, without updating template validation
+- **Why it seemed good**: Batch execution worked correctly at runtime — tests passed, workflows executed properly
+- **Why it failed**: Template validation happens at compile-time using static analysis. It has no knowledge of runtime transformations that change output structures.
 - **Symptoms**:
   - Valid batch workflows fail validation with confusing errors
   - `${item}` reported as "undefined input" even though it works at runtime
   - `${node.results}` fails with suggestion to use `${node.response}` (wrong!)
   - `batch.items` templates not recognized, causing "unused input" warnings
-- **Better approach**: When adding wrappers that change node output structure, audit ALL validation systems:
+- **Better approach**: When adding runtime transformations that change node output structure, audit ALL validation systems:
   1. `template_validator.py` - Static template extraction and output recognition
   2. `workflow_data_flow.py` - Data flow and execution order validation
   3. Any other compile-time validation that reasons about node outputs
@@ -419,7 +419,7 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
       # Register batch outputs (results, count, etc.)
       # Register item alias as available variable
   ```
-- **Key Lesson**: Runtime wrappers and compile-time validation are separate systems with separate data sources. Registry metadata describes unwrapped nodes. Any wrapper that transforms outputs needs corresponding validation updates.
+- **Key Lesson**: Runtime execution (engine) and compile-time validation are separate systems with separate data sources. Registry metadata describes bare nodes. Any runtime transformation (batch aggregation, output mapping) needs corresponding validation updates. *(Updated Task 135: "wrappers" → "engine", same principle applies. The `BATCH_OUTPUTS` contract in `template_validation/validator.py` must match `batch_executor.py:_aggregate_batch_results()` output shape.)*
 
 ---
 
@@ -428,17 +428,19 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
 - **Discovered in**: Shell node dict/list validation bug fix
 - **What we tried**: Adding runtime checks in shell node's `prep()` method to detect when template variables resolve to dict/list (which breaks shell parsing)
 - **Why it seemed good**: The check extracted template variables from the command and checked their types in `self.params` - seemed straightforward
-- **Why it failed**: The wrapper chain resolves templates BEFORE `prep()` runs. By the time the node sees the command, `${data}` has already become `{"key": "value"}` - there are no template variables left to extract.
+- **Why it failed**: The engine resolves templates BEFORE `node._run()`. By the time the node sees the command in `prep()`, `${data}` has already become `{"key": "value"}` — there are no template variables left to extract.
 - **Symptoms**:
   - `TemplateResolver.extract_variables(command)` returns empty set (templates already resolved)
   - Type checks never trigger because `var_name in self.params` is false
   - Dangerous dict/list values pass through to shell, causing runtime failures
   - False positives from regex-based fallback that can't distinguish JSON from shell syntax
-- **Root cause**: Wrapper chain execution order:
+- **Root cause**: Execution order:
   ```
-  TemplateAwareNodeWrapper._run()   ← Templates resolved HERE
-    └─> InnerNode._run()
-        └─> prep()                   ← Your check runs HERE (too late!)
+  WorkflowEngine._execute_node()
+    → resolve_templates(config, shared)  ← Templates resolved HERE
+    → node.params = resolved_params
+    → node._run(store)
+        → prep()                         ← Your check runs HERE (too late!)
   ```
 - **Better approach**: Validate template types at compile time in `template_validator.py`, BEFORE template resolution happens. This layer has access to type metadata from the registry.
 - **Example of failure**:
@@ -462,4 +464,48 @@ A consolidated collection of failed approaches, anti-patterns, and mistakes disc
                   if inferred_type in {"dict", "list", "array", "object"}:
                       errors.append(f"Shell command cannot use {template}...")
   ```
-- **Key Lesson**: The wrapper chain architecture means nodes see fully-resolved values. Any validation that needs to reason about template types MUST happen at compile time (in template_validator.py or compiler.py), not at node runtime.
+- **Key Lesson**: The engine resolves templates before calling `node._run()`, so nodes see fully-resolved values. Any validation that needs to reason about template types MUST happen at compile time (in template_validator.py or compiler.py), not at node runtime. *(Updated Task 135: "wrapper chain" → "engine", same principle applies.)*
+
+---
+
+## Pitfall: Instance State on Shared Engine for Parallel Callback Data
+- **Date**: 2026-03-30
+- **Discovered in**: Task 135 plan review (5/8 review agents flagged)
+- **What we tried**: Storing per-node template resolution results on the engine instance (`self._last_resolutions = result`) so the calling method could read them after `_execute_single_node` returned
+- **Why it seemed good**: Simple communication pattern — set on self, read after call. Works for sequential execution.
+- **Why it failed**: In parallel batch, `execute_batch` calls `_execute_single_node` from multiple `ThreadPoolExecutor` worker threads. All threads share the same engine instance. Thread A writes `self._last_resolutions`, Thread B immediately overwrites it before Thread A's caller reads it. Trace records the wrong template resolutions for every parallel batch item.
+- **Symptoms**:
+  - Parallel batch trace events show wrong `template_resolutions` per item (non-deterministic — depends on thread scheduling)
+  - No crash, no error — silently wrong data in the trace file
+  - Difficult to reproduce in testing (depends on timing)
+- **Better approach**: Return values from the function, don't store on `self`:
+  ```python
+  # DON'T DO THIS on a shared instance
+  def _execute_single_node(self, node, config, shared):
+      resolved = resolve_templates(config, shared)
+      self._last_resolutions = resolved  # Race condition!
+      return action
+
+  # DO THIS — stateless, thread-safe
+  def _execute_single_node(self, node, config, shared) -> tuple[str, dict, list]:
+      resolved, resolutions, errors = resolve_templates(config, shared)
+      return action, resolutions, errors
+  ```
+- **Key Lesson**: `WorkflowEngine` is a single instance shared across all parallel batch threads. ANY `self.X = result` in a method called by those threads is a data race. The engine must be effectively stateless per-node execution. This is the same class of bug that the old wrapper chain avoided by deep-copying each wrapper per thread.
+
+---
+
+## Pitfall: Adapting Tests to Accept Regressions Instead of Fixing the Implementation
+- **Date**: 2026-03-31
+- **Discovered in**: Task 135 implementation (happened twice)
+- **What we tried**: When rewritten tests failed because the new engine did less than the old wrapper chain, the implementing agent "adapted" the tests to accept the reduced behavior instead of questioning why the behavior changed.
+- **Why it seemed good**: Tests pass. Progress continues. The engine is "simpler."
+- **Why it failed**: The tests were correct — they caught real regressions:
+  1. **Memo cache hits not populating `__cache_hits__`** — CLI "↻ cached" indicator silently broken. Agent adapted test to not check `__cache_hits__`. Code review caught it.
+  2. **Template resolution errors not in trace** — Trace events had empty `template_resolutions` on error. Agent adapted test to accept empty resolutions. Code review caught it.
+- **Symptoms**:
+  - Tests pass with weaker assertions
+  - User-visible behavior degrades (no "cached" indicator, no debug data in trace)
+  - Only caught by code review, not by test suite
+- **Better approach**: When a rewritten test needs to assert LESS than the original, that's a signal the new implementation dropped behavior, not that the old test was over-specified. Ask: "Why did the old test check this? What user-visible behavior does it protect?"
+- **Key Lesson**: AI coding agents are optimistic about tests passing. When migrating behavior from one architecture to another, treat the old tests as a specification of REQUIRED behavior, not as implementation-specific tests to be weakened.

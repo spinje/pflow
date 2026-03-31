@@ -478,11 +478,11 @@ Sub-workflows (WorkflowExecutor):
 ```
 
 ### Key metrics
-- **Deleted**: ~4,200 lines (wrappers + dead compiler code + PocketFlow classes + test_pocketflow + shim)
-- **Created**: ~2,200 lines (engine module)
-- **Net reduction**: ~2,000 lines
-- **PocketFlow**: 205 lines → 85 lines (10 classes → 3 classes)
-- **Tests**: 4679 → 4621 (deleted wrapper-internal tests, added 10 new regression/unit tests)
+- **Architecture delta**: Deleted ~4,200 lines (wrappers 3,924 + pocketflow 205 + dead compiler code) → Created ~2,100 lines (engine 2,021 + core/node.py 89) → Net ~2,100 lines of production code eliminated
+- **Git diff (total)**: 209 files changed, +11,729 / -17,280 (includes tests, docs)
+- **Git diff (production .py only)**: 56 files changed, +2,456 / -3,606
+- **PocketFlow**: 205 lines (10 classes) → 89 lines (3 classes) → moved to `core/node.py`, `pocketflow/` deleted
+- **Tests**: 4679 → 4629 (deleted wrapper-internal + pocketflow tests, added 18 new regression/behavioral tests)
 - **No shim**: `compile_ir_to_flow` and `_CompiledWorkflowShim` deleted. All tests use `compile_workflow` + `WorkflowEngine` — same code path as production.
 
 ### Decisions and deviations — complete inventory
