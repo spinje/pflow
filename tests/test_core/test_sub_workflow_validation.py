@@ -71,7 +71,8 @@ This child workflow has a broken step.
         parent_ir = _parent_ir(str(broken_child))
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -116,7 +117,8 @@ This step greets the user nicely.
         parent_ir = _parent_ir(str(valid_child))
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -174,7 +176,8 @@ Delegate to the grandchild workflow.
         parent_ir = _parent_ir(str(middle))
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -240,7 +243,8 @@ This step delegates to workflow A.
         # Must terminate without hanging or raising
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -299,7 +303,8 @@ Perform the configured operation now.
         parent_ir = _parent_ir(str(child), provided_params={"text": "hello"})
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -322,7 +327,8 @@ class TestTemplateWorkflowRef:
         parent_ir = _parent_ir("${dynamic_path}")
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -488,7 +494,8 @@ This step uses a nonexistent node type.
 
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=registry,
             skip_node_types=False,
         )
@@ -531,7 +538,8 @@ First step that references a non-existent node.
         parent_ir = _parent_ir(str(child))
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -582,7 +590,8 @@ Execute the main operation now.
         parent_ir = _parent_ir(str(child))
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -605,7 +614,8 @@ class TestSubWorkflowFileNotFound:
 
         errors, _warnings = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             registry=None,
             skip_node_types=True,
         )
@@ -653,7 +663,8 @@ class TestDuplicateSubWorkflowReference:
 
         errors, _ = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             skip_node_types=True,
         )
 
@@ -714,10 +725,171 @@ class TestDuplicateSubWorkflowReference:
 
         errors, _ = WorkflowValidator.validate(
             workflow_ir=parent_ir,
-            extracted_params={"_pflow_workflow_file": str(tmp_path / "parent.pflow.md")},
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
             skip_node_types=True,
         )
 
         assert any("direct-grandchild" in e and "count" in e and "not provided" in e for e in errors), (
             f"Expected missing 'count' error for direct-grandchild, got: {errors}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 15. Relative path without workflow_file produces warning (issue #166)
+# ---------------------------------------------------------------------------
+
+
+class TestRelativePathWithoutWorkflowFile:
+    def test_relative_path_without_workflow_file_skipped_with_warning(self) -> None:
+        """When workflow_file is None and a relative sub-workflow path is used,
+        the validator should skip with a clear warning instead of resolving
+        against CWD."""
+        parent_ir = _parent_ir("./child.pflow.md")
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            skip_node_types=True,
+            workflow_file=None,
+        )
+
+        assert any("cannot resolve relative" in e.lower() for e in errors), (
+            f"Expected 'cannot resolve relative' error, got: {errors}"
+        )
+        assert any("./child.pflow.md" in e for e in errors)
+        assert any("use an absolute path" in e.lower() for e in errors)
+
+
+# ---------------------------------------------------------------------------
+# 16. Absolute path works without workflow_file
+# ---------------------------------------------------------------------------
+
+
+class TestAbsolutePathWithoutWorkflowFile:
+    def test_absolute_path_works_without_workflow_file(self, tmp_path: Path) -> None:
+        """Absolute sub-workflow paths should work even when workflow_file is None."""
+        child = tmp_path / "child.pflow.md"
+        write_pflow_md(
+            child,
+            """\
+# Child
+
+A valid child workflow here.
+
+## Steps
+
+### step
+
+Execute the main step now.
+
+- type: shell
+- command: echo ok
+""",
+        )
+
+        parent_ir = _parent_ir(str(child))  # absolute path
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            skip_node_types=True,
+            workflow_file=None,
+        )
+
+        # No errors about unresolvable paths
+        assert not any("cannot resolve" in e.lower() for e in errors), f"Unexpected resolution error: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# 17. Relative path resolves correctly with workflow_file (issue #166)
+# ---------------------------------------------------------------------------
+
+
+class TestRelativePathWithWorkflowFile:
+    def test_relative_path_resolves_with_workflow_file(self, tmp_path: Path) -> None:
+        """When workflow_file is provided, relative sub-workflow paths should
+        resolve against the workflow file's directory."""
+        child = tmp_path / "child.pflow.md"
+        write_pflow_md(
+            child,
+            """\
+# Child
+
+A valid child workflow here.
+
+## Steps
+
+### step
+
+Execute the main step now.
+
+- type: shell
+- command: echo ok
+""",
+        )
+
+        parent_ir = _parent_ir("./child.pflow.md")  # relative path
+        errors, _warnings = WorkflowValidator.validate(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            skip_node_types=True,
+            workflow_file=tmp_path / "parent.pflow.md",
+        )
+
+        assert not any("cannot resolve" in e.lower() for e in errors), f"Unexpected resolution error: {errors}"
+        assert errors == [], f"Expected no errors, got: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# 18. save_service resolves relative sub-workflows via source_path (issue #166)
+# ---------------------------------------------------------------------------
+
+
+class TestSaveServiceSubWorkflowResolution:
+    def test_save_service_resolves_relative_sub_workflow(self, tmp_path: Path) -> None:
+        """When save_service validates a workflow from a file, relative
+        sub-workflow references should resolve against the file's directory,
+        not CWD."""
+        from pflow.core.workflow.save_service import _load_from_file
+
+        child = tmp_path / "child.pflow.md"
+        write_pflow_md(
+            child,
+            """\
+# Child
+
+A valid child workflow here.
+
+## Steps
+
+### step
+
+Execute the main step now.
+
+- type: shell
+- command: echo ok
+""",
+        )
+
+        parent = tmp_path / "parent.pflow.md"
+        write_pflow_md(
+            parent,
+            """\
+# Parent
+
+A parent workflow here.
+
+## Steps
+
+### delegate
+
+Delegate work to child workflow.
+
+- type: workflow
+- workflow: ./child.pflow.md
+""",
+        )
+
+        # This should succeed regardless of CWD
+        ir = _load_from_file(parent, auto_normalize=True)
+        assert ir is not None
+        assert "nodes" in ir

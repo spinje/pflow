@@ -3,6 +3,7 @@
 import contextlib
 import logging
 import time
+from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.exceptions import WorkflowNotFoundError
@@ -271,6 +272,7 @@ class WorkflowRunner:
                 extracted_params=dummy_params,
                 registry=registry,
                 skip_node_types=False,
+                workflow_file=Path(file_path) if file_path else None,
             )
 
             return ValidationResult(
@@ -343,12 +345,14 @@ class WorkflowRunner:
         from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry import Registry
 
+        wf_path = params.get("_pflow_workflow_file")
         registry = Registry()
         errors, warnings = WorkflowValidator.validate(
             workflow_ir=ir,
             extracted_params=params,
             registry=registry,
             skip_node_types=False,
+            workflow_file=Path(wf_path) if wf_path else None,
         )
 
         if errors:

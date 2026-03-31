@@ -79,7 +79,12 @@ def validate_workflow_name(name: str) -> tuple[bool, Optional[str]]:
     return True, None
 
 
-def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool, source_desc: str) -> dict[str, Any]:
+def _validate_and_normalize_ir(
+    workflow_ir: dict[str, Any],
+    auto_normalize: bool,
+    source_desc: str,
+    source_path: Optional[Path] = None,
+) -> dict[str, Any]:
     """Validate and optionally normalize workflow IR.
 
     Performs comprehensive validation:
@@ -90,6 +95,8 @@ def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool
         workflow_ir: Workflow IR to validate
         auto_normalize: Whether to auto-add missing fields
         source_desc: Description of source for error messages
+        source_path: Path to the workflow file, for resolving relative
+            sub-workflow references during validation
 
     Returns:
         Validated workflow IR
@@ -126,6 +133,7 @@ def _validate_and_normalize_ir(workflow_ir: dict[str, Any], auto_normalize: bool
             extracted_params=dummy_params,  # Use dummy params for template validation
             registry=registry,
             skip_node_types=False,  # Validate node types
+            workflow_file=source_path,
         )
 
         if errors:
@@ -175,7 +183,7 @@ def _load_from_file(path: Path, auto_normalize: bool) -> dict[str, Any]:
     try:
         content = path.read_text(encoding="utf-8")
         result = parse_markdown(content)
-        return _validate_and_normalize_ir(result.ir, auto_normalize, f"Invalid workflow in {path}")
+        return _validate_and_normalize_ir(result.ir, auto_normalize, f"Invalid workflow in {path}", source_path=path)
 
     except MarkdownParseError as e:
         raise ValueError(f"Invalid workflow in {path}: {e}") from e
@@ -200,7 +208,10 @@ def _load_from_workflow_name(name: str, auto_normalize: bool) -> dict[str, Any]:
     """
     manager = WorkflowManager()
     workflow_ir = manager.load_ir(name)
-    return _validate_and_normalize_ir(workflow_ir, auto_normalize, f"Invalid workflow '{name}'")
+    entry_point = Path(manager.get_path(name))
+    return _validate_and_normalize_ir(
+        workflow_ir, auto_normalize, f"Invalid workflow '{name}'", source_path=entry_point
+    )
 
 
 def load_and_validate_workflow(

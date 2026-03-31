@@ -29,6 +29,7 @@ class WorkflowValidator:
         extracted_params: Optional[dict[str, Any]] = None,
         registry: Optional[Registry] = None,
         skip_node_types: bool = False,
+        workflow_file: Optional[Path] = None,
         _seen: Optional[set[str]] = None,
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
     ) -> tuple[list[str], list[ValidationWarning]]:
@@ -49,6 +50,10 @@ class WorkflowValidator:
             extracted_params: Parameters extracted from user input
             registry: Node registry (uses default if None)
             skip_node_types: Skip node type validation (for mock nodes in tests)
+            workflow_file: Path to the workflow file being validated. Used to
+                resolve relative sub-workflow file references in step 8. When
+                None and a relative path is encountered, a validation error
+                is produced (relative paths are also unresolvable at runtime).
 
         Returns:
             Tuple of (errors, warnings):
@@ -100,7 +105,7 @@ class WorkflowValidator:
 
         # 8. Sub-workflow validation (recursive)
         sub_errors = WorkflowValidator._validate_sub_workflows(
-            workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types
+            workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
         )
         errors.extend(sub_errors)
 
@@ -534,6 +539,7 @@ class WorkflowValidator:
         _seen: Optional[set[str]],
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
         skip_node_types: bool = False,
+        workflow_file: Optional[Path] = None,
     ) -> list[str]:
         """Recursively validate sub-workflow references.
 
@@ -564,7 +570,7 @@ class WorkflowValidator:
             # already_seen=True means the child was loaded before — skip recursive
             # validation (already done) but still check this node's provided inputs.
             child_ir, child_path, ref_label, load_errors, already_seen = WorkflowValidator._load_child_workflow(
-                node_id, params, extracted_params, seen, ir_cache
+                node_id, params, seen, ir_cache, workflow_file
             )
             errors.extend(load_errors)
 
@@ -601,6 +607,7 @@ class WorkflowValidator:
                     extracted_params=dummy_params,
                     registry=registry,
                     skip_node_types=skip_node_types,
+                    workflow_file=child_path,
                     _seen=seen,
                     _ir_cache=ir_cache,
                 )
@@ -613,9 +620,9 @@ class WorkflowValidator:
     def _load_child_workflow(
         node_id: str,
         params: dict[str, Any],
-        extracted_params: Optional[dict[str, Any]],
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
+        workflow_file: Optional[Path] = None,
     ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
         """Load a child workflow from inline IR, file reference, or saved name.
 
@@ -644,7 +651,7 @@ class WorkflowValidator:
             return None, None, "", [], False
 
         if is_workflow_file_reference(workflow_ref):
-            return WorkflowValidator._load_child_from_file(node_id, workflow_ref, extracted_params, seen, ir_cache)
+            return WorkflowValidator._load_child_from_file(node_id, workflow_ref, seen, ir_cache, workflow_file)
 
         # Saved workflow name
         seen_key = f"name:{workflow_ref}"
@@ -676,18 +683,31 @@ class WorkflowValidator:
     def _load_child_from_file(
         node_id: str,
         workflow_ref: str,
-        extracted_params: Optional[dict[str, Any]],
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
+        workflow_file: Optional[Path] = None,
     ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
         """Load a child workflow from a file reference."""
         from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
 
         path = Path(workflow_ref)
-        if not path.is_absolute() and extracted_params:
-            parent_file = extracted_params.get("_pflow_workflow_file")
-            base_dir = Path(parent_file).parent if parent_file else Path.cwd()
-            path = base_dir / path
+        if not path.is_absolute():
+            if workflow_file is not None:
+                base_dir = workflow_file.parent
+                path = base_dir / path
+            else:
+                # Relative path with no file context will also fail at runtime
+                return (
+                    None,
+                    None,
+                    workflow_ref,
+                    [
+                        f"Step '{node_id}': cannot resolve relative sub-workflow "
+                        f"'{workflow_ref}' -- use an absolute path or load the "
+                        f"workflow from a file so relative paths can be resolved"
+                    ],
+                    False,
+                )
         child_path = path.resolve()
 
         seen_key = str(child_path)
