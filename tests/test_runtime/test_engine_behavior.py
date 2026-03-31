@@ -4,12 +4,13 @@ These test specific engine behaviors that are hard to trigger or verify
 through the full compilation pipeline, and where a silent regression
 would leave users with no diagnostic information.
 
-Covers: unmatched action warnings, --only + output resolution, custom error_action.
+Covers: unmatched action warnings, --only + output resolution, custom error_action,
+batch template error propagation.
 """
 
 from pflow.core.node import BaseNode
 from pflow.runtime.engine.engine import WorkflowEngine
-from pflow.runtime.engine.types import CompiledWorkflow, NodeConfig
+from pflow.runtime.engine.types import BatchConfig, CompiledWorkflow, NodeConfig, TemplateConfig
 
 
 class _ActionNode(BaseNode):
@@ -239,3 +240,57 @@ class TestCustomErrorAction:
         assert result == "error"
         assert shared["__execution__"]["failed_node"] == "failing"
         assert "failing" not in shared["__execution__"]["completed_nodes"]
+
+
+class TestBatchTemplateErrorPropagation:
+    """When a batch node uses permissive template resolution, template errors
+    written to each item's shallow-copied shared store must propagate back
+    to the parent shared store.
+
+    Before the fix (GitHub #189), _execute_single_node used
+    shared.setdefault("__template_errors__", {}) on a shallow copy of
+    parent shared, which created a new dict in the copy instead of
+    writing to the parent. The errors were silently lost when the copy
+    was discarded.
+
+    The fix: execute_batch() now initializes shared["__template_errors__"]
+    before the batch loop, so shallow copies share the reference.
+    """
+
+    def test_permissive_batch_template_errors_propagate_to_parent(self):
+        """Batch items with unresolved templates in permissive mode must
+        write errors to parent shared["__template_errors__"], not a lost copy."""
+        node = _ActionNode()
+        node.node_id = "batch_node"
+        node.set_params({"action": "default", "message": "${nonexistent.value}"})
+
+        configs = {
+            "batch_node": NodeConfig(
+                node_id="batch_node",
+                node_type_name="ActionNode",
+                template_config=TemplateConfig(
+                    template_params={"message": "${nonexistent.value}"},
+                    static_params={"action": "default"},
+                    expected_types={},
+                    resolution_mode="permissive",
+                ),
+                batch_config=BatchConfig(
+                    items_template=["a", "b"],
+                ),
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=node, node_configs=configs)
+        shared: dict = {}
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
+
+        # The core assertion: template errors must be in the parent shared store.
+        # Before the fix, this dict was empty because errors were written to
+        # a shallow copy's independent dict, then discarded.
+        assert "__template_errors__" in shared, "__template_errors__ key missing from shared store"
+        assert "batch_node" in shared["__template_errors__"], (
+            f"Expected 'batch_node' in __template_errors__, got keys: {list(shared['__template_errors__'].keys())}"
+        )

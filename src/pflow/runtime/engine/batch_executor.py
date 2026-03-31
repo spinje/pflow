@@ -189,6 +189,12 @@ def execute_batch(
         shared["_batch_trace"] = {}
     shared["_batch_trace"][config.node_id] = []
 
+    # Ensure __template_errors__ exists so item shallow copies share the reference.
+    # Without this, permissive-mode errors written to item_shared via setdefault()
+    # create a new dict in the copy — lost when the copy is discarded.
+    if "__template_errors__" not in shared:
+        shared["__template_errors__"] = {}
+
     # Execute items
     if not items:
         exec_res: list[dict[str, Any] | None] = []
