@@ -26,6 +26,7 @@ Example workflow usage (.pflow.md):
 import ast
 import io
 import logging
+import re
 import sys
 import traceback
 import typing as _typing_module
@@ -268,6 +269,9 @@ class PythonCodeNode(Node):
 
         # Validate annotations exist for every input variable
         self._check_input_annotations(inputs, annotations)
+
+        # Detect type annotations accidentally written in YAML inputs (#148)
+        self._check_input_annotation_syntax(inputs, annotations)
 
         # Validate result or next annotation exists
         has_result = "result" in annotations
@@ -528,6 +532,50 @@ class PythonCodeNode(Node):
             hints = [f"  {name}: <type>" for name in missing]
             raise ValueError(
                 f"Input(s) missing type annotation in code: {', '.join(missing)}\nAdd annotations:\n" + "\n".join(hints)
+            )
+
+    # Pattern matching type annotations accidentally written in YAML input values.
+    # Matches: "str = ...", "list[dict] = ...", "Optional[str] = ...", etc.
+    _INPUT_TYPE_ANNOTATION_PATTERN = re.compile(r"^([a-zA-Z]\w*(?:\[[\w\[\], |]+\])?)\s*=\s*\S")
+
+    @staticmethod
+    def _check_input_annotation_syntax(inputs: dict[str, Any], annotations: dict[str, str]) -> None:
+        """Detect type annotations accidentally written in YAML input values.
+
+        When users see ``text: str`` in the code block, they naturally mirror
+        the syntax in YAML inputs: ``text: str = ${ref}``. YAML treats the
+        whole right side as a string, silently corrupting the value to
+        ``"str = <resolved>"`` instead of just ``"<resolved>"``.
+
+        Cross-references against code annotations to minimize false positives:
+        only flags values where the prefix matches a known type name AND the
+        code declares a matching annotation for that variable.
+        """
+        for var_name, value in inputs.items():
+            if not isinstance(value, str):
+                continue
+            match = PythonCodeNode._INPUT_TYPE_ANNOTATION_PATTERN.match(value)
+            if not match:
+                continue
+            type_prefix = match.group(1)
+            # Cross-reference: only flag if the type prefix base matches a known type
+            base_type = type_prefix.split("[")[0]
+            if base_type not in _TYPE_MAP:
+                continue
+            # And the variable has a code annotation
+            if var_name not in annotations:
+                continue
+            # Extract the actual value after "type = "
+            actual_value = value[match.end() - 1 :]  # -1 to include the \S char
+            raise ValueError(
+                f"Input '{var_name}' appears to have a type annotation: \"{value}\"\n\n"
+                f"Type annotations belong in the code block, not in inputs.\n"
+                f"Write:\n"
+                f"  - inputs:\n"
+                f"      {var_name}: {actual_value}\n\n"
+                f"  ```python code\n"
+                f"  {var_name}: {annotations[var_name]}\n"
+                f"  ```"
             )
 
     @staticmethod

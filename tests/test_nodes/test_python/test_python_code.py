@@ -509,6 +509,128 @@ class TestNextVariableRouting:
 
 
 # ======================================================================
+# Input type annotation syntax detection (#148)
+# ======================================================================
+
+
+class TestInputAnnotationSyntaxDetection:
+    """Detect type annotations accidentally written in YAML input values.
+
+    Users naturally mirror code block syntax (text: str) in YAML inputs,
+    writing text: str = ${ref} instead of text: ${ref}. YAML treats this
+    as a string value "str = <resolved>", silently corrupting the data.
+    """
+
+    def test_str_annotation_in_input_value_detected(self):
+        """str = value pattern caught with actionable error."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match=r"'text'.*type annotation"):
+            run_code_node(
+                shared,
+                code="text: str\nresult: str = text.upper()",
+                inputs={"text": "str = hello world"},
+            )
+
+    def test_int_annotation_in_input_value_detected(self):
+        """int = value pattern caught."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match=r"'count'.*type annotation"):
+            run_code_node(
+                shared,
+                code="count: int\nresult: int = count * 2",
+                inputs={"count": "int = 42"},
+            )
+
+    def test_list_annotation_in_input_value_detected(self):
+        """list = value pattern caught."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match=r"'data'.*type annotation"):
+            run_code_node(
+                shared,
+                code="data: list\nresult: int = len(data)",
+                inputs={"data": "list = [1, 2, 3]"},
+            )
+
+    def test_generic_type_annotation_detected(self):
+        """list[dict] = value pattern caught."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match=r"'items'.*type annotation"):
+            run_code_node(
+                shared,
+                code="items: list[dict]\nresult: int = len(items)",
+                inputs={"items": 'list[dict] = [{"a": 1}]'},
+            )
+
+    def test_dict_annotation_in_input_value_detected(self):
+        """dict = value pattern caught."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match=r"'config'.*type annotation"):
+            run_code_node(
+                shared,
+                code="config: dict\nresult: str = 'ok'",
+                inputs={"config": 'dict = {"key": "val"}'},
+            )
+
+    def test_error_message_shows_correct_syntax(self):
+        """Error message includes the fix: inputs without type, code with type."""
+        shared: dict = {}
+        with pytest.raises(ValueError) as exc_info:
+            run_code_node(
+                shared,
+                code="text: str\nresult: str = text",
+                inputs={"text": "str = hello"},
+            )
+        error = str(exc_info.value)
+        assert "text: hello" in error  # correct inputs syntax
+        assert "text: str" in error  # correct code syntax
+
+    def test_non_string_input_not_flagged(self):
+        """Non-string input values are never flagged (no pattern to match)."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="data: list\nresult: int = len(data)",
+            inputs={"data": [1, 2, 3]},
+        )
+        assert action == "default"
+        assert shared["result"] == 3
+
+    def test_unknown_type_prefix_not_flagged(self):
+        """Values starting with unknown types (not in _TYPE_MAP) pass through."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="text: str\nresult: str = text",
+            inputs={"text": "DataFrame = something"},
+        )
+        assert action == "default"
+        assert shared["result"] == "DataFrame = something"
+
+    def test_value_without_equals_not_flagged(self):
+        """Values starting with a type name but no ' = ' pass through."""
+        shared: dict = {}
+        action = run_code_node(
+            shared,
+            code="text: str\nresult: str = text",
+            inputs={"text": "string value here"},
+        )
+        assert action == "default"
+        assert shared["result"] == "string value here"
+
+    def test_template_reference_with_type_annotation_detected(self):
+        """The actual issue #148 scenario: str = ${ref} after template resolution."""
+        shared: dict = {}
+        with pytest.raises(ValueError, match=r"'text'.*type annotation"):
+            run_code_node(
+                shared,
+                code="text: str\nresult: str = text.upper()",
+                # After template resolution, ${fetch.stdout} becomes the actual value
+                # but the "str = " prefix is preserved as literal text
+                inputs={"text": "str = resolved value from template"},
+            )
+
+
+# ======================================================================
 # Edge cases and parameter validation
 # ======================================================================
 
