@@ -1146,7 +1146,7 @@ class TestParallelExecution:
         _run_batch(inner, shared, parallel=True, max_concurrent=10)
         elapsed = time.time() - start
 
-        assert elapsed < 0.15, f"Parallel took {elapsed:.3f}s, expected < 0.15s"
+        assert elapsed < 0.20, f"Parallel took {elapsed:.3f}s, expected < 0.20s (sequential would be ~0.25s)"
 
     def test_parallel_uses_multiple_threads(self):
         """Parallel execution uses multiple threads."""

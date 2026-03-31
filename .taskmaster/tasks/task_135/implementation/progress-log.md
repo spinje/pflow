@@ -333,7 +333,7 @@ All 21 collection-error files fixed + 33 test failures resolved. Total tests wen
 ## Post-Review Fixes — COMPLETE
 
 **Date**: 2026-03-31
-**Result**: 4618 passed, 9 skipped. `make check` clean.
+**Result**: 4621 passed, 9 skipped. `make check` clean.
 
 ### Additional fixes from review discussion
 
@@ -356,6 +356,12 @@ All 21 collection-error files fixed + 33 test failures resolved. Total tests wen
     - Declared input defaults seeded into `resolved_defaults` → shared store
     - User params available when seeded into shared store
     - `resolve_templates` uses `dict(shared)` only — unit test of the architectural change
+
+13. **Trace fidelity for error actions**: Nodes that return `"error"` as their action string (without raising an exception) must be recorded as `success=False` in the trace. The old `InstrumentedNodeWrapper` passed `success` and `error` as independent parameters: `success=(result != "error"), error=None`. The new `record_trace` derived `success` from `error is None`, which meant error actions were recorded as `success=True`. Fix: added explicit `success` parameter to `record_trace()` that takes precedence over `error is None` when provided. Engine now passes `success=(action != "error")` — exact match with old behavior: `success=False, error=None` (no fabricated error message).
+
+14. **Shim removal**: Deleted `compile_ir_to_flow()` and `_CompiledWorkflowShim` from production code. Migrated all 40 test files (~50 callsites) to `compile_workflow()` + `WorkflowEngine` directly. Tests now exercise the same code path as production. See "Shim Removal" section below for full details.
+
+15. **Stale doc references**: Updated `pflow-pocketflow-integration-guide.md` (compiler example, wrapper chain → engine, execution orchestration), `test_workflow_resolution.py` comment.
 
 ---
 

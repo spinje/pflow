@@ -170,13 +170,13 @@ node = SomeNode(max_retries=2, wait=0)  # ✅ Fast
 
 ### 1. Testing Framework Instead of Your Code
 ```python
-# ❌ Don't create PocketFlow flows with loops to test retry
-flow = Flow(start=generator)
+# ❌ Don't hand-build complex node graphs to test retry
+generator >> validator
 validator - "retry" >> generator
 
 # ✅ Test that nodes return correct action strings
 action = validator.run(shared)
-assert action == "retry"  # PocketFlow handles routing
+assert action == "retry"  # WorkflowEngine handles routing
 ```
 
 ### 2. Import Errors
