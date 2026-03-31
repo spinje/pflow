@@ -239,6 +239,7 @@ You can write this in a node's docstring:
 3. **Forgetting exec_fallback()** - Needed for error messages
 4. **Not testing retries** - Always verify retry behavior
 5. **Using `redirect_stdout`/`redirect_stderr` in threads** — Not thread-safe; zombie threads corrupt streams. See `python_code.py:_execute_code` docstring and issue #138 for details.
+6. **Storing execution state on `self`** — Nodes may be reused across sequential batch items (compile-once cache). Never set `self.X = result` in `exec()`/`post()` — communicate between lifecycle methods via the return value (`prep_res`, `exec_res`) or the shared store. Exception: `self.params` is set by the engine before each `_run()` call.
 
 ## References
 
@@ -260,5 +261,6 @@ Before committing any node:
 - [ ] `post()` checks for "Error:" prefix?
 - [ ] Interface uses enhanced format with types?
 - [ ] Only exclusive params listed (not in Reads)?
+- [ ] No `self.X = ...` in exec()/post()? (nodes reused across batch items — use return values, not instance state)
 
 Remember: **Let exceptions bubble up!** The framework handles retries for you.

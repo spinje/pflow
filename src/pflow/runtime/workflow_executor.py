@@ -116,8 +116,19 @@ class WorkflowExecutor(BaseNode):
 
         execution_stack = shared.get(f"{self.RESERVED_KEY_PREFIX}stack", [])
 
-        # Load the workflow (file, saved name, or inline IR)
-        workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
+        # Cache file/name loaded IR for compile-once: same dict object = same id() = compile cache hit.
+        # First batch item loads and caches. Subsequent items reuse the same IR object.
+        # For parallel batch, each deep-copied instance starts without cache and loads independently.
+        # DON'T cache inline IR — it comes from self.params["workflow_ir"] which may contain
+        # per-item resolved templates (e.g., ${item} inside the child IR), producing a different
+        # dict per item. Caching would freeze the first item's resolved values.
+        cached_ir = getattr(self, "_cached_loaded_ir", None)
+        if cached_ir is not None:
+            workflow_ir, workflow_path, workflow_source = cached_ir
+        else:
+            workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
+            if workflow_source != "inline":
+                self._cached_loaded_ir = (workflow_ir, workflow_path, workflow_source)
 
         # Extract child inputs: all non-reserved params
         # Template resolution already handled by engine's _execute_single_node before prep() runs
@@ -222,8 +233,20 @@ class WorkflowExecutor(BaseNode):
         # Create child storage
         child_storage = self._create_child_storage(parent_shared, storage_mode, prep_res)
 
-        # Seed: defaults first (from compile-time), then per-item values (override defaults)
-        child_storage.update(compiled.resolved_defaults)
+        # Seed structural defaults (for inputs NOT provided by this item), then per-item values.
+        # Only seed resolved_defaults keys absent from child_params — resolved_defaults may
+        # contain coerced values from the first item's compilation (compile-once cache), and
+        # those per-item coerced values must NOT leak to subsequent items.
+        #
+        # KNOWN LIMITATION (see #188): Per-item type coercion is lost. The old model ran
+        # prepare_inputs() per item (via per-item recompilation), which coerced "7" → 7 for
+        # int-typed inputs. The new compile-once model skips per-item coercion — child_params
+        # contain raw values from template resolution (typically strings from CLI args).
+        # This matters for sub-workflow inputs with declared numeric types. Most inputs are
+        # strings in practice, and template resolution preserves upstream types.
+        for k, v in compiled.resolved_defaults.items():
+            if k not in child_params:
+                child_storage[k] = v
         child_storage.update(child_params)
 
         # Initialize _child_trace_events (will be populated after engine runs)

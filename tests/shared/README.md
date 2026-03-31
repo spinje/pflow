@@ -65,6 +65,32 @@ markdown = ir_to_markdown({"nodes": [{"id": "echo", "type": "shell", "params": {
 write_workflow_file(ir_dict, tmp_path / "workflow.pflow.md")
 ```
 
+### engine_utils.py
+
+Provides `compile_and_run()` — the standard pattern for compiling IR, seeding the shared store, and executing via `WorkflowEngine`. Matches the production path in `WorkflowRunner._compile_and_execute()`.
+
+#### Key Function:
+
+- `compile_and_run(ir, registry=None, initial_params=None, shared=None, *, metrics_collector=None, trace_collector=None, only_node=None) -> dict`: Compile + seed + run, returns shared store.
+
+#### Usage:
+
+```python
+from tests.shared.engine_utils import compile_and_run
+
+# Simple: compile and run, check outputs
+shared = compile_and_run(ir, initial_params={"text": "hello"})
+assert shared["echo"]["stdout"] == "hello"
+
+# With trace collector
+collector = WorkflowTraceCollector("test")
+shared = compile_and_run(ir, trace_collector=collector)
+assert len(collector.events) == 1
+
+# With --only flag
+shared = compile_and_run(ir, only_node="first_step")
+```
+
 ## Mock Architecture
 
 The LLM mock is applied globally to prevent API calls:

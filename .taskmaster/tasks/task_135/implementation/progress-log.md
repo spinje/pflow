@@ -521,3 +521,107 @@ These are ALL decisions made during Phases 5-7 and post-review that deviate from
 - `tests/test_runtime/test_memo_cache_error_skip.py` — 1 test: error results not served from cache
 - `tests/test_runtime/test_initial_params_override_removal.py` — 4 tests: shared store as single data source
 - `tests/test_runtime/test_engine_behavior.py` — 3 tests: unmatched action warning, edge following, --only + outputs
+- `tests/test_runtime/test_trace_integration.py::test_template_resolution_error_captured_in_trace_with_partial_resolutions` — 1 test: template errors produce trace events with partial resolutions
+
+---
+
+## Second Code Review + Fixes — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4622 passed, 9 skipped. `make check` clean.
+
+### Review (3 targeted agents)
+
+Deployed `review-impact-completeness`, `review-silent-failures`, `review-test-fidelity` against the full branch diff (post-shim-removal). Focused on: stale patches, silent seeding differences, test fidelity after migration.
+
+### Fixes applied
+
+1. **`write_memo_cache` None action normalization** (Critical — found by review-silent-failures): `action or "default"` in `write_memo_cache` line 248 and `cached_action or "default"` in `check_memo_cache` line 227. Without this, second run of workflows with git nodes returning `None` from `post()` would produce `str(None)` = `"None"` action — no successor edge matches, workflow silently stops.
+
+2. **mypy type error in engine.py:245** (found by review-impact-completeness): `record_trace(error=...)` received `str` where `Exception` expected. The implementing agent had already addressed this differently (using a `success=` parameter instead of `error=` for non-exception error actions), so the fix was already in place — mypy was clean.
+
+3. **Stale documentation references** (6 files, found by review-impact-completeness):
+   - `runtime/CLAUDE.md` — removed `compile_ir_to_flow` and `_CompiledWorkflowShim` references
+   - `compilation/CLAUDE.md` — removed `compile_ir_to_flow` from public API and key functions
+   - `architecture/pflow-pocketflow-integration-guide.md` — rewrote Critical Insight #1 ("PocketFlow IS the Execution Engine" → "PocketFlow Provides the Node Lifecycle"), updated Core Principle and Core Architecture sections
+   - `architecture/best-practices/testing-quick-reference.md` — updated `Flow` examples to `compile_workflow` + `WorkflowEngine`
+   - `architecture/core-concepts/shared-store.md` — replaced `Flow(start=)` examples
+   - `tests/CLAUDE.md` — updated `test_pocketflow/` description, removed `Flow` from example
+
+4. **Stale test comment** (found by review-test-fidelity): `test_trace_integration.py:398-400` said template resolution errors are NOT captured in trace. They ARE (post-review fix #11). Updated comment.
+
+5. **Flaky timing test** (found by review-test-fidelity): `test_parallel_faster_than_sequential` widened margin from 0.15s to 0.20s (sequential is ~0.25s, so 0.20s still proves parallelism while tolerating CI overhead).
+
+6. **Template resolution error trace test** (suggested by review-test-fidelity): Added `test_template_resolution_error_captured_in_trace_with_partial_resolutions`. Verifies that strict-mode template failures produce trace events with partial resolutions (params resolved up to the error point). This was the only untested behavioral gap from post-review fix #11.
+
+7. **Shared test helper** (suggested by review-test-fidelity): Created `tests/shared/engine_utils.py` with `compile_and_run()` — the standard compile+seed+run pattern used across 12+ test files. Single point of change if the production seeding logic evolves. Updated `tests/shared/README.md`.
+
+### Disputed findings (not fixed)
+
+- Template errors loop overwrites per-node (`shared["__template_errors__"][node_id] = err`) — matches old behavior, not a regression
+- `setup_llm_interception` reads params before resolution — documented known limitation
+- `resolve_file_references` called twice — pre-existing, idempotent
+
+### Final metrics
+
+- **Tests**: 4622 passed, 9 skipped
+- **`make check`**: all clean (ruff, mypy, deptry)
+- **Tests added by second review**: 1 (partial resolutions trace test)
+- **Files added**: 1 (`tests/shared/engine_utils.py`)
+- **Doc files updated**: 6
+
+---
+
+## Third Code Review + Fixes — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4622 passed, 9 skipped. `make check` clean.
+
+### Review (full 7-agent code review via /code-review skill)
+
+The implementing agent ran a full code review. Findings were evaluated against actual code via 4 parallel searcher subagents.
+
+### Fixes applied
+
+1. **`NamespacedSharedStore` missing `update()`** (Critical): `storage_mode: shared` crashed because the proxy didn't implement `update()`. Added method that routes through `__setitem__` (which handles namespace routing). File: `engine/namespaced_store.py`.
+
+2. **`resolved_defaults` seeding leaks stale cached data** (Critical, different fix than proposed): Only seed `resolved_defaults` keys NOT in `child_params`. Prevents per-item coerced values from the first compilation leaking to subsequent batch items. Preserves structural defaults for missing inputs. File: `workflow_executor.py:236-243`.
+
+3. **`_coerce_int`/`_coerce_float` return 0 instead of default** (Warning): Old `PflowBatchNode` returned the `default` parameter on failure. New helpers returned hardcoded 0/0.0. `max_concurrent: 0` means zero ThreadPoolExecutor workers. Added `default` parameter, callsites pass real defaults (10, 1, 0.0). File: `compiler.py:373-390`.
+
+4. **Error action inconsistency** (Warning, pre-existing): 6 sites used `== "error"` while 4 used `startswith("error")`. Custom `error_action: error_child` would create contradictory state (workflow fails but node shows completed). Changed all 6 to `startswith("error")`. Files: `instrumentation.py:100,241,382,404`, `engine.py:256`, `node_output_formatter.py:113`.
+
+5. **Broken example** (Suggestion): `examples/github/create_pr_example.py` imported removed `Flow` class. Deleted.
+
+6. **Compile-once for file/saved-name sub-workflows** (Warning, confirmed real): `id(workflow_ir)` cache missed for file-loaded IR because `prep()` re-parsed the file each batch item (new dict object = different `id()`). Fix: cache loaded IR in `prep()` for non-inline sources. Inline IR is NOT cached (may contain per-item resolved templates like `${item}`). File: `workflow_executor.py:120-131`.
+
+### Disputed findings
+
+- **Compile-once doesn't apply to file-based workflows**: Initially disputed as "by design." On re-examination, confirmed as a real gap. Fixed (item #6 above).
+- **Deferred A (mutable node instance state)**: Plausible but no concrete failing example. Current nodes appear safe. Documented as constraint.
+- **Deferred B (trace_collector contract)**: Runner always seeds `_trace_collector` into shared. Not a production issue.
+
+### Known limitation documented
+
+**Per-item type coercion lost for sub-workflow inputs** (#188): The old model ran `prepare_inputs()` per batch item, coercing `"7"` → `7` for int-typed inputs. The new compile-once model skips per-item coercion. Documented in code at the seeding site with reference to #188. Three fix options tracked in the issue. Decision deferred until real user reports surface.
+
+### Node instance state investigation
+
+Fully investigated "Deferred A: cached child workflows may reuse mutable node instance state." AST-searched all 25 production nodes + WorkflowExecutor for `self.X = ...` in exec/post/exec_fallback.
+
+**Result**: 22 of 25 nodes are completely clean. MCPNode sets `self._timeout` in prep() (reset every call — safe). ReadFileNode sets `self._is_binary` in exec() (anti-pattern but set on every successful path — safe). WorkflowExecutor has intentional compile-once caches.
+
+**Actions taken**:
+- Documented constraint in `src/pflow/nodes/CLAUDE.md`: "Common Mistakes" #6 + checklist item
+- Created `tests/test_nodes/test_node_stateless_invariant.py` — AST meta-test that fails if any node adds `self.X = ...` in exec/post/exec_fallback outside an explicit allowlist
+- Second test validates allowlist entries still exist (prevents stale allowlist after refactors)
+- Allowlist: `ReadFileNode._is_binary` (anti-pattern but safe), `WorkflowExecutor._child_trace_events` (reset each exec)
+
+### Final metrics
+
+- **Tests**: 4624 passed, 9 skipped
+- **`make check`**: all clean (ruff, mypy, deptry)
+- **GitHub issues created**: #188 (sub-workflow type coercion)
+- **Files modified**: 5 production (`namespaced_store.py`, `workflow_executor.py`, `compiler.py`, `instrumentation.py`, `engine.py`), 1 formatter (`node_output_formatter.py`), 1 deleted (`examples/github/`)
+- **Tests added**: 2 (node stateless invariant meta-test + allowlist staleness check)
+- **Docs updated**: `src/pflow/nodes/CLAUDE.md` (compile-once constraint)

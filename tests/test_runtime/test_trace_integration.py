@@ -434,3 +434,63 @@ class TestTemplateResolutionsOnError:
         assert event["success"] is False
         assert "error" in event
         assert "does not exist" in event["error"]
+
+    def test_template_resolution_error_captured_in_trace_with_partial_resolutions(self) -> None:
+        """When template resolution fails in strict mode, the trace event should
+        capture partial resolutions (params resolved up to the error point).
+
+        This tests the _partial_resolutions mechanism: resolve_templates() attaches
+        partial resolutions to the ValueError, and the engine's except handler
+        extracts them for trace recording. Without this, template errors produce
+        trace events with empty template_resolutions — losing debug information.
+        """
+        # Two template params: first resolves, second fails.
+        # The trace should show the first param's resolution.
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "producer",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "shell",
+                    "params": {
+                        "command": "${producer.stdout}",  # resolves
+                        "cwd": "${nonexistent.path}",  # fails
+                    },
+                },
+            ],
+            "edges": [{"source": "producer", "target": "consumer"}],
+        }
+
+        collector = WorkflowTraceCollector("test-partial-resolutions")
+        collector.enable_llm_interception = False
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(trace_collector=collector)
+
+        with pytest.raises(ValueError, match="Unresolved"):
+            engine.run(workflow, shared)
+
+        # Should have 2 events: producer (success) + consumer (error)
+        assert len(collector.events) == 2
+
+        # Consumer's trace event should have partial template_resolutions
+        consumer_event = collector.events[1]
+        assert consumer_event["node_id"] == "consumer"
+        assert consumer_event["success"] is False
+        assert "template_resolutions" in consumer_event
+        resolutions = consumer_event["template_resolutions"]
+        # The 'command' param should be resolved (it was processed before 'cwd' failed)
+        assert "command" in resolutions
+        assert resolutions["command"]["template"] == "${producer.stdout}"

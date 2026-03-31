@@ -253,7 +253,7 @@ class WorkflowEngine:
                 child_trace_events,
                 node.params,
                 self.trace,
-                success=(action != "error"),
+                success=not str(action).startswith("error"),
             )
 
             # 17. Completion callback

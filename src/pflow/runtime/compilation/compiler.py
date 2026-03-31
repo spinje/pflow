@@ -343,9 +343,9 @@ def _create_node_and_config(
             item_alias=batch_data.get("as", "item"),
             error_handling=batch_data.get("error_handling", "fail_fast"),
             parallel=_coerce_bool(batch_data.get("parallel", False)),
-            max_concurrent=_coerce_int(batch_data.get("max_concurrent", 10)),
-            max_retries=_coerce_int(batch_data.get("max_retries", 1)),
-            retry_wait=_coerce_float(batch_data.get("retry_wait", 0.0)),
+            max_concurrent=_coerce_int(batch_data.get("max_concurrent", 10), default=10),
+            max_retries=_coerce_int(batch_data.get("max_retries", 1), default=1),
+            retry_wait=_coerce_float(batch_data.get("retry_wait", 0.0), default=0.0),
         )
 
     # Build NodeConfig
@@ -370,24 +370,24 @@ def _coerce_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _coerce_int(value: Any) -> int:
-    """Coerce value to integer."""
+def _coerce_int(value: Any, default: int = 0) -> int:
+    """Coerce value to integer. Returns default on failure."""
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     try:
         return int(value)
     except (ValueError, TypeError):
-        return 0
+        return default
 
 
-def _coerce_float(value: Any) -> float:
-    """Coerce value to float."""
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    """Coerce value to float. Returns default on failure."""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     try:
         return float(value)
     except (ValueError, TypeError):
-        return 0.0
+        return default
 
 
 def _instantiate_nodes_for_workflow(

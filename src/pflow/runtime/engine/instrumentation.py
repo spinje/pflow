@@ -97,9 +97,10 @@ def check_cache_validity(node_id: str, config_hash: str, shared: dict) -> tuple[
 
 def cache_result(node_id: str, config_hash: str, action: str, shared: dict) -> None:
     """Record node as completed with its config hash."""
-    if action != "error":
+    action_str = str(action) if action else "default"
+    if not action_str.startswith("error"):
         shared["__execution__"]["completed_nodes"].append(node_id)
-        shared["__execution__"]["node_actions"][node_id] = action or "default"
+        shared["__execution__"]["node_actions"][node_id] = action_str
         shared["__execution__"]["node_hashes"][node_id] = config_hash
     else:
         shared["__execution__"]["failed_node"] = node_id
@@ -237,7 +238,7 @@ def check_memo_cache(
 
 def write_memo_cache(node_id: str, shared: dict, cache_key: Optional[str], action: str = "default") -> None:
     """Write to SQLite cache after successful execution. Skips error results."""
-    if not cache_key or action == "error":
+    if not cache_key or str(action).startswith("error"):
         return
     memo_cache = shared.get("__memoization_cache__")
     if not memo_cache:
@@ -378,7 +379,8 @@ def call_completion_callback(
     exit_code = shared.get(node_id, {}).get("exit_code") if isinstance(shared.get(node_id), dict) else None
     error_msg = None
 
-    if action == "error":
+    action_str = str(action) if action else "default"
+    if action_str.startswith("error"):
         error_msg = f"Command failed with exit code {exit_code}" if exit_code else "Failed"
     elif exit_code and exit_code != 0 and ignore_errors:
         error_msg = f"Command failed with exit code {exit_code}"
@@ -400,7 +402,7 @@ def call_completion_callback(
             depth,
             error_message=error_msg,
             ignore_errors=ignore_errors,
-            is_error=(action == "error"),
+            is_error=action_str.startswith("error"),
             is_batch=is_batch,
             batch_total=batch_total,
             batch_success_count=batch_success_count,

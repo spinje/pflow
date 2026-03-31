@@ -176,6 +176,14 @@ class NamespacedSharedStore:
         """Return count of combined unique keys."""
         return len(self.keys())
 
+    def update(self, other: dict[str, Any] | None = None, **kwargs: Any) -> None:
+        """Update with key/value pairs, routing through __setitem__."""
+        if other:
+            for key, value in other.items():
+                self[key] = value
+        for key, value in kwargs.items():
+            self[key] = value
+
     def __repr__(self) -> str:
         """String representation for debugging."""
         return (
