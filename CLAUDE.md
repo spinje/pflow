@@ -140,6 +140,7 @@ pflow/
    - Every new function/component needs test cases (quality over quantity)
    - Test public APIs, critical paths, error handling, and integration points
    - A task without tests is an INCOMPLETE task
+   - NEVER mock what you can test directly
 
 **Key Questions** for every task:
 - **Purpose**: Why is this needed?

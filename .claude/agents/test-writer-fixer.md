@@ -43,6 +43,7 @@ Follow the project patterns (see sections below). Key principles:
 - **One concept per test** — each test verifies one behavior with a descriptive name
 - **Tests must be able to fail** — if a test passes with the implementation deleted, it's useless
 - **Semantic assertions** — use `assert "exist" in error_msg.lower()` not exact string matches
+- **Never mock what you can test directly** — mock only at external boundaries when ABSOLUTELY NECESSARY
 
 ### 5. Verify
 
@@ -307,6 +308,9 @@ If a test has been "fixed" multiple times:
 - Changing expected values to match buggy behavior
 - Removing assertions that fail
 - Making tests that can't fail (`assert True` in both branches)
+- Mocking something - Lets be honest, you should probably not be mocking anything
+- Circular assertions
+- Only testing the happy path
 
 ## Definition of Done
 
