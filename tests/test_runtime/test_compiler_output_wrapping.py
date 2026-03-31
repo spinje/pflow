@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 @pytest.fixture
@@ -75,8 +76,14 @@ def registry_with_echo():
 class TestCompilerOutputWrapping:
     """Test compiler's output wrapping behavior."""
 
-    def test_compiler_wraps_run_when_outputs_declared(self, registry_with_echo):
-        """Verify compiler wraps flow.run when outputs are present."""
+    def test_outputs_populated_when_declared(self, registry_with_echo):
+        """Verify output declarations are resolved after successful execution.
+
+        FIX HISTORY:
+        - Previously checked flow.run.__name__ == "run_with_hooks" (monkey-patch).
+        - The shim's .run() IS the run method now; verify output population instead.
+        - Migrated from compile_ir_to_flow shim to compile_workflow + WorkflowEngine.
+        """
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
@@ -85,13 +92,23 @@ class TestCompilerOutputWrapping:
             "outputs": {"result": {"source": "${echo1.echo}", "description": "Test output"}},
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
-        # The run method should be wrapped
-        assert flow.run.__name__ == "run_with_hooks"
+        # Output should be populated at root level from declared outputs
+        assert shared["result"] == "test"
+        assert result == "default"
 
-    def test_wrapper_always_applied_for_visit_count_reset(self, registry_with_echo):
-        """Verify flow.run is always wrapped (for visit count reset)."""
+    def test_run_works_without_outputs(self, registry_with_echo):
+        """Verify workflow runs correctly even without output declarations.
+
+        FIX HISTORY:
+        - Previously checked flow.run.__name__ == "run_with_hooks" (monkey-patch).
+        - The shim's .run() IS the run method now; verify execution works instead.
+        - Migrated from compile_ir_to_flow shim to compile_workflow + WorkflowEngine.
+        """
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
@@ -100,10 +117,15 @@ class TestCompilerOutputWrapping:
             # No outputs field
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
-        # Always wrapped for visit count reset (even without outputs)
-        assert flow.run.__name__ == "run_with_hooks"
+        # Node should have executed and written namespaced output
+        assert "echo1" in shared
+        assert shared["echo1"]["echo"] == "test"
+        assert result == "default"
 
     def test_outputs_populated_on_success(self, registry_with_echo):
         """Verify outputs ARE populated when workflow succeeds."""
@@ -118,9 +140,10 @@ class TestCompilerOutputWrapping:
             },
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
-        shared = {}
-        result = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
         # Output should be populated at root level
         assert shared["result"] == "Hello"
@@ -129,7 +152,7 @@ class TestCompilerOutputWrapping:
         assert result == "default"
 
     # Note: We can't easily test error cases without creating custom test nodes
-    # The logic in compiler.py checks: if not (result and isinstance(result, str) and result.startswith("error"))
+    # The logic in engine.py checks: if not (result and isinstance(result, str) and result.startswith("error"))
     # This means outputs are NOT populated when a node returns an action starting with "error"
     # The implementation follows the same pattern that was previously in the CLI
 
@@ -138,7 +161,7 @@ class TestProgrammaticUsage:
     """Test programmatic usage without CLI."""
 
     def test_programmatic_workflow_with_outputs(self, registry_with_echo):
-        """Verify outputs work when using compile_ir_to_flow directly."""
+        """Verify outputs work when using compile_workflow + WorkflowEngine directly."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "Hello World"}}],
@@ -151,9 +174,10 @@ class TestProgrammaticUsage:
         }
 
         # Use the API directly, no CLI involved
-        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
-        shared = {}
-        result = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
         # Outputs should be populated at root level
         assert shared["message"] == "Hello World"
@@ -179,9 +203,10 @@ class TestProgrammaticUsage:
             },
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry_with_echo)
-        shared = {}
-        result = flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
         # All outputs should be populated
         assert shared["first_msg"] == "First"

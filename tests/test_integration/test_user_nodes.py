@@ -26,13 +26,29 @@ These are REAL integration tests that use actual files and execution.
 
 import tempfile
 from pathlib import Path
+from typing import Any, Optional
 
 import pytest
 
 from pflow.core import validate_ir
 from pflow.registry import Registry
 from pflow.registry.scanner import scan_for_nodes
-from pflow.runtime import CompilationError, compile_ir_to_flow
+from pflow.runtime import CompilationError, WorkflowEngine, compile_workflow
+
+
+def _compile_and_run(
+    workflow_ir: dict[str, Any],
+    registry: Registry,
+    shared: dict[str, Any],
+    initial_params: Optional[dict[str, Any]] = None,
+) -> None:
+    """Compile workflow and run via WorkflowEngine, seeding shared store."""
+    workflow = compile_workflow(workflow_ir, registry, initial_params=initial_params)
+    if initial_params:
+        shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
 
 
 class TestUserNodes:
@@ -173,11 +189,10 @@ class TestCalculatorNode(Node):
 
             # Validate and compile
             validate_ir(workflow_ir)
-            flow = compile_ir_to_flow(workflow_ir, registry)
 
             # Execute with inputs
-            shared = {"x": 10, "y": 5, "operation": "add"}
-            flow.run(shared)
+            shared: dict[str, Any] = {"x": 10, "y": 5, "operation": "add"}
+            _compile_and_run(workflow_ir, registry, shared)
 
             # Verify results (with namespacing)
             assert "calc1" in shared
@@ -199,12 +214,10 @@ class TestCalculatorNode(Node):
             # Create workflow
             workflow_ir = {"ir_version": "0.1.0", "nodes": [{"id": "calc1", "type": "test-calculator"}], "edges": []}
 
-            flow = compile_ir_to_flow(workflow_ir, registry)
-
             # Pass calculation parameters directly (previously tested via shared["stdin"])
             # Note: stdin is now routed to workflow inputs via stdin: true
-            shared = {"x": 7, "y": 3, "operation": "multiply"}
-            flow.run(shared)
+            shared: dict[str, Any] = {"x": 7, "y": 3, "operation": "multiply"}
+            _compile_and_run(workflow_ir, registry, shared)
 
             # Verify results (with namespacing)
             assert "calc1" in shared
@@ -248,11 +261,8 @@ class TestCalculatorNode(Node):
             registry.save(nodes)
 
             # Test with invalid operation (should trigger error)
-            flow = compile_ir_to_flow(workflow_ir, registry)
-            shared = {"x": 10, "y": 5, "operation": "invalid"}
-
-            # The flow should handle the error gracefully
-            flow.run(shared)
+            shared: dict[str, Any] = {"x": 10, "y": 5, "operation": "invalid"}
+            _compile_and_run(workflow_ir, registry, shared)
 
             # Verify error was captured (with namespacing)
             assert "calc1" in shared
@@ -281,9 +291,8 @@ class TestCalculatorNode(Node):
                 },
             }
 
-            flow = compile_ir_to_flow(workflow_ir, registry)
-            shared = {"x": 100, "y": 0.5, "operation": "multiply"}
-            flow.run(shared)
+            shared: dict[str, Any] = {"x": 100, "y": 0.5, "operation": "multiply"}
+            _compile_and_run(workflow_ir, registry, shared)
 
             # Verify output was populated
             assert "calculation_result" in shared
@@ -313,12 +322,14 @@ class TestCalculatorNode(Node):
             workflow_ir = {"ir_version": "0.1.0", "nodes": [{"id": "calc1", "type": "test-calculator"}], "edges": []}
 
             # This should succeed if compiler can import from file path
-            flow = compile_ir_to_flow(workflow_ir, registry)
-            assert flow is not None
+            workflow = compile_workflow(workflow_ir, registry)
+            assert workflow is not None
 
             # Verify it actually works (with namespacing)
-            shared = {"x": 2, "y": 3, "operation": "add"}
-            flow.run(shared)
+            shared: dict[str, Any] = {"x": 2, "y": 3, "operation": "add"}
+            shared.update(workflow.resolved_defaults)
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
             assert "calc1" in shared
             assert shared["calc1"]["result"] == 5
 
@@ -420,7 +431,7 @@ class ImportErrorNode(Node):
 
             # Compilation should fail with clear error
             with pytest.raises(CompilationError) as exc_info:
-                compile_ir_to_flow(workflow_ir, registry)
+                compile_workflow(workflow_ir, registry)
 
             error = exc_info.value
             assert error.phase == "node_import"
@@ -725,11 +736,8 @@ class TraversalNode(Node):
 
             # Compile and run - the node's security attempt is its problem
             # Our framework doesn't need to prevent it, but we test it doesn't crash
-            flow = compile_ir_to_flow(workflow_ir, registry)
-            shared = {"target": "/etc/passwd"}
-
-            # Run should complete (whether it succeeds in reading depends on OS permissions)
-            flow.run(shared)
+            shared: dict[str, Any] = {"target": "/etc/passwd"}
+            _compile_and_run(workflow_ir, registry, shared)
 
             # The important thing is our framework handles it gracefully
             assert "hack" in shared  # Namespaced

@@ -58,7 +58,7 @@ class WorkflowExecutor(BaseNode):
         "max_depth",
         "error_action",
         "__registry__",
-        "inputs",  # Framework key consumed by TemplateAwareNodeWrapper, not a child input
+        "inputs",  # Framework key consumed by engine's template resolution, not a child input
     })
 
     # Cross-cutting infrastructure keys propagated from parent to child storage.
@@ -120,7 +120,7 @@ class WorkflowExecutor(BaseNode):
         workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
 
         # Extract child inputs: all non-reserved params
-        # Template resolution already handled by TemplateAwareNodeWrapper before prep() runs
+        # Template resolution already handled by engine's _execute_single_node before prep() runs
         child_params = self._extract_child_inputs()
 
         # Validate child params against declared inputs

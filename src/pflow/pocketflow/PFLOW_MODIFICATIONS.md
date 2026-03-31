@@ -2,66 +2,40 @@
 
 This file documents modifications made to PocketFlow for pflow's use case.
 
-## Modified Files
+## Task 135: Execution Core Redesign
 
-### 1. `src/pflow/pocketflow/__init__.py` - Flow._orch() method (pflow-specific)
+PocketFlow was slimmed from ~200 lines (10 classes) to ~85 lines (3 classes):
 
-**Line 104-105**: Added conditional parameter setting
+**Kept**: `BaseNode`, `_ConditionalTransition`, `Node`
+**Removed**: `Flow`, `BatchNode`, `BatchFlow`, `AsyncNode`, `AsyncBatchNode`, `AsyncParallelBatchNode`, `AsyncFlow`, `AsyncBatchFlow`, `AsyncParallelBatchFlow`
 
-```python
-# Only override node params if explicitly passed (not for default empty flow params)
-if params is not None:
-    curr.set_params(p)
-```
+### Why Flow was removed
 
-### 2. `src/pflow/pocketflow/__init__.py` - AsyncNode._exec() method (upstream sync)
+pflow's execution was built on a 4-layer wrapper chain (3,920 lines) wrapping PocketFlow's ~200-line core. The wrapper chain handled template resolution, namespacing, batch processing, and instrumentation via nested `_run()` delegation. This caused:
 
-**Line 141-146**: Aligned retry tracking with sync Node implementation
+- Sub-workflows recompiling per batch item (O(N) at 20-50ms each)
+- `initial_params` dual-data-path hacks in template resolution
+- Cross-wrapper coupling via chain traversal (6 methods walking `inner_node` chains)
+- 80% code duplication between sequential and parallel batch paths
 
-**Upstream commit**: [fd5817f](https://github.com/The-Pocket/PocketFlow/commit/fd5817fdccfed7c77b1665fce8e0f69bf4c359e1)
+The redesign replaced this with:
+- **`WorkflowEngine`** (`runtime/engine/engine.py`) — handles graph traversal and all runtime concerns
+- **`CompiledWorkflow`** (`runtime/engine/types.py`) — structural compilation result with per-node configs
+- **`compile_workflow()`** (`runtime/compilation/compiler.py`) — produces bare nodes + configs, no wrappers
 
-```python
-# Changed from local variable 'i' to instance attribute 'self.cur_retry'
-for self.cur_retry in range(self.max_retries):
-    try:
-        return await self.exec_async(prep_res)
-    except Exception as e:
-        if self.cur_retry == self.max_retries - 1:
-            return await self.exec_fallback_async(prep_res, e)
-```
+PocketFlow's `Flow._orch()` loop was the graph walker. The engine replaces it with a simpler `while curr:` loop that reads `NodeConfig` metadata instead of chain-traversing wrapper attributes. The `_orch()` hack (`if params is not None: curr.set_params(p)`) is no longer needed — the engine sets params directly.
 
-**Why**: Ensures consistency between sync `Node` and `AsyncNode` retry mechanisms. Allows derived classes to access `self.cur_retry` during async execution, which is important for retry-aware logic in parallel execution scenarios.
+### What nodes still use
 
-## Rationale
+All pflow nodes inherit from `Node` (which extends `BaseNode`). They use:
+- `prep(shared)` / `exec(prep_res)` / `post(shared, prep_res, exec_res)` lifecycle
+- `self.params` for configuration
+- `_run(shared)` called by the engine
+- `>>` and `-` operators for wiring (during compilation)
+- `max_retries` / `wait` / `exec_fallback` for retry logic
 
-PocketFlow's original design overwrites node parameters with flow parameters in `_orch()`. This is intentional for BatchFlow scenarios where parent flows control child parameters dynamically at runtime.
+### Thread safety note
 
-However, pflow uses parameters differently - as static configuration values set during workflow compilation. The modification prevents empty flow parameters from overwriting carefully configured node parameters.
-
-## Impact
-
-- **Positive**: Allows pflow nodes to maintain their parameters set during compilation
-- **Negative**: Will break BatchFlow functionality if/when implemented in pflow
-- **Risk**: Low for current MVP scope which doesn't include BatchFlow
-
-## Future Considerations
-
-When implementing BatchFlow support in pflow, this modification will need to be revisited. Options include:
-
-1. **Revert this change** and use a wrapper class (like PreservingFlow) for pflow's standard flows
-2. **Enhance the condition** to detect BatchFlow context and apply different behavior
-3. **Redesign** how pflow handles parameters to align with PocketFlow's model
-4. **Fork PocketFlow** if the use cases diverge significantly
-
-## Related Issues
-
-- Initial issue discovered during Task 3 implementation
-- PreservingFlow wrapper was the first solution (now removed)
-- This modification is a temporary pragmatic solution for the MVP
-
-## TODO
-
-- [ ] Add unit tests that verify parameter preservation behavior
-- [ ] Document this limitation in pflow's user documentation
-- [ ] Create issue to track BatchFlow implementation considerations
-- [ ] Consider long-term strategy for PocketFlow integration
+`Node._exec()` uses `self.cur_retry` (instance state) for retry tracking. This is NOT thread-safe, but is safe in pflow because:
+1. Sequential batch does not parallelize
+2. Parallel batch deep-copies the node per thread (in `batch_executor.py`)

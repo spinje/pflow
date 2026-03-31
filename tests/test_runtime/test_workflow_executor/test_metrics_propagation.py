@@ -14,7 +14,8 @@ import pytest
 
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 from pflow.runtime.workflow_executor import WorkflowExecutor
 
 
@@ -194,9 +195,11 @@ class TestLLMCallsViaTrace:
         trace = WorkflowTraceCollector("test")
 
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, trace_collector=trace)
-            shared: dict = {"_trace_collector": trace}
-            flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared: dict = dict(workflow.resolved_defaults)
+            shared["_trace_collector"] = trace
+            engine = WorkflowEngine(trace_collector=trace)
+            engine.run(workflow, shared)
 
             # Both parent and child LLM calls must appear in collect_llm_calls()
             calls = trace.collect_llm_calls()
@@ -262,9 +265,11 @@ class TestLLMCallsViaTrace:
         trace = WorkflowTraceCollector("test")
 
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry, trace_collector=trace)
-            shared: dict = {"_trace_collector": trace}
-            flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared: dict = dict(workflow.resolved_defaults)
+            shared["_trace_collector"] = trace
+            engine = WorkflowEngine(trace_collector=trace)
+            engine.run(workflow, shared)
 
             # 3 batch items x 1 LLM call each = 3 total
             calls = trace.collect_llm_calls()
@@ -314,9 +319,11 @@ class TestProgressCallbackPropagation:
         }
 
         with _setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared: dict = {"__progress_callback__": callback}
-            flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared: dict = dict(workflow.resolved_defaults)
+            shared["__progress_callback__"] = callback
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
 
             # The callback should have been called at least once by the child's
             # InstrumentedNodeWrapper (it calls on node start and completion)

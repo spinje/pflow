@@ -1,42 +1,40 @@
 # Runtime Module
 
-Compilation and execution infrastructure. Transforms workflow IR into executable PocketFlow Flow objects via a multi-layer wrapper architecture for template resolution, namespacing, and instrumentation.
+Compilation and execution infrastructure. Compiles workflow IR into `CompiledWorkflow` (bare nodes + per-node configs), then executes via `WorkflowEngine`.
 
 ## File Structure
 
 ```
 src/pflow/runtime/
-├── __init__.py              # Exports: compile_ir_to_flow(), import_node_class(), CompilationError
-├── compilation/             # IR→Flow compiler package (see compilation/CLAUDE.md)
-├── cache.py                 # Persistent memoization cache (SQLite, cross-run node output caching)
-├── template_resolver.py     # Template variable resolution engine
-├── wrappers/                # Execution wrapper chain (see wrappers/CLAUDE.md)
+├── __init__.py              # Exports: compile_workflow(), compile_ir_to_flow(), WorkflowEngine, etc.
+├── compilation/             # IR→CompiledWorkflow compiler (see compilation/CLAUDE.md)
+├── engine/                  # Orchestration engine (see engine/CLAUDE.md)
+├── cache.py                 # Persistent memoization cache (SQLite, cross-run)
+├── template_resolver.py     # Template variable detection and resolution
 ├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
-├── workflow_executor.py     # Nested workflow executor node
+├── workflow_executor.py     # Nested workflow executor node (with compile-once cache)
 ├── workflow_trace.py        # Trace collection with thread-safe LLM interception
 └── output_resolver.py       # Output declaration resolver
 ```
 
 ## Compilation Pipeline
 
-The `compilation/` package transforms workflow IR into executable PocketFlow Flow objects. See `compilation/CLAUDE.md` for full details including function-level documentation, call graph, and non-obvious behaviors.
-
-`compile_ir_to_flow()` is the main entry point (called by `execution/runner.py` and internally by `workflow_executor.py` for nested workflows):
+`compile_workflow()` is the primary entry point (called by `execution/runner.py` and `workflow_executor.py`):
 
 1. Parse IR dict
-2. Validate structure, inputs, outputs (`ir_preparation.py`)
-3. Instantiate nodes with registry lookup (`node_loader.py`)
-4. Resolve MCP node types (`mcp_resolution.py`)
-5. Apply wrapper chain (template → namespace → batch → instrumentation)
-6. Run template validation (`compile_validation.py`)
-7. Wire nodes using edges
-8. Create Flow object with start node
+2. Resolve external file references
+3. Validate structure, inputs, outputs (`ir_preparation.py`, `compile_validation.py`)
+4. Instantiate **bare nodes** + build `NodeConfig` per node
+5. Wire nodes using edges (PocketFlow `>>` and `-` operators)
+6. Return `CompiledWorkflow(start_node, node_configs, outputs, resolved_defaults, ...)`
 
-**CompilationError** fields: `phase`, `node_id`, `node_type`, `details`, `suggestion` — provides structured context for debugging.
+`compile_ir_to_flow()` is a backward-compat shim — delegates to `compile_workflow()` + wraps in `_CompiledWorkflowShim` with `.run()`.
 
-## Wrapper Architecture
+**CompilationError** (in `core/exceptions.py`): fields `phase`, `node_id`, `node_type`, `details`, `suggestion`.
 
-Multi-layer wrapper chain for template resolution, namespacing, batch processing, and instrumentation. See `wrappers/CLAUDE.md` for full details including application order, interception chain, and per-wrapper documentation.
+## Execution Engine
+
+`WorkflowEngine` (in `engine/engine.py`) walks the node graph and handles all runtime concerns per node. See `engine/CLAUDE.md` for full architecture.
 
 ## Template System
 
@@ -60,10 +58,7 @@ Multi-layer wrapper chain for template resolution, namespacing, batch processing
 - **Unresolved templates**: Remain as-is for debugging visibility
 - **Template errors**: Fatal ValueError in strict mode
 
-**Resolution priority**:
-1. `initial_params` (from CLI)
-2. Shared store (runtime data from upstream nodes)
-3. Workflow inputs
+**Resolution**: Shared store is the single source of runtime data. `resolved_defaults` (from `prepare_inputs()`) are seeded into shared store before engine starts. User-provided params are seeded by the Runner via `_initialize_shared_store()`. No `initial_params` override.
 
 > For JSON auto-parsing and type coercion details, see `architecture/core-concepts/data-type-coercion.md`.
 
@@ -109,12 +104,12 @@ Persistent cross-run caching of node outputs. When an AI agent iterates on a wor
 - **Graceful degradation**: All SQLite/zlib/JSON operations wrapped in try/except with debug logging. Cache failures never crash workflows.
 - **Test isolation**: `tests/conftest.py::isolate_pflow_config` monkey-patches `MemoizationCache.__init__` to use temp paths. Without this, tests pollute the real cache DB and cause cross-test hits.
 
-**Integration point**: Created by `execution/runner.py::_initialize_shared_store()`, stored as `shared["__memoization_cache__"]`. Consumed by `InstrumentedNodeWrapper._run()` (see wrappers/CLAUDE.md). Propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`.
+**Integration point**: Created by `execution/runner.py::_initialize_shared_store()`, stored as `shared["__memoization_cache__"]`. Consumed by `engine/instrumentation.py::check_memo_cache()`. Propagated to child workflows via `_PROPAGATED_KEYS` in `workflow_executor.py`.
 
-**What the config hash includes** (from `InstrumentedNodeWrapper._compute_node_config()`):
-- Node type (class name of innermost actual node)
-- Static params (from innermost node, `_source_line` keys filtered out)
-- Template params (raw `${...}` templates from `TemplateAwareNodeWrapper.template_params`)
+**What the config hash includes** (from `engine/instrumentation.py::compute_node_config()`):
+- Node type (class name of the bare node)
+- Static params (`_source_line` keys filtered out)
+- Template params (raw `${...}` template strings from `NodeConfig.template_config`)
 - Batch semantic config (`items_template`, `item_alias`, `error_handling`, `max_retries`) — but NOT operational config (`parallel`, `max_concurrent`, `retry_wait`)
 
 **Side-effecting nodes ARE cached**: `write-file`, `shell` nodes with deterministic config+inputs will return cached output on second run (file won't be re-written, command won't re-execute). This is intentional for the iteration loop use case. `--no-cache` provides an escape hatch.
@@ -141,21 +136,21 @@ Persistent cross-run caching of node outputs. When an AI agent iterates on a wor
 
 `populate_declared_outputs()` — maps namespaced outputs to root level based on workflow output declarations. Raises `OutputResolutionError` (from `core/user_errors.py`) for non-coalesce output sources that cannot be resolved (e.g., node didn't execute on the taken branch). Coalesce expressions (`??`) where all operands are absent are silently skipped — this is the expected pattern for branch-dependent outputs.
 
-### Error Context (`wrappers/error_context.py`)
+### Error Context (`engine/error_context.py`)
 
-Extracts diagnostic context from upstream nodes when downstream fails. See `wrappers/CLAUDE.md`.
+Extracts diagnostic context from upstream nodes when downstream fails. See `engine/CLAUDE.md`.
 
 ## Reserved Shared Store Keys (Canonical Reference)
 
 ```python
-# Execution tracking (managed by InstrumentedNodeWrapper)
+# Execution tracking (managed by engine/instrumentation.py)
 shared["__execution__"] = {
     "completed_nodes": [],     # Successfully executed nodes
     "node_actions": {},        # Actions returned by each node
     "node_hashes": {},         # MD5 config hashes for cache validation
     "failed_node": None,       # Node that caused workflow failure
     "node_visit_counts": {},   # Per-node visit counter (loop guard)
-    "only_node": None,         # --only target node ID (set by _apply_run_hooks, read by display layer)
+    "only_node": None,         # --only target node ID (set by engine, read by display layer)
 }
 
 # System keys
@@ -166,7 +161,7 @@ shared["__cache_hits__"] = []             # Nodes that used cached results
 shared["__template_errors__"] = {}        # Template/type errors in permissive mode
 shared["__mcp_pool__"] = MCPConnectionPool  # MCP server connection pool (see mcp/pool.py)
 shared["__memoization_cache__"] = MemoizationCache  # Cross-run node output cache (see cache.py)
-shared["__index__"] = int                  # 0-based batch item index (injected by PflowBatchNode)
+shared["__index__"] = int                  # 0-based batch item index (injected by batch_executor)
 
 # Nested workflow keys (different prefix — _pflow_ not __)
 shared["_pflow_depth"] = int               # Current nesting depth
@@ -190,7 +185,7 @@ shared["_pflow_workflow_file"] = str       # Current workflow file path
 
 ### Cache Invalidation (Two Levels)
 
-**In-process cache** (within a single `flow.run()`): Node in `completed_nodes` AND config hash matches → skip re-execution. Invalidated on parameter change (hash mismatch) or revisited nodes (loops).
+**In-process cache** (within a single `engine.run()`): Node in `completed_nodes` AND config hash matches → skip re-execution. Invalidated on parameter change (hash mismatch) or revisited nodes (loops).
 
 **Memoization cache** (cross-run, SQLite-backed): `cache_key = hash(config + resolved_inputs)` → hit returns cached output without executing. Invalidated when: config changes (edited node params, different template text), resolved inputs change (upstream produced different output, CLI override changed), or TTL expires (24h default). **Skipped for revisited nodes** (`visit_count > 1`) — memoization is for cross-run caching, not loop caching. **Skipped for workflow nodes** — sub-workflow files may change between runs; inner nodes are individually cached via the propagated `__memoization_cache__`. Error results are never cached. **Cost aggregation** (`collect_llm_calls()`, `_collect_llm_summary()`) excludes cached events — only nodes that actually executed contribute to the run's reported cost.
 
@@ -230,21 +225,22 @@ shared["_pflow_workflow_file"] = str       # Current workflow file path
 
 **Node type testing**: Core nodes use real test nodes from `src/pflow/nodes/test_node*.py`. MCP nodes mock with `"virtual://mcp"` file path. Enable test nodes with `PFLOW_INCLUDE_TEST_NODES=true`.
 
-**Critical test scenarios**: Template resolution with array indices, cache invalidation via hash mismatch, API warning detection patterns, circular workflow detection, MCP server names with dashes (greedy match), wrapper chain attribute delegation (`inner_node` vs `_inner_node`), thread-safe LLM interception.
+**Critical test scenarios**: Template resolution with array indices, cache invalidation via hash mismatch, API warning detection patterns, circular workflow detection, MCP server names with dashes (greedy match), thread-safe LLM interception, compile-once for sub-workflows in batch.
 
 ## Cross-Module Dependencies
 
 Key runtime modules used outside `runtime/`:
 - **`TemplateResolver`** (`template_resolver.py`): Used by `cli/commands/read_fields.py`, `execution/formatters/`, `mcp_server/services/` — not runtime-internal only.
-- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `wrappers/template_wrapper.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `compilation/ir_preparation.py`.
-- **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `wrappers/template_wrapper.py`, `wrappers/batch_node.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
-- **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `wrappers/instrumented_wrapper.py` and `wrappers/batch_node.py` for progress callback indentation depth.
+- **`coerce_to_declared_type`** (`core/param_coercion.py`): Used by `engine/template_resolution.py` for dict/list→str serialization. **Don't confuse** with `coerce_input_to_declared_type` (same file) which has a full dispatch table for CLI input coercion (str→int/float/bool etc.) — used by `compilation/ir_preparation.py`.
+- **`try_parse_json`** (`core/json_utils.py`): Used by `template_resolver.py`, `engine/template_resolution.py`, `engine/batch_executor.py`. Returns `(bool, Any)` tuple. 10MB security limit. Only parses to dict/list (not primitives) for type safety.
+- **`_pflow_depth`**: Set by `workflow_executor.py`, also read by `engine/instrumentation.py` and `engine/batch_executor.py` for progress callback indentation depth.
 
 ## Gotchas
 
-- **Wrapper chain order matters** — instrumentation must be outermost, batch must be outside namespace
-- **Fresh Registry instance** — always pass a new one to `compile_ir_to_flow()` per execution
+- **Batch nodes skip top-level template resolution** — engine guards on `not config.batch_config`; per-item resolution handled by batch executor
+- **Fresh Registry instance** — always pass a new one to `compile_workflow()` per execution
 - **`__` prefixed params are reserved** — never use for user parameters
 - **Don't modify `__execution__` structure** — checkpoint integrity is critical for resume
 - **Cache assumes immutability** — don't modify cached node state
-- **`validate=False` only for testing** — skipping validation bypasses safety checks
+- **`_source_line` keys NOT filtered in split_params** — `python_code.py` reads them for error line numbers
+- **Compile-once `id()` check** — only works for static `workflow_ir`; template expressions create new dicts per item

@@ -99,7 +99,7 @@ def cache_result(node_id: str, config_hash: str, action: str, shared: dict) -> N
     """Record node as completed with its config hash."""
     if action != "error":
         shared["__execution__"]["completed_nodes"].append(node_id)
-        shared["__execution__"]["node_actions"][node_id] = action
+        shared["__execution__"]["node_actions"][node_id] = action or "default"
         shared["__execution__"]["node_hashes"][node_id] = config_hash
     else:
         shared["__execution__"]["failed_node"] = node_id
@@ -201,6 +201,7 @@ def check_memo_cache(
             if not isinstance(resolved_items, list):
                 return False, None, None
         except Exception:
+            logger.debug("Failed to resolve batch items for memo cache key", exc_info=True)
             return False, None, None
 
         semantic_config = {

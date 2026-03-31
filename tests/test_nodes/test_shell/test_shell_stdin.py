@@ -1,6 +1,9 @@
-"""Test shell node stdin parameter handling with template variables."""
+"""Test shell node stdin parameter handling.
 
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+Tests verify that the ShellNode correctly handles stdin from params,
+including template-resolved values (set directly as resolved params).
+"""
+
 from src.pflow.nodes.shell.shell import ShellNode
 
 
@@ -41,39 +44,36 @@ class TestShellStdinParameterFallback:
         assert action == "default"
         assert shared["stdout"] == "from params"  # Params value used
 
-    def test_stdin_with_template_resolution(self):
-        """Template variables in stdin should resolve correctly."""
-        # This is the key test for Issue #1!
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "test-shell")
+    def test_stdin_with_resolved_template_value(self):
+        """Resolved template values in stdin should work correctly.
 
+        Simulates the result of template resolution (e.g., ${input_data} -> "resolved template value")
+        by setting the resolved value directly as a param.
+        """
+        node = ShellNode()
         node.set_params({
             "command": "cat",
-            "stdin": "${input_data}",  # Template variable
+            "stdin": "resolved template value",
         })
+        shared = {}
 
-        shared = {"input_data": "resolved template value"}
+        action = node.run(shared)
 
-        action = node._run(shared)
-
-        # After fix, template should resolve and work
         assert action == "default"
         assert shared["stdout"] == "resolved template value"
 
-    def test_stdin_with_json_template(self):
-        """JSON data via stdin template should work (after Issue #1 fix)."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "test-shell")
+    def test_stdin_with_json_data(self):
+        """JSON data via stdin should work, including special characters."""
+        node = ShellNode()
 
         json_data = '{"key": "value with \'quotes\' and special $chars"}'
 
-        node.set_params({"command": "jq -r '.key'", "stdin": "${json_input}"})
+        node.set_params({"command": "jq -r '.key'", "stdin": json_data})
 
-        shared = {"json_input": json_data}
+        shared = {}
 
-        action = node._run(shared)
+        action = node.run(shared)
 
-        # Should extract the key value
         assert action == "default"
         assert "quotes" in shared["stdout"]
         assert "special" in shared["stdout"]
@@ -110,27 +110,24 @@ class TestShellStdinWithComplexData:
     """Test stdin handles complex data correctly (real-world scenarios)."""
 
     def test_mcp_json_response_via_stdin(self):
-        """Simulate MCP node output → shell processing."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "process-mcp")
+        """Simulate MCP node output piped to shell for processing."""
+        node = ShellNode()
 
         # Simulated MCP response (JSON string with nested data)
         mcp_result = '{"successful":true,"data":{"url":"https://open.spotify.com/track/xyz"}}'
 
-        node.set_params({"stdin": "${mcp.result}", "command": "jq -r '.data.url'"})
+        node.set_params({"stdin": mcp_result, "command": "jq -r '.data.url'"})
 
-        shared = {"mcp": {"result": mcp_result}}
+        shared = {}
 
-        action = node._run(shared)
+        action = node.run(shared)
 
-        # Should extract the Spotify URL
         assert action == "default"
         assert "https://open.spotify.com/track/xyz" in shared["stdout"]
 
     def test_multiline_text_via_stdin(self):
         """Multiline text should pass through stdin correctly."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "grep-test")
+        node = ShellNode()
 
         multiline_text = """Line 1: normal
 Line 2: with 'quotes'
@@ -139,13 +136,13 @@ Line 4: with $variables
 Line 5: with `backticks`"""
 
         node.set_params({
-            "stdin": "${text}",
+            "stdin": multiline_text,
             "command": "grep -c 'quotes'",  # Count lines with 'quotes'
         })
 
-        shared = {"text": multiline_text}
+        shared = {}
 
-        action = node._run(shared)
+        action = node.run(shared)
 
         assert action == "default"
         assert shared["stdout"].strip() == "2"  # Lines 2 and 3

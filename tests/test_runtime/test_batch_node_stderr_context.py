@@ -4,16 +4,40 @@ This test validates that when a batch node fails because an upstream shell node
 produced invalid output, the error message includes the upstream node's stderr
 to help diagnose the root cause.
 
-Related bug: Shell node stderr not surfaced in error messages
+Functions under test:
+- pflow.runtime.engine.error_context.extract_node_ids_from_template
+- pflow.runtime.engine.error_context.get_upstream_stderr
+- pflow.runtime.engine.batch_executor._resolve_and_validate_items (stderr enrichment)
 """
 
 import pytest
 
-from pflow.runtime.wrappers.batch_node import PflowBatchNode
-from pflow.runtime.wrappers.error_context import (
+from pflow.runtime.engine.batch_executor import execute_batch
+from pflow.runtime.engine.error_context import (
     extract_node_ids_from_template,
     get_upstream_stderr,
 )
+from pflow.runtime.engine.types import BatchConfig, NodeConfig
+
+
+def _make_batch_config(items_template: str) -> BatchConfig:
+    return BatchConfig(items_template=items_template)
+
+
+def _make_node_config(node_id: str, batch_config: BatchConfig) -> NodeConfig:
+    return NodeConfig(
+        node_id=node_id,
+        node_type_name="MockNode",
+        template_config=None,
+        batch_config=batch_config,
+        namespaced=True,
+        interface_metadata=None,
+    )
+
+
+def _simple_execute_single_fn(node, config, item_shared):
+    action = node._run(item_shared)
+    return (action or "default", {}, [])
 
 
 class TestExtractNodeIds:
@@ -82,7 +106,7 @@ class TestGetUpstreamStderr:
 
     def test_returns_none_when_node_not_found(self):
         """Returns None when referenced node doesn't exist in shared store."""
-        shared = {}
+        shared: dict = {}
         template = "${missing-node.stdout}"
 
         result = get_upstream_stderr(template, shared)
@@ -101,7 +125,6 @@ class TestGetUpstreamStderr:
                 "stderr": "ERROR FROM NODE-B - SHOULD appear",
             },
         }
-        # Template only references node-b
         template = "${node-b.stdout}"
 
         result = get_upstream_stderr(template, shared)
@@ -127,15 +150,14 @@ class TestGetUpstreamStderr:
 
         assert result is not None
         assert "..." in result
-        assert len(result) < len(long_stderr) + 100  # Reasonable length with formatting
+        assert len(result) < len(long_stderr) + 100
 
 
 class TestBatchNodeUpstreamStderr:
-    """Test batch node includes upstream stderr in error messages."""
+    """Test batch execution includes upstream stderr in error messages."""
 
     def test_batch_error_includes_upstream_stderr(self):
         """When batch fails due to empty upstream output, error includes stderr."""
-        # Create a mock inner node
         from pflow.pocketflow import Node
 
         class MockNode(Node):
@@ -143,14 +165,9 @@ class TestBatchNodeUpstreamStderr:
                 return {"result": "ok"}
 
         inner_node = MockNode()
-        batch_config = {"items": "${shell-node.stdout}"}
-        batch_node = PflowBatchNode(
-            inner_node=inner_node,
-            node_id="test-batch",
-            batch_config=batch_config,
-        )
+        batch_config = _make_batch_config("${shell-node.stdout}")
+        config = _make_node_config("test-batch", batch_config)
 
-        # Shared store simulates shell node that failed (stderr) but exited 0
         shared = {
             "shell-node": {
                 "stdout": "",  # Empty - will cause batch to fail
@@ -160,12 +177,11 @@ class TestBatchNodeUpstreamStderr:
             }
         }
 
-        # batch.prep() should raise TypeError with upstream stderr context
         with pytest.raises(TypeError) as exc_info:
-            batch_node.prep(shared)
+            execute_batch(inner_node, config, shared, _simple_execute_single_fn)
 
         error_message = str(exc_info.value)
-        assert "Batch items must be an array" in error_message
+        assert "batch items must be an array" in error_message
         assert "shell-node" in error_message
         assert "grep: invalid option" in error_message
 
@@ -178,28 +194,22 @@ class TestBatchNodeUpstreamStderr:
                 return {"result": "ok"}
 
         inner_node = MockNode()
-        batch_config = {"items": "${shell-node.stdout}"}
-        batch_node = PflowBatchNode(
-            inner_node=inner_node,
-            node_id="test-batch",
-            batch_config=batch_config,
-        )
+        batch_config = _make_batch_config("${shell-node.stdout}")
+        config = _make_node_config("test-batch", batch_config)
 
-        # Shell node with empty stdout but no stderr
         shared = {
             "shell-node": {
                 "stdout": "",
-                "stderr": "",  # No stderr
+                "stderr": "",
                 "exit_code": 0,
             }
         }
 
         with pytest.raises(TypeError) as exc_info:
-            batch_node.prep(shared)
+            execute_batch(inner_node, config, shared, _simple_execute_single_fn)
 
         error_message = str(exc_info.value)
-        assert "Batch items must be an array" in error_message
-        # Should NOT have upstream context section
+        assert "batch items must be an array" in error_message
         assert "Upstream node" not in error_message
 
     def test_batch_none_error_includes_upstream_stderr(self):
@@ -211,12 +221,8 @@ class TestBatchNodeUpstreamStderr:
                 return {"result": "ok"}
 
         inner_node = MockNode()
-        batch_config = {"items": "${shell-node.result}"}  # Accessing non-existent field
-        batch_node = PflowBatchNode(
-            inner_node=inner_node,
-            node_id="test-batch",
-            batch_config=batch_config,
-        )
+        batch_config = _make_batch_config("${shell-node.result}")  # Non-existent field
+        config = _make_node_config("test-batch", batch_config)
 
         shared = {
             "shell-node": {
@@ -227,7 +233,7 @@ class TestBatchNodeUpstreamStderr:
         }
 
         with pytest.raises(ValueError) as exc_info:
-            batch_node.prep(shared)
+            execute_batch(inner_node, config, shared, _simple_execute_single_fn)
 
         error_message = str(exc_info.value)
         assert "resolved to None" in error_message

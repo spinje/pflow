@@ -236,22 +236,17 @@ class TestNestedTemplateResolution:
         assert resolved["nested_empty"]["sub"] == {}
         assert resolved["nested_empty"]["items"] == []
 
-    def test_template_wrapper_integration(self):
-        """Test that template wrapper properly handles nested template params."""
-        from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+    def test_template_split_categorizes_nested_templates(self):
+        """Test that split_params correctly categorizes nested template params.
 
-        # Create a mock node
-        class MockNode:
-            def __init__(self):
-                self.params = {}
+        FIX HISTORY:
+        - Previously tested TemplateAwareNodeWrapper (removed in execution core redesign).
+        - Now tests split_params directly, which is the function that separates
+          template params from static params. Verifies nested dicts/lists with
+          templates are categorized as template params.
+        """
+        from pflow.runtime.engine.template_resolution import build_type_cache, split_params
 
-            def set_params(self, params):
-                self.params = params
-
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
-
-        # Set params with nested templates
         params = {
             "url": "https://api.example.com",
             "headers": {
@@ -263,12 +258,16 @@ class TestNestedTemplateResolution:
             },
         }
 
-        wrapper.set_params(params)
+        expected_types = build_type_cache(None)
+        template_params, static_params = split_params(params, expected_types)
 
         # Nested dicts/lists with templates should be categorized as template params
         # (has_templates() recursively checks nested structures)
-        assert "headers" in wrapper.template_params
-        assert "body" in wrapper.template_params
+        assert "headers" in template_params
+        assert "body" in template_params
+        # Static values should be in static_params
+        assert "url" in static_params
+        assert static_params["url"] == "https://api.example.com"
 
 
 class TestTemplateResolverBackwardCompatibility:

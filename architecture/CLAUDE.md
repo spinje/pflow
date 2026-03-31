@@ -56,7 +56,7 @@ Only notes that help you decide whether to read a file. If the filename is self-
 
 **overview.md** — The "why", not the "what". Read for design rationale and product philosophy. Does NOT describe the current system — `architecture.md` does that.
 
-**pflow-pocketflow-integration-guide.md** — For **pflow internal developers** writing platform nodes or extending compiler/runtime internals. NOT for users building workflows. Key insight: complexity belongs in the compiler/wrapper layer, not in nodes.
+**pflow-pocketflow-integration-guide.md** — For **pflow internal developers** writing platform nodes or extending compiler/runtime internals. NOT for users building workflows. Key insight: complexity belongs in the compiler/engine layer, not in nodes.
 
 ### Core Concepts
 
@@ -106,7 +106,7 @@ These `CLAUDE.md` files in the source tree provide implementation-level guidance
 | Architecture Concept | Implementation Guide | Key Content |
 |---------------------|---------------------|-------------|
 | Execution pipeline | `src/pflow/execution/CLAUDE.md` | ExecutionResult, formatters, status flow |
-| Compilation, wrapper chain | `src/pflow/runtime/CLAUDE.md` | Compiler stages, wrapper order |
+| Compilation, engine | `src/pflow/runtime/CLAUDE.md` | Compiler stages, engine architecture |
 | Node implementation | `src/pflow/nodes/CLAUDE.md` | Retry patterns, interface format |
 | CLI commands | `src/pflow/cli/CLAUDE.md` | Routing, subcommands |
 | Core components | `src/pflow/core/CLAUDE.md` | Workflow manager, validation, settings |

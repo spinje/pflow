@@ -1,28 +1,62 @@
-"""Tests for type validation in TemplateAwareNodeWrapper.
+"""Tests for type validation in template resolution.
 
 These tests verify that template resolution validates resolved types
 against expected parameter types from node metadata.
+
+Migrated from TemplateAwareNodeWrapper tests to use standalone functions
+in pflow.runtime.engine.template_resolution.
 """
+
+import json
 
 import pytest
 
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.engine.template_resolution import (
+    build_type_cache,
+    resolve_templates,
+    split_params,
+    validate_resolved_type,
+)
+from pflow.runtime.engine.types import TemplateConfig
 
 
-class DummyNode:
-    """Minimal node for testing template resolution and type validation."""
+def _resolve(
+    params: dict,
+    shared: dict,
+    interface_metadata: dict | None = None,
+    resolution_mode: str = "strict",
+    node_id: str = "test-node",
+) -> dict:
+    """Helper: split params, build config, resolve templates, return merged_params."""
+    expected_types = build_type_cache(interface_metadata)
+    template_params, static_params = split_params(params, expected_types)
+    config = TemplateConfig(
+        template_params=template_params,
+        static_params=static_params,
+        expected_types=expected_types,
+        resolution_mode=resolution_mode,
+    )
+    merged_params, _last_resolutions, _template_errors = resolve_templates(config, shared, node_id)
+    return merged_params
 
-    def __init__(self):
-        self.params = {}
-        self.params_at_execution = {}
 
-    def set_params(self, params):
-        self.params = params
-
-    def _run(self, shared):
-        # Capture params at execution time (before wrapper restores them)
-        self.params_at_execution = dict(self.params)
-        return "default"
+def _resolve_full(
+    params: dict,
+    shared: dict,
+    interface_metadata: dict | None = None,
+    resolution_mode: str = "strict",
+    node_id: str = "test-node",
+) -> tuple[dict, dict, list]:
+    """Helper: like _resolve but returns all three outputs."""
+    expected_types = build_type_cache(interface_metadata)
+    template_params, static_params = split_params(params, expected_types)
+    config = TemplateConfig(
+        template_params=template_params,
+        static_params=static_params,
+        expected_types=expected_types,
+        resolution_mode=resolution_mode,
+    )
+    return resolve_templates(config, shared, node_id)
 
 
 class TestBasicTypeValidation:
@@ -30,153 +64,79 @@ class TestBasicTypeValidation:
 
     def test_string_param_receives_string_no_error(self):
         """String parameter receiving string value should not raise error."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"prompt": "${message}"},
+            {"message": "Hello, World!"},
+            interface_metadata,
         )
 
-        # Set template param that will resolve to string
-        wrapper.set_params({"prompt": "${message}"})
-
-        # Execute with string in shared store
-        shared = {"message": "Hello, World!"}
-
-        # Should not raise error
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert node.params_at_execution["prompt"] == "Hello, World!"
+        assert result["prompt"] == "Hello, World!"
 
     def test_string_param_receives_dict_gets_coerced(self):
         """String parameter receiving dict should be coerced to JSON string."""
-        import json
-
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"prompt": "${data}"},
+            {"data": {"status": "ok", "result": "test"}},
+            interface_metadata,
         )
 
-        # Set template param that will resolve to dict
-        wrapper.set_params({"prompt": "${data}"})
-
-        # Execute with dict in shared store
-        shared = {"data": {"status": "ok", "result": "test"}}
-
-        # Should NOT raise - dict gets coerced to JSON string
-        result = wrapper._run(shared)
-        assert result == "default"
-
         # Verify the dict was serialized to JSON string
-        prompt_value = node.params_at_execution["prompt"]
-        assert isinstance(prompt_value, str)
-        assert json.loads(prompt_value) == {"status": "ok", "result": "test"}
+        assert isinstance(result["prompt"], str)
+        assert json.loads(result["prompt"]) == {"status": "ok", "result": "test"}
 
     def test_string_param_receives_list_gets_coerced(self):
         """String parameter receiving list should be coerced to JSON string."""
-        import json
-
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"prompt": "${items}"},
+            {"items": ["item1", "item2", "item3"]},
+            interface_metadata,
         )
 
-        # Set template param that will resolve to list
-        wrapper.set_params({"prompt": "${items}"})
-
-        # Execute with list in shared store
-        shared = {"items": ["item1", "item2", "item3"]}
-
-        # Should NOT raise - list gets coerced to JSON string
-        result = wrapper._run(shared)
-        assert result == "default"
-
         # Verify the list was serialized to JSON string
-        prompt_value = node.params_at_execution["prompt"]
-        assert isinstance(prompt_value, str)
-        assert json.loads(prompt_value) == ["item1", "item2", "item3"]
+        assert isinstance(result["prompt"], str)
+        assert json.loads(result["prompt"]) == ["item1", "item2", "item3"]
 
     def test_any_param_receives_dict_no_error(self):
         """'any' type parameter should accept dict without error."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "data", "type": "any"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"data": "${response}"},
+            {"response": {"status": "ok"}},
+            interface_metadata,
         )
 
-        # Set template param that will resolve to dict
-        wrapper.set_params({"data": "${response}"})
-
-        # Execute with dict in shared store
-        shared = {"response": {"status": "ok"}}
-
-        # Should not raise error (any type accepts anything)
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert node.params_at_execution["data"] == {"status": "ok"}
+        assert result["data"] == {"status": "ok"}
 
     def test_dict_param_receives_dict_no_error(self):
         """'dict' type parameter should accept dict without error."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "config", "type": "dict"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"config": "${settings}"},
+            {"settings": {"timeout": 30}},
+            interface_metadata,
         )
 
-        # Set template param that will resolve to dict
-        wrapper.set_params({"config": "${settings}"})
-
-        # Execute with dict in shared store
-        shared = {"settings": {"timeout": 30}}
-
-        # Should not raise error
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert node.params_at_execution["config"] == {"timeout": 30}
+        assert result["config"] == {"timeout": 30}
 
     def test_list_param_receives_list_no_error(self):
         """'list' type parameter should accept list without error."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "items", "type": "list"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"items": "${data}"},
+            {"data": [1, 2, 3]},
+            interface_metadata,
         )
 
-        # Set template param that will resolve to list
-        wrapper.set_params({"items": "${data}"})
-
-        # Execute with list in shared store
-        shared = {"data": [1, 2, 3]}
-
-        # Should not raise error
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert node.params_at_execution["items"] == [1, 2, 3]
+        assert result["items"] == [1, 2, 3]
 
 
 class TestComplexTemplates:
@@ -184,27 +144,16 @@ class TestComplexTemplates:
 
     def test_complex_template_with_dict_no_validation(self):
         """Complex template like 'text ${var}' is already string, no validation needed."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"prompt": "Status: ${response}"},
+            {"response": {"status": "ok"}},
+            interface_metadata,
         )
 
-        # Set complex template (will be stringified)
-        wrapper.set_params({"prompt": "Status: ${response}"})
-
-        # Execute with dict in shared store
-        shared = {"response": {"status": "ok"}}
-
-        # Should not raise error - complex template serializes to JSON
-        result = wrapper._run(shared)
-        assert result == "default"
         # Complex template should serialize dict to JSON
-        assert "status" in node.params_at_execution["prompt"]
+        assert "status" in result["prompt"]
 
 
 class TestPermissiveMode:
@@ -212,137 +161,101 @@ class TestPermissiveMode:
 
     def test_permissive_mode_coerces_dict_to_str(self):
         """Permissive mode should coerce dict to str without storing warning."""
-        import json
-
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="permissive",  # Permissive mode
-            interface_metadata=interface_metadata,
+
+        merged, _resolutions, template_errors = _resolve_full(
+            {"prompt": "${data}"},
+            {"data": {"status": "ok"}},
+            interface_metadata,
+            resolution_mode="permissive",
         )
 
-        # Set template param that will resolve to dict
-        wrapper.set_params({"prompt": "${data}"})
-
-        # Execute with dict in shared store
-        shared = {"data": {"status": "ok"}}
-
-        # Should not raise error - dict gets coerced to JSON string
-        result = wrapper._run(shared)
-        assert result == "default"
-
         # No template errors stored (coercion is silent)
-        assert "__template_errors__" not in shared or "test-node" not in shared.get("__template_errors__", {})
+        assert len(template_errors) == 0
 
         # Verify coercion happened
-        assert isinstance(node.params_at_execution["prompt"], str)
-        assert json.loads(node.params_at_execution["prompt"]) == {"status": "ok"}
+        assert isinstance(merged["prompt"], str)
+        assert json.loads(merged["prompt"]) == {"status": "ok"}
 
     def test_permissive_mode_coerces_list_to_str(self):
         """Permissive mode should coerce list to str without storing warning."""
-        import json
-
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "text", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="permissive",
-            interface_metadata=interface_metadata,
+
+        merged, _resolutions, template_errors = _resolve_full(
+            {"text": "${response}"},
+            {"response": ["a", "b", "c"]},
+            interface_metadata,
+            resolution_mode="permissive",
         )
 
-        # Set template that resolves to list
-        wrapper.set_params({"text": "${response}"})
-
-        # Execute
-        shared = {"response": ["a", "b", "c"]}
-        result = wrapper._run(shared)
-
         # Should execute successfully with coerced value
-        assert result == "default"
-        # Node should receive JSON string, not list
-        assert isinstance(node.params_at_execution["text"], str)
-        assert json.loads(node.params_at_execution["text"]) == ["a", "b", "c"]
+        assert len(template_errors) == 0
+        assert isinstance(merged["text"], str)
+        assert json.loads(merged["text"]) == ["a", "b", "c"]
 
 
 class TestErrorMessages:
     """Test error message formatting for type mismatches that still raise errors.
 
-    Note: dict/list → str is now auto-coerced (not an error).
+    Note: dict/list -> str is now auto-coerced (not an error).
     These tests verify error messages for other type mismatches.
     """
 
     def test_error_for_malformed_json_when_dict_expected(self):
-        """Malformed JSON → dict should raise clear error."""
-        node = DummyNode()
+        """Malformed JSON -> dict should raise clear error."""
         interface_metadata = {"inputs": [{"key": "config", "type": "dict"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
-
-        wrapper.set_params({"config": "${data}"})
-        # String that looks like JSON but is malformed
-        shared = {"data": "{invalid json}"}
 
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+            _resolve(
+                {"config": "${data}"},
+                {"data": "{invalid json}"},
+                interface_metadata,
+            )
 
         error_msg = str(exc_info.value)
         assert "Parameter 'config'" in error_msg
         assert "malformed JSON" in error_msg
 
     def test_error_for_malformed_json_when_list_expected(self):
-        """Malformed JSON → list should raise clear error."""
-        node = DummyNode()
+        """Malformed JSON -> list should raise clear error."""
         interface_metadata = {"inputs": [{"key": "items", "type": "list"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
-
-        wrapper.set_params({"items": "${data}"})
-        # String that looks like JSON array but is malformed
-        shared = {"data": "[invalid json]"}
 
         with pytest.raises(ValueError) as exc_info:
-            wrapper._run(shared)
+            _resolve(
+                {"items": "${data}"},
+                {"data": "[invalid json]"},
+                interface_metadata,
+            )
 
         error_msg = str(exc_info.value)
         assert "Parameter 'items'" in error_msg
         assert "malformed JSON" in error_msg
 
     def test_dict_to_str_no_longer_errors(self):
-        """Verify that dict → str is now coerced, not an error."""
-        import json
-
-        node = DummyNode()
+        """Verify that dict -> str is now coerced, not an error."""
         interface_metadata = {"inputs": [{"key": "prompt", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
 
-        wrapper.set_params({"prompt": "${data}"})
-        shared = {"data": {"key": "value"}}
+        result = _resolve(
+            {"prompt": "${data}"},
+            {"data": {"key": "value"}},
+            interface_metadata,
+        )
 
-        # Should NOT raise - gets coerced to JSON string
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert isinstance(node.params_at_execution["prompt"], str)
-        assert json.loads(node.params_at_execution["prompt"]) == {"key": "value"}
+        assert isinstance(result["prompt"], str)
+        assert json.loads(result["prompt"]) == {"key": "value"}
 
     def test_list_to_str_no_longer_errors(self):
-        """Verify that list → str is now coerced, not an error."""
-        import json
-
-        node = DummyNode()
+        """Verify that list -> str is now coerced, not an error."""
         interface_metadata = {"inputs": [{"key": "summary", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
 
-        wrapper.set_params({"summary": "${items}"})
-        shared = {"items": ["a", "b", "c"]}
+        result = _resolve(
+            {"summary": "${items}"},
+            {"items": ["a", "b", "c"]},
+            interface_metadata,
+        )
 
-        # Should NOT raise - gets coerced to JSON string
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert isinstance(node.params_at_execution["summary"], str)
-        assert json.loads(node.params_at_execution["summary"]) == ["a", "b", "c"]
+        assert isinstance(result["summary"], str)
+        assert json.loads(result["summary"]) == ["a", "b", "c"]
 
 
 class TestEdgeCases:
@@ -350,79 +263,58 @@ class TestEdgeCases:
 
     def test_no_metadata_skips_validation(self):
         """When no metadata available, validation should be skipped."""
-        node = DummyNode()
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=None,  # No metadata
+        result = _resolve(
+            {"prompt": "${data}"},
+            {"data": {"key": "value"}},
+            interface_metadata=None,
         )
 
-        # Set template that resolves to dict
-        wrapper.set_params({"prompt": "${data}"})
-        shared = {"data": {"key": "value"}}
-
-        # Should not raise error - no metadata means no validation
-        result = wrapper._run(shared)
-        assert result == "default"
+        # No metadata means no validation -- dict passes through
+        assert result["prompt"] == {"key": "value"}
 
     def test_incomplete_metadata_skips_validation(self):
         """When metadata missing type info, validation should be skipped."""
-        node = DummyNode()
-        # Metadata without type information
         interface_metadata = {"inputs": [{"key": "prompt"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(
-            node,
-            "test-node",
-            initial_params={},
-            template_resolution_mode="strict",
-            interface_metadata=interface_metadata,
+
+        result = _resolve(
+            {"prompt": "${data}"},
+            {"data": {"key": "value"}},
+            interface_metadata,
         )
 
-        # Set template that resolves to dict
-        wrapper.set_params({"prompt": "${data}"})
-        shared = {"data": {"key": "value"}}
-
-        # Should not raise error - missing type info means skip validation
-        result = wrapper._run(shared)
-        assert result == "default"
+        # Missing type info means skip validation -- dict passes through
+        assert result["prompt"] == {"key": "value"}
 
     def test_empty_dict_coerced_to_empty_json_object(self):
         """Empty dict should be coerced to '{}'."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "text", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
 
-        wrapper.set_params({"text": "${data}"})
-        shared = {"data": {}}  # Empty dict
+        result = _resolve(
+            {"text": "${data}"},
+            {"data": {}},
+            interface_metadata,
+        )
 
-        # Should NOT raise - empty dict coerced to "{}"
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert node.params_at_execution["text"] == "{}"
+        assert result["text"] == "{}"
 
     def test_empty_list_coerced_to_empty_json_array(self):
         """Empty list should be coerced to '[]'."""
-        node = DummyNode()
         interface_metadata = {"inputs": [{"key": "message", "type": "str"}], "params": []}
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
 
-        wrapper.set_params({"message": "${items}"})
-        shared = {"items": []}  # Empty list
+        result = _resolve(
+            {"message": "${items}"},
+            {"items": []},
+            interface_metadata,
+        )
 
-        # Should NOT raise - empty list coerced to "[]"
-        result = wrapper._run(shared)
-        assert result == "default"
-        assert node.params_at_execution["message"] == "[]"
+        assert result["message"] == "[]"
 
 
 class TestPerformance:
     """Test performance characteristics."""
 
-    def test_type_cache_built_once(self):
-        """Type cache should be built during __init__, not per resolution."""
-        node = DummyNode()
+    def test_type_cache_built_from_metadata(self):
+        """build_type_cache should extract all types from metadata."""
         interface_metadata = {
             "inputs": [
                 {"key": "prompt", "type": "str"},
@@ -432,26 +324,70 @@ class TestPerformance:
             "params": [{"key": "model", "type": "str"}, {"key": "temperature", "type": "float"}],
         }
 
-        wrapper = TemplateAwareNodeWrapper(node, "test-node", initial_params={}, interface_metadata=interface_metadata)
+        expected_types = build_type_cache(interface_metadata)
 
-        # Type cache should be built
-        assert hasattr(wrapper, "_expected_types")
-        assert len(wrapper._expected_types) == 5
-        assert wrapper._expected_types["prompt"] == "str"
-        assert wrapper._expected_types["model"] == "str"
-        assert wrapper._expected_types["images"] == "list[str]"
+        assert len(expected_types) == 5
+        assert expected_types["prompt"] == "str"
+        assert expected_types["model"] == "str"
+        assert expected_types["images"] == "list[str]"
 
-        # Cache should persist across multiple executions
-        wrapper.set_params({"prompt": "${msg}"})
-        shared1 = {"msg": "Hello"}
-        wrapper._run(shared1)
+    def test_type_cache_reusable(self):
+        """build_type_cache can be called once and reused across multiple resolutions."""
+        interface_metadata = {
+            "inputs": [{"key": "prompt", "type": "str"}],
+            "params": [],
+        }
 
-        # Same cache instance
-        cache_id = id(wrapper._expected_types)
+        expected_types = build_type_cache(interface_metadata)
 
-        wrapper.set_params({"prompt": "${msg2}"})
-        shared2 = {"msg2": "World"}
-        wrapper._run(shared2)
+        # Use same cache for multiple resolutions
+        tp1, sp1 = split_params({"prompt": "${msg}"}, expected_types)
+        config1 = TemplateConfig(
+            template_params=tp1,
+            static_params=sp1,
+            expected_types=expected_types,
+            resolution_mode="strict",
+        )
+        merged1, _, _ = resolve_templates(config1, {"msg": "Hello"}, "test")
 
-        # Cache should be the same object (not rebuilt)
-        assert id(wrapper._expected_types) == cache_id
+        tp2, sp2 = split_params({"prompt": "${msg2}"}, expected_types)
+        config2 = TemplateConfig(
+            template_params=tp2,
+            static_params=sp2,
+            expected_types=expected_types,
+            resolution_mode="strict",
+        )
+        merged2, _, _ = resolve_templates(config2, {"msg2": "World"}, "test")
+
+        assert merged1["prompt"] == "Hello"
+        assert merged2["prompt"] == "World"
+
+
+class TestValidateResolvedType:
+    """Test the validate_resolved_type standalone function."""
+
+    def test_returns_none_for_matching_types(self):
+        """No error when resolved type matches expected type."""
+        expected_types = {"config": "dict"}
+        result = validate_resolved_type("config", {"key": "value"}, "${data}", expected_types, "strict")
+        assert result is None
+
+    def test_returns_error_for_dict_when_str_expected(self):
+        """Returns error message when dict given but str expected."""
+        expected_types = {"prompt": "str"}
+        result = validate_resolved_type("prompt", {"key": "value"}, "${data}", expected_types, "strict")
+        assert result is not None
+        assert "prompt" in result
+        assert "str" in result
+
+    def test_returns_none_for_any_type(self):
+        """'any' type accepts everything."""
+        expected_types = {"data": "any"}
+        result = validate_resolved_type("data", {"key": "value"}, "${data}", expected_types, "strict")
+        assert result is None
+
+    def test_returns_none_for_unknown_param(self):
+        """Unknown param (not in expected_types) skips validation."""
+        expected_types = {"known": "str"}
+        result = validate_resolved_type("unknown", {"key": "value"}, "${data}", expected_types, "strict")
+        assert result is None

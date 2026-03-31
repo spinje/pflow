@@ -10,7 +10,8 @@ from datetime import timedelta
 from unittest.mock import Mock, patch
 
 from pflow.registry.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class TestBinaryDataRoundtrip:
@@ -88,11 +89,15 @@ class TestBinaryDataRoundtrip:
 
             # Compile workflow with template parameter
             registry = Registry()
-            flow = compile_ir_to_flow(workflow_ir, registry=registry, initial_params={"temp_file": str(temp_file)})
+            params = {"temp_file": str(temp_file)}
+            workflow = compile_workflow(workflow_ir, registry=registry, initial_params=params)
 
             # Execute workflow
             shared = {}
-            flow.run(shared)
+            shared.update({k: v for k, v in params.items() if not k.startswith("__")})
+            shared.update(workflow.resolved_defaults)
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
 
         # === Verification Phase ===
 
@@ -154,10 +159,14 @@ class TestBinaryDataRoundtrip:
 
         # Compile and execute
         registry = Registry()
-        flow = compile_ir_to_flow(workflow_ir, registry=registry, initial_params={"temp_file": str(temp_file)})
+        params = {"temp_file": str(temp_file)}
+        workflow = compile_workflow(workflow_ir, registry=registry, initial_params=params)
 
         shared = {}
-        flow.run(shared)
+        shared.update({k: v for k, v in params.items() if not k.startswith("__")})
+        shared.update(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify text handling
         assert temp_file.exists(), "Text file not created"
@@ -202,10 +211,11 @@ class TestBinaryDataRoundtrip:
 
             # Compile and execute
             registry = Registry()
-            flow = compile_ir_to_flow(workflow_ir, registry=registry)
+            workflow = compile_workflow(workflow_ir, registry=registry)
 
-            shared = {}
-            flow.run(shared)
+            shared = dict(workflow.resolved_defaults)
+            engine = WorkflowEngine()
+            engine.run(workflow, shared)
 
         # Verify JSON response is NOT base64 encoded
         assert shared["fetch"]["response_is_binary"] is False, "JSON incorrectly flagged as binary"

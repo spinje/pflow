@@ -4,245 +4,199 @@ CRITICAL: These tests verify that nodes are NOT re-executed when resuming from c
 This prevents duplicate side effects (API calls, file writes, etc.) which is the core promise
 of the checkpoint system.
 
+Migrated from wrapper-based tests to standalone instrumentation functions and
+compile_workflow + WorkflowEngine tests after the wrappers were replaced by
+the engine (Task 135/138).
+
 Bug History:
 - Line 137: Fixed assertion bug - was `node1._run.call_count == 1` (comparison, not assertion)
 - Replaced MagicMocks with real nodes to test actual behavior, not implementation
 """
 
-import tempfile
-from pathlib import Path
-from typing import Optional
+from typing import Any
 from unittest.mock import patch
 
-import pytest
-
-from pflow.pocketflow import Node
-from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
-
-
-class SideEffectNode(Node):
-    """Node with observable side effects to verify no re-execution."""
-
-    execution_count = 0  # Class variable to track executions across instances
-
-    def __init__(self, node_id: str, output_file: Optional[Path] = None):
-        super().__init__()
-        self.node_id = node_id
-        self.output_file = output_file
-        self.local_exec_count = 0
-
-    def _run(self, shared):
-        """Execute with side effects."""
-        # Track execution
-        SideEffectNode.execution_count += 1
-        self.local_exec_count += 1
-
-        # Observable side effect: append to file
-        if self.output_file:
-            with open(self.output_file, "a") as f:
-                f.write(f"{self.node_id} executed\n")
-
-        # Store output in shared
-        shared[self.node_id] = {"output": f"Result from {self.node_id}", "exec_count": self.local_exec_count}
-
-        return "success"
-
-
-class FailingNode(Node):
-    """Node that fails on first execution but could succeed after repair."""
-
-    def __init__(self, node_id: str, fail_message: str = "Node failed"):
-        super().__init__()
-        self.node_id = node_id
-        self.fail_message = fail_message
-
-    def _run(self, shared):
-        """Always fails to simulate error."""
-        raise ValueError(self.fail_message)
+from pflow.runtime.engine.instrumentation import (
+    cache_result,
+    check_cache_validity,
+    compute_config_hash,
+    compute_node_config,
+    enforce_loop_guard,
+    handle_cached_execution,
+    initialize_execution_state,
+)
 
 
 class TestCheckpointTracking:
-    """Test checkpoint tracking with real nodes and observable behavior."""
-
-    def setup_method(self):
-        """Reset execution counter before each test."""
-        SideEffectNode.execution_count = 0
+    """Test checkpoint tracking with standalone instrumentation functions."""
 
     def test_checkpoint_structure_initialization(self):
         """Test that checkpoint structure is properly initialized."""
-        node = SideEffectNode("test_node")
-        wrapper = InstrumentedNodeWrapper(node, "test_node", None, None)
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
 
-        shared = {}
-        wrapper._run(shared)
-
-        # Verify checkpoint structure
         assert "__execution__" in shared, "Checkpoint structure not initialized"
         checkpoint = shared["__execution__"]
         assert "completed_nodes" in checkpoint
         assert "node_actions" in checkpoint
         assert "failed_node" in checkpoint
+        assert checkpoint["completed_nodes"] == []
+        assert checkpoint["node_actions"] == {}
+        assert checkpoint["failed_node"] is None
 
-        # Verify this node was tracked
+    def test_cache_result_records_completion(self):
+        """Test that cache_result properly records node completion."""
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
+
+        cache_result("test_node", "hash123", "success", shared)
+
+        checkpoint = shared["__execution__"]
         assert "test_node" in checkpoint["completed_nodes"]
         assert checkpoint["node_actions"]["test_node"] == "success"
+        assert checkpoint["node_hashes"]["test_node"] == "hash123"
         assert checkpoint["failed_node"] is None
 
     def test_no_reexecution_for_completed_nodes(self):
-        """CRITICAL TEST: Verify completed nodes are NOT re-executed."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
-            output_file = Path(f.name)
+        """CRITICAL TEST: Verify completed nodes return cached action on second check."""
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
 
-        try:
-            node = SideEffectNode("api_call_node", output_file)
-            wrapper = InstrumentedNodeWrapper(node, "api_call_node", None, None)
+        # First execution: mark node as completed
+        config_hash = compute_config_hash(compute_node_config("TestNode", {"value": "hello"}, {}, None))
+        cache_result("api_call_node", config_hash, "success", shared)
 
-            # First execution
-            shared = {}
-            result1 = wrapper._run(shared)
+        # Second check: should be a cache hit
+        cached, cached_action = check_cache_validity("api_call_node", config_hash, shared)
 
-            assert result1 == "success"
-            assert node.local_exec_count == 1
-            assert output_file.read_text() == "api_call_node executed\n"
+        assert cached is True, "Completed node should be a cache hit"
+        assert cached_action == "success", "Cached action should match"
 
-            # Simulate resume: reset visit counts (as flow.run() does) then re-run
-            shared["__execution__"]["node_visit_counts"] = {}
-            result2 = wrapper._run(shared)
+    def test_cache_invalid_on_config_change(self):
+        """Test that cache is invalidated when node config changes."""
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
 
-            # CRITICAL ASSERTIONS:
-            assert result2 == "success", "Should return cached success"
-            assert node.local_exec_count == 1, "Node was re-executed! This would cause duplicate API calls!"
-            assert output_file.read_text() == "api_call_node executed\n", "Side effect was duplicated!"
+        # Mark completed with one config
+        old_hash = compute_config_hash(compute_node_config("TestNode", {"value": "hello"}, {}, None))
+        cache_result("test_node", old_hash, "success", shared)
 
-            # Verify cached action was used
-            assert shared["__execution__"]["node_actions"]["api_call_node"] == "success"
+        # Check with different config
+        new_hash = compute_config_hash(compute_node_config("TestNode", {"value": "changed"}, {}, None))
+        cached, cached_action = check_cache_validity("test_node", new_hash, shared)
 
-        finally:
-            output_file.unlink(missing_ok=True)
+        assert cached is False, "Should be cache miss when config changes"
 
     def test_failed_node_tracking(self):
         """Test that failed nodes are properly recorded for repair."""
-        node = FailingNode("payment_processor", "Payment gateway timeout")
-        wrapper = InstrumentedNodeWrapper(node, "payment_processor", None, None)
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
 
-        shared = {}
+        # Record an error result
+        cache_result("payment_processor", "hash123", "error", shared)
 
-        with pytest.raises(ValueError, match="Payment gateway timeout"):
-            wrapper._run(shared)
-
-        # Verify failure was tracked
         checkpoint = shared["__execution__"]
         assert checkpoint["failed_node"] == "payment_processor"
         assert "payment_processor" not in checkpoint["completed_nodes"]
-        assert "payment_processor" not in checkpoint.get("node_actions", {})
 
     def test_resume_workflow_simulation(self):
-        """Integration test: Simulate workflow resume after repair."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as f:
-            output_file = Path(f.name)
+        """Integration test: Simulate workflow resume after repair.
 
-        try:
-            # Create a 3-node workflow
-            node1 = SideEffectNode("fetch_data", output_file)
-            node2 = SideEffectNode("process_data", output_file)
-            node3 = SideEffectNode("save_results", output_file)
+        Three nodes: fetch_data, process_data, save_results.
+        First two complete successfully. On resume, they should be cache hits.
+        Third node completes on the resumed run.
+        """
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
 
-            wrapper1 = InstrumentedNodeWrapper(node1, "fetch_data", None, None)
-            wrapper2 = InstrumentedNodeWrapper(node2, "process_data", None, None)
-            wrapper3 = InstrumentedNodeWrapper(node3, "save_results", None, None)
+        config_hash_1 = compute_config_hash(compute_node_config("FetchNode", {}, {}, None))
+        config_hash_2 = compute_config_hash(compute_node_config("ProcessNode", {}, {}, None))
+        config_hash_3 = compute_config_hash(compute_node_config("SaveNode", {}, {}, None))
 
-            # Initial execution - node 1 and 2 succeed
-            shared = {}
-            wrapper1._run(shared)
-            wrapper2._run(shared)
+        # Initial execution - nodes 1 and 2 succeed
+        cache_result("fetch_data", config_hash_1, "success", shared)
+        cache_result("process_data", config_hash_2, "success", shared)
 
-            # Node 3 would fail here (simulated by not running it)
-            # Instead, mark it as failed manually
-            shared["__execution__"]["failed_node"] = "save_results"
+        # Mark node 3 as failed
+        shared["__execution__"]["failed_node"] = "save_results"
 
-            # Verify state before resume
-            assert len(shared["__execution__"]["completed_nodes"]) == 2
-            assert "fetch_data" in shared["__execution__"]["completed_nodes"]
-            assert "process_data" in shared["__execution__"]["completed_nodes"]
-            assert output_file.read_text() == "fetch_data executed\nprocess_data executed\n"
+        # Verify state before resume
+        assert len(shared["__execution__"]["completed_nodes"]) == 2
+        assert "fetch_data" in shared["__execution__"]["completed_nodes"]
+        assert "process_data" in shared["__execution__"]["completed_nodes"]
 
-            # SIMULATE RESUME after repair:
-            # Reset visit counts (as flow.run() does) then re-run
-            shared["__execution__"]["node_visit_counts"] = {}
+        # SIMULATE RESUME: check nodes 1 and 2 are cached
+        cached_1, action_1 = check_cache_validity("fetch_data", config_hash_1, shared)
+        cached_2, action_2 = check_cache_validity("process_data", config_hash_2, shared)
 
-            # Nodes 1 and 2 should NOT re-execute
-            result1 = wrapper1._run(shared)
-            result2 = wrapper2._run(shared)
+        assert cached_1 is True, "Node 1 should be cached on resume"
+        assert action_1 == "success"
+        assert cached_2 is True, "Node 2 should be cached on resume"
+        assert action_2 == "success"
 
-            assert result1 == "success"  # Cached
-            assert result2 == "success"  # Cached
-            assert node1.local_exec_count == 1, "Node 1 was re-executed during resume!"
-            assert node2.local_exec_count == 1, "Node 2 was re-executed during resume!"
+        # Node 3 should NOT be cached
+        cached_3, _ = check_cache_validity("save_results", config_hash_3, shared)
+        assert cached_3 is False, "Failed node should not be cached"
 
-            # Node 3 executes for first time
-            result3 = wrapper3._run(shared)
-            assert result3 == "success"
-            assert node3.local_exec_count == 1
-
-            # Verify file shows no duplicate executions
-            assert output_file.read_text() == ("fetch_data executed\nprocess_data executed\nsave_results executed\n"), (
-                "Duplicate side effects detected!"
-            )
-
-            # Verify final checkpoint state
-            assert len(shared["__execution__"]["completed_nodes"]) == 3
-            # Note: failed_node is not cleared - it preserves failure history
-
-        finally:
-            output_file.unlink(missing_ok=True)
+        # After node 3 executes successfully on resume
+        cache_result("save_results", config_hash_3, "success", shared)
+        assert len(shared["__execution__"]["completed_nodes"]) == 3
 
     def test_progress_callback_shows_cached_indicator(self):
-        """Test that cached nodes show '↻ cached' in progress."""
-        node = SideEffectNode("test_node")
-        wrapper = InstrumentedNodeWrapper(node, "test_node", None, None)
+        """Test that cached nodes trigger 'node_start' and 'node_cached' callbacks."""
+        events: list[tuple[str, str]] = []
 
-        events = []
-
-        def track_progress(node_id, event, duration, depth):
+        def track_progress(node_id: str, event: str, duration: Any, depth: int, **kwargs: Any) -> None:
             events.append((node_id, event))
 
-        # Pre-populate checkpoint with correct hash for SideEffectNode
-        # Hash computed from: {"params": {}, "type": "SideEffectNode"}
-        shared = {
+        config_hash = compute_config_hash(compute_node_config("SideEffectNode", {}, {}, None))
+
+        shared: dict[str, Any] = {
             "__execution__": {
                 "completed_nodes": ["test_node"],
                 "node_actions": {"test_node": "success"},
-                "node_hashes": {"test_node": "515c180fa50afc4e759fb44407525010"},  # Correct hash
+                "node_hashes": {"test_node": config_hash},
                 "failed_node": None,
+                "node_visit_counts": {},
             },
+            "__cache_hits__": [],
             "__progress_callback__": track_progress,
         }
 
-        wrapper._run(shared)
+        # Simulate cached execution via handle_cached_execution
+        handle_cached_execution(
+            "test_node",
+            shared,
+            "success",
+            set(shared.keys()),
+            "SideEffectNode",
+            {},
+            None,  # no trace collector
+        )
 
-        # The implementation now sends both "node_start" and "node_cached" for cached nodes
-        assert ("test_node", "node_start") in events  # Shows node name first
-        assert ("test_node", "node_cached") in events  # Then shows it was cached
-        assert ("test_node", "node_complete") not in events  # But doesn't re-execute
+        # The implementation sends both "node_start" and "node_cached" for cached nodes
+        assert ("test_node", "node_start") in events
+        assert ("test_node", "node_cached") in events
+        # But doesn't fire "node_complete" (that would mean re-execution)
+        assert ("test_node", "node_complete") not in events
 
-    def test_checkpoint_prevents_infinite_loops(self):
-        """Test that checkpoint prevents infinite retry loops."""
-        node = SideEffectNode("retry_node")
-        wrapper = InstrumentedNodeWrapper(node, "retry_node", None, None)
+    def test_loop_guard_invalidates_cache_for_revisited_nodes(self):
+        """Test that the loop guard invalidates cache for revisited nodes."""
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
 
-        shared = {}
+        config_hash = compute_config_hash(compute_node_config("TestNode", {}, {}, None))
+        cache_result("retry_node", config_hash, "success", shared)
 
-        # Execute node multiple times (simulate repeated flow.run() calls)
-        for _ in range(5):
-            # Reset visit counts as flow.run() would do between executions
-            if "__execution__" in shared and "node_visit_counts" in shared["__execution__"]:
-                shared["__execution__"]["node_visit_counts"] = {}
-            result = wrapper._run(shared)
-            assert result == "success"
+        # First visit: visit_count=1 (normal)
+        enforce_loop_guard("retry_node", shared)
+        cached, _ = check_cache_validity("retry_node", config_hash, shared)
+        assert cached is True, "First visit should see cache hit"
 
-        # Node should only execute once despite multiple calls
-        assert node.local_exec_count == 1, "Node executed multiple times - checkpoint failed!"
-        assert SideEffectNode.execution_count == 1, "Global execution count incorrect!"
+        # Second visit: visit_count=2, cache should be invalidated
+        enforce_loop_guard("retry_node", shared)
+        cached, _ = check_cache_validity("retry_node", config_hash, shared)
+        assert cached is False, "Revisited node should have invalidated cache"
 
 
 class TestCheckpointIntegration:

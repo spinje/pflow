@@ -25,7 +25,8 @@ from typing import Any
 from unittest.mock import patch
 
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 def _make_static_child_ir() -> dict[str, Any]:
@@ -152,9 +153,10 @@ def test_compile_workflow_called_once_for_static_child_ir():
         "pflow.runtime.workflow_executor.compile_workflow",
         side_effect=counting_compile_workflow,
     ):
-        flow = compile_ir_to_flow(parent_ir, registry=registry)
-        shared: dict[str, Any] = {}
-        result = flow.run(shared)
+        workflow = compile_workflow(parent_ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
 
     assert result == "default", (
         f"Workflow failed with result: {result}. "
@@ -187,9 +189,10 @@ def test_each_batch_item_produces_distinct_output():
     """
     parent_ir = _make_parent_ir_dynamic_child()
     registry = Registry()
-    flow = compile_ir_to_flow(parent_ir, registry=registry)
-    shared: dict[str, Any] = {}
-    result = flow.run(shared)
+    workflow = compile_workflow(parent_ir, registry=registry)
+    shared: dict[str, Any] = dict(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    result = engine.run(workflow, shared)
 
     assert result == "default", (
         f"Workflow failed with result: {result}. "

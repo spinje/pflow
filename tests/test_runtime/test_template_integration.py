@@ -1,12 +1,14 @@
 """Integration tests for the complete template variable system."""
 
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
 
 from pflow.pocketflow import Node
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class MockNode(Node):
@@ -29,6 +31,23 @@ class MockNode(Node):
         # normally and the proxy handles namespacing
         shared["result"] = exec_res
         return "default"
+
+
+def _compile_and_run(
+    ir: dict[str, Any],
+    registry: Any,
+    initial_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Helper: compile workflow, seed shared store, run engine, return shared."""
+    params = initial_params or {}
+    workflow = compile_workflow(ir, registry, initial_params=params)
+    shared: dict[str, Any] = {}
+    if params:
+        shared.update({k: v for k, v in params.items() if not k.startswith("__")})
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
+    return shared
 
 
 class TestCompilerIntegration:
@@ -69,11 +88,7 @@ class TestCompilerIntegration:
         """Test compilation of workflow without templates."""
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"static": "value", "number": 42}}], "edges": []}
 
-        flow = compile_ir_to_flow(ir, mock_registry)
-
-        # Execute flow
-        shared = {}
-        flow.run(shared)
+        shared = _compile_and_run(ir, mock_registry)
 
         # Node should have received static params unchanged (with namespacing)
         assert "node1" in shared
@@ -94,11 +109,7 @@ class TestCompilerIntegration:
         }
 
         initial_params = {"endpoint": "https://api.example.com", "count": 10}
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params)
-
-        # Execute flow
-        shared = {}
-        flow.run(shared)
+        shared = _compile_and_run(ir, mock_registry, initial_params)
 
         # Check that templates were resolved (with namespacing)
         assert "node1" in shared
@@ -137,12 +148,13 @@ class TestCompilerIntegration:
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${missing}"}}], "edges": []}
 
         # Compilation succeeds — template validation now in WorkflowValidator, not compiler
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params={})
+        workflow = compile_workflow(ir, mock_registry, initial_params={})
 
         # But should raise during execution due to runtime template validation
-        shared = {}
+        shared = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
         with pytest.raises(ValueError, match="Unresolved variables"):
-            flow.run(shared)
+            engine.run(workflow, shared)
 
     def test_shared_store_templates_not_validated(self, mock_registry):
         """Test that variables from node outputs are properly validated at runtime.
@@ -195,13 +207,18 @@ class TestCompilerIntegration:
         initial_params = {"provided_param": "https://example.com", "shared_store_var": "__placeholder__"}
 
         # Should pass compile-time validation
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params)
+        workflow = compile_workflow(ir, mock_registry, initial_params=initial_params)
+
+        # Seed shared store: initial_params (skip __ keys) then resolved_defaults
+        shared: dict = {}
+        shared.update({k: v for k, v in initial_params.items() if not k.startswith("__")})
+        shared.update(workflow.resolved_defaults)
 
         # Execute - but MockNode doesn't actually produce shared_store_var with
         # the expected structure, so runtime validation will catch the unresolved template
-        shared = {}
+        engine = WorkflowEngine()
         with pytest.raises(ValueError, match="Unresolved variables"):
-            flow.run(shared)
+            engine.run(workflow, shared)
 
 
 class TestMultiNodeWorkflow:
@@ -335,12 +352,12 @@ class TestMultiNodeWorkflow:
             "initial_url": "https://youtube.com/watch?v=xyz123",
             "video_data": "__placeholder__",
         }
-        flow = compile_ir_to_flow(ir, multi_node_registry, initial_params)
+        workflow = compile_workflow(ir, multi_node_registry, initial_params=initial_params)
 
         # We can't fully execute the flow with MockNodes, but we can verify
         # the template wrapper was applied to the consumer node
         # This tests that the compiler correctly identified and wrapped nodes with templates
-        assert flow is not None  # Flow compiled successfully
+        assert workflow is not None  # Workflow compiled successfully
 
 
 class TestRealWorldWorkflows:
@@ -457,7 +474,7 @@ class TestRealWorldWorkflows:
         }
 
         # Compile workflow
-        flow = compile_ir_to_flow(ir, real_registry, initial_params)
+        workflow = compile_workflow(ir, real_registry, initial_params=initial_params)
 
         # We can't fully execute since we're using mock nodes,
         # but we can verify the workflow compiles correctly
@@ -465,7 +482,7 @@ class TestRealWorldWorkflows:
         # During actual execution, the shared store would be populated:
         # - After fetch node: shared["transcript_data"] with video details
         # - After summarize node: shared["summary"] with bullet points
-        assert flow is not None
+        assert workflow is not None
 
         # The actual execution would resolve all templates:
         # - fetch node gets: url="https://youtube.com/watch?v=xyz"
@@ -510,10 +527,7 @@ class TestEdgeCases:
 
         # Initial params and shared store both have 'circular'
         initial_params = {"circular": "from_params"}
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params)
-
-        shared = {"circular": "from_shared"}
-        flow.run(shared)
+        shared = _compile_and_run(ir, mock_registry, initial_params)
 
         # Initial params should win (higher priority) - with namespacing
         assert "node1" in shared
@@ -532,11 +546,8 @@ class TestEdgeCases:
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"deep": "${a.b.c.d.e.f.g}"}}], "edges": []}
 
         nested_data = {"b": {"c": {"d": {"e": {"f": {"g": "deeply_nested_value"}}}}}}
-        flow = compile_ir_to_flow(ir, mock_registry, initial_params={"a": nested_data})
+        shared = _compile_and_run(ir, mock_registry, initial_params={"a": nested_data})
 
-        shared = {}
-
-        flow.run(shared)
         # With namespacing
         assert "node1" in shared
         assert "result" in shared["node1"]
@@ -556,7 +567,5 @@ class TestEdgeCases:
             "edges": [],
         }
 
-        # Should handle gracefully
-        flow = compile_ir_to_flow(ir, mock_registry)
-        shared = {}
-        flow.run(shared)  # Should not crash
+        # Should handle gracefully — should not crash with no params
+        _compile_and_run(ir, mock_registry)

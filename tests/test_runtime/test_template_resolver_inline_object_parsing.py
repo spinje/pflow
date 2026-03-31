@@ -269,7 +269,8 @@ class TestValidationRuntimeConsistency:
         1. The pattern is accepted by validation (implicit - compilation succeeds)
         2. Runtime resolves and parses the JSON correctly
         """
-        from pflow.runtime import compile_ir_to_flow
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
         from tests.shared.registry_utils import ensure_test_registry
 
         registry = ensure_test_registry()
@@ -297,11 +298,12 @@ class TestValidationRuntimeConsistency:
         }
 
         # Should compile without errors (validation passes)
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
+        workflow = compile_workflow(workflow_ir, registry=registry)
 
         # Should execute correctly (runtime works)
-        shared: dict = {}
-        flow.run(shared)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # jq could access .data.items, proving JSON was parsed
         assert "3" in shared["use-json"]["stdout"]

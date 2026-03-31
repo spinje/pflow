@@ -1,279 +1,216 @@
-"""Tests for instrumented node wrapper."""
+"""Tests for engine instrumentation behavior.
 
-import copy
+Tests timing capture, LLM usage tracking, trace recording, error handling,
+and execution transparency — all behaviors previously tested on the
+InstrumentedNodeWrapper, now implemented by the WorkflowEngine and
+standalone instrumentation functions.
+
+Migrated from wrapper-based tests to compile_workflow + WorkflowEngine
+and standalone function tests after the wrappers were replaced by the
+engine (Task 135/138).
+"""
+
 from typing import Any
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
 from pflow.pocketflow import Node
+from pflow.runtime.engine.instrumentation import (
+    call_completion_callback,
+    call_start_callback,
+    enrich_llm_cost,
+    initialize_execution_state,
+    record_trace,
+)
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
-from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
+
+# ---------------------------------------------------------------------------
+# Test nodes
+# ---------------------------------------------------------------------------
 
 
 class SimpleTestNode(Node):
-    """Simple test node for wrapper testing."""
+    """Simple test node that writes output to shared store."""
 
-    def __init__(self):
-        super().__init__()
-        self.exec_called = False
-        self.test_attribute = "test_value"
-        self.params = {}
-        self.successors = []
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        return shared
 
-    def exec(self, shared, **kwargs):
-        self.exec_called = True
-        shared["test_output"] = "executed"
+    def exec(self, prep_res: Any) -> str:
         return "test_result"
 
-    def _run(self, shared):
-        """Mock _run method that Node class would have."""
-        return self.exec(shared)
-
-    def custom_method(self):
-        """Custom method to test delegation."""
-        return "custom_result"
-
-    def set_params(self, params: dict[str, Any]) -> None:
-        """Set parameters on the node."""
-        self.params = params
+    def post(self, shared: dict[str, Any], prep_res: Any, exec_res: Any) -> str:
+        shared["test_output"] = "executed"
+        return "default"
 
 
 class ErrorNode(Node):
     """Node that raises an error for testing error handling."""
 
-    def exec(self, shared, **kwargs):
+    def prep(self, shared: dict[str, Any]) -> dict[str, Any]:
+        return shared
+
+    def exec(self, prep_res: Any) -> str:
         raise ValueError("Test error")
 
-    def _run(self, shared):
-        """Mock _run method that raises an error."""
-        return self.exec(shared)
+
+# ---------------------------------------------------------------------------
+# Test helpers
+# ---------------------------------------------------------------------------
 
 
-class LLMSimulatorNode(Node):
-    """Node that simulates LLM usage for testing."""
+def _run_single_node_workflow(
+    node_type: str,
+    params: dict[str, Any],
+    shared: dict[str, Any] | None = None,
+    metrics: Any = None,
+    trace: Any = None,
+) -> tuple[dict[str, Any], str]:
+    """Run a single-node workflow through compile_workflow + WorkflowEngine.
 
-    def exec(self, shared, **kwargs):
-        # Simulate LLM usage being set
-        shared["llm_usage"] = {
-            "model": "gpt-4",
-            "prompt_tokens": 100,
-            "completion_tokens": 50,
-            "total_tokens": 150,
+    Returns (shared_store, action_string).
+    """
+    from pflow.registry import Registry
+    from pflow.runtime import compile_workflow
+    from pflow.runtime.engine import WorkflowEngine
+
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [{"id": "test", "type": node_type, "params": params}],
+        "edges": [],
+    }
+
+    registry = Registry()
+    workflow = compile_workflow(ir_json=ir, registry=registry)
+
+    shared = shared or {}
+    shared.update(workflow.resolved_defaults)
+
+    engine = WorkflowEngine(metrics_collector=metrics, trace_collector=trace)
+    action = engine.run(workflow, shared)
+    return shared, action
+
+
+# ===========================================================================
+# Tests: Execution state initialization
+# ===========================================================================
+
+
+class TestExecutionStateInitialization:
+    """Test execution state initialization via standalone functions."""
+
+    def test_initialize_creates_full_structure(self):
+        """Test that initialize_execution_state creates the complete structure."""
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
+
+        assert "__execution__" in shared
+        checkpoint = shared["__execution__"]
+        assert "completed_nodes" in checkpoint
+        assert "node_actions" in checkpoint
+        assert "failed_node" in checkpoint
+        assert "node_hashes" in checkpoint
+        assert "node_visit_counts" in checkpoint
+        assert "__cache_hits__" in shared
+        assert shared["__cache_hits__"] == []
+
+    def test_initialize_is_idempotent(self):
+        """Calling initialize_execution_state twice does not reset existing data."""
+        shared: dict[str, Any] = {}
+        initialize_execution_state(shared)
+
+        # Add some data
+        shared["__execution__"]["completed_nodes"].append("node1")
+        shared["__cache_hits__"].append("node1")
+
+        # Call again — should NOT reset
+        initialize_execution_state(shared)
+        assert "node1" in shared["__execution__"]["completed_nodes"]
+        assert "node1" in shared["__cache_hits__"]
+
+    def test_initialize_adds_missing_keys_to_existing(self):
+        """If __execution__ exists but is missing some keys, they are added."""
+        shared: dict[str, Any] = {
+            "__execution__": {
+                "completed_nodes": ["old"],
+                "node_actions": {},
+                "failed_node": None,
+                # Missing: node_hashes, node_visit_counts
+            },
         }
-        shared["result"] = "LLM output"
-        return "llm_result"
+        initialize_execution_state(shared)
 
-    def _run(self, shared):
-        """Mock _run method that simulates LLM usage."""
-        return self.exec(shared)
-
-
-class TestInstrumentedWrapperBasics:
-    """Test basic wrapper functionality."""
-
-    def test_initialization(self):
-        """Test wrapper initialization."""
-        node = SimpleTestNode()
-        metrics = Mock()
-        trace = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_id", metrics, trace)
-
-        assert wrapper.inner_node is node
-        assert wrapper.node_id == "test_id"
-        assert wrapper.metrics is metrics
-        assert wrapper.trace is trace
-
-    def test_initialization_without_collectors(self):
-        """Test wrapper works without metrics or trace collectors."""
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_id", None, None)
-
-        assert wrapper.inner_node is node
-        assert wrapper.node_id == "test_id"
-        assert wrapper.metrics is None
-        assert wrapper.trace is None
-
-    def test_copies_flow_attributes(self):
-        """Test that Flow-required attributes are copied from inner node."""
-        node = SimpleTestNode()
-        node.successors = ["successor1", "successor2"]
-        node.params = {"param1": "value1"}
-
-        wrapper = InstrumentedNodeWrapper(node, "test_id")
-
-        assert wrapper.successors == ["successor1", "successor2"]
-        assert wrapper.params == {"param1": "value1"}
-
-    def test_attribute_delegation(self):
-        """Test that attributes are delegated to inner node."""
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_id")
-
-        # Test accessing regular attributes
-        assert wrapper.test_attribute == "test_value"
-        assert not wrapper.exec_called
-
-        # Test calling methods
-        assert wrapper.custom_method() == "custom_result"
-
-    def test_copy_operations_work_without_recursion(self):
-        """Test that wrapper can be copied without infinite recursion.
-
-        The wrapper's __getattr__ method prevents infinite recursion by
-        explicitly raising AttributeError for certain pickle-related attributes
-        when they're not found, preventing Python's copy mechanism from
-        entering an infinite loop.
-        """
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_id")
-
-        # The main test is that these operations complete without infinite recursion
-        import pickle
-
-        # Test shallow copy works
-        copied = copy.copy(wrapper)
-        assert copied.node_id == "test_id"
-
-        # Test deep copy works
-        deep_copied = copy.deepcopy(wrapper)
-        assert deep_copied.node_id == "test_id"
-
-        # Test pickle works (which uses __getstate__/__setstate__)
-        pickled = pickle.dumps(wrapper)
-        # Safe to use pickle.loads in test context - we're testing our own pickled data
-        unpickled = pickle.loads(pickled)  # noqa: S301
-        assert unpickled.node_id == "test_id"
-
-        # The AttributeError prevention is specifically for attributes that
-        # don't exist on the inner node but would cause recursion
-        class ObjectWithoutPickleMethods:
-            """Object that explicitly lacks pickle methods."""
-
-            def _run(self, shared):
-                return "result"
-
-        node2 = ObjectWithoutPickleMethods()
-        node2.successors = []
-        node2.params = {}
-        wrapper2 = InstrumentedNodeWrapper(node2, "test_id2")
-
-        # These specific attributes should raise AttributeError when not found
-        # to prevent recursion (not all objects have these)
-        for attr in ["__setstate__", "__getnewargs__", "__getnewargs_ex__"]:
-            if not hasattr(node2, attr):
-                with pytest.raises(AttributeError, match=f"object has no attribute '{attr}'"):
-                    getattr(wrapper2, attr)
+        assert "node_hashes" in shared["__execution__"]
+        assert "node_visit_counts" in shared["__execution__"]
+        # Existing data preserved
+        assert "old" in shared["__execution__"]["completed_nodes"]
 
 
-class TestOperatorDelegation:
-    """Test operator delegation for flow connections."""
-
-    def test_rshift_operator_delegation(self):
-        """Test >> operator is delegated to inner node."""
-        node = Mock()
-        node.successors = []
-        node.params = {}
-        node.__rshift__ = Mock(return_value="rshift_result")
-
-        wrapper = InstrumentedNodeWrapper(node, "test_id")
-        result = wrapper >> "action"
-
-        node.__rshift__.assert_called_once_with("action")
-        assert result == "rshift_result"
-
-    def test_sub_operator_delegation(self):
-        """Test - operator is delegated to inner node."""
-        node = Mock()
-        node.successors = []
-        node.params = {}
-        node.__sub__ = Mock(return_value="sub_result")
-
-        wrapper = InstrumentedNodeWrapper(node, "test_id")
-        result = wrapper - "action"
-
-        node.__sub__.assert_called_once_with("action")
-        assert result == "sub_result"
+# ===========================================================================
+# Tests: Timing capture through engine
+# ===========================================================================
 
 
 class TestTimingCapture:
-    """Test execution timing capture."""
+    """Test that execution timing is captured by the engine."""
 
-    @patch("time.perf_counter")
-    def test_timing_capture(self, mock_perf_counter):
-        """Test that execution time is measured correctly."""
-        # Setup mock timer to return predictable values
-        mock_perf_counter.side_effect = [1.0, 1.5]  # Start and end times
-
-        node = SimpleTestNode()
+    def test_metrics_receive_timing(self):
+        """Test that metrics collector receives timing data from a real workflow run."""
         metrics = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_id", metrics, None)
+        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, metrics=metrics)
 
-        shared = {}
-        wrapper._run(shared)
+        # Metrics collector should have been called with node_id and duration_ms
+        metrics.record_node_execution.assert_called_once()
+        call_args = metrics.record_node_execution.call_args
+        assert call_args[0][0] == "test"  # node_id
+        assert isinstance(call_args[0][1], float)  # duration_ms
+        assert call_args[0][1] >= 0
 
-        # Verify timing was calculated correctly (500ms)
-        metrics.record_node_execution.assert_called_once_with("test_id", 500.0)
 
-    @patch("time.perf_counter")
-    def test_timing_capture_with_error(self, mock_perf_counter):
-        """Test that timing is captured even when node raises an error."""
-        mock_perf_counter.side_effect = [2.0, 2.25]  # Start and end times
-
-        node = ErrorNode()
-        metrics = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_id", metrics, None)
-
-        shared = {}
-        with pytest.raises(ValueError, match="Test error"):
-            wrapper._run(shared)
-
-        # Verify timing was still recorded (250ms)
-        metrics.record_node_execution.assert_called_once_with("test_id", 250.0)
+# ===========================================================================
+# Tests: LLM usage tracking
+# ===========================================================================
 
 
 class TestLLMUsageTracking:
     """Test LLM usage tracking via trace collector.
 
-    After the removal of __llm_calls__ accumulator, LLM usage is tracked via the
-    WorkflowTraceCollector. The wrapper enriches llm_usage with cost_usd in-place
-    in shared store, and _record_trace() passes node_output to the trace collector
-    which captures llm_usage as llm_call in the event.
+    The engine enriches llm_usage with cost_usd in-place in shared store,
+    and record_trace passes node_output to the trace collector which captures
+    llm_usage as llm_call in the event.
     """
-
-    @staticmethod
-    def _make_namespaced_llm_node(node_id: str, usage_data: dict[str, Any]) -> type:
-        """Create an LLM node class that writes output under its namespace.
-
-        In a real workflow, the namespace wrapper writes node output under
-        shared[node_id]. These test nodes simulate that behavior directly.
-        """
-
-        class NamespacedLLMNode(Node):
-            def _run(self, shared: dict[str, Any]) -> str:
-                shared[node_id] = {"llm_usage": dict(usage_data), "result": "LLM output"}
-                # Also write at root level (as nodes do before namespacing moves it)
-                shared["llm_usage"] = shared[node_id]["llm_usage"]
-                return "done"
-
-        return NamespacedLLMNode
 
     def test_llm_usage_captured_in_trace(self):
         """Test that LLM usage is captured as llm_call in the trace event."""
         trace = WorkflowTraceCollector("test")
-        usage_data = {
-            "model": "gpt-4",
-            "prompt_tokens": 100,
-            "completion_tokens": 50,
-            "total_tokens": 150,
+
+        # Simulate what record_trace does with a node that has llm_usage
+        node_output = {
+            "llm_usage": {
+                "model": "gpt-4",
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "total_tokens": 150,
+            },
+            "result": "LLM output",
         }
-        node_cls = self._make_namespaced_llm_node("llm_node_1", usage_data)
-        wrapper = InstrumentedNodeWrapper(node_cls(), "llm_node_1", None, trace)
 
-        shared: dict[str, Any] = {}
-        wrapper._run(shared)
+        import time
 
-        # Trace collector should have one event with llm_call data
+        shared: dict[str, Any] = {"llm_node_1": node_output}
+        record_trace(
+            node_id="llm_node_1",
+            node_type_name="LLMNode",
+            shared=shared,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(),
+            last_resolutions={},
+            batch_trace_items=None,
+            child_trace_events=None,
+            node_params={},
+            trace_collector=trace,
+        )
+
         assert len(trace.events) == 1
         event = trace.events[0]
         assert "llm_call" in event
@@ -286,75 +223,78 @@ class TestLLMUsageTracking:
     def test_multiple_llm_calls_captured_in_trace(self):
         """Test that multiple LLM calls produce separate trace events."""
         trace = WorkflowTraceCollector("test")
-        usage_data = {
-            "model": "gpt-4",
-            "prompt_tokens": 100,
-            "completion_tokens": 50,
-            "total_tokens": 150,
-        }
+        import time
 
-        node1_cls = self._make_namespaced_llm_node("llm_node_1", usage_data)
-        wrapper1 = InstrumentedNodeWrapper(node1_cls(), "llm_node_1", None, trace)
+        for node_id, model in [("llm1", "gpt-3.5"), ("llm2", "gpt-4")]:
+            output = {"llm_usage": {"model": model, "tokens": 100}, "result": "output"}
+            shared: dict[str, Any] = {node_id: output}
 
-        node2_cls = self._make_namespaced_llm_node("llm_node_2", usage_data)
-        wrapper2 = InstrumentedNodeWrapper(node2_cls(), "llm_node_2", None, trace)
+            record_trace(
+                node_id=node_id,
+                node_type_name="LLMNode",
+                shared=shared,
+                start_time=time.perf_counter(),
+                shared_keys_before=set(),
+                last_resolutions={},
+                batch_trace_items=None,
+                child_trace_events=None,
+                node_params={},
+                trace_collector=trace,
+            )
 
-        shared: dict[str, Any] = {}
-        wrapper1._run(shared)
-        wrapper2._run(shared)
-
-        # Both calls should be captured as separate trace events
         assert len(trace.events) == 2
-        assert trace.events[0]["node_id"] == "llm_node_1"
-        assert trace.events[1]["node_id"] == "llm_node_2"
+        assert trace.events[0]["node_id"] == "llm1"
+        assert trace.events[1]["node_id"] == "llm2"
         assert "llm_call" in trace.events[0]
         assert "llm_call" in trace.events[1]
 
     def test_non_llm_node_trace_has_no_llm_call(self):
         """Test that non-LLM nodes produce trace events without llm_call."""
         trace = WorkflowTraceCollector("test")
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "regular_node", None, trace)
+        import time
 
-        shared: dict[str, Any] = {}
-        wrapper._run(shared)
+        shared: dict[str, Any] = {"regular_node": {"result": "data"}}
+        record_trace(
+            node_id="regular_node",
+            node_type_name="SimpleNode",
+            shared=shared,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(),
+            last_resolutions={},
+            batch_trace_items=None,
+            child_trace_events=None,
+            node_params={},
+            trace_collector=trace,
+        )
 
-        # Trace event should exist but without llm_call
         assert len(trace.events) == 1
         assert "llm_call" not in trace.events[0]
         assert trace.events[0]["node_id"] == "regular_node"
 
-    def _make_llm_cost_wrapper(self, trace: WorkflowTraceCollector | None = None) -> InstrumentedNodeWrapper:
-        """Create an InstrumentedNodeWrapper around a node that writes standard llm_usage."""
-        node_id = "llm_cost"
-
-        class LLMNodeWithStandardTokenKeys(Node):
-            """Node simulating LLM usage with input_tokens/output_tokens keys."""
-
-            def _run(self, shared: dict[str, Any]) -> str:
-                usage = {
-                    "model": "gpt-4",
-                    "input_tokens": 1000,
-                    "output_tokens": 500,
-                }
-                shared[node_id] = {"llm_usage": usage}
-                shared["llm_usage"] = usage
-                return "done"
-
-        return InstrumentedNodeWrapper(LLMNodeWithStandardTokenKeys(), node_id, None, trace)
-
     def test_llm_usage_enriched_with_cost_in_shared_store(self):
-        """After execution, shared store's llm_usage dict should have cost_usd added.
+        """After enrichment, shared store's llm_usage dict should have cost_usd added.
 
         Uses input_tokens/output_tokens keys (the standard keys enrich_llm_usage_with_cost reads).
         """
-        wrapper = self._make_llm_cost_wrapper()
+        node_id = "llm_cost"
+        shared: dict[str, Any] = {
+            node_id: {
+                "llm_usage": {
+                    "model": "gpt-4",
+                    "input_tokens": 1000,
+                    "output_tokens": 500,
+                },
+            },
+            "llm_usage": {
+                "model": "gpt-4",
+                "input_tokens": 1000,
+                "output_tokens": 500,
+            },
+        }
 
-        shared: dict[str, Any] = {}
-        wrapper._run(shared)
+        enrich_llm_cost(node_id, shared)
 
-        # The original llm_usage in shared store should be enriched in-place
-        assert "llm_usage" in shared
+        # Both root-level and namespaced llm_usage should be enriched
         assert "cost_usd" in shared["llm_usage"]
         # gpt-4: $30/1M input, $60/1M output
         # 1000 input = 0.03, 500 output = 0.03 => total = 0.06
@@ -362,387 +302,314 @@ class TestLLMUsageTracking:
         assert shared["llm_usage"]["cost_usd"] == 0.06
 
     def test_trace_event_has_cost_usd(self):
-        """The trace event's llm_call should contain cost_usd from enrichment."""
+        """The trace event's llm_call should contain cost_usd from enrichment.
+
+        In real execution, the node writes llm_usage into its namespaced output.
+        enrich_llm_cost finds it at shared[node_id]["llm_usage"] and enriches
+        it in-place. record_trace then reads the same dict via shared[node_id].
+        """
         trace = WorkflowTraceCollector("test")
-        wrapper = self._make_llm_cost_wrapper(trace)
+        import time
 
-        shared: dict[str, Any] = {}
-        wrapper._run(shared)
+        node_id = "llm_cost"
+        # Single shared usage dict (as in real namespaced execution)
+        usage = {
+            "model": "gpt-4",
+            "input_tokens": 1000,
+            "output_tokens": 500,
+        }
+        shared: dict[str, Any] = {
+            node_id: {"llm_usage": usage},
+        }
 
-        # Trace event should have llm_call with cost
+        # Enrich cost first (engine does this before record_trace)
+        enrich_llm_cost(node_id, shared)
+
+        record_trace(
+            node_id=node_id,
+            node_type_name="LLMNode",
+            shared=shared,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(),
+            last_resolutions={},
+            batch_trace_items=None,
+            child_trace_events=None,
+            node_params={},
+            trace_collector=trace,
+        )
+
         assert len(trace.events) == 1
         event = trace.events[0]
         assert "llm_call" in event
         assert "cost_usd" in event["llm_call"]
         assert isinstance(event["llm_call"]["cost_usd"], float)
         assert event["llm_call"]["cost_usd"] == 0.06
-        # The trace cost should match the shared store cost
-        assert event["llm_call"]["cost_usd"] == shared["llm_usage"]["cost_usd"]
+
+
+# ===========================================================================
+# Tests: Error handling
+# ===========================================================================
 
 
 class TestErrorHandling:
-    """Test error handling during node execution."""
+    """Test error handling during node execution via the engine."""
 
     def test_metrics_recorded_on_error(self):
-        """Test that metrics are still recorded when node fails."""
-        node = ErrorNode()
-        metrics = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "error_node", metrics, None)
+        """Test that metrics are still recorded when node raises during execution.
 
-        shared = {}
-        with pytest.raises(ValueError):
-            wrapper._run(shared)
+        Uses a shell node with working_dir pointing to a nonexistent directory,
+        which raises ValueError in prep() inside the engine's try/except.
+        """
+        metrics = Mock()
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "error_node",
+                    "type": "shell",
+                    "params": {"command": "echo hi", "cwd": "/nonexistent/path/xyz"},
+                },
+            ],
+            "edges": [],
+        }
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(metrics_collector=metrics)
+
+        with pytest.raises(ValueError, match="does not exist"):
+            engine.run(workflow, shared)
 
         # Verify metrics were recorded despite error
         metrics.record_node_execution.assert_called_once()
         call_args = metrics.record_node_execution.call_args
-        assert call_args[0][0] == "error_node"  # node_id
-        assert isinstance(call_args[0][1], float)  # duration_ms
+        assert call_args[0][0] == "error_node"
+        assert isinstance(call_args[0][1], float)
 
     def test_trace_recorded_on_error(self):
-        """Test that trace is recorded when node fails."""
-        node = ErrorNode()
-        trace = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "error_node", None, trace)
+        """Test that trace is recorded when node fails via compile_workflow + WorkflowEngine."""
+        trace = WorkflowTraceCollector("test")
 
-        shared = {"initial": "state"}
-        with pytest.raises(ValueError):
-            wrapper._run(shared)
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "error_node",
+                    "type": "shell",
+                    "params": {"command": "echo hi", "cwd": "/nonexistent/path/xyz"},
+                },
+            ],
+            "edges": [],
+        }
+
+        from pflow.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+        workflow = compile_workflow(ir_json=ir, registry=registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+
+        engine = WorkflowEngine(trace_collector=trace)
+
+        with pytest.raises(ValueError, match="does not exist"):
+            engine.run(workflow, shared)
 
         # Verify trace was recorded with error information
-        trace.record_node_execution.assert_called_once()
-        call_kwargs = trace.record_node_execution.call_args[1]
-        assert call_kwargs["node_id"] == "error_node"
-        assert call_kwargs["node_type"] == "ErrorNode"
-        assert not call_kwargs["success"]
-        assert call_kwargs["error"] == "Test error"
-        # Format 2.0.0: no shared_before/shared_after, uses node_output/mutations instead
-        assert "shared_before" not in call_kwargs
-        assert "node_output" in call_kwargs
-        assert "mutations" in call_kwargs
+        assert len(trace.events) == 1
+        event = trace.events[0]
+        assert event["node_id"] == "error_node"
+        assert event["node_type"] == "ShellNode"
+        assert not event["success"]
+        assert event["error"] is not None
+        assert "does not exist" in event["error"]
+        # Format 2.0.0: no shared_before/shared_after
+        assert "shared_before" not in event
+        assert "mutations" in event
 
-    def test_exception_propagated(self):
-        """Test that exceptions are re-raised after recording metrics."""
-        node = ErrorNode()
-        metrics = Mock()
-        trace = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "error_node", metrics, trace)
 
-        shared = {}
-        with pytest.raises(ValueError, match="Test error"):
-            wrapper._run(shared)
-
-        # Verify both collectors were called
-        metrics.record_node_execution.assert_called_once()
-        trace.record_node_execution.assert_called_once()
+# ===========================================================================
+# Tests: Trace collector integration
+# ===========================================================================
 
 
 class TestCollectorIntegration:
-    """Test integration with metrics and trace collectors."""
+    """Test integration with metrics and trace collectors through compile_workflow + WorkflowEngine."""
 
     def test_metrics_collector_integration(self):
         """Test integration with metrics collector."""
-        node = SimpleTestNode()
         metrics = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_node", metrics, None)
-
-        shared = {"input": "data"}
-        result = wrapper._run(shared)
+        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, metrics=metrics)
 
         # Verify metrics collector was called correctly
         metrics.record_node_execution.assert_called_once()
         call_args = metrics.record_node_execution.call_args
-        assert call_args[0][0] == "test_node"
+        assert call_args[0][0] == "test"  # node_id
         assert isinstance(call_args[0][1], float)  # duration_ms
-
-        # Verify node still executed correctly
-        assert result == "test_result"
-        assert shared["test_output"] == "executed"
 
     def test_trace_collector_integration(self):
         """Test integration with trace collector."""
-        node = SimpleTestNode()
-        trace = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_node", None, trace)
-
-        shared = {"input": "data"}
-        result = wrapper._run(shared)
+        trace = WorkflowTraceCollector("test")
+        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, trace=trace)
 
         # Verify trace collector was called correctly
-        trace.record_node_execution.assert_called_once()
-        call_kwargs = trace.record_node_execution.call_args[1]
-        assert call_kwargs["node_id"] == "test_node"
-        assert call_kwargs["node_type"] == "SimpleTestNode"
-        assert isinstance(call_kwargs["duration_ms"], float)
+        assert len(trace.events) == 1
+        event = trace.events[0]
+        assert event["node_id"] == "test"
+        assert event["success"]
+        assert isinstance(event["duration_ms"], float)
         # Format 2.0.0: no shared_before/shared_after
-        assert "shared_before" not in call_kwargs
-        assert "shared_after" not in call_kwargs
-        # node_output is the node's namespace from shared store
-        assert "node_output" in call_kwargs
-        # mutations computed from key sets
-        assert "mutations" in call_kwargs
-        assert call_kwargs["success"]
-        assert call_kwargs["error"] is None
-        assert call_kwargs["template_resolutions"] == {}
-
-        # Verify node still executed correctly
-        assert result == "test_result"
+        assert "shared_before" not in event
+        assert "shared_after" not in event
 
     def test_both_collectors_integration(self):
         """Test with both metrics and trace collectors."""
-        node = SimpleTestNode()
         metrics = Mock()
-        trace = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_node", metrics, trace)
-
-        shared = {}
-        wrapper._run(shared)
+        trace = WorkflowTraceCollector("test")
+        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, metrics=metrics, trace=trace)
 
         # Verify both collectors were called
         metrics.record_node_execution.assert_called_once()
-        trace.record_node_execution.assert_called_once()
+        assert len(trace.events) == 1
 
     def test_no_collectors(self):
-        """Test that wrapper works without any collectors."""
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_node", None, None)
-
-        shared = {}
-        result = wrapper._run(shared)
+        """Test that workflow works without any collectors."""
+        shared, action = _run_single_node_workflow("echo", {"message": "hello"})
 
         # Verify node executed successfully without collectors
-        assert result == "test_result"
-        assert shared["test_output"] == "executed"
+        assert shared["test"]["echo"] == "hello"
 
 
-class TestSetParams:
-    """Test set_params delegation."""
-
-    def test_set_params_delegation(self):
-        """Test that set_params is delegated to inner node."""
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
-
-        params = {"param1": "value1", "param2": "value2"}
-        wrapper.set_params(params)
-
-        assert node.params == params
-
-    def test_set_params_without_method(self):
-        """Test set_params when inner node doesn't have the method."""
-
-        # Create a simple object without set_params
-        class NodeWithoutSetParams:
-            def __init__(self):
-                self.params = {}
-                self.successors = []
-
-            def _run(self, shared):
-                return "result"
-
-        node = NodeWithoutSetParams()
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
-
-        params = {"param1": "value1"}
-        wrapper.set_params(params)
-
-        # When inner node doesn't have set_params, wrapper stores params directly
-        # Use object.__getattribute__ to bypass delegation and check wrapper's own attribute
-        stored_params = object.__getattribute__(wrapper, "params")
-        assert stored_params == params
-
-
-class TestCopyOperations:
-    """Test copy and deepcopy operations."""
-
-    def test_shallow_copy(self):
-        """Test shallow copy operation."""
-        node = SimpleTestNode()
-        node.successors = ["s1", "s2"]
-        node.params = {"p1": "v1"}
-        metrics = Mock()
-        trace = Mock()
-
-        wrapper = InstrumentedNodeWrapper(node, "test_node", metrics, trace)
-        wrapper.successors = ["s1", "s2"]
-        wrapper.params = {"p1": "v1"}
-
-        # Perform shallow copy
-        copied = copy.copy(wrapper)
-
-        # Verify copy structure
-        assert copied.node_id == "test_node"
-        assert copied.metrics is metrics  # Same reference
-        assert copied.trace is trace  # Same reference
-        assert copied.successors == ["s1", "s2"]
-        assert copied.params == {"p1": "v1"}
-
-        # Verify successors list was copied (not same reference)
-        assert copied.successors is not wrapper.successors
-
-        # Inner node should be shallow copied
-        assert copied.inner_node is not wrapper.inner_node
-        assert isinstance(copied.inner_node, type(wrapper.inner_node))
-
-    def test_deep_copy(self):
-        """Test deep copy operation."""
-        node = SimpleTestNode()
-        node.successors = ["s1", "s2"]
-        node.params = {"p1": {"nested": "value"}}
-        metrics = Mock()
-        trace = Mock()
-
-        wrapper = InstrumentedNodeWrapper(node, "test_node", metrics, trace)
-        wrapper.successors = ["s1", "s2"]
-        wrapper.params = {"p1": {"nested": "value"}}
-
-        # Perform deep copy
-        copied = copy.deepcopy(wrapper)
-
-        # Verify copy structure
-        assert copied.node_id == "test_node"
-        assert copied.metrics is metrics  # Not deep copied
-        assert copied.trace is trace  # Not deep copied
-        assert copied.successors == ["s1", "s2"]
-        assert copied.params == {"p1": {"nested": "value"}}
-
-        # Verify deep copy (different references)
-        assert copied.successors is not wrapper.successors
-        assert copied.params is not wrapper.params
-        assert copied.params["p1"] is not wrapper.params["p1"]
-
-        # Inner node should be deep copied
-        assert copied.inner_node is not wrapper.inner_node
-
-    def test_copy_without_attributes(self):
-        """Test copy when node doesn't have successors or params."""
-        node = Mock()
-        node._run = Mock(return_value="result")
-        # Don't set successors or params
-
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
-
-        # Should copy without error
-        copied = copy.copy(wrapper)
-        assert copied.node_id == "test_node"
-
-        # Deep copy should also work
-        deep_copied = copy.deepcopy(wrapper)
-        assert deep_copied.node_id == "test_node"
+# ===========================================================================
+# Tests: Engine transparency
+# ===========================================================================
 
 
 class TestTransparency:
-    """Test that wrapper is transparent to inner node behavior."""
+    """Test that the engine doesn't change node behavior."""
 
-    def test_wrapper_transparency(self):
-        """Test that wrapper doesn't change inner node behavior."""
-        # Run node directly
-        node = SimpleTestNode()
-        shared_direct = {"input": "test"}
-        result_direct = node._run(shared_direct)
+    def test_engine_transparency_via_workflow(self):
+        """Test that engine execution produces correct node outputs."""
+        shared, action = _run_single_node_workflow("echo", {"message": "hello world"})
 
-        # Run same node through wrapper
-        wrapped_node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(wrapped_node, "test_node")
-        shared_wrapped = {"input": "test"}
-        result_wrapped = wrapper._run(shared_wrapped)
-
-        # Results should be identical
-        assert result_direct == result_wrapped
-        assert shared_direct["test_output"] == shared_wrapped["test_output"]
-
-        # Both nodes should have been executed
-        assert node.exec_called
-        assert wrapped_node.exec_called
+        # echo node writes output to shared[node_id]
+        assert shared["test"]["echo"] == "hello world"
 
     def test_shared_store_modifications_preserved(self):
-        """Test that modifications to shared store are preserved."""
+        """Test that modifications to shared store are preserved through the engine."""
+        shared, action = _run_single_node_workflow("shell", {"command": "echo 'hello world'"})
 
-        class ModifyingNode(Node):
-            def _run(self, shared):
-                shared["added_key"] = "added_value"
-                shared["counter"] = shared.get("counter", 0) + 1
-                if "remove_me" in shared:
-                    del shared["remove_me"]
-                return "done"
+        # Shell node writes stdout to shared[node_id]
+        assert "test" in shared
+        assert "stdout" in shared["test"]
+        assert "hello world" in shared["test"]["stdout"]
 
-        node = ModifyingNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
 
-        shared = {"counter": 5, "remove_me": "value", "keep_me": "value"}
-        result = wrapper._run(shared)
+# ===========================================================================
+# Tests: Progress callbacks
+# ===========================================================================
 
-        # Verify all modifications were preserved
-        assert result == "done"
-        assert shared["added_key"] == "added_value"
-        assert shared["counter"] == 6
-        assert "remove_me" not in shared
-        assert shared["keep_me"] == "value"
 
-    def test_return_value_preserved(self):
-        """Test that return values are preserved exactly."""
+class TestProgressCallbacks:
+    """Test progress callback integration with standalone functions."""
 
-        class ComplexReturnNode(Node):
-            def _run(self, shared):
-                return {"complex": "structure", "list": [1, 2, 3], "nested": {"a": "b"}}
+    def test_start_callback_called(self):
+        """Test that call_start_callback fires the callback."""
+        events: list[tuple[str, str]] = []
 
-        node = ComplexReturnNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
+        def callback(node_id: str, event: str, *args: Any, **kwargs: Any) -> None:
+            events.append((node_id, event))
 
-        shared = {}
-        result = wrapper._run(shared)
+        shared: dict[str, Any] = {"__progress_callback__": callback}
+        call_start_callback("my_node", shared)
 
-        assert result == {"complex": "structure", "list": [1, 2, 3], "nested": {"a": "b"}}
+        assert ("my_node", "node_start") in events
+
+    def test_completion_callback_called(self):
+        """Test that call_completion_callback fires the callback."""
+        events: list[tuple[str, str]] = []
+
+        def callback(node_id: str, event: str, *args: Any, **kwargs: Any) -> None:
+            events.append((node_id, event))
+
+        shared: dict[str, Any] = {"__progress_callback__": callback}
+        call_completion_callback("my_node", shared, "default", 100.0)
+
+        assert ("my_node", "node_complete") in events
+
+    def test_no_callback_no_error(self):
+        """Test that missing callback doesn't cause errors."""
+        shared: dict[str, Any] = {}
+        # These should not raise
+        call_start_callback("my_node", shared)
+        call_completion_callback("my_node", shared, "default", 100.0)
+
+
+# ===========================================================================
+# Tests: Edge cases
+# ===========================================================================
 
 
 class TestEdgeCases:
     """Test edge cases and boundary conditions."""
 
     def test_empty_shared_store(self):
-        """Test execution with empty shared store."""
-        node = SimpleTestNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
+        """Test execution with empty shared store via compile_workflow + WorkflowEngine."""
+        shared, action = _run_single_node_workflow("echo", {"message": "test"})
 
-        shared: dict[str, Any] = {}
-        result = wrapper._run(shared)
-
-        assert result == "test_result"
-        # __llm_calls__ is no longer initialized by the wrapper
+        # __llm_calls__ is no longer initialized by the engine
         assert "__llm_calls__" not in shared
-        assert shared["test_output"] == "executed"
 
     def test_llm_usage_overwrite_captured_in_trace(self):
-        """Test that each LLM call's usage is captured separately in trace events.
+        """Test that each node's LLM usage is captured in its own trace event.
 
-        When two nodes both write llm_usage to the shared store (overwriting each
-        other), both should still be captured as separate trace events because the
-        trace collector records each node's execution independently.
+        When two nodes both write llm_usage (overwriting at root level),
+        both should still be captured as separate trace events because
+        record_trace reads from shared[node_id] (namespaced).
         """
         trace = WorkflowTraceCollector("test")
+        import time
 
-        class OverwritingLLMNode(Node):
-            def __init__(self, node_id: str, usage_data: dict[str, Any]):
-                self._node_id = node_id
-                self.usage_data = usage_data
+        # First node
+        shared: dict[str, Any] = {
+            "llm1": {"llm_usage": {"model": "gpt-3.5", "tokens": 100}},
+            "llm_usage": {"model": "gpt-3.5", "tokens": 100},
+        }
+        record_trace(
+            node_id="llm1",
+            node_type_name="LLMNode",
+            shared=shared,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(),
+            last_resolutions={},
+            batch_trace_items=None,
+            child_trace_events=None,
+            node_params={},
+            trace_collector=trace,
+        )
 
-            def _run(self, shared: dict[str, Any]) -> str:
-                # Write under namespace (simulating namespace wrapper)
-                shared[self._node_id] = {"llm_usage": dict(self.usage_data)}
-                # Also write at root level (would be overwritten by next node)
-                shared["llm_usage"] = self.usage_data
-                return "done"
-
-        # First call sets one usage
-        node1 = OverwritingLLMNode("llm1", {"model": "gpt-3.5", "tokens": 100})
-        wrapper1 = InstrumentedNodeWrapper(node1, "llm1", None, trace)
-
-        # Second call overwrites root llm_usage with different data
-        node2 = OverwritingLLMNode("llm2", {"model": "gpt-4", "tokens": 200})
-        wrapper2 = InstrumentedNodeWrapper(node2, "llm2", None, trace)
-
-        shared: dict[str, Any] = {}
-        wrapper1._run(shared)
-        wrapper2._run(shared)
+        # Second node overwrites root level
+        shared["llm2"] = {"llm_usage": {"model": "gpt-4", "tokens": 200}}
+        shared["llm_usage"] = {"model": "gpt-4", "tokens": 200}
+        record_trace(
+            node_id="llm2",
+            node_type_name="LLMNode",
+            shared=shared,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(),
+            last_resolutions={},
+            batch_trace_items=None,
+            child_trace_events=None,
+            node_params={},
+            trace_collector=trace,
+        )
 
         # Both usages should be captured in separate trace events
         assert len(trace.events) == 2
@@ -753,36 +620,21 @@ class TestEdgeCases:
         assert trace.events[1]["llm_call"]["tokens"] == 200
         assert trace.events[1]["node_id"] == "llm2"
 
-        # The last usage should still be in shared (not removed)
-        assert shared["llm_usage"]["model"] == "gpt-4"
+    def test_record_trace_without_collector(self):
+        """Test that record_trace with no collector is a no-op."""
+        import time
 
-    def test_none_return_value(self):
-        """Test handling of None return value."""
-
-        class NoneReturnNode(Node):
-            def _run(self, shared):
-                return None
-
-        node = NoneReturnNode()
-        wrapper = InstrumentedNodeWrapper(node, "test_node")
-
-        shared = {}
-        result = wrapper._run(shared)
-
-        assert result is None
-
-    @patch("time.perf_counter")
-    def test_zero_duration(self, mock_perf_counter):
-        """Test handling of zero duration (same start and end time)."""
-        # Same time for start and end
-        mock_perf_counter.side_effect = [1.0, 1.0]
-
-        node = SimpleTestNode()
-        metrics = Mock()
-        wrapper = InstrumentedNodeWrapper(node, "test_node", metrics)
-
-        shared = {}
-        wrapper._run(shared)
-
-        # Should record 0.0 duration
-        metrics.record_node_execution.assert_called_once_with("test_node", 0.0)
+        shared: dict[str, Any] = {"test": {"result": "data"}}
+        # Should not raise
+        record_trace(
+            node_id="test",
+            node_type_name="TestNode",
+            shared=shared,
+            start_time=time.perf_counter(),
+            shared_keys_before=set(),
+            last_resolutions={},
+            batch_trace_items=None,
+            child_trace_events=None,
+            node_params={},
+            trace_collector=None,
+        )

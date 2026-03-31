@@ -343,8 +343,8 @@ def resolve_templates(  # noqa: C901
             )
             if type_error:
                 if template_config.resolution_mode == "strict":
-                    # Store partial resolutions for trace before raising
-                    last_resolutions = {
+                    # Store partial resolutions on exception for trace capture
+                    partial = {
                         k: {"template": template_config.template_params[k], "resolved": resolved_params[k]}
                         for k in resolved_params
                     }
@@ -354,7 +354,9 @@ def resolve_templates(  # noqa: C901
                     upstream_context = get_upstream_stderr(str(template), context)
                     if upstream_context:
                         type_error += upstream_context
-                    raise ValueError(type_error)
+                    exc = ValueError(type_error)
+                    exc._partial_resolutions = partial  # type: ignore[attr-defined]
+                    raise exc
                 else:
                     template_errors.append({
                         "message": type_error,
@@ -382,12 +384,14 @@ def resolve_templates(  # noqa: C901
                 upstream_context = get_upstream_stderr(str(template), context)
                 if upstream_context:
                     error_msg += upstream_context
-                # Store partial resolutions for trace before raising
-                last_resolutions = {
+                # Store partial resolutions on exception for trace capture
+                partial = {
                     k: {"template": template_config.template_params[k], "resolved": resolved_params[k]}
                     for k in resolved_params
                 }
-                raise ValueError(error_msg)
+                exc = ValueError(error_msg)
+                exc._partial_resolutions = partial  # type: ignore[attr-defined]
+                raise exc
             else:
                 template_errors.append({
                     "message": error_msg,

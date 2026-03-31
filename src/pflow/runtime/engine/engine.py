@@ -54,6 +54,18 @@ class WorkflowEngine:
 
     def run(self, workflow: CompiledWorkflow, shared: dict[str, Any]) -> str:
         """Execute a compiled workflow. Returns action string."""
+        # 0. Validate --only target exists
+        if self.only_node and self.only_node not in workflow.node_configs:
+            from pflow.core.exceptions import CompilationError
+
+            available = sorted(workflow.node_configs.keys())
+            raise CompilationError(
+                f"Node '{self.only_node}' not found",
+                phase="only_node_resolution",
+                details={"available_nodes": available},
+                suggestion=f"Available nodes: {', '.join(available)}",
+            )
+
         # 1. Reset visit counts
         if "__execution__" in shared and "node_visit_counts" in shared["__execution__"]:
             shared["__execution__"]["node_visit_counts"] = {}
@@ -114,16 +126,6 @@ class WorkflowEngine:
         # 3. Loop guard
         visit_counts = enforce_loop_guard(config.node_id, shared)
 
-        # 4. Resolve templates EARLY — needed for both cache key and execution
-        #    SKIP for batch nodes: templates are resolved per-item in _execute_single_node
-        last_resolutions: dict = {}
-        template_errors: list = []
-        resolved_params: Optional[dict] = None
-        if config.template_config and not config.batch_config:
-            resolved_params, last_resolutions, template_errors = resolve_templates(
-                config.template_config, shared, config.node_id
-            )
-
         # 5. Compute config hash (for both cache checks)
         config_hash = compute_config_hash(
             compute_node_config(
@@ -134,41 +136,62 @@ class WorkflowEngine:
             )
         )
 
-        # 6. Memoization cache check
-        hit, result, cache_key = check_memo_cache(
-            config.node_id,
-            config.node_type_name,
-            config_hash,
-            config.batch_config,
-            shared,
-            visit_counts,
-            resolved_params=resolved_params,
-        )
-        if hit:
-            return str(result)
-
-        # 7. In-process cache check
-        cached, cached_action = check_cache_validity(config.node_id, config_hash, shared)
-        if cached:
-            return str(
-                handle_cached_execution(
-                    config.node_id,
-                    shared,
-                    cached_action,
-                    shared_keys_before,
-                    config.node_type_name,
-                    node.params,
-                    self.trace,
-                )
-            )
-
-        # 8. Progress callback (node_start)
-        call_start_callback(config.node_id, shared)
-
+        # 4-8 are inside try so template errors get recorded in trace
+        last_resolutions: dict = {}
+        template_errors: list = []
+        resolved_params: Optional[dict] = None
         batch_trace_items: Optional[list] = None
         child_trace_events: Optional[list] = None
 
         try:
+            # 4. Resolve templates EARLY — needed for both cache key and execution
+            #    SKIP for batch nodes: templates are resolved per-item in _execute_single_node
+            if config.template_config and not config.batch_config:
+                resolved_params, last_resolutions, template_errors = resolve_templates(
+                    config.template_config, shared, config.node_id
+                )
+
+            # 6. Memoization cache check
+            hit, result, cache_key = check_memo_cache(
+                config.node_id,
+                config.node_type_name,
+                config_hash,
+                config.batch_config,
+                shared,
+                visit_counts,
+                resolved_params=resolved_params,
+            )
+            if hit:
+                return str(
+                    handle_cached_execution(
+                        config.node_id,
+                        shared,
+                        result,
+                        shared_keys_before,
+                        config.node_type_name,
+                        node.params,
+                        self.trace,
+                    )
+                )
+
+            # 7. In-process cache check
+            cached, cached_action = check_cache_validity(config.node_id, config_hash, shared)
+            if cached:
+                return str(
+                    handle_cached_execution(
+                        config.node_id,
+                        shared,
+                        cached_action,
+                        shared_keys_before,
+                        config.node_type_name,
+                        node.params,
+                        self.trace,
+                    )
+                )
+
+            # 8. Progress callback (node_start)
+            call_start_callback(config.node_id, shared)
+
             # 9. Execute: batch or single
             if config.batch_config:
                 action, batch_trace_items = execute_batch(node, config, shared, self._execute_single_node)
@@ -252,13 +275,16 @@ class WorkflowEngine:
 
             enrich_llm_cost(config.node_id, shared)
 
+            # Extract partial resolutions from template errors (attached by resolve_templates)
+            error_resolutions = getattr(e, "_partial_resolutions", None) or last_resolutions
+
             record_trace(
                 config.node_id,
                 config.node_type_name,
                 shared,
                 start_time,
                 shared_keys_before,
-                last_resolutions,
+                error_resolutions,
                 batch_trace_items,
                 child_trace_events,
                 node.params,
@@ -266,8 +292,15 @@ class WorkflowEngine:
                 error=e,
             )
 
+            # Notify progress display that node failed
+            call_completion_callback(config.node_id, shared, "error", duration_ms, error=e)
+
             if "__execution__" in shared:
                 shared["__execution__"]["failed_node"] = config.node_id
+
+            # Annotate exception with node_id so runner can include it in error dict
+            if not hasattr(e, "_pflow_node_id"):
+                e._pflow_node_id = config.node_id  # type: ignore[attr-defined]
 
             raise
 

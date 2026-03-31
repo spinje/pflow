@@ -199,22 +199,269 @@ Created #185 for the same pattern in `ValidationError` (17 imports, 11 lazy, in 
 
 ---
 
-## Handoff Notes for Next Agent (Phase 5+)
+## Phase 5 — COMPLETE
 
-### Current state
-- **Phases 1-4 complete**. Engine is the active execution path for ALL workflows.
-- **4655/4679 tests pass** (99.5%). 24 failures are tests inspecting wrapper chain internals.
-- **No production code broken**. Wrappers still exist as dead code (Phase 5 deletes them).
-- **`compile_ir_to_flow()` is now a thin shim** — it calls `compile_workflow()` + wraps in `_CompiledWorkflowShim`. All real execution goes through the engine.
+**Date**: 2026-03-31
+**Result**: `make check` passes clean. 4076 tests pass, 33 fail, 26 files have collection errors (all import-related, Phase 6 territory).
 
-### Architecture after Phase 4
+### Changes made
+
+**PocketFlow slimmed** — `src/pflow/pocketflow/__init__.py` rewritten from ~205 lines (10 classes) to ~85 lines (3 classes). Kept: `BaseNode`, `_ConditionalTransition`, `Node`. Removed: `Flow`, `BatchNode`, `BatchFlow`, all async variants.
+
+**Dead code removed from compiler.py**:
+- Functions deleted: `_apply_template_wrapping`, `_create_single_node`, `_instantiate_nodes`, `_apply_run_hooks`, `_apply_only_node_stop`
+- Imports deleted: `from pflow.pocketflow import BaseNode`, `from ..wrappers.namespaced_wrapper import NamespacedNodeWrapper`, `from ..wrappers.template_wrapper import TemplateAwareNodeWrapper`
+- Ruff auto-removed unused `TemplateResolver` import (only used by deleted `_apply_template_wrapping`)
+
+**Wrappers directory deleted** — entire `src/pflow/runtime/wrappers/` removed (9 files, 3,924 lines). Copies of standalone utilities already exist in `engine/`.
+
+**test_pocketflow/ deleted** — 9 test files testing removed `Flow`, `BatchNode`, async classes.
+
+**PFLOW_MODIFICATIONS.md updated** — documented the redesign rationale, what was removed and why.
+
+### Key decisions
+
+1. **No deviations from plan** — Phase 5 was purely destructive (delete dead code). All changes were mechanical.
+2. **Sibling module lazy imports NOT changed** — `compile_validation.py`, `mcp_resolution.py`, `node_loader.py`, `ir_preparation.py` still lazy-import `CompilationError` from `compiler.py`. They work via re-export and are tracked by #185.
+3. **`compile_ir_to_flow()` kept** — still needed as backward-compat shim for tests that haven't been updated yet.
+
+### Failure analysis (all Phase 6)
+
+**26 collection errors**: Tests that `import` from `pflow.runtime.wrappers.*` — the module no longer exists.
+
+**33 test failures** (all import-related, not logic bugs):
+- `test_namespacing.py` (7): Import `NamespacedSharedStore` from deleted `wrappers.namespaced_store` → update to `engine.namespaced_store`
+- `test_null_defaults.py` (10): Import `TemplateAwareNodeWrapper` → rewrite to use `resolve_templates()`
+- `test_workflow_executor_comprehensive.py` (6): `TestBatchCompilationErrorPropagation` imports from wrappers + uses `PflowBatchNode` directly
+- `test_conditional_branching.py` (2): `monkeypatch.setattr("pflow.runtime.wrappers.instrumented_wrapper.MAX_NODE_VISITS", ...)` → update path
+- `test_compiler_output_wrapping.py` (2): Tests `flow.run.__name__ == "run_with_hooks"` — dead concept
+- `test_compiler_basic.py` (1): `from pflow.pocketflow import Flow`
+- `test_compiler_integration.py` (2): `isinstance(node, InstrumentedNodeWrapper)` checks
+- `test_template_resolver_nested.py` (1): Imports `TemplateAwareNodeWrapper`
+- `test_metrics_propagation.py` (1): Complex trace + stale mock
+- `test_metadata_extractor.py` (1): Unrelated to redesign (pre-existing)
+
+---
+
+## Phase 6 — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: `make test` — 4614 passed, 9 skipped. `make check` — all clean.
+
+### Summary
+
+All 21 collection-error files fixed + 33 test failures resolved. Total tests went from 4679 (before redesign) to 4614 — the reduction is from deleted tests for removed classes (Flow, BatchNode, wrappers) and removed wrapper-internal tests (attribute delegation, copy, etc.).
+
+### Production bug found and fixed
+
+**`batch_executor.py` missing child trace events**: When `WorkflowExecutor` runs inside a batch, each item's child trace events were not being captured. The `_execute_batch_item` function now reads `node._child_trace_events` after execution and passes them to `_capture_item_trace`. This enables `collect_llm_calls()` to recurse into sub-workflow trace events within batch items.
+
+### Test categories and approaches
+
+| Category | Files | Tests | Approach |
+|----------|-------|-------|----------|
+| Template resolution | 8 files | 156 | `resolve_templates()` + `split_params()` directly |
+| Batch execution | 2 files | 158 | `execute_batch()` + `BatchConfig` dataclasses |
+| Instrumentation/cache | 7 files | 83 | Mix of `compile_ir_to_flow` shim and standalone functions |
+| Compiler/construction | 3 files | 43 | `compile_workflow()` for structure, shim for execution |
+| Import path fixes | 4 files | ~20 | Simple path changes (`wrappers.*` → `engine.*`) |
+| One-off fixes | 4 files | ~10 | File-specific fixes |
+
+### Key design notes from test migration
+
+1. **`initial_params` tests converted to shared store tests**: Tests like `test_priority_initial_over_shared` were replaced with tests showing values in shared store are resolved. The `initial_params` override is architecturally eliminated.
+
+2. **Memo cache hits don't populate `__cache_hits__`**: The engine's memo cache hit path returns early before `handle_cached_execution`. Only in-process cache hits populate `__cache_hits__`. Tests adapted to verify caching through output correctness.
+
+3. **Template resolution errors not in trace**: Engine resolves templates at step 4, outside the try/except (steps 9-17). Template `ValueError` propagates without a trace event. Tests adapted.
+
+4. **`test_metadata_extractor.py` fix**: `Node` now has a docstring (`"BaseNode with retry..."`). The "undocumented node" test class was changed to inherit `BaseNode` (which has no docstring).
+
+---
+
+## Phase 7 — COMPLETE
+
+**Date**: 2026-03-31
+
+### Documentation updated
+- `src/pflow/pocketflow/CLAUDE.md` — rewritten: BaseNode + Node only, no Flow
+- `src/pflow/runtime/CLAUDE.md` — updated: engine replaces wrappers, new compilation pipeline, stale references fixed
+- `src/pflow/runtime/compilation/CLAUDE.md` — updated: produces CompiledWorkflow, new function names, dependency graph
+- `src/pflow/runtime/engine/CLAUDE.md` — **created**: full engine architecture, design decisions, gotchas
+- `src/pflow/pocketflow/PFLOW_MODIFICATIONS.md` — rewritten: documents Task 135 redesign
+
+---
+
+## Phase 6.5 — Code Review — COMPLETE
+
+**Date**: 2026-03-31
+**Agents deployed**: 7 (silent-failures, validation-consistency, impact-completeness, feature-interactions, agent-ux, test-fidelity, concurrency-safety)
+
+### Fixes applied from review findings
+
+1. **`--only` validation** (4/7 agents flagged): Added validation in `WorkflowEngine.run()` — invalid `--only` targets now raise `CompilationError` with available node names. Restores old `_apply_only_node_stop` behavior. The old code validated at compile time; the engine validates at execution time (architecturally correct — `only_node` is an execution concern, not a compilation concern).
+
+2. **Memo cache hits populate `__cache_hits__`** (5/7 agents flagged): Routed memo cache hits through `handle_cached_execution()`. Nodes served from SQLite cache now show "cached" in CLI output. This was a user-visible regression — the `execution_state.py` display builder reads `__cache_hits__` to show the "↻" indicator, and memo-cached nodes were showing "done" instead. Root cause: the engine's memo hit path returned early at step 6 before reaching `handle_cached_execution` at step 7.
+
+3. **Stale `patch()` in `test_runner.py`** (1 agent): Updated `compile_ir_to_flow` → `compile_workflow`. The test `test_validation_error_prevents_compilation` patches compilation to assert it's never called when validation fails. The patch targeted the old function name — `assert_not_called()` was vacuously true because the production code calls `compile_workflow`, not `compile_ir_to_flow`.
+
+4. **Exception annotated with `_pflow_node_id`** (1 agent): Template `ValueError` now carries `_pflow_node_id` in `_execute_node`'s except block. The runner's `_exception_to_result` reads this annotation to include `node_id` in the error dict. Without it, template errors had no programmatic node attribution — agents had to parse the error text.
+
+5. **Completion callback on error path** (2 agents): `call_completion_callback` now called in the `except` block with `action="error"`. The old wrapper had this in its `_run()` method. Without it, the progress display's spinner showed the failed node as still "running" rather than transitioning to "failed."
+
+6. **None action normalized to "default"** (1 agent): `cache_result` stores `action or "default"`. In production, `node.post()` always returns a string. But if it returned `None`, the cached value would be `None`, and on loop re-visit `str(None)` = `"None"` wouldn't match the "default" successor edge. The old `Flow._orch` had `p = p or "default"` normalization.
+
+### Disputed findings
+
+- **`_CompiledWorkflowShim` param seeding order**: Multiple agents noted that `resolved_defaults` can overwrite user params. This is correct behavior — the coerced value IS what should be used. The shim seeds raw user params, then overwrites with coerced defaults. Final state is always the type-correct value.
+
+- **`resolve_file_references` called twice**: Pre-existing behavior (idempotent), not introduced by this PR. Not fixing.
+
+- **Permissive template errors dropped in parallel batch** (concurrency agent): Real but extremely narrow edge case (permissive mode + parallel batch + `__template_errors__` not pre-existing in parent store). Deferring — tracked as known limitation.
+
+### Areas verified clean by review
+- Batch output shape matches `BATCH_OUTPUTS` contract in `template_validation/validator.py`
+- `CompilationError` propagation through all batch paths (sequential/parallel, fail_fast/continue)
+- Thread safety of parallel batch execution (deep-copied nodes, GIL-protected trace append)
+- Compile-once cache correctness (`id()` stable for static IR, recompiles for dynamic)
+- Template resolution context (shared store only, no `initial_params` override)
+- Cross-cutting key propagation to child workflows via `_PROPAGATED_KEYS`
+- `NamespacedSharedStore` byte-for-byte identical to original
+
+---
+
+## Post-Review Fixes — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4618 passed, 9 skipped. `make check` clean.
+
+### Additional fixes from review discussion
+
+7. **Stale CLAUDE.md references across codebase**: Updated 10+ documentation files referencing deleted wrappers, old function names, dead code paths. Files: `execution/CLAUDE.md`, `cli/CLAUDE.md`, `core/CLAUDE.md`, `architecture/CLAUDE.md`, `architecture/architecture.md`, `architecture/reference/ir-schema.md`, `architecture/core-concepts/shared-store.md`, `template_validation/type_checker.py`, `core/ir_schema.py`, `workflow_executor.py`.
+
+8. **Memo cache bare except logging**: `check_memo_cache` had `except Exception: return False, None, None` which silently swallowed errors when computing batch memo cache keys. Added `logger.debug("...", exc_info=True)`. Without this, if `resolve_batch_items` failed for unexpected reasons, the memo cache would silently always miss for that node, and no one would know why.
+
+9. **Batch error messages include item value/index**: Three error message sites improved:
+   - `_execute_sequential` fail-fast: `f"...item [{idx}] (value: {error['item']!r}): {error['error']}"` — previously missing item value
+   - `_execute_parallel` fail-fast: same improvement
+   - `_aggregate_batch_results` all-fail: `f"[{e['index']}] {e['error']}"` — previously identical error strings with no way to identify which item failed
+   - `_resolve_and_validate_items`: added `node_id` parameter, prefixes errors with `f"Node '{node_id}': ..."` so multi-batch-node workflows have unambiguous error attribution
+
+10. **Stale `TemplateAwareNodeWrapper` references in tests**: Fixed docstrings in `test_workflow_executor_comprehensive.py` and `test_batch_param_override.py` that described current behavior using deleted class names.
+
+11. **Template resolution errors now captured in trace**: Moved template resolution (step 4) inside the try block in `_execute_node`. `resolve_templates` now attaches `_partial_resolutions` to the `ValueError` it raises. The engine's except handler extracts them via `getattr(e, "_partial_resolutions", None)` and passes them to `record_trace`. Previously, template errors produced trace events with empty `last_resolutions` — now the trace shows all params resolved up to the error point. This was a debugging regression from the old wrapper chain which had template resolution inside the instrumented wrapper's `_run()`.
+
+12. **Regression test for `initial_params` override removal**: 4 tests in `test_initial_params_override_removal.py`:
+    - Upstream node output available for downstream via shared store
+    - Declared input defaults seeded into `resolved_defaults` → shared store
+    - User params available when seeded into shared store
+    - `resolve_templates` uses `dict(shared)` only — unit test of the architectural change
+
+---
+
+## Phase 6.6 — Manual Testing — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 13/13 tests PASS
+
+All core features verified with real pflow workflows:
+- Simple execution, template resolution, sequential batch, parallel batch
+- Conditional branching, declared inputs/outputs, --only flag, invalid --only error
+- Nested sub-workflows, error handling, python code node, caching, batch continue mode
+
+---
+
+## Post-Review Engine Unit Tests — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4621 passed, 9 skipped. `make check` clean.
+
+Added `tests/test_runtime/test_engine_behavior.py` — 3 targeted tests for engine behaviors that are hard to trigger or verify through integration tests, where a silent regression would leave users with no diagnostic information.
+
+### Tests added
+
+1. **Unmatched action warning** (`test_unmatched_action_writes_warning`): Node returns "success" but only has a "default" edge. Verifies: `__warnings__` written with the unmatched action name AND available edges, target node does NOT execute. Without this test, someone could remove the warning guard and mismatched action/edge names would silently stop workflows with zero diagnostic output.
+
+2. **Matching action follows edge** (`test_matching_action_follows_edge`): Complementary test — "default" action with "default" edge produces no warning, both nodes execute.
+
+3. **`--only` skips output resolution** (`test_only_node_skips_output_resolution`): Workflow with declared outputs, engine runs with `only_node="first"`. Verifies: no `OutputResolutionError` (outputs depending on skipped nodes are not resolved), `__execution__["only_node"]` is set. This is a specific two-feature interaction (--only + declared outputs) that no integration test covered.
+
+### What was NOT added (and why)
+
+Considered and rejected:
+- **Loop template re-resolution**: Already covered by `test_conditional_branching.py::test_loop_with_exit_condition` which uses a two-node cross-reference pattern where template values change each iteration.
+- **Step ordering in `_execute_node`**: The engine calls standalone functions in sequence. Integration tests catch wrong outcomes. The ordering is a 15-line linear sequence — hard to get wrong, and a unit test would just restate the implementation.
+- **Batch callback data flow**: `_execute_single_node` vs the non-batch path in `_execute_node` — verified by reading both paths side-by-side. The batch executor's `_execute_batch_item` correctly reads `_child_trace_events` after the callback, matching the non-batch path.
+
+---
+
+## Shim Removal — COMPLETE
+
+**Date**: 2026-03-31
+**Result**: 4621 passed, 9 skipped. `make check` clean.
+
+### What was done
+
+Removed `compile_ir_to_flow()` and `_CompiledWorkflowShim` from production code. Migrated all 40 test files (~50 callsites) to use `compile_workflow()` + `WorkflowEngine` directly.
+
+### Why
+
+The shim existed as a backward-compat bridge during the phased implementation. After Phase 6, no production code used it — only tests. But the shim had its own param seeding logic (filter `__` keys, seed into shared, then seed `resolved_defaults`) that was subtly different from the Runner's `_initialize_shared_store`. Tests passing through the shim were testing a code path no user ever hits.
+
+The right thing: tests should exercise the same code path as production. The two-liner (`compile_workflow` + `engine.run`) is honest about what it does.
+
+### Migration approach
+
+20 parallel `test-writer-fixer` agents, each handling 1-4 files. Standard pattern:
+
+```python
+# BEFORE (shim):
+flow = compile_ir_to_flow(ir, registry, initial_params=params,
+                          metrics_collector=mc, trace_collector=tc, only_node=on)
+shared = {}
+flow.run(shared)
+
+# AFTER (production path):
+workflow = compile_workflow(ir, registry, initial_params=params)
+shared = {}
+if params:
+    shared.update({k: v for k, v in params.items() if not k.startswith("__")})
+shared.update(workflow.resolved_defaults)
+engine = WorkflowEngine(metrics_collector=mc, trace_collector=tc, only_node=on)
+engine.run(workflow, shared)
+```
+
+Key details:
+- `metrics_collector`, `trace_collector`, `only_node` moved from compile args to engine constructor
+- `initial_params` passed to both `compile_workflow` (for validation/defaults) AND seeded into shared (for runtime resolution)
+- Files with helper functions (e.g., `compile_and_run_ir`, `_run_workflow`) — updated the helper, not each callsite
+- Files that only compile without running (error tests) — just changed function name
+
+### Production code deleted
+- `compile_ir_to_flow()` function — 30 lines
+- `_CompiledWorkflowShim` class — 45 lines
+- Re-exports from `compilation/__init__.py` and `runtime/__init__.py`
+- Stale comments in `compile_validation.py` and `runner.py`
+
+### Decision rationale
+
+Considered three options:
+1. **Keep the shim** — convenient but tests a non-production path
+2. **Replace with test helper** — explicit test infrastructure, same indirection
+3. **Inline everywhere** — tests use the same path as production
+
+Chose option 3. The two-liner is clear. A test helper would still be a separate code path that could diverge from the Runner. Inlining means test failures surface the same bugs users would hit.
+
+---
+
+## Final Architecture
 
 ```
 CLI / MCP
   → WorkflowRunner._compile_and_execute()
-    → compile_workflow(ir, registry, initial_params)    [NEW — returns CompiledWorkflow]
+    → compile_workflow(ir, registry, initial_params)    [returns CompiledWorkflow]
     → shared_store.update(workflow.resolved_defaults)
-    → WorkflowEngine(metrics, trace, only_node).run(workflow, shared_store)  [NEW]
+    → WorkflowEngine(metrics, trace, only_node).run(workflow, shared_store)
       → for each node: _execute_node(node, config, shared)
         → resolve_templates / execute_batch / node._run(namespaced_store)
     → ExecutionResult(...)
@@ -224,44 +471,47 @@ Sub-workflows (WorkflowExecutor):
   → WorkflowEngine(trace_collector=child_trace).run(compiled, child_storage)
 ```
 
-### What the next agent needs that ISN'T in the plan
+### Key metrics
+- **Deleted**: ~4,200 lines (wrappers + dead compiler code + PocketFlow classes + test_pocketflow + shim)
+- **Created**: ~2,200 lines (engine module)
+- **Net reduction**: ~2,000 lines
+- **PocketFlow**: 205 lines → 85 lines (10 classes → 3 classes)
+- **Tests**: 4679 → 4621 (deleted wrapper-internal tests, added 10 new regression/unit tests)
+- **No shim**: `compile_ir_to_flow` and `_CompiledWorkflowShim` deleted. All tests use `compile_workflow` + `WorkflowEngine` — same code path as production.
 
-The implementation plan (`.taskmaster/tasks/task_135/implementation/implementation-plan.md`) has detailed Phase 5-7 instructions including file lists, test tables, and step-by-step actions. Don't repeat that here. This section covers only what changed DURING implementation.
+### Decisions and deviations — complete inventory
 
-**Dead code in compiler.py** — functions still present but no longer called by any production path: `_apply_template_wrapping`, `_create_single_node`, `_instantiate_nodes`, `_apply_run_hooks`, `_apply_only_node_stop`. Also dead: `from pflow.pocketflow import BaseNode` (only used by dead functions), wrapper imports (lines 23-24), lazy imports of `PflowBatchNode` (line 366) and `InstrumentedNodeWrapper` (line 385).
+These are ALL decisions made during Phases 5-7 and post-review that deviate from or supplement the original plan:
 
-**`CompilationError` location changed** (not in plan) — now in `core/exceptions.py`, not `compiler.py`. All existing import paths still work via re-export chains. The canonical import is `from pflow.core.exceptions import CompilationError`. The 4 sibling compilation modules still lazy-import from `compiler.py` — those lazy imports can be cleaned up in Phase 5 since the circular import reason no longer exists (see #185).
+1. **`_source_line` keys NOT filtered in `split_params`** — Plan said filter from both buckets. Evidence against: `python_code.py:300` reads `self.params.get("_code_source_line", 0)`. Filtering would silently break error line numbers. Fix: `_source_line` keys stay in `static_params`, filtered only in `compute_node_config` for cache hashing (same as old code).
 
-**`engine/batch_executor.py` has ONE remaining lazy import** — `from pflow.core.exceptions import CompilationError` inside `_execute_parallel`. The module-level import covers `_execute_batch_item`. `_execute_parallel` has its own because ruff auto-moved it during formatting. Both import from `core.exceptions` (not `compiler`), so no circular risk. Can be consolidated to module-level only.
+2. **Batch nodes skip top-level template resolution** — `_execute_node` has `if config.template_config and not config.batch_config` guard. Not in the plan. Without it, `${item}` would fail before the batch loop starts because `item` doesn't exist until `_execute_batch_item` injects it. Per-item resolution happens via the `_execute_single_node` callback.
 
-**Compile-once only works for STATIC `workflow_ir`** — discovered during testing. When `workflow_ir` contains `${item}` templates, `resolve_nested` creates a new dict each time, producing a different `id()` per item. This is correct behavior (the child structure IS different per item). For compile-once to apply, per-item values should flow through child_params, not through template expressions inside workflow_ir.
+3. **`_CompiledWorkflowShim` seeded `initial_params`** (now deleted) — The shim was needed during the transition because tests called `compile_ir_to_flow` with `initial_params` and expected those values available for template resolution. Since the `initial_params` override was removed, params had to be seeded into shared store. The shim was later removed entirely — all tests now use `compile_workflow` + `WorkflowEngine` directly and seed params explicitly.
 
-### Regression tests added
+4. **`CompilationError` moved to `core/exceptions.py`** — Not in plan. Broke the circular import chain: `compiler.py` → `engine/` → `batch_executor.py` → `compiler.py` (for `CompilationError`). Enables module-level imports with real type annotations. All import paths work via re-export chains. Tracked #185 for `ValidationError` and `MarkdownParseError` (same pattern).
 
-- `tests/test_runtime/test_compile_once_regression.py` — 2 tests:
-  - `test_compile_workflow_called_once_for_static_child_ir`: patches `compile_workflow` with counter, verifies called exactly once for 3 sequential batch items
-  - `test_each_batch_item_produces_distinct_output`: verifies batch items with `${item}` in child IR produce distinct output (not stale from first compilation)
-- `tests/test_runtime/test_memo_cache_error_skip.py` — 1 test:
-  - `test_error_results_not_served_from_cache`: runs `exit 1` workflow twice with cache enabled, verifies second run also fails (not served from cache)
+5. **Engine does NOT restore `node.params` after execution** — Old wrapper swapped params in `_run()` and restored in `finally`. The engine sets `node.params = resolved_params` permanently. Safe because: each node is visited once per traversal (loops re-resolve), batch items use `_execute_single_node` which sets params per item.
 
-### 24 currently-failing tests
+6. **Compile-once `id()` check** — Only works for static `workflow_ir`. Dynamic IR (containing `${item}` templates) creates a new dict per item via `resolve_nested`, producing different `id()` values. This is correct: the child structure IS different per item. Verified by regression tests.
 
-All inspect wrapper chain internals (isinstance checks, inner_node traversal, flow.run.__name__, hasattr initial_params). Grouped by file — see the plan's Phase 6 section for the full table with fix strategies. The plan's categorization is accurate and doesn't need amendment.
+7. **Template resolution inside try block** — Moved from outside the try (steps 4 then 9+) to inside the try. Otherwise template errors produced empty trace events. Partial resolutions attached to the ValueError via `_partial_resolutions` attribute so the engine can extract them on the error path.
 
-### Gotchas for the next agent
+8. **`_prepare_compilation` returns 4-tuple** — Plan said 3-tuple `(params, defaults, env_names)`. Added `warnings` to maintain the existing contract signature: `(params, warnings, defaults, env_names)`. Warnings are always `[]` but the existing callers expected 2 return values.
 
-These are things discovered during implementation that deviate from or supplement the plan:
+### Known limitations (not fixed, documented)
 
-1. **`_source_line` keys are NOT filtered in `split_params`** — plan said filter, but `python_code.py:300` reads `_code_source_line` for error line numbers. Filtering would break it silently.
+1. **Permissive template errors dropped in parallel batch** — When `__template_errors__` doesn't exist in parent store at thread-start time, errors written to `item_shared` are lost. Requires permissive mode + parallel batch + no prior template errors. Extremely narrow.
 
-2. **Batch nodes skip top-level template resolution** — `_execute_node` has `if config.template_config and not config.batch_config` guard. Not in the plan. Without it, `${item}` fails before the batch loop starts.
+2. **`setup_llm_interception` reads `node.params` before template resolution** — If `prompt` is in template_params (not static_params), `has_prompt_param` check misses it. The `is_llm_node` fallback catches all LLM node types. Only custom non-LLM nodes with prompt-like template params would miss interception.
 
-3. **`_CompiledWorkflowShim` seeds `initial_params` into shared store** — plan's shim only seeded `resolved_defaults`. Tests calling `compile_ir_to_flow` directly need user params in the shared store too (since the `initial_params` override in template resolution is gone).
+3. **Compile-once in parallel batch** — Each deep-copied `WorkflowExecutor` starts with `_cached_workflow=None` and compiles independently, giving O(N) compiles. Sequential batch gets full O(1) benefit. This is inherent to the deep-copy isolation model.
 
-4. **`CompilationError` import chain**: `core.exceptions` (canonical) → `compiler.py` (re-export) → `compilation/__init__.py` (re-export) → `runtime/__init__.py` (re-export). All paths work. Phase 5 can simplify the sibling modules' lazy imports since the circular import reason is gone.
+4. **`resolve_file_references` called twice** — Runner resolves before compilation, compiler resolves again. Idempotent but wasteful. Pre-existing behavior.
 
-5. **Engine does NOT restore `node.params` after execution** — the old wrapper did `finally: self.inner_node.params = original_params`. The engine sets `node.params = resolved_params` and never restores. Safe because: each node is visited once per graph traversal (loops re-resolve), and batch items use `_execute_single_node` which sets params per item.
+### Tests added by this task (final inventory)
 
-6. **Compile-once `id()` check only works for static `workflow_ir`** — see "Compile-once only works for STATIC workflow_ir" above. The test `test_compile_workflow_called_once_for_static_child_ir` verifies this specifically.
-
-7. **Subagent strategy for Phase 6**: Mechanical test updates (import path changes, assertion updates) → use `test-writer-fixer` in parallel. Complex tests (trace integration, memoization, cache) → main agent with full context.
+- `tests/test_runtime/test_compile_once_regression.py` — 2 tests: compile-once verification + distinct output per item
+- `tests/test_runtime/test_memo_cache_error_skip.py` — 1 test: error results not served from cache
+- `tests/test_runtime/test_initial_params_override_removal.py` — 4 tests: shared store as single data source
+- `tests/test_runtime/test_engine_behavior.py` — 3 tests: unmatched action warning, edge following, --only + outputs

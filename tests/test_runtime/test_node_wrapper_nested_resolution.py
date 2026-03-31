@@ -1,52 +1,47 @@
-"""Test that TemplateAwareNodeWrapper properly resolves nested templates at runtime.
+"""Test that template resolution properly resolves nested templates.
 
-This test verifies that when a wrapped node executes, the nested template
-structures are properly resolved before being passed to the inner node.
+This test verifies that nested template structures (dicts and lists containing
+${...} templates) are properly resolved. Migrated from TemplateAwareNodeWrapper
+tests to use standalone functions in pflow.runtime.engine.template_resolution.
 """
 
 import pytest
 
-from pflow.pocketflow import BaseNode
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime.engine.template_resolution import (
+    build_type_cache,
+    resolve_templates,
+    split_params,
+)
+from pflow.runtime.engine.types import TemplateConfig
 
 
-class MockNode(BaseNode):
-    """Mock node that captures params at execution time."""
-
-    def __init__(self):
-        super().__init__()
-        self.params = {}
-        self.exec_params = None  # Will capture params during exec
-
-    def set_params(self, params):
-        self.params = params
-
-    def prep(self, shared):
-        return {"params": self.params}
-
-    def exec(self, prep_res):
-        # Capture the params we receive during execution
-        self.exec_params = prep_res.get("params", {})
-        return {"result": "success"}
-
-    def post(self, shared, prep_res, exec_res):
-        shared["result"] = exec_res["result"]
-        return "default"
+def _resolve(
+    params: dict,
+    shared: dict,
+    interface_metadata: dict | None = None,
+    resolution_mode: str = "strict",
+    node_id: str = "test_node",
+) -> dict:
+    """Helper: split params, build config, resolve templates, return merged_params."""
+    expected_types = build_type_cache(interface_metadata)
+    template_params, static_params = split_params(params, expected_types)
+    config = TemplateConfig(
+        template_params=template_params,
+        static_params=static_params,
+        expected_types=expected_types,
+        resolution_mode=resolution_mode,
+    )
+    merged_params, _last_resolutions, _template_errors = resolve_templates(config, shared, node_id)
+    return merged_params
 
 
 class TestNodeWrapperNestedResolution:
-    """Test runtime resolution of nested templates in node wrapper."""
+    """Test runtime resolution of nested templates."""
 
     def test_resolves_nested_dict_templates_at_runtime(self):
-        """Test that nested dict templates are resolved during execution."""
-        # Create node and wrapper
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
+        """Test that nested dict templates are resolved."""
+        shared = {"api_token": "xoxb-123456", "channel_id": "C09C16NAU5B"}
 
-        # Set initial params for template resolution
-        wrapper.initial_params = {"api_token": "xoxb-123456", "channel_id": "C09C16NAU5B"}
-
-        # Set params with nested templates
         params = {
             "url": "https://api.example.com",
             "headers": {
@@ -56,51 +51,31 @@ class TestNodeWrapperNestedResolution:
             },
         }
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared)
 
-        # Verify wrapper detected templates
-        assert "headers" in wrapper.template_params
-
-        # Execute the wrapper (simulates runtime)
-        shared = {}
-        wrapper._run(shared)
-
-        # Check what params the inner node actually received
-        assert node.exec_params is not None
-        assert node.exec_params["url"] == "https://api.example.com"
-        assert node.exec_params["headers"]["Authorization"] == "Bearer xoxb-123456"
-        assert node.exec_params["headers"]["X-Channel-ID"] == "C09C16NAU5B"
-        assert node.exec_params["headers"]["Content-Type"] == "application/json"
+        assert result["url"] == "https://api.example.com"
+        assert result["headers"]["Authorization"] == "Bearer xoxb-123456"
+        assert result["headers"]["X-Channel-ID"] == "C09C16NAU5B"
+        assert result["headers"]["Content-Type"] == "application/json"
 
     def test_resolves_nested_list_templates_at_runtime(self):
-        """Test that list templates are resolved during execution."""
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
-
-        wrapper.initial_params = {"item1": "apple", "item2": "banana", "item3": "cherry"}
+        """Test that list templates are resolved."""
+        shared = {"item1": "apple", "item2": "banana", "item3": "cherry"}
 
         params = {
             "items": ["${item1}", "static_value", "${item2}"],
             "nested_items": [["${item1}", "${item3}"], {"key": "${item2}"}],
         }
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared)
 
-        # Execute
-        shared = {}
-        wrapper._run(shared)
-
-        # Verify resolution
-        assert node.exec_params["items"] == ["apple", "static_value", "banana"]
-        assert node.exec_params["nested_items"][0] == ["apple", "cherry"]
-        assert node.exec_params["nested_items"][1]["key"] == "banana"
+        assert result["items"] == ["apple", "static_value", "banana"]
+        assert result["nested_items"][0] == ["apple", "cherry"]
+        assert result["nested_items"][1]["key"] == "banana"
 
     def test_resolves_deeply_nested_templates_at_runtime(self):
         """Test resolution of deeply nested structures."""
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
-
-        wrapper.initial_params = {"deep_value": "found_me", "another_value": "also_found"}
+        shared = {"deep_value": "found_me", "another_value": "also_found"}
 
         params = {
             "config": {
@@ -116,24 +91,16 @@ class TestNodeWrapperNestedResolution:
             }
         }
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared)
 
-        # Execute
-        shared = {}
-        wrapper._run(shared)
-
-        # Verify deep resolution
-        level3 = node.exec_params["config"]["level1"]["level2"]["level3"]
+        level3 = result["config"]["level1"]["level2"]["level3"]
         assert level3["value"] == "found_me"
         assert level3["items"] == ["also_found", "static"]
         assert level3["meta"]["ref"] == "found_me"
 
     def test_preserves_non_template_types(self):
         """Test that non-template values keep their types."""
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
-
-        wrapper.initial_params = {"name": "test"}
+        shared = {"name": "test"}
 
         params = {
             "message": "Hello ${name}",  # String template
@@ -147,65 +114,44 @@ class TestNodeWrapperNestedResolution:
             },
         }
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared)
 
-        # Execute
-        shared = {}
-        wrapper._run(shared)
-
-        # Verify types are preserved
-        assert node.exec_params["message"] == "Hello test"
-        assert node.exec_params["count"] == 42
-        assert isinstance(node.exec_params["count"], int)
-        assert node.exec_params["enabled"] is True
-        assert isinstance(node.exec_params["enabled"], bool)
+        assert result["message"] == "Hello test"
+        assert result["count"] == 42
+        assert isinstance(result["count"], int)
+        assert result["enabled"] is True
+        assert isinstance(result["enabled"], bool)
 
         # Check list items
-        assert node.exec_params["items"] == ["test", 123, False, None]
-        assert isinstance(node.exec_params["items"][1], int)
-        assert isinstance(node.exec_params["items"][2], bool)
-        assert node.exec_params["items"][3] is None
+        assert result["items"] == ["test", 123, False, None]
+        assert isinstance(result["items"][1], int)
+        assert isinstance(result["items"][2], bool)
+        assert result["items"][3] is None
 
         # Check nested config
-        assert node.exec_params["config"]["name"] == "test"
-        assert node.exec_params["config"]["size"] == 100
-        assert isinstance(node.exec_params["config"]["size"], int)
-        assert node.exec_params["config"]["active"] is False
+        assert result["config"]["name"] == "test"
+        assert result["config"]["size"] == 100
+        assert isinstance(result["config"]["size"], int)
+        assert result["config"]["active"] is False
 
     def test_handles_missing_template_variables(self):
-        """Test that missing template variables raise ValueError (Issue #95 fix).
-
-        Updated as part of Task 85. Previously, missing variables would remain
-        unresolved, now they correctly raise ValueError.
-        """
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
-
-        wrapper.initial_params = {"exists": "yes"}
+        """Test that missing template variables raise ValueError (Issue #95 fix)."""
+        shared = {"exists": "yes"}
 
         params = {"headers": {"X-Exists": "${exists}", "X-Missing": "${does_not_exist}"}}
 
-        wrapper.set_params(params)
-
-        # Should raise ValueError for unresolved template
-        shared = {}
         with pytest.raises(ValueError, match="Unresolved variables"):
-            wrapper._run(shared)
+            _resolve(params, shared)
 
     def test_real_world_http_scenario(self):
         """Test the exact HTTP scenario that was failing."""
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="api_call")
-
-        # Real-world initial params
-        wrapper.initial_params = {
+        shared = {
             "slack_channel_id": "C09C16NAU5B",
             "message_count": 10,
             "slack_bot_token": "xoxb-123456789",
             "api_endpoint": "https://slack.com/api/conversations.history",
         }
 
-        # Real-world nested params structure
         params = {
             "url": "${api_endpoint}",
             "method": "GET",
@@ -213,45 +159,31 @@ class TestNodeWrapperNestedResolution:
             "headers": {"Authorization": "Bearer ${slack_bot_token}", "Content-Type": "application/json"},
         }
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared, node_id="api_call")
 
-        # Execute
-        shared = {}
-        wrapper._run(shared)
-
-        # Verify complete resolution
-        assert node.exec_params["url"] == "https://slack.com/api/conversations.history"
-        assert node.exec_params["method"] == "GET"
-        assert node.exec_params["params"]["channel"] == "C09C16NAU5B"
+        assert result["url"] == "https://slack.com/api/conversations.history"
+        assert result["method"] == "GET"
+        assert result["params"]["channel"] == "C09C16NAU5B"
         # Simple templates now preserve original type (int stays int)
-        assert node.exec_params["params"]["limit"] == 10
-        assert node.exec_params["headers"]["Authorization"] == "Bearer xoxb-123456789"
-        assert node.exec_params["headers"]["Content-Type"] == "application/json"
+        assert result["params"]["limit"] == 10
+        assert result["headers"]["Authorization"] == "Bearer xoxb-123456789"
+        assert result["headers"]["Content-Type"] == "application/json"
 
-    def test_initial_params_override_shared_store(self):
-        """Test that initial params (planner parameters) have higher priority than shared store."""
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="test_node")
+    def test_shared_store_values_resolved(self):
+        """Test that shared store values are resolved correctly.
 
-        wrapper.initial_params = {"value": "from_initial"}
-
+        initial_params override behavior is removed. Values come from shared store.
+        """
+        shared = {"value": "from_shared"}
         params = {"config": {"setting": "${value}"}}
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared)
 
-        # Execute with value in shared store
-        shared = {"value": "from_shared"}
-        wrapper._run(shared)
-
-        # Initial params should override shared store (by design)
-        assert node.exec_params["config"]["setting"] == "from_initial"
+        assert result["config"]["setting"] == "from_shared"
 
     def test_complex_mixed_scenario(self):
         """Test complex scenario with all types of nesting."""
-        node = MockNode()
-        wrapper = TemplateAwareNodeWrapper(node, node_id="complex")
-
-        wrapper.initial_params = {"auth": "secret123", "endpoint": "users", "page": 1, "active": True}
+        shared = {"auth": "secret123", "endpoint": "users", "page": 1, "active": True}
 
         params = {
             "url": "https://api.example.com/${endpoint}",
@@ -260,18 +192,13 @@ class TestNodeWrapperNestedResolution:
             "body": {"data": {"items": [{"type": "${endpoint}", "page": "${page}"}, {"type": "static", "page": 0}]}},
         }
 
-        wrapper.set_params(params)
+        result = _resolve(params, shared, node_id="complex")
 
-        # Execute
-        shared = {}
-        wrapper._run(shared)
-
-        # Verify all resolutions
-        assert node.exec_params["url"] == "https://api.example.com/users"
-        assert node.exec_params["auth"]["token"] == "secret123"  # noqa: S105 - Test data, not real credentials
+        assert result["url"] == "https://api.example.com/users"
+        assert result["auth"]["token"] == "secret123"  # noqa: S105 - Test data, not real credentials
         # Simple templates now preserve original types (int stays int, bool stays bool)
-        assert node.exec_params["query"]["page"] == 1
-        assert node.exec_params["query"]["active"] is True  # Boolean preserved
-        assert node.exec_params["query"]["filters"] == ["users", "published"]
-        assert node.exec_params["body"]["data"]["items"][0] == {"type": "users", "page": 1}
-        assert node.exec_params["body"]["data"]["items"][1] == {"type": "static", "page": 0}
+        assert result["query"]["page"] == 1
+        assert result["query"]["active"] is True  # Boolean preserved
+        assert result["query"]["filters"] == ["users", "published"]
+        assert result["body"]["data"]["items"][0] == {"type": "users", "page": 1}
+        assert result["body"]["data"]["items"][1] == {"type": "static", "page": 0}

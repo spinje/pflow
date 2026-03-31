@@ -1,7 +1,8 @@
 """Integration tests for automatic namespacing with templates."""
 
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 def test_namespacing_with_workflow_inputs(tmp_path):
@@ -59,11 +60,13 @@ def test_namespacing_with_workflow_inputs(tmp_path):
 
     try:
         # Compile with initial params
-        flow = compile_ir_to_flow(workflow, registry, initial_params={"input_data": "custom_value"})
+        initial_params = {"input_data": "custom_value"}
+        compiled = compile_workflow(workflow, registry, initial_params=initial_params)
 
         # Execute
-        shared = {}
-        flow.run(shared)
+        shared: dict = {k: v for k, v in initial_params.items() if not k.startswith("__")}
+        shared.update(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # With namespacing, each node's output is in its namespace
         assert "process1" in shared, "First node namespace should exist"
@@ -74,14 +77,14 @@ def test_namespacing_with_workflow_inputs(tmp_path):
         assert shared["process2"]["data"] == "custom_value", "Second node should get first node's output"
 
         # Now test with default value
-        flow = compile_ir_to_flow(
+        compiled = compile_workflow(
             workflow,
             registry,
             initial_params={},  # No params, should use default
         )
 
-        shared = {}
-        flow.run(shared)
+        shared = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         assert shared["process1"]["data"] == "test_value", "Should use default value"
         assert shared["process2"]["data"] == "test_value", "Should pass through default"
@@ -151,9 +154,9 @@ def test_namespacing_prevents_collisions_with_templates(tmp_path):
     compiler_module.import_node_class = mock_import
 
     try:
-        flow = compile_ir_to_flow(workflow, registry)
-        shared = {}
-        flow.run(shared)
+        compiled = compile_workflow(workflow, registry)
+        shared: dict = dict(compiled.resolved_defaults)
+        WorkflowEngine().run(compiled, shared)
 
         # Check namespaces exist
         assert "api1" in shared

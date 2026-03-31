@@ -6,7 +6,8 @@ which is then auto-parsed when used in an inline object for another node's stdin
 
 import pytest
 
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 from tests.shared.registry_utils import ensure_test_registry
 
 
@@ -41,9 +42,10 @@ class TestInlineObjectParsingE2E:
             "edges": [{"from": "get-data", "to": "process"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # jq should have been able to access .data.count
         assert "3" in shared["process"]["stdout"]
@@ -82,9 +84,10 @@ class TestInlineObjectParsingE2E:
             ],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # 1 + 2 = 3
         assert "3" in shared["combine"]["stdout"]
@@ -111,9 +114,10 @@ class TestInlineObjectParsingE2E:
             "edges": [{"from": "get-items", "to": "count"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Array has 2 items
         assert "2" in shared["count"]["stdout"]
@@ -141,9 +145,10 @@ class TestInlineObjectParsingE2E:
             "edges": [{"from": "get-data", "to": "show-raw"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Should be the raw string with prefix, not parsed
         assert 'Raw JSON: {"value": 42}' in shared["show-raw"]["stdout"]
@@ -170,9 +175,10 @@ class TestInlineObjectParsingE2E:
             "edges": [{"from": "get-config", "to": "use-config"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Should access the boolean value
         assert "true" in shared["use-config"]["stdout"]
@@ -203,9 +209,10 @@ class TestInlineObjectParsingE2E:
             "edges": [{"from": "get-data", "to": "process"}],
         }
 
-        flow = compile_ir_to_flow(workflow_ir, registry=registry)
-        shared: dict = {}
-        flow.run(shared)
+        workflow = compile_workflow(workflow_ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # 1 (from items[0]) + 42 = 43
         assert "43" in shared["process"]["stdout"]

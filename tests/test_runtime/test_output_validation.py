@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from pflow.core.ir_schema import ValidationError
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
 from pflow.runtime.compilation.compile_validation import _validate_outputs
 
 
@@ -168,7 +168,7 @@ class TestOutputValidation:
 
 
 class TestOutputValidationIntegration:
-    """Test output validation as part of compile_ir_to_flow."""
+    """Test output validation as part of compile_workflow."""
 
     def test_compile_with_hyphenated_output_names_now_allowed(self):
         """Test that compilation succeeds with hyphenated output names."""
@@ -189,8 +189,8 @@ class TestOutputValidationIntegration:
             mock_import.return_value = type("ExampleNode", (Mock,), {})
 
             # Should compile successfully now
-            flow = compile_ir_to_flow(ir_dict, registry)
-            assert flow is not None  # Compilation succeeded
+            workflow = compile_workflow(ir_dict, registry)
+            assert workflow is not None  # Compilation succeeded
 
     @patch("pflow.runtime.compilation.compiler.import_node_class")
     def test_compile_with_output_warnings(self, mock_import, caplog):
@@ -218,8 +218,8 @@ class TestOutputValidationIntegration:
 
         with caplog.at_level(logging.WARNING):
             # Should compile successfully despite warning
-            flow = compile_ir_to_flow(ir_dict, registry)
-            assert flow is not None
+            workflow = compile_workflow(ir_dict, registry)
+            assert workflow is not None
 
         # Should have warning about untraceable output
         assert "Declared output 'maybe_dynamic' cannot be traced" in caplog.text

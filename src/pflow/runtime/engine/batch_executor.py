@@ -55,7 +55,7 @@ def resolve_batch_items(items_template: Any, shared: dict[str, Any]) -> Any:
     return resolved
 
 
-def _resolve_and_validate_items(batch_config: BatchConfig, shared: dict[str, Any]) -> list[Any]:
+def _resolve_and_validate_items(batch_config: BatchConfig, shared: dict[str, Any], node_id: str) -> list[Any]:
     """Resolve batch items template and validate the result is a list.
 
     Raises ValueError if items resolve to None, TypeError if not a list.
@@ -64,14 +64,14 @@ def _resolve_and_validate_items(batch_config: BatchConfig, shared: dict[str, Any
 
     if items is None:
         base_error = (
-            f"Batch items template '{batch_config.items_template}' resolved to None. "
+            f"Node '{node_id}': batch items template '{batch_config.items_template}' resolved to None. "
             f"Ensure the referenced node output exists."
         )
         raise ValueError(_enrich_with_upstream_stderr(base_error, batch_config.items_template, shared))
 
     if not isinstance(items, list):
         base_error = (
-            f"Batch items must be an array, got {type(items).__name__}. "
+            f"Node '{node_id}': batch items must be an array, got {type(items).__name__}. "
             f"Template '{batch_config.items_template}' resolved to: {items!r}"
         )
         raise TypeError(_enrich_with_upstream_stderr(base_error, batch_config.items_template, shared))
@@ -122,7 +122,7 @@ def execute_batch(
     if batch_config is None:
         raise ValueError("execute_batch called without batch_config")
 
-    items = _resolve_and_validate_items(batch_config, shared)
+    items = _resolve_and_validate_items(batch_config, shared, config.node_id)
 
     # Initialize batch trace accumulator
     if "_batch_trace" not in shared:
@@ -191,6 +191,9 @@ def _execute_batch_item(
             # Execute via callback
             action, last_resolutions, template_errors = execute_single_fn(node, config, item_shared)
 
+            # Extract child trace events from WorkflowExecutor (sub-workflow in batch)
+            item_child_trace_events: list[dict[str, Any]] | None = getattr(node, "_child_trace_events", None)
+
             # Normalize result
             raw_result = item_shared.get(config.node_id)
             result = _normalize_result(raw_result)
@@ -222,6 +225,7 @@ def _execute_batch_item(
                     duration_ms,
                     error_info,
                     last_resolutions,
+                    child_trace_events=item_child_trace_events,
                 )
                 return result, error_info, duration_ms, last_resolutions, template_errors
 
@@ -234,6 +238,7 @@ def _execute_batch_item(
                 duration_ms,
                 None,
                 last_resolutions,
+                child_trace_events=item_child_trace_events,
             )
             return result, None, duration_ms, last_resolutions, template_errors
 
@@ -259,6 +264,7 @@ def _execute_batch_item(
         duration_ms,
         error_info,
         last_resolutions,
+        child_trace_events=getattr(node, "_child_trace_events", None),
     )
     return None, error_info, duration_ms, last_resolutions, template_errors
 
@@ -295,7 +301,9 @@ def _execute_sequential(
                 if error.get("exception") is not None:
                     raise error["exception"]
                 else:
-                    raise RuntimeError(f"Batch '{config.node_id}' failed at item [{idx}]: {error['error']}")
+                    raise RuntimeError(
+                        f"Batch '{config.node_id}' failed at item [{idx}] (value: {error['item']!r}): {error['error']}"
+                    )
 
     return results, errors, timings
 
@@ -438,7 +446,8 @@ def _execute_parallel(
             raise first_error["exception"]
         else:
             raise RuntimeError(
-                f"Batch '{config.node_id}' failed at item [{first_error['index']}]: {first_error['error']}"
+                f"Batch '{config.node_id}' failed at item [{first_error['index']}] "
+                f"(value: {first_error['item']!r}): {first_error['error']}"
             )
 
     return results, pending_errors, timings
@@ -472,6 +481,7 @@ def _capture_item_trace(
     duration_ms: float,
     error: dict[str, Any] | None,
     last_resolutions: dict,
+    child_trace_events: list[dict[str, Any]] | None = None,
 ) -> None:
     """Capture per-item trace event. Appends to parent_shared._batch_trace."""
     trace_list = parent_shared.get("_batch_trace", {}).get(node_id)
@@ -507,6 +517,11 @@ def _capture_item_trace(
             if isinstance(value, str):
                 item_event[dst_key] = value
 
+    # Sub-workflow trace events (from WorkflowExecutor batch items).
+    # Stored as "events" so collect_llm_calls() can recurse into them.
+    if child_trace_events:
+        item_event["events"] = child_trace_events
+
     trace_list.append(item_event)  # GIL-protected for parallel
 
 
@@ -524,7 +539,7 @@ def _aggregate_batch_results(
 
     # All items failed -> abort
     if batch_config.error_handling == "continue" and success_count == 0 and errors:
-        error_summary = "; ".join(e["error"] for e in errors[:3])
+        error_summary = "; ".join(f"[{e['index']}] {e['error']}" for e in errors[:3])
         if len(errors) > 3:
             error_summary += f" (+{len(errors) - 3} more)"
         raise RuntimeError(

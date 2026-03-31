@@ -2,7 +2,7 @@
 
 Consolidates all validation steps that run before IR-to-Flow compilation:
 structure validation, input preparation, output validation, and template
-validation. Called once from compile_ir_to_flow() as a single orchestration point.
+validation. Called once from compile_workflow() as a single orchestration point.
 """
 
 import logging

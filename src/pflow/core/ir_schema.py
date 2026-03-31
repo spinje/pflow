@@ -2,7 +2,7 @@
 
 This module provides the schema and validation functions for workflow IR,
 which is the standardized format for representing workflows before they
-are compiled to executable pocketflow.Flow objects.
+are compiled to CompiledWorkflow objects for execution by WorkflowEngine.
 
 The IR format is designed to be:
 - Human-readable and editable

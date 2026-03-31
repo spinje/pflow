@@ -26,8 +26,8 @@ class WorkflowRunner:
     - Resolution (via unified resolve_workflow)
     - File reference resolution
     - Validation (WorkflowValidator, once)
-    - Compilation (compile_ir_to_flow)
-    - Execution (flow.run)
+    - Compilation (compile_workflow)
+    - Execution (WorkflowEngine.run)
     - Resource lifecycle (MCP pool, cache, trace, metrics)
     - Metadata update (if workflow_manager provided)
     - Exception boundary (always returns ExecutionResult)

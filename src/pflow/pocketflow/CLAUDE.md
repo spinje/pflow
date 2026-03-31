@@ -1,44 +1,52 @@
-# PocketFlow Repository Map & Inventory
+# PocketFlow — Minimal Node Framework
 
-pflow is built on the **PocketFlow** framework (~200-line Python library in `src/pflow/pocketflow/__init__.py`).
+pflow is built on **PocketFlow** (~85-line Python library in `src/pflow/pocketflow/__init__.py`).
 
-> Important to note: `pflow` is a CLI tool that extends the PocketFlow framework to allow users to build workflows and pipelines using the PocketFlow framework more easily.
+PocketFlow provides `BaseNode` and `Node` — the lifecycle (prep/exec/post) and wiring (>>, -) primitives. The `WorkflowEngine` (in `pflow.runtime.engine`) handles graph traversal and all runtime concerns.
 
-The Pocketflow framework also provides extensive documentation, which Claude should leverage to understand the system and its components.
+## What PocketFlow Provides
 
-## Overview
+1. **`BaseNode`**: The building block. Operates in three steps:
+   - `prep(shared)`: Read from shared store
+   - `exec(prep_res)`: Execute core logic (retryable)
+   - `post(shared, prep_res, exec_res)`: Write results, return action string
 
-Below is a high-level overview of the core components of PocketFlow that Claude should understand to build the `pflow` CLI:
+2. **`Node(BaseNode)`**: Adds retry logic (`max_retries`, `wait`, `exec_fallback`)
 
-1.  **`Node`**: The basic building block. A Node represents a single, self-contained task. It operates in three steps:
-    *   `prep()`: Reads and prepares data from the `Shared Store`.
-    *   `exec()`: Executes the core logic, like making an LLM call. This step is designed to be compute-focused and retryable.
-    *   `post()`: Writes the results back to the `Shared Store` and returns an "action" string to tell the `Flow` where to go next.
+3. **Wiring operators**: `node_a >> node_b` (default edge), `node_a - "action" >> node_b` (conditional edge)
 
-2.  **`Flow`**: The orchestrator. A Flow connects `Node`s together to form a graph. It uses the "action" strings returned by each Node to decide which Node to execute next, allowing for branching, looping, and complex pipelines. Flows can also be nested inside other Flows.
+4. **Shared Store**: In-memory dict that all nodes read/write. The only communication channel.
 
-3.  **`Shared Store`**: The communication hub. It's typically an in-memory dictionary that all `Node`s within a `Flow` can read from and write to. This keeps data handling separate from the computation logic.
+## What PocketFlow Does NOT Provide
 
-4.  **`Batch`**: A component for handling data-intensive tasks.
-    *   **`BatchNode`**: Processes a list of items (like document chunks or files) in its `exec()` method, one item at a time.
-    *   **`BatchFlow`**: Runs an entire sub-flow multiple times, once for each item in a list of parameters.
+- **Graph traversal** — `WorkflowEngine` walks the node graph
+- **Template resolution** — `engine/template_resolution.py`
+- **Batch processing** — `engine/batch_executor.py`
+- **Instrumentation** — `engine/instrumentation.py`
+- **Namespacing** — `engine/namespaced_store.py`
 
-5.  **`Async` & `Parallel`**: Advanced components for handling I/O-bound tasks efficiently.
-    *   **`Async`**: For `Node`s and `Flow`s that need to perform asynchronous operations (e.g., non-blocking API calls, waiting for user input).
-    *   **`Parallel`**: For running multiple `Async` tasks concurrently to speed up execution.
-
-> Note: Async is outside the scope of the MVP, but it is important to understand how it works in PocketFlow as it will be used heavily in Version 2.0 of `pflow` CLI.
-
-In essence, PocketFlow provides a small set of simple but powerful "building blocks" (`Node`, `Flow`, `Shared Store`) that you can assemble to create sophisticated and reliable LLM-powered applications or workflows.
+These were previously in PocketFlow's `Flow` class and a 4-layer wrapper chain. Task 135 extracted them into the engine.
 
 ## Repository Structure
+
 ```
 src/pflow/pocketflow/
-├── __init__.py           # Core 100-line framework: **The most important file in the repository**
-├── CLAUDE.md            # Guidance for Claude on using PocketFlow <-- This file
-├── LICENSE              # MIT License
-├── PFLOW_MODIFICATIONS.md
-└── docs/                # Comprehensive documentation
-
-tests/pocketflow/         # PocketFlow test suite
+├── __init__.py              # ~85 lines: BaseNode, _ConditionalTransition, Node
+├── CLAUDE.md                # This file
+├── LICENSE                  # MIT License
+├── PFLOW_MODIFICATIONS.md   # History of pflow-specific changes
+└── docs/                    # Upstream PocketFlow documentation (historical)
 ```
+
+## All pflow nodes inherit from `Node`
+
+```python
+from pflow.pocketflow import Node  # NOT BaseNode!
+
+class MyNode(Node):
+    def prep(self, shared): ...
+    def exec(self, prep_res): ...
+    def post(self, shared, prep_res, exec_res): ...
+```
+
+Exception: `WorkflowExecutor` inherits from `BaseNode` (no retry — sub-workflow errors propagate directly).

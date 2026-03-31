@@ -208,7 +208,7 @@ Generates navigable markdown report directories from trace files. `generate_repo
 
 ### file_resolver.py
 
-Detects file path references in node params and batch items, reads the files, and substitutes their content into the IR before compilation. Called by `compile_ir_to_flow()` and validate-only paths.
+Detects file path references in node params and batch items, reads the files, and substitutes their content into the IR before compilation. Called by `compile_workflow()` and validate-only paths.
 
 **Detection heuristic**: starts with `./` or `../`, or contains `/` with recognized extension (.md, .txt, .py, .sh, .yaml, .yml, .json). Must not contain `${`, newlines, or `://` (URLs excluded).
 
@@ -248,7 +248,7 @@ The `workflow/` subdirectory has its own `__init__.py` with full re-exports. Imp
 | Compiler (`runtime/compilation/`) | validate_ir, validation_utils, SettingsManager | IR validation, param security, env loading |
 | Execution (`execution/`) | WorkflowValidator, OutputController, WorkflowManager | Validation phase, display, metadata updates |
 | Registry (`registry/`) | SettingsManager | Node filtering at load time |
-| Runtime (`runtime/wrappers/instrumented_wrapper.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |
+| Runtime (`runtime/engine/instrumentation.py`) | MetricsCollector, OutputController | LLM usage capture, progress callbacks |
 | MCP Server (`mcp_server/`) | workflow_save_service, suggestion_utils, security_utils | Save ops, suggestions, error sanitization |
 
 ## Critical Issues

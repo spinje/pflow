@@ -29,7 +29,7 @@ def test_validation_error_prevents_compilation():
         ],
     }
 
-    with patch("pflow.runtime.compile_ir_to_flow") as mock_compile:
+    with patch("pflow.runtime.compile_workflow") as mock_compile:
         result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
 
     assert isinstance(result, ExecutionResult)

@@ -4,7 +4,6 @@ The shell node should intelligently adapt any Python type to string for stdin,
 since subprocess.run() requires string or None for input.
 """
 
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
 from src.pflow.nodes.shell.shell import ShellNode
 
 
@@ -191,51 +190,44 @@ class TestBytesHandling:
 
 
 class TestTemplateIntegration:
-    """Test type adaptation works with template variables."""
+    """Test type adaptation works with non-string types (as would arrive from template resolution)."""
 
-    def test_dict_from_template_variable(self):
-        """Dict from template variable should work."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "test")
+    def test_dict_stdin_from_resolved_template(self):
+        """Dict value (as resolved from template variable) should be JSON serialized for stdin."""
+        node = ShellNode()
+        node.set_params({
+            "command": "jq -r '.data.url'",
+            "stdin": {"data": {"url": "https://example.com"}},
+        })
+        shared = {}
 
-        node.set_params({"command": "jq -r '.data.url'", "stdin": "${mcp.result}"})
-
-        shared = {"mcp": {"result": {"data": {"url": "https://example.com"}}}}
-
-        action = node._run(shared)
+        action = node.run(shared)
         assert action == "default"
         assert "https://example.com" in shared["stdout"]
 
-    def test_list_from_template_variable(self):
-        """List from template variable should work."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "test")
+    def test_list_stdin_from_resolved_template(self):
+        """List value (as resolved from template variable) should be JSON serialized for stdin."""
+        node = ShellNode()
+        node.set_params({"command": "jq -r '.[1]'", "stdin": ["first", "second", "third"]})
+        shared = {}
 
-        node.set_params({"command": "jq -r '.[1]'", "stdin": "${items}"})
-
-        shared = {"items": ["first", "second", "third"]}
-
-        action = node._run(shared)
+        action = node.run(shared)
         assert action == "default"
         assert "second" in shared["stdout"]
 
-    def test_int_from_template_variable(self):
-        """Integer from template variable should work."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "test")
+    def test_int_stdin_from_resolved_template(self):
+        """Integer value (as resolved from template variable) should be converted to string."""
+        node = ShellNode()
+        node.set_params({"command": "cat", "stdin": 42})
+        shared = {}
 
-        node.set_params({"command": "cat", "stdin": "${count}"})
-
-        shared = {"count": 42}
-
-        action = node._run(shared)
+        action = node.run(shared)
         assert action == "default"
         assert shared["stdout"] == "42"
 
     def test_mcp_json_response(self):
         """Simulates real MCP response (dict) being piped to jq."""
-        inner_node = ShellNode()
-        node = TemplateAwareNodeWrapper(inner_node, "process-mcp")
+        node = ShellNode()
 
         # Simulated MCP response structure
         mcp_result = {
@@ -243,13 +235,14 @@ class TestTemplateIntegration:
             "data": {"valueRanges": [{"values": [["https://open.spotify.com/track/xyz"]]}]},
         }
 
-        node.set_params({"stdin": "${mcp.result}", "command": "jq -r '.data.valueRanges[0].values[0][0]'"})
+        node.set_params({
+            "stdin": mcp_result,
+            "command": "jq -r '.data.valueRanges[0].values[0][0]'",
+        })
+        shared = {}
 
-        shared = {"mcp": {"result": mcp_result}}
+        action = node.run(shared)
 
-        action = node._run(shared)
-
-        # Should extract the Spotify URL
         assert action == "default"
         assert "https://open.spotify.com/track/xyz" in shared["stdout"]
 

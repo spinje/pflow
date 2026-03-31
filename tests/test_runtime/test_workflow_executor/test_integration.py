@@ -17,7 +17,8 @@ import pytest
 
 from pflow.pocketflow import BaseNode
 from pflow.registry import Registry
-from pflow.runtime import compile_ir_to_flow
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 from pflow.runtime.workflow_executor import WorkflowExecutor
 from tests.shared.markdown_utils import write_workflow_file
 
@@ -182,9 +183,10 @@ class TestWorkflowExecutorIntegration:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared = {}
-            result = flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
 
@@ -210,9 +212,11 @@ class TestWorkflowExecutorIntegration:
         }
 
         with self._setup_mock_imports():
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared = {"__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
 
@@ -232,9 +236,12 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(TrackingExampleNode):
-            flow = compile_ir_to_flow(nested_workflow_ir, registry=mock_registry)
-            shared = {"outer_input": "test_value", "__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(nested_workflow_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["outer_input"] = "test_value"
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
             assert len(execution_order) > 0, "Inner node should have executed"
@@ -264,9 +271,11 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(FailingExampleNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared = {"__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             # WorkflowExecutor returns error_action value
             assert result == "error"
@@ -315,9 +324,12 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(StorageCapturingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared = {"parent_data": "should_not_leak", "__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["parent_data"] = "should_not_leak"
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
             # Child should see only its mapped input, not parent_data
@@ -373,9 +385,11 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(InputCapturingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared = {"__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
             assert received_input["test_input"] == "mapped_value"
@@ -415,9 +429,11 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(DepthTrackingNode):
-            flow = compile_ir_to_flow(level1, registry=mock_registry)
-            shared = {"__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(level1, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
             # Leaf node is at depth 2 (level1=0, level2=1, level3=2)
@@ -475,9 +491,11 @@ class TestWorkflowExecutorIntegration:
                 return "default"
 
         with self._setup_mock_imports(OutputProducingNode):
-            flow = compile_ir_to_flow(parent_ir, registry=mock_registry)
-            shared = {"__registry__": mock_registry}
-            result = flow.run(shared)
+            workflow = compile_workflow(parent_ir, registry=mock_registry)
+            shared = dict(workflow.resolved_defaults)
+            shared["__registry__"] = mock_registry
+            engine = WorkflowEngine()
+            result = engine.run(workflow, shared)
 
             assert result == "default"
             # Child outputs are auto-exposed under the parent node's namespace.

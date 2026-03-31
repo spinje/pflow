@@ -35,9 +35,15 @@ class TestMetadataExtractorBehavior:
         assert result["description"] != "No description"
 
     def test_handles_missing_docstring_gracefully(self):
-        """Test that nodes without docstrings are handled gracefully."""
+        """Test that nodes without docstrings are handled gracefully.
 
-        class UndocumentedNode(pocketflow.Node):
+        FIX HISTORY:
+        - Previously used pocketflow.Node, but Node now has a docstring
+          ("BaseNode with retry...") which inspect.getdoc() inherits.
+        - Use pocketflow.BaseNode (no docstring) to test the "no description" path.
+        """
+
+        class UndocumentedNode(pocketflow.BaseNode):
             pass
 
         result = self.extractor.extract_metadata(UndocumentedNode)

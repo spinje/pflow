@@ -1,7 +1,13 @@
 """Tests for batch processing compiler integration.
 
-These tests verify that the compiler correctly applies the PflowBatchNode wrapper
-in the wrapper chain when nodes have batch configuration.
+These tests verify that the compiler correctly builds BatchConfig in NodeConfig
+when nodes have batch configuration, and that batch execution works end-to-end
+through the WorkflowEngine.
+
+FIX HISTORY:
+- Updated for compile-once redesign: removed wrapper isinstance checks,
+  use compile_workflow() + NodeConfig for structural assertions,
+  use compile_workflow() + WorkflowEngine for execution tests.
 """
 
 import tempfile
@@ -12,11 +18,8 @@ import pytest
 
 from pflow.pocketflow import Node
 from pflow.registry.registry import Registry
-from pflow.runtime import compile_ir_to_flow
-from pflow.runtime.wrappers.batch_node import PflowBatchNode
-from pflow.runtime.wrappers.instrumented_wrapper import InstrumentedNodeWrapper
-from pflow.runtime.wrappers.namespaced_wrapper import NamespacedNodeWrapper
-from pflow.runtime.wrappers.template_wrapper import TemplateAwareNodeWrapper
+from pflow.runtime import compile_workflow
+from pflow.runtime.engine import WorkflowEngine
 
 
 class ValueNode(Node):
@@ -45,7 +48,6 @@ def test_registry():
         registry_path = Path(tmpdir) / "test_registry.json"
         registry = Registry(registry_path)
 
-        # Register our test node - use __module__ to get correct path
         test_node_metadata = {
             "value-node": {
                 "module": "tests.test_runtime.test_compiler_batch",
@@ -63,11 +65,11 @@ def test_registry():
         yield registry
 
 
-class TestBatchWrapperChain:
-    """Tests for batch node wrapper chain order."""
+class TestBatchNodeConfig:
+    """Tests for batch NodeConfig creation during compilation."""
 
-    def test_batch_node_gets_wrapped(self, test_registry):
-        """Batch-configured node gets PflowBatchNode wrapper applied."""
+    def test_batch_node_gets_batch_config(self, test_registry):
+        """Batch-configured node gets BatchConfig in its NodeConfig."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -82,19 +84,14 @@ class TestBatchWrapperChain:
             "edges": [{"from": "data_source", "to": "batch_processor"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
+        workflow = compile_workflow(ir, registry=test_registry)
 
-        # Find the batch_processor node in the flow
-        batch_node = flow.start_node.successors.get("default")
-        assert batch_node is not None
+        config = workflow.node_configs["batch_processor"]
+        assert config.batch_config is not None
+        assert config.batch_config.items_template == "${data_source.result}"
 
-        # Verify wrapper chain: InstrumentedNodeWrapper wrapping PflowBatchNode
-        assert isinstance(batch_node, InstrumentedNodeWrapper)
-        inner = batch_node.inner_node
-        assert isinstance(inner, PflowBatchNode)
-
-    def test_non_batch_node_not_wrapped_with_batch(self, test_registry):
-        """Node without batch config does NOT get PflowBatchNode wrapper."""
+    def test_non_batch_node_has_no_batch_config(self, test_registry):
+        """Node without batch config has BatchConfig = None."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -103,21 +100,13 @@ class TestBatchWrapperChain:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
+        workflow = compile_workflow(ir, registry=test_registry)
 
-        node = flow.start_node
-        assert isinstance(node, InstrumentedNodeWrapper)
+        config = workflow.node_configs["normal_node"]
+        assert config.batch_config is None
 
-        # Inner should NOT be PflowBatchNode
-        inner = node.inner_node
-        assert not isinstance(inner, PflowBatchNode)
-
-    def test_wrapper_chain_order_correct(self, test_registry):
-        """Wrapper chain order: Instrumented > Batch > Namespace > Template > Actual.
-
-        Applied inner-to-outer: Actual → Template → Namespace → Batch → Instrumented
-        Executed outer-to-inner: Instrumented → Batch → Namespace → Template → Actual
-        """
+    def test_node_config_structure_correct(self, test_registry):
+        """NodeConfig captures all compilation metadata for batch and non-batch nodes."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -126,46 +115,35 @@ class TestBatchWrapperChain:
                     "id": "batch",
                     "type": "value-node",
                     "batch": {"items": "${source.result}"},
-                    "params": {"value": "${item}"},  # Template to trigger TemplateAwareNodeWrapper
+                    "params": {"value": "${item}"},
                 },
             ],
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        batch_node = flow.start_node.successors.get("default")
+        workflow = compile_workflow(ir, registry=test_registry)
 
-        # Layer 1 (outermost): InstrumentedNodeWrapper
-        assert isinstance(batch_node, InstrumentedNodeWrapper)
-        layer1 = batch_node
+        # Source node: no batch, has template config for static params
+        source_config = workflow.node_configs["source"]
+        assert source_config.node_id == "source"
+        assert source_config.node_type_name == "ValueNode"
+        assert source_config.batch_config is None
+        assert source_config.namespaced is True
 
-        # Layer 2: PflowBatchNode
-        layer2 = layer1.inner_node
-        assert isinstance(layer2, PflowBatchNode)
-
-        # Layer 3: NamespacedNodeWrapper
-        # PflowBatchNode stores inner node as self.inner_node
-        layer3 = layer2.inner_node
-        assert isinstance(layer3, NamespacedNodeWrapper)
-
-        # Layer 4: TemplateAwareNodeWrapper (because params have templates)
-        # NamespacedNodeWrapper stores inner node as self._inner_node
-        layer4 = layer3._inner_node
-        assert isinstance(layer4, TemplateAwareNodeWrapper)
-
-        # Layer 5 (innermost): Actual ValueNode
-        layer5 = layer4.inner_node
-        # Use duck typing - check it has the ValueNode interface (exec method)
-        # Can't use isinstance because the dynamically loaded class is a different object
-        assert hasattr(layer5, "exec")
-        assert layer5.__class__.__name__ == "ValueNode"
+        # Batch node: has batch config and template config
+        batch_config = workflow.node_configs["batch"]
+        assert batch_config.node_id == "batch"
+        assert batch_config.node_type_name == "ValueNode"
+        assert batch_config.batch_config is not None
+        assert batch_config.template_config is not None
+        assert batch_config.namespaced is True
 
 
 class TestBatchConfigParsing:
     """Tests for batch configuration parsing in compiler."""
 
     def test_batch_config_items_parsed(self, test_registry):
-        """Batch items template is correctly passed to PflowBatchNode."""
+        """Batch items template is correctly captured in BatchConfig."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -179,14 +157,14 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        batch_wrapper = flow.start_node.successors.get("default").inner_node
+        workflow = compile_workflow(ir, registry=test_registry)
+        config = workflow.node_configs["batch"]
 
-        assert isinstance(batch_wrapper, PflowBatchNode)
-        assert batch_wrapper.items_template == "${source.result}"
+        assert config.batch_config is not None
+        assert config.batch_config.items_template == "${source.result}"
 
     def test_batch_config_custom_alias(self, test_registry):
-        """Custom 'as' alias is correctly passed to PflowBatchNode."""
+        """Custom 'as' alias is correctly captured in BatchConfig."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -200,13 +178,13 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        batch_wrapper = flow.start_node.successors.get("default").inner_node
+        workflow = compile_workflow(ir, registry=test_registry)
+        config = workflow.node_configs["batch"]
 
-        assert batch_wrapper.item_alias == "record"
+        assert config.batch_config.item_alias == "record"
 
     def test_batch_config_error_handling(self, test_registry):
-        """Error handling mode is correctly passed to PflowBatchNode."""
+        """Error handling mode is correctly captured in BatchConfig."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -220,10 +198,10 @@ class TestBatchConfigParsing:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        batch_wrapper = flow.start_node.successors.get("default").inner_node
+        workflow = compile_workflow(ir, registry=test_registry)
+        config = workflow.node_configs["batch"]
 
-        assert batch_wrapper.error_handling == "continue"
+        assert config.batch_config.error_handling == "continue"
 
     def test_batch_config_defaults_applied(self, test_registry):
         """Default values applied when optional fields not specified."""
@@ -234,17 +212,17 @@ class TestBatchConfigParsing:
                 {
                     "id": "batch",
                     "type": "value-node",
-                    "batch": {"items": "${source.result}"},  # Only required field
+                    "batch": {"items": "${source.result}"},
                 },
             ],
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        batch_wrapper = flow.start_node.successors.get("default").inner_node
+        workflow = compile_workflow(ir, registry=test_registry)
+        config = workflow.node_configs["batch"]
 
-        assert batch_wrapper.item_alias == "item"  # Default
-        assert batch_wrapper.error_handling == "fail_fast"  # Default
+        assert config.batch_config.item_alias == "item"
+        assert config.batch_config.error_handling == "fail_fast"
 
 
 class TestBatchExecutionIntegration:
@@ -270,9 +248,10 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Source node should have result
         assert "source" in shared
@@ -299,17 +278,17 @@ class TestBatchExecutionIntegration:
                     "id": "batch",
                     "type": "value-node",
                     "batch": {"items": "${source.result}"},
-                    "params": {"value": "${item}"},  # Should resolve to each item
+                    "params": {"value": "${item}"},
                 },
             ],
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
-        # Each result should contain the resolved item value
         results = shared["batch"]["results"]
         assert len(results) == 3
         assert results[0].get("result") == 10
@@ -330,15 +309,16 @@ class TestBatchExecutionIntegration:
                     "id": "batch",
                     "type": "value-node",
                     "batch": {"items": "${source.result}", "as": "letter"},
-                    "params": {"value": "${letter}"},  # Uses custom alias
+                    "params": {"value": "${letter}"},
                 },
             ],
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         results = shared["batch"]["results"]
         assert results[0].get("result") == "x"
@@ -363,15 +343,16 @@ class TestBatchExecutionIntegration:
                     "id": "batch",
                     "type": "value-node",
                     "batch": {"items": "${source.result}"},
-                    "params": {"value": "${item.name}"},  # Nested field access
+                    "params": {"value": "${item.name}"},
                 },
             ],
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         results = shared["batch"]["results"]
         assert results[0].get("result") == "Alice"
@@ -381,7 +362,7 @@ class TestBatchExecutionIntegration:
         """Batch works correctly with namespacing enabled (default)."""
         ir = {
             "ir_version": "0.1.0",
-            "enable_namespacing": True,  # Explicitly enabled
+            "enable_namespacing": True,
             "nodes": [
                 {
                     "id": "source",
@@ -397,11 +378,11 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
-        # Results should be namespaced correctly
         assert "batch" in shared
         assert "results" in shared["batch"]
         assert shared["batch"]["count"] == 2
@@ -425,12 +406,12 @@ class TestBatchExecutionIntegration:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # After execution, _batch_trace is cleaned up from shared store
-        # (data transferred to batch node's _trace_items, consumed by InstrumentedNodeWrapper)
         assert "_batch_trace" not in shared
 
 
@@ -445,7 +426,7 @@ class TestBatchEdgeCases:
                 {
                     "id": "source",
                     "type": "value-node",
-                    "params": {"value": []},  # Empty array
+                    "params": {"value": []},
                 },
                 {
                     "id": "batch",
@@ -456,9 +437,10 @@ class TestBatchEdgeCases:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["batch"]["count"] == 0
         assert shared["batch"]["results"] == []
@@ -496,15 +478,16 @@ class TestBatchEdgeCases:
             ],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["batch1"]["count"] == 2
         assert shared["batch2"]["count"] == 3
 
     def test_batch_inline_array_with_templates_compiles_and_executes(self, test_registry):
-        """Full pipeline: IR with inline batch array → compile → execute.
+        """Full pipeline: IR with inline batch array -> compile -> execute.
 
         This is the primary use case: different operations on same data.
         Verifies templates inside inline array elements resolve correctly.
@@ -526,15 +509,16 @@ class TestBatchEdgeCases:
                             {"op": "lower", "data": "${source.result}"},
                         ]
                     },
-                    "params": {"value": "${item}"},  # Just echo the resolved item
+                    "params": {"value": "${item}"},
                 },
             ],
             "edges": [{"from": "source", "to": "multi-op"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         # Verify inline array resolved templates and executed both items
         assert shared["multi-op"]["count"] == 2
@@ -550,18 +534,12 @@ class TestBatchEdgeCases:
 class TestInputsAsTemplateContext:
     """Tests for inputs-as-context through the full compiled pipeline.
 
-    Exercises the entire wrapper chain (instrumented → batch → namespace → template)
+    Exercises the engine pipeline (template resolution -> batch -> namespace)
     to verify that 'inputs' values are available as template context for other params.
     """
 
     def test_batch_inputs_resolve_in_other_params(self, test_registry):
-        """Inputs mapping from batch item fields resolves in another param.
-
-        This is the core use case: a node maps ${item.field} to a simpler name
-        via inputs, then references that name in another param. The full wrapper
-        chain must cooperate: batch injects 'item', namespace proxies the store,
-        template resolves inputs first then uses enriched context for other params.
-        """
+        """Inputs mapping from batch item fields resolves in another param."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -591,9 +569,10 @@ class TestInputsAsTemplateContext:
             "edges": [{"from": "source", "to": "batch"}],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         results = shared["batch"]["results"]
         assert len(results) == 2
@@ -601,12 +580,7 @@ class TestInputsAsTemplateContext:
         assert results[1]["result"] == "Name=Bob, Role=designer"
 
     def test_static_inputs_resolve_in_other_params(self, test_registry):
-        """Static inputs (no templates) also enrich the template context.
-
-        When inputs has literal values, they should be available for resolving
-        template variables in other params — even though inputs itself has no
-        templates and goes through set_params as a static param.
-        """
+        """Static inputs (no templates) also enrich the template context."""
         ir = {
             "ir_version": "0.1.0",
             "nodes": [
@@ -622,8 +596,9 @@ class TestInputsAsTemplateContext:
             "edges": [],
         }
 
-        flow = compile_ir_to_flow(ir, registry=test_registry)
-        shared: dict[str, Any] = {}
-        flow.run(shared)
+        workflow = compile_workflow(ir, registry=test_registry)
+        shared: dict[str, Any] = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
 
         assert shared["node"]["result"] == "hello world"

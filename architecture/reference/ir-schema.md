@@ -494,7 +494,7 @@ The item alias (default: `item`) is injected into the shared store for each iter
 
 > **Template Syntax**: For complete template variable syntax, type preservation, and resolution rules, see [Template Variables Reference](./template-variables.md).
 
-> **Implementation**: See `src/pflow/runtime/wrappers/batch_node.py` for the `PflowBatchNode` wrapper that implements batch processing.
+> **Implementation**: See `src/pflow/runtime/engine/batch_executor.py` for the batch execution logic.
 
 ---
 

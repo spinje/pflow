@@ -599,8 +599,8 @@ shared = {
 ### Technical Implementation
 
 - `NamespacedSharedStore`: Proxy that redirects writes to namespaced locations
-- `NamespacedNodeWrapper`: Wraps nodes to provide namespaced store access
-- Compiler integration: Automatically applies wrapping when enabled
+- Engine namespacing: `WorkflowEngine` wraps nodes with namespaced store access during execution
+- Compiler integration: Automatically enables namespacing when configured
 - Template resolver: Supports path-based access (`${node.key}`)
 
 ## Summary
