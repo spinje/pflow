@@ -11,6 +11,10 @@ Two `_find_auto_output()` implementations return different results for the same 
 
 A workflow producing both `response` and `result` shows different output depending on `--output-format`. An agent testing interactively sees one thing; consuming JSON programmatically sees another.
 
+## Status
+
+done
+
 ## What Was Done
 
 Created a single shared `find_auto_output()` in `execution/formatters/output_utils.py`, used by both consumers.

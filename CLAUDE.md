@@ -200,19 +200,15 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 106: Workflow Iteration Cache
 - ✅ Task 136: Recursive Sub-Workflow Validation at Parse Time
 - ✅ Task 137: Unified CLI Output Pipeline
+- ✅ Task 134: Output Detection Unification
 - ✅ Task 138: Shared Execution Pipeline
 - ✅ Task 135: Execution Core Compile-Once Redesign
 
 ### Planned Features (in order of priority)
 
 **Next**
-- Task 125: Human-in-the-Loop Approval Gates
-
-**Refactors:**
 - Task 141: Consolidate Exception Hierarchy
-- Task 134: Output Detection Unification
-- Task 117: JSON Error Output for CLI Subcommands (registry, workflow — narrowed, main.py done by Task 137)
-- Task 120: Strict Input Type Validation
+- Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**
 - Task 46: Workflow Export to Zero-Dependency Code
@@ -242,6 +238,10 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - Task 81: Find/Install Remote MCP Servers
 - Task 86: MCP Server Discovery Automation
 - Task 123: OAuth Authentication for MCP HTTP Servers
+
+**Refactors:**
+- Task 117: Subcommand JSON Error Output
+- Task 120: Strict Input Type Validation
 
 **Later:**
 - Task 124: Code Node Dependency Management

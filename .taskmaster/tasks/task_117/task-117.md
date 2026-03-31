@@ -1,4 +1,4 @@
-# Task 117: JSON Error Output for CLI Subcommands
+# Task 117: Subcommand JSON Error Output
 
 ## Description
 
