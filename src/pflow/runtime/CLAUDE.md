@@ -6,7 +6,7 @@ Compilation and execution infrastructure. Compiles workflow IR into `CompiledWor
 
 ```
 src/pflow/runtime/
-├── __init__.py              # Exports: compile_workflow(), compile_ir_to_flow(), WorkflowEngine, etc.
+├── __init__.py              # Exports: compile_workflow(), WorkflowEngine, CompiledWorkflow, etc.
 ├── compilation/             # IR→CompiledWorkflow compiler (see compilation/CLAUDE.md)
 ├── engine/                  # Orchestration engine (see engine/CLAUDE.md)
 ├── cache.py                 # Persistent memoization cache (SQLite, cross-run)
@@ -28,7 +28,7 @@ src/pflow/runtime/
 5. Wire nodes using edges (PocketFlow `>>` and `-` operators)
 6. Return `CompiledWorkflow(start_node, node_configs, outputs, resolved_defaults, ...)`
 
-`compile_ir_to_flow()` is a backward-compat shim — delegates to `compile_workflow()` + wraps in `_CompiledWorkflowShim` with `.run()`.
+`compile_ir_to_flow()` was removed (shim deleted after full migration). All callers use `compile_workflow()` + `WorkflowEngine` directly.
 
 **CompilationError** (in `core/exceptions.py`): fields `phase`, `node_id`, `node_type`, `details`, `suggestion`.
 

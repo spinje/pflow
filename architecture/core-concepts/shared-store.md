@@ -283,8 +283,7 @@ shared = {"prompt": "Summarize this content: Input content"}
 llm_node = LLMNode()
 llm_node.set_params({"model": "claude-sonnet-4-20250514", "temperature": 0.7})
 
-flow = Flow(start=llm_node)
-flow.run(shared)  # Node accesses shared["prompt"] directly
+llm_node.run(shared)  # Node accesses shared["prompt"] directly
 ```
 
 ### Level 2 - Complex Flow (Proxy Mapping)
@@ -322,8 +321,8 @@ llm_node.set_params({
     "temperature": 0.3  # Conservative for academic content
 })
 
-# Wire the flow using pocketflow operators
-flow = Flow(start=llm_node)
+# Wire and compile — in production, compile_workflow() handles this
+# Bare nodes use >> operator for wiring, engine handles execution
 ```
 
 **Flow B** (Complex - With Proxy Mapping):

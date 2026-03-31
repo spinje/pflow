@@ -25,50 +25,36 @@ This document captures critical insights about how pflow and pocketflow integrat
 
 1. **Writing platform nodes** - All nodes inherit from `pocketflow.Node`. This is the standard pattern for extending pflow's capabilities. Wrappers (template resolution, namespacing, instrumentation) are applied automatically by the compiler - node authors don't implement these.
 
-2. **Direct PocketFlow flows** - Used ONLY in exceptional cases where pflow itself needs an internal workflow. This is rare and should be avoided unless there's a compelling reason.
+2. **Understanding the execution engine** - `WorkflowEngine` handles graph traversal and all runtime concerns. PocketFlow provides the node lifecycle only.
 
-**For the compilation/runtime layer** where the workflow IR is transformed into executable PocketFlow objects, see `src/pflow/runtime/CLAUDE.md`.
+**For the compilation/runtime layer** where the workflow IR is transformed into `CompiledWorkflow` and executed via `WorkflowEngine`, see `src/pflow/runtime/CLAUDE.md`.
 
-## Critical Insight #1: PocketFlow IS the Execution Engine
+## Critical Insight #1: PocketFlow Provides the Node Lifecycle, Not Execution
 
-**What new implementers often miss**: Task descriptions might suggest building an "execution engine" or "runtime system", but pocketflow's `Flow` class already provides complete execution orchestration.
+PocketFlow is slimmed to ~85 lines: `BaseNode`, `_ConditionalTransition`, `Node`. The `Flow` class was removed (Task 135). Graph traversal and all runtime concerns are handled by `WorkflowEngine` in `runtime/engine/`.
 
-```python
-# WRONG - Don't reimplement execution
-class PflowExecutionEngine:
-    def execute_nodes(self, nodes):
-        # Don't do this!
+**What PocketFlow provides**:
+- Node lifecycle (prep→exec→post)
+- Retry logic (`Node._exec` with `max_retries`/`wait`)
+- The `>>` and `-` operators for wiring nodes during compilation
+- Shared Store Pattern (a plain dictionary: nodes read in `prep(shared)`, write in `post(shared, ...)`)
 
-# RIGHT - Use pocketflow directly
-from pflow.pocketflow import Flow
-flow = Flow(start=first_node)
-result = flow.run(shared)
-```
+**What pflow's engine adds** (all in `runtime/engine/`):
+- Graph traversal (`WorkflowEngine.run` — walks node successors)
+- Template resolution (resolve `${var}` against shared store)
+- Namespacing (per-node output isolation via `NamespacedSharedStore`)
+- Batch processing (sequential/parallel, retry, error handling)
+- Instrumentation (memoization cache, trace, metrics, progress callbacks, loop guards)
 
-**What pocketflow provides**:
-- Complete node lifecycle management (prep→exec→post)
-- Action-based routing between nodes using the `-` operator
-- Built-in retry logic and error handling
-- Flow composition and nesting
-- Parameter passing system
-- The `>>` operator for chaining nodes
-- `Node` class with prep/exec/post lifecycle
-- `Flow` class for orchestration (THIS IS THE EXECUTION ENGINE)
-- Shared Store Pattern
-    - NOT a built-in class, just a dictionary pattern
-    - Nodes read in `prep(shared)`, write in `post(shared, ...)`
-    - Framework passes the dictionary through execution
-
-**What pflow adds**:
+**What pflow adds beyond the engine**:
 - CLI interface and command parsing
-- Markdown parser (`.pflow.md` → IR dict) and IR-to-Flow compilation
+- Markdown parser (`.pflow.md` → IR dict) and IR-to-CompiledWorkflow compilation
 - Node registry and discovery
-- Template variable resolution
-- Legacy natural-language workflow generation
+- `WorkflowRunner` (resolution → validation → compilation → execution → cleanup)
 
 ## Critical Insight #2: No Wrapper Classes Needed
 
-**The trap**: Initial instinct is to create `PflowNode(pocketflow.Node)` and `PflowFlow(pocketflow.Flow)` wrapper classes.
+**The trap**: Initial instinct is to create wrapper classes around PocketFlow nodes.
 
 **The reality**: These wrappers add zero value and unnecessary complexity.
 
@@ -179,37 +165,37 @@ def categorize_flags(flags_dict, node_metadata):
 
 **What NOT to do**: Generate Python code strings or implement a complex compiler.
 
-**What to do**: Instantiate pocketflow objects from the IR dict.
+**What to do**: Instantiate bare nodes from the IR dict, build per-node configs, return a `CompiledWorkflow`.
 
 ```python
-def compile_ir_to_flow(ir_dict):
-    """Convert IR dict to executable pocketflow.Flow."""
-    from pflow.pocketflow import Flow
+def compile_workflow(ir_dict):
+    """Convert IR dict to CompiledWorkflow (bare nodes + configs)."""
     from pflow.registry import get_node_class
 
-    # Create nodes
-    nodes = {}
+    # Create bare nodes + configs
+    nodes, configs = {}, {}
     for node_spec in ir_dict["nodes"]:
         NodeClass = get_node_class(node_spec["type"])
         node = NodeClass()
+        node.node_id = node_spec["id"]
         if "params" in node_spec:
             node.set_params(node_spec["params"])
         nodes[node_spec["id"]] = node
+        configs[node_spec["id"]] = NodeConfig(...)  # template, batch, namespace metadata
 
-    # Connect nodes
+    # Connect nodes (PocketFlow wiring operators still used)
     for edge in ir_dict["edges"]:
         from_node = nodes[edge["from"]]
         to_node = nodes[edge["to"]]
         action = edge.get("action", "default")
-
         if action == "default":
             from_node >> to_node
         else:
             from_node - action >> to_node
 
-    # Create flow
     start_node = nodes[ir_dict["start_node"]]
-    return Flow(start=start_node)
+    return CompiledWorkflow(start_node=start_node, node_configs=configs)
+    # Execution: WorkflowEngine().run(compiled, shared_store)
 ```
 
 ## Critical Insight #8: Registry is Filesystem Scanning
@@ -253,30 +239,19 @@ def scan_for_nodes(directory):
 
 **Core principles that remain true:**
 
-1. **Execution orchestration** - pocketflow.Flow handles this; don't reimplement
+1. **Execution orchestration** - WorkflowEngine handles graph traversal; don't reimplement
 2. **Retry mechanisms** - pocketflow.Node has this built-in; use `max_retries` and `wait`
-3. **Complex abstractions in nodes** - Nodes should be simple; complexity lives in wrappers
+3. **Complex abstractions in nodes** - Nodes should be simple; complexity lives in the engine
 
 **What the MVP avoided but was added as the system matured:**
 
-4. **~~SharedStore class~~** → `NamespacedSharedStore` was added for collision prevention (applied by compiler)
+4. **~~SharedStore class~~** → `NamespacedSharedStore` proxy for collision prevention (applied by engine)
 5. **~~Simple template engine~~** → Template resolution grew to 600+ lines with path traversal, type preservation, auto JSON parsing
-6. **~~No wrapper classes~~** → Wrapper chain was added (applied by compiler):
-   ```
-   InstrumentedWrapper (metrics, cache, trace)
-       ↓
-   BatchWrapper (if configured - iteration over arrays)
-       ↓
-   NamespacedWrapper (collision prevention)
-       ↓
-   TemplateAwareWrapper (${var} resolution)
-       ↓
-   ActualNode
-   ```
+6. **~~No runtime layer~~** → `WorkflowEngine` orchestrates all runtime concerns (template resolution, namespacing, batch iteration, caching, tracing, progress callbacks) directly during graph traversal. Nodes remain bare — the engine handles everything.
 7. **~~Simple registry~~** → Registry now includes metadata extraction, LLM-powered discovery
 8. **~~No metrics~~** → `MetricsCollector` tracks timing, tokens, costs
 
-**The lesson:** Start simple, but expect complexity to emerge. The key is that complexity was added in the **compiler/wrapper layer**, not in node implementations. Nodes remain simple.
+**The lesson:** Start simple, but expect complexity to emerge. The key is that complexity was added in the **compiler/engine layer**, not in node implementations. Nodes remain simple.
 
 ## Implementation Principles
 
@@ -289,32 +264,31 @@ def scan_for_nodes(directory):
 ## The Core Principle: "Extend, Don't Wrap"
 
 This principle guides every architectural decision:
-- Extend pocketflow.Node directly, don't create wrapper classes
+- Inherit from `pocketflow.Node` directly, keep nodes simple
 - Extend shared dict with validation functions, don't wrap in classes
 - Extend CLI patterns, don't reinvent parsing
-- Use pocketflow.Flow directly, don't reimplement orchestration
+- Runtime concerns (templates, namespacing, batch, tracing) belong in the engine, not in node wrappers
 
-This prevents the "framework on framework" anti-pattern and keeps pflow as a thin, focused layer that:
-- Makes pocketflow accessible via CLI
-- Adds natural-language workflow generation
-- Provides platform-specific nodes
-- Enables workflow reuse
+This keeps pflow as a focused layer that:
+- Makes workflow execution accessible via CLI
+- Provides platform-specific nodes (shell, llm, http, mcp, etc.)
+- Handles all runtime orchestration (engine) and compilation (compiler)
+- Enables workflow reuse and composition
 
 ## The Core Architecture
 
 ```
-User Input → CLI Parser → Flag Categorization → Markdown Parser → IR dict →
-IR Compiler → pocketflow.Flow → Execution → Results
+User Input → CLI Parser → Markdown Parser → IR dict →
+compile_workflow() → CompiledWorkflow(bare nodes + configs) →
+WorkflowEngine.run(workflow, shared_store) → ExecutionResult
 
 Where:
-- CLI Parser: click-based command parsing
-- Markdown Parser: .pflow.md → IR dict (same shape JSON produced)
-- IR Compiler: Converts IR dict to pocketflow objects
-- Execution: pocketflow handles everything
+- Markdown Parser: .pflow.md → IR dict
+- compile_workflow(): IR dict → bare node instances + NodeConfig metadata + wiring
+- WorkflowEngine: walks graph, handles template resolution, batch, caching, tracing
+- PocketFlow: provides Node lifecycle (prep/exec/post) and wiring operators (>>, -)
 ```
 
 ## Final Wisdom
 
-pflow is a **CLI tool** that makes pocketflow accessible, not a framework on top of a framework. Every line of code should have a clear purpose: CLI interface, node discovery, workflow authoring support, or IR compilation. If you find yourself reimplementing something that feels like execution orchestration, you're probably duplicating pocketflow functionality.
-
-**Remember**: We're extending pocketflow, not replacing it.
+pflow nodes are simple — they inherit from `pocketflow.Node`, implement `prep`/`exec`/`post`, and communicate via the shared store. All complexity (template resolution, namespacing, batch processing, caching, tracing) lives in the engine, not in the nodes. If you find yourself adding cross-cutting behavior to a node, it probably belongs in the engine instead.

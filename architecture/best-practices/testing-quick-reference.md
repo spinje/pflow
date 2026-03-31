@@ -175,14 +175,16 @@ def test_node_handles_missing_input():
 ```python
 def test_nodes_work_together_in_workflow():
     """Test nodes communicate via shared store."""
-    # Build workflow
-    flow = Flow() >> ProducerNode() >> ConsumerNode()
-
-    # Run with input
-    result = flow.run({"initial_data": "test"})
+    # Build workflow IR and compile
+    ir = {"nodes": [...], "edges": [...]}
+    workflow = compile_workflow(ir, registry)
+    shared = {"initial_data": "test"}
+    shared.update(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    engine.run(workflow, shared)
 
     # Verify end result
-    assert result["final_output"] == "processed: test"
+    assert shared["consumer"]["final_output"] == "processed: test"
 ```
 
 ## 📝 Test Patterns by Implementation Type
@@ -627,9 +629,9 @@ Should I mock this?
 │  ├─ Database → Yes (mock connection)
 │  └─ Time → Yes (use freezegun)
 │
-├─ Is it a PocketFlow component?
+├─ Is it a PocketFlow/engine component?
 │  ├─ Node → NO! Never mock
-│  ├─ Flow → NO! Never mock
+│  ├─ WorkflowEngine → NO! Never mock
 │  └─ Shared store → NO! Never mock
 │
 ├─ Is it your own code?

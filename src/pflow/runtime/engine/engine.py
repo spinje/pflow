@@ -241,7 +241,7 @@ class WorkflowEngine:
             # 15. LLM cost
             enrich_llm_cost(config.node_id, shared)
 
-            # 16. Trace
+            # 16. Trace — node returning "error" action is a failure even without exception
             record_trace(
                 config.node_id,
                 config.node_type_name,
@@ -253,6 +253,7 @@ class WorkflowEngine:
                 child_trace_events,
                 node.params,
                 self.trace,
+                success=(action != "error"),
             )
 
             # 17. Completion callback

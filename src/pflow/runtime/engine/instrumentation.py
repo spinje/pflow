@@ -224,6 +224,7 @@ def check_memo_cache(
         return False, None, cache_key
 
     cached_action, cached_output = cached
+    cached_action = cached_action or "default"  # Normalize None from SQLite
     # Restore output for downstream template resolution
     shared[node_id] = cached_output
     # Record in in-process execution state
@@ -245,7 +246,7 @@ def write_memo_cache(node_id: str, shared: dict, cache_key: Optional[str], actio
     if node_output is not None:
         workflow_path = shared.get("_pflow_workflow_file")
         output_dict = dict(node_output) if isinstance(node_output, dict) else {"value": node_output}
-        memo_cache.put(cache_key, node_id, workflow_path, action, output_dict)
+        memo_cache.put(cache_key, node_id, workflow_path, action or "default", output_dict)
 
 
 # --- Metrics & Tracing ---
@@ -264,6 +265,7 @@ def record_trace(
     trace_collector: Any,
     cached: bool = False,
     error: Optional[Exception] = None,
+    success: Optional[bool] = None,
 ) -> None:
     """Record trace event. Receives data directly, no chain traversal."""
     if not trace_collector:
@@ -308,7 +310,7 @@ def record_trace(
         node_id=node_id,
         node_type=node_type_name,
         duration_ms=duration_ms,
-        success=(error is None),
+        success=success if success is not None else (error is None),
         error=str(error) if error else None,
         node_params=node_params,
         template_resolutions=last_resolutions,

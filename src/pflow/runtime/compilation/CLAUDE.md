@@ -16,9 +16,9 @@ compilation/
 
 ## Public API (via `__init__.py`)
 
-`CompilationError`, `compile_ir_to_flow`, `compile_workflow`, `inject_special_parameters`, `import_node_class`, `prepare_inputs`, `validate_ir_structure`
+`CompilationError`, `compile_workflow`, `inject_special_parameters`, `import_node_class`, `prepare_inputs`, `validate_ir_structure`
 
-Also re-exported through `runtime/__init__.py`: `CompilationError`, `compile_ir_to_flow`, `compile_workflow`, `import_node_class`, `CompiledWorkflow`, `WorkflowEngine`.
+Also re-exported through `runtime/__init__.py`: `CompilationError`, `compile_workflow`, `import_node_class`, `CompiledWorkflow`, `WorkflowEngine`.
 
 ## compiler.py
 
@@ -28,7 +28,6 @@ The orchestrator. `compile_workflow()` is the primary entry point: parse IR dict
 
 **Key functions**:
 - `compile_workflow()` — primary pipeline. Returns `CompiledWorkflow` (no runtime state baked in).
-- `compile_ir_to_flow()` — backward-compat shim. Delegates to `compile_workflow()` + `_CompiledWorkflowShim`.
 - `_create_node_and_config()` — creates bare node + `NodeConfig`. Calls `split_params()` to separate template/static, builds `TemplateConfig` and `BatchConfig`.
 - `_instantiate_nodes_for_workflow()` — loops nodes, returns `(nodes_dict, configs_dict)`.
 - `inject_special_parameters()` — injects `__registry__` for workflow nodes, `__mcp_server__`/`__mcp_tool__` for MCP nodes.

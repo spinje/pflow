@@ -9,7 +9,7 @@ tests/
 │   ├── markdown_utils.py # ir_to_markdown() and write_workflow_file() for .pflow.md test files
 │   ├── registry_utils.py # ensure_test_registry() helper
 │   └── README.md         # Docs for shared utilities
-├── test_pocketflow/       # PocketFlow framework tests (sync/async, batch, flow composition)
+├── test_pocketflow/       # PocketFlow framework tests (BaseNode, Node lifecycle)
 ├── test_cli/              # CLI command tests (CliRunner-based)
 ├── test_core/             # IR schema, shell integration, settings, workflow manager
 ├── test_docs/             # Documentation validation
