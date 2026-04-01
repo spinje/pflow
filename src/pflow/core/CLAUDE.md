@@ -66,12 +66,28 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 ```
 `except PflowError` catches all pflow-specific exceptions except `MaxNodeVisitsError`. All exception imports should use `from pflow.core.exceptions import ClassName` (canonical path). Re-exports exist in `ir_schema.py` (`SchemaValidationError as ValidationError`) and `markdown_parser.py` (`MarkdownParseError`) for backward compatibility.
 
+**When to use which exception** — pick the most specific one that fits:
+
+| Context | Exception | Key attrs |
+|---------|-----------|-----------|
+| Node `exec()` body | Just raise — the engine catches, annotates with `_pflow_node_id`, and retries if applicable. Use `NonRetriableError` (from `nodes/file/exceptions.py`) for validation errors that should not retry. | — |
+| IR schema validation (bad field types, missing required fields) | `SchemaValidationError` | `message`, `path="nodes[0].type"`, `suggestion="Use 'shell'"` |
+| Markdown parsing failures (malformed `.pflow.md`) | `MarkdownParseError` | `message`, `line=42`, `suggestion="Add ## Steps"` |
+| Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
+| Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[(msg, path, suggestion), ...]` |
+| Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
+| User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
+| MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
+| Output resolution failures (branch-dependent outputs) | `OutputResolutionError` (subclass of `UserFriendlyError`) | `failures=[{...}]` |
+
+**Import**: Always `from pflow.core.exceptions import ClassName`. Never import exceptions from heavy modules (`ir_schema`, `markdown_parser`, `runtime`).
+
+**Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
+
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
 - Runtime phase catches exceptions and converts to error **dicts**
 - CLI formats errors based on output mode (text/JSON)
-
-See `.taskmaster/tasks/task_59/research/error-handling-patterns.md` for patterns used with nested workflows.
 
 ### ir_schema.py
 
