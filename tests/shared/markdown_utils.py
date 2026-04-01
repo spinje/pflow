@@ -182,6 +182,8 @@ def _format_inline_value(value: Any) -> str:
     Handles booleans (lowercase), strings, numbers.
     Quotes strings that contain YAML-special characters.
     """
+    if value is None:
+        return "null"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):

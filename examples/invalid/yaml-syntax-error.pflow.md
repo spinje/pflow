@@ -4,10 +4,11 @@ A workflow with invalid YAML in the parameter list.
 
 ## Steps
 
-### process
+### fetch
 
-Run a shell command.
+Fetches data from an API.
 
-- type: shell
-- command: echo "hello"
-- headers: {invalid yaml: [unclosed bracket
+- type: http
+- url: https://api.example.com/data
+- headers:
+    invalid: [unclosed bracket

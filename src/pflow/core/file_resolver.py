@@ -30,9 +30,10 @@ FILE_REFERENCE_EXTENSIONS = frozenset({
 YAML_PARSED_PARAMS = frozenset({"batch", "output_schema", "headers"})
 
 # Only these params can be resolved as file references.
-# These are the params that correspond to code block tags in the markdown parser
-# (see markdown_parser.py _CODE_BLOCK_TAG_TO_PARAM). Other params like 'file_path',
-# 'workflow', 'url', etc. contain path/URL VALUES, not content to inline.
+# A subset of code block tags from markdown_parser.py _CODE_BLOCK_TAG_TO_PARAM.
+# Other params like 'file_path', 'workflow', 'url', etc. contain path/URL VALUES,
+# not content to inline. Content params like 'system', 'content', 'body' could be
+# added here in the future but are not yet file-resolvable.
 # Note: "batch" is handled separately in _resolve_batch_file_references(), not here.
 FILE_RESOLVABLE_PARAMS = frozenset({
     "command",
