@@ -24,6 +24,7 @@ import pytest
 
 from pflow.core.markdown_parser import (
     MarkdownParseError,
+    _coerce_yaml_scalar,
     _find_colon_offending_line,
     parse_markdown,
 )
@@ -474,7 +475,13 @@ class TestYAMLParamParsing:
         assert node["params"]["url"] == "https://example.com"
         assert node["params"]["timeout"] == 30
 
-    def test_yaml_comments_preserved(self) -> None:
+    def test_inline_comments_become_part_of_value(self) -> None:
+        """Inline # is NOT stripped as YAML comment — it becomes part of the raw value.
+
+        This is intentional: stripping # causes silent corruption for URLs
+        (fragments), hex colors, and prompts with markdown headings.
+        Users should use markdown prose (* note) for annotations.
+        """
         content = _md("""\
             # Test
 
@@ -491,9 +498,10 @@ class TestYAMLParamParsing:
         """)
         result = parse_markdown(content)
         node = result.ir["nodes"][0]
-        # YAML parser strips comments
-        assert node["type"] == "http"
-        assert node["params"]["timeout"] == 30
+        # Inline comments are now part of the value (not stripped)
+        assert node["type"] == "http  # Best choice"
+        # timeout is no longer int because "30  # Long timeout" can't be coerced
+        assert node["params"]["timeout"] == "30  # Long timeout"
 
     def test_yaml_boolean_coercion(self) -> None:
         content = _md("""\
@@ -3309,8 +3317,8 @@ class TestConditionalBranching:
 class TestYAMLColonErrorEnhancement:
     """Tests for actionable error messages when a param value contains unquoted ': '."""
 
-    def test_unquoted_colon_in_value_gives_actionable_error(self) -> None:
-        """When a value has ': ' (colon + space), error suggests quoting the value."""
+    def test_unquoted_colon_in_single_line_value_preserved(self) -> None:
+        """Single-line values with colon-space are preserved as raw strings."""
         content = _md("""\
             # Test
 
@@ -3323,19 +3331,15 @@ class TestYAMLColonErrorEnhancement:
             Asks a question.
 
             - type: llm
-            - prompt: Write a sentence: about dogs
+            - system: You are helpful: always be concise
 
-            ```shell command
-            echo placeholder
+            ```prompt
+            Hello
             ```
         """)
-        with pytest.raises(MarkdownParseError, match="YAML parse error") as exc_info:
-            parse_markdown(content)
-
-        err = exc_info.value
-        assert err.suggestion is not None
-        assert "colon + space" in err.suggestion
-        assert '- prompt: "Write a sentence: about dogs"' in err.suggestion
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["system"] == "You are helpful: always be concise"
 
     def test_quoted_value_with_colon_parses_successfully(self) -> None:
         """A value with ': ' that is already quoted should parse without error."""
@@ -3375,7 +3379,8 @@ class TestYAMLColonErrorEnhancement:
             Fetches data.
 
             - type: http
-            - headers: {invalid yaml: [unclosed
+            - headers:
+                invalid: [unclosed bracket
 
             ```shell command
             echo placeholder
@@ -3407,3 +3412,501 @@ class TestFindColonOffendingLine:
     def test_returns_none_for_empty_list(self) -> None:
         result = _find_colon_offending_line([])
         assert result is None
+
+
+class TestRawStringParsing:
+    """Tests for single-line raw string parsing (no YAML structural parsing)."""
+
+    def test_colon_space_in_value_preserved(self) -> None:
+        """Colon-space in single-line values doesn't break parsing."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a command.
+
+            - type: shell
+            - system: You are a helpful assistant: be concise
+
+            ```shell command
+            echo placeholder
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["system"] == "You are a helpful assistant: be concise"
+
+    def test_url_fragment_preserved(self) -> None:
+        """URL fragments (#...) are not stripped as YAML comments."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches data.
+
+            - type: http
+            - url: https://example.com/search#results
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["url"] == "https://example.com/search#results"
+
+    def test_hash_in_value_preserved(self) -> None:
+        """Hash character anywhere in value is preserved."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a command.
+
+            - type: shell
+            - color: #ff0000
+
+            ```shell command
+            echo color
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["color"] == "#ff0000"
+
+    def test_scalar_coercion_int(self) -> None:
+        """Integer values are coerced from raw strings."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches data.
+
+            - type: http
+            - timeout: 30
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["timeout"] == 30
+        assert isinstance(node["params"]["timeout"], int)
+
+    def test_scalar_coercion_float(self) -> None:
+        """Float values are coerced from raw strings."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### ask
+
+            Asks something.
+
+            - type: llm
+            - temperature: 0.7
+
+            ```prompt
+            Hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["temperature"] == 0.7
+        assert isinstance(node["params"]["temperature"], float)
+
+    def test_scalar_coercion_bool(self) -> None:
+        """Boolean values are coerced from raw strings."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Inputs
+
+            ### flag
+
+            A boolean flag.
+
+            - type: boolean
+            - required: true
+            - default: false
+
+            ## Steps
+
+            ### run
+
+            Runs something.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        result = parse_markdown(content)
+        inp = result.ir["inputs"]["flag"]
+        assert inp["required"] is True
+        assert inp["default"] is False
+
+    def test_scalar_coercion_null(self) -> None:
+        """Null/empty values are coerced to None."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### ask
+
+            Asks something.
+
+            - type: llm
+            - model: null
+
+            ```prompt
+            Hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["model"] is None
+
+    def test_double_quoted_string_preserved(self) -> None:
+        """Double-quoted values have quotes stripped and escapes processed."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### ask
+
+            Asks something.
+
+            - type: llm
+            - system: "Write about: dogs"
+
+            ```prompt
+            Hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["system"] == "Write about: dogs"
+
+    def test_quoted_bool_string_not_coerced(self) -> None:
+        """Quoted 'true'/'false' stays as string, not coerced to bool."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### ask
+
+            Asks something.
+
+            - type: llm
+            - label: "true"
+
+            ```prompt
+            Hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["label"] == "true"
+        assert isinstance(node["params"]["label"], str)
+
+    def test_multiline_items_still_yaml_parsed(self) -> None:
+        """Multi-line items with continuations use YAML parsing for structure."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs code.
+
+            - type: code
+            - inputs:
+                text: ${fetch.stdout}
+                count: 10
+
+            ```python code
+            print(inputs["text"])
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["inputs"] == {"text": "${fetch.stdout}", "count": 10}
+
+    def test_flow_style_dict_parsed(self) -> None:
+        """Flow-style YAML dicts on single lines are parsed as dicts."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs code.
+
+            - type: code
+            - inputs: {text: "${fetch.stdout}", count: 10}
+
+            ```python code
+            print(inputs["text"])
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert isinstance(node["params"]["inputs"], dict)
+        assert node["params"]["inputs"]["text"] == "${fetch.stdout}"
+        assert node["params"]["inputs"]["count"] == 10
+
+    def test_flow_style_list_parsed(self) -> None:
+        """Flow-style YAML lists on single lines are parsed as lists."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### run
+
+            Runs a command.
+
+            - type: shell
+            - sections: [features, fixes, breaking]
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["sections"] == ["features", "fixes", "breaking"]
+
+    def test_multiline_yaml_syntax_error(self) -> None:
+        """Multi-line items with invalid YAML still produce errors."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches data.
+
+            - type: http
+            - headers:
+                invalid: [unclosed bracket
+        """)
+        with pytest.raises(MarkdownParseError, match="YAML"):
+            parse_markdown(content)
+
+    def test_malformed_flow_style_produces_parse_error(self) -> None:
+        """Malformed flow-style YAML on a single line produces a parse error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### fetch
+
+            Fetches data.
+
+            - type: http
+            - headers: {Authorization: Bearer token
+        """)
+        with pytest.raises(MarkdownParseError, match="YAML"):
+            parse_markdown(content)
+
+    def test_unterminated_quote_produces_parse_error(self) -> None:
+        """Unterminated quoted value produces a parse error, not a silent string."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### ask
+
+            Asks something.
+
+            - type: llm
+            - system: "unterminated
+
+            ```prompt
+            Hello
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match="Unterminated"):
+            parse_markdown(content)
+
+    def test_bare_key_no_value_is_none(self) -> None:
+        """A bare ``- key:`` with no value produces None."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### ask
+
+            Asks something.
+
+            - type: llm
+            - model:
+
+            ```prompt
+            Hello
+            ```
+        """)
+        result = parse_markdown(content)
+        node = result.ir["nodes"][0]
+        assert node["params"]["model"] is None
+
+
+class TestCoerceYamlScalar:
+    """Unit tests for _coerce_yaml_scalar helper."""
+
+    def test_empty_returns_none(self) -> None:
+        assert _coerce_yaml_scalar("") is None
+
+    def test_null_values(self) -> None:
+        for val in ("null", "Null", "NULL", "~"):
+            assert _coerce_yaml_scalar(val) is None, f"Failed for {val!r}"
+
+    def test_bool_true_variants(self) -> None:
+        for val in ("true", "True", "TRUE", "yes", "Yes", "YES", "on", "On", "ON"):
+            assert _coerce_yaml_scalar(val) is True, f"Failed for {val!r}"
+
+    def test_bool_false_variants(self) -> None:
+        for val in ("false", "False", "FALSE", "no", "No", "NO", "off", "Off", "OFF"):
+            assert _coerce_yaml_scalar(val) is False, f"Failed for {val!r}"
+
+    def test_integers(self) -> None:
+        assert _coerce_yaml_scalar("0") == 0
+        assert _coerce_yaml_scalar("30") == 30
+        assert _coerce_yaml_scalar("-5") == -5
+        assert _coerce_yaml_scalar("+42") == 42
+        assert isinstance(_coerce_yaml_scalar("30"), int)
+
+    def test_floats(self) -> None:
+        assert _coerce_yaml_scalar("3.14") == 3.14
+        assert _coerce_yaml_scalar("0.7") == 0.7
+        assert _coerce_yaml_scalar("-1.5") == -1.5
+        # 1.5e10: PyYAML keeps as string (YAML 1.1 requires explicit sign "1.5e+10"),
+        # but pflow intentionally coerces to float (more useful for workflow authors)
+        assert _coerce_yaml_scalar("1.5e10") == 1.5e10
+        assert _coerce_yaml_scalar(".5") == 0.5
+        assert isinstance(_coerce_yaml_scalar("3.14"), float)
+
+    def test_scientific_notation_without_dot_stays_string(self) -> None:
+        """'1e5' has no dot — stays string (matches PyYAML behavior)."""
+        assert _coerce_yaml_scalar("1e5") == "1e5"
+        assert isinstance(_coerce_yaml_scalar("1e5"), str)
+
+    def test_inf_nan_stay_string(self) -> None:
+        """'inf', 'nan', 'infinity' stay as strings (matches PyYAML behavior)."""
+        for val in ("inf", "nan", "Inf", "NaN", "infinity", "Infinity", "-inf"):
+            assert isinstance(_coerce_yaml_scalar(val), str), f"{val!r} should be string"
+
+    def test_raw_strings(self) -> None:
+        assert _coerce_yaml_scalar("hello") == "hello"
+        assert _coerce_yaml_scalar("echo hello world") == "echo hello world"
+        assert _coerce_yaml_scalar("https://example.com#frag") == "https://example.com#frag"
+        assert _coerce_yaml_scalar("value: with colon") == "value: with colon"
+
+    def test_double_quoted_strips_quotes(self) -> None:
+        assert _coerce_yaml_scalar('"hello"') == "hello"
+        assert _coerce_yaml_scalar('"value: with colon"') == "value: with colon"
+
+    def test_double_quoted_escapes(self) -> None:
+        assert _coerce_yaml_scalar(r'"line1\nline2"') == "line1\nline2"
+        assert _coerce_yaml_scalar(r'"tab\there"') == "tab\there"
+        assert _coerce_yaml_scalar(r'"back\\slash"') == "back\\slash"
+        assert _coerce_yaml_scalar(r'"say \"hi\""') == 'say "hi"'
+
+    def test_single_quoted_strips_quotes(self) -> None:
+        assert _coerce_yaml_scalar("'hello'") == "hello"
+        assert _coerce_yaml_scalar("'value: with colon'") == "value: with colon"
+
+    def test_single_quoted_double_apostrophe(self) -> None:
+        assert _coerce_yaml_scalar("'it''s'") == "it's"
+
+    def test_quoted_bool_stays_string(self) -> None:
+        assert _coerce_yaml_scalar('"true"') == "true"
+        assert isinstance(_coerce_yaml_scalar('"true"'), str)
+
+    def test_quoted_null_stays_string(self) -> None:
+        assert _coerce_yaml_scalar('"null"') == "null"
+        assert isinstance(_coerce_yaml_scalar('"null"'), str)
+
+    def test_quoted_number_stays_string(self) -> None:
+        assert _coerce_yaml_scalar('"30"') == "30"
+        assert isinstance(_coerce_yaml_scalar('"30"'), str)
+
+    def test_flow_style_dict(self) -> None:
+        result = _coerce_yaml_scalar("{a: 1, b: 2}")
+        assert result == {"a": 1, "b": 2}
+
+    def test_flow_style_list(self) -> None:
+        result = _coerce_yaml_scalar("[x, y, z]")
+        assert result == ["x", "y", "z"]
+
+    def test_unterminated_double_quote_raises(self) -> None:
+        """Unterminated double-quoted string raises ValueError."""
+        with pytest.raises(ValueError, match="Unterminated double-quoted"):
+            _coerce_yaml_scalar('"unterminated')
+
+    def test_unterminated_single_quote_raises(self) -> None:
+        """Unterminated single-quoted string raises ValueError."""
+        with pytest.raises(ValueError, match="Unterminated single-quoted"):
+            _coerce_yaml_scalar("'unterminated")
+
+    def test_lone_quote_raises(self) -> None:
+        """A single quote character raises ValueError."""
+        with pytest.raises(ValueError, match="Unterminated"):
+            _coerce_yaml_scalar('"')
+
+    def test_malformed_flow_style_raises_yaml_error(self) -> None:
+        """Malformed flow-style YAML raises an error instead of silently returning a string."""
+        import yaml
+
+        with pytest.raises(yaml.YAMLError):
+            _coerce_yaml_scalar("{invalid: [unclosed")
