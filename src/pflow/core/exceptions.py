@@ -94,6 +94,53 @@ class CriticalDiscoveryError(PflowError):
         super().__init__(message)
 
 
+class SchemaValidationError(PflowError):
+    """Validation error for IR schema with helpful messages and field paths.
+
+    Attributes:
+        message: The validation error message
+        path: Dotted path to the invalid field (e.g., "nodes[0].type")
+        suggestion: Optional suggestion for fixing the error
+    """
+
+    def __init__(self, message: str, path: str = "", suggestion: str = ""):
+        self.message = message
+        self.path = path
+        self.suggestion = suggestion
+
+        full_message = "Validation error"
+        if path:
+            full_message += f" at {path}"
+        full_message += f": {message}"
+        if suggestion:
+            full_message += f"\n{suggestion}"
+
+        super().__init__(full_message)
+
+
+class MarkdownParseError(PflowError):
+    """Error raised when markdown workflow content cannot be parsed.
+
+    Attributes:
+        line: Source line number where the error occurred (1-based).
+        suggestion: Optional human-readable fix suggestion.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        line: int | None = None,
+        suggestion: str | None = None,
+    ):
+        self.line = line
+        self.suggestion = suggestion
+        prefix = f"Line {line}: " if line is not None else ""
+        full = f"{prefix}{message}"
+        if suggestion:
+            full += f"\n\n{suggestion}"
+        super().__init__(full)
+
+
 class CompilationError(PflowError):
     """Error during IR compilation with rich context.
 

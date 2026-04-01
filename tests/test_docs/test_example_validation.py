@@ -16,9 +16,10 @@ from pathlib import Path
 
 import pytest
 
-from pflow.core import ValidationError, validate_ir
+from pflow.core import validate_ir
+from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.core.ir_schema import normalize_ir
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import parse_markdown
 
 EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
 
@@ -69,7 +70,7 @@ class TestExampleValidation:
         for pflow_file, ir_data in valid_workflow_files:
             try:
                 validate_ir(ir_data)
-            except ValidationError as e:
+            except SchemaValidationError as e:
                 rel_path = pflow_file.relative_to(EXAMPLES_DIR)
                 failures.append(f"  {rel_path}: {e}")
 
@@ -91,7 +92,7 @@ class TestExampleValidation:
                 validate_ir(ir_data)
                 # If we get here, the file unexpectedly passed
                 unexpected_passes.append(pflow_file.name)
-            except (MarkdownParseError, ValidationError, ValueError):
+            except (MarkdownParseError, SchemaValidationError, ValueError):
                 pass  # Expected - invalid examples should fail
 
         if unexpected_passes:

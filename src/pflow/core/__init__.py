@@ -6,13 +6,14 @@ Import from specific submodules for symbols not listed here:
     from pflow.core.llm_pricing import calculate_llm_cost
 """
 
-from .ir_schema import FLOW_IR_SCHEMA, ValidationError, normalize_ir, validate_ir
+from .exceptions import SchemaValidationError
+from .ir_schema import FLOW_IR_SCHEMA, normalize_ir, validate_ir
 from .shell_integration import StdinData
 
 __all__ = [
     "FLOW_IR_SCHEMA",
+    "SchemaValidationError",
     "StdinData",
-    "ValidationError",
     "normalize_ir",
     "validate_ir",
 ]

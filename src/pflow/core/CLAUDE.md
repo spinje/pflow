@@ -49,7 +49,22 @@ src/pflow/core/
 
 ### exceptions.py
 
-**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError` (structured: `workflow_name`, `similar_names`, `hint`, `format_for_cli()`), `WorkflowValidationError` (structured: `summary`, `validation_errors` as strings or `(msg, path, suggestion)` tuples, `format_for_cli()`), `CriticalDiscoveryError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`, has `node_id`, `visit_count`, `max_visits`, `format_for_cli()`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
+**Exception classes** — canonical home for all pflow exceptions. Hierarchy:
+```
+PflowError(Exception)                    <- base for all pflow errors
+  |- SchemaValidationError               <- IR schema validation (message, path, suggestion)
+  |- MarkdownParseError                  <- .pflow.md parse errors (line, suggestion)
+  |- CompilationError                    <- IR compilation (phase, node_id, node_type, suggestion)
+  |- WorkflowValidationError             <- pre-execution validation (summary, validation_errors, format_for_cli())
+  |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint, format_for_cli())
+  |- WorkflowExistsError                 <- duplicate workflow save
+  |- CriticalDiscoveryError              <- discovery abort (node_name, reason)
+  |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions, format_for_cli())
+  |   |- MCPError                        <- user_errors.py
+  |   |- OutputResolutionError           <- user_errors.py (failures list)
+MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop guard)
+```
+`except PflowError` catches all pflow-specific exceptions except `MaxNodeVisitsError`. All exception imports should use `from pflow.core.exceptions import ClassName` (canonical path). Re-exports exist in `ir_schema.py` (`SchemaValidationError as ValidationError`) and `markdown_parser.py` (`MarkdownParseError`) for backward compatibility.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)

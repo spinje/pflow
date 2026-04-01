@@ -5,7 +5,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.core.ir_schema import ValidationError
+from pflow.core.exceptions import SchemaValidationError
 from pflow.runtime import compile_workflow
 from pflow.runtime.compilation.compile_validation import _validate_outputs
 
@@ -27,7 +27,7 @@ class TestOutputValidation:
         registry.get_nodes_metadata.assert_not_called()
 
     def test_invalid_output_name(self):
-        """Test that output names with shell special characters raise ValidationError."""
+        """Test that output names with shell special characters raise SchemaValidationError."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "n1", "type": "test-node"}],
@@ -40,7 +40,7 @@ class TestOutputValidation:
         # Mock get_nodes_metadata to avoid TypeError
         registry.get_nodes_metadata.return_value = {"test-node": {"interface": {"outputs": []}}}
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             _validate_outputs(workflow_ir, registry)
 
         assert "Invalid output name 'my$output'" in str(exc_info.value)

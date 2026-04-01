@@ -21,6 +21,7 @@ from pflow.cli.workflow_output import (
 )
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
+from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
     read_stdin as read_stdin_content,
@@ -623,8 +624,6 @@ def _validate_and_prepare_workflow_params(
     # Validate parameter keys (now more permissive than Python identifiers)
     invalid_keys = [k for k in params if not is_valid_parameter_name(k)]
     if invalid_keys:
-        from pflow.core.exceptions import WorkflowValidationError
-
         raise WorkflowValidationError(
             summary="Invalid parameter names",
             validation_errors=[
@@ -751,11 +750,9 @@ def _handle_named_workflow(
         True if workflow was executed, False otherwise
     """
     if workflow_ir is None:
-        from pflow.core.exceptions import WorkflowNotFoundError as _WNF
-
         try:
             resolved = resolve_workflow(first_arg)
-        except _WNF:
+        except WorkflowNotFoundError:
             return False
         workflow_ir, source = resolved.ir, resolved.source
     if not workflow_ir:
@@ -833,8 +830,6 @@ def _try_execute_named_workflow(
     ):
         return True
     # Should not reach here — resolve_workflow raises if not found
-    from pflow.core.exceptions import WorkflowNotFoundError
-
     raise WorkflowNotFoundError(first_arg, similar_names=[])
 
 

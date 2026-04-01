@@ -9,6 +9,8 @@ import logging
 
 import click
 
+from pflow.core.exceptions import CriticalDiscoveryError
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,8 +39,6 @@ def handle_discovery_error(
         ...     ]
         ... )
     """
-    from pflow.core.exceptions import CriticalDiscoveryError
-
     if isinstance(exception, CriticalDiscoveryError):
         # Known discovery error - handle gracefully
         reason_lower = exception.reason.lower()

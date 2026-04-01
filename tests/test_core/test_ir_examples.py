@@ -12,9 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from pflow.core import ValidationError, validate_ir
+from pflow.core import validate_ir
+from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.core.ir_schema import normalize_ir
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import parse_markdown
 
 
 class TestValidExamples:
@@ -247,5 +248,5 @@ class TestExampleContent:
                 ir_data = result.ir
                 normalize_ir(ir_data)
                 validate_ir(ir_data)
-            except (MarkdownParseError, ValidationError) as exc:
+            except (MarkdownParseError, SchemaValidationError) as exc:
                 pytest.fail(f"Failed to parse/validate {pflow_file}: {exc}")

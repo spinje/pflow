@@ -2,7 +2,8 @@
 
 import pytest
 
-from pflow.core import ValidationError, validate_ir
+from pflow.core import validate_ir
+from pflow.core.exceptions import SchemaValidationError
 
 
 class TestWorkflowInterfaces:
@@ -194,7 +195,7 @@ class TestWorkflowInterfaces:
                 },
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error = exc_info.value
@@ -215,7 +216,7 @@ class TestWorkflowInterfaces:
                 },
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error = exc_info.value
@@ -229,7 +230,7 @@ class TestWorkflowInterfaces:
                 "inputs": ["input1", "input2"],  # Wrong type
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error = exc_info.value
@@ -244,7 +245,7 @@ class TestWorkflowInterfaces:
                 "outputs": ["output1", "output2"],  # Wrong type
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error = exc_info.value
@@ -278,7 +279,7 @@ class TestWorkflowInterfaces:
                 },
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error = exc_info.value
@@ -298,7 +299,7 @@ class TestWorkflowInterfaces:
                 },
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error = exc_info.value
@@ -318,7 +319,7 @@ class TestWorkflowInterfaces:
                 },
             }
 
-            with pytest.raises(ValidationError):
+            with pytest.raises(SchemaValidationError):
                 validate_ir(ir)
 
     class TestBackwardCompatibility:

@@ -6,7 +6,14 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.exceptions import WorkflowNotFoundError
+from pflow.core.exceptions import (
+    CompilationError,
+    MarkdownParseError,
+    MaxNodeVisitsError,
+    SchemaValidationError,
+    WorkflowNotFoundError,
+    WorkflowValidationError,
+)
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
 
@@ -283,6 +290,8 @@ class WorkflowRunner:
 
         except (
             WorkflowNotFoundError,
+            SchemaValidationError,
+            MarkdownParseError,
             ValueError,
             PermissionError,
             FileNotFoundError,
@@ -294,20 +303,13 @@ class WorkflowRunner:
                 warnings=[],
             )
         except Exception as e:
-            # Check for pflow-specific exceptions via lazy imports to avoid circular deps
-            from pflow.core.exceptions import WorkflowValidationError
-            from pflow.core.ir_schema import ValidationError as IRValidationError
-            from pflow.core.markdown_parser import MarkdownParseError
-            from pflow.runtime import CompilationError
-
-            if isinstance(e, (WorkflowValidationError, MarkdownParseError, CompilationError, IRValidationError)):
+            if isinstance(e, (WorkflowValidationError, CompilationError)):
                 return ValidationResult(
                     valid=False,
                     errors=[str(e)],
                     warnings=[],
                 )
             # Unexpected errors (programming bugs) — let them propagate.
-            # Callers (CLI, MCP) have their own exception handlers.
             raise
 
     # --- Internal helpers ---
@@ -327,7 +329,6 @@ class WorkflowRunner:
         import yaml
 
         from pflow.core.file_resolver import get_base_dir, resolve_file_references
-        from pflow.runtime import CompilationError
 
         base_dir = get_base_dir(params)
         try:
@@ -356,8 +357,6 @@ class WorkflowRunner:
         )
 
         if errors:
-            from pflow.core.exceptions import WorkflowValidationError
-
             # errors is list[str]; WorkflowValidationError accepts list[str | tuple]
             raise WorkflowValidationError(validation_errors=errors)  # type: ignore[arg-type]
 
@@ -491,10 +490,6 @@ class WorkflowRunner:
         validation_warnings: list[Any] | None = None,
     ) -> ExecutionResult:
         """Convert any exception to ExecutionResult."""
-        from pflow.core.exceptions import MaxNodeVisitsError, WorkflowValidationError
-        from pflow.core.markdown_parser import MarkdownParseError
-        from pflow.runtime import CompilationError
-
         error_dict: dict[str, Any] = {"source": "runtime", "message": str(exception)}
 
         # Extract node_id annotated by _compile_and_execute's flow.run() wrapper
@@ -542,22 +537,31 @@ class WorkflowRunner:
                     error_dict["path"] = first_err[1]
                 if first_err[2]:
                     error_dict["suggestion"] = first_err[2]
-        elif isinstance(exception, (MarkdownParseError, ValueError)):
-            error_dict.update({"category": "validation"})
-            if annotated_node_id:
-                error_dict["node_id"] = annotated_node_id
-        elif type(exception).__name__ == "ValidationError" and hasattr(exception, "path"):
-            # ir_schema.ValidationError — has path and suggestion from prepare_inputs
+        elif isinstance(exception, SchemaValidationError):
             error_dict.update({
                 "source": "validation",
                 "category": "validation",
             })
-            path = getattr(exception, "path", None)
-            suggestion = getattr(exception, "suggestion", None)
-            if path:
-                error_dict["path"] = path
-            if suggestion:
-                error_dict["suggestion"] = suggestion
+            if exception.path:
+                error_dict["path"] = exception.path
+            if exception.suggestion:
+                error_dict["suggestion"] = exception.suggestion
+        elif isinstance(exception, MarkdownParseError):
+            error_dict.update({"category": "validation"})
+            if exception.line is not None:
+                error_dict["line"] = exception.line
+            if exception.suggestion:
+                error_dict["suggestion"] = exception.suggestion
+            if annotated_node_id:
+                error_dict["node_id"] = annotated_node_id
+        elif isinstance(exception, ValueError):
+            if annotated_node_id:
+                error_dict.update({
+                    "category": "execution_failure",
+                    "node_id": annotated_node_id,
+                })
+            else:
+                error_dict.update({"category": "validation"})
         elif isinstance(exception, WorkflowNotFoundError):
             error_dict.update({
                 "category": "not_found",

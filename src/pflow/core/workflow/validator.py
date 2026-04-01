@@ -8,6 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation import ValidationWarning
@@ -128,7 +129,6 @@ class WorkflowValidator:
         Returns:
             List of structural validation errors
         """
-        from pflow.core.ir_schema import ValidationError as SchemaValidationError
         from pflow.core.ir_schema import validate_ir
 
         try:
@@ -688,7 +688,7 @@ class WorkflowValidator:
         workflow_file: Optional[Path] = None,
     ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
         """Load a child workflow from a file reference."""
-        from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+        from pflow.core.markdown_parser import parse_markdown
 
         path = Path(workflow_ref)
         if not path.is_absolute():

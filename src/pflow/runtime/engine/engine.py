@@ -15,6 +15,8 @@ Key design decisions:
 import time
 from typing import Any, Optional
 
+from pflow.core.exceptions import CompilationError
+
 from .api_warning_detector import detect_api_warning
 from .batch_executor import execute_batch
 from .instrumentation import (
@@ -56,8 +58,6 @@ class WorkflowEngine:
         """Execute a compiled workflow. Returns action string."""
         # 0. Validate --only target exists
         if self.only_node and self.only_node not in workflow.node_configs:
-            from pflow.core.exceptions import CompilationError
-
             available = sorted(workflow.node_configs.keys())
             raise CompilationError(
                 f"Node '{self.only_node}' not found",
@@ -76,8 +76,6 @@ class WorkflowEngine:
         while curr:
             node_id = getattr(curr, "node_id", None)
             if node_id is None or node_id not in workflow.node_configs:
-                from pflow.core.exceptions import CompilationError
-
                 raise CompilationError(
                     "Node in graph has no node_id or missing from node_configs",
                     phase="execution",
