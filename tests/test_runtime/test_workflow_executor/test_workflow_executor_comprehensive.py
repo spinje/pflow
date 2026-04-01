@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.core.exceptions import MarkdownParseError
 from pflow.core.node import BaseNode
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
@@ -223,7 +224,7 @@ class TestWorkflowExecutorComprehensive:
         node.set_params({"workflow": str(workflow_file)})
 
         shared = {}
-        with pytest.raises(ValueError):
+        with pytest.raises(MarkdownParseError):
             node.prep(shared)
 
     # --- Test 9: template resolution via compiled pipeline ---

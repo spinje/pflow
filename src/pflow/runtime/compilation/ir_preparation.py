@@ -13,6 +13,7 @@ import logging
 import os
 from typing import Any
 
+from pflow.core.exceptions import CompilationError
 from pflow.core.param_coercion import coerce_input_to_declared_type
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 
@@ -186,8 +187,6 @@ def validate_ir_structure(ir_dict: dict[str, Any]) -> None:
     Raises:
         CompilationError: If required keys are missing or have wrong types
     """
-    from .compiler import CompilationError
-
     logger.debug("Validating IR structure", extra={"phase": "validation"})
 
     # Check for required 'nodes' key
@@ -241,7 +240,7 @@ def prepare_inputs(
 
     Returns:
         tuple: (errors, defaults_to_apply, env_param_names) where:
-            - errors: List of (message, path, suggestion) tuples for ValidationError
+            - errors: List of (message, path, suggestion) tuples for SchemaValidationError
             - defaults_to_apply: Dict of default values to apply for missing optional inputs
             - env_param_names: Set of parameter names that came from settings.env
 

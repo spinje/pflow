@@ -8,7 +8,7 @@ validation. Called once from compile_workflow() as a single orchestration point.
 import logging
 from typing import Any
 
-from pflow.core.ir_schema import ValidationError
+from pflow.core.exceptions import CompilationError, SchemaValidationError
 from pflow.core.validation_utils import get_parameter_validation_error, is_valid_parameter_name
 from pflow.registry import Registry
 
@@ -38,18 +38,18 @@ def _load_settings_env() -> dict[str, str]:
 
 
 def _raise_input_validation_errors(errors: list[tuple[str, str, str]]) -> None:
-    """Raise ValidationError with formatted input error messages.
+    """Raise SchemaValidationError with formatted input error messages.
 
     Args:
         errors: List of (message, path, suggestion) tuples from prepare_inputs
 
     Raises:
-        ValidationError: Always raises with formatted error message
+        SchemaValidationError: Always raises with formatted error message
     """
     if len(errors) == 1:
         # Single error - keep current behavior for backward compatibility
         message, path, suggestion = errors[0]
-        raise ValidationError(message, path=path, suggestion=suggestion)
+        raise SchemaValidationError(message, path=path, suggestion=suggestion)
 
     # Multiple errors - aggregate them for better UX
     error_lines = []
@@ -59,7 +59,7 @@ def _raise_input_validation_errors(errors: list[tuple[str, str, str]]) -> None:
         error_lines.append(f"  \u2022 '{input_name}' - {msg}")
 
     combined_message = f"Found {len(errors)} input validation errors:\n" + "\n".join(error_lines)
-    raise ValidationError(
+    raise SchemaValidationError(
         message=combined_message,
         path="inputs",
         suggestion="Fix all validation errors above before compiling the workflow",
@@ -78,8 +78,6 @@ def _get_template_resolution_mode(ir_dict: dict[str, Any]) -> str:
     Raises:
         CompilationError: If mode value is invalid
     """
-    from .compiler import CompilationError
-
     template_resolution_mode = ir_dict.get("template_resolution_mode")
     if template_resolution_mode is None:
         # Load from global settings if not specified in workflow
@@ -99,7 +97,7 @@ def _get_template_resolution_mode(ir_dict: dict[str, Any]) -> str:
     return template_resolution_mode
 
 
-def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], CompilationError: type) -> None:
+def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
     """Validate data flow at compile time (cycles, forward refs, non-existent node refs).
 
     Passes check_inputs=False because the compiler has initial_params containing
@@ -108,7 +106,6 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any], CompilationErro
 
     Args:
         ir_dict: The workflow IR dictionary
-        CompilationError: The CompilationError class (passed to avoid circular import)
 
     Raises:
         CompilationError: If data flow validation finds errors
@@ -147,8 +144,6 @@ def _prepare_compilation(
         Warnings are currently always [] — template warnings come from
         WorkflowValidator, not the compiler.
     """
-    from .compiler import CompilationError
-
     # Structure validation — compiler prerequisite (prevents KeyError on ir_dict["nodes"])
     try:
         validate_ir_structure(ir_dict)
@@ -157,7 +152,7 @@ def _prepare_compilation(
         raise
 
     # Data flow validation — prevents compiler producing Flows with cycles
-    _validate_data_flow_at_compile_time(ir_dict, CompilationError)
+    _validate_data_flow_at_compile_time(ir_dict)
 
     # Template resolution mode (reads IR or settings, writes to initial_params)
     template_resolution_mode = _get_template_resolution_mode(ir_dict)
@@ -182,14 +177,14 @@ def _prepare_compilation(
 
         if env_param_names:
             initial_params["__env_param_names__"] = list(env_param_names)
-    except ValidationError:
+    except SchemaValidationError:
         logger.debug("Input validation failed", extra={"phase": "input_validation"}, exc_info=True)
         raise
 
     # Output validation (validates output names can trace to node outputs)
     try:
         _validate_outputs(ir_dict, registry)
-    except ValidationError:
+    except SchemaValidationError:
         logger.debug("Output validation failed", extra={"phase": "output_validation"}, exc_info=True)
         raise
 
@@ -207,7 +202,7 @@ def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
         registry: Registry instance for accessing node metadata
 
     Raises:
-        ValidationError: If output names are invalid identifiers
+        SchemaValidationError: If output names are invalid identifiers
     """
     # Extract output declarations (backward compatible with workflows without outputs)
     outputs = workflow_ir.get("outputs", {})
@@ -225,7 +220,7 @@ def _validate_outputs(workflow_ir: dict[str, Any], registry: Registry) -> None:
     for output_name, _output_spec in outputs.items():
         if not is_valid_parameter_name(output_name):
             error_msg = get_parameter_validation_error(output_name, "output")
-            raise ValidationError(
+            raise SchemaValidationError(
                 message=error_msg,
                 path=f"outputs.{output_name}",
                 suggestion="Avoid shell special characters like $, |, >, <, &, ;",

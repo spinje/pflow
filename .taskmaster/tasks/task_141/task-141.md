@@ -28,7 +28,7 @@ This causes:
 2. **A duck-type hack** in `runner.py:545`: `type(exception).__name__ == "ValidationError" and hasattr(exception, "path")` — avoids importing from the heavy module, but incorrectly matches pydantic's `ValidationError` (which also has `.path`)
 3. **Three different aliases** for the same class: `SchemaValidationError`, `IrSchemaValidationError`, `IRValidationError` at different import sites
 4. **No catch-all** — can't write `except PflowError` to handle all pflow-specific errors
-5. **`MarkdownParseError(ValueError)`** was a migration hack (docstring: "so existing `except ValueError` catches still work") — but every catch site already catches `MarkdownParseError` by name
+5. **`MarkdownParseError(ValueError)`** was a migration hack (docstring: "so existing `except ValueError` catches still work") — almost every catch site already catches `MarkdownParseError` by name, with one exception: `save_service.py:311` has `except (FileNotFoundError, ValueError)` that catches `MarkdownParseError` through its `ValueError` inheritance
 
 Additionally, `runner.py:541` miscategorizes ALL ValueErrors as `category: "validation"`, including node execution errors (HTTP timeouts, GitHub API failures, git errors) that should be `category: "execution_failure"`.
 
@@ -54,7 +54,7 @@ Use `_pflow_node_id` annotation as discriminator in `_exception_to_result`: Valu
 
 - **Rename `ValidationError` to `SchemaValidationError`**: Eliminates name collision with pydantic's and jsonschema's `ValidationError`. Makes distinction with `WorkflowValidationError` self-documenting (schema-level vs. aggregated workflow-level). The name is already used as a local alias in `validator.py`. Verified no collision in any dependency.
 
-- **Rebase `MarkdownParseError` off `PflowError`, not keep `ValueError`**: The `ValueError` inheritance was an explicit migration hack. Every production catch site already catches `MarkdownParseError` by name. No `except ValueError` in the codebase incidentally relies on catching `MarkdownParseError` with behavior that would change. One test (`test_workflow_executor_comprehensive.py:226`) uses `pytest.raises(ValueError)` to catch it — trivial fix.
+- **Rebase `MarkdownParseError` off `PflowError`, not keep `ValueError`**: The `ValueError` inheritance was an explicit migration hack. Almost every production catch site already catches `MarkdownParseError` by name. One `except ValueError` in `save_service.py:_discover_and_bundle_deps` (line 311) incidentally catches `MarkdownParseError` through inheritance — must add `MarkdownParseError` to that except tuple. One test (`test_workflow_executor_comprehensive.py:226`) uses `pytest.raises(ValueError)` to catch it — trivial fix.
 
 - **Rebase `UserFriendlyError` onto `PflowError` but keep it in `user_errors.py`**: The class has a `format_for_cli()` method with structured WHAT/WHY/HOW formatting — a different concern from the simple data-carrying exceptions in `exceptions.py`. Zero `isinstance(_, PflowError)` checks exist in the codebase, so the rebase changes zero behavior. No circular import risk (`user_errors.py` currently imports only from `typing`; adding `PflowError` is a one-way dependency).
 
@@ -86,18 +86,27 @@ None. `core/exceptions.py` is a leaf module with only `typing` imports.
 - The duck-type hack at `runner.py:545` replaced with proper `isinstance(exception, SchemaValidationError)`
 - CompilationError lazy imports in `compilation/` siblings (`compile_validation.py`, `mcp_resolution.py`, `node_loader.py`, `ir_preparation.py`) converted to module-level from `pflow.core.exceptions`
 - Redundant lazy import in `batch_executor.py:419` removed (module-level import already at line 19)
+- Redundant lazy import of `WorkflowValidationError` in `runner.py:359` removed (now at module-level)
 
 ### Error categorization fix
 
 - In `runner.py:_exception_to_result`, ValueErrors with `_pflow_node_id` annotation categorized as `execution_failure` (not `validation`)
 - ValueErrors without `_pflow_node_id` annotation remain categorized as `validation`
-- `MarkdownParseError` handled by its own explicit branch (not lumped with `ValueError`), preserving `.line` and `.suggestion` attrs in the error dict
+- `MarkdownParseError` handled by its own explicit branch (not lumped with `ValueError`), conditionally preserving `.line` and `.suggestion` attrs in the error dict (only when non-None, to avoid writing null values into JSON output)
+- `MarkdownParseError` branch preserves `annotated_node_id` when present (nested workflow scenarios where engine annotates parse errors with the failing workflow node's ID)
+- `save_service.py:_discover_and_bundle_deps` (line 311): `MarkdownParseError` added to `except (FileNotFoundError, ValueError)` tuple to prevent fallthrough to misleading "If this is a bug" error message
 
 ### Test updates
 
 - `test_workflow_executor_comprehensive.py:226`: `pytest.raises(ValueError)` changed to `pytest.raises(MarkdownParseError)`
 - No other test changes required for the rebase (verified by exhaustive search)
 - New test: verify `except PflowError` catches `SchemaValidationError`, `MarkdownParseError`, `CompilationError`, `UserFriendlyError` (and subclasses)
+- Regression tests for `_exception_to_result` behavioral changes:
+  - `ValueError` with `_pflow_node_id` annotation produces `category: "execution_failure"` + `node_id`
+  - `ValueError` without `_pflow_node_id` produces `category: "validation"` (no `node_id`)
+  - `SchemaValidationError` preserves `path` and `suggestion` in error dict (replaces duck-type hack)
+  - `MarkdownParseError` extracts `.line` and `.suggestion` into error dict (only when non-None)
+  - `MarkdownParseError` with no `.line`/`.suggestion` omits those fields (not `None` values)
 
 ## Implementation Notes
 
@@ -133,6 +142,7 @@ NonRetriableError(Exception)             <- nodes/file/exceptions.py (package-lo
 **MarkdownParseError**:
 - `core/workflow/manager.py:26` — module-level (update import path)
 - `core/workflow/save_service.py:14` — module-level (update import path)
+- `core/workflow/save_service.py:311` — `except (FileNotFoundError, ValueError)` catches `MarkdownParseError` through inheritance (add `MarkdownParseError` to tuple)
 - `core/workflow/dependency_discovery.py:16` — module-level (update import path)
 - `cli/error_output.py:157` — lazy (convert to module-level, update path)
 - `cli/error_output.py:274` — lazy (convert to module-level, update path)
@@ -150,6 +160,7 @@ NonRetriableError(Exception)             <- nodes/file/exceptions.py (package-lo
 - `runtime/engine/batch_executor.py:419` — redundant lazy (remove, line 19 already has module-level)
 - `runtime/engine/engine.py:59,79` — 2 lazy from `core.exceptions` (convert to module-level)
 - `execution/runner.py:299,328,492` — 3 lazy from `pflow.runtime` (convert to `core.exceptions`, module-level)
+- `execution/runner.py:359` — lazy `WorkflowValidationError` (redundant after module-level import, remove)
 
 ### Edge case: `compile_validation.py` passes CompilationError as parameter
 
@@ -167,12 +178,23 @@ elif isinstance(exception, (MarkdownParseError, ValueError)):
 
 After:
 ```python
-elif isinstance(exception, MarkdownParseError):
+elif isinstance(exception, SchemaValidationError):
     error_dict.update({
+        "source": "validation",
         "category": "validation",
-        "line": exception.line,
-        "suggestion": exception.suggestion,
     })
+    if exception.path:
+        error_dict["path"] = exception.path
+    if exception.suggestion:
+        error_dict["suggestion"] = exception.suggestion
+elif isinstance(exception, MarkdownParseError):
+    error_dict.update({"category": "validation"})
+    if exception.line is not None:
+        error_dict["line"] = exception.line
+    if exception.suggestion:
+        error_dict["suggestion"] = exception.suggestion
+    if annotated_node_id:
+        error_dict["node_id"] = annotated_node_id
 elif isinstance(exception, ValueError):
     if annotated_node_id:
         error_dict.update({
@@ -185,7 +207,7 @@ elif isinstance(exception, ValueError):
 
 ### runner.py `validate()` method (line 282)
 
-Currently catches `ValueError` which includes `MarkdownParseError`. After rebase, `MarkdownParseError` falls through to the `except Exception` block at line 294 which explicitly checks `isinstance(e, MarkdownParseError)` and returns the same `ValidationResult`. Same behavior, different code path. No change needed, but could optionally add `MarkdownParseError` to the first except tuple for clarity.
+Currently catches `ValueError` which includes `MarkdownParseError`. After rebase, `MarkdownParseError` falls through to the `except Exception` block at line 294 which explicitly checks `isinstance(e, MarkdownParseError)` and returns the same `ValidationResult`. Same behavior, different code path. Add `MarkdownParseError` and `SchemaValidationError` to the first except tuple for explicitness, then simplify the second except block (remove lazy imports, keep only `WorkflowValidationError` and `CompilationError`).
 
 ## Verification
 
@@ -193,7 +215,7 @@ Currently catches `ValueError` which includes `MarkdownParseError`. After rebase
 - `make check` passes (ruff, mypy)
 - Zero lazy imports of `SchemaValidationError`, `MarkdownParseError` remain in `src/pflow/`
 - Zero lazy imports of `CompilationError` from `compiler.py` or `pflow.runtime` remain in `src/pflow/`
-- `grep -r "type(exception).__name__" src/pflow/` returns zero matches (duck-type hack eliminated)
+- `grep -r 'type(exception).__name__ == "ValidationError"' src/pflow/` returns zero matches (duck-type hack eliminated)
 - `except PflowError` catches all pflow-specific exceptions (verified by new test)
 - Node execution ValueErrors (with `_pflow_node_id`) produce `category: "execution_failure"` in error output
 - Pre-execution ValueErrors (without `_pflow_node_id`) produce `category: "validation"` in error output

@@ -8,7 +8,8 @@ These tests catch REAL bugs that would break agents:
 
 import pytest
 
-from pflow.core.ir_schema import ValidationError, validate_ir
+from pflow.core.exceptions import SchemaValidationError
+from pflow.core.ir_schema import validate_ir
 
 
 class TestOutputSchemaSuggestions:
@@ -29,7 +30,7 @@ class TestOutputSchemaSuggestions:
                 "outputs": {"result": {wrong_field: "${n1.output}"}},
             }
 
-            with pytest.raises(ValidationError) as exc_info:
+            with pytest.raises(SchemaValidationError) as exc_info:
                 validate_ir(ir)
 
             error_msg = str(exc_info.value)
@@ -51,7 +52,7 @@ class TestOutputSchemaSuggestions:
             "outputs": {"result": "${node.output}"},  # Should be object
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error_msg = str(exc_info.value)

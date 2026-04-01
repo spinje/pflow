@@ -416,8 +416,6 @@ def _collect_parallel_results(
 
     Modifies results, timings, pending_errors in place.
     """
-    from pflow.core.exceptions import CompilationError
-
     should_stop = False
     completed_count = 0
     total = len(future_to_idx)

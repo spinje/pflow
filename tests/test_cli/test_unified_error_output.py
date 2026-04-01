@@ -222,9 +222,9 @@ class TestStructuredFieldPreservation:
 
     def test_exception_to_errors_validation_error(self) -> None:
         """IR schema ValidationError fields (path, suggestion) survive."""
-        from pflow.core.ir_schema import ValidationError
+        from pflow.core.exceptions import SchemaValidationError
 
-        exc = ValidationError(
+        exc = SchemaValidationError(
             message="Node type 'foo' is not registered",
             path="nodes[0].type",
             suggestion="Did you mean 'file'?",

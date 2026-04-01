@@ -6,6 +6,7 @@ validation, and user-friendly error suggestions for missing MCP tools.
 
 import logging
 
+from pflow.core.exceptions import CompilationError
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.registry import Registry
 
@@ -111,8 +112,6 @@ def _parse_mcp_node_type(node_type: str) -> tuple[str, str]:
     Raises:
         CompilationError: If the server cannot be determined unambiguously
     """
-    from .compiler import CompilationError
-
     parts = node_type.split("-")
 
     if len(parts) < 3:

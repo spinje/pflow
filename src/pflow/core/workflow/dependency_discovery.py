@@ -12,8 +12,9 @@ from typing import Any, Literal, Optional
 
 import yaml
 
+from pflow.core.exceptions import MarkdownParseError
 from pflow.core.file_resolver import FILE_RESOLVABLE_PARAMS, is_file_reference, is_workflow_file_reference
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import parse_markdown
 
 logger = logging.getLogger(__name__)
 

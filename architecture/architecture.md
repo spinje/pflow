@@ -148,7 +148,7 @@ The markdown parser (`src/pflow/core/markdown_parser.py`, ~350 lines) converts `
 
 **Key types:**
 - `MarkdownParseResult` — dataclass with `ir` (dict), `title` (str), `description` (str), `metadata` (dict, from frontmatter), `source` (original markdown content for save operations)
-- `MarkdownParseError(ValueError)` — includes `line` number and `suggestion` for markdown-native error messages
+- `MarkdownParseError(PflowError)` — includes `line` number and `suggestion` for markdown-native error messages
 
 **Main function:** `parse_markdown(content: str) -> MarkdownParseResult`
 

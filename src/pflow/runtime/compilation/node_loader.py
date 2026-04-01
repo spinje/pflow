@@ -10,6 +10,7 @@ import importlib.util
 import logging
 from typing import cast
 
+from pflow.core.exceptions import CompilationError
 from pflow.core.node import BaseNode
 from pflow.registry import Registry
 
@@ -37,8 +38,6 @@ def import_node_class(node_type: str, registry: Registry) -> type[BaseNode]:
             - Class not found in module (phase: "node_import")
             - Class doesn't inherit from BaseNode (phase: "node_validation")
     """
-    from .compiler import CompilationError
-
     # Special handling for workflow execution
     if node_type == "workflow" or node_type == "pflow.runtime.workflow_executor":
         from pflow.runtime.workflow_executor import WorkflowExecutor

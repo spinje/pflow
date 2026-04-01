@@ -5,9 +5,10 @@ from typing import Any
 
 import pytest
 
+from pflow.core.exceptions import MarkdownParseError
 from pflow.core.file_resolver import resolve_file_references
 from pflow.core.ir_schema import normalize_ir, validate_ir
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import parse_markdown
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 

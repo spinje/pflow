@@ -121,11 +121,11 @@ compile_validation.py
   ├── ir_preparation.{prepare_inputs, validate_ir_structure}
   └── ../template_validation.{extract_node_outputs}
 
-Sibling module imports of CompilationError (lazy, via compiler.py re-export — see #185):
-  compile_validation.py → compiler.CompilationError (re-exported from core.exceptions)
-  mcp_resolution.py     → compiler.CompilationError
-  node_loader.py        → compiler.CompilationError
-  ir_preparation.py     → compiler.CompilationError
+All four sibling modules import CompilationError directly from core.exceptions (module-level):
+  compile_validation.py → core.exceptions.CompilationError
+  mcp_resolution.py     → core.exceptions.CompilationError
+  node_loader.py        → core.exceptions.CompilationError
+  ir_preparation.py     → core.exceptions.CompilationError
 ```
 
 ## External Consumers
@@ -149,7 +149,7 @@ Tests in `tests/test_runtime/`:
 
 ## Gotchas
 
-- **`CompilationError` canonical location is `core/exceptions.py`** (moved in Task 135). `compiler.py` re-exports it. Four sibling modules still lazy-import via `compiler.CompilationError` (tracked by #185).
+- **`CompilationError` canonical location is `core/exceptions.py`** (moved in Task 135). `compiler.py` re-exports it. All four sibling modules now import directly from `core.exceptions` (module-level, Task 141).
 - **`node.node_id` is a dynamic attribute** — `BaseNode.__init__` doesn't define it. The compiler sets it after instantiation (`node_instance.node_id = node_id`). If a node enters the graph without this attribute, the engine raises a clear error.
 - **`_parse_mcp_node_type` placement**: Conceptually belongs in `mcp/` but raises `CompilationError`, anchoring it in the compilation package.
 - **Batch config coercion is fail-fast**: `_coerce_bool/int/float` raise `CompilationError` on invalid values. The old `PflowBatchNode` silently used defaults — the new behavior is intentionally stricter.

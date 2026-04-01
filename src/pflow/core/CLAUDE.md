@@ -49,14 +49,45 @@ src/pflow/core/
 
 ### exceptions.py
 
-**Exception classes**: `PflowError` (base), `WorkflowExistsError`, `WorkflowNotFoundError` (structured: `workflow_name`, `similar_names`, `hint`, `format_for_cli()`), `WorkflowValidationError` (structured: `summary`, `validation_errors` as strings or `(msg, path, suggestion)` tuples, `format_for_cli()`), `CriticalDiscoveryError`. `MaxNodeVisitsError` (subclasses `RuntimeError`, not `PflowError`, has `node_id`, `visit_count`, `max_visits`, `format_for_cli()`) — raised when a node exceeds visit limit (loop guard). `OutputResolutionError` lives in `user_errors.py` (not here) — see below.
+**Exception classes** — canonical home for all pflow exceptions. Hierarchy:
+```
+PflowError(Exception)                    <- base for all pflow errors
+  |- SchemaValidationError               <- IR schema validation (message, path, suggestion)
+  |- MarkdownParseError                  <- .pflow.md parse errors (line, suggestion)
+  |- CompilationError                    <- IR compilation (phase, node_id, node_type, suggestion)
+  |- WorkflowValidationError             <- pre-execution validation (summary, validation_errors, format_for_cli())
+  |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint, format_for_cli())
+  |- WorkflowExistsError                 <- duplicate workflow save
+  |- CriticalDiscoveryError              <- discovery abort (node_name, reason)
+  |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions, format_for_cli())
+  |   |- MCPError                        <- user_errors.py
+  |   |- OutputResolutionError           <- user_errors.py (failures list)
+MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop guard)
+```
+`except PflowError` catches all pflow-specific exceptions except `MaxNodeVisitsError`. All exception imports should use `from pflow.core.exceptions import ClassName` (canonical path). Re-exports exist in `ir_schema.py` (`SchemaValidationError as ValidationError`) and `markdown_parser.py` (`MarkdownParseError`) for backward compatibility.
+
+**When to use which exception** — pick the most specific one that fits:
+
+| Context | Exception | Key attrs |
+|---------|-----------|-----------|
+| Node `exec()` body | Just raise — the engine catches, annotates with `_pflow_node_id`, and retries if applicable. Use `NonRetriableError` (from `nodes/file/exceptions.py`) for validation errors that should not retry. | — |
+| IR schema validation (bad field types, missing required fields) | `SchemaValidationError` | `message`, `path="nodes[0].type"`, `suggestion="Use 'shell'"` |
+| Markdown parsing failures (malformed `.pflow.md`) | `MarkdownParseError` | `message`, `line=42`, `suggestion="Add ## Steps"` |
+| Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
+| Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[(msg, path, suggestion), ...]` |
+| Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
+| User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
+| MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
+| Output resolution failures (branch-dependent outputs) | `OutputResolutionError` (subclass of `UserFriendlyError`) | `failures=[{...}]` |
+
+**Import**: Always `from pflow.core.exceptions import ClassName`. Never import exceptions from heavy modules (`ir_schema`, `markdown_parser`, `runtime`).
+
+**Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
 - Runtime phase catches exceptions and converts to error **dicts**
 - CLI formats errors based on output mode (text/JSON)
-
-See `.taskmaster/tasks/task_59/research/error-handling-patterns.md` for patterns used with nested workflows.
 
 ### ir_schema.py
 

@@ -11,6 +11,15 @@ from typing import Any
 
 import click
 
+from pflow.core.exceptions import (
+    MarkdownParseError,
+    MaxNodeVisitsError,
+    SchemaValidationError,
+    WorkflowNotFoundError,
+    WorkflowValidationError,
+)
+from pflow.core.user_errors import MCPError, OutputResolutionError, UserFriendlyError
+
 logger = logging.getLogger(__name__)
 
 
@@ -147,16 +156,6 @@ def _exception_to_errors(exception: Exception) -> tuple[str, list[dict[str, Any]
 
     Order matters: subclasses are checked BEFORE parent classes.
     """
-    # Lazy imports to avoid circular dependencies
-    from pflow.core.exceptions import (
-        MaxNodeVisitsError,
-        WorkflowNotFoundError,
-        WorkflowValidationError,
-    )
-    from pflow.core.ir_schema import ValidationError as IrSchemaValidationError
-    from pflow.core.markdown_parser import MarkdownParseError
-    from pflow.core.user_errors import MCPError, OutputResolutionError, UserFriendlyError
-
     if isinstance(exception, WorkflowValidationError):
         return _workflow_validation_to_errors(exception)
     if isinstance(exception, WorkflowNotFoundError):
@@ -179,7 +178,7 @@ def _exception_to_errors(exception: Exception) -> tuple[str, list[dict[str, Any]
         ]
     if isinstance(exception, MarkdownParseError):
         return _markdown_parse_to_errors(exception)
-    if isinstance(exception, IrSchemaValidationError):
+    if isinstance(exception, SchemaValidationError):
         return _schema_validation_to_errors(exception)
     if isinstance(exception, FileNotFoundError):
         return str(exception), [{"message": str(exception), "category": "file_not_found"}]
@@ -269,21 +268,11 @@ def _schema_validation_to_errors(exception: Any) -> tuple[str, list[dict[str, An
     return str(exception), [entry]
 
 
-def _is_markdown_parse_error(exception: Exception) -> bool:
-    """Check if exception is a MarkdownParseError (avoids top-level import)."""
-    from pflow.core.markdown_parser import MarkdownParseError
-
-    return isinstance(exception, MarkdownParseError)
-
-
 def display_exception_text(exception: Exception, verbose: bool = False) -> None:
     """Display exception in text mode, preserving rich formatting.
 
     Uses format_for_cli() when available, falls back to generic display.
     """
-    from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
-    from pflow.core.user_errors import UserFriendlyError
-
     if isinstance(exception, UserFriendlyError):
         click.echo(exception.format_for_cli(verbose), err=True)
     elif isinstance(exception, (WorkflowNotFoundError, WorkflowValidationError)) or hasattr(
@@ -293,7 +282,7 @@ def display_exception_text(exception: Exception, verbose: bool = False) -> None:
     elif isinstance(exception, PermissionError):
         msg = str(exception) if str(exception) else "Permission denied"
         click.echo(f"\u2717 {msg}", err=True)
-    elif isinstance(exception, FileNotFoundError) or _is_markdown_parse_error(exception):
+    elif isinstance(exception, (FileNotFoundError, MarkdownParseError)):
         click.echo(f"\u2717 {exception}", err=True)
     elif isinstance(exception, UnicodeDecodeError):
         click.echo("\u2717 File must be valid UTF-8 text.", err=True)

@@ -9,9 +9,9 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.exceptions import WorkflowValidationError
+from pflow.core.exceptions import MarkdownParseError, WorkflowValidationError
 from pflow.core.ir_schema import normalize_ir, validate_ir
-from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+from pflow.core.markdown_parser import parse_markdown
 from pflow.core.workflow.manager import WorkflowManager
 
 logger = logging.getLogger(__name__)
@@ -308,7 +308,7 @@ def _discover_and_bundle_deps(
 
     except WorkflowValidationError:
         raise
-    except (FileNotFoundError, ValueError) as e:
+    except (FileNotFoundError, MarkdownParseError, ValueError) as e:
         raise WorkflowValidationError(f"Dependency discovery failed for '{name}': {e}") from e
     except Exception as e:
         raise WorkflowValidationError(

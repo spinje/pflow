@@ -2,7 +2,8 @@
 
 import pytest
 
-from pflow.core import FLOW_IR_SCHEMA, ValidationError, validate_ir
+from pflow.core import FLOW_IR_SCHEMA, validate_ir
+from pflow.core.exceptions import SchemaValidationError
 
 
 class TestSchemaStructure:
@@ -146,7 +147,7 @@ class TestInvalidIR:
         """Test error when ir_version is missing."""
         ir = {"nodes": [{"id": "n1", "type": "test", "purpose": "Test node for validation check"}]}
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -158,7 +159,7 @@ class TestInvalidIR:
         """Test error when nodes array is missing."""
         ir = {"ir_version": "0.1.0"}
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -169,7 +170,7 @@ class TestInvalidIR:
         """Test error when nodes array is empty."""
         ir = {"ir_version": "0.1.0", "nodes": []}
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -183,7 +184,7 @@ class TestInvalidIR:
             "nodes": [{"id": "n1", "type": "test", "purpose": "Test node for version validation"}],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -199,7 +200,7 @@ class TestInvalidIR:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -215,7 +216,7 @@ class TestInvalidIR:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -236,7 +237,7 @@ class TestInvalidIR:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -256,7 +257,7 @@ class TestInvalidIR:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -273,7 +274,7 @@ class TestInvalidIR:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -291,7 +292,7 @@ class TestInvalidIR:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -306,7 +307,7 @@ class TestInvalidIR:
             "nodes": {"n1": {"type": "test", "purpose": "Test node in wrong structure"}},  # Dict instead of array
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -335,7 +336,7 @@ class TestErrorMessages:
             ],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         error = exc_info.value
@@ -350,7 +351,7 @@ class TestErrorMessages:
             "nodes": [{"id": "n1", "type": "test", "purpose": "Test node for version format validation"}],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         assert "0.1.0" in exc_info.value.suggestion
@@ -358,7 +359,7 @@ class TestErrorMessages:
         # Test type mismatch suggestion
         ir = {"ir_version": "0.1.0", "nodes": "not-an-array"}
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
 
         assert "str" in exc_info.value.suggestion
@@ -395,7 +396,7 @@ class TestInputTypeAliases:
             "nodes": [{"id": "n1", "type": "test", "purpose": "Test node"}],
             "inputs": {"param": {"type": "invalid_type", "required": True}},
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "inputs.param.type" in exc_info.value.path
 
@@ -530,7 +531,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "'items'" in str(exc_info.value)
         assert "required" in str(exc_info.value).lower()
@@ -550,7 +551,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         # Pattern validation fails
         assert "nodes[0]" in exc_info.value.path
@@ -571,7 +572,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -591,7 +592,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -611,7 +612,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -631,7 +632,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -711,7 +712,7 @@ class TestBatchConfig:
                 }
             ],
         }
-        with pytest.raises(ValidationError):
+        with pytest.raises(SchemaValidationError):
             validate_ir(ir)
 
 
@@ -822,7 +823,7 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -841,7 +842,7 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -878,7 +879,7 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -897,7 +898,7 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -934,7 +935,7 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -977,7 +978,7 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path
 
@@ -996,6 +997,6 @@ class TestBatchConfigPhase2:
                 }
             ],
         }
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             validate_ir(ir)
         assert "nodes[0]" in exc_info.value.path

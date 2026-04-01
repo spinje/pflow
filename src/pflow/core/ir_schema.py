@@ -71,48 +71,7 @@ import jsonschema
 from jsonschema import Draft7Validator
 from jsonschema import ValidationError as JsonSchemaValidationError
 
-
-class ValidationError(Exception):
-    """Custom validation error with helpful messages and field paths.
-
-    This exception provides structured error information to help users
-    quickly identify and fix validation issues in their IR.
-
-    Attributes:
-        message (str): The validation error message
-        path (str): Dotted path to the invalid field (e.g., "nodes[0].type")
-        suggestion (str): Optional suggestion for fixing the error
-
-    Example:
-        >>> try:
-        ...     validate_ir({"nodes": []})
-        ... except ValidationError as e:
-        ...     print(f"Error at {e.path}: {e.message}")
-        ...     if e.suggestion:
-        ...         print(f"Suggestion: {e.suggestion}")
-    """
-
-    def __init__(self, message: str, path: str = "", suggestion: str = ""):
-        """Initialize validation error.
-
-        Args:
-            message: The validation error message
-            path: The path to the invalid field (e.g., "nodes[0].type")
-            suggestion: Optional suggestion for fixing the error
-        """
-        self.message = message
-        self.path = path
-        self.suggestion = suggestion
-
-        full_message = "Validation error"
-        if path:
-            full_message += f" at {path}"
-        full_message += f": {message}"
-        if suggestion:
-            full_message += f"\n{suggestion}"
-
-        super().__init__(full_message)
-
+from pflow.core.exceptions import SchemaValidationError as ValidationError
 
 # JSON Schema for batch configuration on nodes
 # Enables sequential or parallel processing of multiple items through a single node

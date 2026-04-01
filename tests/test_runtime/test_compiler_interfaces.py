@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from pflow.core.ir_schema import ValidationError
+from pflow.core.exceptions import SchemaValidationError
 from pflow.core.node import BaseNode
 from pflow.runtime import compile_workflow
 
@@ -117,7 +117,7 @@ class TestCompilerInterfaces:
         assert workflow is not None
 
     def test_missing_required_input_raises_error(self, registry_with_nodes, mock_node_import):
-        """Test that missing required inputs raise ValidationError with description."""
+        """Test that missing required inputs raise SchemaValidationError with description."""
         ir = {
             "ir_version": "0.1.0",
             "inputs": {"file_path": {"description": "Path to the input file", "required": True, "type": "string"}},
@@ -126,7 +126,7 @@ class TestCompilerInterfaces:
         }
 
         # No initial_params provided
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
@@ -188,7 +188,7 @@ class TestCompilerInterfaces:
         }
 
         # Only provide one of the required inputs
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {"source_file": "source.txt"})
 
         error = exc_info.value
@@ -236,7 +236,7 @@ class TestCompilerInterfaces:
             "edges": [],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {"my$input": "value"})
 
         error = exc_info.value
@@ -252,7 +252,7 @@ class TestCompilerInterfaces:
             "edges": [],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
@@ -338,7 +338,7 @@ class TestCompilerInterfaces:
             "edges": [],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes)
 
         error = exc_info.value
@@ -519,7 +519,7 @@ class TestCompilerInterfaces:
             "edges": [],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
@@ -534,7 +534,7 @@ class TestCompilerInterfaces:
             "edges": [],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value
@@ -551,7 +551,7 @@ class TestCompilerInterfaces:
             "edges": [],
         }
 
-        with pytest.raises(ValidationError) as exc_info:
+        with pytest.raises(SchemaValidationError) as exc_info:
             compile_workflow(ir, registry_with_nodes, {})
 
         error = exc_info.value

@@ -6,8 +6,10 @@ error messages that help users resolve issues independently.
 
 from typing import Any, Optional
 
+from pflow.core.exceptions import PflowError
 
-class UserFriendlyError(Exception):
+
+class UserFriendlyError(PflowError):
     """Base class for user-friendly errors with structured formatting.
 
     Every error follows a three-part structure:

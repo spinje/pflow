@@ -23,35 +23,8 @@ from typing import Any
 
 import yaml
 
+from pflow.core.exceptions import MarkdownParseError
 from pflow.core.suggestion_utils import find_similar_items
-
-# --- Exceptions ---
-
-
-class MarkdownParseError(ValueError):
-    """Error raised when markdown workflow content cannot be parsed.
-
-    Extends ValueError so existing ``except ValueError`` catches still work.
-
-    Attributes:
-        line: Source line number where the error occurred (1-based).
-        suggestion: Optional human-readable fix suggestion.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        line: int | None = None,
-        suggestion: str | None = None,
-    ):
-        self.line = line
-        self.suggestion = suggestion
-        prefix = f"Line {line}: " if line else ""
-        full = f"{prefix}{message}"
-        if suggestion:
-            full += f"\n\n{suggestion}"
-        super().__init__(full)
-
 
 # --- Result dataclass ---
 

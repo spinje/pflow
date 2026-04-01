@@ -7,6 +7,7 @@ from typing import Any
 
 import click
 
+from pflow.core.exceptions import MarkdownParseError, WorkflowValidationError
 from pflow.core.workflow.manager import WorkflowManager
 
 
@@ -236,7 +237,7 @@ def _load_and_parse_workflow(file_path: str) -> tuple[dict[str, Any], str, str |
     from pathlib import Path
 
     from pflow.core import normalize_ir
-    from pflow.core.markdown_parser import MarkdownParseError, parse_markdown
+    from pflow.core.markdown_parser import parse_markdown
 
     path = Path(file_path)
 
@@ -294,7 +295,6 @@ def _save_with_overwrite_check(
     Raises:
         SystemExit: If workflow exists and force=False, or save fails
     """
-    from pflow.core.exceptions import WorkflowValidationError
     from pflow.core.workflow.save_service import save_workflow_with_options
 
     try:
