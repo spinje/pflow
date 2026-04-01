@@ -78,6 +78,7 @@ make check                     # Run all quality checks (lint, type check, etc.)
 - **Shared Store Pattern**: All node communication through shared store
 - **Atomic Nodes**: Isolated, focused on business logic only
 - **Agent-Friendly CLI**: Primary interface for AI agents
+- **Structured Errors**: Raise `PflowError` subclasses from `src/pflow/core/exceptions.py`, never vanilla `ValueError`/`Exception`. In nodes, just raise — the engine handles retries. See `src/pflow/core/exceptions.py` for the hierarchy; `src/pflow/core/CLAUDE.md` → `exceptions.py` section for the usage table.
 
 ### Technology Stack
 

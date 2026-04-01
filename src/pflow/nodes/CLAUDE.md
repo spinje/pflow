@@ -57,7 +57,8 @@ class ExampleNode(Node):
 
 1. **NO try/except in exec()** - Let exceptions bubble up!
 2. **Use NonRetriableError** for validation errors that shouldn't retry
-3. **Return only success values** from exec()
+3. **Prefer `PflowError` subclasses** over vanilla `ValueError`/`Exception` — see `src/pflow/core/exceptions.py`
+4. **Return only success values** from exec()
 4. **Handle errors in exec_fallback()** after retries exhausted
 5. **Check for errors in post()** by looking for "Error:" prefix
 
