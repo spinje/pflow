@@ -8,10 +8,6 @@ llm-anthropic (https://github.com/simonw/llm-anthropic)
 Copyright (c) Simon Willison
 Licensed under Apache License 2.0
 
-anthropic (https://github.com/anthropics/anthropic-sdk-python)
-Copyright (c) Anthropic, PBC
-Licensed under MIT License
-
 click (https://github.com/pallets/click)
 Copyright (c) Pallets
 Licensed under BSD-3-Clause
@@ -35,11 +31,5 @@ Licensed under Apache License 2.0
 claude-agent-sdk (https://github.com/anthropics/claude-agent-sdk-python)
 Copyright (c) Anthropic, PBC
 Licensed under MIT License
-
-PocketFlow (https://github.com/The-Pocket/PocketFlow) - EMBEDDED COMPONENT
-Copyright (c) 2024 Zachary Huang
-Licensed under MIT License
-Embedded in this distribution under src/pflow/pocketflow/
-See src/pflow/pocketflow/LICENSE for full license text.
 
 For full license texts, see the respective project repositories.
