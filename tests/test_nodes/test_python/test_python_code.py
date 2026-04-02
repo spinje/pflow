@@ -681,10 +681,10 @@ class TestWorkflowIntegration:
     """
 
     def test_code_node_in_compiled_workflow(self):
-        """Echo → Code workflow: template resolution through inputs dict.
+        """Code → Code workflow: template resolution through inputs dict.
 
         This is the critical integration path. The inputs dict contains
-        ${source.echo} which must be resolved by the TemplateAwareNodeWrapper
+        ${source.result} which must be resolved by the TemplateAwareNodeWrapper
         before the code node's prep() sees it as a native Python object.
         """
         from pflow.runtime import compile_workflow
@@ -698,9 +698,9 @@ class TestWorkflowIntegration:
             "nodes": [
                 {
                     "id": "source",
-                    "type": "echo",
+                    "type": "code",
                     "params": {
-                        "data": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                        "code": "result: list = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]",
                     },
                 },
                 {
@@ -708,7 +708,7 @@ class TestWorkflowIntegration:
                     "type": "code",
                     "params": {
                         "inputs": {
-                            "data": "${source.data}",
+                            "data": "${source.result}",
                             "limit": 5,
                         },
                         "code": "data: list\nlimit: int\n\nresult: list = data[:limit]",

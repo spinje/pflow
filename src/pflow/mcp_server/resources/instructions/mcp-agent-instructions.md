@@ -404,21 +404,21 @@ Analyze query results. Whole result = no test needed.
 - type: llm
 - prompt: "Analyze this data: ${query-database.result}"
 
-### fetch-pr
+### fetch-data
 
-Fetch PR details. Need testing — accessing specific nested fields.
+Fetch data from an MCP service. Need testing — accessing specific nested fields.
 
-- type: mcp-github-GET_PR
-- pr: ${pr_number}
+- type: mcp-slack-GET_CHANNEL
+- channel: ${channel_id}
 
 ### check-status
 
-Check PR status. Specific path `${fetch-pr.result.data.state}` = test required.
+Check data status. Specific path `${fetch-data.result.data.status}` = test required.
 
 - type: shell
 
 ```shell command
-echo 'Status: ${fetch-pr.result.data.state}'
+echo 'Status: ${fetch-data.result.data.status}'
 ```
 `````
 
@@ -723,14 +723,14 @@ Fetch data from protected API with authentication.
     query: ${search_query}
     limit: ${limit}
 
-### get-git-log
+### list-recent-files
 
-Get recent commits. Note: `$var` = shell variable, `${var}` = pflow template.
+List recently modified files. Note: `$var` = shell variable, `${var}` = pflow template.
 
 - type: shell
 
 ```shell command
-git log --oneline -${limit}
+find . -maxdepth ${depth} -type f -newer /tmp/marker 2>/dev/null | head -20
 ```
 
 ### filter-and-reshape
@@ -2093,7 +2093,7 @@ Service-specific?     → MCP node
 ### Workflow Naming Convention
 
 Format: `verb-noun-qualifier`
-- Examples: `fetch-api-data`, `process-csv-files`, `analyze-github-prs`
+- Examples: `fetch-api-data`, `process-csv-files`, `analyze-slack-messages`
 - Max 30 chars, lowercase, hyphens only
 - Specific enough to find, generic enough to reuse
 

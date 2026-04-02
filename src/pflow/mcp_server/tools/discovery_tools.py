@@ -85,7 +85,7 @@ async def registry_discover(
     The more context you provide, the better the node selection.
 
     Use registry_discover for: Exploring capabilities ("nodes for JSON processing")
-    Use registry_list for: Name-based filtering ("show all github nodes")
+    Use registry_list for: Name-based filtering ("show all file nodes")
 
     Examples:
         # Detailed workflow description (describes full context and requirements)

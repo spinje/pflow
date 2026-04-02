@@ -185,7 +185,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 {
   "version": "1.0.0",
   "registry": {
-    "nodes": { "allow": ["*"], "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"] }
+    "nodes": { "allow": ["*"], "deny": [] }
   },
   "runtime": { "template_resolution_mode": "strict" },
   "llm": { "default_model": null, "discovery_model": null, "filtering_model": null },
@@ -206,7 +206,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 **Input precedence**: CLI params → settings.env → workflow defaults → error.
 
-**Node filtering**: Allow/deny patterns with fnmatch. Filtering happens at Registry **load time**, not storage time. Test nodes hidden by default, exposed via `PFLOW_INCLUDE_TEST_NODES` env var. **`include_test_nodes` is never persisted** — the env toggle is ephemeral by design. MCP nodes generate multiple match candidates: `mcp-{server}-{tool}` → also tries `{tool}` (hyphenated) and `{server}.{tool}`.
+**Node filtering**: Allow/deny patterns with fnmatch. Filtering happens at Registry **load time**, not storage time. MCP nodes generate multiple match candidates: `mcp-{server}-{tool}` → also tries `{tool}` (hyphenated) and `{server}.{tool}`.
 
 ### user_errors.py
 

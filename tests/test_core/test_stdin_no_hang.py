@@ -185,7 +185,6 @@ def test_stdin_no_hang_integration(tmp_path, uv_exe):
     # A minimal registry (one node) starts faster than the full registry (~30 nodes).
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
 
     pflow_dir = tmp_path / ".pflow"
     pflow_dir.mkdir(exist_ok=True)

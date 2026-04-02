@@ -29,7 +29,6 @@ Complex workflows with companion `.md` explanations:
 
 - **content-pipeline.pflow.md** — File processing with validation
 - **file-migration.pflow.md** — Multi-step file migration with error handling
-- **github-workflow.pflow.md** — GitHub API integration
 
 ### invalid/
 Deliberately broken files for testing the parser. Used by `tests/test_docs/test_example_validation.py`.

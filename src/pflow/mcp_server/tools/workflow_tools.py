@@ -31,25 +31,25 @@ async def workflow_list(
       - "Show workflows for data processing"
 
     Use `workflow_list` when: Filtering by keywords in name
-      - "Show workflows with 'github' in the name"
+      - "Show workflows with 'data' in the name"
       - "List workflows containing 'slack'"
 
     Filter behavior:
     - No filter: Returns ALL workflows (may be long)
     - Single keyword: Matches name OR description
     - Multiple keywords: Space-separated AND logic (all must match)
-      Example: "github pr" matches workflows with both "github" AND "pr"
+      Example: "data process" matches workflows with both "data" AND "process"
 
     Examples:
         # List all workflows (no parameters)
         <invoke with no parameters>
 
         # Filter by single keyword
-        filter_pattern="github"    # Shows github-pr-analyzer, etc.
+        filter_pattern="data"      # Shows data-processor, etc.
         filter_pattern="slack"     # Shows slack-notification, etc.
 
         # Multi-keyword filter (ALL keywords must match)
-        filter_pattern="github pr"    # Must match BOTH "github" AND "pr"
+        filter_pattern="data process"  # Must match BOTH "data" AND "process"
         filter_pattern="slack send"   # Must match BOTH "slack" AND "send"
 
     Returns:
@@ -91,7 +91,7 @@ async def workflow_describe(
 
     Examples:
         # Check what parameters a workflow needs before execution
-        name="github-pr-analyzer"
+        name="data-processor"
         # Returns: inputs, outputs, full description and example usage
 
 

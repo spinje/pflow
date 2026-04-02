@@ -210,10 +210,6 @@ Templates use `${variable}` syntax. In `.pflow.md` files, templates appear inlin
 | `write-file` | `nodes/file/` | Write file contents | Active |
 | `claude-code` | `nodes/claude/` | Claude Code CLI integration | Active |
 | `mcp` | `nodes/mcp/` | Execute MCP tools | Active |
-| `git/*` | `nodes/git/` | Git operations | ⚠️ Deprecated |
-| `github/*` | `nodes/github/` | GitHub API operations | ⚠️ Deprecated |
-
-> **Deprecation Notice**: The `git/*` and `github/*` nodes are deprecated. Use MCP GitHub server (`mcp-github-*`) instead for GitHub operations, and shell commands with `git` CLI for Git operations.
 
 > **Critical:** See `src/pflow/nodes/CLAUDE.md` for the mandatory retry pattern. Nodes that catch exceptions in exec() break automatic retries.
 

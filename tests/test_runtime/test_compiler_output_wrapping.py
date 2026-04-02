@@ -15,68 +15,48 @@ from pflow.runtime.engine import WorkflowEngine
 
 
 @pytest.fixture
-def registry_with_echo():
-    """Create a test registry with echo node registered."""
+def registry_with_shell():
+    """Create a test registry with shell node registered."""
     # Create a temporary registry file
     registry_dir = tempfile.mkdtemp()
     registry_path = Path(registry_dir) / "test_registry.json"
     registry = Registry(registry_path)
 
-    # Register the echo node
-    echo_metadata = {
-        "echo": {
-            "module": "pflow.nodes.test.echo",
-            "class_name": "EchoNode",
-            "file_path": "src/pflow/nodes/test/echo.py",
-            "docstring": "Simple echo node for testing workflows.",
+    # Register the shell node
+    shell_metadata = {
+        "shell": {
+            "module": "pflow.nodes.shell.shell",
+            "class_name": "ShellNode",
+            "file_path": "src/pflow/nodes/shell/shell.py",
+            "docstring": "Run shell commands.",
             "interface": {
-                "description": "Simple echo node for testing workflows.",
-                "inputs": [
-                    {"name": "message", "type": "str", "description": "Message to echo", "required": False},
-                    {"name": "count", "type": "int", "description": "Number of times to repeat", "required": False},
-                    {"name": "data", "type": "any", "description": "Any data to pass through", "required": False},
-                ],
+                "description": "Run shell commands.",
+                "inputs": [],
                 "outputs": [
-                    {"key": "echo", "type": "str", "description": "The echoed message"},
-                    {"key": "data", "type": "any", "description": "The passed-through data"},
-                    {
-                        "key": "metadata",
-                        "type": "dict",
-                        "description": "Information about the echo operation",
-                        "structure": {
-                            "original_message": {"type": "str", "description": "The original message"},
-                            "count": {"type": "int", "description": "Number of repetitions"},
-                            "modified": {"type": "bool", "description": "Whether the message was modified"},
-                        },
-                    },
+                    {"key": "stdout", "type": "str", "description": "Command standard output"},
+                    {"key": "stderr", "type": "str", "description": "Command standard error"},
+                    {"key": "exit_code", "type": "int", "description": "Command exit code"},
                 ],
                 "params": [
                     {
-                        "name": "prefix",
+                        "name": "command",
                         "type": "str",
-                        "description": "Optional prefix for the message",
-                        "required": False,
+                        "description": "Shell command to execute",
+                        "required": True,
                     },
-                    {
-                        "name": "suffix",
-                        "type": "str",
-                        "description": "Optional suffix for the message",
-                        "required": False,
-                    },
-                    {"name": "uppercase", "type": "bool", "description": "Convert to uppercase", "required": False},
                 ],
-                "actions": ["default"],
+                "actions": ["default", "error"],
             },
         }
     }
-    registry.save(echo_metadata)
+    registry.save(shell_metadata)
     return registry
 
 
 class TestCompilerOutputWrapping:
     """Test compiler's output wrapping behavior."""
 
-    def test_outputs_populated_when_declared(self, registry_with_echo):
+    def test_outputs_populated_when_declared(self, registry_with_shell):
         """Verify output declarations are resolved after successful execution.
 
         FIX HISTORY:
@@ -86,22 +66,22 @@ class TestCompilerOutputWrapping:
         """
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "sh1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
-            "start_node": "echo1",
-            "outputs": {"result": {"source": "${echo1.echo}", "description": "Test output"}},
+            "start_node": "sh1",
+            "outputs": {"result": {"source": "${sh1.stdout}", "description": "Test output"}},
         }
 
-        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_shell)
         shared: dict = dict(workflow.resolved_defaults)
         engine = WorkflowEngine()
         result = engine.run(workflow, shared)
 
         # Output should be populated at root level from declared outputs
-        assert shared["result"] == "test"
+        assert "test" in shared["result"]
         assert result == "default"
 
-    def test_run_works_without_outputs(self, registry_with_echo):
+    def test_run_works_without_outputs(self, registry_with_shell):
         """Verify workflow runs correctly even without output declarations.
 
         FIX HISTORY:
@@ -111,43 +91,43 @@ class TestCompilerOutputWrapping:
         """
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "sh1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
-            "start_node": "echo1",
+            "start_node": "sh1",
             # No outputs field
         }
 
-        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_shell)
         shared: dict = dict(workflow.resolved_defaults)
         engine = WorkflowEngine()
         result = engine.run(workflow, shared)
 
         # Node should have executed and written namespaced output
-        assert "echo1" in shared
-        assert shared["echo1"]["echo"] == "test"
+        assert "sh1" in shared
+        assert "test" in shared["sh1"]["stdout"]
         assert result == "default"
 
-    def test_outputs_populated_on_success(self, registry_with_echo):
+    def test_outputs_populated_on_success(self, registry_with_shell):
         """Verify outputs ARE populated when workflow succeeds."""
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "Hello"}}],
+            "nodes": [{"id": "sh1", "type": "shell", "params": {"command": "echo Hello"}}],
             "edges": [],
-            "start_node": "echo1",
+            "start_node": "sh1",
             "outputs": {
-                "result": {"source": "${echo1.echo}"},
-                "metadata_msg": {"source": "${echo1.metadata.original_message}"},
+                "result": {"source": "${sh1.stdout}"},
+                "code": {"source": "${sh1.exit_code}"},
             },
         }
 
-        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_shell)
         shared: dict = dict(workflow.resolved_defaults)
         engine = WorkflowEngine()
         result = engine.run(workflow, shared)
 
         # Output should be populated at root level
-        assert shared["result"] == "Hello"
-        assert shared["metadata_msg"] == "Hello"
+        assert "Hello" in shared["result"]
+        assert shared["code"] == 0
         # Result should be "default" (success)
         assert result == "default"
 
@@ -160,56 +140,54 @@ class TestCompilerOutputWrapping:
 class TestProgrammaticUsage:
     """Test programmatic usage without CLI."""
 
-    def test_programmatic_workflow_with_outputs(self, registry_with_echo):
+    def test_programmatic_workflow_with_outputs(self, registry_with_shell):
         """Verify outputs work when using compile_workflow + WorkflowEngine directly."""
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "Hello World"}}],
+            "nodes": [{"id": "sh1", "type": "shell", "params": {"command": "echo Hello World"}}],
             "edges": [],
-            "start_node": "echo1",
+            "start_node": "sh1",
             "outputs": {
-                "message": {"source": "${echo1.echo}", "description": "Echo output"},
-                "metadata": {"source": "${echo1.metadata.original_message}"},
+                "message": {"source": "${sh1.stdout}", "description": "Shell output"},
+                "code": {"source": "${sh1.exit_code}"},
             },
         }
 
         # Use the API directly, no CLI involved
-        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_shell)
         shared: dict = dict(workflow.resolved_defaults)
         engine = WorkflowEngine()
         result = engine.run(workflow, shared)
 
         # Outputs should be populated at root level
-        assert shared["message"] == "Hello World"
-        assert shared["metadata"] == "Hello World"
+        assert "Hello World" in shared["message"]
+        assert shared["code"] == 0
         # Namespaced values should also exist
-        assert shared["echo1"]["echo"] == "Hello World"
+        assert "Hello World" in shared["sh1"]["stdout"]
         assert result == "default"
 
-    def test_complex_workflow_with_multiple_nodes(self, registry_with_echo):
+    def test_complex_workflow_with_multiple_nodes(self, registry_with_shell):
         """Test outputs from a multi-node workflow."""
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "echo1", "type": "echo", "params": {"message": "First"}},
-                {"id": "echo2", "type": "echo", "params": {"message": "Second"}},
+                {"id": "sh1", "type": "shell", "params": {"command": "echo First"}},
+                {"id": "sh2", "type": "shell", "params": {"command": "echo Second"}},
             ],
-            "edges": [{"from": "echo1", "to": "echo2"}],
-            "start_node": "echo1",
+            "edges": [{"from": "sh1", "to": "sh2"}],
+            "start_node": "sh1",
             "outputs": {
-                "first_msg": {"source": "${echo1.echo}"},
-                "second_msg": {"source": "${echo2.echo}"},
-                "combined": {"source": "${echo2.metadata.original_message}"},
+                "first_msg": {"source": "${sh1.stdout}"},
+                "second_msg": {"source": "${sh2.stdout}"},
             },
         }
 
-        workflow = compile_workflow(workflow_ir, registry_with_echo)
+        workflow = compile_workflow(workflow_ir, registry_with_shell)
         shared: dict = dict(workflow.resolved_defaults)
         engine = WorkflowEngine()
         result = engine.run(workflow, shared)
 
         # All outputs should be populated
-        assert shared["first_msg"] == "First"
-        assert shared["second_msg"] == "Second"
-        assert shared["combined"] == "Second"
+        assert "First" in shared["first_msg"]
+        assert "Second" in shared["second_msg"]
         assert result == "default"

@@ -28,8 +28,7 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
     settings = {
         "version": "1.0.0",
         "registry": {
-            "nodes": {"allow": ["*"], "deny": ["git-push", "github-delete-*", "test.*", "echo"]},
-            "include_test_nodes": False,
+            "nodes": {"allow": ["*"], "deny": ["http", "pflow.nodes.http.*", "mcp-*"]},
         },
         "env": {},
     }
@@ -62,17 +61,12 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
 
         # Verify denied nodes are not present
         # Check for node definitions (these should NOT appear)
-        assert '"git-push"' not in context, "git-push node leaked to LLM context"
-        assert "'git-push'" not in context, "git-push node leaked to LLM context"
-        assert "git-push:" not in context, "git-push node leaked to LLM context"
-
-        assert '"echo"' not in context, "echo test node leaked to LLM context"
-        assert "'echo'" not in context, "echo test node leaked to LLM context"
-        assert "echo:" not in context, "echo test node leaked to LLM context"
+        assert '"http"' not in context, "http node leaked to LLM context"
+        assert "'http'" not in context, "http node leaked to LLM context"
+        assert "http:" not in context, "http node leaked to LLM context"
 
         # Verify allowed nodes ARE present (sanity check)
-        # Note: git nodes are denied by default, so we check for always-enabled nodes
-        assert "llm" in context or "http" in context, "Allowed nodes should be in context"
+        assert "llm" in context or "shell" in context, "Allowed nodes should be in context"
 
     finally:
         # Restore original HOME
@@ -82,79 +76,65 @@ def test_denied_nodes_not_in_llm_context(tmp_path):
             os.environ.pop("HOME", None)
 
 
-def test_env_var_overrides_settings(tmp_path):
-    """Critical: Ensure PFLOW_INCLUDE_TEST_NODES overrides settings for tests.
+def test_deny_rules_filter_nodes_from_registry(tmp_path):
+    """Critical: Ensure deny rules in settings actually filter nodes.
 
-    This test verifies that the test environment can override
-    settings to include test nodes. This is critical for CI/CD
-    where tests need access to test nodes like 'echo'.
+    This test verifies that changing deny rules in settings
+    changes which nodes are visible in the registry. The deny
+    rules are the primary mechanism for restricting node access.
     """
-    # Create strict deny settings
-    settings = {
+    from pflow.core.settings import SettingsManager
+    from pflow.registry import Registry
+
+    # Create registry with known nodes
+    registry_path = tmp_path / "registry.json"
+    registry_data = {
+        "version": "0.0.0",
+        "nodes": {
+            "shell": {"module": "pflow.nodes.shell.shell", "class_name": "ShellNode", "type": "core"},
+            "llm": {"module": "pflow.nodes.llm.llm", "class_name": "LLMNode", "type": "core"},
+            "http": {"module": "pflow.nodes.http.http", "class_name": "HttpNode", "type": "core"},
+            "read-file": {"module": "pflow.nodes.file.read_file", "class_name": "ReadFileNode", "type": "core"},
+        },
+    }
+    registry_path.write_text(json.dumps(registry_data))
+
+    # Test 1: With restrictive deny rules, nodes are filtered out
+    restrictive_settings = {
         "version": "1.0.0",
         "registry": {
-            "nodes": {
-                "allow": ["file.*", "git.*"],  # Very restrictive
-                "deny": ["test.*", "echo", "*"],  # Deny everything else
-            },
-            "include_test_nodes": False,
+            "nodes": {"allow": ["*"], "deny": ["llm", "http"]},
         },
-        "env": {},
     }
+    restrictive_settings_path = tmp_path / "restrictive_settings.json"
+    restrictive_settings_path.write_text(json.dumps(restrictive_settings))
 
-    # Set up test environment
-    test_home = tmp_path / "home"
-    test_home.mkdir()
-    pflow_dir = test_home / ".pflow"
-    pflow_dir.mkdir()
-    (pflow_dir / "settings.json").write_text(json.dumps(settings))
+    sm_restrictive = SettingsManager(restrictive_settings_path)
+    registry = Registry(registry_path=registry_path)
+    registry._settings_manager = sm_restrictive
 
-    original_home = os.environ.get("HOME")
-    original_env = os.environ.get("PFLOW_INCLUDE_TEST_NODES")
+    filtered_nodes = registry.load(include_filtered=False)
+    assert "llm" not in filtered_nodes, "llm should be denied by restrictive rules"
+    assert "http" not in filtered_nodes, "http should be denied by restrictive rules"
+    assert "shell" in filtered_nodes, "shell should be allowed"
+    assert "read-file" in filtered_nodes, "read-file should be allowed"
 
-    try:
-        os.environ["HOME"] = str(test_home)
+    # Test 2: With permissive settings, all nodes are visible
+    permissive_settings = {
+        "version": "1.0.0",
+        "registry": {
+            "nodes": {"allow": ["*"], "deny": []},
+        },
+    }
+    permissive_settings_path = tmp_path / "permissive_settings.json"
+    permissive_settings_path.write_text(json.dumps(permissive_settings))
 
-        # First verify test nodes are denied without env var
-        os.environ.pop("PFLOW_INCLUDE_TEST_NODES", None)
+    sm_permissive = SettingsManager(permissive_settings_path)
+    registry2 = Registry(registry_path=registry_path)
+    registry2._settings_manager = sm_permissive
 
-        from pflow.core.settings import SettingsManager
-        from pflow.registry import Registry
-
-        # Force reload settings
-        sm = SettingsManager(pflow_dir / "settings.json")
-        sm._settings = None  # Clear cache
-
-        registry = Registry()
-        registry._settings_manager = None  # Clear cache to reload
-
-        nodes_without_env = registry.load()
-        assert "echo" not in nodes_without_env, "echo should be denied without env var"
-
-        # Now enable test nodes via environment variable
-        os.environ["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
-        # Force reload with env var
-        sm._settings = None  # Clear cache
-        registry._settings_manager = None  # Clear cache
-
-        nodes_with_env = registry.load()
-
-        # Verify test nodes are now accessible
-        assert "echo" in nodes_with_env, "echo should be available with PFLOW_INCLUDE_TEST_NODES=true"
-
-        # Verify the env var truly overrides the strict deny rules
-        test_nodes = [name for name in nodes_with_env if "test" in name or name == "echo"]
-        assert len(test_nodes) > 0, "Test nodes should be accessible with env override"
-
-    finally:
-        # Restore environment
-        if original_home:
-            os.environ["HOME"] = original_home
-        else:
-            os.environ.pop("HOME", None)
-
-        if original_env:
-            os.environ["PFLOW_INCLUDE_TEST_NODES"] = original_env
-        else:
-            os.environ.pop("PFLOW_INCLUDE_TEST_NODES", None)
+    all_nodes = registry2.load(include_filtered=False)
+    assert "llm" in all_nodes, "llm should be visible with permissive rules"
+    assert "http" in all_nodes, "http should be visible with permissive rules"
+    assert "shell" in all_nodes, "shell should be visible with permissive rules"
+    assert len(all_nodes) > len(filtered_nodes), "Permissive rules should show more nodes"

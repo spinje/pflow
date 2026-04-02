@@ -60,7 +60,7 @@ def test_memo_cache_miss_then_hit(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "my-node", "type": "echo", "params": {"message": "hello"}},
+            {"id": "my-node", "type": "shell", "params": {"command": "printf '%s' hello"}},
         ],
         "edges": [],
     }
@@ -68,13 +68,13 @@ def test_memo_cache_miss_then_hit(tmp_path: Any) -> None:
     # --- First run: cache MISS, node must execute ---
     shared1 = _run_workflow(ir, cache)
     assert "my-node" in shared1
-    assert shared1["my-node"]["echo"] == "hello"
+    assert shared1["my-node"]["stdout"] == "hello"
 
     # --- Second run: fresh shared, SAME cache ---
     shared2 = _run_workflow(ir, cache)
     # Output restored from cache
     assert "my-node" in shared2
-    assert shared2["my-node"]["echo"] == "hello"
+    assert shared2["my-node"]["stdout"] == "hello"
 
 
 def test_memo_cache_stores_output(tmp_path: Any) -> None:
@@ -86,7 +86,7 @@ def test_memo_cache_stores_output(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "store-test", "type": "echo", "params": {"message": "cached-value"}},
+            {"id": "store-test", "type": "shell", "params": {"command": "printf '%s' cached-value"}},
         ],
         "edges": [],
     }
@@ -110,7 +110,7 @@ def test_memo_cache_restores_shared(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "restore-node", "type": "echo", "params": {"message": "restore-me"}},
+            {"id": "restore-node", "type": "shell", "params": {"command": "printf '%s' restore-me"}},
         ],
         "edges": [],
     }
@@ -134,7 +134,7 @@ def test_memo_cache_miss_on_different_input(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "diff-input", "type": "echo", "params": {"message": "${input_val}"}},
+            {"id": "diff-input", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
         ],
         "edges": [],
         "inputs": {"input_val": {"type": "str", "description": "Test input"}},
@@ -142,14 +142,14 @@ def test_memo_cache_miss_on_different_input(tmp_path: Any) -> None:
 
     # First run with input_val="hello"
     shared1 = _run_workflow(ir, cache, initial_params={"input_val": "hello"})
-    assert shared1["diff-input"]["echo"] == "hello"
+    assert shared1["diff-input"]["stdout"] == "hello"
 
     # Second run with input_val="world" (different input)
     shared2 = _run_workflow(ir, cache, initial_params={"input_val": "world"})
-    assert shared2["diff-input"]["echo"] == "world"
+    assert shared2["diff-input"]["stdout"] == "world"
 
     # Outputs should differ (cache miss due to different input)
-    assert shared1["diff-input"]["echo"] != shared2["diff-input"]["echo"]
+    assert shared1["diff-input"]["stdout"] != shared2["diff-input"]["stdout"]
 
 
 def test_no_memo_cache_in_shared(tmp_path: Any) -> None:
@@ -161,7 +161,7 @@ def test_no_memo_cache_in_shared(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "no-cache-node", "type": "echo", "params": {"message": "works"}},
+            {"id": "no-cache-node", "type": "shell", "params": {"command": "printf '%s' works"}},
         ],
         "edges": [],
     }
@@ -175,7 +175,7 @@ def test_no_memo_cache_in_shared(tmp_path: Any) -> None:
     engine = WorkflowEngine()
     engine.run(workflow, shared)
 
-    assert shared["no-cache-node"]["echo"] == "works"
+    assert shared["no-cache-node"]["stdout"] == "works"
 
 
 def test_memo_cache_prevents_reexecution(tmp_path: Any) -> None:
@@ -211,7 +211,7 @@ def test_memo_cache_records_execution_state(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "state-node", "type": "echo", "params": {"message": "test"}},
+            {"id": "state-node", "type": "shell", "params": {"command": "printf '%s' test"}},
         ],
         "edges": [],
     }

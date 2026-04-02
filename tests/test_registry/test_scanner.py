@@ -318,14 +318,16 @@ class TestExtractMetadataBehavior:
             "actions": ["default", "error"],
         }
 
-        metadata = extract_metadata(TestNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
+        metadata = extract_metadata(
+            TestNode, "pflow.nodes.shell.shell", Path("/project/shell.py"), extractor=mock_extractor
+        )
 
         # Test that metadata contains expected fields
-        assert metadata["module"] == "pflow.nodes.test"
+        assert metadata["module"] == "pflow.nodes.shell.shell"
         assert metadata["class_name"] == "TestNode"
         assert metadata["name"] == "test-node"
         assert metadata["docstring"] == "Test node documentation."
-        assert "/project/test.py" in metadata["file_path"]
+        assert "/project/shell.py" in metadata["file_path"]
 
         # Test that interface was integrated
         assert "interface" in metadata
@@ -348,7 +350,9 @@ class TestExtractMetadataBehavior:
             "actions": [],
         }
 
-        metadata = extract_metadata(NoDocNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
+        metadata = extract_metadata(
+            NoDocNode, "pflow.nodes.shell.shell", Path("/project/shell.py"), extractor=mock_extractor
+        )
 
         assert metadata["docstring"] == ""
         assert metadata["interface"]["description"] == "No description"
@@ -367,7 +371,7 @@ class TestExtractMetadataBehavior:
         import pytest
 
         with pytest.raises(ValueError, match="Invalid interface format"):
-            extract_metadata(BadNode, "pflow.nodes.test", Path("/project/test.py"), extractor=mock_extractor)
+            extract_metadata(BadNode, "pflow.nodes.shell.shell", Path("/project/shell.py"), extractor=mock_extractor)
 
 
 class TestTemporarySyspathBehavior:

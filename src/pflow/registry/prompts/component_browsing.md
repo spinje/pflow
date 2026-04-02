@@ -26,55 +26,34 @@ If requirements have been extracted, use them to guide component selection. Each
 ### Step 2: Identify the Workflow Domain & Complexity
 Analyze the user request to understand both domain AND workflow pattern:
 
-**GitHub Domain Patterns**:
-- *Simple Read*: "get issue 1234", "summarize issue" → github-get-issue + llm + write-file
-- *Analysis Workflow*: "triage issues", "analyze issues" → github-list-issues + llm + write-file
-- *Content Creation*: "generate changelog", "create release notes" → github-list-issues + llm + write-file + git-checkout + git-commit + github-create-pr
-
 **Data Processing Domain**: File analysis, CSV processing, report generation
-**Cross-Domain**: Explicitly combines GitHub data with local processing
+**API Integration Domain**: REST APIs, webhooks, external service calls
+**MCP Service Domain**: Specialized tools via MCP servers (GitHub, Slack, databases)
 
 ### Step 2: Select Domain-Relevant Components
 **Primary Evidence**: Direct functionality match within the identified domain
-
-**GitHub Simple Read** (get/summarize single item):
-- `github-get-issue` for single item retrieval
-- `llm` for analysis/processing
-- output to stdout (default)
-- NO save operations unless explicitly mentioned
-
-**GitHub Simple Read and Save** (get/summarize single item):
-- `github-get-issue` for single item retrieval
-- `llm` for analysis/processing
-- `write-file` for output
-- NO git operations (no content creation)
-
-**GitHub Analysis Workflow** (analyze multiple items):
-- `github-list-issues` for data gathering
-- `llm` for processing/analysis
-- `write-file` for report output
-- NO git operations (analysis only, no commits)
-
-**GitHub Content Creation** (generate/create deliverables):
-- `github-list-issues` for data gathering
-- `llm` for content generation
-- `write-file` for artifact creation
-- `git-checkout` + `git-commit` + `github-create-pr` for delivery
 
 **Data Processing Workflows**:
 - `read-file` for data input
 - `llm` for analysis and processing
 - `write-file` for results and reports
-- NO GitHub/Git nodes unless explicitly mentioned
+- `code` for data transformation and filtering
+
+**API Integration Workflows**:
+- `http` for making HTTP requests to APIs and web services
+- `llm` for processing API responses
+- `write-file` for saving results
+- `shell` for CLI tool invocations
+
+**MCP Service Workflows**:
+- `mcp-*` custom specialized MCP nodes for specific services and their tools
+- `llm` for processing service data
+- `write-file` for saving results
 
 **Integrating with external services**
 - `http` for making HTTP requests to APIs and web services
 - `mcp-*` custom specialized MCP nodes for specific services and their tools
-
-**Cross-Domain Workflows** (GitHub data + local processing):
-- Include GitHub nodes for data gathering
-- Include file/LLM nodes for local processing
-- EXCLUDE git operations unless explicitly mentioned
+- `shell` for CLI tools (git, gh, curl, docker, etc.)
 
 ### Step 3: Apply Smart Over-Inclusive Logic
 
@@ -84,9 +63,9 @@ Analyze the user request to understand both domain AND workflow pattern:
 - Workflow demonstrates relevant patterns for the domain
 
 **Exclude when**:
-- Component belongs to a different domain (e.g., GitHub nodes for pure data processing)
-- Component adds unnecessary complexity (e.g., PR creation for simple read operations)
-- File management operations not relevant to the workflow (e.g., delete-file for changelog generation)
+- Component belongs to a different domain
+- Component adds unnecessary complexity
+- File management operations not relevant to the workflow
 
 ## Selection Principles
 
@@ -99,25 +78,21 @@ Analyze the user request to understand both domain AND workflow pattern:
 
 ## Pattern Recognition Examples
 
-**"generate changelog"** → GitHub Content Creation Pattern
-✅ Include: github-list-issues, llm, write-file, git-checkout, git-commit, github-create-pr
-❌ Exclude: delete-file, move-file (irrelevant), github-get-issue (need list, not single)
-
-**"get GitHub issue 1234 and summarize"** → GitHub Simple Read Pattern
-✅ Include: github-get-issue, llm, write-file
-❌ Exclude: git-commit, github-create-pr (no content creation), github-list-issues (need single, not list)
-
-**"triage issues"** → GitHub Analysis Pattern
-✅ Include: github-list-issues, llm, write-file
-❌ Exclude: git-commit (analysis only, no deliverable creation)
-
-**"analyze GitHub issues and generate local report"** → Cross-Domain Pattern
-✅ Include: github-list-issues, llm, write-file
-❌ Exclude: git-commit (local processing, no GitHub deliverable)
-
-**"analyze data"** → Data Processing Domain
+**"analyze data from a file"** → Data Processing Domain
 ✅ Include: read-file, llm, write-file
-❌ Exclude: github-list-issues, git-commit (no GitHub operations needed)
+❌ Exclude: http, mcp-* (no external service needed)
+
+**"fetch API data and generate report"** → API Integration
+✅ Include: http, llm, write-file
+❌ Exclude: read-file (data comes from API, not files)
+
+**"send Slack notifications based on file contents"** → MCP Service + Data
+✅ Include: read-file, llm, mcp-slack-SEND_MESSAGE
+❌ Exclude: http (Slack accessed via MCP, not raw HTTP)
+
+**"process CSV and save results"** → Data Processing Domain
+✅ Include: read-file, code, write-file
+❌ Exclude: llm (deterministic transformation, no LLM needed)
 
 Return node IDs and workflow names that fit the identified domain and support the workflow requirements (see <extracted_requirements>).
 

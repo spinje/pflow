@@ -81,7 +81,7 @@ Current settings:
   "registry": {
     "nodes": {
       "allow": ["*"],
-      "deny": ["test.*"]
+      "deny": []
     }
   },
   "llm": {
@@ -230,9 +230,6 @@ pflow settings deny <PATTERN>
 **Examples:**
 
 ```bash
-# Block test nodes
-pflow settings deny "pflow.nodes.test.*"
-
 # Block dangerous operations
 pflow settings deny "shell"
 pflow settings deny "*-delete-*"
@@ -261,7 +258,7 @@ pflow settings remove <PATTERN> [--allow|--deny]
 
 ```bash
 # Remove from deny list
-pflow settings remove "test.*" --deny
+pflow settings remove "shell" --deny
 
 # Remove from allow list
 pflow settings remove "file.*" --allow
@@ -295,9 +292,9 @@ pflow settings check read-file
 **Output (excluded):**
 
 ```
-✗ Node 'echo' would be EXCLUDED
+✗ Node 'shell' would be EXCLUDED
 
-  Matched deny patterns: test.*
+  Matched deny patterns: shell
 ```
 
 ## pflow settings reset
@@ -529,10 +526,9 @@ See [registry run output modes](/reference/cli/registry#output-modes) for detail
 
 Node filtering uses allow and deny patterns evaluated in this order:
 
-1. **Test nodes** - Hidden by default (enable with `PFLOW_INCLUDE_TEST_NODES=true`)
-2. **Deny patterns** - Block matching nodes (highest precedence)
-3. **Allow patterns** - Include matching nodes
-4. **Default** - Include if `*` in allow list
+1. **Deny patterns** - Block matching nodes (highest precedence)
+2. **Allow patterns** - Include matching nodes
+3. **Default** - Include if `*` in allow list
 
 **Example configuration:**
 
@@ -541,7 +537,7 @@ Node filtering uses allow and deny patterns evaluated in this order:
   "registry": {
     "nodes": {
       "allow": ["*"],
-      "deny": ["test.*", "shell"]
+      "deny": ["shell"]
     }
   }
 }

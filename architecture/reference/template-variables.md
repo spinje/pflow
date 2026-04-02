@@ -1270,9 +1270,6 @@ File: `~/.pflow/settings.json`
 ```bash
 # Override template resolution mode
 export PFLOW_TEMPLATE_RESOLUTION_MODE=permissive
-
-# Include test nodes (useful for development)
-export PFLOW_INCLUDE_TEST_NODES=true
 ```
 
 ### Configuration Hierarchy

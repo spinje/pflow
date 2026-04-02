@@ -229,16 +229,16 @@ def test_import_node_class_real_node():
     # Create real registry instance
     registry = Registry()
 
-    # Use the echo node which is the designated test node in src/pflow/nodes/test/echo.py
+    # Use the shell node which is always available as a core node
     nodes = registry.load()
-    if "echo" in nodes:
-        # Import the real echo node
-        result = import_node_class("echo", registry)
+    if "shell" in nodes:
+        # Import the real shell node
+        result = import_node_class("shell", registry)
 
         # Verify it's a proper class
         assert isinstance(result, type)
         assert issubclass(result, BaseNode)
-        assert result.__name__ == "EchoNode"
+        assert result.__name__ == "ShellNode"
     else:
-        # Skip test if registry doesn't have test nodes
-        pytest.skip("Echo node not found in registry")
+        # Skip test if registry doesn't have shell node
+        pytest.skip("Shell node not found in registry")

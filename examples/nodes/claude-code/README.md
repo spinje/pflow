@@ -185,9 +185,9 @@ When you need specific data fields, always use `output_schema`:
 Always log costs for expensive operations:
 ```json
 {
-  "type": "echo",
+  "type": "shell",
   "params": {
-    "message": "Cost: $${node.llm_usage.cost_usd}"
+    "command": "echo Cost: $${node.llm_usage.cost_usd}"
   }
 }
 ```

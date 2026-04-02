@@ -67,13 +67,13 @@ class TestCodeDynamicRouting:
                 },
                 {
                     "id": "fast-path",
-                    "type": "echo",
-                    "params": {"message": "fast"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' fast"},
                 },
                 {
                     "id": "slow-path",
-                    "type": "echo",
-                    "params": {"message": "slow"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' slow"},
                 },
             ],
             "edges": [
@@ -102,8 +102,8 @@ class TestCodeDynamicRouting:
                 },
                 {
                     "id": "default-target",
-                    "type": "echo",
-                    "params": {"message": "reached"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' reached"},
                 },
             ],
             "edges": [
@@ -114,7 +114,7 @@ class TestCodeDynamicRouting:
         shared = compile_and_run_ir(ir)
 
         assert _node_ran(shared, "default-target")
-        assert shared["default-target"]["echo"] == "reached"
+        assert shared["default-target"]["stdout"] == "reached"
 
     def test_code_skip_ahead(self) -> None:
         """When code sets next='save', intermediate nodes are skipped."""
@@ -129,13 +129,13 @@ class TestCodeDynamicRouting:
                 },
                 {
                     "id": "transform",
-                    "type": "echo",
-                    "params": {"message": "transform"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' transform"},
                 },
                 {
                     "id": "save",
-                    "type": "echo",
-                    "params": {"message": "saved"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' saved"},
                 },
             ],
             "edges": [
@@ -149,7 +149,7 @@ class TestCodeDynamicRouting:
 
         assert not _node_ran(shared, "transform")
         assert _node_ran(shared, "save")
-        assert shared["save"]["echo"] == "saved"
+        assert shared["save"]["stdout"] == "saved"
 
 
 # ===========================================================================
@@ -173,8 +173,8 @@ class TestErrorRouting:
                 },
                 {
                     "id": "handler",
-                    "type": "echo",
-                    "params": {"message": "handled"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' handled"},
                 },
             ],
             "edges": [
@@ -185,7 +185,7 @@ class TestErrorRouting:
         shared = compile_and_run_ir(ir)
 
         assert _node_ran(shared, "handler")
-        assert shared["handler"]["echo"] == "handled"
+        assert shared["handler"]["stdout"] == "handled"
         # The failer node should have an error recorded
         assert "error" in shared["failer"]
 
@@ -202,8 +202,8 @@ class TestErrorRouting:
                 },
                 {
                     "id": "handler",
-                    "type": "echo",
-                    "params": {"message": "should not run"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' 'should not run'"},
                 },
             ],
             "edges": [
@@ -291,8 +291,8 @@ class TestLoopExecution:
                 },
                 {
                     "id": "done",
-                    "type": "echo",
-                    "params": {"message": "finished"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' finished"},
                 },
             ],
             "edges": [
@@ -308,7 +308,7 @@ class TestLoopExecution:
 
         # The loop should run 3 iterations: worker(1)→checker(1)→worker(2)→checker(2)→worker(3)→checker(3)→done
         assert _node_ran(shared, "done")
-        assert shared["done"]["echo"] == "finished"
+        assert shared["done"]["stdout"] == "finished"
         # Worker's final result should be "3" (incremented 3 times: 0→1, 1→2, 2→3)
         assert shared["worker"]["result"] == "3"
         # Each node should have been visited 3 times
@@ -337,8 +337,8 @@ class TestNextEnd:
                 },
                 {
                     "id": "after-stopper",
-                    "type": "echo",
-                    "params": {"message": "should not run"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' 'should not run'"},
                 },
             ],
             # No edge from stopper to after-stopper — flow ends after stopper
@@ -363,8 +363,8 @@ class TestNextEnd:
                 },
                 {
                     "id": "after-decider",
-                    "type": "echo",
-                    "params": {"message": "should not run"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' 'should not run'"},
                 },
             ],
             # Edge exists so curr.successors is non-empty — tests "end" bypass
@@ -391,8 +391,8 @@ class TestNextEnd:
                 },
                 {
                     "id": "fallback",
-                    "type": "echo",
-                    "params": {"message": "fallback"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' fallback"},
                 },
             ],
             "edges": [{"from": "bad-router", "to": "fallback", "action": "default"}],
@@ -417,8 +417,8 @@ class TestNextEnd:
                 },
                 {
                     "id": "fallback",
-                    "type": "echo",
-                    "params": {"message": "fallback"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' fallback"},
                 },
             ],
             "edges": [{"from": "bad-router", "to": "fallback", "action": "default"}],
@@ -465,16 +465,16 @@ class TestFullPipeline:
 
             Handle positive classification.
 
-            - type: echo
-            - message: positive-result
+            - type: shell
+            - command: printf '%s' positive-result
             - next: end
 
             ### negative
 
             Handle negative classification.
 
-            - type: echo
-            - message: negative-result
+            - type: shell
+            - command: printf '%s' negative-result
             - next: end
         """)
 
@@ -483,7 +483,7 @@ class TestFullPipeline:
         assert _node_ran(shared, "classifier")
         assert _node_ran(shared, "positive")
         assert not _node_ran(shared, "negative")
-        assert shared["positive"]["echo"] == "positive-result"
+        assert shared["positive"]["stdout"] == "positive-result"
 
     def test_pipeline_error_routing(self) -> None:
         """A failing code node routes to the error handler via on-error in markdown."""
@@ -509,15 +509,15 @@ class TestFullPipeline:
 
             Handle errors from the risky step.
 
-            - type: echo
-            - message: error-handled
+            - type: shell
+            - command: printf '%s' error-handled
             - next: end
         """)
 
         shared = parse_compile_and_run(markdown)
 
         assert _node_ran(shared, "handler")
-        assert shared["handler"]["echo"] == "error-handled"
+        assert shared["handler"]["stdout"] == "error-handled"
         assert "error" in shared["risky"]
 
     def test_pipeline_next_end(self) -> None:
@@ -544,8 +544,8 @@ class TestFullPipeline:
 
             This step should never run.
 
-            - type: echo
-            - message: should-not-run
+            - type: shell
+            - command: printf '%s' should-not-run
         """)
 
         shared = parse_compile_and_run(markdown)
@@ -609,8 +609,8 @@ class TestFullPipeline:
 
             Final step.
 
-            - type: echo
-            - message: complete
+            - type: shell
+            - command: printf '%s' complete
         """)
 
         # validate=True exercises the full validation pipeline including
@@ -702,23 +702,23 @@ class TestFullPipeline:
 
             Handle errors, then continue to done.
 
-            - type: echo
-            - message: handled
+            - type: shell
+            - command: printf '%s' handled
             - next: done
 
             ### done
 
             Final step (convergence point).
 
-            - type: echo
-            - message: complete
+            - type: shell
+            - command: printf '%s' complete
         """)
 
         shared = parse_compile_and_run(markdown)
 
         assert _node_ran(shared, "handler")
         assert _node_ran(shared, "done")
-        assert shared["done"]["echo"] == "complete"
+        assert shared["done"]["stdout"] == "complete"
 
     def test_pipeline_branch_targets_at_bottom(self) -> None:
         """Pattern B layout: main flow on top, branch targets at bottom."""
@@ -733,8 +733,8 @@ class TestFullPipeline:
 
             Fetch data.
 
-            - type: echo
-            - message: fetched
+            - type: shell
+            - command: printf '%s' fetched
 
             ### process
 
@@ -751,16 +751,16 @@ class TestFullPipeline:
 
             End of main flow.
 
-            - type: echo
-            - message: finished
+            - type: shell
+            - command: printf '%s' finished
             - next: end
 
             ### special-handler
 
             Special processing branch.
 
-            - type: echo
-            - message: special
+            - type: shell
+            - command: printf '%s' special
             - next: end
         """)
 
@@ -769,7 +769,7 @@ class TestFullPipeline:
         assert _node_ran(shared, "process")
         assert _node_ran(shared, "special-handler")
         assert not _node_ran(shared, "finish")
-        assert shared["special-handler"]["echo"] == "special"
+        assert shared["special-handler"]["stdout"] == "special"
 
     def test_pipeline_code_end_branch_no_warning(self) -> None:
         """Code node with conditional next='end' produces no warning."""
@@ -799,8 +799,8 @@ class TestFullPipeline:
 
             Send the email.
 
-            - type: echo
-            - message: email-sent
+            - type: shell
+            - command: printf '%s' email-sent
             - next: end
         """)
 
@@ -834,9 +834,9 @@ class TestFullPipeline:
                         next: str = "end"
                         result: str = "inner done"
                   - id: inner-after
-                    type: echo
+                    type: shell
                     params:
-                      message: should-not-run
+                      command: printf '%s' should-not-run
                 edges:
                   - from: inner-decider
                     to: inner-after
@@ -845,13 +845,13 @@ class TestFullPipeline:
 
             This must still run.
 
-            - type: echo
-            - message: outer-continued
+            - type: shell
+            - command: printf '%s' outer-continued
         """)
 
         shared = parse_compile_and_run(markdown)
 
         assert _node_ran(shared, "run-inner")
         assert _node_ran(shared, "outer-after")
-        assert shared["outer-after"]["echo"] == "outer-continued"
+        assert shared["outer-after"]["stdout"] == "outer-continued"
         assert shared.get("__warnings__", {}) == {}

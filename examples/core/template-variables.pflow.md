@@ -21,9 +21,11 @@ path and encoding are configurable at runtime.
 Call an external API endpoint with authentication. The endpoint URL
 and auth token are resolved from workflow inputs.
 
-- type: test
-- endpoint: ${api_endpoint}
-- auth_token: ${api_token}
+- type: shell
+
+```shell command
+curl -s -H "Authorization: Bearer ${api_token}" "${api_endpoint}"
+```
 
 ### copier
 
@@ -48,6 +50,8 @@ Shows template variables embedded in multi-line content strings.
 Send a notification email when processing completes. Template variables
 work in any string value, including email subjects.
 
-- type: test
-- recipient: ${recipient_email}
-- subject: "Process completed for ${input_file}"
+- type: shell
+
+```shell command
+echo "Notification: Process completed for ${input_file} — sent to ${recipient_email}"
+```

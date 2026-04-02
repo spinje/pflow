@@ -212,7 +212,7 @@ class TestCheckpointIntegration:
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "node1", "type": "echo", "params": {"message": "Step 1"}},
+                {"id": "node1", "type": "shell", "params": {"command": "printf '%s' 'Step 1'"}},
             ],
         }
 

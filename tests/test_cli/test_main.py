@@ -97,7 +97,7 @@ def test_from_markdown_file():
 
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
         with open("workflow.pflow.md", "w") as f:
@@ -106,7 +106,7 @@ def test_from_markdown_file():
         # .pflow.md file path is detected automatically without --file flag
         result = runner.invoke(main, ["./workflow.pflow.md"])
 
-        # Should execute successfully with echo node
+        # Should execute successfully with shell node
         assert result.exit_code == 0
         assert "test" in result.output or "Workflow executed" in result.output
 
@@ -165,7 +165,7 @@ def test_markdown_workflow_with_parameters():
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"param1": {"type": "string", "required": True}},
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${param1}"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo ${param1}"}}],
             "edges": [],
         }
         with open("workflow.pflow.md", "w") as f:
@@ -234,7 +234,7 @@ def test_pflow_file_with_no_parameters():
 
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "hello"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo hello"}}],
             "edges": [],
         }
         with open("workflow.pflow.md", "w") as f:
@@ -330,7 +330,7 @@ def test_stdin_with_file_workflow(mock_stdin_has_data):
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${data}"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${data}'"}}],
             "edges": [],
         }
         with open("workflow.pflow.md", "w") as f:
@@ -449,7 +449,7 @@ def test_pflow_file_automatic_detection():
 
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
         with open("my-workflow.pflow.md", "w") as f:
@@ -457,7 +457,7 @@ def test_pflow_file_automatic_detection():
 
         # .pflow.md extension triggers file workflow detection
         result = runner.invoke(main, ["my-workflow.pflow.md"])
-        # Should execute successfully with echo node
+        # Should execute successfully with shell node
         assert result.exit_code == 0
         assert "test" in result.output or "Workflow executed" in result.output
 
@@ -473,7 +473,7 @@ def test_path_with_slash_triggers_file_detection():
         os.makedirs("workflows")
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "hello"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo hello"}}],
             "edges": [],
         }
         with open("workflows/test.pflow.md", "w") as f:
@@ -496,7 +496,7 @@ def test_absolute_path_workflow():
 
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "absolute path test"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo 'absolute path test'"}}],
             "edges": [],
         }
         with open("workflow.pflow.md", "w") as f:
@@ -524,7 +524,7 @@ def test_home_directory_expansion():
     try:
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "home test"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo 'home test'"}}],
             "edges": [],
         }
         test_file.write_text(ir_to_markdown(workflow))

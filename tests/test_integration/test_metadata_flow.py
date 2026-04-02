@@ -68,29 +68,29 @@ class TestMetadataFlow:
     def test_enhanced_format_flow_complex_structure(self):
         """Test flow with complex nested structures."""
 
-        class GitHubGetIssueNode(Node):
+        class HttpRequestNode(Node):
             """
-            Get GitHub issue details.
+            Make an HTTP request and return the response.
 
             Interface:
-            - Reads: shared["issue_number"]: int  # Issue number to fetch
-            - Reads: shared["repo"]: str  # Repository name (owner/repo)
-            - Writes: shared["issue_data"]: dict  # Complete issue information
+            - Reads: shared["url"]: str  # URL to request
+            - Reads: shared["method"]: str  # HTTP method (GET, POST, etc.)
+            - Writes: shared["response_data"]: dict  # Complete response information
             - Writes: shared["error"]: str  # Error message if failed
-            - Params: token: str  # GitHub API token
+            - Params: timeout: int  # Request timeout in seconds
             - Actions: default (success), error (failure)
             """
 
             def exec(self, prep_res):
-                return {"number": 123}
+                return {"status": 200}
 
         # Extract metadata
         extractor = PflowMetadataExtractor()
-        metadata = extractor.extract_metadata(GitHubGetIssueNode)
+        metadata = extractor.extract_metadata(HttpRequestNode)
 
         # Verify complex type detected
-        issue_data = next(out for out in metadata["outputs"] if out["key"] == "issue_data")
-        assert issue_data["type"] == "dict"
+        response_data = next(out for out in metadata["outputs"] if out["key"] == "response_data")
+        assert response_data["type"] == "dict"
 
         # Format node section
         node_data = {
@@ -101,12 +101,12 @@ class TestMetadataFlow:
             "actions": metadata["actions"],
         }
 
-        formatted = _format_node_section_enhanced("github-get-issue", node_data)
+        formatted = _format_node_section_enhanced("http", node_data)
 
         # Verify context shows dict type
-        assert "`issue_data: dict`" in formatted
-        assert "Complete issue information" in formatted
-        assert "`token: str`" in formatted  # Exclusive param shown
+        assert "`response_data: dict`" in formatted
+        assert "Complete response information" in formatted
+        assert "`timeout: int`" in formatted  # Exclusive param shown
 
     def test_exclusive_params_in_flow(self):
         """Test that exclusive params pattern works through the flow."""

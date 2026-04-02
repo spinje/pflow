@@ -6,9 +6,9 @@ from pflow.core.workflow.manager import WorkflowManager
 # Sample workflow IR
 sample_workflow_ir = {
     "ir_version": "0.1.0",
-    "inputs": {"message": {"type": "str", "description": "Message to echo"}},
-    "outputs": {"result": {"type": "str", "description": "Echo result"}},
-    "nodes": [{"id": "echo_node", "type": "echo", "config": {"message": "{{ inputs.message }}"}}],
+    "inputs": {"message": {"type": "str", "description": "Message to display"}},
+    "outputs": {"result": {"type": "str", "description": "Shell output"}},
+    "nodes": [{"id": "greet", "type": "shell", "params": {"command": "echo ${message}"}}],
     "edges": [],
 }
 

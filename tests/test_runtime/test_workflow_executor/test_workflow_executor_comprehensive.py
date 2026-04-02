@@ -44,7 +44,7 @@ class TestWorkflowExecutorComprehensive:
     def simple_workflow_ir(self):
         """Basic workflow IR for testing."""
         return {
-            "nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "test_node", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
 
@@ -54,8 +54,8 @@ class TestWorkflowExecutorComprehensive:
         registry_path = tmp_path / "test_registry.json"
         registry = Registry(registry_path)
         registry_data = {
-            "pflow.nodes.test_node": {
-                "module": "pflow.nodes.test_node",
+            "tests.shared.mock_nodes": {
+                "module": "tests.shared.mock_nodes",
                 "class_name": "ExampleNode",
                 "docstring": "Test node for testing",
                 "file_path": "/mock/path/test_node.py",
@@ -108,7 +108,7 @@ class TestWorkflowExecutorComprehensive:
         mock_module.WorkflowExecutor = WorkflowExecutor
 
         def side_effect(module_path):
-            if module_path == "pflow.nodes.test_node":
+            if module_path == "tests.shared.mock_nodes":
                 return mock_module
             elif module_path == "pflow.runtime.workflow_executor":
                 import pflow.runtime.workflow_executor
@@ -233,7 +233,7 @@ class TestWorkflowExecutorComprehensive:
         """Template params are resolved by the wrapper chain before child receives them."""
         child_workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "nodes": [{"id": "test", "type": "tests.shared.mock_nodes", "params": {}}],
             "edges": [],
         }
 
@@ -289,7 +289,7 @@ class TestWorkflowExecutorComprehensive:
         """Dict/list params with nested templates are resolved by wrapper chain."""
         child_workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "nodes": [{"id": "test", "type": "tests.shared.mock_nodes", "params": {}}],
             "edges": [],
         }
 
@@ -353,7 +353,7 @@ class TestWorkflowExecutorComprehensive:
         """
         child_workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "nodes": [{"id": "test", "type": "tests.shared.mock_nodes", "params": {}}],
             "edges": [],
         }
 
@@ -362,7 +362,7 @@ class TestWorkflowExecutorComprehensive:
             "nodes": [
                 {
                     "id": "producer",
-                    "type": "pflow.nodes.test_node",
+                    "type": "tests.shared.mock_nodes",
                     "params": {},
                 },
                 {
@@ -626,7 +626,7 @@ class TestWorkflowExecutorComprehensive:
         """In production, the engine raises ValueError for unresolved templates."""
         child_workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test", "type": "pflow.nodes.test_node", "params": {}}],
+            "nodes": [{"id": "test", "type": "tests.shared.mock_nodes", "params": {}}],
             "edges": [],
         }
 

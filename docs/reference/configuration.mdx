@@ -22,9 +22,8 @@ pflow settings show
   "registry": {
     "nodes": {
       "allow": ["*"],
-      "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"]
+      "deny": []
     },
-    "include_test_nodes": false,
     "output_mode": "smart"
   },
   "runtime": {
@@ -44,8 +43,7 @@ pflow settings show
 | Field | Default | Description |
 |-------|---------|-------------|
 | `registry.nodes.allow` | `["*"]` | Patterns for nodes to include |
-| `registry.nodes.deny` | `["pflow.nodes.git.*", "pflow.nodes.github.*"]` | Patterns for nodes to exclude |
-| `registry.include_test_nodes` | `false` | Show internal test nodes |
+| `registry.nodes.deny` | `[]` | Patterns for nodes to exclude |
 | `registry.output_mode` | `"smart"` | Output display mode for `registry run`: `"smart"`, `"structure"`, or `"full"` |
 | `runtime.template_resolution_mode` | `"strict"` | `"strict"` or `"permissive"` |
 | `llm.default_model` | `null` | Default model for all pflow LLM usage |
@@ -123,7 +121,6 @@ API keys stored via `pflow settings set-env` are used automatically for workflow
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PFLOW_INCLUDE_TEST_NODES` | `false` | Show test nodes in registry |
 | `PFLOW_TEMPLATE_RESOLUTION_MODE` | `strict` | `strict` or `permissive` |
 | `PFLOW_SHELL_STRICT` | `false` | Block dangerous shell commands |
 
@@ -156,10 +153,9 @@ pflow uses glob-style patterns (fnmatch):
 
 ### Evaluation order
 
-1. **Test nodes** - Filtered first based on `include_test_nodes`
-2. **Deny patterns** - If matched, node is excluded
-3. **Allow patterns** - If matched, node is included
-4. **Default** - Included only if `*` is in allow list
+1. **Deny patterns** - If matched, node is excluded
+2. **Allow patterns** - If matched, node is included
+3. **Default** - Included only if `*` is in allow list
 
 <Warning>
 Deny patterns take precedence over allow patterns. If a node matches both, it's excluded.
@@ -169,7 +165,7 @@ Deny patterns take precedence over allow patterns. If a node matches both, it's 
 
 ```bash
 # Allow a pattern
-pflow settings allow "pflow.nodes.git.*"
+pflow settings allow "pflow.nodes.file.*"
 
 # Deny a pattern
 pflow settings deny "shell"
@@ -182,20 +178,10 @@ pflow settings check read-file
 
 # Verify filtering took effect
 pflow registry list              # See all available nodes
-pflow registry list github       # Filter to specific nodes
+pflow registry list file         # Filter to specific nodes
 ```
 
 ### Examples
-
-**Enable git/github nodes** (denied by default):
-```bash
-pflow settings allow "pflow.nodes.git.*"
-pflow settings allow "pflow.nodes.github.*"
-```
-
-<Note>
-Git and GitHub nodes are [experimental and not feature complete](/reference/experimental#built-in-git-and-github-nodes). They require the `git` and `gh` CLI tools to be installed.
-</Note>
 
 **Block shell access**:
 ```bash

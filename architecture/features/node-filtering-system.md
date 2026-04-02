@@ -33,29 +33,22 @@ Registry File → load() → Settings Filter → Filtered Nodes → Consumers
      "registry": {
        "nodes": {
          "allow": ["*"],
-         "deny": ["pflow.nodes.git.*", "pflow.nodes.github.*"]
+         "deny": []
        }
      }
    }
    ```
-
-   > **Note**: Git and GitHub nodes are denied by default as they are deprecated in favor of MCP integrations.
-
-4. **Environment Override**
-   - `PFLOW_INCLUDE_TEST_NODES=true` includes internal test nodes regardless of patterns
-   - Critical for CI/CD where tests need access to test nodes
 
 ## User Experience
 
 ### Default Behavior
 
 ```bash
-# Test nodes are hidden by default
+# Denied nodes are hidden
 $ pflow registry list
 file.read
 file.write
-git.status
-# (no echo or test nodes)
+# denied nodes not shown
 
 # LLM tooling doesn't see denied nodes
 $ pflow "create a workflow"
@@ -66,28 +59,27 @@ $ pflow "create a workflow"
 
 ```bash
 # Add deny pattern
-$ pflow settings deny "github.delete-*"
+$ pflow settings deny "*-delete-*"
 
 # Add allow pattern
 $ pflow settings allow "mcp-slack-*"
 
 # Check if node would be included
-$ pflow settings check echo
-✗ Node 'echo' would be EXCLUDED
+$ pflow settings check shell
+✓ Node 'shell' would be INCLUDED
 
 # View current settings
 $ pflow settings show
 ```
 
-### Test Environment
+### Verifying settings
 
 ```bash
-# Tests automatically enable test nodes via conftest.py
-$ make test  # PFLOW_INCLUDE_TEST_NODES=true is set
+# Check current configuration
+$ pflow settings show
 
-# Manual override for debugging
-$ PFLOW_INCLUDE_TEST_NODES=true pflow registry list
-# Now shows echo and other test nodes
+# Test whether a specific node is included
+$ pflow settings check read-file
 ```
 
 ## Implementation Details
@@ -103,7 +95,7 @@ $ PFLOW_INCLUDE_TEST_NODES=true pflow registry list
 2. **Pattern Matching**:
    - Uses Python's `fnmatch` for glob-style patterns
    - Patterns checked against both node name and module path
-   - Examples: `test.*`, `mcp-github-*`, `*/test/*`
+   - Examples: `pflow.nodes.file.*`, `mcp-slack-*`, `shell`
 
 3. **Lazy Loading**:
    - SettingsManager loaded on first access to avoid circular imports

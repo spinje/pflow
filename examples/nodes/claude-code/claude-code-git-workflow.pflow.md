@@ -9,16 +9,21 @@ generate a comprehensive pull request description.
 
 Get the diff of current changes against main branch.
 
-- type: git-diff
-- target: main
+- type: shell
+
+```shell command
+git diff main
+```
 
 ### git_log
 
 Get recent commit history.
 
-- type: git-log
-- limit: 10
-- format: oneline
+- type: shell
+
+```shell command
+git log --oneline -10
+```
 
 ### analyze_changes
 
@@ -28,8 +33,8 @@ Analyze the git changes and commit history to understand what was implemented.
 - max_turns: 3
 
 ```yaml context
-diff: ${git_diff.diff}
-commits: ${git_log.commits}
+diff: ${git_diff.stdout}
+commits: ${git_log.stdout}
 ```
 
 ```yaml output_schema
@@ -63,7 +68,7 @@ Generate a comprehensive pull request description based on the analysis.
 
 ```yaml context
 analysis: ${analyze_changes.result}
-diff_stats: ${git_diff.stats}
+diff_stats: ${git_diff.stdout}
 ```
 
 ```yaml output_schema

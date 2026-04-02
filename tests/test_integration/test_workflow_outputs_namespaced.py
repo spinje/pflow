@@ -28,15 +28,21 @@ class TestWorkflowOutputsNamespaced:
 
     def test_workflow_with_namespaced_output_works(self):
         """Test that a workflow with source field in output returns the correct value."""
-        # Create a simple workflow with echo node and output with source
+        # Create a simple workflow with shell node and output with source
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "Hello from echo", "uppercase": True}}],
+            "nodes": [
+                {
+                    "id": "echo1",
+                    "type": "shell",
+                    "params": {"command": "printf '%s' 'Hello from echo' | tr '[:lower:]' '[:upper:]'"},
+                }
+            ],
             "edges": [],
             "outputs": {
                 "result": {
                     "description": "The echoed message",
-                    "source": "echo1.echo",  # Access namespaced value
+                    "source": "echo1.stdout",  # Access namespaced value
                 }
             },
         }
@@ -62,18 +68,18 @@ class TestWorkflowOutputsNamespaced:
 
     def test_json_output_format_works(self):
         """Test that JSON output format returns the output values correctly."""
-        # Create workflow with echo node
+        # Create workflow with shell node
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "greeting",
-                    "type": "echo",
-                    "params": {"message": "Greetings", "prefix": ">>> ", "suffix": " <<<"},
+                    "type": "shell",
+                    "params": {"command": "printf '>>> Greetings<<<'"},
                 }
             ],
             "edges": [],
-            "outputs": {"formatted_message": {"description": "Formatted greeting", "source": "greeting.echo"}},
+            "outputs": {"formatted_message": {"description": "Formatted greeting", "source": "greeting.stdout"}},
         }
 
         # Save workflow to temp file
@@ -97,27 +103,29 @@ class TestWorkflowOutputsNamespaced:
 
             # Verify the output contains the expected value
             assert "formatted_message" in actual_result
-            # Note: Leading space in suffix " <<<" is lost during markdown parsing
-            # because YAML treats "suffix: <<<" (with space after colon) as just "<<<"
             assert actual_result["formatted_message"] == ">>> Greetings<<<"
         finally:
             Path(workflow_file).unlink(missing_ok=True)
 
     def test_multiple_outputs(self):
         """Test workflow with multiple outputs from different nodes."""
-        # Create workflow with multiple echo nodes
+        # Create workflow with multiple shell nodes
         workflow_ir = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "first", "type": "echo", "params": {"message": "First message", "count": 2}},
-                {"id": "second", "type": "echo", "params": {"message": "Second message", "uppercase": True}},
-                {"id": "third", "type": "echo", "params": {"message": "Third message", "prefix": "[INFO] "}},
+                {"id": "first", "type": "shell", "params": {"command": "printf 'First message First message'"}},
+                {
+                    "id": "second",
+                    "type": "shell",
+                    "params": {"command": "printf '%s' 'Second message' | tr '[:lower:]' '[:upper:]'"},
+                },
+                {"id": "third", "type": "shell", "params": {"command": "printf '[INFO] Third message'"}},
             ],
             "edges": [{"from": "first", "to": "second"}, {"from": "second", "to": "third"}],
             "outputs": {
-                "repeated": {"description": "First message repeated", "source": "first.echo"},
-                "uppercase": {"description": "Second message in uppercase", "source": "second.echo"},
-                "prefixed": {"description": "Third message with prefix", "source": "third.echo"},
+                "repeated": {"description": "First message repeated", "source": "first.stdout"},
+                "uppercase": {"description": "Second message in uppercase", "source": "second.stdout"},
+                "prefixed": {"description": "Third message with prefix", "source": "third.stdout"},
             },
         }
 

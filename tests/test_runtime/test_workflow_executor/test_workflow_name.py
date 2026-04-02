@@ -22,7 +22,7 @@ class TestWorkflowSavedName:
     def simple_workflow_ir(self):
         """Basic workflow IR for testing."""
         return {
-            "nodes": [{"id": "test_node", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "test_node", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
         }
 

@@ -20,7 +20,6 @@ tests/
 ├── test_nodes/            # Node implementation tests
 │   ├── test_file/         # File node tests (read/write/copy/move/delete)
 │   ├── test_shell/        # Shell node tests (execution, binary, SIGPIPE, security)
-│   ├── test_git/          # Git node tests (status/commit/push/checkout/log/tag)
 │   ├── test_claude/       # Claude Code node tests
 │   └── test_llm/          # LLM node tests (includes RUN_LLM_TESTS integration test)
 ├── test_registry/         # Registry, scanner, smart filter, and component discovery tests
@@ -52,7 +51,6 @@ md_content = ir_to_markdown(ir_dict, title="Test Workflow", description="...")
 These run automatically for every test — you do NOT need to set them up:
 - **`mock_llm_calls`**: Patches `llm.get_model` with mock. **Skips** tests in `/llm/` directories (they use real APIs).
 - **`isolate_pflow_config`**: Creates isolated `tmp_path/.pflow/` dir, redirects `Registry`, `SettingsManager`, `MCPServerManager`, and `WorkflowManager` to temp paths. **Pre-populates registry with all core nodes.**
-- **`enable_test_nodes`**: Session-scoped, sets `PFLOW_INCLUDE_TEST_NODES=true`
 
 **Surprise**: `isolate_pflow_config` gives every test a registry with all core nodes already loaded. If you need an **empty** registry, create one with an explicit temp path.
 
@@ -120,7 +118,7 @@ All commands include `--doctest-modules` (doctests in `src/pflow/` run alongside
 
 Use shared fixtures from `tests/conftest.py` for real CLI subprocess tests:
 - **`uv_exe`**: Finds `uv` or skips the test
-- **`prepared_subprocess_env`**: Creates isolated HOME, sets `PFLOW_INCLUDE_TEST_NODES=true`, writes pre-populated registry JSON
+- **`prepared_subprocess_env`**: Creates isolated HOME, writes pre-populated registry JSON
 
 ```python
 def test_cli_subprocess(tmp_path, uv_exe, prepared_subprocess_env):
@@ -212,7 +210,6 @@ Mocks from one file persist and break others → Use `@pytest.fixture(autouse=Tr
 ```python
 # ❌ {"module": "test.module", "class_name": "ExampleNode"}  # Module doesn't exist
 # ✅ {"module": "tests.test_runtime.test_compiler_integration", "class_name": "ExampleNode"}
-# ✅ {"module": "pflow.nodes.test_node", "class_name": "ExampleNode"}
 ```
 
 ### 13. Context Builder Uses Fresh Instances
