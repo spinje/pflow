@@ -2,6 +2,7 @@
 
 import pytest
 
+from pflow.core.validation_utils import generate_validation_suggestions
 from pflow.core.workflow.data_flow import CycleError, build_execution_order, validate_data_flow
 
 
@@ -741,3 +742,167 @@ class TestNestedParamValidation:
         assert len(errors) == 2
         assert any("'a'" in e for e in errors)
         assert any("'b'" in e for e in errors)
+
+
+class TestImprovedErrorMessages:
+    """Test improved error messages for undefined input references."""
+
+    def test_undefined_ref_no_inputs_declared(self):
+        """When zero inputs are declared, error says 'no inputs are declared'."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "params": {"command": "echo ${message}"},
+                },
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "no inputs are declared" in errors[0]
+        assert "echo" in errors[0]
+        assert "message" in errors[0]
+
+    def test_undefined_ref_lists_declared_inputs(self):
+        """When inputs exist but name doesn't match, error lists declared inputs."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "shell",
+                    "params": {"command": "curl ${urll}"},
+                },
+            ],
+            "edges": [],
+            "inputs": {
+                "url": {"type": "string"},
+                "method": {"type": "string"},
+            },
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "Declared inputs:" in errors[0]
+        assert "method" in errors[0]
+        assert "url" in errors[0]
+
+    def test_batch_aliases_listed_as_declared_inputs(self):
+        """Batch aliases are included in declared inputs when listing valid references."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "process",
+                    "type": "shell",
+                    "params": {"command": "echo ${unknown_var}"},
+                    "batch": {"over": "items", "as": "item"},
+                },
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "Declared inputs:" in errors[0]
+        assert "item" in errors[0]
+
+    def test_node_level_inputs_listed_in_error(self):
+        """Node-level params.inputs keys appear in declared inputs, not 'no inputs declared'."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "source",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                },
+                {
+                    "id": "process",
+                    "type": "llm",
+                    "params": {
+                        "inputs": {"brief": "${source.stdout}"},
+                        "prompt": "Write about ${brief} for ${audience}",
+                    },
+                },
+            ],
+            "edges": [{"from": "source", "to": "process"}],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "audience" in errors[0]
+        # Should list node-level input 'brief', not say "no inputs are declared"
+        assert "Declared inputs:" in errors[0]
+        assert "brief" in errors[0]
+        assert "no inputs are declared" not in errors[0]
+
+    def test_no_inputs_message_when_truly_empty(self):
+        """'No inputs declared' only fires when no valid references exist at all."""
+        workflow = {
+            "nodes": [
+                {
+                    "id": "echo",
+                    "type": "shell",
+                    "params": {"command": "echo ${message}"},
+                },
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        errors = validate_data_flow(workflow)
+        assert len(errors) == 1
+        assert "no inputs are declared" in errors[0]
+
+
+class TestValidationSuggestions:
+    """Test validation suggestion generation."""
+
+    def test_no_template_suggestion_for_no_inputs_error(self):
+        """'No inputs declared' errors get input declaration suggestion, not template syntax."""
+        errors = [
+            {
+                "message": "Node 'echo' references '${message}' in parameter 'command' but no inputs are declared in this workflow",
+                "type": "validation",
+            }
+        ]
+        suggestions = generate_validation_suggestions(errors)
+        assert "Check template syntax: ${node.output}" not in suggestions
+        assert any("Declare inputs" in s for s in suggestions)
+
+    def test_template_suggestion_suppressed_when_no_inputs_with_multiple_errors(self):
+        """When 'no inputs' and 'no valid source' errors both fire, only the input suggestion shows."""
+        errors = [
+            {
+                "message": "Node 'echo' references '${message}' in parameter 'command' but no inputs are declared in this workflow",
+                "type": "validation",
+            },
+            {
+                "message": "Template variable ${message} has no valid source - not provided in initial_params and not written by any node",
+                "type": "validation",
+            },
+        ]
+        suggestions = generate_validation_suggestions(errors)
+        assert "Check template syntax: ${node.output}" not in suggestions
+        assert any("Declare inputs" in s for s in suggestions)
+
+    def test_no_template_suggestion_for_declared_inputs_error(self):
+        """'Declared inputs:' errors don't get misleading template syntax suggestion."""
+        errors = [
+            {
+                "message": "Node 'fetch' references undefined input '${urll}' in parameter 'command'. Declared inputs: method, url",
+                "type": "validation",
+            }
+        ]
+        suggestions = generate_validation_suggestions(errors)
+        assert "Check template syntax: ${node.output}" not in suggestions
+
+    def test_no_template_suggestion_for_did_you_mean_error(self):
+        """'did you mean' errors don't get misleading template syntax suggestion."""
+        errors = [
+            {
+                "message": "Node 'fetch' references undefined input '${URL}' in parameter 'command' - did you mean '${url}'?",
+                "type": "validation",
+            }
+        ]
+        suggestions = generate_validation_suggestions(errors)
+        assert "Check template syntax: ${node.output}" not in suggestions

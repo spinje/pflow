@@ -24,7 +24,7 @@ src/pflow/core/
 ├── shell_integration.py     # Unix pipe and stdin handling
 ├── suggestion_utils.py      # "Did you mean" fuzzy matching
 ├── user_errors.py           # User-friendly CLI error formatting
-├── validation_utils.py      # Parameter name validation (security-aware)
+├── validation_utils.py      # Parameter name validation, validation suggestion generation
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
 ├── execution_cache.py       # Two-phase execution cache for registry run
@@ -120,7 +120,7 @@ Returns `MarkdownParseResult(ir, title, description, metadata, source)`.
 
 **Branch target validation**: After edge generation, the parser validates that all branch targets (nodes reached via named action edges or `- on-error:` edges) have explicit `- next:` directives. Also validates that non-router nodes don't fall through into branch targets via document order, and that dynamic `next` assignments in code have corresponding `- next:` declarations. Raises `MarkdownParseError` with actionable fix suggestions.
 
-**Validates at parse time**: missing descriptions, bare code blocks, duplicate params, unclosed fences, YAML syntax errors (multi-line/flow-style items), invalid node IDs, missing `## Steps`.
+**Validates at parse time**: missing descriptions, bare code blocks, duplicate params, unclosed fences, YAML syntax errors (multi-line/flow-style items), invalid node IDs, missing `## Steps`, orphaned content in known sections (content in `## Inputs`/`## Steps`/`## Outputs` outside any `### heading` — errors when zero entities parsed, warns when entities exist alongside orphaned content).
 
 **Integration points**: CLI (`main.py`), WorkflowManager (`load`/`load_ir`), MCP resolver, runtime executor (nested workflows), workflow save service.
 
@@ -215,6 +215,8 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 ### validation_utils.py
 
 **Forbidden in parameter names**: `$` (template conflict), `|><&;` (shell injection), spaces/tabs (CLI parsing). Allowed: hyphens, dots, numbers at start.
+
+**`generate_validation_suggestions()`**: Converts validation error messages into actionable fix suggestions. Input-aware: "no inputs declared" errors get an input declaration suggestion instead of the generic "check template syntax." Errors that already contain specific guidance ("undefined input" with declared inputs list, "did you mean" typo matches) are excluded from generic suggestion generation to avoid noise.
 
 **🚨 Security gaps identified**:
 - Template variables NOT validated for dangerous characters
