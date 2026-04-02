@@ -420,6 +420,11 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
 
     # Validate routing targets
     node_id_set = {n["id"] for n in nodes}
+    if "end" in node_id_set:
+        raise MarkdownParseError(
+            "'end' is a reserved keyword and cannot be used as a node ID",
+            suggestion="Rename the node to something else (e.g., 'finish', 'done')",
+        )
     _validate_routing_targets(ir["edges"], node_id_set)
 
     # Validate branch target routing (prevents silent fall-through)
@@ -987,7 +992,7 @@ def _build_edges(
     """Build edge list from node order, routing metadata, and AST targets.
 
     Rules:
-    - next: end -> no outgoing edge
+    - next: end -> no outgoing edge (terminal keyword, filtered from targets)
     - next: node-id -> edge with action "default" (overrides document order)
     - next: a, b, c -> edges with action = target node ID
     - No next -> document-order edge to next node (no action field)
@@ -1006,15 +1011,16 @@ def _build_edges(
         # Default / next edges
         if next_value is not None:
             targets = _parse_next_targets(str(next_value))
-            if targets == ["end"]:
-                pass  # Terminal: no outgoing edge
-            elif len(targets) == 1:
-                edges.append({"from": node_id, "to": targets[0], "action": "default"})
+            real_targets = [t for t in targets if t != "end"]
+            if not real_targets:
+                pass  # Terminal: "end" only, no outgoing edge
+            elif len(real_targets) == 1:
+                edges.append({"from": node_id, "to": real_targets[0], "action": "default"})
             else:
                 # Multi-target: all get named edges, first also gets default
-                for target in targets:
+                for target in real_targets:
                     edges.append({"from": node_id, "to": target, "action": target})
-                edges.append({"from": node_id, "to": targets[0], "action": "default"})
+                edges.append({"from": node_id, "to": real_targets[0], "action": "default"})
         else:
             # Document-order default edge
             if i < len(nodes) - 1:
