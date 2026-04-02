@@ -83,7 +83,7 @@ class RetryExampleNode(Node):
 
     def exec(self, input_data: str) -> str:
         """Process with potential for retry."""
-        # Simulate work that might fail
+        # Coupled to Node.cur_retry — intentional, tests the retry mechanism
         if hasattr(self, "cur_retry") and self.cur_retry < 2:
             # Simulate failure on first attempts
             raise RuntimeError("Simulated failure for testing")
