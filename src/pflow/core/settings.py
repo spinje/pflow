@@ -149,9 +149,6 @@ class SettingsManager:
             try:
                 with open(self.settings_path) as f:
                     data = json.load(f)
-                # Strip removed fields from old settings files
-                if isinstance(data.get("registry"), dict):
-                    data["registry"].pop("include_test_nodes", None)
                 return PflowSettings(**data)
             except Exception as e:
                 # If file is corrupted, use defaults
