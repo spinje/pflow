@@ -123,7 +123,7 @@ def generate_validation_suggestions(errors: list[dict[str, str]]) -> list[str]:
             suggestions.append("Remove unused inputs or use them in node parameters")
 
     # De-duplicate suggestions
-    result = list(set(suggestions))
+    result = list(dict.fromkeys(suggestions))
 
     # Don't suggest template syntax check when the real issue is missing inputs
     if any("Declare inputs" in s for s in result):
