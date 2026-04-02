@@ -4,10 +4,18 @@ This test demonstrates the Task 17 Subtask 5 enhancement working in
 a realistic scenario where a workflow declares inputs but doesn't use them all.
 """
 
+from pathlib import Path
+
 import pytest
 
+from pflow.core.file_resolver import resolve_file_references
+from pflow.core.ir_schema import normalize_ir
+from pflow.core.markdown_parser import parse_markdown
+from pflow.core.validation_utils import generate_dummy_parameters
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 from pflow.runtime.template_validation import validate_workflow_templates
+from tests.shared.markdown_utils import write_workflow_file
 
 
 class MockRegistry(Registry):
@@ -229,6 +237,258 @@ def test_unused_inputs_with_nested_workflows(tmp_path):
     # Should detect the unused debug flag
     assert any("unused_debug_flag" in error for error in errors)
     assert any("never used as template variable" in error for error in errors)
+
+
+def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) -> None:
+    """When a sub-workflow input is referenced inside external .prompt.md files
+    loaded via batch items, the validator should NOT report it as unused.
+
+    This is a regression test for the false-positive bug where
+    resolve_file_references was not called on child IRs before recursive
+    validation, making template variables inside prompt files invisible.
+    """
+    # 1. Create external prompt files that reference the sub-workflow input
+    (tmp_path / "prompt-a.prompt.md").write_text("Analyze emotionally:\n\n${content}")
+    (tmp_path / "prompt-b.prompt.md").write_text("Analyze factually:\n\n${content}")
+
+    # 2. Sub-workflow: declares 'content' input, uses it via batch prompt files
+    sub_workflow_ir = {
+        "inputs": {
+            "content": {
+                "type": "string",
+                "description": "The content to analyze.",
+                "required": True,
+            },
+        },
+        "nodes": [
+            {
+                "id": "analyze",
+                "type": "llm",
+                "purpose": "Runs analysis prompts in parallel.",
+                "params": {"prompt": "${item.prompt}"},
+                "batch": {
+                    "items": [
+                        {"focus": "emotional", "prompt": "./prompt-a.prompt.md"},
+                        {"focus": "factual", "prompt": "./prompt-b.prompt.md"},
+                    ],
+                    "parallel": True,
+                },
+            },
+        ],
+    }
+    write_workflow_file(sub_workflow_ir, tmp_path / "sub-workflow.pflow.md", title="Sub Workflow")
+
+    # 3. Parent workflow: passes 'text' input into sub-workflow as 'content'
+    parent_workflow_ir = {
+        "inputs": {
+            "text": {
+                "type": "string",
+                "description": "Text to be analyzed.",
+                "required": True,
+            },
+        },
+        "nodes": [
+            {
+                "id": "analyze",
+                "type": "workflow",
+                "purpose": "Delegates analysis to sub-workflow.",
+                "params": {
+                    "workflow": "./sub-workflow.pflow.md",
+                    "content": "${text}",
+                },
+            },
+        ],
+    }
+    write_workflow_file(parent_workflow_ir, tmp_path / "parent-workflow.pflow.md", title="Parent Workflow")
+
+    # 4. Validate the parent workflow (same pipeline as production)
+    parent_path = tmp_path / "parent-workflow.pflow.md"
+    content = parent_path.read_text()
+    result = parse_markdown(content)
+    ir = result.ir
+    normalize_ir(ir)
+    resolve_file_references(ir, tmp_path)
+
+    inputs = ir.get("inputs", {})
+    dummy_params = generate_dummy_parameters(inputs)
+    dummy_params["_pflow_workflow_file"] = str(parent_path)
+
+    errors, _warnings = WorkflowValidator.validate(
+        ir,
+        extracted_params=dummy_params,
+        skip_node_types=True,
+        workflow_file=parent_path,
+    )
+
+    # No error should mention 'content' being unused in the sub-workflow
+    unused_errors = [e for e in errors if "unused" in e.lower() or "never used" in e.lower()]
+    assert unused_errors == [], f"Expected no unused-input errors, but got: {unused_errors}"
+
+
+def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_path: Path) -> None:
+    """When a sub-workflow has BOTH an input used in prompt files AND a genuinely
+    unused input, only the unused one should be flagged.
+
+    Guards against over-broad fixes that suppress all unused-input detection
+    for sub-workflows with file references.
+    """
+    # Prompt file uses ${content} but NOT ${debug_mode}
+    (tmp_path / "prompt.prompt.md").write_text("Analyze:\n\n${content}")
+
+    sub_workflow_ir = {
+        "inputs": {
+            "content": {
+                "type": "string",
+                "description": "Used in prompt file.",
+                "required": True,
+            },
+            "debug_mode": {
+                "type": "string",
+                "description": "Genuinely unused anywhere.",
+                "required": False,
+            },
+        },
+        "nodes": [
+            {
+                "id": "analyze",
+                "type": "llm",
+                "purpose": "Runs analysis via batch prompt file.",
+                "params": {"prompt": "${item.prompt}"},
+                "batch": {
+                    "items": [{"prompt": "./prompt.prompt.md"}],
+                },
+            },
+        ],
+    }
+    write_workflow_file(sub_workflow_ir, tmp_path / "sub.pflow.md", title="Sub Workflow")
+
+    parent_workflow_ir = {
+        "inputs": {
+            "text": {
+                "type": "string",
+                "description": "Text to analyze.",
+                "required": True,
+            },
+        },
+        "nodes": [
+            {
+                "id": "run-sub",
+                "type": "workflow",
+                "purpose": "Delegates to sub-workflow.",
+                "params": {
+                    "workflow": "./sub.pflow.md",
+                    "content": "${text}",
+                    "debug_mode": "on",
+                },
+            },
+        ],
+    }
+    write_workflow_file(parent_workflow_ir, tmp_path / "parent.pflow.md", title="Parent Workflow")
+
+    parent_path = tmp_path / "parent.pflow.md"
+    result = parse_markdown(parent_path.read_text())
+    ir = result.ir
+    normalize_ir(ir)
+    resolve_file_references(ir, tmp_path)
+
+    dummy_params = generate_dummy_parameters(ir.get("inputs", {}))
+    dummy_params["_pflow_workflow_file"] = str(parent_path)
+
+    errors, _warnings = WorkflowValidator.validate(
+        ir,
+        extracted_params=dummy_params,
+        skip_node_types=True,
+        workflow_file=parent_path,
+    )
+
+    unused_errors = [e for e in errors if "never used" in e.lower()]
+    # debug_mode IS genuinely unused — must be caught
+    assert any("debug_mode" in e for e in unused_errors), (
+        f"Expected 'debug_mode' to be flagged as unused, but got: {errors}"
+    )
+    # content is used in the prompt file — must NOT be flagged
+    assert not any("content" in e for e in unused_errors), (
+        f"'content' should not be flagged as unused (it's in the prompt file), but got: {unused_errors}"
+    )
+
+
+def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: Path) -> None:
+    """When a sub-workflow references a prompt file that does not exist,
+    the validator should produce a validation error (not crash).
+    """
+    # 1. Sub-workflow references nonexistent prompt files
+    sub_workflow_ir = {
+        "inputs": {
+            "content": {
+                "type": "string",
+                "description": "The content to analyze.",
+                "required": True,
+            },
+        },
+        "nodes": [
+            {
+                "id": "analyze",
+                "type": "llm",
+                "purpose": "Runs analysis prompts in parallel.",
+                "params": {"prompt": "${item.prompt}"},
+                "batch": {
+                    "items": [
+                        {"focus": "emotional", "prompt": "./nonexistent.prompt.md"},
+                    ],
+                    "parallel": True,
+                },
+            },
+        ],
+    }
+    write_workflow_file(sub_workflow_ir, tmp_path / "sub-workflow.pflow.md", title="Sub Workflow")
+
+    # 2. Parent workflow
+    parent_workflow_ir = {
+        "inputs": {
+            "text": {
+                "type": "string",
+                "description": "Text to be analyzed.",
+                "required": True,
+            },
+        },
+        "nodes": [
+            {
+                "id": "analyze",
+                "type": "workflow",
+                "purpose": "Delegates analysis to sub-workflow.",
+                "params": {
+                    "workflow": "./sub-workflow.pflow.md",
+                    "content": "${text}",
+                },
+            },
+        ],
+    }
+    write_workflow_file(parent_workflow_ir, tmp_path / "parent-workflow.pflow.md", title="Parent Workflow")
+
+    # 3. Validate the parent workflow
+    parent_path = tmp_path / "parent-workflow.pflow.md"
+    content = parent_path.read_text()
+    result = parse_markdown(content)
+    ir = result.ir
+    normalize_ir(ir)
+    resolve_file_references(ir, tmp_path)
+
+    inputs = ir.get("inputs", {})
+    dummy_params = generate_dummy_parameters(inputs)
+    dummy_params["_pflow_workflow_file"] = str(parent_path)
+
+    errors, _warnings = WorkflowValidator.validate(
+        ir,
+        extracted_params=dummy_params,
+        skip_node_types=True,
+        workflow_file=parent_path,
+    )
+
+    # Should produce a "not found" error from the file resolver, not a crash
+    not_found_errors = [e for e in errors if "not found" in e.lower()]
+    assert len(not_found_errors) >= 1, (
+        f"Expected at least one 'not found' error for the missing prompt file, but got errors: {errors}"
+    )
 
 
 if __name__ == "__main__":
