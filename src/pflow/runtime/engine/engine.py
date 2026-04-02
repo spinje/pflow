@@ -108,7 +108,9 @@ class WorkflowEngine:
 
         return str(last_action) if last_action else "default"
 
-    def _handle_no_successor(self, last_action: Any, node_id: str, curr: Any, shared: dict[str, Any]) -> Any:
+    def _handle_no_successor(
+        self, last_action: Optional[str], node_id: str, curr: Any, shared: dict[str, Any]
+    ) -> Optional[str]:
         """Handle case where no successor matches the current action.
 
         Returns the (possibly updated) last_action.
