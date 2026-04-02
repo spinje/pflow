@@ -60,13 +60,13 @@ def _run_workflow(
     return shared
 
 
-def _two_echo_ir(msg1: str = "hello", msg2: str = "world") -> dict[str, Any]:
-    """Build IR for a 2-node echo workflow: step-1 >> step-2."""
+def _two_shell_ir(msg1: str = "hello", msg2: str = "world") -> dict[str, Any]:
+    """Build IR for a 2-node shell workflow: step-1 >> step-2."""
     return {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "echo", "params": {"message": msg1}},
-            {"id": "step-2", "type": "echo", "params": {"message": msg2}},
+            {"id": "step-1", "type": "shell", "params": {"command": f"printf '%s' '{msg1}'"}},
+            {"id": "step-2", "type": "shell", "params": {"command": f"printf '%s' '{msg2}'"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
     }
@@ -110,16 +110,16 @@ def test_full_cache_cycle(tmp_path: Any) -> None:
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     # --- First run: both nodes execute ---
-    shared1 = _run_workflow(_two_echo_ir("hello", "world"), cache)
-    assert shared1["step-1"]["echo"] == "hello"
-    assert shared1["step-2"]["echo"] == "world"
+    shared1 = _run_workflow(_two_shell_ir("hello", "world"), cache)
+    assert shared1["step-1"]["stdout"] == "hello"
+    assert shared1["step-2"]["stdout"] == "world"
 
     # --- Second run: fresh shared, SAME cache ---
-    shared2 = _run_workflow(_two_echo_ir("hello", "world"), cache)
+    shared2 = _run_workflow(_two_shell_ir("hello", "world"), cache)
 
     # Outputs restored from cache should be identical
-    assert shared2["step-1"]["echo"] == "hello"
-    assert shared2["step-2"]["echo"] == "world"
+    assert shared2["step-1"]["stdout"] == "hello"
+    assert shared2["step-2"]["stdout"] == "world"
 
 
 def test_cache_prevents_reexecution(tmp_path: Any) -> None:
@@ -163,16 +163,16 @@ def test_config_change_invalidation(tmp_path: Any) -> None:
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     # First run: populate cache
-    shared1 = _run_workflow(_two_echo_ir("alpha", "beta"), cache)
-    assert shared1["step-1"]["echo"] == "alpha"
-    assert shared1["step-2"]["echo"] == "beta"
+    shared1 = _run_workflow(_two_shell_ir("alpha", "beta"), cache)
+    assert shared1["step-1"]["stdout"] == "alpha"
+    assert shared1["step-2"]["stdout"] == "beta"
 
     # Second run: step-2 has a different message
-    shared2 = _run_workflow(_two_echo_ir("alpha", "gamma"), cache)
+    shared2 = _run_workflow(_two_shell_ir("alpha", "gamma"), cache)
 
     # step-1 should be cached (same value), step-2 re-executed with new value
-    assert shared2["step-1"]["echo"] == "alpha"
-    assert shared2["step-2"]["echo"] == "gamma"
+    assert shared2["step-1"]["stdout"] == "alpha"
+    assert shared2["step-2"]["stdout"] == "gamma"
 
 
 def test_template_input_change_invalidation(tmp_path: Any) -> None:
@@ -186,8 +186,8 @@ def test_template_input_change_invalidation(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "echo", "params": {"message": "${input_val}"}},
-            {"id": "step-2", "type": "echo", "params": {"message": "fixed"}},
+            {"id": "step-1", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
+            {"id": "step-2", "type": "shell", "params": {"command": "printf '%s' fixed"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
         "inputs": {"input_val": {"type": "str", "description": "Test input"}},
@@ -195,14 +195,14 @@ def test_template_input_change_invalidation(tmp_path: Any) -> None:
 
     # First run with input_val=A
     shared1 = _run_workflow(ir, cache, initial_params={"input_val": "A"})
-    assert shared1["step-1"]["echo"] == "A"
+    assert shared1["step-1"]["stdout"] == "A"
 
     # Second run with input_val=B
     shared2 = _run_workflow(ir, cache, initial_params={"input_val": "B"})
 
     # step-1 re-executes (template input changed), step-2 cached (static param unchanged)
-    assert shared2["step-1"]["echo"] == "B"
-    assert shared2["step-2"]["echo"] == "fixed"
+    assert shared2["step-1"]["stdout"] == "B"
+    assert shared2["step-2"]["stdout"] == "fixed"
 
 
 def test_no_cache_flag(tmp_path: Any) -> None:
@@ -250,9 +250,9 @@ def test_only_flag_stops_after_target(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "A", "type": "echo", "params": {"message": "a-val"}},
-            {"id": "B", "type": "echo", "params": {"message": "b-val"}},
-            {"id": "C", "type": "echo", "params": {"message": "c-val"}},
+            {"id": "A", "type": "shell", "params": {"command": "printf '%s' a-val"}},
+            {"id": "B", "type": "shell", "params": {"command": "printf '%s' b-val"}},
+            {"id": "C", "type": "shell", "params": {"command": "printf '%s' c-val"}},
         ],
         "edges": [
             {"from": "A", "to": "B"},
@@ -262,8 +262,8 @@ def test_only_flag_stops_after_target(tmp_path: Any) -> None:
 
     shared = _run_workflow(ir, cache, only_node="B")
 
-    assert shared["A"]["echo"] == "a-val"
-    assert shared["B"]["echo"] == "b-val"
+    assert shared["A"]["stdout"] == "a-val"
+    assert shared["B"]["stdout"] == "b-val"
     assert "C" not in shared, "C should not have been visited"
 
 
@@ -274,9 +274,9 @@ def test_only_with_cache(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "A", "type": "echo", "params": {"message": "a-val"}},
-            {"id": "B", "type": "echo", "params": {"message": "b-val"}},
-            {"id": "C", "type": "echo", "params": {"message": "c-val"}},
+            {"id": "A", "type": "shell", "params": {"command": "printf '%s' a-val"}},
+            {"id": "B", "type": "shell", "params": {"command": "printf '%s' b-val"}},
+            {"id": "C", "type": "shell", "params": {"command": "printf '%s' c-val"}},
         ],
         "edges": [
             {"from": "A", "to": "B"},
@@ -286,15 +286,15 @@ def test_only_with_cache(tmp_path: Any) -> None:
 
     # --- Full run: populate cache for all three nodes ---
     shared1 = _run_workflow(ir, cache)
-    assert shared1["A"]["echo"] == "a-val"
-    assert shared1["B"]["echo"] == "b-val"
-    assert shared1["C"]["echo"] == "c-val"
+    assert shared1["A"]["stdout"] == "a-val"
+    assert shared1["B"]["stdout"] == "b-val"
+    assert shared1["C"]["stdout"] == "c-val"
 
     # --- --only B run: fresh shared, same cache ---
     shared2 = _run_workflow(ir, cache, only_node="B")
 
-    assert shared2["A"]["echo"] == "a-val"  # restored from cache
-    assert shared2["B"]["echo"] == "b-val"  # restored from cache
+    assert shared2["A"]["stdout"] == "a-val"  # restored from cache
+    assert shared2["B"]["stdout"] == "b-val"  # restored from cache
     assert "C" not in shared2, "C should not have been visited"
 
 
@@ -308,8 +308,8 @@ def test_key_value_override_cache_interaction(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "step-1", "type": "echo", "params": {"message": "${input_val}"}},
-            {"id": "step-2", "type": "echo", "params": {"message": "static"}},
+            {"id": "step-1", "type": "shell", "params": {"command": "printf '%s' '${input_val}'"}},
+            {"id": "step-2", "type": "shell", "params": {"command": "printf '%s' static"}},
         ],
         "edges": [{"from": "step-1", "to": "step-2"}],
         "inputs": {"input_val": {"type": "str", "description": "Test input"}},
@@ -317,17 +317,17 @@ def test_key_value_override_cache_interaction(tmp_path: Any) -> None:
 
     # Run 1: input_val=A
     shared1 = _run_workflow(ir, cache, initial_params={"input_val": "A"})
-    assert shared1["step-1"]["echo"] == "A"
+    assert shared1["step-1"]["stdout"] == "A"
 
     # Run 2: input_val=B -> cache miss for step-1
     shared2 = _run_workflow(ir, cache, initial_params={"input_val": "B"})
-    assert shared2["step-1"]["echo"] == "B"
-    assert shared2["step-2"]["echo"] == "static"
+    assert shared2["step-1"]["stdout"] == "B"
+    assert shared2["step-2"]["stdout"] == "static"
 
     # Run 3: input_val=A again -> cache HIT from run 1
     shared3 = _run_workflow(ir, cache, initial_params={"input_val": "A"})
-    assert shared3["step-1"]["echo"] == "A"
-    assert shared3["step-2"]["echo"] == "static"
+    assert shared3["step-1"]["stdout"] == "A"
+    assert shared3["step-2"]["stdout"] == "static"
 
 
 def test_error_node_not_cached(tmp_path: Any) -> None:
@@ -370,15 +370,15 @@ def test_upstream_cached_downstream_executes(tmp_path: Any) -> None:
     cache = MemoizationCache(db_path=tmp_path / "cache.db")
 
     # First run: both execute
-    shared1 = _run_workflow(_two_echo_ir("upstream", "downstream-v1"), cache)
-    assert shared1["step-1"]["echo"] == "upstream"
-    assert shared1["step-2"]["echo"] == "downstream-v1"
+    shared1 = _run_workflow(_two_shell_ir("upstream", "downstream-v1"), cache)
+    assert shared1["step-1"]["stdout"] == "upstream"
+    assert shared1["step-2"]["stdout"] == "downstream-v1"
 
     # Second run: step-1 unchanged (cached), step-2 config changed
-    shared2 = _run_workflow(_two_echo_ir("upstream", "downstream-v2"), cache)
+    shared2 = _run_workflow(_two_shell_ir("upstream", "downstream-v2"), cache)
 
-    assert shared2["step-1"]["echo"] == "upstream"  # from cache
-    assert shared2["step-2"]["echo"] == "downstream-v2"  # re-executed
+    assert shared2["step-1"]["stdout"] == "upstream"  # from cache
+    assert shared2["step-2"]["stdout"] == "downstream-v2"  # re-executed
 
 
 def test_cache_ttl_expiry(tmp_path: Any) -> None:
@@ -434,16 +434,16 @@ def test_cached_output_flows_through_template_resolution(tmp_path: Any) -> None:
     ir = {
         "ir_version": "0.1.0",
         "nodes": [
-            {"id": "producer", "type": "echo", "params": {"message": "hello world"}},
-            {"id": "consumer", "type": "echo", "params": {"message": "${producer.echo}"}},
+            {"id": "producer", "type": "shell", "params": {"command": "printf '%s' 'hello world'"}},
+            {"id": "consumer", "type": "shell", "params": {"command": "printf '%s' '${producer.stdout}'"}},
         ],
         "edges": [{"from": "producer", "to": "consumer"}],
     }
 
     # --- Run 1: all nodes execute ---
     shared1 = _run_workflow(ir, cache)
-    assert shared1["producer"]["echo"] == "hello world"
-    assert shared1["consumer"]["echo"] == "hello world"
+    assert shared1["producer"]["stdout"] == "hello world"
+    assert shared1["consumer"]["stdout"] == "hello world"
 
     run1_producer = dict(shared1["producer"])
     run1_consumer = dict(shared1["consumer"])

@@ -32,7 +32,7 @@ def sample_ir():
         "ir_version": "0.1.0",
         "inputs": {"text": {"type": "str", "description": "Input text"}},
         "outputs": {"result": {"type": "str", "description": "Processed result"}},
-        "nodes": [{"id": "node1", "type": "echo", "config": {"message": "Hello"}}],
+        "nodes": [{"id": "node1", "type": "shell", "config": {"message": "Hello"}}],
         "edges": [],
     }
 
@@ -374,7 +374,7 @@ class TestWorkflowManager:
 
         def save_workflow(name, index):
             try:
-                ir = {"ir_version": "0.1.0", "nodes": [{"id": f"node_{index}", "type": "echo"}]}
+                ir = {"ir_version": "0.1.0", "nodes": [{"id": f"node_{index}", "type": "shell"}]}
                 markdown_content = ir_to_markdown(ir, title=f"Version {index}")
                 workflow_manager.save(name, markdown_content)
                 results["successes"] += 1
@@ -481,7 +481,7 @@ class TestWorkflowManager:
         when multiple processes try to save the same workflow simultaneously.
         """
         name = "atomicity-test"
-        ir = {"ir_version": "0.1.0", "nodes": [{"id": "test", "type": "echo"}]}
+        ir = {"ir_version": "0.1.0", "nodes": [{"id": "test", "type": "shell"}]}
         markdown_content = ir_to_markdown(ir)
 
         # Test that repeated rapid saves work correctly
@@ -526,7 +526,7 @@ class TestWorkflowManager:
         where the temporary file creation succeeds but the workflow cannot be saved.
         """
         name = "write-failure-test"
-        ir = {"ir_version": "0.1.0", "nodes": [{"id": "test", "type": "echo"}]}
+        ir = {"ir_version": "0.1.0", "nodes": [{"id": "test", "type": "shell"}]}
 
         # Create invalid markdown content that will cause save to fail
         # Use invalid UTF-8 bytes to trigger encoding error

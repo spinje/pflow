@@ -8,7 +8,7 @@ import tempfile
 import threading
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import ClassVar, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,16 +23,13 @@ class NodeFilterSettings(BaseModel):
     """Node filtering configuration."""
 
     allow: list[str] = Field(default_factory=lambda: ["*"])  # Default: allow all
-    # Default: deny git/github nodes (require external tools, not universally useful)
-    # Users can enable with: pflow settings allow pflow.nodes.git.* pflow.nodes.github.*
-    deny: list[str] = Field(default_factory=lambda: ["pflow.nodes.git.*", "pflow.nodes.github.*"])
+    deny: list[str] = Field(default_factory=list)
 
 
 class RegistrySettings(BaseModel):
     """Registry-specific settings."""
 
     nodes: NodeFilterSettings = Field(default_factory=NodeFilterSettings)
-    include_test_nodes: bool = Field(default=False)  # Can be overridden by env var
     output_mode: str = Field(
         default="smart",
         description="Output mode for registry run: smart (show values with truncation), "
@@ -120,15 +117,11 @@ class PflowSettings(BaseModel):
 
 
 class SettingsManager:
-    # Reserved for future use (kept for compatibility)
-    _DEFAULT_TEST_DENY: ClassVar[set[str]] = set()
     """Manages pflow settings with environment variable override support."""
 
     def __init__(self, settings_path: Optional[Path] = None):
         self.settings_path = settings_path or Path.home() / ".pflow" / "settings.json"
         self._settings: Optional[PflowSettings] = None
-        # Track base include_test_nodes from file to correctly handle env toggling
-        self._base_include_test_nodes: Optional[bool] = None
         # RLock for thread-safe operations (reentrant since set_env calls load)
         self._lock = threading.RLock()
 
@@ -156,33 +149,15 @@ class SettingsManager:
             try:
                 with open(self.settings_path) as f:
                     data = json.load(f)
-                loaded = PflowSettings(**data)
-                # Capture base include_test_nodes from file
-                self._base_include_test_nodes = loaded.registry.include_test_nodes
-                return loaded
+                return PflowSettings(**data)
             except Exception as e:
                 # If file is corrupted, use defaults
                 logger.warning(f"Failed to load settings from {self.settings_path} ({e}); using defaults")
-                defaults = PflowSettings()
-                self._base_include_test_nodes = defaults.registry.include_test_nodes
-                return defaults
-        defaults = PflowSettings()
-        self._base_include_test_nodes = defaults.registry.include_test_nodes
-        return defaults
+                return PflowSettings()
+        return PflowSettings()
 
     def _apply_env_overrides(self, settings: PflowSettings) -> None:
         """Apply environment variable overrides."""
-        # Check for test node inclusion override
-        env_value = os.getenv("PFLOW_INCLUDE_TEST_NODES")
-        # Start from base value from file each time
-        if self._base_include_test_nodes is not None:
-            settings.registry.include_test_nodes = bool(self._base_include_test_nodes)
-        if env_value is not None:
-            include_test = env_value.lower() in ("true", "1", "yes")
-            settings.registry.include_test_nodes = include_test
-        # Note: We don't mutate the deny list here - the override is handled
-        # at runtime in should_include_node() to keep it ephemeral
-
         # Check for template resolution mode override
         env_mode = os.getenv("PFLOW_TEMPLATE_RESOLUTION_MODE")
         if env_mode is not None:
@@ -198,17 +173,13 @@ class SettingsManager:
         """Check if a node should be included based on settings.
 
         Args:
-            node_name: The node name (e.g., "echo", "read-file")
-            node_module: Optional module path (e.g., "pflow.nodes.test.echo")
+            node_name: The node name (e.g., "read-file", "shell")
+            node_module: Optional module path (e.g., "pflow.nodes.file.read_file")
 
         Returns:
             True if the node should be included, False otherwise.
         """
         settings = self.load()
-
-        # Hard test-node policy: hidden by default, visible only with env/test override
-        if self._is_test_node(node_name, node_module):
-            return settings.registry.include_test_nodes
 
         # Build candidates (includes MCP aliases for convenience)
         base_candidates: list[str] = [node_name]
@@ -235,32 +206,6 @@ class SettingsManager:
             return True
 
         return "*" in settings.registry.nodes.allow
-
-    @staticmethod
-    def _is_test_node(node_name: str, node_module: Optional[str]) -> bool:
-        """Heuristic classification of pflow internal test nodes.
-
-        Hidden by default; only exposed when PFLOW_INCLUDE_TEST_NODES=true.
-        """
-        # Known test node names in core tree
-        known_test_names = {
-            "echo",
-            "example",
-            "custom-name",
-            "no-docstring",
-            "retry-example",
-            "structured-example",
-            "mcp",  # Internal MCPNode - only used for virtual MCP tool entries
-        }
-        if node_name in known_test_names:
-            return True
-        if node_name.startswith("test") or node_name.startswith("test-") or node_name.startswith("test_"):
-            return True
-        if not node_module:
-            return False
-        # Dotted module path (e.g., pflow.nodes.test.echo) or filename/path
-        nm = node_module
-        return ".test." in nm or "test_node" in nm or "/test/" in nm or "/nodes/test_" in nm
 
     @staticmethod
     def _build_match_candidates(node_name: str, node_module: Optional[str]) -> list[str]:
@@ -306,11 +251,7 @@ class SettingsManager:
 
         try:
             with open(temp_fd, "w", encoding="utf-8") as f:
-                data = settings.model_dump()
-                # Never persist env-derived test override; keep override ephemeral
-                if isinstance(data.get("registry"), dict):
-                    data["registry"].pop("include_test_nodes", None)
-                json.dump(data, f, indent=2)
+                json.dump(settings.model_dump(), f, indent=2)
 
             # Atomic replace (works on all platforms)
             os.replace(temp_path, self.settings_path)

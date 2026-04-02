@@ -116,28 +116,6 @@ def test_node_retries_on_failure():
 - **http/** - HTTP requests
 - **claude/** - Claude Code CLI integration
 - **mcp/** - MCP tool bridge
-- **test/** - Test utilities (echo node for workflow testing)
-
-## Deprecated Node Categories
-
-> ⚠️ **DEPRECATED**: The following node categories are deprecated and will be removed in a future version. Use `shell` node with CLI tools instead.
-
-- **git/** - ⚠️ DEPRECATED: Use `shell` node with `git` CLI instead
-  - Example: `shell --command="git status --porcelain"`
-- **github/** - ⚠️ DEPRECATED: Use `shell` node with `gh` CLI or MCP tools instead
-  - Example: `shell --command="gh issue view 123 --json title,body"`
-
-## Registry Inclusion Rules
-
-**User-visible nodes** (in subdirectories):
-- Nodes in `file/`, `llm/`, `test/`, etc. subdirectories → **Included in registry**
-- Example: `test/echo.py` → Available to users via CLI
-
-**Internal test fixtures** (in root directory):
-- `test_node*.py` files in root `nodes/` directory → **NOT in registry**
-- Example: `test_node_retry.py` → Internal framework testing only
-
-The scanner only processes subdirectories, keeping internal test fixtures hidden from users.
 
 ## Interface Documentation Format
 

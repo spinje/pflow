@@ -4,8 +4,8 @@ This tests the complete fix for the shell stdin template variable issue,
 simulating the exact user scenario that was failing.
 
 The tests verify that dict/list/int values from MCP-like nodes (simulated
-using the echo node) are correctly converted to JSON/strings when passed
-as stdin to shell commands.
+using a code node that outputs structured data) are correctly converted to
+JSON/strings when passed as stdin to shell commands.
 """
 
 from pflow.registry import Registry
@@ -20,52 +20,47 @@ class TestMCPShellIntegration:
         """Test that MCP dict can be piped to jq via shell stdin.
 
         This was the original failing scenario:
-        - Echo node (simulating MCP) stores dict in shared["data"]
-        - Template ${mock-mcp.data} resolves to dict
+        - Upstream node stores dict in shared store
+        - Template ${mock-mcp.result} resolves to dict
         - Shell node receives dict in stdin param
         - Type adaptation converts dict → JSON string
         - jq processes the JSON from stdin
         """
-        # Workflow IR simulating user's scenario
+        # Pre-seed mock MCP data into shared store, then use shell to extract
+        mcp_data = {
+            "successful": True,
+            "data": {
+                "valueRanges": [
+                    {
+                        "values": [
+                            ["https://open.spotify.com/track/abc"],
+                            ["Some text"],
+                            ["https://open.spotify.com/track/xyz"],
+                        ]
+                    }
+                ]
+            },
+        }
+
         workflow_ir = {
             "nodes": [
-                {
-                    "id": "mock-mcp",
-                    "type": "echo",
-                    "params": {
-                        # Echo node will store this dict in shared
-                        "data": {
-                            "successful": True,
-                            "data": {
-                                "valueRanges": [
-                                    {
-                                        "values": [
-                                            ["https://open.spotify.com/track/abc"],
-                                            ["Some text"],
-                                            ["https://open.spotify.com/track/xyz"],
-                                        ]
-                                    }
-                                ]
-                            },
-                        }
-                    },
-                },
                 {
                     "id": "extract-url",
                     "type": "shell",
                     "params": {
-                        "stdin": "${mock-mcp.data}",  # This is a dict!
+                        "stdin": "${mock_mcp_data}",  # This is a dict!
                         "command": "jq -r '.data.valueRanges[0].values | map(.[0]) | .[-1]'",
                     },
                 },
             ],
-            "edges": [{"from": "mock-mcp", "to": "extract-url"}],
+            "edges": [],
         }
 
-        # Compile and run
+        # Compile and run with pre-seeded data
         registry = Registry()
         workflow = compile_workflow(workflow_ir, registry=registry)
         shared = dict(workflow.resolved_defaults)
+        shared["mock_mcp_data"] = mcp_data
         engine = WorkflowEngine()
         action = engine.run(workflow, shared)
 
@@ -80,22 +75,18 @@ class TestMCPShellIntegration:
         workflow_ir = {
             "nodes": [
                 {
-                    "id": "mock-mcp",
-                    "type": "echo",
-                    "params": {"data": {"user": {"profile": {"name": "John Doe", "email": "john@example.com"}}}},
-                },
-                {
                     "id": "extract-email",
                     "type": "shell",
-                    "params": {"stdin": "${mock-mcp.data}", "command": "jq -r '.user.profile.email'"},
+                    "params": {"stdin": "${mock_mcp_data}", "command": "jq -r '.user.profile.email'"},
                 },
             ],
-            "edges": [{"from": "mock-mcp", "to": "extract-email"}],
+            "edges": [],
         }
 
         registry = Registry()
         workflow = compile_workflow(workflow_ir, registry=registry)
         shared = dict(workflow.resolved_defaults)
+        shared["mock_mcp_data"] = {"user": {"profile": {"name": "John Doe", "email": "john@example.com"}}}
         engine = WorkflowEngine()
         action = engine.run(workflow, shared)
 
@@ -107,24 +98,18 @@ class TestMCPShellIntegration:
         workflow_ir = {
             "nodes": [
                 {
-                    "id": "mock-mcp",
-                    "type": "echo",
-                    "params": {
-                        "data": [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}, {"id": 3, "name": "third"}]
-                    },
-                },
-                {
                     "id": "extract-second",
                     "type": "shell",
-                    "params": {"stdin": "${mock-mcp.data}", "command": "jq -r '.[1].name'"},
+                    "params": {"stdin": "${mock_mcp_data}", "command": "jq -r '.[1].name'"},
                 },
             ],
-            "edges": [{"from": "mock-mcp", "to": "extract-second"}],
+            "edges": [],
         }
 
         registry = Registry()
         workflow = compile_workflow(workflow_ir, registry=registry)
         shared = dict(workflow.resolved_defaults)
+        shared["mock_mcp_data"] = [{"id": 1, "name": "first"}, {"id": 2, "name": "second"}, {"id": 3, "name": "third"}]
         engine = WorkflowEngine()
         action = engine.run(workflow, shared)
 
@@ -135,19 +120,19 @@ class TestMCPShellIntegration:
         """Test that integer from MCP can be used in shell."""
         workflow_ir = {
             "nodes": [
-                {"id": "mock-mcp", "type": "echo", "params": {"data": 42}},
                 {
                     "id": "process-number",
                     "type": "shell",
-                    "params": {"stdin": "${mock-mcp.data}", "command": "awk '{print $1 * 2}'"},
+                    "params": {"stdin": "${mock_mcp_data}", "command": "awk '{print $1 * 2}'"},
                 },
             ],
-            "edges": [{"from": "mock-mcp", "to": "process-number"}],
+            "edges": [],
         }
 
         registry = Registry()
         workflow = compile_workflow(workflow_ir, registry=registry)
         shared = dict(workflow.resolved_defaults)
+        shared["mock_mcp_data"] = 42
         engine = WorkflowEngine()
         action = engine.run(workflow, shared)
 
@@ -181,23 +166,23 @@ class TestMCPShellIntegration:
 
         workflow_ir = {
             "nodes": [
-                {"id": "sheets-data", "type": "echo", "params": {"data": google_sheets_response}},
                 {
                     "id": "extract-spotify-url",
                     "type": "shell",
                     "params": {
-                        "stdin": "${sheets-data.data}",
+                        "stdin": "${sheets_data}",
                         # Simplified command that just extracts the last URL using jq
                         "command": "jq -r '.data.valueRanges[0].values | map(.[0]) | map(select(contains(\"spotify.com\"))) | .[-1]'",
                     },
                 },
             ],
-            "edges": [{"from": "sheets-data", "to": "extract-spotify-url"}],
+            "edges": [],
         }
 
         registry = Registry()
         workflow = compile_workflow(workflow_ir, registry=registry)
         shared = dict(workflow.resolved_defaults)
+        shared["sheets_data"] = google_sheets_response
         engine = WorkflowEngine()
 
         # This would have crashed before with:

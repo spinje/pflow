@@ -72,7 +72,7 @@ async def registry_describe(
 async def registry_list(
     filter_pattern: str | None = Field(
         None,
-        description="Optional filter pattern. Single keyword or space-separated keywords (AND logic). Examples: 'github' or 'github api'",
+        description="Optional filter pattern. Single keyword or space-separated keywords (AND logic). Examples: 'file' or 'file read'",
     ),
 ) -> str:
     """List available nodes with name-based filtering.
@@ -82,7 +82,7 @@ async def registry_list(
       - "Find nodes for data transformation"
 
     Use registry_list when: Name-based filtering only
-      - "Show all github nodes"
+      - "Show all file nodes"
       - "List nodes containing 'slack'"
 
     ⚠️ WARNING: Without filter returns 100+ nodes (overwhelming).
@@ -94,11 +94,11 @@ async def registry_list(
 
         # Filter by single keyword (returns matching nodes sorted by relevance)
         filter_pattern="llm"      # Finds llm node
-        filter_pattern="github"    # Finds github-create-pr, github-list-repos, etc.
+        filter_pattern="file"      # Finds read-file, write-file, copy-file, etc.
         filter_pattern="slack"     # Finds Slack MCP tools
 
         # Multi-keyword filter (returns nodes matching ALL keywords via AND logic)
-        filter_pattern="github api"   # Must match BOTH "github" AND "api"
+        filter_pattern="file read"    # Must match BOTH "file" AND "read"
         filter_pattern="slack send"   # Must match BOTH "slack" AND "send"
 
     Returns:
@@ -108,10 +108,10 @@ async def registry_list(
 
         Example output (filtered):
         ```
-        Found 3 nodes matching 'github api':
-          github-create-pr          Create pull requests via API
-          github-create-issue       Create issues via API
-          github-get-file           Get file contents using API
+        Found 3 nodes matching 'file':
+          read-file                 Read file contents
+          write-file                Write content to a file
+          copy-file                 Copy a file to a new location
         ```
     """
     logger.debug(f"registry_list called with filter: {filter_pattern}")

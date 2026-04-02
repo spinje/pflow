@@ -111,7 +111,6 @@ These apply to ALL tests automatically — you don't need to request them:
 |---------|-------|-------------|
 | `mock_llm_calls` | function | Mocks all LLM API calls. Skips for tests in `/llm/` directories. Access mock via `request.node.mock_llm`. |
 | `isolate_pflow_config` | function | Isolates registry, settings, MCP servers, workflows to temp dirs per test. Returns dict of paths. |
-| `enable_test_nodes` | session | Sets `PFLOW_INCLUDE_TEST_NODES=true` once per session. |
 | `precomputed_core_registry_nodes` | session | Scans and caches core node metadata once (~0.2s). |
 
 ### Shared Test Utilities (`tests/shared/`)

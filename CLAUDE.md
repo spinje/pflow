@@ -109,7 +109,7 @@ pflow/
 │   ├── execution/           # Execution UX, formatters
 │   ├── runtime/             # Compilation, engine, tracing
 │   ├── nodes/               # Platform node implementations
-│   │   └── (shell, http, llm, file, git, github, mcp, python, claude, test)
+│   │   └── (shell, http, llm, file, mcp, python, claude)
 │   ├── mcp/                 # MCP client integration (for MCP nodes in workflows)
 │   ├── mcp_server/          # pflow-as-MCP-server for AI agents
 │   └── registry/            # Node registry, scanning, context building, discovery
@@ -177,7 +177,7 @@ Proactively use `pflow-codebase-searcher` subagents in PARALLEL when reading doc
 
 MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` for version history.
 
-**What's implemented**: shell/http/llm/file/git/github/mcp/python/claude-code nodes, template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
+**What's implemented**: shell/http/llm/file/mcp/python/claude-code nodes, template system (`${var}` with nested path access), batch processing, MCP integration (client + server), metrics/tracing, settings/security, CLI with Unix pipe support, workflow save/load, registry, skills publishing.
 
 **Recently Completed:**
 - ✅ Task 105: Auto-Parse JSON Strings During Nested Template Access
@@ -205,11 +205,11 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 134: Output Detection Unification
 - ✅ Task 138: Shared Execution Pipeline
 - ✅ Task 135: Execution Core Compile-Once Redesign
+- ✅ Task 141: Consolidate Exception Hierarchy
 
 ### Planned Features (in order of priority)
 
 **Next**
-- Task 141: Consolidate Exception Hierarchy
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**

@@ -24,7 +24,11 @@ Back up the destination directory before overwriting anything.
 
 Process the file list from the manifest.
 
-- type: test
+- type: shell
+
+```shell command
+echo "Processing file list from manifest..."
+```
 
 ### copy_new_files
 

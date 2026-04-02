@@ -39,42 +39,42 @@ def create_real_test_registry():
     # Use real test nodes from the codebase
     real_nodes_metadata = {
         "test-node": {
-            "module": "pflow.nodes.test_node",
+            "module": "tests.shared.mock_nodes",
             "class_name": "ExampleNode",
             "docstring": "Test node for validation",
-            "file_path": "src/pflow/nodes/test_node.py",
+            "file_path": "tests/shared/mock_nodes.py",
         },
         "test-node-retry": {
-            "module": "pflow.nodes.test_node_retry",
+            "module": "tests.shared.mock_nodes",
             "class_name": "RetryExampleNode",
             "docstring": "Test node with retry",
-            "file_path": "src/pflow/nodes/test_node_retry.py",
+            "file_path": "tests/shared/mock_nodes.py",
         },
         "test-node-structured": {
-            "module": "pflow.nodes.test_node_structured",
+            "module": "tests.shared.mock_nodes",
             "class_name": "StructuredExampleNode",
             "docstring": "Structured test node",
-            "file_path": "src/pflow/nodes/test_node_structured.py",
+            "file_path": "tests/shared/mock_nodes.py",
         },
         # Add alias for basic-node to test-node for backward compatibility
         "basic-node": {
-            "module": "pflow.nodes.test_node",
+            "module": "tests.shared.mock_nodes",
             "class_name": "ExampleNode",
             "docstring": "Basic test node (alias for test-node)",
-            "file_path": "src/pflow/nodes/test_node.py",
+            "file_path": "tests/shared/mock_nodes.py",
         },
         # Add aliases for other common test node types
         "transform-node": {
-            "module": "pflow.nodes.test_node_structured",
+            "module": "tests.shared.mock_nodes",
             "class_name": "StructuredExampleNode",
             "docstring": "Transform test node (alias for test-node-structured)",
-            "file_path": "src/pflow/nodes/test_node_structured.py",
+            "file_path": "tests/shared/mock_nodes.py",
         },
         "conditional-node": {
-            "module": "pflow.nodes.test_node_retry",
+            "module": "tests.shared.mock_nodes",
             "class_name": "RetryExampleNode",
             "docstring": "Conditional test node (alias for test-node-retry)",
-            "file_path": "src/pflow/nodes/test_node_retry.py",
+            "file_path": "tests/shared/mock_nodes.py",
         },
         "code": {
             "module": "pflow.nodes.python.python_code",

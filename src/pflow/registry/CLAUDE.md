@@ -39,8 +39,7 @@ Class name → kebab-case with `Node` suffix stripped:
 - Can be overridden with explicit `name` class attribute on the class
 
 Common override reasons:
-- **Prefix additions**: GitHub nodes (`GetIssueNode` → `github-get-issue`) add category prefix
-- **Fixing kebab split**: `GitHubCreatePRNode` would auto-convert to `git-hub-create-pr`, override fixes to `github-create-pr`
+- **Fixing kebab split**: Override when auto-conversion produces wrong results
 - **Intentional rename**: `PythonCodeNode` → `code`
 
 ### Interface Extraction

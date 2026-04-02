@@ -1,8 +1,7 @@
 # Proxy Mappings
 
 Demonstrates a pipeline using proxy mappings to rename shared store keys
-between nodes with incompatible interfaces. The reader outputs `content`
-but the processor expects `test_input` — mappings bridge the gap.
+between nodes with incompatible interfaces — mappings bridge the gap.
 
 * Mappings are declared in the IR `mappings` field (not visible in markdown)
 * Pattern: read → process (with key renaming) → write
@@ -17,13 +16,16 @@ under the `content` key.
 - type: read-file
 - file_path: input.txt
 
-### test_processor
+### processor
 
-Process the file content through a test node. Expects `test_input`
-(mapped from `content`) and outputs `test_output` (mapped to
-`processed_content`).
+Process the file content. Expects input from upstream
+and outputs processed result.
 
-- type: test
+- type: shell
+
+```shell command
+echo "Processed content"
+```
 
 ### writer
 

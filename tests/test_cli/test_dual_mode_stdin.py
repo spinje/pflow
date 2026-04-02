@@ -35,7 +35,6 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
 
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
 
     subprocess.run(  # noqa: S603
         [uv_exe, "run", "pflow", "registry", "list", "--json"],
@@ -66,8 +65,8 @@ class TestDualModeStdinBehavior:
             "nodes": [
                 {
                     "id": "test_echo",
-                    "type": "echo",
-                    "params": {"message": "${data}"},
+                    "type": "shell",
+                    "params": {"command": "echo '${data}'"},
                 }
             ],
             "edges": [],
@@ -171,7 +170,7 @@ class TestDualModeStdinBehavior:
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"path": {"type": "string", "required": True}},
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${path}"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${path}'"}}],
             "edges": [],
             "start_node": "echo1",
         }
@@ -200,7 +199,7 @@ class TestDualModeStdinBehavior:
                 "input_a": {"type": "string", "required": True, "stdin": True},
                 "input_b": {"type": "string", "required": True, "stdin": True},
             },
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
             "start_node": "echo1",
         }
@@ -269,7 +268,7 @@ class TestDualModeStdinBehavior:
         workflow = {
             "ir_version": "0.1.0",
             "inputs": {"data": {"type": "string", "required": True, "stdin": True}},
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "${data}"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo '${data}'"}}],
             "edges": [],
             "start_node": "echo1",
         }
@@ -302,14 +301,14 @@ class TestRealShellIntegration:
     @pytest.mark.skipif(sys.platform == "win32", reason="Unix pipe test")
     def test_pipe_data_to_workflow_file_creates_expected_output(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test actual shell pipe: echo 'data' | pflow workflow.pflow.md"""
-        # Create a workflow using echo node
+        # Create a workflow using shell node
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "test_echo",
-                    "type": "echo",
-                    "params": {"message": "Test content"},
+                    "type": "shell",
+                    "params": {"command": "echo 'Test content'"},
                 }
             ],
             "edges": [],
@@ -367,14 +366,14 @@ class TestBinaryAndLargeStdinBehavior:
 
     def test_binary_stdin_shows_appropriate_warning(self, tmp_path, uv_exe, prepared_subprocess_env):
         """Test that binary stdin produces appropriate user feedback."""
-        # Create a simple workflow using echo node
+        # Create a simple workflow using shell node
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
                 {
                     "id": "test_echo",
-                    "type": "echo",
-                    "params": {"message": "Test content"},
+                    "type": "shell",
+                    "params": {"command": "echo 'Test content'"},
                 }
             ],
             "edges": [],

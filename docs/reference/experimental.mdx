@@ -6,62 +6,6 @@ icon: "flask-conical"
 
 These features are available but experimental — they may change, have rough edges, or be removed in future versions. Use them if they solve a problem, but know the caveats.
 
-## Built-in Git and GitHub nodes
-
-pflow includes nodes for Git and GitHub operations, but they're **disabled by default**.
-
-### Recommended alternatives
-
-For most use cases, there are better options:
-
-**Git operations** - Use the `git` CLI directly via [shell node](/reference/nodes/shell). Your agent knows Git extremely well from training data and doesn't need special nodes for common operations.
-
-````markdown
-### commit-changes
-
-Stage and commit all changes.
-
-- type: shell
-
-```shell command
-git add . && git commit -m '${commit_message}'
-```
-````
-
-**GitHub operations** - Use the `gh` CLI via shell node for simple tasks, or the [GitHub MCP server](/guides/adding-mcp-servers#github) for complex operations that benefit from structured tools.
-
-````markdown
-### create-pr
-
-Create a pull request using the GitHub CLI.
-
-- type: shell
-
-```shell command
-gh pr create --title '${title}' --body '${body}'
-```
-````
-
-### If you still want to try the built-in nodes
-
-Enable with:
-
-```bash
-# Enable git nodes
-pflow settings allow "pflow.nodes.git.*"
-
-# Enable github nodes
-pflow settings allow "pflow.nodes.github.*"
-```
-
-Then view available nodes:
-
-```bash
-pflow registry list git
-pflow registry list github
-```
-
-
 ## Feedback
 
 If you use these experimental features and have feedback:

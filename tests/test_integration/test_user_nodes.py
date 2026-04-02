@@ -253,7 +253,7 @@ class TestCalculatorNode(Node):
             # Add test nodes to registry for routing
             test_node_metadata = {
                 "class_name": "ExampleNode",
-                "module": "pflow.nodes.test_node",
+                "module": "tests.shared.mock_nodes",
                 "interface": {"description": "Test node"},
             }
             nodes = registry.load()

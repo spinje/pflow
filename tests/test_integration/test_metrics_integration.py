@@ -70,18 +70,18 @@ def temp_registry(temp_home):
     # Create minimal registry with test nodes
     # Note: Registry stores nodes directly, not wrapped in a structure
     registry_data = {
-        "echo": {
-            "module": "pflow.nodes.test.echo",
-            "class_name": "EchoNode",  # Note: class_name not class
+        "shell": {
+            "module": "pflow.nodes.shell.shell",
+            "class_name": "ShellNode",
             "metadata": {
-                "name": "echo",
-                "description": "Echoes input to output",
-                "parameters": {"message": {"type": "string", "description": "Message to echo"}},
+                "name": "shell",
+                "description": "Runs a shell command",
+                "parameters": {"command": {"type": "string", "description": "Command to run"}},
             },
             "interface": {
-                "writes": {"echo": {"type": "string", "description": "Echoed message"}},
-                "params": {"message": {"type": "string", "description": "Message to echo"}},
-                "outputs": {"echo": {"type": "string", "description": "Echoed message"}},
+                "writes": {"stdout": {"type": "string", "description": "Command output"}},
+                "params": {"command": {"type": "string", "description": "Command to run"}},
+                "outputs": {"stdout": {"type": "string", "description": "Command output"}},
             },
         },
         "llm": {
@@ -490,9 +490,9 @@ class TestWrapperIntegration:
 
         workflow_ir = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "shell1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
-            "start_node": "echo1",
+            "start_node": "shell1",
         }
 
         registry = Registry()
@@ -510,18 +510,18 @@ class TestWrapperIntegration:
 
         # Test 2: Metrics were collected (proves InstrumentedNodeWrapper works)
         assert len(metrics.workflow_nodes) == 1
-        assert "echo1" in metrics.workflow_nodes
-        assert metrics.workflow_nodes["echo1"] > 0  # Duration in ms
+        assert "shell1" in metrics.workflow_nodes
+        assert metrics.workflow_nodes["shell1"] > 0  # Duration in ms
 
         # Test 3: Namespacing worked (proves NamespacedNodeWrapper works)
-        # The echo node should write to a namespaced key
-        assert "echo1" in shared  # The namespace exists
-        assert "echo" in shared["echo1"]  # The output is in the namespace
-        assert shared["echo1"]["echo"] == "test"  # The value is correct
+        # The shell node should write to a namespaced key
+        assert "shell1" in shared  # The namespace exists
+        assert "stdout" in shared["shell1"]  # The output is in the namespace
+        assert "test" in shared["shell1"]["stdout"]  # The value is correct
 
         # Test 4: Trace was collected (proves both wrappers integrate)
         assert len(trace.events) == 1
-        assert trace.events[0]["node_id"] == "echo1"
+        assert trace.events[0]["node_id"] == "shell1"
         assert trace.events[0]["success"] is True
 
     def test_llm_accumulation_across_nodes(self, temp_home, temp_registry, mock_llm):
@@ -904,7 +904,7 @@ class TestMetricsAccuracy:
                 1,
                 {
                     "ir_version": "0.1.0",
-                    "nodes": [{"id": "n1", "type": "echo", "params": {"message": "hi"}}],
+                    "nodes": [{"id": "n1", "type": "shell", "params": {"command": "echo hi"}}],
                     "edges": [],
                     "start_node": "n1",
                 },
@@ -914,9 +914,9 @@ class TestMetricsAccuracy:
                 {
                     "ir_version": "0.1.0",
                     "nodes": [
-                        {"id": "n1", "type": "echo", "params": {"message": "first"}},
-                        {"id": "n2", "type": "echo", "params": {"message": "second"}},
-                        {"id": "n3", "type": "echo", "params": {"message": "third"}},
+                        {"id": "n1", "type": "shell", "params": {"command": "echo first"}},
+                        {"id": "n2", "type": "shell", "params": {"command": "echo second"}},
+                        {"id": "n3", "type": "shell", "params": {"command": "echo third"}},
                     ],
                     "edges": [{"from": "n1", "to": "n2"}, {"from": "n2", "to": "n3"}],
                     "start_node": "n1",

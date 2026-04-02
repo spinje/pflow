@@ -270,10 +270,10 @@ class TestCompileWorkflow:
             # Save real node metadata for ExampleNode
             test_node_metadata = {
                 "test-node": {
-                    "module": "pflow.nodes.test_node",
+                    "module": "tests.shared.mock_nodes",
                     "class_name": "ExampleNode",
                     "docstring": "Test node for validation",
-                    "file_path": "src/pflow/nodes/test_node.py",
+                    "file_path": "tests/shared/mock_nodes.py",
                 }
             }
             registry.save(test_node_metadata)
@@ -321,16 +321,16 @@ class TestCompileWorkflow:
             # Save metadata for multiple test nodes
             test_nodes_metadata = {
                 "test-node": {
-                    "module": "pflow.nodes.test_node",
+                    "module": "tests.shared.mock_nodes",
                     "class_name": "ExampleNode",
                     "docstring": "Test node for validation",
-                    "file_path": "src/pflow/nodes/test_node.py",
+                    "file_path": "tests/shared/mock_nodes.py",
                 },
                 "test-node-retry": {
-                    "module": "pflow.nodes.test_node_retry",
+                    "module": "tests.shared.mock_nodes",
                     "class_name": "RetryExampleNode",
                     "docstring": "Test node with retry",
-                    "file_path": "src/pflow/nodes/test_node_retry.py",
+                    "file_path": "tests/shared/mock_nodes.py",
                 },
             }
             registry.save(test_nodes_metadata)

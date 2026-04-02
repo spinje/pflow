@@ -58,8 +58,8 @@ class TestTemplateResolutionsInTrace:
             "nodes": [
                 {
                     "id": "echo",
-                    "type": "echo",
-                    "params": {"message": "Hello ${name}"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' 'Hello ${name}'"},
                 },
             ],
             "edges": [],
@@ -72,20 +72,20 @@ class TestTemplateResolutionsInTrace:
         event = collector.events[0]
 
         assert event["success"] is True
-        assert event["node_type"] == "EchoNode"
+        assert event["node_type"] == "ShellNode"
 
         # Template resolutions should be captured
         assert "template_resolutions" in event, (
             "template_resolutions missing from trace event — engine may not be passing last_resolutions to record_trace"
         )
         resolutions = event["template_resolutions"]
-        assert "message" in resolutions
-        assert resolutions["message"]["template"] == "Hello ${name}"
-        assert resolutions["message"]["resolved"] == "Hello World"
+        assert "command" in resolutions
+        assert resolutions["command"]["template"] == "printf '%s' 'Hello ${name}'"
+        assert resolutions["command"]["resolved"] == "printf '%s' 'Hello World'"
 
         # Node output should be namespaced
         assert "node_output" in event
-        assert event["node_output"]["echo"] == "Hello World"
+        assert event["node_output"]["stdout"] == "Hello World"
 
         # Mutations should include the echo node's namespace
         assert "mutations" in event
@@ -103,8 +103,8 @@ class TestBatchNodeTraceEvents:
             "nodes": [
                 {
                     "id": "processor",
-                    "type": "echo",
-                    "params": {"message": "${item}"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' '${item}'"},
                     "batch": {"items": "${data}", "as": "item"},
                 },
             ],
@@ -117,7 +117,7 @@ class TestBatchNodeTraceEvents:
         event = collector.events[0]
 
         assert event["success"] is True
-        assert event["node_type"] == "EchoNode"
+        assert event["node_type"] == "ShellNode"
 
         # Batch items should be captured
         assert "batch_items" in event, (
@@ -156,8 +156,8 @@ class TestTraceToReportFormatCompatibility:
             "nodes": [
                 {
                     "id": "processor",
-                    "type": "echo",
-                    "params": {"message": "${item}"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' '${item}'"},
                     "batch": {"items": "${data}", "as": "item"},
                 },
             ],
@@ -215,8 +215,8 @@ class TestParallelBatchTraceCapture:
             "nodes": [
                 {
                     "id": "greeter",
-                    "type": "echo",
-                    "params": {"message": "${item}"},
+                    "type": "shell",
+                    "params": {"command": "printf '%s' '${item}'"},
                     "batch": {"items": "${data}", "as": "item", "parallel": True},
                 },
             ],
@@ -232,17 +232,17 @@ class TestParallelBatchTraceCapture:
         assert len(batch_items) == 2
 
         # Parallel batch items may complete in any order — match by content
-        resolved_messages = set()
+        resolved_commands = set()
         for item in batch_items:
             assert item["success"] is True
             # Template resolutions captured from per-item resolution
             resolutions = item.get("template_resolutions", {})
-            assert "message" in resolutions, (
-                "template_resolutions missing 'message' — "
+            assert "command" in resolutions, (
+                "template_resolutions missing 'command' — "
                 "per-item template resolution may not be captured in batch trace"
             )
-            resolved_messages.add(resolutions["message"]["resolved"])
-        assert resolved_messages == {"alice", "bob"}
+            resolved_commands.add(resolutions["command"]["resolved"])
+        assert resolved_commands == {"printf '%s' 'alice'", "printf '%s' 'bob'"}
 
 
 class TestFailedBatchItemsInTrace:
@@ -364,8 +364,8 @@ class TestTemplateResolutionsOnError:
             "nodes": [
                 {
                     "id": "broken-node",
-                    "type": "echo",
-                    "params": {"message": "Summarize ${fetch.result.messages}"},
+                    "type": "shell",
+                    "params": {"command": "echo Summarize ${fetch.result.messages}"},
                 },
             ],
             "edges": [],

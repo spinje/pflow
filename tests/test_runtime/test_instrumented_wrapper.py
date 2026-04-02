@@ -157,7 +157,7 @@ class TestTimingCapture:
     def test_metrics_receive_timing(self):
         """Test that metrics collector receives timing data from a real workflow run."""
         metrics = Mock()
-        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, metrics=metrics)
+        shared, action = _run_single_node_workflow("shell", {"command": "printf '%s' hello"}, metrics=metrics)
 
         # Metrics collector should have been called with node_id and duration_ms
         metrics.record_node_execution.assert_called_once()
@@ -446,7 +446,7 @@ class TestCollectorIntegration:
     def test_metrics_collector_integration(self):
         """Test integration with metrics collector."""
         metrics = Mock()
-        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, metrics=metrics)
+        shared, action = _run_single_node_workflow("shell", {"command": "printf '%s' hello"}, metrics=metrics)
 
         # Verify metrics collector was called correctly
         metrics.record_node_execution.assert_called_once()
@@ -457,7 +457,7 @@ class TestCollectorIntegration:
     def test_trace_collector_integration(self):
         """Test integration with trace collector."""
         trace = WorkflowTraceCollector("test")
-        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, trace=trace)
+        shared, action = _run_single_node_workflow("shell", {"command": "printf '%s' hello"}, trace=trace)
 
         # Verify trace collector was called correctly
         assert len(trace.events) == 1
@@ -473,7 +473,9 @@ class TestCollectorIntegration:
         """Test with both metrics and trace collectors."""
         metrics = Mock()
         trace = WorkflowTraceCollector("test")
-        shared, action = _run_single_node_workflow("echo", {"message": "hello"}, metrics=metrics, trace=trace)
+        shared, action = _run_single_node_workflow(
+            "shell", {"command": "printf '%s' hello"}, metrics=metrics, trace=trace
+        )
 
         # Verify both collectors were called
         metrics.record_node_execution.assert_called_once()
@@ -481,10 +483,10 @@ class TestCollectorIntegration:
 
     def test_no_collectors(self):
         """Test that workflow works without any collectors."""
-        shared, action = _run_single_node_workflow("echo", {"message": "hello"})
+        shared, action = _run_single_node_workflow("shell", {"command": "printf '%s' hello"})
 
         # Verify node executed successfully without collectors
-        assert shared["test"]["echo"] == "hello"
+        assert shared["test"]["stdout"] == "hello"
 
 
 # ===========================================================================
@@ -497,10 +499,10 @@ class TestTransparency:
 
     def test_engine_transparency_via_workflow(self):
         """Test that engine execution produces correct node outputs."""
-        shared, action = _run_single_node_workflow("echo", {"message": "hello world"})
+        shared, action = _run_single_node_workflow("shell", {"command": "printf '%s' 'hello world'"})
 
-        # echo node writes output to shared[node_id]
-        assert shared["test"]["echo"] == "hello world"
+        # shell node writes output to shared[node_id]
+        assert shared["test"]["stdout"] == "hello world"
 
     def test_shared_store_modifications_preserved(self):
         """Test that modifications to shared store are preserved through the engine."""
@@ -562,7 +564,7 @@ class TestEdgeCases:
 
     def test_empty_shared_store(self):
         """Test execution with empty shared store via compile_workflow + WorkflowEngine."""
-        shared, action = _run_single_node_workflow("echo", {"message": "test"})
+        shared, action = _run_single_node_workflow("shell", {"command": "printf '%s' test"})
 
         # __llm_calls__ is no longer initialized by the engine
         assert "__llm_calls__" not in shared

@@ -44,8 +44,8 @@ class TestValidExamples:
         """Verify advanced examples are present."""
         advanced_dir = examples_dir / "advanced"
         expected = [
-            "github-workflow.pflow.md",
             "content-pipeline.pflow.md",
+            "file-migration.pflow.md",
         ]
         for example in expected:
             assert (advanced_dir / example).exists(), f"Missing advanced example: {example}"
@@ -75,8 +75,8 @@ class TestValidExamples:
             "core/error-handling.pflow.md",
             "core/conditional-branching.pflow.md",
             "core/proxy-mappings.pflow.md",
-            "advanced/github-workflow.pflow.md",
             "advanced/content-pipeline.pflow.md",
+            "advanced/file-migration.pflow.md",
         ],
     )
     def test_valid_examples_pass_validation(self, examples_dir, example_file):
@@ -233,7 +233,7 @@ class TestExampleContent:
         validate_ir(ir_data)
         node_ids = [n["id"] for n in ir_data["nodes"]]
         assert "reader" in node_ids
-        assert "test_processor" in node_ids
+        assert "processor" in node_ids
         assert "writer" in node_ids
 
     def test_all_pflow_md_files_parse(self, examples_dir):

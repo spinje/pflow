@@ -22,13 +22,13 @@ class TestWorkflowOutputSource:
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "echo1", "type": "echo", "params": {"message": "hello"}},
-                {"id": "echo2", "type": "echo", "params": {"message": "world"}},
+                {"id": "echo1", "type": "shell", "params": {"command": "printf '%s' hello"}},
+                {"id": "echo2", "type": "shell", "params": {"command": "printf '%s' world"}},
             ],
             "edges": [{"from": "echo1", "to": "echo2"}],
             "outputs": {
-                "message1": {"source": "${echo1.echo}", "description": "Output from first echo"},
-                "message2": {"source": "${echo2.echo}", "description": "Output from second echo"},
+                "message1": {"source": "${echo1.stdout}", "description": "Output from first echo"},
+                "message2": {"source": "${echo2.stdout}", "description": "Output from second echo"},
             },
         }
 
@@ -55,9 +55,9 @@ class TestWorkflowOutputSource:
         """Test that output source works with text output format."""
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test message"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "printf '%s' 'test message'"}}],
             "edges": [],
-            "outputs": {"result": {"source": "${echo1.echo}", "description": "Echo result"}},
+            "outputs": {"result": {"source": "${echo1.stdout}", "description": "Echo result"}},
         }
 
         # Create a temporary file since stdin-only workflows are no longer supported
@@ -80,13 +80,13 @@ class TestWorkflowOutputSource:
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [
-                {"id": "node_a", "type": "echo", "params": {"message": "from A"}},
-                {"id": "node_b", "type": "echo", "params": {"message": "from B"}},
+                {"id": "node_a", "type": "shell", "params": {"command": "printf '%s' 'from A'"}},
+                {"id": "node_b", "type": "shell", "params": {"command": "printf '%s' 'from B'"}},
             ],
             "edges": [{"from": "node_a", "to": "node_b"}],
             "outputs": {
-                "first": {"source": "${node_a.echo}"},
-                "second": {"source": "${node_b.echo}"},
+                "first": {"source": "${node_a.stdout}"},
+                "second": {"source": "${node_b.stdout}"},
             },
         }
 
@@ -112,9 +112,9 @@ class TestWorkflowOutputSource:
         """Test output source when running from a file."""
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "test_node", "type": "echo", "params": {"message": "file test"}}],
+            "nodes": [{"id": "test_node", "type": "shell", "params": {"command": "printf '%s' 'file test'"}}],
             "edges": [],
-            "outputs": {"result": {"source": "${test_node.echo}"}},
+            "outputs": {"result": {"source": "${test_node.stdout}"}},
         }
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
@@ -137,7 +137,7 @@ class TestWorkflowOutputSource:
         """Test that outputs without source field still work (backward compatibility)."""
         workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "backward compat"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "printf '%s' 'backward compat'"}}],
             "edges": [],
             "outputs": {
                 "echo": {

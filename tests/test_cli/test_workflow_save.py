@@ -19,7 +19,6 @@ def prepared_subprocess_env(tmp_path_factory, uv_exe):
 
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
 
     subprocess.run(  # noqa: S603
         [uv_exe, "run", "pflow", "registry", "list", "--json"],
@@ -129,7 +128,7 @@ class TestWorkflowSaveCLI:
         # Create a workflow file with simpler workflow
         simple_workflow = {
             "ir_version": "0.1.0",
-            "nodes": [{"id": "echo1", "type": "echo", "params": {"message": "test"}}],
+            "nodes": [{"id": "echo1", "type": "shell", "params": {"command": "echo test"}}],
             "edges": [],
             "start_node": "echo1",
         }

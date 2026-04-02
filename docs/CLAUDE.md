@@ -440,10 +440,6 @@ Use `<Update>` for changelog entries. This creates the timeline layout automatic
 - `claude-code` - agentic development
 - `mcp` - MCP bridge
 
-**Skip these:**
-- `git`, `github` - specialized, not core
-- `test`, `echo` - internal nodes
-
 ---
 
 ## Cross-References

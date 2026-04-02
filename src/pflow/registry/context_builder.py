@@ -34,26 +34,6 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
         if node_type.startswith("__") and node_type.endswith("__"):
             continue
 
-        # Skip test nodes - check for nodes in test directory or test_node files
-        # We check the module path, not the full file path to avoid issues with
-        # project directories that contain "test" in their name
-        module_path = node_info.get("module", "")
-        file_path = node_info.get("file_path", "")
-
-        # Check if this is a test node by looking at the module path
-        # Test nodes are either in pflow.nodes.test.* or pflow.nodes.test_node*
-        is_test_node = (
-            "pflow.nodes.test." in module_path
-            or "pflow.nodes.test_node" in module_path
-            or "/nodes/test/" in file_path
-            or "/test_node" in file_path
-        )
-
-        if is_test_node:
-            logger.debug(f"context: Skipping test node: {node_type}")
-            skipped_count += 1
-            continue
-
         # Use pre-parsed interface data directly from registry
         interface = node_info.get("interface")
         if not interface:
@@ -78,12 +58,9 @@ def _process_nodes(registry_metadata: dict[str, dict[str, Any]]) -> tuple[dict[s
 # Map of known pflow node categories to friendly names
 _PFLOW_CATEGORY_NAMES = {
     "file": "File Operations",
-    "git": "Git Operations",
-    "github": "GitHub Operations",
     "ai": "AI/LLM Operations",  # Match module path pflow.nodes.ai.*
     "llm": "AI/LLM Operations",
     "shell": "System Operations",
-    "test": "Test Operations",
 }
 
 
@@ -121,10 +98,6 @@ def _get_pflow_node_category(module: str) -> str:
         return "General Operations"
 
     if module:
-        # For test modules like "test.file", extract category from module name
-        parts = module.split(".")
-        if len(parts) >= 2 and parts[1] in _PFLOW_CATEGORY_NAMES:
-            return _PFLOW_CATEGORY_NAMES[parts[1]]
         return "General Operations"
 
     return ""  # Empty module - will trigger fallback
@@ -143,10 +116,6 @@ def _get_category_from_node_name(node_type: str) -> str:
     # Only include patterns that exist in real nodes
     if any(pattern in node_type for pattern in ["read-file", "write-file", "copy-file", "move-file", "delete-file"]):
         return "File Operations"
-
-    if any(pattern in node_type for pattern in ["git-", "github-", "gitlab-"]):
-        # All git-related nodes go under Git Operations
-        return "Git Operations"
 
     if node_type == "llm" or "ai-" in node_type:
         return "AI/LLM Operations"

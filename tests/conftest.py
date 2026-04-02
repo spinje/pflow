@@ -55,28 +55,6 @@ def mock_llm_responses(request):
     return create_mock_get_model()
 
 
-@pytest.fixture(autouse=True, scope="session")
-def enable_test_nodes():
-    """Enable test nodes for all test runs.
-
-    This ensures that test nodes like 'echo' are available during testing,
-    even though they're hidden from users by default.
-    """
-    # Store original value
-    original = os.environ.get("PFLOW_INCLUDE_TEST_NODES")
-
-    # Enable test nodes for all tests
-    os.environ["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
-    yield
-
-    # Restore original value after tests
-    if original is None:
-        os.environ.pop("PFLOW_INCLUDE_TEST_NODES", None)
-    else:
-        os.environ["PFLOW_INCLUDE_TEST_NODES"] = original
-
-
 def _import_test_modules() -> tuple:
     """Import required and optional modules for test isolation.
 
@@ -113,7 +91,6 @@ def _import_test_modules() -> tuple:
 @pytest.fixture(scope="session")
 def precomputed_core_registry_nodes(tmp_path_factory):
     """Precompute core registry nodes once per session to avoid repeated scans."""
-    os.environ["PFLOW_INCLUDE_TEST_NODES"] = "true"
     from pflow.registry.registry import Registry
 
     session_registry_path = tmp_path_factory.mktemp("session_core") / "registry.json"
@@ -365,6 +342,4 @@ def prepared_subprocess_env(tmp_path_factory, precomputed_core_registry_nodes):
 
     env = os.environ.copy()
     env["HOME"] = str(home)
-    env["PFLOW_INCLUDE_TEST_NODES"] = "true"
-
     return env

@@ -17,7 +17,6 @@ examples/
 ├── mcp-http/              # MCP HTTP transport examples
 ├── mcp-integration/       # MCP client integration demos (Python scripts)
 ├── mcp-pflow/             # pflow-as-MCP-server setup and testing
-├── github/                # GitHub API example script
 ├── interfaces/            # Empty
 ├── scraped-*-test/        # Test fixture data for markdown parser edge cases
 ├── *.pflow.md             # Root-level workflow examples (batch, MCP, output validation)

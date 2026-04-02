@@ -24,13 +24,21 @@ Create a timestamped backup of the original file before any processing.
 
 Process the content through the transformation pipeline.
 
-- type: test
+- type: shell
+
+```shell command
+echo "Processing content..."
+```
 
 ### validate_result
 
 Validate the processed content meets quality standards.
 
-- type: test-structured
+- type: shell
+
+```shell command
+echo '{"valid": true, "score": 95}'
+```
 
 ### save_processed
 
@@ -50,7 +58,11 @@ Write a validation report for audit purposes.
 
 Retry processing if validation found issues.
 
-- type: test-retry
+- type: shell
+
+```shell command
+echo "Retrying processing..."
+```
 
 ### archive_results
 

@@ -75,7 +75,7 @@ def _setup_mock_imports(mock_node_class=None):
     mock_source_module.SourceNode = SourceNode
 
     def side_effect(module_path):
-        if module_path == "pflow.nodes.test_node":
+        if module_path == "tests.shared.mock_nodes":
             return mock_llm_module
         elif module_path == "pflow.nodes.source_node":
             return mock_source_module
@@ -96,8 +96,8 @@ def mock_registry(tmp_path):
     registry = Registry(registry_path)
 
     registry_data = {
-        "pflow.nodes.test_node": {
-            "module": "pflow.nodes.test_node",
+        "tests.shared.mock_nodes": {
+            "module": "tests.shared.mock_nodes",
             "class_name": "ExampleNode",
             "docstring": "Test node for testing",
             "file_path": "/mock/path/test_node.py",
@@ -163,7 +163,7 @@ class TestLLMCallsViaTrace:
             "nodes": [
                 {
                     "id": "inner-llm",
-                    "type": "pflow.nodes.test_node",
+                    "type": "tests.shared.mock_nodes",
                     "params": {},
                     "purpose": "Simulate LLM call inside child workflow",
                 }
@@ -176,7 +176,7 @@ class TestLLMCallsViaTrace:
             "nodes": [
                 {
                     "id": "direct-llm",
-                    "type": "pflow.nodes.test_node",
+                    "type": "tests.shared.mock_nodes",
                     "params": {},
                     "purpose": "Simulate LLM call in parent workflow",
                 },
@@ -232,7 +232,7 @@ class TestLLMCallsViaTrace:
             "nodes": [
                 {
                     "id": "child-llm",
-                    "type": "pflow.nodes.test_node",
+                    "type": "tests.shared.mock_nodes",
                     "params": {},
                     "purpose": "Simulate LLM call inside batched child workflow",
                 }
@@ -295,7 +295,7 @@ class TestProgressCallbackPropagation:
             "nodes": [
                 {
                     "id": "inner-node",
-                    "type": "pflow.nodes.test_node",
+                    "type": "tests.shared.mock_nodes",
                     "params": {},
                     "purpose": "Node inside child that should trigger callback",
                 }

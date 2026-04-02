@@ -113,7 +113,7 @@ class Registry:
             filtered_nodes = {}
             for node_name, node_data in nodes.items():
                 # Priority: module_path > module > file_path
-                # Use 'module' before 'file_path' so dotted patterns (pflow.nodes.git.*)
+                # Use 'module' before 'file_path' so dotted patterns
                 # work correctly - file_path is a filesystem path that won't match
                 module_path = node_data.get("module_path") or node_data.get("module") or node_data.get("file_path", "")
                 if self.settings_manager.should_include_node(node_name, module_path):

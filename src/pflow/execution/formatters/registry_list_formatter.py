@@ -94,7 +94,7 @@ def _group_nodes_by_package(nodes: dict[str, Any]) -> dict[str, dict[str, list[s
             category = "mcp"
             # Extract full server name from node ID (mcp-server-name-TOOL_NAME)
             # For mcp-composio-slack-SEND_MESSAGE -> "composio-slack"
-            # For mcp-github-LIST_REPOS -> "github"
+            # For mcp-slack-SEND_MESSAGE -> "slack"
             parts = name.split("-")
             if len(parts) >= 3:
                 # All parts between "mcp" and the tool name (last part, usually ALL_CAPS)

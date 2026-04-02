@@ -82,15 +82,6 @@ def show() -> None:
 
     click.echo(json.dumps(masked_dict, indent=2))
 
-    # Show if environment variable is overriding
-    import os
-
-    if os.getenv("PFLOW_INCLUDE_TEST_NODES"):
-        click.echo("\n⚠️  PFLOW_INCLUDE_TEST_NODES environment variable is set")
-        click.echo(
-            f"   Test nodes are {'enabled' if os.getenv('PFLOW_INCLUDE_TEST_NODES', '').lower() in ('true', '1', 'yes') else 'disabled'} via environment variable"
-        )
-
 
 @settings.command()
 @click.argument("pattern")
@@ -280,14 +271,6 @@ def _print_matching_patterns(settings: PflowSettings, candidates: list[str], nod
     matching_allow = [p for p in settings.registry.nodes.allow if any(fnmatch(c, p) for c in candidates)]
     if matching_allow:
         click.echo(f"  Matched allow patterns: {', '.join(matching_allow)}")
-
-    # Check environment override
-    import os
-
-    if os.getenv("PFLOW_INCLUDE_TEST_NODES") and node_name.startswith("test"):
-        env_value = os.getenv("PFLOW_INCLUDE_TEST_NODES", "").lower()
-        if env_value in ("true", "1", "yes"):
-            click.echo("\n  ⚠️  Test node included due to PFLOW_INCLUDE_TEST_NODES=true")
 
 
 @settings.command(name="set-env")

@@ -8,7 +8,7 @@ Usage:
     from tests.shared.engine_utils import compile_and_run
 
     shared = compile_and_run(ir, initial_params={"text": "hello"})
-    assert shared["echo"]["stdout"] == "hello"
+    assert shared["greeter"]["stdout"] == "hello"
 
     # With trace collector:
     collector = WorkflowTraceCollector("test")

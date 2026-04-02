@@ -176,11 +176,11 @@ class TestRegistryScannerIntegration:
             # Scanner output format
             scan_results = [
                 {
-                    "name": "test-node",
-                    "module": "pflow.nodes.test",
-                    "class_name": "ExampleNode",
-                    "docstring": "Test node",
-                    "file_path": "/path/test.py",
+                    "name": "shell",
+                    "module": "pflow.nodes.shell.shell",
+                    "class_name": "ShellNode",
+                    "docstring": "Shell node",
+                    "file_path": "/path/shell.py",
                 },
                 {
                     "name": "llm-node",
@@ -198,16 +198,16 @@ class TestRegistryScannerIntegration:
             loaded_data = registry.load()
 
             # Should be keyed by node name
-            assert "test-node" in loaded_data
+            assert "shell" in loaded_data
             assert "llm-node" in loaded_data
 
             # Name should not be in the stored data (it's the key)
-            assert "name" not in loaded_data["test-node"]
+            assert "name" not in loaded_data["shell"]
             assert "name" not in loaded_data["llm-node"]
 
             # Other fields should be preserved
-            assert loaded_data["test-node"]["module"] == "pflow.nodes.test"
-            assert loaded_data["test-node"]["class_name"] == "ExampleNode"
+            assert loaded_data["shell"]["module"] == "pflow.nodes.shell.shell"
+            assert loaded_data["shell"]["class_name"] == "ShellNode"
 
     def test_handles_scanner_nodes_without_names(self):
         """Test that scanner nodes missing names are skipped gracefully."""
