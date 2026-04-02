@@ -280,3 +280,16 @@ class TestExecErrorActionDetection:
 
         assert "returned error action" in msg
         assert "build.pflow.md" in msg
+
+    def test_extract_child_error_from_warnings(self):
+        """When failed_node has no 'error' key but __warnings__ has an entry, use it."""
+        child_storage = {
+            "__execution__": {"failed_node": "router"},
+            "router": {"result": "some_value"},
+            "__warnings__": {"router": "Node 'router' returned action 'banana' but no successor edge matches."},
+        }
+        msg = WorkflowExecutor._extract_child_error(child_storage, "child.pflow.md")
+
+        assert "banana" in msg
+        assert "no successor edge matches" in msg
+        assert "child.pflow.md" in msg

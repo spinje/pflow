@@ -3308,6 +3308,74 @@ class TestConditionalBranching:
         result = parse_markdown(content)
         assert result.ir is not None
 
+    def test_next_multi_target_with_end(self) -> None:
+        """'- next: step-3, end' creates edges for step-3 only, not for 'end'."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### router
+
+            Route to step-3 or end.
+
+            - type: code
+            - next: step-3, end
+
+            ```python code
+            if True:
+                next: str = "step-3"
+            else:
+                next: str = "end"
+            result: str = "routed"
+            ```
+
+            ### step-3
+
+            Final step.
+
+            - type: echo
+            - message: reached
+            - next: end
+        """)
+        result = parse_markdown(content)
+        edges = result.ir["edges"]
+
+        router_edges = [e for e in edges if e["from"] == "router"]
+        targets = {e["to"] for e in router_edges}
+        assert "step-3" in targets
+        assert "end" not in targets
+        # Single real target → should get action "default"
+        assert {"from": "router", "to": "step-3", "action": "default"} in router_edges
+
+    def test_node_named_end_rejected(self) -> None:
+        """A node with ID 'end' is rejected as reserved keyword."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### start
+
+            First step.
+
+            - type: echo
+            - message: hello
+
+            ### end
+
+            This should not be allowed.
+
+            - type: echo
+            - message: bye
+        """)
+        with pytest.raises(MarkdownParseError, match="reserved keyword"):
+            parse_markdown(content)
+
 
 # ===========================================================================
 # 18. YAML colon-in-value error enhancement

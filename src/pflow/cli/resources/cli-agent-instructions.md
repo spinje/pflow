@@ -1830,6 +1830,8 @@ Route based on input size.
 
 ```python code
 items: list
+if not items:
+    raise ValueError("No items to process")
 result: int = len(items)
 if len(items) > 100:
     next: str = "bulk-process"
@@ -1904,6 +1906,8 @@ echo "B: ${route.result}"
 - `- next: end` — terminate flow (no successor)
 - `- on-error: node-id` — route on failure (any node)
 - `next: str = "node-id"` — dynamic routing (code nodes only)
+- `next: str = "end"` — terminate from code (code nodes only, e.g., skip optional steps)
+- `"end"` is a reserved keyword — do not use it as a node ID
 - No `next` set in code → continues to next node in document order
 
 **Required: Branch targets MUST have explicit `- next:`**

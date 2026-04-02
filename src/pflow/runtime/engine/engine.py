@@ -32,6 +32,7 @@ from .instrumentation import (
     handle_api_warning,
     handle_cached_execution,
     initialize_execution_state,
+    invalidate_cache,
     record_trace,
     setup_llm_interception,
     write_memo_cache,
@@ -93,12 +94,9 @@ class WorkflowEngine:
 
             # Follow successor edge
             nxt = curr.successors.get(last_action or "default")
-            if not nxt and curr.successors:
-                shared.setdefault("__warnings__", {})[node_id] = (
-                    f"Node '{node_id}' returned action '{last_action}' "
-                    f"but no successor edge matches. Available: {list(curr.successors)}. "
-                    f"Execution stopped after this node."
-                )
+            if not nxt:
+                last_action = self._handle_no_successor(last_action, node_id, curr, shared)
+                break
             curr = nxt
 
         # 3. Populate declared outputs
@@ -109,6 +107,35 @@ class WorkflowEngine:
             populate_declared_outputs(shared, {"outputs": workflow.outputs})
 
         return str(last_action) if last_action else "default"
+
+    def _handle_no_successor(
+        self, last_action: Optional[str], node_id: str, curr: Any, shared: dict[str, Any]
+    ) -> Optional[str]:
+        """Handle case where no successor matches the current action.
+
+        Returns the (possibly updated) last_action.
+        """
+        if last_action == "end" or not curr.successors:
+            return last_action  # Intentional termination or end of chain
+
+        # Unmatched action — either a node failure with no error handler,
+        # or a routing error (code returned action not in declared targets)
+        is_node_failure = isinstance(last_action, str) and last_action.startswith("error")
+        suggestion = (
+            "Add '- on-error: <handler-node>' to handle errors."
+            if is_node_failure
+            else 'Use next: str = "end" to terminate intentionally.'
+        )
+        shared.setdefault("__warnings__", {})[node_id] = (
+            f"Node '{node_id}' returned action '{last_action}' "
+            f"but no successor edge matches. Available: {list(curr.successors)}. "
+            f"{suggestion}"
+        )
+        # Roll back success bookkeeping — _execute_node recorded this node as
+        # completed before we discovered the routing failure
+        invalidate_cache(node_id, shared)
+        shared["__execution__"]["failed_node"] = node_id
+        return "error"
 
     def _execute_node(self, node: Any, config: NodeConfig, shared: dict[str, Any]) -> str:  # noqa: C901
         """Execute a single node with all runtime concerns."""

@@ -211,17 +211,13 @@ class TestErrorRouting:
             ],
         }
 
-        # PocketFlow warns when action "default" has no matching edge — expected
-        # since this IR only has an "error" edge, and the node succeeds.
-        import warnings
+        # Node succeeds (returns "default") but only an "error" edge exists.
+        # This is a routing failure — the node executed but has no forward path.
+        shared = compile_and_run_ir(ir)
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", UserWarning)
-            shared = compile_and_run_ir(ir)
-
-        assert _node_ran(shared, "succeeder")
-        assert not _node_ran(shared, "handler")
-        assert shared["succeeder"]["result"] == "ok"
+        assert not _node_ran(shared, "handler")  # Error edge NOT taken
+        assert shared["succeeder"]["result"] == "ok"  # Node DID execute
+        assert shared["__execution__"]["failed_node"] == "succeeder"  # Routing failed
 
 
 # ===========================================================================
@@ -353,6 +349,88 @@ class TestNextEnd:
 
         assert _node_ran(shared, "stopper")
         assert not _node_ran(shared, "after-stopper")
+
+    def test_end_action_terminates_cleanly(self) -> None:
+        """Code node returning next='end' terminates without warning."""
+        ir = {
+            "nodes": [
+                {
+                    "id": "decider",
+                    "type": "code",
+                    "params": {
+                        "code": 'next: str = "end"\nresult: str = "decided"',
+                    },
+                },
+                {
+                    "id": "after-decider",
+                    "type": "echo",
+                    "params": {"message": "should not run"},
+                },
+            ],
+            # Edge exists so curr.successors is non-empty — tests "end" bypass
+            "edges": [{"from": "decider", "to": "after-decider", "action": "default"}],
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        assert _node_ran(shared, "decider")
+        assert not _node_ran(shared, "after-decider")
+        assert shared.get("__warnings__", {}) == {}
+        assert shared["__execution__"]["failed_node"] is None
+
+    def test_unmatched_action_sets_failed_node(self) -> None:
+        """Code node returning unrecognized action marks workflow as failed."""
+        ir = {
+            "nodes": [
+                {
+                    "id": "bad-router",
+                    "type": "code",
+                    "params": {
+                        "code": 'next: str = "nonexistent"\nresult: str = "routed"',
+                    },
+                },
+                {
+                    "id": "fallback",
+                    "type": "echo",
+                    "params": {"message": "fallback"},
+                },
+            ],
+            "edges": [{"from": "bad-router", "to": "fallback", "action": "default"}],
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        assert shared["__execution__"]["failed_node"] == "bad-router"
+        assert "bad-router" in shared.get("__warnings__", {})
+        assert 'next: str = "end"' in shared["__warnings__"]["bad-router"]
+
+    def test_unmatched_action_not_in_completed_nodes(self) -> None:
+        """Routing failure rolls back success bookkeeping — node must not appear completed."""
+        ir = {
+            "nodes": [
+                {
+                    "id": "bad-router",
+                    "type": "code",
+                    "params": {
+                        "code": 'next: str = "nonexistent"\nresult: str = "routed"',
+                    },
+                },
+                {
+                    "id": "fallback",
+                    "type": "echo",
+                    "params": {"message": "fallback"},
+                },
+            ],
+            "edges": [{"from": "bad-router", "to": "fallback", "action": "default"}],
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        exec_state = shared["__execution__"]
+        assert exec_state["failed_node"] == "bad-router"
+        assert "bad-router" not in exec_state["completed_nodes"]
+        assert "bad-router" not in exec_state.get("node_actions", {})
+        assert "bad-router" not in exec_state.get("node_hashes", {})
 
 
 # ===========================================================================
@@ -692,3 +770,88 @@ class TestFullPipeline:
         assert _node_ran(shared, "special-handler")
         assert not _node_ran(shared, "finish")
         assert shared["special-handler"]["echo"] == "special"
+
+    def test_pipeline_code_end_branch_no_warning(self) -> None:
+        """Code node with conditional next='end' produces no warning."""
+        markdown = _md("""\
+            # Conditional End Workflow
+
+            Skip email if address is empty.
+
+            ## Steps
+
+            ### checker
+
+            Check whether to continue or stop.
+
+            - type: code
+            - next: sender, end
+
+            ```python code
+            if True:
+                next: str = "end"
+            else:
+                next: str = "sender"
+            result: str = "checked"
+            ```
+
+            ### sender
+
+            Send the email.
+
+            - type: echo
+            - message: email-sent
+            - next: end
+        """)
+
+        shared = parse_compile_and_run(markdown)
+
+        assert _node_ran(shared, "checker")
+        assert not _node_ran(shared, "sender")
+        assert shared.get("__warnings__", {}) == {}
+        assert shared["__execution__"]["failed_node"] is None
+
+    def test_sub_workflow_end_does_not_leak_to_parent(self) -> None:
+        """Inner workflow terminating via 'end' must not stop the parent."""
+        markdown = _md("""\
+            # Parent Workflow
+
+            Outer workflow continues after sub-workflow ends early.
+
+            ## Steps
+
+            ### run-inner
+
+            Sub-workflow that terminates via end.
+
+            - type: workflow
+            - workflow_ir:
+                nodes:
+                  - id: inner-decider
+                    type: code
+                    params:
+                      code: |
+                        next: str = "end"
+                        result: str = "inner done"
+                  - id: inner-after
+                    type: echo
+                    params:
+                      message: should-not-run
+                edges:
+                  - from: inner-decider
+                    to: inner-after
+
+            ### outer-after
+
+            This must still run.
+
+            - type: echo
+            - message: outer-continued
+        """)
+
+        shared = parse_compile_and_run(markdown)
+
+        assert _node_ran(shared, "run-inner")
+        assert _node_ran(shared, "outer-after")
+        assert shared["outer-after"]["echo"] == "outer-continued"
+        assert shared.get("__warnings__", {}) == {}

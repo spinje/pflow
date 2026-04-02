@@ -328,9 +328,12 @@ class WorkflowExecutor(BaseNode):
                         continue
                     shared[key] = value
 
-        # Return result action
+        # Return result action — "end" from inner workflow means normal
+        # termination, map to "default" so it doesn't leak to parent engine
         child_result = exec_res.get("result")
-        return child_result if isinstance(child_result, str) else "default"
+        if not isinstance(child_result, str) or child_result == "end":
+            return "default"
+        return child_result
 
     @staticmethod
     def _is_file_reference(value: str) -> bool:
@@ -346,11 +349,16 @@ class WorkflowExecutor(BaseNode):
         """
         failed_node = child_storage.get("__execution__", {}).get("failed_node")
         if failed_node:
+            # Check namespaced node error (e.g., node's own post() set shared["error"])
             node_data = child_storage.get(failed_node)
             if isinstance(node_data, dict):
                 error = node_data.get("error")
                 if error:
                     return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {error}"
+            # Check warnings (e.g., routing failures, API warnings)
+            warning = child_storage.get("__warnings__", {}).get(failed_node)
+            if warning:
+                return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {warning}"
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:

@@ -468,8 +468,6 @@ def handle_api_warning(
         shared["__warnings__"] = {}
     shared["__warnings__"][node_id] = warning
 
-    shared["__execution__"]["completed_nodes"].append(node_id)
-    shared["__execution__"]["node_actions"][node_id] = "error"
     shared["__execution__"]["failed_node"] = node_id
 
     duration_ms = (time.perf_counter() - start_time) * 1000
