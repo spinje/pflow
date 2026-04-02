@@ -104,7 +104,7 @@ IR structure validation and input preparation.
   - Only one `stdin: true` input allowed
   - Type coercion via `coerce_input_to_declared_type()` — lenient (warns on failure, doesn't error)
 
-**WARNING**: A DIFFERENT `validator.py` exists at `core/workflow/validator.py` (pre-execution 8-step orchestrator, 7+ external consumers). Don't confuse them.
+**WARNING**: A DIFFERENT `validator.py` exists at `core/workflow/validator.py` (pre-execution 9-step orchestrator, 7+ external consumers). Don't confuse them.
 
 ## Dependency Graph (no cycles at import time)
 

@@ -103,7 +103,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
     "outputs": {...},                          # Optional - workflow output declarations
     "template_resolution_mode": "strict"       # Optional - "strict" or "permissive"
 }
-# Node: {"id": "unique-id", "type": "node-type", "params": {...}}
+# Node: {"id": "unique-id", "type": "node-type", "params": {...}, "cache": true/false (optional)}
 ```
 
 Validates beyond schema structure: catches duplicate IDs, node reference integrity, and provides fix suggestions.

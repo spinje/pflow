@@ -45,6 +45,7 @@ class WorkflowValidator:
         6. Output source validation - Output node references
         7. Unknown param errors - Rejects params not in node interface
         8. Sub-workflow validation - Recursive validation of child workflows
+        9. Cache lint - Warn about input-less shell nodes without cache: false
 
         Args:
             workflow_ir: Workflow to validate
@@ -109,6 +110,10 @@ class WorkflowValidator:
             workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
         )
         errors.extend(sub_errors)
+
+        # 9. Cache lint — warn about input-less shell nodes
+        cache_warnings = WorkflowValidator._warn_inputless_shell_nodes(workflow_ir)
+        warnings.extend(cache_warnings)
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
@@ -766,3 +771,54 @@ class WorkflowValidator:
                 [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
                 False,
             )
+
+    @staticmethod
+    def _warn_inputless_shell_nodes(workflow_ir: dict[str, Any]) -> list[ValidationWarning]:
+        """Warn when shell nodes have no template inputs and no cache: false.
+
+        A shell node with no ${...} variables in its params produces the same
+        cache key every run. If it reads external state (git branch, env vars,
+        filesystem), cached results silently return stale values.
+
+        Only warns when:
+        - Node type is 'shell'
+        - No template variables in any param value
+        - No batch config (batch nodes get different cache keys per item)
+        - No explicit cache: false already set
+        """
+        warnings: list[ValidationWarning] = []
+        for node in workflow_ir.get("nodes", []):
+            if node.get("type") != "shell":
+                continue
+            if "cache" in node:
+                continue
+            if node.get("batch"):
+                continue
+
+            params = node.get("params", {})
+            if not params:
+                continue  # No params at all (unusual for shell, but nothing to warn about)
+
+            # Check if any param value contains real pflow template variables.
+            # Uses extract_variables() (strict regex) instead of has_templates()
+            # (naive "${" substring) to avoid false positives on bash syntax
+            # like ${var:-default}, ${array[@]}, and $${escaped}.
+            has_pflow_templates = False
+            for value in params.values():
+                if isinstance(value, str) and TemplateResolver.extract_variables(value):
+                    has_pflow_templates = True
+                    break
+
+            if not has_pflow_templates:
+                warnings.append(
+                    ValidationWarning(
+                        node_id=node["id"],
+                        message=(
+                            "Shell node has no template inputs — cached results will "
+                            "persist across runs. Consider '- cache: false' if this "
+                            "node reads runtime state (git, env, filesystem)."
+                        ),
+                    )
+                )
+
+        return warnings

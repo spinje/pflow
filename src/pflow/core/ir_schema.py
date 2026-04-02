@@ -176,6 +176,10 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "description": "Maps param names to source file paths (injected by file resolver)",
                         "additionalProperties": {"type": "string"},
                     },
+                    "cache": {
+                        "type": "boolean",
+                        "description": "Whether to cache this node's output across runs (default: true)",
+                    },
                 },
                 "required": ["id", "type"],
                 "additionalProperties": False,

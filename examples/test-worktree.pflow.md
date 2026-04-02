@@ -36,9 +36,10 @@ Whether to open Claude Code in the new worktree.
 
 ### git_status
 
-Check git repository status to understand current state.
+Check git repository status. Not cached because git state changes between runs.
 
 - type: shell
+- cache: false
 
 ```shell command
 git status --short
@@ -49,6 +50,7 @@ git status --short
 Get current git branch name for reference.
 
 - type: shell
+- cache: false
 
 ```shell command
 git branch --show-current
@@ -59,6 +61,7 @@ git branch --show-current
 Get current directory name for worktree path generation.
 
 - type: shell
+- cache: false
 
 ```shell command
 basename $(pwd)

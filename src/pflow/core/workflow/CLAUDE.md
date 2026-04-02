@@ -10,7 +10,7 @@ core/workflow/
 ├── manager.py               # WorkflowManager: save/load/list/delete workflows (folder-based)
 ├── save_service.py          # Shared save operations for CLI + MCP (with dependency bundling)
 ├── dependency_discovery.py  # Recursive file dependency scanner for bundling
-├── validator.py             # Unified 7-step validation orchestrator
+├── validator.py             # Unified 9-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
 ├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
@@ -46,7 +46,7 @@ No cycles. `save_service → validator` and `save_service → skill_service` are
 | `manager.py` | `WorkflowManager` |
 | `save_service.py` | `load_and_validate_workflow`, `save_workflow_with_options`, `validate_workflow_name`, `delete_draft_safely`, `generate_workflow_metadata` |
 | `dependency_discovery.py` | `Dependency`, `discover_dependencies` |
-| `validator.py` | `WorkflowValidator` (static `.validate()` method — 8-step pipeline) |
+| `validator.py` | `WorkflowValidator` (static `.validate()` method — 9-step pipeline) |
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
 | `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
 | `skill_service.py` | `SkillInfo`, `enrich_workflow`, `create_skill_symlink`, `find_pflow_skills`, `remove_skill`, `re_enrich_if_skill` |
@@ -92,7 +92,7 @@ The entry point has YAML frontmatter for system metadata (timestamps, execution 
 
 Unified validation orchestrator. Replaces scattered validation that previously existed in multiple places.
 
-**8-step validation pipeline**:
+**9-step validation pipeline**:
 1. Structural (IR schema) — always runs
 2. Stdin inputs — only one `stdin: true` allowed per workflow
 3. Data flow (execution order, dependencies) — always runs
@@ -101,6 +101,7 @@ Unified validation orchestrator. Replaces scattered validation that previously e
 6. Output sources — validates `${node.key}` refs in outputs, with fuzzy "did you mean?" suggestions
 7. Unknown param warnings — flags params not in node interface metadata (warnings, not errors)
 8. Sub-workflow validation — recursive validation of referenced child workflows (file, saved name, inline IR)
+9. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
 
 ### data_flow.py
 

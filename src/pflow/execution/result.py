@@ -40,7 +40,7 @@ class ValidationResult:
     valid: bool
     errors: list[str] = field(default_factory=list)
     warnings: list[dict[str, Any]] = field(default_factory=list)
-    # warnings shape: {"node": str, "node_type": str, "template": str, "message": str}
+    # warnings shape: {"node_id": str, "message": str, "template": str | None}
 
 
 @dataclass

@@ -295,6 +295,25 @@ pflow ./workflow.pflow.md --no-cache
 
 Use this when a node has external side effects (API calls, file writes) that should always run, or when cached results seem stale.
 
+### Per-node opt-out
+
+For nodes that read runtime state (`git branch`, `date`, environment variables), use `- cache: false` to permanently skip caching for that node. Unlike `--no-cache`, this skips both cache reads and writes:
+
+```markdown
+### get-branch
+
+Detect the current git branch.
+
+- type: shell
+- cache: false
+
+```shell command
+git branch --show-current
+```
+```
+
+Validation warns when a shell node has no template inputs and no `cache: false` — a sign its cached results may go stale across runs.
+
 ## Traces and reports
 
 By default, pflow saves execution traces to `~/.pflow/debug/`:

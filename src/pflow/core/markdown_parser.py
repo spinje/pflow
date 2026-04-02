@@ -1284,6 +1284,10 @@ def _build_node_dict(entity: _Entity) -> tuple[dict[str, Any], dict[str, Any]]:
     if "batch" in all_params:
         node["batch"] = all_params.pop("batch")
 
+    # Extract cache (goes to top-level, not params)
+    if "cache" in all_params:
+        node["cache"] = all_params.pop("cache")
+
     # Extract routing metadata (not stored in params)
     routing: dict[str, Any] = {}
     if "next" in all_params:

@@ -355,6 +355,7 @@ def _create_node_and_config(
         batch_config=batch_config,
         namespaced=enable_namespacing,
         interface_metadata=interface_metadata,
+        cache_enabled=node_data.get("cache", True),
     )
 
     return node_instance, node_config

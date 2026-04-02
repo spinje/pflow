@@ -32,13 +32,13 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │
         ├─ INSIDE try (template errors get trace recording):
         │  5. resolve_templates (SKIP for batch nodes — per-item in callback)
-        │  6. check_memo_cache → early return via handle_cached_execution
+        │  6. check_memo_cache → early return (SKIP when cache_enabled=False)
         │  7. check_cache_validity → early return via handle_cached_execution
         │  8. call_start_callback
         │  9. execute: batch → execute_batch() | single → node._run(namespaced_store)
         │  10. detect_api_warning → handle_api_warning if found
-        │  11-17. cache_result, write_memo_cache, metrics, enrich_llm_cost,
-        │         record_trace, call_completion_callback
+        │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False),
+        │  13-17. duration, metrics, enrich_llm_cost, record_trace, call_completion_callback
         │
         └─ EXCEPT (error path — ~30% of _execute_node):
            metrics, enrich_llm_cost, record_trace(error=e),
@@ -97,7 +97,7 @@ The return tuple is the contract between engine and batch executor. Changing it 
 ## Types (`types.py`)
 
 - **`CompiledWorkflow`** — structural result from `compile_workflow()`. Reusable for sequential batch items within one execution. **NOT safe for concurrent `engine.run()` calls** — `node.params` is mutated during execution.
-- **`NodeConfig`** — per-node metadata: template config, batch config, namespacing flag, interface metadata
+- **`NodeConfig`** — per-node metadata: template config, batch config, namespacing flag, interface metadata, cache_enabled flag
 - **`TemplateConfig`** — template vs static param split, expected types, resolution mode, optional input keys
 - **`BatchConfig`** — items template, alias, error handling, parallel/sequential, concurrency, retry settings
 

@@ -58,23 +58,23 @@ class TestValidationWarningsPropagateToResult:
         runner = WorkflowRunner()
         result = runner.run(NESTED_ACCESS_IR, {}, RunnerConfig())
 
-        # Regardless of execution success/failure, validation warnings must be present
-        assert len(result.validation_warnings) == 1, (
-            f"Expected exactly 1 validation warning for nested access on str output, "
-            f"got {len(result.validation_warnings)}: {result.validation_warnings}"
+        # Filter for template warnings (not lint warnings like cache advisory)
+        template_warnings = [w for w in result.validation_warnings if w.get("template")]
+
+        assert len(template_warnings) == 1, (
+            f"Expected exactly 1 template validation warning for nested access on str output, "
+            f"got {len(template_warnings)}: {template_warnings}"
         )
 
-        warning = result.validation_warnings[0]
+        warning = template_warnings[0]
 
         # Verify the warning dict has the expected structure
-        assert "node" in warning, f"Warning dict missing 'node' key: {warning}"
-        assert "node_type" in warning, f"Warning dict missing 'node_type' key: {warning}"
+        assert "node_id" in warning, f"Warning dict missing 'node_id' key: {warning}"
         assert "template" in warning, f"Warning dict missing 'template' key: {warning}"
         assert "message" in warning, f"Warning dict missing 'message' key: {warning}"
 
         # Verify values are populated (not None or empty)
-        assert warning["node"], f"'node' should have a value, got: {warning['node']}"
-        assert warning["node_type"], f"'node_type' should have a value, got: {warning['node_type']}"
+        assert warning["node_id"], f"'node_id' should have a value, got: {warning['node_id']}"
         assert warning["message"], f"'message' should have a value, got: {warning['message']}"
 
         # The template should reference the nested access
@@ -89,10 +89,12 @@ class TestValidationWarningsPropagateToResult:
 
         assert result.validation_warnings, "Expected validation warnings"
 
-        warning = result.validation_warnings[0]
-        assert warning["node"] == "fetch", f"Warning should identify 'fetch' as the source node, got: {warning['node']}"
-        assert warning["node_type"] == "shell", (
-            f"Warning should identify 'shell' as the node type, got: {warning['node_type']}"
+        # Filter for template warning (not cache lint warning)
+        template_warnings = [w for w in result.validation_warnings if w.get("template")]
+        assert template_warnings, "Expected at least one template validation warning"
+        warning = template_warnings[0]
+        assert warning["node_id"] == "fetch", (
+            f"Warning should identify 'fetch' as the source node, got: {warning['node_id']}"
         )
 
     def test_mocked_warnings_propagate_through_runner(self):
@@ -100,13 +102,9 @@ class TestValidationWarningsPropagateToResult:
         result.validation_warnings. Tests the plumbing independently of
         what specific validation logic triggers warnings."""
         synthetic_warning = ValidationWarning(
-            template="${api.result.data.items}",
             node_id="api",
-            node_type="mcp-server-tool",
-            output_key="result",
-            output_type="any",
-            reason="Cannot verify nested access on 'any' type at validation time",
-            nested_path="data.items",
+            message="Cannot verify nested access on 'any' type at validation time",
+            template="${api.result.data.items}",
         )
 
         original_validate = WorkflowRunner._validate
@@ -146,14 +144,13 @@ class TestValidationWarningsPropagateToResult:
         )
 
         warning = matching[0]
-        assert warning["node"] == "api"
-        assert warning["node_type"] == "mcp-server-tool"
+        assert warning["node_id"] == "api"
         assert warning["message"] == "Cannot verify nested access on 'any' type at validation time"
         assert warning["template"] == "${api.result.data.items}"
 
     def test_validation_warnings_empty_when_no_nested_access(self):
-        """When there are no nested accesses on str outputs, validation_warnings
-        should be empty."""
+        """When there are no nested accesses on str outputs, template-related
+        validation_warnings should be empty. (Cache lint warnings may still appear.)"""
         simple_ir = {
             "nodes": [
                 {
@@ -168,6 +165,8 @@ class TestValidationWarningsPropagateToResult:
         runner = WorkflowRunner()
         result = runner.run(simple_ir, {}, RunnerConfig())
 
-        assert result.validation_warnings == [], (
-            f"Expected no validation warnings for simple workflow, got: {result.validation_warnings}"
+        # Filter for template warnings only (exclude lint warnings like cache advisory)
+        template_warnings = [w for w in result.validation_warnings if w.get("template")]
+        assert template_warnings == [], (
+            f"Expected no template validation warnings for simple workflow, got: {template_warnings}"
         )
