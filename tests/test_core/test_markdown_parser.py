@@ -416,6 +416,153 @@ class TestEntityParsing:
         with pytest.raises(MarkdownParseError, match="Duplicate entity ID 'fetch'"):
             parse_markdown(content)
 
+    def test_duplicate_steps_section_raises(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ## Steps
+
+            ### goodbye
+
+            Says goodbye.
+
+            - type: shell
+        """)
+        with pytest.raises(MarkdownParseError, match="Duplicate '## Steps' section") as exc_info:
+            parse_markdown(content)
+        assert "Merge with the existing" in str(exc_info.value.suggestion)
+        # Error line points to the duplicate (line 13), suggestion references the original (line 5)
+        assert exc_info.value.line == 13
+        assert "line 5" in str(exc_info.value.suggestion)
+
+    def test_duplicate_inputs_section_raises(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Inputs
+
+            ### message
+
+            A message.
+
+            - type: str
+
+            ## Inputs
+
+            ### name
+
+            A name.
+
+            - type: str
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+        """)
+        with pytest.raises(MarkdownParseError, match="Duplicate '## Inputs' section"):
+            parse_markdown(content)
+
+    def test_duplicate_outputs_section_raises(self) -> None:
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ## Outputs
+
+            ### result
+
+            The result.
+
+            - from: hello
+
+            ## Outputs
+
+            ### other
+
+            Another output.
+
+            - from: hello
+        """)
+        with pytest.raises(MarkdownParseError, match="Duplicate '## Outputs' section"):
+            parse_markdown(content)
+
+    def test_duplicate_section_case_insensitive(self) -> None:
+        """## Steps and ## steps both resolve to STEPS — duplicate detected."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ## steps
+
+            ### goodbye
+
+            Says goodbye.
+
+            - type: shell
+        """)
+        with pytest.raises(MarkdownParseError, match="Duplicate '## Steps' section"):
+            parse_markdown(content)
+
+    def test_duplicate_unknown_sections_allowed(self) -> None:
+        """Unknown sections (not Inputs/Steps/Outputs) can repeat without error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Notes
+
+            Some notes.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ## Notes
+
+            More notes.
+        """)
+        result = parse_markdown(content)
+        assert len(result.ir["nodes"]) == 1
+
 
 # ===========================================================================
 # 4. YAML param parsing

@@ -206,6 +206,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     result = MarkdownParseResult(ir={}, source=content)
     warnings: list[str] = []
     orphaned_lines: dict[_SectionType, list[int]] = {}
+    seen_sections: dict[_SectionType, int] = {}  # section_type → first line number
 
     lines = content.splitlines()
     total_lines = len(lines)
@@ -305,6 +306,14 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
             current_entity = None
             section_name = stripped[3:].strip()
             current_section, is_steps, warning = _resolve_section(section_name, line_num)
+            if current_section in _KNOWN_SECTIONS and current_section in seen_sections:
+                raise MarkdownParseError(
+                    f"Duplicate '## {_SECTION_DISPLAY_NAMES[current_section]}' section.",
+                    line=line_num,
+                    suggestion=f"Merge with the existing '## {_SECTION_DISPLAY_NAMES[current_section]}' section at line {seen_sections[current_section]}.",
+                )
+            if current_section in _KNOWN_SECTIONS:
+                seen_sections[current_section] = line_num
             if is_steps:
                 steps_section_found = True
             if warning:
