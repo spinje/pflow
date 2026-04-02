@@ -181,30 +181,32 @@ class WorkflowEngine:
                     config.template_config, shared, config.node_id
                 )
 
-            # 6. Memoization cache check
-            hit, result, cache_key = check_memo_cache(
-                config.node_id,
-                config.node_type_name,
-                config_hash,
-                config.batch_config,
-                shared,
-                visit_counts,
-                resolved_params=resolved_params,
-            )
-            if hit:
-                return str(
-                    handle_cached_execution(
-                        config.node_id,
-                        shared,
-                        result,
-                        shared_keys_before,
-                        config.node_type_name,
-                        node.params,
-                        self.trace,
-                    )
+            # 6. Memoization cache check (skip for nodes with cache: false)
+            cache_key: Optional[str] = None
+            if config.cache_enabled:
+                hit, result, cache_key = check_memo_cache(
+                    config.node_id,
+                    config.node_type_name,
+                    config_hash,
+                    config.batch_config,
+                    shared,
+                    visit_counts,
+                    resolved_params=resolved_params,
                 )
+                if hit:
+                    return str(
+                        handle_cached_execution(
+                            config.node_id,
+                            shared,
+                            result,
+                            shared_keys_before,
+                            config.node_type_name,
+                            node.params,
+                            self.trace,
+                        )
+                    )
 
-            # 7. In-process cache check
+            # 7. In-process cache check (always runs — scoped to this traversal, not cross-run)
             cached, cached_action = check_cache_validity(config.node_id, config_hash, shared)
             if cached:
                 return str(
@@ -257,11 +259,12 @@ class WorkflowEngine:
                     node.params,
                 )
 
-            # 11. Cache result
+            # 11. Cache result (in-process only — not gated by cache_enabled)
             cache_result(config.node_id, config_hash, action, shared)
 
-            # 12. Memo cache write
-            write_memo_cache(config.node_id, shared, cache_key, action)
+            # 12. Memo cache write (skip for nodes with cache: false)
+            if config.cache_enabled:
+                write_memo_cache(config.node_id, shared, cache_key, action)
 
             # 13. Duration
             duration_ms = (time.perf_counter() - start_time) * 1000

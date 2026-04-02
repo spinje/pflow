@@ -607,19 +607,18 @@ class WorkflowRunner:
         if isinstance(warning, dict):
             return warning
         return {
-            "node": getattr(warning, "node_id", None),
-            "node_type": getattr(warning, "node_type", None),
+            "node_id": getattr(warning, "node_id", None),
             "template": getattr(warning, "template", None),
-            "message": str(warning) if not hasattr(warning, "reason") else warning.reason,
+            "message": getattr(warning, "message", str(warning)),
         }
 
     @staticmethod
     def _deduplicate_warnings(warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Deduplicate validation warnings by (node, template)."""
+        """Deduplicate validation warnings by (node_id, template)."""
         seen: set[tuple[str | None, str | None]] = set()
         result: list[dict[str, Any]] = []
         for w in warnings:
-            key = (w.get("node"), w.get("template"))
+            key = (w.get("node_id"), w.get("template"))
             if key not in seen:
                 seen.add(key)
                 result.append(w)

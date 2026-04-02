@@ -642,6 +642,7 @@ pflow caches node outputs automatically. When you edit a prompt or parameter and
 - Edit a prompt file → re-run → only affected nodes execute (~seconds, not minutes)
 - `--only <node>` → run just that node (upstream cached, downstream skipped)
 - `--no-cache` → force everything fresh (side-effect nodes, external API changes)
+- `- cache: false` on a node → permanently opt out of caching for nodes that read runtime state (`git branch`, `date`, env vars)
 
 <!-- PART 2 START: Building Workflows -->
 <!-- Covers: Input declaration, node creation patterns, validation, testing, saving workflows, technical reference -->

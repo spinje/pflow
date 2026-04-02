@@ -21,20 +21,16 @@ MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
 
 @dataclass
 class ValidationWarning:
-    """Warning about runtime-validated template access.
+    """Pre-execution warning about a node or template.
 
-    Emitted when static validation cannot verify a template path
-    (e.g., accessing nested fields on outputs with type 'Any').
-    These templates will be validated at runtime during execution.
+    General-purpose warning type used by all validation steps.
+    Template warnings include the template field; lint warnings
+    (e.g., cache advisories) set template to None.
     """
 
-    template: str  # Full template with ${}
-    node_id: str  # Node producing the output
-    node_type: str  # Node type (often MCP)
-    output_key: str  # Output key being accessed
-    output_type: str  # Type causing runtime validation
-    reason: str  # Human-readable explanation
-    nested_path: str  # Nested portion: "data.field[0]"
+    node_id: str  # Node this warning applies to
+    message: str  # Human-readable explanation
+    template: str | None = None  # Template string (for template warnings only)
 
 
 def split_template_path(template: str) -> list[str]:

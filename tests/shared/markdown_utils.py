@@ -76,6 +76,10 @@ def ir_to_markdown(  # noqa: C901
             lines.append("")
             # Type param (extracted to top-level in IR, but written as param in markdown)
             lines.append(f"- type: {node['type']}")
+            # Cache opt-out
+            cache = node.get("cache")
+            if cache is not None:
+                lines.append(f"- cache: {'true' if cache else 'false'}")
             # Params
             params = node.get("params", {})
             for key, value in params.items():

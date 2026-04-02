@@ -124,9 +124,8 @@ class TestValidationWarnings:
         assert len(warnings) == 1
         warning = warnings[0]
         assert "shell" in warning.node_id
-        assert warning.output_type == "str"
-        assert "field" in warning.nested_path
-        assert "requires valid JSON" in warning.reason
+        assert "requires valid JSON" in warning.message
+        assert warning.template is not None
 
     def test_any_nested_template_no_warning(self):
         """any output with nested template should NOT warn (explicit declaration)."""
@@ -183,20 +182,21 @@ class TestValidationWarnings:
     def test_warning_dataclass_structure(self):
         """ValidationWarning should have all required fields."""
         warning = ValidationWarning(
-            template="${test.stdout.data}",
             node_id="test-node",
-            node_type="shell",
-            output_key="stdout",
-            output_type="str",
-            reason="Test reason",
-            nested_path="data",
+            message="Test reason",
+            template="${test.stdout.data}",
         )
 
-        assert warning.template == "${test.stdout.data}"
         assert warning.node_id == "test-node"
-        assert warning.nested_path == "data"
-        assert warning.output_type == "str"
-        assert warning.output_key == "stdout"
+        assert warning.message == "Test reason"
+        assert warning.template == "${test.stdout.data}"
+
+        # Test lint-style warning (no template)
+        lint_warning = ValidationWarning(
+            node_id="get-branch",
+            message="Shell node has no inputs",
+        )
+        assert lint_warning.template is None
 
     def test_multiple_nested_templates_generate_multiple_warnings(self):
         """Multiple nested accesses on str type should generate multiple warnings."""
@@ -253,10 +253,8 @@ class TestValidationWarnings:
 
         warning = warnings[0]
         assert warning.node_id == "my-shell"
-        assert warning.node_type == "shell-node"
-        assert warning.output_key == "stdout"
-        assert warning.output_type == "str"
-        assert "nested.path" in warning.nested_path
+        assert "requires valid JSON" in warning.message
+        assert warning.template is not None
 
 
 class TestWarningEdgeCases:
@@ -293,4 +291,4 @@ class TestWarningEdgeCases:
 
         # Should still have warning for str nested access
         assert len(warnings) == 1
-        assert "requires valid JSON" in warnings[0].reason
+        assert "requires valid JSON" in warnings[0].message

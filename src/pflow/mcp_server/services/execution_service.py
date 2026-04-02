@@ -267,9 +267,16 @@ class ExecutionService(BaseService):
 
             msg = format_validation_success()
             if vresult.warnings:
-                warning_text = "\n".join(
-                    f"  ⚠ {w.get('template', '?')}: {w.get('message', '')}" for w in vresult.warnings
-                )
+
+                def _format_warning(w: dict) -> str:
+                    node = w.get("node_id", "?")
+                    template = w.get("template")
+                    message = w.get("message", "")
+                    if template:
+                        return f"  ⚠ [{node}] {template}: {message}"
+                    return f"  ⚠ [{node}] {message}"
+
+                warning_text = "\n".join(_format_warning(w) for w in vresult.warnings)
                 msg += f"\n\nWarnings:\n{warning_text}"
             return msg
         else:

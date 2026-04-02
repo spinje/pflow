@@ -359,12 +359,6 @@ def _display_execution_result(
     from pflow.cli.error_output import output_error
     from pflow.core.workflow.status import WorkflowStatus
 
-    # Surface validation warnings (pre-execution diagnostics from WorkflowValidator)
-    if result.validation_warnings and output_format != "json":
-        for w in result.validation_warnings:
-            node = w.get("node", "?")
-            click.echo(f"  ⚠ [{node}] {w.get('template', '?')}: {w.get('message', '')}", err=True)
-
     if result.success:
         _handle_workflow_success(
             ctx=ctx,
@@ -414,7 +408,13 @@ def _display_validation_result(
             click.echo(format_validation_success())
             if vresult.warnings:
                 for w in vresult.warnings:
-                    click.echo(f"  ⚠ {w.get('template', '?')}: {w.get('message', '')}", err=True)
+                    node = w.get("node_id", "?")
+                    template = w.get("template")
+                    message = w.get("message", "")
+                    if template:
+                        click.echo(f"  ⚠ [{node}] {template}: {message}", err=True)
+                    else:
+                        click.echo(f"  ⚠ [{node}] {message}", err=True)
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 

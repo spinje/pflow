@@ -164,8 +164,8 @@ class TestValidationCorrectBehavior:
         result = ExecutionService.validate_workflow(workflow)
 
         assert isinstance(result, str), "Should return string"
-        # Minimal success message (token-efficient)
-        assert result == "✓ Workflow is valid"
+        # Minimal success message (token-efficient), may include cache lint warnings
+        assert result.startswith("✓ Workflow is valid")
 
     def test_accepts_workflow_with_valid_templates(self):
         """Valid template variables should pass."""

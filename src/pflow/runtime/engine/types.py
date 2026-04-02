@@ -43,6 +43,7 @@ class NodeConfig:
     batch_config: Optional[BatchConfig]  # None if not a batch node
     namespaced: bool  # Whether node outputs are namespaced
     interface_metadata: Optional[dict[str, Any]]  # Registry interface for type validation
+    cache_enabled: bool = True  # Whether to use memoization cache (per-node opt-out)
 
 
 @dataclass

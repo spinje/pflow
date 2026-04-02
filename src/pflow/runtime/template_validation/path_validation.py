@@ -178,18 +178,13 @@ def validate_namespaced_output(
         # This matches the behavior of check_type_allows_traversal for field access
         if output_type in ["str", "string"]:
             # Generate warning about JSON auto-parsing requirement
-            nested_path = f"[{array_index}]" + (".".join(parts[2:]) if len(parts) > 2 else "")
             warning = ValidationWarning(
-                template=template if template.startswith("${") else f"${{{template}}}",
                 node_id=output_info.get("node_id", "unknown"),
-                node_type=output_info.get("node_type", "unknown"),
-                output_key=base_output,
-                output_type=output_type,
-                reason=(
+                message=(
                     f"Array access on '{output_type}' requires valid JSON array at runtime. "
                     f"Non-JSON strings cause 'Unresolved variables' error."
                 ),
-                nested_path=nested_path,
+                template=template if template.startswith("${") else f"${{{template}}}",
             )
             return (True, warning)
         return (False, None)
@@ -295,16 +290,12 @@ def check_type_allows_traversal(
 
     if string_types and len(path_parts) > 0:
         warning = ValidationWarning(
-            template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
             node_id=output_info.get("node_id", "unknown"),
-            node_type=output_info.get("node_type", "unknown"),
-            output_key=output_key,
-            output_type=output_type,
-            reason=(
+            message=(
                 f"Nested access on '{output_type}' requires valid JSON at runtime. "
                 f"Non-JSON strings cause 'Unresolved variables' error."
             ),
-            nested_path=".".join(path_parts),
+            template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
         )
 
     return (True, warning)
