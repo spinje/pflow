@@ -532,7 +532,7 @@ class WorkflowValidator:
     # =========================================================================
 
     @staticmethod
-    def _validate_sub_workflows(
+    def _validate_sub_workflows(  # noqa: C901
         workflow_ir: dict[str, Any],
         extracted_params: Optional[dict[str, Any]],
         registry: Optional[Registry],
@@ -547,6 +547,7 @@ class WorkflowValidator:
         full validation on it. Catches parse errors, structural errors,
         missing required inputs, and cycles.
         """
+        from pflow.core.file_resolver import resolve_file_references
         from pflow.core.ir_schema import normalize_ir
         from pflow.core.validation_utils import generate_dummy_parameters
         from pflow.runtime.workflow_executor import WorkflowExecutor
@@ -580,6 +581,16 @@ class WorkflowValidator:
             if not already_seen:
                 # Normalize child IR (adds ir_version, edges) — same as CLI/save paths
                 normalize_ir(child_ir)
+
+                # Resolve file references so template validation sees variables
+                # inside external files (e.g. prompt files referenced in batch items).
+                # Matches the top-level pipeline: resolve → file_refs → validate.
+                if child_path:
+                    try:
+                        resolve_file_references(child_ir, child_path.parent)
+                    except FileNotFoundError as e:
+                        errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}")
+                        continue
 
             # Static required-input check — always runs, even for already-seen children,
             # because each parent node may provide different params.
