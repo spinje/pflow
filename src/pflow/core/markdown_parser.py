@@ -126,6 +126,44 @@ class _SectionType(Enum):
     UNKNOWN = auto()
 
 
+_KNOWN_SECTIONS: set[_SectionType] = {
+    _SectionType.INPUTS,
+    _SectionType.STEPS,
+    _SectionType.OUTPUTS,
+}
+
+_SECTION_DISPLAY_NAMES: dict[_SectionType, str] = {
+    _SectionType.INPUTS: "Inputs",
+    _SectionType.STEPS: "Steps",
+    _SectionType.OUTPUTS: "Outputs",
+}
+
+_SECTION_SYNTAX_HINTS: dict[_SectionType, str] = {
+    _SectionType.INPUTS: (
+        "Inputs must use ### heading syntax:\n\n"
+        "    ### input-name\n\n"
+        "    Description of the input.\n\n"
+        "    - type: str\n"
+        "    - required: true"
+    ),
+    _SectionType.STEPS: (
+        "Steps must use ### heading syntax:\n\n"
+        "    ### step-name\n\n"
+        "    Description of what this step does.\n\n"
+        "    - type: shell\n\n"
+        "    ```shell command\n"
+        '    echo "hello"\n'
+        "    ```"
+    ),
+    _SectionType.OUTPUTS: (
+        "Outputs must use ### heading syntax:\n\n"
+        "    ### output-name\n\n"
+        "    Description of the output.\n\n"
+        "    - value: ${step-name.output}"
+    ),
+}
+
+
 @dataclass
 class _CodeBlock:
     """A collected code block within an entity."""
@@ -167,6 +205,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     """
     result = MarkdownParseResult(ir={}, source=content)
     warnings: list[str] = []
+    orphaned_lines: dict[_SectionType, list[int]] = {}
 
     lines = content.splitlines()
     total_lines = len(lines)
@@ -224,6 +263,8 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                     block_content = "\n".join(code_block_lines)
                     if current_entity is not None:
                         _append_code_block(current_entity, code_block_tag, block_content, code_fence_line)
+                    elif current_section in _KNOWN_SECTIONS:
+                        orphaned_lines.setdefault(current_section, []).extend([code_fence_line, line_num])
                     in_code_block = False
                     code_block_lines = []
                     continue
@@ -342,6 +383,10 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 h1_prose_parts.append(stripped)
             continue
 
+        # --- Orphaned content in known sections ---
+        if current_section in _KNOWN_SECTIONS and stripped:
+            orphaned_lines.setdefault(current_section, []).append(line_num)
+
     # --- End of file ---
     _flush_yaml_item()
 
@@ -356,6 +401,27 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     # Set workflow description from H1 prose
     if h1_prose_parts:
         result.description = "\n\n".join(_join_prose_paragraphs(h1_prose_parts))
+
+    # Check for orphaned content in known sections
+    for section_type, line_nums in orphaned_lines.items():
+        section_name = _SECTION_DISPLAY_NAMES[section_type]
+        entity_count = sum(1 for e in entities if e.section_type == section_type)
+        first_line = min(line_nums)
+        last_line = max(line_nums)
+
+        line_ref = f"line {first_line}" if first_line == last_line else f"lines {first_line}-{last_line}"
+
+        if entity_count == 0:
+            raise MarkdownParseError(
+                f"'{section_name}' section has content but no {section_name.lower()} were parsed ({line_ref}).",
+                line=first_line,
+                suggestion=_SECTION_SYNTAX_HINTS[section_type],
+            )
+        else:
+            warnings.append(
+                f"Unparsed content in '{section_name}' section ({line_ref}). "
+                f"Content before the first ### heading is not captured."
+            )
 
     # --- Phase 3: Validate structure ---
     if not steps_section_found:

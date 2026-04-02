@@ -143,7 +143,8 @@ def _validate_template_reference(
         node_position: Position of the current node in execution order
         nodes_by_id: Mapping of node IDs to node objects
         node_positions: Mapping of node IDs to execution positions
-        declared_inputs: Set of declared input parameters
+        declared_inputs: All valid simple refs for this node context
+            (workflow inputs + batch aliases + node-level params.inputs keys)
         loop_forward_limits: For loop targets, the max position they can reference
         check_inputs: Whether to validate undefined input references
 
@@ -182,7 +183,16 @@ def _validate_template_reference(
                 f"Node '{node_id}' references undefined input '${{{ref}}}' "
                 f"in parameter '{param_name}' - did you mean '${{{close_matches[0]}}}'?"
             )
-        return f"Node '{node_id}' references undefined input '${{{ref}}}' in parameter '{param_name}'"
+        if not declared_inputs:
+            return (
+                f"Node '{node_id}' references '${{{ref}}}' in parameter '{param_name}' "
+                f"but no inputs are declared in this workflow"
+            )
+        return (
+            f"Node '{node_id}' references undefined input '${{{ref}}}' "
+            f"in parameter '{param_name}'. "
+            f"Declared inputs: {', '.join(sorted(declared_inputs))}"
+        )
     return None
 
 

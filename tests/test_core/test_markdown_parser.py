@@ -2008,6 +2008,205 @@ echo step {i}
         result = parse_markdown(content)
         assert '{"result": "${gen.stdout}"}' in result.ir["outputs"]["data"]["source"]
 
+    def test_orphaned_yaml_content_in_inputs_error(self) -> None:
+        """YAML-block syntax under ## Inputs with no ### headings raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Inputs
+
+            message:
+              type: str
+              description: A message
+              required: true
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        with pytest.raises(MarkdownParseError, match="'Inputs' section has content but no inputs were parsed"):
+            parse_markdown(content)
+
+    def test_orphaned_yaml_content_in_outputs_error(self) -> None:
+        """YAML-block syntax under ## Outputs with no ### headings raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+
+            ## Outputs
+
+            result:
+              value: ${hello.output}
+        """)
+        with pytest.raises(MarkdownParseError, match="'Outputs' section has content but no outputs were parsed"):
+            parse_markdown(content)
+
+    def test_orphaned_content_in_steps_error(self) -> None:
+        """Non-heading content under ## Steps with no ### headings raises error."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Steps
+
+            - name: fetch-data
+              type: shell
+              run: curl http://example.com
+        """)
+        with pytest.raises(MarkdownParseError, match="'Steps' section has content but no steps were parsed"):
+            parse_markdown(content)
+
+    def test_orphaned_prose_before_entity_warning(self) -> None:
+        """Prose before the first ### entity in a known section produces a warning."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Inputs
+
+            These are the workflow parameters.
+
+            ### message
+
+            A message.
+
+            - type: str
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        result = parse_markdown(content)
+        assert any("Unparsed content" in w and "Inputs" in w for w in result.warnings)
+        # Workflow still parses correctly
+        assert "message" in result.ir["inputs"]
+
+    def test_orphaned_code_fence_in_known_section(self) -> None:
+        """Code fence between ## and ### in known section is detected as orphaned."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Inputs
+
+            ```yaml
+            message:
+              type: str
+            ```
+
+            ### actual-input
+
+            A real input.
+
+            - type: str
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        result = parse_markdown(content)
+        assert any("Unparsed content" in w and "Inputs" in w for w in result.warnings)
+
+    def test_no_orphan_detection_for_unknown_sections(self) -> None:
+        """Content under unknown ## sections does not trigger orphan warnings."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Notes
+
+            This is a design note that should not trigger warnings.
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        result = parse_markdown(content)
+        orphan_warnings = [w for w in result.warnings if "Unparsed content" in w]
+        assert orphan_warnings == []
+
+    def test_orphaned_content_error_includes_syntax_hint(self) -> None:
+        """Orphan error for inputs includes the correct syntax example."""
+        content = _md("""\
+            # Test
+
+            A test.
+
+            ## Inputs
+
+            message:
+              type: str
+
+            ## Steps
+
+            ### hello
+
+            Says hello.
+
+            - type: shell
+
+            ```shell command
+            echo hello
+            ```
+        """)
+        with pytest.raises(MarkdownParseError) as exc_info:
+            parse_markdown(content)
+        err = exc_info.value
+        assert err.suggestion is not None
+        assert "### input-name" in err.suggestion
+        assert "- type: str" in err.suggestion
+
 
 # ===========================================================================
 # 16. Source line tracking for runtime error references

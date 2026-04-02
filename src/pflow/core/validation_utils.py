@@ -109,7 +109,11 @@ def generate_validation_suggestions(errors: list[dict[str, str]]) -> list[str]:
     for error in errors:
         message = error.get("message", "").lower()
 
-        if "template" in message or "${" in message:
+        if "no inputs are declared" in message:
+            suggestions.append("Declare inputs in the ## Inputs section with ### headings")
+        elif "undefined input" in message:
+            pass  # Error already lists declared inputs or suggests typo fix
+        elif "template" in message or "${" in message:
             suggestions.append("Check template syntax: ${node.output}")
         elif "node type" in message or "unknown node" in message:
             suggestions.append("Use 'registry list' to see available nodes")
@@ -119,4 +123,10 @@ def generate_validation_suggestions(errors: list[dict[str, str]]) -> list[str]:
             suggestions.append("Remove unused inputs or use them in node parameters")
 
     # De-duplicate suggestions
-    return list(set(suggestions))
+    result = list(dict.fromkeys(suggestions))
+
+    # Don't suggest template syntax check when the real issue is missing inputs
+    if any("Declare inputs" in s for s in result):
+        result = [s for s in result if "Check template syntax" not in s]
+
+    return result
