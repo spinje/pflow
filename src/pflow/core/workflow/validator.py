@@ -532,7 +532,7 @@ class WorkflowValidator:
     # =========================================================================
 
     @staticmethod
-    def _validate_sub_workflows(  # noqa: C901
+    def _validate_sub_workflows(
         workflow_ir: dict[str, Any],
         extracted_params: Optional[dict[str, Any]],
         registry: Optional[Registry],
@@ -550,7 +550,6 @@ class WorkflowValidator:
         from pflow.core.file_resolver import resolve_file_references
         from pflow.core.ir_schema import normalize_ir
         from pflow.core.validation_utils import generate_dummy_parameters
-        from pflow.runtime.workflow_executor import WorkflowExecutor
 
         errors: list[str] = []
         seen = _seen if _seen is not None else set()
@@ -588,24 +587,14 @@ class WorkflowValidator:
                 if child_path:
                     try:
                         resolve_file_references(child_ir, child_path.parent)
-                    except FileNotFoundError as e:
+                    except (FileNotFoundError, OSError, UnicodeDecodeError) as e:
                         errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}")
                         continue
 
             # Static required-input check — always runs, even for already-seen children,
             # because each parent node may provide different params.
-            parent_keys = {k for k in params if k not in WorkflowExecutor.RESERVED_PARAMS and not k.startswith("__")}
             child_inputs = child_ir.get("inputs", {})
-            for input_name, input_spec in child_inputs.items():
-                is_required = input_spec.get("required", True)
-                has_default = "default" in input_spec
-                if is_required and not has_default and input_name not in parent_keys:
-                    available = ", ".join(sorted(child_inputs.keys()))
-                    errors.append(
-                        f"Step '{node_id}': sub-workflow '{ref_label}' requires "
-                        f"input '{input_name}' but it is not provided. "
-                        f"Available inputs: {available}"
-                    )
+            errors.extend(WorkflowValidator._check_required_inputs(node_id, ref_label, params, child_inputs))
 
             # Recursive validation — skip if this child was already validated
             if not already_seen:
@@ -625,6 +614,30 @@ class WorkflowValidator:
                 for err in child_errors:
                     errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {err}")
 
+        return errors
+
+    @staticmethod
+    def _check_required_inputs(
+        node_id: str,
+        ref_label: str,
+        parent_params: dict[str, Any],
+        child_inputs: dict[str, Any],
+    ) -> list[str]:
+        """Check that all required child inputs are provided by the parent node."""
+        from pflow.runtime.workflow_executor import WorkflowExecutor
+
+        errors: list[str] = []
+        parent_keys = {k for k in parent_params if k not in WorkflowExecutor.RESERVED_PARAMS and not k.startswith("__")}
+        for input_name, input_spec in child_inputs.items():
+            is_required = input_spec.get("required", True)
+            has_default = "default" in input_spec
+            if is_required and not has_default and input_name not in parent_keys:
+                available = ", ".join(sorted(child_inputs.keys()))
+                errors.append(
+                    f"Step '{node_id}': sub-workflow '{ref_label}' requires "
+                    f"input '{input_name}' but it is not provided. "
+                    f"Available inputs: {available}"
+                )
         return errors
 
     @staticmethod
