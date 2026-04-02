@@ -115,8 +115,8 @@ class WorkflowEngine:
 
         Returns the (possibly updated) last_action.
         """
-        if last_action == "end" or not curr.successors:
-            return last_action  # Intentional termination or end of chain
+        if last_action == "end" or all(k == "error" for k in curr.successors):
+            return last_action  # Intentional termination or no forward path
 
         # Unmatched action — either a node failure with no error handler,
         # or a routing error (code returned action not in declared targets)

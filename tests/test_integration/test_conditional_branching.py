@@ -211,13 +211,13 @@ class TestErrorRouting:
             ],
         }
 
-        # Node succeeds (returns "default") but only an "error" edge exists.
-        # This is a routing failure — the node executed but has no forward path.
+        # Node succeeds — only error edges exist, so this is clean termination
+        # (no forward path, not a routing failure).
         shared = compile_and_run_ir(ir)
 
         assert not _node_ran(shared, "handler")  # Error edge NOT taken
         assert shared["succeeder"]["result"] == "ok"  # Node DID execute
-        assert shared["__execution__"]["failed_node"] == "succeeder"  # Routing failed
+        assert shared["__execution__"]["failed_node"] is None  # Clean termination
 
 
 # ===========================================================================
@@ -432,6 +432,38 @@ class TestNextEnd:
         assert "bad-router" not in exec_state.get("node_actions", {})
         assert "bad-router" not in exec_state.get("node_hashes", {})
 
+    def test_error_only_successors_terminate_on_success(self) -> None:
+        """Node with only 'error' edges terminates cleanly on success.
+
+        When a node's only successor is an error edge, success means 'done' —
+        there is no forward path. This is the IR-level equivalent of
+        '- next: end' + '- on-error: handler'.
+        """
+        ir = {
+            "nodes": [
+                {
+                    "id": "primary",
+                    "type": "shell",
+                    "params": {"command": "printf '%s' ok"},
+                },
+                {
+                    "id": "handler",
+                    "type": "shell",
+                    "params": {"command": "printf '%s' handled"},
+                },
+            ],
+            # Only an error edge — no default successor
+            "edges": [{"from": "primary", "to": "handler", "action": "error"}],
+        }
+
+        shared = compile_and_run_ir(ir)
+
+        assert _node_ran(shared, "primary")
+        assert not _node_ran(shared, "handler")
+        assert shared["primary"]["stdout"] == "ok"
+        assert shared.get("__warnings__", {}) == {}
+        assert shared["__execution__"]["failed_node"] is None
+
 
 # ===========================================================================
 # TestFullPipeline — Markdown -> parse -> compile -> run
@@ -553,6 +585,82 @@ class TestFullPipeline:
         assert _node_ran(shared, "stopper")
         assert not _node_ran(shared, "unreachable")
         assert shared["stopper"]["result"] == "done"
+
+    def test_pipeline_next_end_with_on_error(self) -> None:
+        """A node with both '- next: end' and '- on-error:' terminates on success.
+
+        Regression test: the engine previously treated the error-only successor
+        map as a routing failure because 'default' was absent. The correct
+        behavior is to recognize that no forward (non-error) path means
+        intentional termination.
+        """
+        markdown = _md("""\
+            # Fallback Chain
+
+            Primary fetch with fallback on error.
+
+            ## Steps
+
+            ### primary
+
+            Try the primary path. On success, stop. On error, fall back.
+
+            - type: shell
+            - command: printf '%s' primary-ok
+            - on-error: fallback
+            - next: end
+
+            ### fallback
+
+            Fallback path if primary fails.
+
+            - type: shell
+            - command: printf '%s' fallback-ok
+            - next: end
+        """)
+
+        shared = parse_compile_and_run(markdown)
+
+        assert _node_ran(shared, "primary")
+        assert not _node_ran(shared, "fallback")
+        assert shared["primary"]["stdout"] == "primary-ok"
+        assert shared.get("__warnings__", {}) == {}
+        assert shared["__execution__"]["failed_node"] is None
+
+    def test_pipeline_next_end_with_on_error_takes_fallback(self) -> None:
+        """When the primary node fails, on-error routes to the fallback."""
+        markdown = _md("""\
+            # Fallback Chain — Error Path
+
+            Primary fails, fallback runs.
+
+            ## Steps
+
+            ### primary
+
+            A step that will fail.
+
+            - type: code
+            - on-error: fallback
+            - next: end
+
+            ```python code
+            result: int = 1 // 0
+            ```
+
+            ### fallback
+
+            Fallback path runs on error.
+
+            - type: shell
+            - command: printf '%s' fallback-ok
+            - next: end
+        """)
+
+        shared = parse_compile_and_run(markdown)
+
+        assert _node_ran(shared, "fallback")
+        assert shared["fallback"]["stdout"] == "fallback-ok"
 
     def test_pipeline_validated_branching_with_upstream_refs(self) -> None:
         """Branch targets referencing upstream data pass validation (not just execution).
