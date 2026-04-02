@@ -206,7 +206,7 @@ class WorkflowEngine:
                         )
                     )
 
-            # 7. In-process cache check
+            # 7. In-process cache check (always runs — scoped to this traversal, not cross-run)
             cached, cached_action = check_cache_validity(config.node_id, config_hash, shared)
             if cached:
                 return str(
@@ -259,7 +259,7 @@ class WorkflowEngine:
                     node.params,
                 )
 
-            # 11. Cache result
+            # 11. Cache result (in-process only — not gated by cache_enabled)
             cache_result(config.node_id, config_hash, action, shared)
 
             # 12. Memo cache write (skip for nodes with cache: false)
