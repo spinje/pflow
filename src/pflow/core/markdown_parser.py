@@ -23,6 +23,7 @@ from typing import Any
 
 import yaml
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.suggestion_utils import find_similar_items
 
@@ -47,7 +48,7 @@ class MarkdownParseResult:
     description: str | None = None
     metadata: dict[str, Any] | None = None
     source: str = ""
-    warnings: list[str] = field(default_factory=list)
+    warnings: list[Diagnostic] = field(default_factory=list)
 
 
 # --- Internal types ---
@@ -204,7 +205,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
         MarkdownParseError: If the content has structural or syntax errors.
     """
     result = MarkdownParseResult(ir={}, source=content)
-    warnings: list[str] = []
+    warnings: list[Diagnostic] = []
     orphaned_lines: dict[_SectionType, list[int]] = {}
     seen_sections: dict[_SectionType, int] = {}  # section_type → first line number
 
@@ -428,8 +429,15 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
             )
         else:
             warnings.append(
-                f"Unparsed content in '{section_name}' section ({line_ref}). "
-                f"Content before the first ### heading is not captured."
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message=(
+                        f"Unparsed content in '{section_name}' section ({line_ref}). "
+                        "Content before the first ### heading is not captured."
+                    ),
+                    suggestion="Move content under a ### heading, or remove it.",
+                    source="parser",
+                )
             )
 
     # --- Phase 3: Validate structure ---
@@ -553,7 +561,7 @@ def _extract_param_name(tag: str) -> str:
     return parts[-1]
 
 
-def _resolve_section(section_name: str, line_num: int) -> tuple[_SectionType, bool, str | None]:
+def _resolve_section(section_name: str, line_num: int) -> tuple[_SectionType, bool, Diagnostic | None]:
     """Resolve an H2 section name to a section type.
 
     Returns (section_type, is_steps, optional_warning).
@@ -569,7 +577,12 @@ def _resolve_section(section_name: str, line_num: int) -> tuple[_SectionType, bo
     warning = None
     if section_lower in _NEAR_MISS_SECTIONS:
         expected = _NEAR_MISS_SECTIONS[section_lower]
-        warning = f"Line {line_num}: '## {section_name}' looks like a typo — did you mean '## {expected}'?"
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            message=f"Line {line_num}: '## {section_name}' looks like a typo for '## {expected}'.",
+            suggestion=f"Rename to '## {expected}'.",
+            source="parser",
+        )
     return _SectionType.UNKNOWN, False, warning
 
 

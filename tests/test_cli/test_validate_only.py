@@ -305,6 +305,183 @@ class TestValidateOnlyJSONOutput:
         assert isinstance(output_data["errors"], list)
         assert len(output_data["errors"]) > 0
 
+    def test_validate_only_json_warnings_are_structured(self, tmp_path: Path) -> None:
+        """JSON warnings should be serialized as structured dicts, not Diagnostic repr strings."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "shell",
+                    "type": "shell",
+                    "params": {"command": "echo hello"},
+                }
+            ],
+            "edges": [],
+        }
+
+        workflow_path = tmp_path / "warning.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
+
+        assert result.exit_code == 0
+        output_data = json.loads(result.output)
+
+        assert output_data["warnings"], "Expected cache lint warning in validate-only JSON"
+        warning = output_data["warnings"][0]
+        assert isinstance(warning, dict)
+        assert warning["severity"] == "warning"
+        assert warning["source"] == "validator"
+        assert warning["node_id"] == "shell"
+        assert warning["suggestion"]
+
+
+class TestParserWarningsReachCLI:
+    """End-to-end regression tests for issue #209: parser warnings silently lost.
+
+    These verify that parser-level diagnostics (section typos, orphaned content)
+    actually appear in CLI text and JSON output — the full pipeline from
+    parse_markdown() through the runner through display.
+    """
+
+    def test_parser_typo_warning_appears_in_validate_text(self, tmp_path: Path) -> None:
+        """A '## Input' typo (near-miss for '## Inputs') must appear in validate-only text."""
+        workflow_md = (
+            "# Test\n\n"
+            "## Input\n\n"  # typo — should warn about near-miss for '## Inputs'
+            "### api-key\n\n"
+            "User API key.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo a greeting.\n\n"
+            "- type: shell\n"
+            "- command: echo hello\n"
+        )
+        workflow_path = tmp_path / "typo.pflow.md"
+        workflow_path.write_text(workflow_md)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+
+        assert result.exit_code == 0
+        # The parser warning must reach stderr
+        assert "Input" in result.stderr, (
+            f"Parser typo warning not in CLI text output.\nstdout: {result.output}\nstderr: {result.stderr}"
+        )
+        assert "Inputs" in result.stderr
+
+    def test_parser_typo_warning_appears_in_validate_json(self, tmp_path: Path) -> None:
+        """A '## Input' typo must appear in the diagnostics array of validate-only JSON."""
+        workflow_md = (
+            "# Test\n\n"
+            "## Input\n\n"  # typo — should warn about near-miss for '## Inputs'
+            "### api-key\n\n"
+            "User API key.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo a greeting.\n\n"
+            "- type: shell\n"
+            "- command: echo hello\n"
+        )
+        workflow_path = tmp_path / "typo.pflow.md"
+        workflow_path.write_text(workflow_md)
+
+        result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
+
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        diagnostics = data.get("diagnostics", [])
+        parser_warnings = [d for d in diagnostics if d.get("source") == "parser"]
+        assert parser_warnings, (
+            f"Parser warning not in validate-only JSON diagnostics.\nFull output: {json.dumps(data, indent=2)}"
+        )
+        assert any("Input" in w["message"] for w in parser_warnings)
+
+    def test_parser_typo_warning_appears_in_execution_output(self, tmp_path: Path) -> None:
+        """A parser warning must survive through execution (not just validate-only)."""
+        workflow_md = (
+            "# Test\n\n"
+            "## Input\n\n"  # typo — should warn about near-miss for '## Inputs'
+            "### api-key\n\n"
+            "User API key.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### echo\n\n"
+            "Echo a greeting.\n\n"
+            "- type: shell\n"
+            "- command: echo hello\n"
+        )
+        workflow_path = tmp_path / "typo.pflow.md"
+        workflow_path.write_text(workflow_md)
+
+        result = invoke_cli([str(workflow_path)])
+
+        # Workflow should succeed (the ## Input section is just ignored, not an error)
+        # Parser warning should appear in output
+        combined = result.output + result.stderr
+        assert "Input" in combined and "Inputs" in combined, (
+            f"Parser typo warning not in execution output.\nstdout: {result.output}\nstderr: {result.stderr}"
+        )
+
+
+class TestFailurePathShowsWarnings:
+    """Regression test: failure output must show warnings alongside errors.
+
+    The spec requires 'Failure path shows warnings (currently doesn't)'.
+    Before Task 143, warnings were silently dropped on the failure path.
+    This tests the full display pipeline — not just the data model.
+    """
+
+    def test_failed_workflow_shows_parser_warning_in_error_output(self, tmp_path: Path) -> None:
+        """A workflow that fails must show parser warnings alongside the error.
+
+        Scenario: parent workflow has a parser typo AND calls a child that
+        fails due to a missing required input. The error output must show
+        both the error AND the parser warning.
+        """
+        child = tmp_path / "child.pflow.md"
+        child.write_text(
+            "# Child\n\n"
+            "## Inputs\n\n"
+            "### required_value\n\n"
+            "A required input.\n\n"
+            "- type: string\n"
+            "- required: true\n\n"
+            "## Steps\n\n"
+            "### use-it\n\n"
+            "Use the input.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo ${required_value}\n",
+            encoding="utf-8",
+        )
+
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\n"
+            "## Input\n\n"  # typo — parser warning
+            "### unused\n\n"
+            "Not used.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### call-child\n\n"
+            "Run the child without providing required_value.\n\n"
+            f"- type: workflow\n"
+            f"- workflow: {child}\n",
+            encoding="utf-8",
+        )
+
+        result = invoke_cli([str(parent)])
+
+        assert result.exit_code != 0, "Workflow should fail (missing required input)"
+        # Error must be present
+        assert "failed" in result.stderr.lower() or "error" in result.stderr.lower(), (
+            f"Expected error in output.\nstderr: {result.stderr}"
+        )
+        # Parser warning must ALSO be present — this is the regression guard
+        assert "Warning" in result.stderr, f"Expected warnings section in failure output.\nstderr: {result.stderr}"
+
 
 class TestValidateOnlyWithComplexWorkflows:
     """Test validation with more complex workflow patterns."""

@@ -8,7 +8,8 @@ Warning behavior:
 
 from unittest.mock import Mock
 
-from pflow.runtime.template_validation import ValidationWarning, validate_workflow_templates
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.runtime.template_validation import validate_workflow_templates
 
 
 def create_mock_registry_with_str_output():
@@ -125,7 +126,7 @@ class TestValidationWarnings:
         warning = warnings[0]
         assert "shell" in warning.node_id
         assert "requires valid JSON" in warning.message
-        assert warning.template is not None
+        assert (warning.context or {}).get("template") is not None
 
     def test_any_nested_template_no_warning(self):
         """any output with nested template should NOT warn (explicit declaration)."""
@@ -180,23 +181,30 @@ class TestValidationWarnings:
         assert len(warnings) == 0
 
     def test_warning_dataclass_structure(self):
-        """ValidationWarning should have all required fields."""
-        warning = ValidationWarning(
+        """Diagnostic warnings should have all required fields."""
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            source="validator",
             node_id="test-node",
             message="Test reason",
-            template="${test.stdout.data}",
+            suggestion="Fix the template.",
+            context={"template": "${test.stdout.data}"},
         )
 
         assert warning.node_id == "test-node"
         assert warning.message == "Test reason"
-        assert warning.template == "${test.stdout.data}"
+        assert warning.suggestion == "Fix the template."
+        assert (warning.context or {}).get("template") == "${test.stdout.data}"
 
         # Test lint-style warning (no template)
-        lint_warning = ValidationWarning(
+        lint_warning = Diagnostic(
+            severity=Severity.WARNING,
+            source="validator",
             node_id="get-branch",
             message="Shell node has no inputs",
+            suggestion="Add '- cache: false' if this node reads runtime state.",
         )
-        assert lint_warning.template is None
+        assert (lint_warning.context or {}).get("template") is None
 
     def test_multiple_nested_templates_generate_multiple_warnings(self):
         """Multiple nested accesses on str type should generate multiple warnings."""
@@ -254,7 +262,7 @@ class TestValidationWarnings:
         warning = warnings[0]
         assert warning.node_id == "my-shell"
         assert "requires valid JSON" in warning.message
-        assert warning.template is not None
+        assert (warning.context or {}).get("template") is not None
 
 
 class TestWarningEdgeCases:

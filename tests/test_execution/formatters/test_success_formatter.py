@@ -4,6 +4,7 @@ These tests catch real bugs that could break execution output for agents and CLI
 Each test documents what bug it prevents.
 """
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.execution.formatters.output_utils import find_auto_output
 from pflow.execution.formatters.success_formatter import (
     _append_execution_steps,
@@ -11,6 +12,7 @@ from pflow.execution.formatters.success_formatter import (
     _format_batch_node_line,
     _format_execution_step,
     _truncate_error_message,
+    format_execution_success,
     format_success_as_text,
 )
 
@@ -469,9 +471,41 @@ class TestFormatSuccessAsText:
         text = format_success_as_text(result_dict)
 
         assert "⚠️ Warnings:" in text
-        assert "send-alert (api_warning):" in text
+        assert "[send-alert] API error: Rate limit exceeded" in text
         assert "API error: Rate limit exceeded" in text
         assert "Retry after 30s" in text
+
+    def test_format_execution_success_serializes_warning_diagnostics_for_json(self):
+        """REGRESSION: Warning diagnostics stay structured in success JSON output.
+
+        Real bug this catches: Raw Diagnostic objects under ``warnings`` get
+        stringified to ``Diagnostic(...)`` reprs by JSON serialization.
+        """
+        result = format_execution_success(
+            shared_storage={"stdout": "ok"},
+            workflow_ir={},
+            metrics_collector=None,
+            warnings=[
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message="Shell node has no template inputs",
+                    suggestion="Add '- cache: false' if this node reads runtime state.",
+                    node_id="run-shell",
+                    source="validator",
+                )
+            ],
+        )
+
+        assert result["warnings"] == [
+            {
+                "severity": "warning",
+                "message": "Shell node has no template inputs",
+                "source": "validator",
+                "suggestion": "Add '- cache: false' if this node reads runtime state.",
+                "node_id": "run-shell",
+            }
+        ]
+        assert result["diagnostics"] == result["warnings"]
 
 
 class TestNonBatchNodesUnchanged:

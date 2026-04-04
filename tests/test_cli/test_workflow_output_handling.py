@@ -89,6 +89,7 @@ def mock_compile():
         def run_mock(workflow, params, config, **kwargs):
             # Store the IR for reference
             shared_data["last_ir"] = workflow
+            workflow_ir = workflow.ir if hasattr(workflow, "ir") else workflow
 
             # Create result with our test node's output
             shared_storage = {}
@@ -96,15 +97,15 @@ def mock_compile():
             # Create and run our test node
             node = MockOutputNode()
             # Extract params from the IR if available
-            if isinstance(workflow, dict):
-                node_params = workflow.get("nodes", [{}])[0].get("params", {})
+            if isinstance(workflow_ir, dict):
+                node_params = workflow_ir.get("nodes", [{}])[0].get("params", {})
                 node.set_params(node_params)
             node.run(shared_storage)
 
             # Create a successful result
             from pflow.execution.result import ExecutionResult
 
-            return ExecutionResult(success=True, errors=[], shared_after=shared_storage)
+            return ExecutionResult(success=True, diagnostics=[], shared_after=shared_storage)
 
         mock_run.side_effect = run_mock
         yield mock_run

@@ -8,7 +8,7 @@ at the Runner level or using real shell execution where feasible.
 from unittest.mock import MagicMock, patch
 
 from pflow.execution.result import ExecutionResult
-from pflow.mcp_server.services.execution_service import ExecutionService
+from pflow.mcp_server.services.execution_service import ExecutionService, _build_error_text
 
 
 class TestRegistryRunMCP:
@@ -238,3 +238,14 @@ class TestRegistryRunMCP:
         assert isinstance(result, str)
         # Must contain actual error context, not generic fallback
         assert "Workflow execution failed" not in result or "exit" in result.lower()
+
+    def test_build_error_text_omits_error_number_for_single_error(self):
+        """Single-error MCP text should use "Error at node", not "Error 1 at node"."""
+        error_text = _build_error_text({
+            "error": {"message": "Workflow execution failed"},
+            "errors": [{"node_id": "run-tests", "message": "Shell command failed"}],
+            "trace_path": "",
+        })
+
+        assert "Error at node 'run-tests':" in error_text
+        assert "Error 1 at node 'run-tests':" not in error_text

@@ -85,7 +85,7 @@ class TestIssue95Prevention:
         assert len(result.errors) > 0
         error = result.errors[0]
         # Validator catches that nonexistent_field is not a valid shell output
-        assert "nonexistent_field" in error["message"]
+        assert "nonexistent_field" in error.message
 
         # No user nodes should have completed
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
@@ -159,7 +159,7 @@ class TestIssue95Prevention:
         # Verify error is about the nonexistent field
         assert len(result.errors) > 0
         error = result.errors[0]
-        assert "nonexistent_field" in error["message"]
+        assert "nonexistent_field" in error.message
 
         # No user nodes should have completed
         completed = result.shared_after.get("__execution__", {}).get("completed_nodes", [])
@@ -222,6 +222,7 @@ class TestTriStateStatus:
                 {
                     "id": "producer",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo data"},
                 },
                 {
@@ -268,7 +269,7 @@ class TestTriStateStatus:
         assert len(result.errors) > 0
 
         # Error should mention the missing variable
-        error_message = result.errors[0]["message"]
+        error_message = result.errors[0].message
         assert "missing_variable" in error_message
 
     def test_failed_status_for_strict_mode(self):
@@ -390,7 +391,7 @@ class TestMultipleTemplateErrors:
         assert result.status == WorkflowStatus.FAILED
 
         # Both template errors should be captured in the error message
-        error_messages = " ".join(e["message"] for e in result.errors)
+        error_messages = " ".join(error.message for error in result.errors)
         assert "missing1" in error_messages
         assert "missing2" in error_messages
 
@@ -461,7 +462,7 @@ class TestEnhancedErrorMessages:
 
         # Should fail with detailed error
         assert not result.success
-        error_message = result.errors[0]["message"]
+        error_message = result.errors[0].message
 
         # Error should mention the wrong field
         assert "wrong_field" in error_message

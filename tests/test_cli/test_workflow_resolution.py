@@ -142,7 +142,9 @@ class TestWorkflowResolutionCLI:
 
                 # Verify the IR was passed correctly
                 call_args = mock_execute.call_args[0]
-                assert call_args[1]["nodes"][0]["type"] == "test_node"
+                workflow_arg = call_args[1]
+                workflow_ir = workflow_arg.ir if hasattr(workflow_arg, "ir") else workflow_arg
+                assert workflow_ir["nodes"][0]["type"] == "test_node"
 
     def test_run_workflow_with_pflow_md_extension(self):
         """Test running workflow with .pflow.md extension strips it."""

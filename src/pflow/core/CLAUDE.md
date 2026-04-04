@@ -55,11 +55,11 @@ PflowError(Exception)                    <- base for all pflow errors
   |- SchemaValidationError               <- IR schema validation (message, path, suggestion)
   |- MarkdownParseError                  <- .pflow.md parse errors (line, suggestion)
   |- CompilationError                    <- IR compilation (phase, node_id, node_type, suggestion)
-  |- WorkflowValidationError             <- pre-execution validation (summary, validation_errors, format_for_cli())
-  |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint, format_for_cli())
+  |- WorkflowValidationError             <- pre-execution validation (summary, validation_errors)
+  |- WorkflowNotFoundError               <- workflow lookup (workflow_name, similar_names, hint)
   |- WorkflowExistsError                 <- duplicate workflow save
   |- CriticalDiscoveryError              <- discovery abort (node_name, reason)
-  |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions, format_for_cli())
+  |- UserFriendlyError                   <- user_errors.py (title, explanation, suggestions)
   |   |- MCPError                        <- user_errors.py
   |   |- OutputResolutionError           <- user_errors.py (failures list)
 MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop guard)
@@ -84,9 +84,11 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
+`format_for_cli()` methods were removed in Task 143. Convert exceptions to `Diagnostic` via `pflow.core.diagnostic.exception_to_diagnostics()` and render text with `format_diagnostic()`.
+
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
-- Runtime phase catches exceptions and converts to error **dicts**
+- Runtime phase catches exceptions and converts to **Diagnostic** objects
 - CLI formats errors based on output mode (text/JSON)
 
 ### ir_schema.py

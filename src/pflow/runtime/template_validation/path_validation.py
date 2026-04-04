@@ -8,10 +8,10 @@ and all error formatting for path-related issues.
 import logging
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.registry import Registry
 from pflow.runtime.template_validation.utils import (
     MAX_DISPLAYED_FIELDS,
-    ValidationWarning,
     build_paths_from_entries,
     find_similar_paths,
     get_node_ids,
@@ -33,7 +33,7 @@ def validate_template_paths(
     node_outputs: dict[str, Any],
     workflow_ir: dict[str, Any],
     registry: Registry,
-) -> tuple[list[str], list[ValidationWarning]]:
+) -> tuple[list[str], list[Diagnostic]]:
     """Validate each template path exists in available sources.
 
     Wraps the per-template loop: for every template, checks existence
@@ -50,7 +50,7 @@ def validate_template_paths(
         Tuple of (errors, warnings)
     """
     errors: list[str] = []
-    warnings: list[ValidationWarning] = []
+    warnings: list[Diagnostic] = []
 
     for template in sorted(all_templates):
         is_valid, warning = validate_template_path(template, available_params, node_outputs, workflow_ir, registry)
@@ -76,7 +76,7 @@ def validate_template_path(
     node_outputs: dict[str, Any],
     workflow_ir: dict[str, Any],
     registry: Registry,
-) -> tuple[bool, Optional[ValidationWarning]]:
+) -> tuple[bool, Optional[Diagnostic]]:
     """Validate a template path exists in available sources.
 
     With namespacing enabled, we need to distinguish between:
@@ -131,7 +131,7 @@ def validate_namespaced_output(
     base_var: str,
     node_outputs: dict[str, Any],
     template: str,
-) -> tuple[bool, Optional[ValidationWarning]]:
+) -> tuple[bool, Optional[Diagnostic]]:
     """Validate a namespaced node output reference with array index support.
 
     Handles patterns like:
@@ -178,13 +178,16 @@ def validate_namespaced_output(
         # This matches the behavior of check_type_allows_traversal for field access
         if output_type in ["str", "string"]:
             # Generate warning about JSON auto-parsing requirement
-            warning = ValidationWarning(
+            warning = Diagnostic(
+                severity=Severity.WARNING,
+                source="validator",
                 node_id=output_info.get("node_id", "unknown"),
                 message=(
                     f"Array access on '{output_type}' requires valid JSON array at runtime. "
                     f"Non-JSON strings cause 'Unresolved variables' error."
                 ),
-                template=template if template.startswith("${") else f"${{{template}}}",
+                suggestion="Ensure the value is a valid JSON array at runtime.",
+                context={"template": template if template.startswith("${") else f"${{{template}}}"},
             )
             return (True, warning)
         return (False, None)
@@ -198,7 +201,7 @@ def validate_namespaced_output(
 
 def validate_nested_path(
     path_parts: list[str], output_info: dict[str, Any], full_template: str = "", output_key: str = ""
-) -> tuple[bool, Optional[ValidationWarning]]:
+) -> tuple[bool, Optional[Diagnostic]]:
     """Validate a nested path exists in the output structure.
 
     Args:
@@ -250,7 +253,7 @@ def validate_nested_path(
 
 def check_type_allows_traversal(
     output_type: str, path_parts: list[str], output_info: dict[str, Any], full_template: str, output_key: str
-) -> tuple[bool, Optional[ValidationWarning]]:
+) -> tuple[bool, Optional[Diagnostic]]:
     """Check if output type allows traversal and generate warning if needed.
 
     Args:
@@ -289,13 +292,16 @@ def check_type_allows_traversal(
     warning = None
 
     if string_types and len(path_parts) > 0:
-        warning = ValidationWarning(
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            source="validator",
             node_id=output_info.get("node_id", "unknown"),
             message=(
                 f"Nested access on '{output_type}' requires valid JSON at runtime. "
                 f"Non-JSON strings cause 'Unresolved variables' error."
             ),
-            template=full_template if full_template.startswith("${") else f"${{{full_template}}}",
+            suggestion="Ensure the value is valid JSON at runtime.",
+            context={"template": full_template if full_template.startswith("${") else f"${{{full_template}}}"},
         )
 
     return (True, warning)

@@ -50,7 +50,9 @@ def test_report_flag_generates_report(tmp_path: Path):
     """Test that --report flag generates an execution report directory."""
     # Create a minimal workflow
     workflow = tmp_path / "test.pflow.md"
-    workflow.write_text("# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- command: echo hi\n")
+    workflow.write_text(
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+    )
     report_dir = tmp_path / "report"
 
     runner = click.testing.CliRunner()
@@ -67,7 +69,9 @@ def test_report_flag_generates_report(tmp_path: Path):
 def test_report_flag_overrides_no_trace(tmp_path: Path):
     """Test that --report overrides --no-trace (report requires trace data)."""
     workflow = tmp_path / "test.pflow.md"
-    workflow.write_text("# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- command: echo hi\n")
+    workflow.write_text(
+        "# Test\n\n## Steps\n\n### hello\n\nSay hello.\n\n- type: shell\n- cache: false\n- command: echo hi\n"
+    )
     report_dir = tmp_path / "report"
 
     runner = click.testing.CliRunner()

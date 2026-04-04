@@ -30,6 +30,7 @@ class TestShellStderrWarnings:
                 {
                     "id": "stderr-with-success",
                     "type": "shell",
+                    "cache": False,
                     "params": {
                         # Command that writes to stderr but exits 0
                         "command": "echo 'This is stderr output' >&2; echo 'stdout'"
@@ -66,6 +67,7 @@ class TestShellStderrWarnings:
                 {
                     "id": "no-stderr",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'just stdout'"},
                 }
             ],
@@ -93,6 +95,7 @@ class TestShellStderrWarnings:
                 {
                     "id": "failed-command",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'error' >&2; exit 1"},
                 }
             ],
@@ -121,11 +124,13 @@ class TestShellStderrWarnings:
                 {
                     "id": "node1-stderr",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'stderr from node1' >&2"},
                 },
                 {
                     "id": "node2-stderr",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'stderr from node2' >&2"},
                 },
             ],
@@ -160,6 +165,7 @@ class TestWorkflowLevelStderrIndicator:
                 {
                     "id": "stderr-node",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'warning' >&2"},
                 }
             ],
@@ -191,6 +197,7 @@ class TestWorkflowLevelStderrIndicator:
                 {
                     "id": "clean-node",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'clean output'"},
                 }
             ],
@@ -220,11 +227,13 @@ class TestWorkflowLevelStderrIndicator:
                 {
                     "id": "clean-node",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'clean'"},
                 },
                 {
                     "id": "stderr-node",
                     "type": "shell",
+                    "cache": False,
                     "params": {"command": "echo 'warning' >&2"},
                 },
             ],

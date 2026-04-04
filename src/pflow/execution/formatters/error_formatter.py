@@ -7,6 +7,7 @@ to ensure consistent error handling across interfaces.
 import logging
 from typing import Any
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.execution.execution_state import build_execution_steps
 from pflow.execution.result import ExecutionResult
 
@@ -55,7 +56,7 @@ def format_execution_errors(
     formatted_errors = []
     for error in result.errors:
         # Create copy to avoid modifying original
-        formatted_error = error.copy()
+        formatted_error = error.to_display_dict() if isinstance(error, Diagnostic) else error.copy()
 
         # Apply sanitization if requested
         if sanitize:

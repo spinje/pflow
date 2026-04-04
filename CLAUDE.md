@@ -210,6 +210,7 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 ### Planned Features (in order of priority)
 
 **Next**
+- Task 143: Unified Diagnostic System
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**

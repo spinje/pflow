@@ -6,10 +6,10 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, exception_to_diagnostics
 from pflow.core.exceptions import (
     CompilationError,
     MarkdownParseError,
-    MaxNodeVisitsError,
     SchemaValidationError,
     WorkflowNotFoundError,
     WorkflowValidationError,
@@ -49,7 +49,7 @@ class WorkflowRunner:
 
     def run(
         self,
-        workflow: str | dict[str, Any],
+        workflow: str | dict[str, Any] | ResolvedWorkflow,
         params: dict[str, Any],
         config: RunnerConfig,
         *,
@@ -78,12 +78,12 @@ class WorkflowRunner:
         mcp_pool = None
         trace_collector = None
         metrics_collector = None
-        validation_warnings: list[Any] = []
+        validation_warnings: list[Diagnostic] = []
         start_time = time.perf_counter()
 
         try:
             # Resolve, validate, prepare
-            resolved, validation_warnings = self._prepare_workflow(workflow, params)
+            resolved = self._prepare_workflow(workflow, params, validation_warnings)
 
             # Create per-execution resources (in run scope for safe cleanup)
             from pflow.core.metrics import MetricsCollector
@@ -127,14 +127,13 @@ class WorkflowRunner:
 
     def _prepare_workflow(
         self,
-        workflow: str | dict[str, Any],
+        workflow: str | dict[str, Any] | ResolvedWorkflow,
         params: dict[str, Any],
-    ) -> tuple[ResolvedWorkflow, list[Any]]:
-        """Resolve, inject file path, resolve file refs, enrich defaults, validate.
-
-        Returns (resolved, validation_warnings). Raises on validation error.
-        """
+        diagnostics: list[Diagnostic],
+    ) -> ResolvedWorkflow:
+        """Resolve, inject file path, resolve file refs, enrich defaults, validate."""
         resolved = self._resolve(workflow)
+        diagnostics.extend(resolved.diagnostics)
 
         # For dict inputs (pre-resolved IR), file_path is always None here.
         # Callers who pre-resolve must inject _pflow_workflow_file into params
@@ -151,8 +150,9 @@ class WorkflowRunner:
         self._fill_declared_defaults(resolved.ir, params)
 
         validation_warnings = self._validate(resolved.ir, params)
+        diagnostics.extend(validation_warnings)
 
-        return resolved, validation_warnings
+        return resolved
 
     def _compile_and_execute(
         self,
@@ -162,7 +162,7 @@ class WorkflowRunner:
         output: Optional[OutputInterface],
         workflow_manager: Optional[WorkflowManager],
         workflow_name: Optional[str],
-        validation_warnings: list[Any],
+        validation_warnings: list[Diagnostic],
         start_time: float,
         metrics_collector: Any,
         trace_collector: Any,
@@ -207,33 +207,37 @@ class WorkflowRunner:
             failed_node = shared_store.get("__execution__", {}).get("failed_node")
             if failed_node and not hasattr(e, "_pflow_node_id"):
                 e._pflow_node_id = failed_node  # type: ignore[attr-defined]
+            parser_diagnostics = shared_store.get("__parser_diagnostics__", [])
+            if parser_diagnostics and not hasattr(e, "_pflow_parser_diagnostics"):
+                e._pflow_parser_diagnostics = list(parser_diagnostics)  # type: ignore[attr-defined]
             raise
 
         success, status = self._determine_status(action_result, shared_store)
         errors = self._build_errors(success, action_result, shared_store) if not success else []
         runtime_warnings = self._extract_runtime_warnings(shared_store)
+        diagnostics = deduplicate_diagnostics([*errors, *runtime_warnings, *validation_warnings])
 
         duration = time.perf_counter() - start_time
         self._update_metadata(success, workflow_manager, workflow_name, params, duration)
 
         trace_collector = shared_store.get("_trace_collector", trace_collector)
         if trace_collector:
-            trace_collector.set_warnings(runtime_warnings)
+            trace_collector.set_warnings([
+                diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
+            ])
 
         return ExecutionResult(
             success=success,
             status=status,
             shared_after=shared_store,
-            errors=errors,
-            warnings=runtime_warnings,
-            validation_warnings=self._deduplicate_warnings([self._warning_to_dict(w) for w in validation_warnings]),
             trace=trace_collector,
             metrics=metrics_collector,
+            diagnostics=diagnostics,
         )
 
     def validate(
         self,
-        workflow: str | dict[str, Any],
+        workflow: str | dict[str, Any] | ResolvedWorkflow,
         params: dict[str, Any],
         *,
         source_file_path: Optional[str] = None,
@@ -252,8 +256,10 @@ class WorkflowRunner:
         Returns:
             ValidationResult with valid, errors, and warnings.
         """
+        parser_diagnostics: list[Diagnostic] = []
         try:
             resolved = self._resolve(workflow)
+            parser_diagnostics = list(resolved.diagnostics)
             file_path = source_file_path or resolved.file_path
 
             params = dict(params)  # Copy at boundary (consistent with run())
@@ -281,11 +287,36 @@ class WorkflowRunner:
                 skip_node_types=False,
                 workflow_file=Path(file_path) if file_path else None,
             )
+            diagnostics = [
+                *resolved.diagnostics,
+                *warnings,
+                *[
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        message=error,
+                        source="validation",
+                        context={"category": "validation"},
+                    )
+                    for error in errors
+                ],
+            ]
+            if errors:
+                from pflow.core.validation_utils import generate_validation_suggestions
+
+                for suggestion in generate_validation_suggestions([
+                    {"message": error, "type": "validation"} for error in errors
+                ]):
+                    diagnostics.append(
+                        Diagnostic(
+                            severity=Severity.INFO,
+                            message=suggestion,
+                            source="validation",
+                        )
+                    )
 
             return ValidationResult(
                 valid=len(errors) == 0,
-                errors=errors,
-                warnings=[self._warning_to_dict(w) for w in warnings],
+                diagnostics=deduplicate_diagnostics(diagnostics),
             )
 
         except (
@@ -299,23 +330,23 @@ class WorkflowRunner:
             # Expected validation-phase errors → structured result
             return ValidationResult(
                 valid=False,
-                errors=[str(e)],
-                warnings=[],
+                diagnostics=deduplicate_diagnostics([*parser_diagnostics, *exception_to_diagnostics(e)]),
             )
         except Exception as e:
             if isinstance(e, (WorkflowValidationError, CompilationError)):
                 return ValidationResult(
                     valid=False,
-                    errors=[str(e)],
-                    warnings=[],
+                    diagnostics=deduplicate_diagnostics([*parser_diagnostics, *exception_to_diagnostics(e)]),
                 )
             # Unexpected errors (programming bugs) — let them propagate.
             raise
 
     # --- Internal helpers ---
 
-    def _resolve(self, workflow: str | dict[str, Any]) -> ResolvedWorkflow:
+    def _resolve(self, workflow: str | dict[str, Any] | ResolvedWorkflow) -> ResolvedWorkflow:
         """Resolve workflow identifier to IR."""
+        if isinstance(workflow, ResolvedWorkflow):
+            return workflow
         if isinstance(workflow, dict):
             from pflow.core import normalize_ir
 
@@ -341,7 +372,7 @@ class WorkflowRunner:
                 suggestion="Check that the file path is correct and relative to the workflow file.",
             ) from e
 
-    def _validate(self, ir: dict[str, Any], params: dict[str, Any]) -> list[Any]:
+    def _validate(self, ir: dict[str, Any], params: dict[str, Any]) -> list[Diagnostic]:
         """Run WorkflowValidator once. Returns validation warnings."""
         from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry import Registry
@@ -358,7 +389,9 @@ class WorkflowRunner:
 
         if errors:
             # errors is list[str]; WorkflowValidationError accepts list[str | tuple]
-            raise WorkflowValidationError(validation_errors=errors)  # type: ignore[arg-type]
+            error = WorkflowValidationError(validation_errors=errors)  # type: ignore[arg-type]
+            error._pflow_validation_warnings = list(warnings)  # type: ignore[attr-defined]
+            raise error
 
         return warnings
 
@@ -377,6 +410,7 @@ class WorkflowRunner:
         shared_store.update(params)
         shared_store["__verbose__"] = verbose
         shared_store["__warnings__"] = {}
+        shared_store["__parser_diagnostics__"] = []
 
         if output:
             callback = output.create_node_callback()
@@ -429,24 +463,44 @@ class WorkflowRunner:
             return True, WorkflowStatus.DEGRADED
         return True, WorkflowStatus.SUCCESS
 
-    def _build_errors(self, success: bool, action_result: Any, shared_store: dict[str, Any]) -> list[dict[str, Any]]:
+    def _build_errors(self, success: bool, action_result: Any, shared_store: dict[str, Any]) -> list[Diagnostic]:
         """Build error list from execution result."""
         from .executor_service import build_error_list
 
         return build_error_list(success, action_result, shared_store)
 
-    def _extract_runtime_warnings(self, shared_store: dict[str, Any]) -> list[dict[str, Any]]:
+    def _extract_runtime_warnings(self, shared_store: dict[str, Any]) -> list[Diagnostic]:
         """Extract runtime warnings from shared store."""
-        warnings: list[dict[str, Any]] = []
+        warnings: list[Diagnostic] = []
         for node_id, message in shared_store.get("__warnings__", {}).items():
-            warnings.append({"node_id": node_id, "type": "api_warning", "message": message})
+            warnings.append(
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message=message,
+                    suggestion="Inspect this node's output and upstream inputs to determine whether the warning is expected.",
+                    node_id=node_id,
+                    source="runtime",
+                    context={"type": "api_warning"},
+                )
+            )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():
-            warnings.append({
-                "node_id": node_id,
-                "type": "template_resolution",
-                "message": error_data.get("message", "Template resolution failed"),
-                "unresolved_templates": error_data.get("unresolved", []),
-            })
+            unresolved = error_data.get("unresolved", [])
+            warnings.append(
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message=error_data.get("message", "Template resolution failed"),
+                    suggestion="Fix unresolved template references, or use ?? fallback for branch-dependent outputs.",
+                    node_id=node_id,
+                    source="runtime",
+                    context={
+                        "type": "template_resolution",
+                        "unresolved_templates": unresolved,
+                    },
+                )
+            )
+        for diagnostic in shared_store.get("__parser_diagnostics__", []):
+            if isinstance(diagnostic, Diagnostic):
+                warnings.append(diagnostic)
         return warnings
 
     def _update_metadata(
@@ -482,105 +536,41 @@ class WorkflowRunner:
         except Exception:
             logger.debug("Metadata update failed", exc_info=True)
 
-    def _exception_to_result(  # noqa: C901
+    def _exception_to_result(
         self,
         exception: Exception,
         start_time: float,
         trace_collector: Any,
-        validation_warnings: list[Any] | None = None,
+        validation_warnings: list[Diagnostic] | None = None,
     ) -> ExecutionResult:
         """Convert any exception to ExecutionResult."""
-        error_dict: dict[str, Any] = {"source": "runtime", "message": str(exception)}
+        parser_diagnostics = [
+            diagnostic
+            for diagnostic in getattr(exception, "_pflow_parser_diagnostics", [])
+            if isinstance(diagnostic, Diagnostic)
+        ]
+        exception_validation_warnings = [
+            diagnostic
+            for diagnostic in getattr(exception, "_pflow_validation_warnings", [])
+            if isinstance(diagnostic, Diagnostic)
+        ]
+        diagnostics = deduplicate_diagnostics([
+            *exception_to_diagnostics(exception),
+            *(validation_warnings or []),
+            *parser_diagnostics,
+            *exception_validation_warnings,
+        ])
 
-        # Extract node_id annotated by _compile_and_execute's flow.run() wrapper
-        annotated_node_id = getattr(exception, "_pflow_node_id", None)
-
-        if isinstance(exception, CompilationError):
-            error_dict.update({
-                "source": "compilation",
-                "category": "compilation",
-                "message": getattr(exception, "raw_message", str(exception)),
-                "phase": getattr(exception, "phase", None),
-                "node_id": getattr(exception, "node_id", None),
-                "node_type": getattr(exception, "node_type", None),
-                "suggestion": getattr(exception, "suggestion", None),
-                "sub_workflow_path": (getattr(exception, "details", None) or {}).get("sub_workflow_path"),
-            })
-        elif isinstance(exception, MaxNodeVisitsError):
-            error_dict.update({
-                "source": "runtime",
-                "category": "max_visits",
-                "node_id": exception.node_id,
-                "visit_count": exception.visit_count,
-                "max_visits": exception.max_visits,
-            })
-        elif isinstance(exception, WorkflowValidationError):
-            # Preserve full structure: (msg, path, suggestion) tuples or plain strings
-            validation_msgs = []
-            for err in exception.validation_errors:
-                if isinstance(err, tuple) and len(err) >= 3:
-                    validation_msgs.append(err[0])
-                else:
-                    validation_msgs.append(str(err))
-            message = "\n".join(validation_msgs) if validation_msgs else str(exception)
-
-            # Preserve path and suggestion from first tuple error (for structured output)
-            first_err = exception.validation_errors[0] if exception.validation_errors else None
-            error_dict.update({
-                "source": "validation",
-                "category": "validation",
-                "message": message,
-                "validation_errors": validation_msgs,
-            })
-            if isinstance(first_err, tuple) and len(first_err) >= 3:
-                if first_err[1]:
-                    error_dict["path"] = first_err[1]
-                if first_err[2]:
-                    error_dict["suggestion"] = first_err[2]
-        elif isinstance(exception, SchemaValidationError):
-            error_dict.update({
-                "source": "validation",
-                "category": "validation",
-            })
-            if exception.path:
-                error_dict["path"] = exception.path
-            if exception.suggestion:
-                error_dict["suggestion"] = exception.suggestion
-        elif isinstance(exception, MarkdownParseError):
-            error_dict.update({"category": "validation"})
-            if exception.line is not None:
-                error_dict["line"] = exception.line
-            if exception.suggestion:
-                error_dict["suggestion"] = exception.suggestion
-            if annotated_node_id:
-                error_dict["node_id"] = annotated_node_id
-        elif isinstance(exception, ValueError):
-            if annotated_node_id:
-                error_dict.update({
-                    "category": "execution_failure",
-                    "node_id": annotated_node_id,
-                })
-            else:
-                error_dict.update({"category": "validation"})
-        elif isinstance(exception, WorkflowNotFoundError):
-            error_dict.update({
-                "category": "not_found",
-                "similar_names": getattr(exception, "similar_names", []),
-            })
-        else:
-            error_dict.update({
-                "category": "execution_failure",
-                "exception_type": type(exception).__name__,
-            })
-            if annotated_node_id:
-                error_dict["node_id"] = annotated_node_id
+        if trace_collector:
+            trace_collector.set_warnings([
+                diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
+            ])
 
         return ExecutionResult(
             success=False,
             status=WorkflowStatus.FAILED,
-            errors=[error_dict],
-            validation_warnings=[self._warning_to_dict(w) for w in (validation_warnings or [])],
             trace=trace_collector,
+            diagnostics=diagnostics,
         )
 
     def _cleanup(self, mcp_pool: Any, trace_collector: Any, metrics_collector: Any) -> None:
@@ -600,26 +590,3 @@ class WorkflowRunner:
         if metrics_collector is not None:
             with contextlib.suppress(Exception):
                 metrics_collector.record_workflow_end()
-
-    @staticmethod
-    def _warning_to_dict(warning: Any) -> dict[str, Any]:
-        """Convert ValidationWarning to agent-facing dict."""
-        if isinstance(warning, dict):
-            return warning
-        return {
-            "node_id": getattr(warning, "node_id", None),
-            "template": getattr(warning, "template", None),
-            "message": getattr(warning, "message", str(warning)),
-        }
-
-    @staticmethod
-    def _deduplicate_warnings(warnings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Deduplicate validation warnings by (node_id, template)."""
-        seen: set[tuple[str | None, str | None]] = set()
-        result: list[dict[str, Any]] = []
-        for w in warnings:
-            key = (w.get("node_id"), w.get("template"))
-            if key not in seen:
-                seen.add(key)
-                result.append(w)
-        return result

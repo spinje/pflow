@@ -1,9 +1,11 @@
 """Unit tests for WorkflowExecutor."""
 
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pflow.core.diagnostic import Severity
 from pflow.runtime.workflow_executor import WorkflowExecutor
 
 
@@ -129,6 +131,45 @@ class TestWorkflowExecutor:
         # Test invalid mode — should raise ValueError
         with pytest.raises(ValueError, match="Invalid storage_mode"):
             node._create_child_storage(parent_shared, "isolated", prep_res)
+
+    def test_prep_preserves_child_parser_warnings_when_input_validation_fails(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Child parser warnings should propagate even if prep fails before post()."""
+        child_workflow = tmp_path / "child.pflow.md"
+        child_workflow.write_text(
+            "# Child\n\n"
+            "## Input\n\n"
+            "Typo section heading.\n\n"
+            "## Inputs\n\n"
+            "### required_value\n\n"
+            "Required input.\n\n"
+            "- type: string\n"
+            "- required: true\n\n"
+            "## Steps\n\n"
+            "### run\n\n"
+            "Use the input.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo ${required_value}\n",
+            encoding="utf-8",
+        )
+
+        node = WorkflowExecutor()
+        node.set_params({"workflow": str(child_workflow)})
+        shared: dict[str, object] = {"__parser_diagnostics__": []}
+
+        with pytest.raises(ValueError, match="missing required inputs"):
+            node.prep(shared)
+
+        parser_diagnostics = shared["__parser_diagnostics__"]
+        assert isinstance(parser_diagnostics, list)
+        assert len(parser_diagnostics) == 1
+        diagnostic = parser_diagnostics[0]
+        assert diagnostic.severity == Severity.WARNING
+        assert diagnostic.source == "parser"
+        assert "## Input" in diagnostic.message
 
 
 class TestExecErrorActionDetection:

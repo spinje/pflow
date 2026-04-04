@@ -4,8 +4,10 @@ Verifies that validation gates compilation (spec 9b) and that a valid
 workflow runs through the full pipeline producing structured results.
 """
 
+from pathlib import Path
 from unittest.mock import patch
 
+from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import ExecutionResult, RunnerConfig
@@ -151,49 +153,49 @@ class TestExceptionToResultCategorization:
         exc = ValueError("HTTP timeout connecting to api.example.com")
         exc._pflow_node_id = "fetch-data"  # type: ignore[attr-defined]
         result = self._run(exc)
-        assert result.errors[0]["category"] == "execution_failure"
-        assert result.errors[0]["node_id"] == "fetch-data"
+        assert (result.errors[0].context or {}).get("category") == "execution_failure"
+        assert result.errors[0].node_id == "fetch-data"
 
     def test_valueerror_without_annotation_is_validation(self):
         """ValueError from pre-execution (no annotation) -> validation."""
         exc = ValueError("Invalid parameter format")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert "node_id" not in result.errors[0]
+        assert (result.errors[0].context or {}).get("category") == "validation"
+        assert result.errors[0].node_id is None
 
     def test_schema_validation_error_preserves_fields(self):
         """SchemaValidationError (replacing duck-type hack) preserves path and suggestion."""
         exc = SchemaValidationError("bad field", path="nodes[0].type", suggestion="Use 'shell'")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert result.errors[0]["source"] == "validation"
-        assert result.errors[0]["path"] == "nodes[0].type"
-        assert result.errors[0]["suggestion"] == "Use 'shell'"
+        assert (result.errors[0].context or {}).get("category") == "validation"
+        assert result.errors[0].source == "validation"
+        assert (result.errors[0].context or {}).get("path") == "nodes[0].type"
+        assert result.errors[0].suggestion == "Use 'shell'"
 
     def test_markdown_parse_error_preserves_line_and_suggestion(self):
         """MarkdownParseError extracts .line and .suggestion into error dict."""
         exc = MarkdownParseError("bad syntax", line=42, suggestion="Add ## Steps")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert result.errors[0]["line"] == 42
-        assert result.errors[0]["suggestion"] == "Add ## Steps"
+        assert (result.errors[0].context or {}).get("category") == "parse_error"
+        assert (result.errors[0].context or {}).get("line") == 42
+        assert result.errors[0].suggestion == "Add ## Steps"
 
     def test_markdown_parse_error_with_node_annotation(self):
         """MarkdownParseError from nested workflow propagates node_id."""
         exc = MarkdownParseError("bad syntax", line=5)
         exc._pflow_node_id = "load-sub-workflow"  # type: ignore[attr-defined]
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert result.errors[0]["node_id"] == "load-sub-workflow"
-        assert result.errors[0]["line"] == 5
+        assert (result.errors[0].context or {}).get("category") == "parse_error"
+        assert result.errors[0].node_id == "load-sub-workflow"
+        assert (result.errors[0].context or {}).get("line") == 5
 
     def test_markdown_parse_error_omits_none_fields(self):
         """MarkdownParseError with None line/suggestion doesn't write None values."""
         exc = MarkdownParseError("bad syntax")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert "line" not in result.errors[0]
-        assert "suggestion" not in result.errors[0]
+        assert (result.errors[0].context or {}).get("category") == "parse_error"
+        assert "line" not in (result.errors[0].context or {})
+        assert result.errors[0].suggestion is None
 
 
 def test_node_valueerror_categorized_as_execution_failure():
@@ -226,9 +228,130 @@ def test_node_valueerror_categorized_as_execution_failure():
     assert result.success is False
     assert len(result.errors) == 1
     error = result.errors[0]
-    assert error["category"] == "execution_failure", (
-        f"Expected 'execution_failure' but got '{error['category']}'. "
+    category = (error.context or {}).get("category")
+    assert category == "execution_failure", (
+        f"Expected 'execution_failure' but got '{category}'. "
         f"This means the engine's _pflow_node_id annotation or the "
         f"runner's ValueError dispatch is broken."
     )
-    assert error["node_id"] == "bad-node"
+    assert error.node_id == "bad-node"
+
+
+def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
+    """Child parser warnings should survive child prep failures and reach the result."""
+    child_workflow = tmp_path / "child.pflow.md"
+    child_workflow.write_text(
+        "# Child\n\n"
+        "## Input\n\n"
+        "Typo section heading.\n\n"
+        "## Inputs\n\n"
+        "### required_value\n\n"
+        "Required input.\n\n"
+        "- type: string\n"
+        "- required: true\n\n"
+        "## Steps\n\n"
+        "### run\n\n"
+        "Use the input.\n\n"
+        "- type: shell\n"
+        "- cache: false\n"
+        "- command: echo ${required_value}\n",
+        encoding="utf-8",
+    )
+
+    parent_workflow = tmp_path / "parent.pflow.md"
+    parent_workflow.write_text(
+        f"# Parent\n\n## Steps\n\n### child\n\nRun child.\n\n- type: workflow\n- workflow: {child_workflow}\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent_workflow), {}, RunnerConfig())
+
+    assert result.success is False
+    assert any(diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics)
+    parser_warnings = [
+        diagnostic
+        for diagnostic in result.diagnostics
+        if diagnostic.severity == Severity.WARNING and diagnostic.source == "parser"
+    ]
+    assert len(parser_warnings) == 1
+    assert "## Input" in parser_warnings[0].message
+
+
+def test_sibling_child_parser_warnings_not_collapsed_by_dedup(tmp_path: Path):
+    """Two children with identical parser warnings must both survive deduplication.
+
+    Regression test for: parser warnings from sibling sub-workflows had the same
+    (severity, source, node_id, message) hash when node_id was None and the typo
+    appeared on the same line number, causing deduplicate_diagnostics() to drop one.
+    Fix: _propagate_child_parser_warnings adds parent node_id and workflow path
+    as provenance, making the two diagnostics distinguishable.
+    """
+    for name in ("child_a", "child_b"):
+        (tmp_path / f"{name}.pflow.md").write_text(
+            f"# {name}\n\n"
+            "## Input\n\n"  # same typo, same line number in both
+            "Typo section.\n\n"
+            "## Steps\n\n"
+            f"### run-{name}\n\n"
+            "Does a thing.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo hello\n",
+            encoding="utf-8",
+        )
+
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        "# Parent\n\n## Steps\n\n"
+        f"### step-a\n\nRun child A.\n\n- type: workflow\n- workflow: {tmp_path / 'child_a.pflow.md'}\n\n"
+        f"### step-b\n\nRun child B.\n\n- type: workflow\n- workflow: {tmp_path / 'child_b.pflow.md'}\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent), {}, RunnerConfig())
+
+    parser_warnings = [d for d in result.diagnostics if d.severity == Severity.WARNING and d.source == "parser"]
+    # Both children's parser warnings must survive — not collapsed by dedup
+    assert len(parser_warnings) == 2, (
+        f"Expected 2 parser warnings (one per child), got {len(parser_warnings)}: "
+        f"{[w.message for w in parser_warnings]}"
+    )
+    # Each should identify its parent step via provenance
+    messages = [w.message for w in parser_warnings]
+    assert any("step-a" in m for m in messages)
+    assert any("step-b" in m for m in messages)
+
+
+def test_child_cache_lint_warning_propagates_to_parent_validation(tmp_path: Path):
+    """Cache-lint warnings from child workflows must reach parent validate-only output.
+
+    Regression test for: _validate_sub_workflows() discarded _child_warnings from
+    recursive WorkflowValidator.validate() calls, so cache-lint warnings from children
+    never reached the parent.
+    """
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\n## Steps\n\n"
+        "### static-shell\n\n"
+        "Runs a command with no template inputs.\n\n"
+        "- type: shell\n"
+        "- command: git branch --show-current\n",  # no templates, no cache:false → lint warning
+        encoding="utf-8",
+    )
+
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        f"# Parent\n\n## Steps\n\n### child-step\n\nRun child.\n\n- type: workflow\n- workflow: {child}\n",
+        encoding="utf-8",
+    )
+
+    vresult = WorkflowRunner().validate(str(parent), {})
+
+    assert vresult.valid is True
+    warnings = vresult.warnings
+    cache_warnings = [w for w in warnings if "cache" in w.message.lower() or "template inputs" in w.message.lower()]
+    assert cache_warnings, (
+        f"Expected child cache-lint warning in parent validation, got warnings: {[w.message for w in warnings]}"
+    )
+    # Should include provenance about which sub-workflow produced it
+    assert any("child" in w.message.lower() or "child-step" in (w.node_id or "") for w in cache_warnings)

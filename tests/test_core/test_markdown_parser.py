@@ -291,7 +291,7 @@ class TestSectionHandling:
         """)
         result = parse_markdown(content)
         warnings = result.warnings
-        assert any("Input" in w and "Inputs" in w for w in warnings)
+        assert any("Input" in w.message and "Inputs" in w.message for w in warnings)
 
     def test_missing_steps_section_error(self) -> None:
         content = _md("""\
@@ -2257,7 +2257,7 @@ echo step {i}
             ```
         """)
         result = parse_markdown(content)
-        assert any("Unparsed content" in w and "Inputs" in w for w in result.warnings)
+        assert any("Unparsed content" in w.message and "Inputs" in w.message for w in result.warnings)
         # Workflow still parses correctly
         assert "message" in result.ir["inputs"]
 
@@ -2294,7 +2294,7 @@ echo step {i}
             ```
         """)
         result = parse_markdown(content)
-        assert any("Unparsed content" in w and "Inputs" in w for w in result.warnings)
+        assert any("Unparsed content" in w.message and "Inputs" in w.message for w in result.warnings)
 
     def test_no_orphan_detection_for_unknown_sections(self) -> None:
         """Content under unknown ## sections does not trigger orphan warnings."""
@@ -2320,7 +2320,7 @@ echo step {i}
             ```
         """)
         result = parse_markdown(content)
-        orphan_warnings = [w for w in result.warnings if "Unparsed content" in w]
+        orphan_warnings = [w for w in result.warnings if "Unparsed content" in w.message]
         assert orphan_warnings == []
 
     def test_orphaned_content_error_includes_syntax_hint(self) -> None:

@@ -11,8 +11,22 @@ bug that could break production:
 If a test passes but the feature is broken, the test failed its purpose.
 """
 
+from copy import deepcopy
+
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.execution.formatters.error_formatter import format_execution_errors
 from pflow.execution.result import ExecutionResult
+
+
+def _diagnostic(message: str, node_id: str | None = None, source: str = "runtime", **context: object) -> Diagnostic:
+    """Build an error Diagnostic with optional context."""
+    return Diagnostic(
+        severity=Severity.ERROR,
+        message=message,
+        node_id=node_id,
+        source=source,
+        context=dict(context) if context else None,
+    )
 
 
 class TestSecurityGuardrails:
@@ -26,15 +40,15 @@ class TestSecurityGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[
-                {
-                    "message": "API validation failed",
-                    "raw_response": {
+            diagnostics=[
+                _diagnostic(
+                    "API validation failed",
+                    raw_response={
                         "api_key": "sk-secret123456",  # Must be redacted
                         "error": "Invalid request",
                         "apikey": "another-secret",  # Must be redacted
                     },
-                }
+                )
             ],
             shared_after={},
         )
@@ -54,15 +68,15 @@ class TestSecurityGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[
-                {
-                    "message": "HTTP error",
-                    "response_headers": {
+            diagnostics=[
+                _diagnostic(
+                    "HTTP error",
+                    response_headers={
                         "Authorization": "Bearer secret-token-12345",
                         "Content-Type": "application/json",
                         "X-Api-Key": "admin-key-secret",
                     },
-                }
+                )
             ],
             shared_after={},
         )
@@ -83,10 +97,10 @@ class TestSecurityGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[
-                {
-                    "message": "Complex API error",
-                    "raw_response": {
+            diagnostics=[
+                _diagnostic(
+                    "Complex API error",
+                    raw_response={
                         "error": {
                             "details": {
                                 "password": "user-password-123",  # Nested secret
@@ -94,7 +108,7 @@ class TestSecurityGuardrails:
                             }
                         }
                     },
-                }
+                )
             ],
             shared_after={},
         )
@@ -116,15 +130,19 @@ class TestDataIntegrityGuardrails:
         Real bug this catches: If formatter modifies original errors instead of
         copies, it would corrupt ExecutionResult data used elsewhere in the system.
         """
-        original_errors = [{"message": "Test error", "raw_response": {"api_key": "secret", "data": "value"}}]
-        result = ExecutionResult(success=False, errors=original_errors, shared_after={})
+        original_context = {"raw_response": {"api_key": "secret", "data": "value"}}
+        result = ExecutionResult(
+            success=False,
+            diagnostics=[_diagnostic("Test error", **deepcopy(original_context))],
+            shared_after={},
+        )
 
         # Run formatter
         format_execution_errors(result, sanitize=True)
 
         # INTEGRITY REQUIREMENT: Original data unchanged
-        assert original_errors[0]["raw_response"]["api_key"] == "secret"
-        assert original_errors[0]["raw_response"]["data"] == "value"
+        assert original_context["raw_response"]["api_key"] == "secret"
+        assert original_context["raw_response"]["data"] == "value"
 
     def test_multiple_errors_must_all_be_processed(self):
         """DATA INTEGRITY: All errors must be formatted, not just the first.
@@ -134,10 +152,10 @@ class TestDataIntegrityGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[
-                {"message": "Error 1", "node_id": "node1", "raw_response": {"secret": "s1"}},
-                {"message": "Error 2", "node_id": "node2", "raw_response": {"secret": "s2"}},
-                {"message": "Error 3", "node_id": "node3", "raw_response": {"secret": "s3"}},
+            diagnostics=[
+                _diagnostic("Error 1", node_id="node1", raw_response={"secret": "s1"}),
+                _diagnostic("Error 2", node_id="node2", raw_response={"secret": "s2"}),
+                _diagnostic("Error 3", node_id="node3", raw_response={"secret": "s3"}),
             ],
             shared_after={},
         )
@@ -168,7 +186,7 @@ class TestExecutionStateGuardrails:
             "__execution__": {"completed_nodes": ["fetch", "process"], "failed_node": "send"},
             "__cache_hits__": [],
         }
-        result = ExecutionResult(success=False, errors=[{"message": "Send failed"}], shared_after=shared_storage)
+        result = ExecutionResult(success=False, diagnostics=[_diagnostic("Send failed")], shared_after=shared_storage)
 
         formatted = format_execution_errors(result, shared_storage, ir_data)
 
@@ -189,7 +207,7 @@ class TestExecutionStateGuardrails:
             "__execution__": {"completed_nodes": ["node1", "node2"]},
             "__cache_hits__": ["node1"],  # Only node1 used cache
         }
-        result = ExecutionResult(success=False, errors=[{"message": "Later error"}], shared_after=shared_storage)
+        result = ExecutionResult(success=False, diagnostics=[_diagnostic("Later error")], shared_after=shared_storage)
 
         formatted = format_execution_errors(result, shared_storage, ir_data)
 
@@ -210,7 +228,7 @@ class TestRobustnessGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[],  # Empty errors list
+            diagnostics=[],  # Empty diagnostics list
             shared_after={},
         )
 
@@ -228,9 +246,7 @@ class TestRobustnessGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[
-                {"message": "Simple error"}  # No raw_response, no headers
-            ],
+            diagnostics=[_diagnostic("Simple error")],  # No raw_response, no headers
             shared_after={},
         )
 
@@ -251,7 +267,7 @@ class TestRobustnessGuardrails:
             "__execution__": {"completed_nodes": ["test"]},
             "__cache_hits__": [],
         }
-        result = ExecutionResult(success=False, errors=[{"message": "Error"}], shared_after=shared_storage)
+        result = ExecutionResult(success=False, diagnostics=[_diagnostic("Error")], shared_after=shared_storage)
 
         formatted = format_execution_errors(
             result,
@@ -273,7 +289,7 @@ class TestRobustnessGuardrails:
         """
         result = ExecutionResult(
             success=False,
-            errors=[{"message": "Error"}],
+            diagnostics=[_diagnostic("Error")],
             shared_after={},  # No __execution__ key
         )
 
@@ -293,7 +309,9 @@ class TestBehaviorContracts:
         (which needs raw data for formatting) would get redacted data.
         """
         result = ExecutionResult(
-            success=False, errors=[{"message": "Error", "raw_response": {"api_key": "secret"}}], shared_after={}
+            success=False,
+            diagnostics=[_diagnostic("Error", raw_response={"api_key": "secret"})],
+            shared_after={},
         )
 
         formatted = format_execution_errors(result, sanitize=False)
@@ -309,7 +327,9 @@ class TestBehaviorContracts:
         """
         checkpoint_data = {"completed_nodes": ["node1"], "node_actions": {"node1": "default"}, "failed_node": "node2"}
         result = ExecutionResult(
-            success=False, errors=[{"message": "Error"}], shared_after={"__execution__": checkpoint_data}
+            success=False,
+            diagnostics=[_diagnostic("Error")],
+            shared_after={"__execution__": checkpoint_data},
         )
 
         formatted = format_execution_errors(result)
@@ -323,7 +343,7 @@ class TestBehaviorContracts:
         Real bug this catches: If execution state is always returned even without
         data, consumers would get incorrect empty structures.
         """
-        result = ExecutionResult(success=False, errors=[{"message": "Error"}], shared_after={})
+        result = ExecutionResult(success=False, diagnostics=[_diagnostic("Error")], shared_after={})
 
         # Without ir_data
         formatted1 = format_execution_errors(result, shared_storage={})
@@ -349,7 +369,11 @@ def test_formatter_runs_in_under_10ms():
     """
     import time
 
-    result = ExecutionResult(success=False, errors=[{"message": f"Error {i}"} for i in range(10)], shared_after={})
+    result = ExecutionResult(
+        success=False,
+        diagnostics=[_diagnostic(f"Error {i}") for i in range(10)],
+        shared_after={},
+    )
 
     start = time.perf_counter()
     for _ in range(100):  # 100 iterations

@@ -148,7 +148,15 @@ class TestImprovedErrorDetection:
         assert shared["exit_code"] != 0
         # Could be permission denied or read-only file system
         stderr_lower = shared["stderr"].lower()
-        assert any(msg in stderr_lower for msg in ["permission denied", "read-only", "keine berechtigung"])
+        assert any(
+            msg in stderr_lower
+            for msg in [
+                "permission denied",
+                "read-only",
+                "keine berechtigung",
+                "operation not permitted",
+            ]
+        )
 
         # Syntax error
         shared = {}

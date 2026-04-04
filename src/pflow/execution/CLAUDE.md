@@ -61,23 +61,33 @@ class ResolvedWorkflow:
     ir: dict[str, Any]
     source: str  # "file", "library", "content", "direct"
     file_path: Optional[str] = None
+    diagnostics: tuple[Diagnostic, ...] = ()
 
 @dataclass
 class ValidationResult:
     valid: bool
-    errors: list[str]
-    warnings: list[dict[str, Any]]
+    diagnostics: list[Diagnostic] = field(default_factory=list)
+
+    @property
+    def errors(self) -> list[str]: ...
+
+    @property
+    def warnings(self) -> list[Diagnostic]: ...
 
 @dataclass
 class ExecutionResult:
     success: bool
     status: WorkflowStatus = WorkflowStatus.SUCCESS
     shared_after: dict[str, Any] = field(default_factory=dict)
-    errors: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[dict[str, Any]] = field(default_factory=list)              # runtime warnings
-    validation_warnings: list[dict[str, Any]] = field(default_factory=list)   # pre-execution warnings
+    diagnostics: list[Diagnostic] = field(default_factory=list)
     trace: Optional[Any] = None
     metrics: Optional[Any] = None
+
+    @property
+    def errors(self) -> list[Diagnostic]: ...
+
+    @property
+    def warnings(self) -> list[Diagnostic]: ...
 ```
 
 ## Unified Resolver (workflow_resolver.py)
@@ -95,13 +105,16 @@ Raises `WorkflowNotFoundError` (with `similar_names` for suggestions) on not-fou
 ## Error Structure (Canonical Reference)
 
 ```python
-{
-    "source": "runtime",              # Where error originated
-    "category": "api_validation",     # Error type
-    "message": "Field 'title' required",
-    "node_id": "create-issue",        # Which node failed
-    # Rich context from shared_store[node_id] — see executor_service.build_error_list()
-}
+Diagnostic(
+    severity=Severity.ERROR,
+    source="runtime",               # Where error originated
+    message="Field 'title' required",
+    node_id="create-issue",         # Which node failed
+    context={
+        "category": "api_validation",
+        # Rich context from shared_store[node_id] — see executor_service.build_error_list()
+    },
+)
 ```
 
 ## OutputInterface Protocol

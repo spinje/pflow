@@ -8,6 +8,8 @@ from typing import Any
 
 import click
 
+from pflow.core.diagnostic import coerce_warning_diagnostic, format_diagnostic
+
 
 def safe_output(value: Any) -> bool:
     """Safely output a value to stdout, handling broken pipes.
@@ -94,7 +96,7 @@ def _handle_text_output(
     workflow_metadata: dict[str, Any] | None = None,
     output_controller: Any = None,
     status: Any = None,
-    warnings: list[dict[str, Any]] | None = None,
+    warnings: list[Any] | None = None,
 ) -> bool:
     """Handle text formatted output with execution summary.
 
@@ -478,6 +480,7 @@ def _display_workflow_completion_status(
     has_stderr_warnings: bool,
     cache_hits: int = 0,
     nodes_executed: int = 0,
+    warning_count: int = 0,
 ) -> None:
     """Display workflow completion status with appropriate indicator.
 
@@ -487,6 +490,7 @@ def _display_workflow_completion_status(
         has_stderr_warnings: Whether any shell node produced stderr with exit_code=0
         cache_hits: Number of nodes served from cache (0 = no cache stats shown)
         nodes_executed: Total completed nodes (used to compute fresh executions)
+        warning_count: Number of diagnostics warnings surfaced in the summary
     """
     cache_suffix = ""
     if cache_hits > 0:
@@ -496,7 +500,12 @@ def _display_workflow_completion_status(
     if status == "degraded":
         click.echo(f"⚠️ Workflow completed with warnings in {duration_s:.3f}s{cache_suffix}", err=True)
     elif status == "failed":
-        click.echo(f"❌ Workflow failed after {duration_s:.3f}s{cache_suffix}", err=True)
+        if warning_count:
+            click.echo(f"❌ Workflow failed ({warning_count} warnings) after {duration_s:.3f}s{cache_suffix}", err=True)
+        else:
+            click.echo(f"❌ Workflow failed after {duration_s:.3f}s{cache_suffix}", err=True)
+    elif warning_count:
+        click.echo(f"⚠️ Workflow completed with {warning_count} warnings in {duration_s:.3f}s{cache_suffix}", err=True)
     elif has_stderr_warnings:
         click.echo(f"⚠️ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
     else:
@@ -541,12 +550,14 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
         has_stderr_warnings = any(step.get("has_stderr") for step in steps)
         cache_hits = execution.get("cache_hits", 0)
         completed_count = execution.get("nodes_executed", 0)
+        warning_count = len(formatted_result.get("warnings", []))
         _display_workflow_completion_status(
             duration_s,
             status,
             has_stderr_warnings,
             cache_hits=cache_hits,
             nodes_executed=completed_count,
+            warning_count=warning_count,
         )
 
     # Show per-node execution details
@@ -586,15 +597,7 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
         click.echo("", err=True)
         click.echo("⚠️ Warnings:", err=True)
         for warning in warnings:
-            node_id = warning.get("node_id", "unknown")
-            warning_type = warning.get("type", "warning")
-            message = warning.get("message", "No message")
-
-            # Show the full warning message with proper indentation
-            click.echo(f"  • {node_id} ({warning_type}):", err=True)
-            for line in message.split("\n"):
-                if line.strip():  # Skip empty lines
-                    click.echo(f"    {line}", err=True)
+            click.echo(format_diagnostic(coerce_warning_diagnostic(warning)), err=True)
 
 
 def _handle_json_output(
@@ -606,7 +609,7 @@ def _handle_json_output(
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
     status: Any = None,
-    warnings: list[dict[str, Any]] | None = None,
+    warnings: list[Any] | None = None,
 ) -> bool:
     """Handle JSON formatted output.
 
@@ -696,7 +699,7 @@ def _handle_workflow_output(
     workflow_trace: Any | None = None,
     output_controller: Any = None,
     status: Any = None,
-    warnings: list[dict[str, Any]] | None = None,
+    warnings: list[Any] | None = None,
 ) -> bool:
     """Handle output from workflow execution.
 

@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.core.exceptions import WorkflowNotFoundError
 from pflow.core.suggestion_utils import find_similar_items
 from pflow.core.workflow.manager import WorkflowManager
@@ -51,9 +52,9 @@ def resolve_workflow(
 
     # Raw markdown content — contains newlines (MCP sends inline workflows)
     if "\n" in identifier:
-        ir = _parse_markdown_content(identifier)
+        ir, diagnostics = _parse_markdown_content(identifier)
         _check_inline_file_references(ir, "content")
-        return ResolvedWorkflow(ir=ir, source="content", file_path=None)
+        return ResolvedWorkflow(ir=ir, source="content", file_path=None, diagnostics=diagnostics)
 
     # File path — contains path separator or ends with known extension
     if _is_path_like(identifier):
@@ -129,46 +130,62 @@ def _try_load_from_file(identifier: str) -> ResolvedWorkflow | None:
         ir=result.ir,
         source="file",
         file_path=str(path),
+        diagnostics=tuple(result.warnings),
     )
 
 
 def _try_load_from_library(identifier: str, wm: WorkflowManager) -> ResolvedWorkflow | None:
     """Try to load workflow from saved library."""
+    name = identifier
+    if not wm.exists(name):
+        # Strip .pflow.md extension and retry
+        if identifier.endswith(".pflow.md"):
+            name = identifier[:-9]  # len(".pflow.md") == 9
+            if not wm.exists(name):
+                return None
+        else:
+            return None
+
+    return _load_library_workflow(name, wm)
+
+
+def _load_library_workflow(name: str, wm: WorkflowManager) -> ResolvedWorkflow:
+    """Load a saved workflow, preserving parser diagnostics when possible.
+
+    Parses the entry-point file directly so parser warnings survive.
+    Falls back to ``load_ir()`` when the file isn't readable (e.g. mocked
+    WorkflowManager in tests with fake paths).
+    """
     from pflow.core import normalize_ir
+    from pflow.core.markdown_parser import parse_markdown
 
-    # Exact name match
-    if wm.exists(identifier):
-        ir = wm.load_ir(identifier)
-        normalize_ir(ir)
-        return ResolvedWorkflow(
-            ir=ir,
-            source="library",
-            file_path=wm.get_path(identifier),
-        )
-
-    # Strip .pflow.md extension and retry
-    if identifier.endswith(".pflow.md"):
-        stripped = identifier[:-9]  # len(".pflow.md") == 9
-        if wm.exists(stripped):
-            ir = wm.load_ir(stripped)
-            normalize_ir(ir)
-            return ResolvedWorkflow(
-                ir=ir,
-                source="library",
-                file_path=wm.get_path(stripped),
-            )
-
-    return None
+    file_path = wm.get_path(name)
+    diagnostics: tuple[Diagnostic, ...] = ()
+    path = Path(file_path)
+    if path.exists():
+        content = path.read_text(encoding="utf-8")
+        result = parse_markdown(content)
+        ir = result.ir
+        diagnostics = tuple(result.warnings)
+    else:
+        ir = wm.load_ir(name)
+    normalize_ir(ir)
+    return ResolvedWorkflow(
+        ir=ir,
+        source="library",
+        file_path=file_path,
+        diagnostics=diagnostics,
+    )
 
 
-def _parse_markdown_content(content: str) -> dict[str, Any]:
-    """Parse raw markdown string into IR dict."""
+def _parse_markdown_content(content: str) -> tuple[dict[str, Any], tuple[Diagnostic, ...]]:
+    """Parse raw markdown string into IR dict and parser diagnostics."""
     from pflow.core import normalize_ir
     from pflow.core.markdown_parser import parse_markdown
 
     result = parse_markdown(content)
     normalize_ir(result.ir)
-    return result.ir
+    return result.ir, tuple(result.warnings)
 
 
 def _check_inline_file_references(workflow_ir: dict[str, Any], source: str) -> None:

@@ -11,7 +11,7 @@ template_validation/
 ├── path_validation.py       # Pass 5: path existence + all path error formatting
 ├── type_validation.py       # Passes 6+7: type matching + shell command safety
 ├── batch_item_validation.py # Pass 8: ${item.field} against inferred item structure
-├── utils.py                 # Shared: ValidationWarning, path splitting, display helpers
+├── utils.py                 # Shared: path splitting and display helpers
 └── type_checker.py          # Type compatibility matrix and inference
 ```
 
@@ -21,7 +21,6 @@ template_validation/
 from pflow.runtime.template_validation import (
     validate_workflow_templates,   # Main entry point (orchestrator)
     extract_node_outputs,          # Builds node_outputs dict (also used by compiler)
-    ValidationWarning,             # Dataclass for runtime-validated warnings
     flatten_output_structure,      # Recursive path flattening (used by formatters)
     split_template_path,           # Dot-splitting that preserves ${...} nesting
     sanitize_for_display,          # Security: strips control chars for error messages
@@ -56,7 +55,7 @@ validator.py (orchestrator)
 
 | File | What it imports |
 |------|----------------|
-| `runtime/compilation/compile_validation.py` | `validate_workflow_templates`, `extract_node_outputs`, `ValidationWarning` |
+| `runtime/compilation/compile_validation.py` | `validate_workflow_templates`, `extract_node_outputs` |
 | `core/workflow/validator.py` | `validate_workflow_templates` (lazy) |
 | `execution/formatters/node_output_formatter.py` | `flatten_output_structure` |
 | `execution/executor_service.py` | `MAX_DISPLAYED_FIELDS` (lazy) |
@@ -97,7 +96,7 @@ Passes use `is_batch_output` and `is_batch_item` to branch behavior. Workflow no
 - Error messages include "Did you mean?" suggestions via substring matching
 - Shell validation has a single-quote escape hatch: `'${var}'` signals user accepts JSON coercion
 - `flatten_output_structure` shows array access patterns: `result.messages[0].text`
-- `ValidationWarning` emitted when str-type output needs JSON auto-parsing at runtime
+- `Diagnostic(severity=WARNING, source="validator")` emitted when str-type output needs JSON auto-parsing at runtime
 
 ## Design Decisions
 

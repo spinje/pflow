@@ -10,10 +10,12 @@ import json
 import logging
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
+
 logger = logging.getLogger(__name__)
 
 
-def build_error_list(success: bool, action_result: Optional[str], shared_store: dict[str, Any]) -> list[dict[str, Any]]:
+def build_error_list(success: bool, action_result: Optional[str], shared_store: dict[str, Any]) -> list[Diagnostic]:
     """Build error list from a failed workflow execution.
 
     Args:
@@ -22,7 +24,7 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
         shared_store: The shared store containing error details
 
     Returns:
-        List of error dictionaries with rich context (shell, HTTP, MCP details)
+        List of error diagnostics with rich context (shell, HTTP, MCP details)
     """
     if success:
         return []
@@ -30,12 +32,9 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
     error_info = _extract_error_info(action_result, shared_store)
     category = determine_error_category(error_info["message"] or "")
 
-    error: dict[str, Any] = {
-        "source": "runtime",
+    context: dict[str, Any] = {
         "category": category,
-        "message": error_info["message"],
         "action": action_result,
-        "node_id": error_info["failed_node"],
     }
 
     # Extract rich error data from namespaced node output
@@ -43,9 +42,17 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
     if failed_node:
         node_output = shared_store.get(failed_node, {})
         if isinstance(node_output, dict):
-            _enrich_error_from_node_output(error, node_output, category)
+            _enrich_error_from_node_output(context, node_output, category)
 
-    return [error]
+    return [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message=error_info["message"] or "Workflow execution failed",
+            node_id=failed_node,
+            source="runtime",
+            context=context,
+        )
+    ]
 
 
 def determine_error_category(error_message: str) -> str:
@@ -178,44 +185,44 @@ def _extract_error_from_mcp_result(result: Any) -> Optional[str]:
     return None
 
 
-def _enrich_error_from_node_output(error: dict[str, Any], node_output: dict[str, Any], category: str) -> None:
+def _enrich_error_from_node_output(context: dict[str, Any], node_output: dict[str, Any], category: str) -> None:
     """Add rich error context from the failed node's output dict.
 
-    Mutates the error dict in place with HTTP, MCP, shell, and template details.
+    Mutates the context dict in place with HTTP, MCP, shell, and template details.
     """
     # HTTP node data
     if "status_code" in node_output:
-        error["status_code"] = node_output["status_code"]
-        error["raw_response"] = node_output.get("response")
-        error["response_headers"] = node_output.get("response_headers")
-        error["response_time"] = node_output.get("response_time")
+        context["status_code"] = node_output["status_code"]
+        context["raw_response"] = node_output.get("response")
+        context["response_headers"] = node_output.get("response_headers")
+        context["response_time"] = node_output.get("response_time")
 
     # MCP node data
     if "error_details" in node_output:
-        error["mcp_error_details"] = node_output["error_details"]
+        context["mcp_error_details"] = node_output["error_details"]
 
     if "result" in node_output and isinstance(node_output["result"], dict) and "error" in node_output["result"]:
-        error["mcp_error"] = node_output["result"]["error"]
+        context["mcp_error"] = node_output["result"]["error"]
 
     # Shell node data
     if "exit_code" in node_output and "command" in node_output:
-        error["shell_command"] = node_output.get("command")
-        error["shell_exit_code"] = node_output.get("exit_code")
-        error["shell_stdout"] = node_output.get("stdout")
-        error["shell_stderr"] = node_output.get("stderr")
+        context["shell_command"] = node_output.get("command")
+        context["shell_exit_code"] = node_output.get("exit_code")
+        context["shell_stdout"] = node_output.get("stdout")
+        context["shell_stderr"] = node_output.get("stderr")
 
     # Template errors: capture available fields
     if category == "template_error":
         from pflow.runtime.template_validation import MAX_DISPLAYED_FIELDS
 
         all_fields = list(node_output.keys()) if isinstance(node_output, dict) else []
-        error["available_fields"] = [str(f) for f in all_fields[:MAX_DISPLAYED_FIELDS]]
+        context["available_fields"] = [str(f) for f in all_fields[:MAX_DISPLAYED_FIELDS]]
 
         total_fields = len(all_fields)
         if total_fields > MAX_DISPLAYED_FIELDS:
-            error["available_fields_total"] = total_fields
-            error["available_fields_truncated"] = True
-            error["trace_file_hint"] = (
+            context["available_fields_total"] = total_fields
+            context["available_fields_truncated"] = True
+            context["trace_file_hint"] = (
                 f"Showing {MAX_DISPLAYED_FIELDS} of {total_fields} fields. "
                 "Full field list saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json"
             )

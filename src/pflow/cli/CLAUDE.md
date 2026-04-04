@@ -134,9 +134,8 @@ Text-mode error display for `ExecutionResult` failures. `_display_text_error_det
 
 Unified error output for ALL error types (Task 137). Single entry point: `output_error()` handles both JSON and text modes for both exceptions and `ExecutionResult` failures.
 
-- `format_error_json()` — builds unified JSON shape: `{success, status, error, errors, workflow}`
-- `_exception_to_errors()` — converts any exception to structured `(summary, errors_list)`, extracting fields from known types
-- `display_exception_text()` — text-mode display using `format_for_cli()` protocol
+- `format_error_json()` — builds unified JSON shape: `{success, status, error, errors, diagnostics, workflow}`
+- `display_exception_text()` — text-mode display using `exception_to_diagnostics()` + `format_diagnostic()`
 - `output_error()` — THE single error output function (JSON delegates to `_serialize_json_result`, text delegates to `display_exception_text` or `_display_text_error_details`)
 
 ## Workflow Resolution

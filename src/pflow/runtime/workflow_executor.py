@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, format_child_provenance
 from pflow.core.file_resolver import is_workflow_file_reference
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.node import BaseNode
@@ -102,6 +103,7 @@ class WorkflowExecutor(BaseNode):
         "__progress_callback__",
         "__mcp_pool__",
         "__warnings__",
+        "__parser_diagnostics__",
         "__memoization_cache__",
         "_trace_collector",
     )
@@ -125,11 +127,13 @@ class WorkflowExecutor(BaseNode):
         # dict per item. Caching would freeze the first item's resolved values.
         cached_ir = getattr(self, "_cached_loaded_ir", None)
         if cached_ir is not None:
-            workflow_ir, workflow_path, workflow_source = cached_ir
+            workflow_ir, workflow_path, workflow_source, parser_warnings = cached_ir
         else:
-            workflow_ir, workflow_path, workflow_source = self._load_workflow(shared, execution_stack)
+            workflow_ir, workflow_path, workflow_source, parser_warnings = self._load_workflow(shared, execution_stack)
             if workflow_source != "inline":
-                self._cached_loaded_ir = (workflow_ir, workflow_path, workflow_source)
+                self._cached_loaded_ir = (workflow_ir, workflow_path, workflow_source, parser_warnings)
+        self._child_parser_warnings = list(parser_warnings)
+        self._propagate_child_parser_warnings(shared)
 
         # Extract child inputs: all non-reserved params
         # Template resolution already handled by engine's _execute_single_node before prep() runs
@@ -307,26 +311,7 @@ class WorkflowExecutor(BaseNode):
             error_action = self.params.get("error_action", "error")
             return str(error_action) if error_action else "error"
 
-        # Auto-expose child outputs (skip for shared mode — child already wrote to parent)
-        if exec_res.get("storage_mode") != "shared":
-            child_storage = exec_res.get("child_storage", {})
-            child_ir = prep_res.get("workflow_ir", {})
-            child_declared_outputs = child_ir.get("outputs", {})
-
-            if child_declared_outputs:
-                # Child has ## Outputs — expose only declared outputs
-                for output_name in child_declared_outputs:
-                    if output_name in child_storage:
-                        shared[output_name] = child_storage[output_name]
-            else:
-                # No declared outputs — expose all non-internal, non-input root keys
-                child_input_keys = set(prep_res.get("child_params", {}).keys())
-                for key, value in child_storage.items():
-                    if key.startswith(("_pflow_", "__")):
-                        continue
-                    if key in child_input_keys:
-                        continue
-                    shared[key] = value
+        self._expose_child_outputs(shared, prep_res, exec_res)
 
         # Return result action — "end" from inner workflow means normal
         # termination, map to "default" so it doesn't leak to parent engine
@@ -334,6 +319,61 @@ class WorkflowExecutor(BaseNode):
         if not isinstance(child_result, str) or child_result == "end":
             return "default"
         return child_result
+
+    def _propagate_child_parser_warnings(self, shared: dict[str, Any]) -> None:
+        """Append parser diagnostics from the child workflow to the parent shared store.
+
+        Adds the parent step's node_id as provenance so that:
+        - Sibling children with identical parser warnings don't collapse during dedup
+          (dedup identity includes node_id)
+        - Display shows which step produced each warning
+        """
+        if not getattr(self, "_child_parser_warnings", None):
+            return
+        parser_diagnostics = shared.setdefault("__parser_diagnostics__", [])
+        step_id = getattr(self, "node_id", None)
+        for d in self._child_parser_warnings:
+            if step_id:
+                parser_diagnostics.append(
+                    Diagnostic(
+                        severity=d.severity,
+                        message=format_child_provenance(step_id, d.message),
+                        suggestion=d.suggestion,
+                        node_id=step_id,
+                        source=d.source,
+                        context=d.context,
+                    )
+                )
+            else:
+                parser_diagnostics.append(d)
+
+    @staticmethod
+    def _expose_child_outputs(
+        shared: dict[str, Any],
+        prep_res: dict[str, Any],
+        exec_res: dict[str, Any],
+    ) -> None:
+        """Expose child workflow outputs unless child storage was shared directly."""
+        if exec_res.get("storage_mode") == "shared":
+            return
+
+        child_storage = exec_res.get("child_storage", {})
+        child_ir = prep_res.get("workflow_ir", {})
+        child_declared_outputs = child_ir.get("outputs", {})
+
+        if child_declared_outputs:
+            for output_name in child_declared_outputs:
+                if output_name in child_storage:
+                    shared[output_name] = child_storage[output_name]
+            return
+
+        child_input_keys = set(prep_res.get("child_params", {}).keys())
+        for key, value in child_storage.items():
+            if key.startswith(("_pflow_", "__")):
+                continue
+            if key in child_input_keys:
+                continue
+            shared[key] = value
 
     @staticmethod
     def _is_file_reference(value: str) -> bool:
@@ -371,11 +411,11 @@ class WorkflowExecutor(BaseNode):
 
     def _load_workflow(
         self, shared: dict[str, Any], execution_stack: list[str]
-    ) -> tuple[dict[str, Any], Optional[Path], str]:
+    ) -> tuple[dict[str, Any], Optional[Path], str, list[Diagnostic]]:
         """Load the workflow from file, saved name, or inline IR.
 
         Returns:
-            (workflow_ir, workflow_path, workflow_source)
+            (workflow_ir, workflow_path, workflow_source, parser_warnings)
         """
         workflow = self.params.get("workflow")
         workflow_ir = self.params.get("workflow_ir")
@@ -386,27 +426,21 @@ class WorkflowExecutor(BaseNode):
             raise ValueError("Only one of 'workflow' or 'workflow_ir' should be provided")
 
         workflow_path: Optional[Path] = None
+        parser_warnings: list[Diagnostic] = []
 
         if workflow:
             if self._is_file_reference(workflow):
-                logger.debug(f"Loading workflow from file: {workflow}")
-                workflow_path = self._resolve_safe_path(workflow, shared)
-                if str(workflow_path) in execution_stack:
-                    cycle = " -> ".join([*execution_stack, str(workflow_path)])
-                    raise ValueError(f"Circular workflow reference detected: {cycle}")
-                workflow_ir = self._load_workflow_file(workflow_path)
+                workflow_ir, workflow_path, parser_warnings = self._load_workflow_from_reference(
+                    workflow,
+                    shared,
+                    execution_stack,
+                )
                 workflow_source = f"ref:{workflow}"
             else:
-                logger.debug(f"Loading workflow by name: {workflow}")
-                workflow_manager = WorkflowManager()
-                try:
-                    workflow_ir = workflow_manager.load_ir(workflow)
-                    workflow_path = Path(workflow_manager.get_path(workflow))
-                    if str(workflow_path) in execution_stack:
-                        cycle = " -> ".join([*execution_stack, str(workflow_path)])
-                        raise ValueError(f"Circular workflow reference detected: {cycle}")
-                except Exception as e:
-                    raise ValueError(f"Failed to load workflow '{workflow}': {e!s}") from e
+                workflow_ir, workflow_path, parser_warnings = self._load_workflow_by_name(
+                    workflow,
+                    execution_stack,
+                )
                 workflow_source = f"name:{workflow}"
         else:
             logger.debug("Using inline workflow definition")
@@ -417,7 +451,49 @@ class WorkflowExecutor(BaseNode):
         if "nodes" not in workflow_ir:
             raise ValueError("Workflow IR must contain 'nodes' (use '## Steps' section in .pflow.md files)")
 
-        return workflow_ir, workflow_path, workflow_source
+        return workflow_ir, workflow_path, workflow_source, parser_warnings
+
+    def _load_workflow_from_reference(
+        self,
+        workflow: str,
+        shared: dict[str, Any],
+        execution_stack: list[str],
+    ) -> tuple[dict[str, Any], Path, list[Diagnostic]]:
+        """Load a child workflow from a file reference and collect parser warnings."""
+        logger.debug(f"Loading workflow from file: {workflow}")
+        workflow_path = self._resolve_safe_path(workflow, shared)
+        self._check_workflow_cycle(workflow_path, execution_stack)
+        workflow_ir, parser_warnings = self._load_workflow_file(workflow_path)
+        return workflow_ir, workflow_path, parser_warnings
+
+    def _load_workflow_by_name(
+        self,
+        workflow: str,
+        execution_stack: list[str],
+    ) -> tuple[dict[str, Any], Optional[Path], list[Diagnostic]]:
+        """Load a child workflow from the saved library and collect parser warnings."""
+        logger.debug(f"Loading workflow by name: {workflow}")
+        workflow_manager = WorkflowManager()
+        workflow_path: Optional[Path] = None
+        parser_warnings: list[Diagnostic] = []
+        try:
+            workflow_ir = workflow_manager.load_ir(workflow)
+            workflow_path_value = workflow_manager.get_path(workflow)
+            if isinstance(workflow_path_value, str):
+                workflow_path = Path(workflow_path_value)
+                self._check_workflow_cycle(workflow_path, execution_stack)
+                if workflow_path.exists():
+                    workflow_ir, parser_warnings = self._load_workflow_file(workflow_path)
+            return workflow_ir, workflow_path, parser_warnings
+        except Exception as e:
+            raise ValueError(f"Failed to load workflow '{workflow}': {e!s}") from e
+
+    @staticmethod
+    def _check_workflow_cycle(workflow_path: Path, execution_stack: list[str]) -> None:
+        """Raise if loading ``workflow_path`` would create a cycle."""
+        if str(workflow_path) in execution_stack:
+            cycle = " -> ".join([*execution_stack, str(workflow_path)])
+            raise ValueError(f"Circular workflow reference detected: {cycle}")
 
     def _resolve_safe_path(self, workflow_ref: str, shared: dict[str, Any]) -> Path:
         """Resolve workflow path, relative to parent workflow or CWD."""
@@ -428,7 +504,7 @@ class WorkflowExecutor(BaseNode):
             path = base_dir / path
         return path.resolve()
 
-    def _load_workflow_file(self, path: Path) -> dict[str, Any]:
+    def _load_workflow_file(self, path: Path) -> tuple[dict[str, Any], list[Diagnostic]]:
         """Load and parse a .pflow.md workflow file."""
         if not path.exists():
             raise FileNotFoundError(f"Workflow file not found: {path}")
@@ -442,7 +518,7 @@ class WorkflowExecutor(BaseNode):
         workflow_ir = result.ir
         if "nodes" not in workflow_ir:
             raise ValueError(f"Workflow file {path} must contain a '## Steps' section with at least one node")
-        return workflow_ir
+        return workflow_ir, list(result.warnings)
 
     def _validate_child_params(
         self, workflow_ir: dict[str, Any], child_params: dict[str, Any], workflow_path: Any

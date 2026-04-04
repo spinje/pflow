@@ -1,14 +1,12 @@
 """Shared validation utilities for template validation.
 
 Provides common infrastructure used across multiple validation modules:
-- ValidationWarning dataclass
 - Display constants
 - Path splitting, sanitization, and suggestion matching
 - Output structure flattening
 """
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -17,20 +15,6 @@ logger = logging.getLogger(__name__)
 MAX_DISPLAYED_FIELDS = 20  # Fits in ~25 terminal lines with formatting
 MAX_DISPLAYED_SUGGESTIONS = 3  # Cognitive limit for processing alternatives
 MAX_FLATTEN_DEPTH = 5  # Prevent infinite recursion on circular refs
-
-
-@dataclass
-class ValidationWarning:
-    """Pre-execution warning about a node or template.
-
-    General-purpose warning type used by all validation steps.
-    Template warnings include the template field; lint warnings
-    (e.g., cache advisories) set template to None.
-    """
-
-    node_id: str  # Node this warning applies to
-    message: str  # Human-readable explanation
-    template: str | None = None  # Template string (for template warnings only)
 
 
 def split_template_path(template: str) -> list[str]:
