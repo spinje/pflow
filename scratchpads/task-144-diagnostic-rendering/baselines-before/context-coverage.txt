@@ -1,0 +1,346 @@
+CONTEXT KEY COVERAGE ANALYSIS
+
+For each fixture, shows which context keys from the Diagnostic
+are rendered in text vs silently dropped.
+
+SUMMARY: 96/127 context keys rendered (76%)
+         31 keys silently dropped
+
+==============================================================================
+  compilation-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (3):
+    + category
+    + node_type
+    + sub_workflow_path
+  DROPPED (1):
+    - phase
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (3):
+    + category
+    + node_type
+    + sub_workflow_path
+  DROPPED (1):
+    - phase
+
+==============================================================================
+  max-visits-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (2):
+    + max_visits
+    + visit_count
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (3):
+    + category
+    + max_visits
+    + visit_count
+
+==============================================================================
+  workflow-validation-error [1/3]
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + path
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (2):
+    + category
+    + path
+
+==============================================================================
+  workflow-validation-error [2/3]
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + path
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (2):
+    + category
+    + path
+
+==============================================================================
+  workflow-validation-error [3/3]
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + path
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (2):
+    + category
+    + path
+
+==============================================================================
+  schema-validation-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + path
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (2):
+    + category
+    + path
+
+==============================================================================
+  markdown-parse-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + line
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (2):
+    + category
+    + line
+
+==============================================================================
+  workflow-not-found-with-suggestions
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (2):
+    + similar_names
+    + workflow_name
+  DROPPED (2):
+    - category
+    - hint
+
+==============================================================================
+  workflow-not-found-with-hint
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + hint
+  DROPPED (3):
+    - category
+    - similar_names
+    - workflow_name
+
+==============================================================================
+  output-resolution-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (6):
+    + explanation
+    + failures
+    + output_name
+    + source_expr
+    + suggestions
+    + title
+  DROPPED (2):
+    - category
+    - technical_details
+
+  Path: format_diagnostic(verbose=True)
+  Rendered (7):
+    + explanation
+    + failures
+    + output_name
+    + source_expr
+    + suggestions
+    + technical_details
+    + title
+  DROPPED (1):
+    - category
+
+==============================================================================
+  mcp-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (4):
+    + category
+    + explanation
+    + suggestions
+    + title
+  DROPPED (1):
+    - technical_details
+
+  Path: format_diagnostic(verbose=True)
+  Rendered (5):
+    + category
+    + explanation
+    + suggestions
+    + technical_details
+    + title
+
+==============================================================================
+  user-friendly-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (3):
+    + explanation
+    + suggestions
+    + title
+  DROPPED (2):
+    - category
+    - technical_details
+
+  Path: format_diagnostic(verbose=True)
+  Rendered (4):
+    + explanation
+    + suggestions
+    + technical_details
+    + title
+  DROPPED (1):
+    - category
+
+==============================================================================
+  file-not-found-error
+==============================================================================
+  Path: format_diagnostic()
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (1):
+    + category
+
+==============================================================================
+  permission-error
+==============================================================================
+  Path: format_diagnostic()
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (1):
+    + category
+
+==============================================================================
+  valueerror-with-node-annotation
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (1):
+    + category
+
+==============================================================================
+  valueerror-without-annotation
+==============================================================================
+  Path: format_diagnostic()
+  DROPPED (1):
+    - category
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (1):
+    + category
+
+==============================================================================
+  generic-exception-typeerror
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + category
+  DROPPED (1):
+    - exception_type
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (1):
+    + category
+  DROPPED (1):
+    - exception_type
+
+==============================================================================
+  runtime-shell-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (5):
+    + category
+    + shell_command
+    + shell_exit_code
+    + shell_stderr
+    + shell_stdout
+  DROPPED (1):
+    - action
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (5):
+    + category
+    + shell_command
+    + shell_exit_code
+    + shell_stderr
+    + shell_stdout
+  DROPPED (1):
+    - action
+
+==============================================================================
+  runtime-api-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (3):
+    + category
+    + raw_response
+    + status_code
+  DROPPED (1):
+    - action
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (3):
+    + category
+    + raw_response
+    + status_code
+  DROPPED (1):
+    - action
+
+==============================================================================
+  runtime-mcp-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (3):
+    + action
+    + category
+    + mcp_error
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (3):
+    + action
+    + category
+    + mcp_error
+
+==============================================================================
+  runtime-template-error
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (4):
+    + action
+    + available_fields
+    + available_fields_total
+    + category
+  DROPPED (1):
+    - available_fields_truncated
+
+  Path: format_diagnostic(error_number=1)
+  Rendered (4):
+    + action
+    + available_fields
+    + available_fields_total
+    + category
+  DROPPED (1):
+    - available_fields_truncated
+
+==============================================================================
+  warning-with-suggestion
+==============================================================================
+  Path: format_diagnostic()
+  Rendered (1):
+    + template
