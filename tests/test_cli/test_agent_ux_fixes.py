@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import patch
 
 from pflow.cli.workflow_errors import _display_single_error
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.executor_service import determine_error_category
 from pflow.execution.result import ExecutionResult
@@ -26,16 +27,20 @@ def test_shell_stderr_shown_without_verbose() -> None:
     """Shell command and stderr are displayed even when verbose=False.
 
     Previously, shell details were gated behind the verbose flag.
-    Now they are always shown when shell_command is present in the error dict,
+    Now they are always shown when shell_command is present in the error,
     because agents need stderr for diagnosis regardless of verbose mode.
     """
-    error: dict[str, Any] = {
-        "node_id": "run-build",
-        "category": "execution_failure",
-        "message": "Shell command failed with exit code 1",
-        "shell_command": "npm run build",
-        "shell_stderr": "Error: Cannot find module 'react'",
-    }
+    error = Diagnostic(
+        severity=Severity.ERROR,
+        message="Shell command failed with exit code 1",
+        node_id="run-build",
+        source="runtime",
+        context={
+            "category": "execution_failure",
+            "shell_command": "npm run build",
+            "shell_stderr": "Error: Cannot find module 'react'",
+        },
+    )
 
     # Capture all click.echo calls to stderr
     captured: list[str] = []
@@ -57,14 +62,18 @@ def test_shell_stderr_shown_without_verbose() -> None:
 
 def test_shell_stdout_also_shown_without_verbose() -> None:
     """When shell_stdout is present alongside stderr, both are shown."""
-    error: dict[str, Any] = {
-        "node_id": "run-tests",
-        "category": "execution_failure",
-        "message": "Shell command failed",
-        "shell_command": "pytest tests/",
-        "shell_stdout": "FAILED tests/test_foo.py::test_bar",
-        "shell_stderr": "1 failed, 5 passed",
-    }
+    error = Diagnostic(
+        severity=Severity.ERROR,
+        message="Shell command failed",
+        node_id="run-tests",
+        source="runtime",
+        context={
+            "category": "execution_failure",
+            "shell_command": "pytest tests/",
+            "shell_stdout": "FAILED tests/test_foo.py::test_bar",
+            "shell_stderr": "1 failed, 5 passed",
+        },
+    )
 
     captured: list[str] = []
 
@@ -84,13 +93,22 @@ def test_shell_stdout_also_shown_without_verbose() -> None:
 
 
 def test_single_cli_error_is_not_numbered() -> None:
-    """Single-error display should omit the redundant "Error 1" label."""
-    error: dict[str, Any] = {
-        "node_id": "run-build",
-        "category": "execution_failure",
-        "message": "Shell command failed with exit code 1",
-        "shell_command": "npm run build",
-    }
+    """Single-error display should omit the redundant "Error 1" label.
+
+    The unified titled format renders "Error: <title>" for a single error
+    (error_number=None) and "Error N: <title>" for multiple errors.
+    """
+    error = Diagnostic(
+        severity=Severity.ERROR,
+        message="Shell command failed with exit code 1",
+        title="Execution Failed",
+        node_id="run-build",
+        source="runtime",
+        context={
+            "category": "execution_failure",
+            "shell_command": "npm run build",
+        },
+    )
 
     captured: list[str] = []
 
@@ -99,11 +117,12 @@ def test_single_cli_error_is_not_numbered() -> None:
             captured.append(str(message))
 
     with patch("pflow.cli.workflow_errors.click.echo", side_effect=capture_echo):
-        _display_single_error(error, error_number=0, verbose=False)
+        _display_single_error(error, error_number=None, verbose=False)
 
     output = "\n".join(captured)
-    assert "Error at node 'run-build':" in output
-    assert "Error 1 at node 'run-build':" not in output
+    # Unified titled format: "Error: Execution Failed" (no number for single error)
+    assert "Error: Execution Failed" in output
+    assert "Error 1:" not in output
 
 
 # ---------------------------------------------------------------------------
@@ -337,18 +356,20 @@ def test_mcp_build_error_text_includes_shell_details() -> None:
     """MCP error text should include shell command and stderr for agent diagnosis."""
     from pflow.mcp_server.services.execution_service import _build_error_text
 
-    error_dict = {
-        "error": {"message": "Shell command failed"},
-        "errors": [
-            {
-                "node_id": "build",
-                "message": "exit 1",
+    errors = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="exit 1",
+            node_id="build",
+            source="runtime",
+            context={
+                "category": "execution_failure",
                 "shell_command": "npm run build",
                 "shell_stderr": "Error: Cannot find module 'webpack'",
-            }
-        ],
-    }
-    text = _build_error_text(error_dict)
+            },
+        )
+    ]
+    text = _build_error_text(errors, warnings=[], trace_path="")
     assert "npm run build" in text
     assert "Cannot find module" in text
     assert "build" in text
@@ -358,16 +379,18 @@ def test_mcp_build_error_text_truncates_long_values(tmp_path: Any) -> None:
     """MCP error text truncates long commands and stderr."""
     from pflow.mcp_server.services.execution_service import _build_error_text
 
-    error_dict = {
-        "error": {"message": "Failed"},
-        "errors": [
-            {
-                "node_id": "run",
-                "message": "exit 1",
+    errors = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="exit 1",
+            node_id="run",
+            source="runtime",
+            context={
+                "category": "execution_failure",
                 "shell_command": "x" * 250,
                 "shell_stderr": "y" * 350,
-            }
-        ],
-    }
-    text = _build_error_text(error_dict)
+            },
+        )
+    ]
+    text = _build_error_text(errors, warnings=[], trace_path="")
     assert "..." in text  # Truncation happened

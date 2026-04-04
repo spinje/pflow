@@ -45,8 +45,8 @@ class TestRegistryRunErrorFormat:
         assert isinstance(result, str), f"Expected str, got {type(result).__name__}"
         assert "not found" in result.lower()
         assert "read-fle" in result
-        # Should include helpful guidance
-        assert "registry_discover" in result.lower() or "registry_list" in result.lower()
+        # Should include helpful guidance (rendered via format_diagnostic suggestions)
+        assert "registry" in result.lower()
 
     def test_execution_error_returns_string_not_dict(self):
         """CRITICAL BUG GUARD: Returns string on execution exception.
@@ -68,15 +68,22 @@ class TestRegistryRunErrorFormat:
         result = ExecutionService.run_registry_node("totally-fake-node")
 
         assert isinstance(result, str)
-        # Should tell user how to find valid nodes
-        assert "registry_list" in result.lower() or "see all nodes" in result.lower()
+        # Should tell user how to find valid nodes (via diagnostic suggestions)
+        assert "registry" in result.lower()
 
-    def test_error_format_matches_cli_style(self):
-        """Error messages use CLI-style formatting (❌ prefix)."""
+    def test_error_format_uses_diagnostic_style(self):
+        """Node-not-found errors use diagnostic format with title and suggestions.
+
+        After diagnostic rendering redesign (Task 144), node-not-found errors
+        use format_diagnostic() which renders 'Error: Node Not Found' instead
+        of the old '❌ Node not found' prefix.
+        """
         result = ExecutionService.run_registry_node("bad-node")
 
         assert isinstance(result, str)
-        assert "❌" in result  # CLI-style error indicator
+        assert "not found" in result.lower()
+        # Diagnostic format uses titled error blocks
+        assert "Node Not Found" in result
 
 
 class TestRegistryRunReturnTypeConsistency:
@@ -89,7 +96,7 @@ class TestRegistryRunReturnTypeConsistency:
         "node_type,parameters,expected_indicator",
         [
             ("nonexistent-fake-node-xyz", None, "not found"),  # Error: node doesn't exist
-            ("read-file", None, "❌"),  # Error: missing required param
+            ("read-file", None, "error"),  # Error: missing required param (diagnostic format)
             ("another-fake-xyz", None, "not found"),  # Error: node doesn't exist (no suggestions)
         ],
     )

@@ -10,7 +10,7 @@ import json
 import logging
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import _CATEGORY_TITLES, Diagnostic, Severity
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
         Diagnostic(
             severity=Severity.ERROR,
             message=error_info["message"] or "Workflow execution failed",
+            title=_CATEGORY_TITLES.get(category, "Execution Failed"),
             node_id=failed_node,
             source="runtime",
             context=context,

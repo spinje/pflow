@@ -20,15 +20,23 @@ class Severity(Enum):
 class Diagnostic:
     """Single type for pflow diagnostics.
 
-    Identity ignores context because context is mutable enrichment data.
+    Identity ignores context, title, and suggestions — these are display data, not identity.
     """
 
     severity: Severity
     message: str
-    suggestion: str | None = None
+    title: str | None = None
+    suggestions: list[str] | None = None
     node_id: str | None = None
     source: str = ""
     context: dict[str, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.suggestions, str):
+            raise TypeError(
+                f"Diagnostic.suggestions must be list[str] | None, got str: {self.suggestions!r}. "
+                f"Wrap in a list: suggestions=[{self.suggestions!r}]"
+            )
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Diagnostic):
@@ -50,8 +58,10 @@ class Diagnostic:
             "message": self.message,
             "source": self.source,
         }
-        if self.suggestion is not None:
-            result["suggestion"] = self.suggestion
+        if self.title is not None:
+            result["title"] = self.title
+        if self.suggestions is not None:
+            result["suggestions"] = list(self.suggestions)
         if self.node_id is not None:
             result["node_id"] = self.node_id
         if self.context:
@@ -89,36 +99,6 @@ def format_child_provenance(step_id: str, message: str) -> str:
     return f"In step '{step_id}' sub-workflow: {message}"
 
 
-def coerce_warning_diagnostic(warning: Any) -> Diagnostic:
-    """Convert a legacy warning payload to ``Diagnostic``."""
-    return _coerce_diagnostic(warning, Severity.WARNING, "No message")
-
-
-def coerce_error_diagnostic(error: Any) -> Diagnostic:
-    """Convert a legacy error payload to ``Diagnostic``."""
-    return _coerce_diagnostic(error, Severity.ERROR, "Unknown error")
-
-
-_KNOWN_FIELDS = {"severity", "message", "suggestion", "node_id", "source"}
-
-
-def _coerce_diagnostic(payload: Any, severity: Severity, default_message: str) -> Diagnostic:
-    """Shared coercion logic for legacy warning/error payloads."""
-    if isinstance(payload, Diagnostic):
-        return payload
-    if isinstance(payload, dict):
-        context = {k: v for k, v in payload.items() if k not in _KNOWN_FIELDS}
-        return Diagnostic(
-            severity=severity,
-            message=payload.get("message", default_message),
-            suggestion=payload.get("suggestion"),
-            node_id=payload.get("node_id"),
-            source=str(payload.get("source") or payload.get("type") or "runtime"),
-            context=context or None,
-        )
-    return Diagnostic(severity=severity, message=str(payload), source="runtime")
-
-
 def format_diagnostic(
     diagnostic: Diagnostic,
     verbose: bool = False,
@@ -141,8 +121,9 @@ def _format_warning_or_info_diagnostic(diagnostic: Diagnostic) -> str:
         line = f"  {icon} [{diagnostic.node_id}] {diagnostic.message}"
     else:
         line = f"  {icon} {diagnostic.message}"
-    if diagnostic.suggestion:
-        line += f"\n    → {diagnostic.suggestion}"
+    if diagnostic.suggestions:
+        for suggestion in diagnostic.suggestions:
+            line += f"\n    → {suggestion}"
     return line
 
 
@@ -151,140 +132,71 @@ def _format_error_diagnostic(
     verbose: bool,
     error_number: int | None = None,
 ) -> str:
-    """Render one ERROR diagnostic."""
+    """Render one ERROR diagnostic in the unified titled format."""
+    lines: list[str] = []
     context = diagnostic.context or {}
-    if diagnostic.source == "validation":
-        return _format_validation_diagnostic(
-            diagnostic,
-            context,
-            error_number=error_number,
-        )
-    if context.get("category") == "not_found":
-        return _format_not_found_diagnostic(diagnostic, context)
-    if context.get("title"):
-        return _format_user_friendly_diagnostic(diagnostic, context, verbose=verbose)
-    if context.get("category") == "max_visits":
-        if error_number is not None:
-            return _format_runtime_error_diagnostic(
-                diagnostic,
-                context,
-                error_number=error_number,
-            )
-        return f"❌ {diagnostic.message}"
-    if _is_simple_error_diagnostic(diagnostic, context):
-        return _format_simple_error_diagnostic(
-            diagnostic,
-            context,
-            error_number=error_number,
-        )
-    return _format_runtime_error_diagnostic(
-        diagnostic,
-        context,
-        error_number=error_number,
-    )
 
+    # 1. Title line
+    title = diagnostic.title or _CATEGORY_TITLES.get(context.get("category", ""), "Error")
+    prefix = f"Error {error_number}" if error_number is not None else "Error"
+    lines.append(f"{prefix}: {title}")
+    lines.append("")
 
-def _format_validation_diagnostic(
-    diagnostic: Diagnostic,
-    context: dict[str, Any],
-    error_number: int | None = None,
-) -> str:
-    """Render a validation diagnostic."""
-    if error_number is not None:
-        lines = _format_runtime_error_header_lines(
-            diagnostic,
-            context,
-            error_number=error_number,
-        )
-        if (path := context.get("path")) and path != "root":
-            lines.append(f"  At: {path}")
-        return "\n".join(lines)
+    # 2. Message
+    lines.append(diagnostic.message)
 
-    lines = [f"❌ {diagnostic.message}"]
-    if (path := context.get("path")) and path != "root":
-        lines.append(f"   At: {path}")
-    if diagnostic.suggestion:
-        lines.append(f"   👉 {diagnostic.suggestion}")
-    return "\n".join(lines)
+    # 3. Location (At:)
+    location = _format_location(diagnostic, context)
+    if location:
+        lines.append(f"  At: {location}")
 
+    # 4. Context blocks (universal — called for ALL error types)
+    context_lines = _format_all_context_blocks(diagnostic, context)
+    if context_lines:
+        lines.extend(context_lines)
 
-def _is_simple_error_diagnostic(diagnostic: Diagnostic, context: dict[str, Any]) -> bool:
-    """Return whether this diagnostic uses the one-line error format."""
-    return not diagnostic.node_id and context.get("category") in {
-        "execution_failure",
-        "file_not_found",
-        "parse_error",
-        "permission_denied",
-        "validation",
-    }
-
-
-def _format_simple_error_diagnostic(
-    diagnostic: Diagnostic,
-    context: dict[str, Any],
-    error_number: int | None = None,
-) -> str:
-    """Render a simple non-node error."""
-    if error_number is not None:
-        return "\n".join(
-            _format_runtime_error_header_lines(
-                diagnostic,
-                context,
-                error_number=error_number,
-            )
-        )
-    if diagnostic.suggestion:
-        return f"✗ {diagnostic.message}\n    → {diagnostic.suggestion}"
-    return f"✗ {diagnostic.message}"
-
-
-def _format_runtime_error_diagnostic(
-    diagnostic: Diagnostic,
-    context: dict[str, Any],
-    error_number: int | None = None,
-) -> str:
-    """Render a runtime or compilation diagnostic with optional context blocks."""
-    lines = _format_runtime_error_header_lines(
-        diagnostic,
-        context,
-        error_number=error_number,
-    )
-    lines.extend(_format_runtime_error_context_lines(diagnostic, context))
-    return "\n".join(lines)
-
-
-def _format_runtime_error_header_lines(
-    diagnostic: Diagnostic,
-    context: dict[str, Any],
-    error_number: int | None = None,
-) -> list[str]:
-    """Render the message, category, and suggestion lines for runtime diagnostics."""
-    lines: list[str] = []
-    if diagnostic.node_id:
-        prefix = f"Error {error_number}" if error_number else "Error"
-        lines.append(f"{prefix} at node '{diagnostic.node_id}':")
-    elif error_number is not None:
-        prefix = f"Error {error_number}" if error_number else "Error"
-        lines.append(f"{prefix}:")
-    if category := context.get("category"):
-        lines.append(f"  Category: {category}")
-    lines.append(f"  Message: {diagnostic.message}")
-
-    if diagnostic.suggestion:
+    # 5. Suggestions
+    suggestions = diagnostic.suggestions or []
+    if suggestions:
         lines.append("")
-        lines.append(f"  Suggestion: {diagnostic.suggestion}")
+        if len(suggestions) == 1:
+            lines.append(f"  → {suggestions[0]}")
+        else:
+            lines.append("To fix this:")
+            for i, s in enumerate(suggestions, 1):
+                lines.append(f"  {i}. {s}")
 
-    return lines
+    # 6. Verbose hint
+    technical_details = context.get("technical_details")
+    if verbose and technical_details:
+        lines.append("")
+        lines.append("Technical details:")
+        lines.append(str(technical_details))
+    elif technical_details:
+        lines.append("")
+        lines.append("Run with --verbose for technical details.")
+
+    return "\n".join(lines)
 
 
-def _format_runtime_error_context_lines(
-    diagnostic: Diagnostic,
-    context: dict[str, Any],
-) -> list[str]:
-    """Render optional structured context blocks for runtime diagnostics."""
+def _format_location(diagnostic: Diagnostic, context: dict[str, Any]) -> str | None:
+    """Build the At: location line from node_id, path, and line."""
+    parts: list[str] = []
+    if diagnostic.node_id:
+        parts.append(f"node '{diagnostic.node_id}'")
+    if (path := context.get("path")) and path != "root":
+        parts.append(path)
+    if (line := context.get("line")) is not None:
+        parts.append(f"line {line}")
+    return ", ".join(parts) if parts else None
+
+
+def _format_all_context_blocks(diagnostic: Diagnostic, context: dict[str, Any]) -> list[str]:
+    """Render all context blocks for any error type."""
     lines: list[str] = []
-    if diagnostic.source == "compilation":
-        lines.extend(_format_compilation_context_lines(context))
+    lines.extend(_format_compilation_context_lines(context))
+    lines.extend(_format_similar_names_block(context))
+    lines.extend(_format_exception_type_line(context))
 
     if (raw := context.get("raw_response")) and isinstance(raw, dict):
         lines.extend(_format_api_response_lines(raw))
@@ -304,11 +216,31 @@ def _format_runtime_error_context_lines(
 def _format_compilation_context_lines(context: dict[str, Any]) -> list[str]:
     """Render compilation-specific context fields."""
     lines: list[str] = []
+    if phase := context.get("phase"):
+        lines.append(f"  Phase: {phase}")
     if node_type := context.get("node_type"):
         lines.append(f"  Node type: {node_type}")
     if sub_path := context.get("sub_workflow_path"):
         lines.append(f"  Sub-workflow: {sub_path}")
     return lines
+
+
+def _format_similar_names_block(context: dict[str, Any]) -> list[str]:
+    """Render a 'Did you mean' list from similar_names context."""
+    similar = context.get("similar_names")
+    if not similar:
+        return []
+    lines = ["", "Did you mean one of these?"]
+    for name in similar:
+        lines.append(f"  - {name}")
+    return lines
+
+
+def _format_exception_type_line(context: dict[str, Any]) -> list[str]:
+    """Render exception type when available (for generic exceptions)."""
+    if exc_type := context.get("exception_type"):
+        return [f"  Type: {exc_type}"]
+    return []
 
 
 def _format_template_error_lines(context: dict[str, Any]) -> list[str]:
@@ -331,63 +263,6 @@ def _format_template_error_lines(context: dict[str, Any]) -> list[str]:
         lines.append("  📁 Complete field list available in trace file")
         lines.append("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json")
     return lines
-
-
-def _format_not_found_diagnostic(diagnostic: Diagnostic, context: dict[str, Any]) -> str:
-    """Render a not-found diagnostic."""
-    if hint := context.get("hint"):
-        return f"❌ {hint}"
-
-    workflow_name = context.get("workflow_name", "unknown")
-    lines = [f"❌ Workflow '{workflow_name}' not found."]
-
-    similar_names = context.get("similar_names") or []
-    if similar_names:
-        lines.append("\nDid you mean one of these?")
-        for name in similar_names:
-            lines.append(f"  - {name}")
-    elif diagnostic.suggestion:
-        lines.append(f"\n{diagnostic.suggestion}")
-    else:
-        lines.append("\nUse 'pflow workflow list' to see available workflows.")
-
-    return "\n".join(lines)
-
-
-def _format_user_friendly_diagnostic(
-    diagnostic: Diagnostic,
-    context: dict[str, Any],
-    verbose: bool,
-) -> str:
-    """Render UserFriendlyError-style diagnostics."""
-    lines = [f"Error: {context['title']}", ""]
-
-    if explanation := context.get("explanation"):
-        lines.append(str(explanation))
-        lines.append("")
-
-    suggestions = context.get("suggestions") or []
-    if not suggestions and diagnostic.suggestion:
-        suggestions = [diagnostic.suggestion]
-
-    if suggestions:
-        lines.append("To fix this:")
-        if len(suggestions) == 1:
-            lines.append(f"  {suggestions[0]}")
-        else:
-            for index, suggestion in enumerate(suggestions, 1):
-                lines.append(f"  {index}. {suggestion}")
-        lines.append("")
-
-    technical_details = context.get("technical_details")
-    if verbose and technical_details:
-        lines.append("Technical details:")
-        lines.append(str(technical_details))
-        lines.append("")
-    elif technical_details:
-        lines.append("Run with --verbose for technical details.")
-
-    return "\n".join(lines).strip()
 
 
 def _format_api_response_lines(raw_response: dict[str, Any]) -> list[str]:
@@ -432,7 +307,7 @@ def _format_mcp_error_lines(mcp_error: dict[str, Any]) -> list[str]:
 def _format_shell_error_lines(context: dict[str, Any]) -> list[str]:
     """Render shell command failure details."""
     lines = ["", "  Shell details:"]
-    command = context.get("shell_command", "")
+    command = context.get("shell_command") or ""
     command_display = command[:200] + "..." if len(command) > 200 else command
     lines.append(f"    Command: {command_display}")
     if stdout := context.get("shell_stdout"):
@@ -444,240 +319,98 @@ def _format_shell_error_lines(context: dict[str, Any]) -> list[str]:
     return lines
 
 
-def exception_to_diagnostics(exception: Exception) -> list[Diagnostic]:  # noqa: C901
-    """Convert any exception to one or more diagnostics."""
-    from pflow.core.exceptions import (
-        CompilationError,
-        MarkdownParseError,
-        MaxNodeVisitsError,
-        SchemaValidationError,
-        WorkflowNotFoundError,
-        WorkflowValidationError,
-    )
-    from pflow.core.user_errors import MCPError, OutputResolutionError, UserFriendlyError
+_CATEGORY_TITLES: dict[str, str] = {
+    "compilation": "Compilation Failed",
+    "max_visits": "Infinite Loop Detected",
+    "validation": "Validation Error",
+    "parse_error": "Parse Error",
+    "not_found": "Workflow Not Found",
+    "file_not_found": "File Not Found",
+    "permission_denied": "Permission Denied",
+    "execution_failure": "Execution Failed",
+    "api_validation": "API Validation Error",
+    "template_error": "Template Error",
+    "mcp": "MCP Error",
+    "cli": "Error",
+}
+
+
+def exception_to_diagnostics(exception: Exception) -> list[Diagnostic]:
+    """Convert any exception to one or more diagnostics.
+
+    Dispatches to to_diagnostics() on exceptions that have it, falls back
+    to _builtin_exception_diagnostic() for built-in exception types.
+    """
+    from dataclasses import replace
 
     annotated_node_id = getattr(exception, "_pflow_node_id", None)
 
-    if isinstance(exception, CompilationError):
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=getattr(exception, "raw_message", str(exception)),
-                suggestion=exception.suggestion,
-                node_id=exception.node_id,
-                source="compilation",
-                context={
-                    "category": "compilation",
-                    "phase": exception.phase,
-                    "node_type": exception.node_type,
-                    "sub_workflow_path": (exception.details or {}).get("sub_workflow_path"),
-                },
-            )
-        ]
+    if hasattr(exception, "to_diagnostics"):
+        diagnostics: list[Diagnostic] = exception.to_diagnostics()
+    else:
+        diagnostics = [_builtin_exception_diagnostic(exception, annotated_node_id)]
 
-    if isinstance(exception, MaxNodeVisitsError):
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=str(exception),
-                suggestion="Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional.",
-                node_id=exception.node_id,
-                source="runtime",
-                context={
-                    "category": "max_visits",
-                    "visit_count": exception.visit_count,
-                    "max_visits": exception.max_visits,
-                },
-            )
-        ]
+    # Apply engine node_id annotation via replace (separation of concerns —
+    # to_diagnostics() methods don't read _pflow_node_id)
+    if annotated_node_id:
+        diagnostics = [replace(d, node_id=annotated_node_id) if not d.node_id else d for d in diagnostics]
 
-    if isinstance(exception, WorkflowValidationError):
-        diagnostics: list[Diagnostic] = []
-        for error in exception.validation_errors:
-            if isinstance(error, tuple):
-                message = error[0] if len(error) >= 1 else str(exception)
-                path = error[1] if len(error) >= 2 else ""
-                suggestion = error[2] or None if len(error) >= 3 else None
-                validation_context: dict[str, Any] = {"category": "validation"}
-                if path:
-                    validation_context["path"] = path
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=message,
-                        suggestion=suggestion,
-                        source="validation",
-                        context=validation_context,
-                    )
-                )
-            else:
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=str(error),
-                        source="validation",
-                        context={"category": "validation"},
-                    )
-                )
-        return diagnostics or [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=str(exception),
-                source="validation",
-                context={"category": "validation"},
-            )
-        ]
+    return diagnostics
 
-    if isinstance(exception, SchemaValidationError):
-        schema_context: dict[str, Any] = {"category": "validation"}
-        if exception.path:
-            schema_context["path"] = exception.path
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=exception.message,
-                suggestion=exception.suggestion or None,
-                source="validation",
-                context=schema_context,
-            )
-        ]
 
-    if isinstance(exception, MarkdownParseError):
-        parser_context: dict[str, Any] = {"category": "parse_error"}
-        if exception.line is not None:
-            parser_context["line"] = exception.line
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=str(exception).split("\n\n", 1)[0],
-                suggestion=exception.suggestion,
-                node_id=annotated_node_id,
-                source="parser",
-                context=parser_context,
-            )
-        ]
-
-    if isinstance(exception, WorkflowNotFoundError):
-        suggestion = None
-        if exception.similar_names:
-            suggestion = f"Did you mean: {', '.join(exception.similar_names)}"
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=str(exception),
-                suggestion=suggestion,
-                source="runtime",
-                context={
-                    "category": "not_found",
-                    "workflow_name": exception.workflow_name,
-                    "similar_names": exception.similar_names,
-                    "hint": exception.hint,
-                },
-            )
-        ]
-
-    if isinstance(exception, OutputResolutionError):
-        suggestion = "; ".join(exception.suggestions) if exception.suggestions else None
-        output_context: dict[str, Any] = {
-            "category": "runtime",
-            "title": exception.title,
-            "explanation": exception.explanation,
-            "suggestions": exception.suggestions,
-            "technical_details": exception.technical_details,
-            "failures": exception.failures,
-        }
-        if exception.failures:
-            first_failure = exception.failures[0]
-            if first_failure.get("output_name"):
-                output_context["output_name"] = first_failure["output_name"]
-            if first_failure.get("source_expr"):
-                output_context["source_expr"] = first_failure["source_expr"]
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=exception.explanation,
-                suggestion=suggestion,
-                source="runtime",
-                context=output_context,
-            )
-        ]
-
-    if isinstance(exception, MCPError):
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=exception.explanation,
-                suggestion="; ".join(exception.suggestions) if exception.suggestions else None,
-                source="runtime",
-                context={
-                    "category": "mcp",
-                    "title": exception.title,
-                    "explanation": exception.explanation,
-                    "suggestions": exception.suggestions,
-                    "technical_details": exception.technical_details,
-                },
-            )
-        ]
-
-    if isinstance(exception, UserFriendlyError):
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=exception.explanation,
-                suggestion="; ".join(exception.suggestions) if exception.suggestions else None,
-                source="runtime",
-                context={
-                    "category": "cli",
-                    "title": exception.title,
-                    "explanation": exception.explanation,
-                    "suggestions": exception.suggestions,
-                    "technical_details": exception.technical_details,
-                },
-            )
-        ]
-
+def _builtin_exception_diagnostic(exception: Exception, annotated_node_id: str | None = None) -> Diagnostic:
+    """Convert built-in exceptions (FileNotFoundError, PermissionError, etc.) to Diagnostic."""
     if isinstance(exception, FileNotFoundError):
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=str(exception),
-                source="runtime",
-                context={"category": "file_not_found"},
-            )
-        ]
+        return Diagnostic(
+            severity=Severity.ERROR,
+            message=str(exception),
+            title="File Not Found",
+            suggestions=["Check the file path and ensure the file exists."],
+            source="runtime",
+            context={"category": "file_not_found"},
+        )
 
     if isinstance(exception, PermissionError):
         message = str(exception) if str(exception) else "Permission denied"
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=message,
-                source="runtime",
-                context={"category": "permission_denied"},
-            )
-        ]
+        return Diagnostic(
+            severity=Severity.ERROR,
+            message=message,
+            title="Permission Denied",
+            suggestions=["Check file permissions and access rights."],
+            source="runtime",
+            context={"category": "permission_denied"},
+        )
+
+    if isinstance(exception, UnicodeDecodeError):
+        return Diagnostic(
+            severity=Severity.ERROR,
+            message="File must be valid UTF-8 text.",
+            title="Encoding Error",
+            suggestions=["Ensure the file is saved as UTF-8."],
+            source="runtime",
+            context={"category": "validation"},
+        )
 
     if isinstance(exception, ValueError):
-        context = {"category": "execution_failure" if annotated_node_id else "validation"}
-        return [
-            Diagnostic(
-                severity=Severity.ERROR,
-                message=str(exception),
-                node_id=annotated_node_id,
-                source="runtime",
-                context=context,
-            )
-        ]
-
-    return [
-        Diagnostic(
+        category = "execution_failure" if annotated_node_id else "validation"
+        title = "Execution Failed" if annotated_node_id else "Validation Error"
+        return Diagnostic(
             severity=Severity.ERROR,
             message=str(exception),
+            title=title,
             node_id=annotated_node_id,
             source="runtime",
-            context={
-                "category": "execution_failure",
-                "exception_type": type(exception).__name__,
-            },
+            context={"category": category},
         )
-    ]
+
+    return Diagnostic(
+        severity=Severity.ERROR,
+        message=str(exception),
+        title="Execution Failed",
+        node_id=annotated_node_id,
+        source="runtime",
+        context={
+            "category": "execution_failure",
+            "exception_type": type(exception).__name__,
+        },
+    )

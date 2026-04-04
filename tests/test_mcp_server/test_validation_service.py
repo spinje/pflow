@@ -210,7 +210,11 @@ class TestValidationResponseFormat:
         # This test verifies the formatter can handle suggestions when present
 
     def test_error_format_structure(self):
-        """Validation errors should follow text format structure."""
+        """Validation errors should follow numbered text format structure.
+
+        After diagnostic rendering redesign (Task 144), validation errors
+        use numbered format (1. Error) instead of bullet points (bullet Error).
+        """
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "node1", "type": "nonexistent", "params": {}}],
@@ -222,5 +226,5 @@ class TestValidationResponseFormat:
 
         # Check text format structure
         assert isinstance(result, str), "Should return string"
-        assert result.startswith("✗"), "Should start with failure indicator"
-        assert "• " in result, "Should use bullet points for errors"
+        assert result.startswith("\u2717"), "Should start with failure indicator"
+        assert "1. " in result, "Should use numbered format for errors"

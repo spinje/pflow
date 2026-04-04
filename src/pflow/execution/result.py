@@ -43,9 +43,9 @@ class ValidationResult:
     diagnostics: list[Diagnostic] = field(default_factory=list)
 
     @property
-    def errors(self) -> list[str]:
-        """Validation errors as plain messages for display formatters."""
-        return [d.message for d in self.diagnostics if d.severity == Severity.ERROR]
+    def errors(self) -> list[Diagnostic]:
+        """Validation errors as diagnostics."""
+        return [d for d in self.diagnostics if d.severity == Severity.ERROR]
 
     @property
     def warnings(self) -> list[Diagnostic]:

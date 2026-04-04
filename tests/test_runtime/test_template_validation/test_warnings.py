@@ -187,13 +187,13 @@ class TestValidationWarnings:
             source="validator",
             node_id="test-node",
             message="Test reason",
-            suggestion="Fix the template.",
+            suggestions=["Fix the template."],
             context={"template": "${test.stdout.data}"},
         )
 
         assert warning.node_id == "test-node"
         assert warning.message == "Test reason"
-        assert warning.suggestion == "Fix the template."
+        assert warning.suggestions == ["Fix the template."]
         assert (warning.context or {}).get("template") == "${test.stdout.data}"
 
         # Test lint-style warning (no template)
@@ -202,7 +202,7 @@ class TestValidationWarnings:
             source="validator",
             node_id="get-branch",
             message="Shell node has no inputs",
-            suggestion="Add '- cache: false' if this node reads runtime state.",
+            suggestions=["Add '- cache: false' if this node reads runtime state."],
         )
         assert (lint_warning.context or {}).get("template") is None
 

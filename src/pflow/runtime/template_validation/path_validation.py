@@ -186,7 +186,7 @@ def validate_namespaced_output(
                     f"Array access on '{output_type}' requires valid JSON array at runtime. "
                     f"Non-JSON strings cause 'Unresolved variables' error."
                 ),
-                suggestion="Ensure the value is a valid JSON array at runtime.",
+                suggestions=["Ensure the value is a valid JSON array at runtime."],
                 context={"template": template if template.startswith("${") else f"${{{template}}}"},
             )
             return (True, warning)
@@ -300,7 +300,7 @@ def check_type_allows_traversal(
                 f"Nested access on '{output_type}' requires valid JSON at runtime. "
                 f"Non-JSON strings cause 'Unresolved variables' error."
             ),
-            suggestion="Ensure the value is valid JSON at runtime.",
+            suggestions=["Ensure the value is valid JSON at runtime."],
             context={"template": full_template if full_template.startswith("${") else f"${{{full_template}}}"},
         )
 

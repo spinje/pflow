@@ -105,7 +105,7 @@ class TestValidationWarningsPropagateToResult:
             source="validator",
             node_id="api",
             message="Cannot verify nested access on 'any' type at validation time",
-            suggestion="Inspect this runtime value before relying on nested access.",
+            suggestions=["Inspect this runtime value before relying on nested access."],
             context={"template": "${api.result.data.items}"},
         )
 

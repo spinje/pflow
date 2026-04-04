@@ -16,7 +16,6 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `discovery_formatter` | LLM workflow discovery results | str |
 | `registry_list_formatter` | All nodes grouped by package | str |
 | `registry_search_formatter` | Node search results | str |
-| `registry_run_formatter` | Registry run errors + suggestions | str |
 | `history_formatter` | Execution history (compact/detailed) | str or None |
 | `field_output_formatter` | Field retrieval results (read-fields) | str or dict |
 | `output_utils` | Unified output auto-detection (shared by CLI + JSON/MCP) | tuple |

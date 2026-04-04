@@ -233,7 +233,7 @@ class TestStructuredFieldPreservation:
         assert len(summary) > 0
 
     def test_exception_to_errors_validation_error(self) -> None:
-        """IR schema ValidationError fields (path, suggestion) survive."""
+        """IR schema ValidationError fields (path, suggestions) survive."""
         from pflow.core.exceptions import SchemaValidationError
 
         exc = SchemaValidationError(
@@ -247,11 +247,14 @@ class TestStructuredFieldPreservation:
         err = errors[0]
         assert err["category"] == "validation"
         assert err["path"] == "nodes[0].type"
-        assert err["suggestion"] == "Did you mean 'file'?"
+        # suggestion is now a list: suggestions=["Did you mean 'file'?"]
+        assert "suggestions" in err, f"Expected 'suggestions' field, got keys: {list(err.keys())}"
+        assert "Did you mean 'file'?" in err["suggestions"]
+        assert "title" in err
         assert "foo" in err["message"]
 
     def test_exception_to_errors_workflow_not_found(self) -> None:
-        """WorkflowNotFoundError with similar names produces suggestion field."""
+        """WorkflowNotFoundError with similar names produces suggestions field."""
         from pflow.core.exceptions import WorkflowNotFoundError
 
         exc = WorkflowNotFoundError(
@@ -263,8 +266,11 @@ class TestStructuredFieldPreservation:
         assert len(errors) == 1
         err = errors[0]
         assert err["category"] == "not_found"
-        assert "suggestion" in err, "Expected suggestion field for similar names"
-        assert "my-workflow" in err["suggestion"]
+        assert "title" in err
+        # suggestions is now a list; similar_names are in context, not suggestions
+        assert "suggestions" in err, f"Expected 'suggestions' field, got keys: {list(err.keys())}"
+        # The similar_names are available in context for rendering
+        assert err["similar_names"] == ["my-workflow", "my-workflow-v2"]
 
     def test_missing_required_input_preserves_path_and_suggestion(self, tmp_path: Path) -> None:
         """Missing required input produces JSON with path and suggestion fields.

@@ -240,12 +240,30 @@ class TestRegistryRunMCP:
         assert "Workflow execution failed" not in result or "exit" in result.lower()
 
     def test_build_error_text_omits_error_number_for_single_error(self):
-        """Single-error MCP text should use "Error at node", not "Error 1 at node"."""
-        error_text = _build_error_text({
-            "error": {"message": "Workflow execution failed"},
-            "errors": [{"node_id": "run-tests", "message": "Shell command failed"}],
-            "trace_path": "",
-        })
+        """Single-error MCP text should not use numbered prefix 'Error 1'.
 
-        assert "Error at node 'run-tests':" in error_text
-        assert "Error 1 at node 'run-tests':" not in error_text
+        After diagnostic rendering redesign (Task 144), _build_error_text
+        accepts list[Diagnostic] instead of a dict. Single errors render
+        without numbering (just 'Error: <title>').
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
+        error_text = _build_error_text(
+            errors=[
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    message="Shell command failed",
+                    title="Execution Failed",
+                    node_id="run-tests",
+                    source="runtime",
+                )
+            ],
+            warnings=[],
+            trace_path="",
+        )
+
+        # Single error should NOT have "Error 1" numbering
+        assert "Error 1" not in error_text
+        # Should include the error title and node context
+        assert "Execution Failed" in error_text
+        assert "run-tests" in error_text

@@ -294,6 +294,7 @@ class WorkflowRunner:
                     Diagnostic(
                         severity=Severity.ERROR,
                         message=error,
+                        title="Validation Error",
                         source="validation",
                         context={"category": "validation"},
                     )
@@ -477,7 +478,9 @@ class WorkflowRunner:
                 Diagnostic(
                     severity=Severity.WARNING,
                     message=message,
-                    suggestion="Inspect this node's output and upstream inputs to determine whether the warning is expected.",
+                    suggestions=[
+                        "Inspect this node's output and upstream inputs to determine whether the warning is expected."
+                    ],
                     node_id=node_id,
                     source="runtime",
                     context={"type": "api_warning"},
@@ -489,7 +492,9 @@ class WorkflowRunner:
                 Diagnostic(
                     severity=Severity.WARNING,
                     message=error_data.get("message", "Template resolution failed"),
-                    suggestion="Fix unresolved template references, or use ?? fallback for branch-dependent outputs.",
+                    suggestions=[
+                        "Fix unresolved template references, or use ?? fallback for branch-dependent outputs."
+                    ],
                     node_id=node_id,
                     source="runtime",
                     context={

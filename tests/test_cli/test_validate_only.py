@@ -333,10 +333,76 @@ class TestValidateOnlyJSONOutput:
         assert warning["severity"] == "warning"
         assert warning["source"] == "validator"
         assert warning["node_id"] == "shell"
-        assert warning["suggestion"]
+        assert warning["suggestions"]
 
 
-class TestParserWarningsReachCLI:
+class TestValidationErrorDiagnosticShape:
+    """Regression guard for Task 144: validation errors are Diagnostic objects.
+
+    ValidationResult.errors changed from list[str] to list[Diagnostic].
+    These tests verify the two main consumers (JSON output and text formatter)
+    handle the new type correctly — not just that they don't crash, but that
+    they produce the specific structured data that agents depend on.
+    """
+
+    def test_json_errors_are_diagnostic_dicts_not_strings(self, tmp_path: Path) -> None:
+        """JSON error entries must be Diagnostic.to_display_dict(), not {"message": str, "category": str}.
+
+        Before Task 144, errors were: [{"message": "error text", "category": "validation"}]
+        After: [{"severity": "error", "message": "...", "source": "validation", "title": "...", ...}]
+        Any agent parsing "severity" or "title" from the JSON would break if this regresses.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "test", "type": "unknown_type", "params": {}}],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
+        assert result.exit_code != 0
+
+        output_data = json.loads(result.output)
+        errors = output_data["errors"]
+        assert len(errors) > 0
+
+        err = errors[0]
+        # These keys come from Diagnostic.to_display_dict() — NOT from the old string wrapper
+        assert "severity" in err, f"Missing 'severity' key — errors may have reverted to string wrapping: {err}"
+        assert err["severity"] == "error"
+        assert "source" in err, f"Missing 'source' — not a Diagnostic dict: {err}"
+        assert "message" in err
+        assert "title" in err, f"Missing 'title' — Diagnostic should have title set: {err}"
+
+    def test_text_validation_failure_renders_diagnostic_fields(self, tmp_path: Path) -> None:
+        """Text output must render per-error location and suggestions from Diagnostic fields.
+
+        If format_validation_failure() regresses to treating Diagnostics as strings,
+        it would render Diagnostic.__repr__() instead of structured output.
+        This test uses a workflow with TWO validation errors to verify numbered format.
+        """
+        # Workflow with two problems: bad type AND unresolvable template
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "bad-type", "type": "nonexistent_type_xyz", "params": {}},
+                {"id": "fetch", "type": "shell", "params": {"command": "echo ${bad-type.missing_field}"}},
+            ],
+            "edges": [{"from": "bad-type", "to": "fetch"}],
+        }
+        workflow_path = tmp_path / "test.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", str(workflow_path)])
+        assert result.exit_code != 0
+
+        combined = result.output + result.stderr
+        # Must use numbered format (from Diagnostic-aware formatter), not bullet format
+        assert "1." in combined, f"Expected numbered errors, got:\n{combined}"
+        # Must NOT contain Diagnostic repr (the failure mode if treated as string)
+        assert "Diagnostic(" not in combined, f"Diagnostic repr leaked into output:\n{combined}"
+
     """End-to-end regression tests for issue #209: parser warnings silently lost.
 
     These verify that parser-level diagnostics (section typos, orphaned content)

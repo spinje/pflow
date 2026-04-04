@@ -453,6 +453,10 @@ class TestFormatSuccessAsText:
 
         Real bug this catches: Warning data could survive execution but be lost
         in the final text output shown to CLI and MCP consumers.
+
+        After diagnostic rendering redesign (Task 144), format_success_as_text
+        accepts warning_diagnostics as a parameter instead of reading from the
+        result dict's 'warnings' key. Warnings are rendered via format_diagnostic().
         """
         result_dict = {
             "success": True,
@@ -468,18 +472,31 @@ class TestFormatSuccessAsText:
             "execution": {"nodes_executed": 1, "steps": []},
         }
 
-        text = format_success_as_text(result_dict)
+        warning_diagnostics = [
+            Diagnostic(
+                severity=Severity.WARNING,
+                message="API error: Rate limit exceeded\nRetry after 30s",
+                node_id="send-alert",
+                source="api_warning",
+            )
+        ]
 
-        assert "⚠️ Warnings:" in text
+        text = format_success_as_text(result_dict, warning_diagnostics=warning_diagnostics)
+
+        assert "\u26a0\ufe0f Warnings:" in text
         assert "[send-alert] API error: Rate limit exceeded" in text
         assert "API error: Rate limit exceeded" in text
-        assert "Retry after 30s" in text
 
     def test_format_execution_success_serializes_warning_diagnostics_for_json(self):
         """REGRESSION: Warning diagnostics stay structured in success JSON output.
 
         Real bug this catches: Raw Diagnostic objects under ``warnings`` get
         stringified to ``Diagnostic(...)`` reprs by JSON serialization.
+
+        After diagnostic rendering redesign (Task 144), Diagnostic uses
+        ``title`` and ``suggestions`` (list) instead of ``suggestion`` (str).
+        ``to_display_dict()`` serializes these new fields. ``to_dict()`` is used
+        for the ``diagnostics`` key (without context merging).
         """
         result = format_execution_success(
             shared_storage={"stdout": "ok"},
@@ -489,23 +506,33 @@ class TestFormatSuccessAsText:
                 Diagnostic(
                     severity=Severity.WARNING,
                     message="Shell node has no template inputs",
-                    suggestion="Add '- cache: false' if this node reads runtime state.",
+                    suggestions=["Add '- cache: false' if this node reads runtime state."],
                     node_id="run-shell",
                     source="validator",
                 )
             ],
         )
 
+        # warnings uses to_display_dict() — includes suggestions as list
         assert result["warnings"] == [
             {
                 "severity": "warning",
                 "message": "Shell node has no template inputs",
                 "source": "validator",
-                "suggestion": "Add '- cache: false' if this node reads runtime state.",
+                "suggestions": ["Add '- cache: false' if this node reads runtime state."],
                 "node_id": "run-shell",
             }
         ]
-        assert result["diagnostics"] == result["warnings"]
+        # diagnostics uses to_dict() — same shape (no context to merge here)
+        assert result["diagnostics"] == [
+            {
+                "severity": "warning",
+                "message": "Shell node has no template inputs",
+                "source": "validator",
+                "suggestions": ["Add '- cache: false' if this node reads runtime state."],
+                "node_id": "run-shell",
+            }
+        ]
 
 
 class TestNonBatchNodesUnchanged:

@@ -1,0 +1,741 @@
+DIAGNOSTIC RENDERING BASELINE CAPTURE
+Total outputs: 56
+
+
+==============================================================================
+  compilation-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'fetch':
+    Category: compilation
+    Message: Node type 'httpp' is not registered
+
+    Suggestion: Check available node types with: pflow registry list
+    Node type: httpp
+    Sub-workflow: ./child.pflow.md
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'fetch':
+    Category: compilation
+    Message: Node type 'httpp' is not registered
+
+    Suggestion: Check available node types with: pflow registry list
+    Node type: httpp
+    Sub-workflow: ./child.pflow.md
+
+
+==============================================================================
+  max-visits-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ Node 'process' exceeded maximum visits (100/100). This likely indicates an infinite loop in the workflow. Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional.
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'process':
+    Category: max_visits
+    Message: Node 'process' exceeded maximum visits (100/100). This likely indicates an infinite loop in the workflow. Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional.
+
+    Suggestion: Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional.
+
+
+==============================================================================
+  workflow-validation-error [1/3]
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ Unknown node type 'httpp'
+     At: nodes[0].type
+     👉 Use 'shell', 'http', 'llm', 'file', or 'mcp'
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: validation
+    Message: Unknown node type 'httpp'
+
+    Suggestion: Use 'shell', 'http', 'llm', 'file', or 'mcp'
+    At: nodes[0].type
+
+
+==============================================================================
+  workflow-validation-error [2/3]
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ Missing required field 'type'
+     At: nodes[1]
+     👉 Every node must have a 'type' field
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: validation
+    Message: Missing required field 'type'
+
+    Suggestion: Every node must have a 'type' field
+    At: nodes[1]
+
+
+==============================================================================
+  workflow-validation-error [3/3]
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ Undefined template variable '${api_key}'
+     At: nodes[2].params.url
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: validation
+    Message: Undefined template variable '${api_key}'
+    At: nodes[2].params.url
+
+
+==============================================================================
+  schema-validation-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ 'steps' is not a valid section name
+     At: root.sections
+     👉 Did you mean '## Steps'? Section names are case-sensitive.
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: validation
+    Message: 'steps' is not a valid section name
+
+    Suggestion: Did you mean '## Steps'? Section names are case-sensitive.
+    At: root.sections
+
+
+==============================================================================
+  markdown-parse-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ✗ Line 42: Unclosed code fence
+      → Add a closing ``` to terminate the code block.
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: parse_error
+    Message: Line 42: Unclosed code fence
+
+    Suggestion: Add a closing ``` to terminate the code block.
+
+
+==============================================================================
+  workflow-not-found-with-suggestions
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ Workflow 'my-workfow' not found.
+
+  Did you mean one of these?
+    - my-workflow
+    - my-workflow-v2
+
+
+==============================================================================
+  workflow-not-found-with-hint
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ❌ No saved workflows found. Use 'pflow save' to save a workflow first.
+
+
+==============================================================================
+  output-resolution-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error: 2 workflow outputs could not be resolved
+
+    Output 'summary' (source: ${branch-a.result}):
+      - Node 'branch-a' did not execute on this path
+    Output 'details' (source: ${branch-b.response}):
+      - Key 'response' not found in node 'branch-b' output
+
+  To fix this:
+    1. Use the ?? coalesce operator for branch-dependent outputs: source: ${branch-a.result ?? branch-b.result}
+    2. Check that source expressions reference nodes that always execute on this path
+
+  Run with --verbose for technical details.
+
+
+--- format_diagnostic(verbose=True) ---
+
+  Error: 2 workflow outputs could not be resolved
+
+    Output 'summary' (source: ${branch-a.result}):
+      - Node 'branch-a' did not execute on this path
+    Output 'details' (source: ${branch-b.response}):
+      - Key 'response' not found in node 'branch-b' output
+
+  To fix this:
+    1. Use the ?? coalesce operator for branch-dependent outputs: source: ${branch-a.result ?? branch-b.result}
+    2. Check that source expressions reference nodes that always execute on this path
+
+  Technical details:
+  branch-a was skipped because condition evaluated to False
+
+
+==============================================================================
+  mcp-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error: MCP tools not available
+
+  The workflow tried to use MCP tools that aren't registered.
+  This usually happens when MCP servers haven't been synced.
+
+  To fix this:
+    1. Check your MCP servers: pflow mcp list
+    2. Sync MCP tools: pflow mcp sync --all
+    3. Verify tools are registered: pflow registry list | grep mcp
+    4. Run your workflow again
+
+  Run with --verbose for technical details.
+
+
+--- format_diagnostic(verbose=True) ---
+
+  Error: MCP tools not available
+
+  The workflow tried to use MCP tools that aren't registered.
+  This usually happens when MCP servers haven't been synced.
+
+  To fix this:
+    1. Check your MCP servers: pflow mcp list
+    2. Sync MCP tools: pflow mcp sync --all
+    3. Verify tools are registered: pflow registry list | grep mcp
+    4. Run your workflow again
+
+  Technical details:
+  ModuleNotFoundError: No module named 'mcp_github'
+
+
+==============================================================================
+  user-friendly-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error: API Key Missing
+
+  No API key found for the configured LLM provider.
+
+  To fix this:
+    1. Set your API key: pflow settings set-env OPENAI_API_KEY sk-...
+    2. Or set it as an environment variable: export OPENAI_API_KEY=sk-...
+
+  Run with --verbose for technical details.
+
+
+--- format_diagnostic(verbose=True) ---
+
+  Error: API Key Missing
+
+  No API key found for the configured LLM provider.
+
+  To fix this:
+    1. Set your API key: pflow settings set-env OPENAI_API_KEY sk-...
+    2. Or set it as an environment variable: export OPENAI_API_KEY=sk-...
+
+  Technical details:
+  KeyError: 'OPENAI_API_KEY' not in os.environ
+
+
+==============================================================================
+  file-not-found-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ✗ workflow.pflow.md
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: file_not_found
+    Message: workflow.pflow.md
+
+
+==============================================================================
+  permission-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ✗ Permission denied: /etc/pflow/config
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: permission_denied
+    Message: Permission denied: /etc/pflow/config
+
+
+==============================================================================
+  valueerror-with-node-annotation
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'parse':
+    Category: execution_failure
+    Message: Invalid JSON response from API
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'parse':
+    Category: execution_failure
+    Message: Invalid JSON response from API
+
+
+==============================================================================
+  valueerror-without-annotation
+==============================================================================
+
+--- format_diagnostic() ---
+
+  ✗ Missing required field 'type' in node configuration
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1:
+    Category: validation
+    Message: Missing required field 'type' in node configuration
+
+
+==============================================================================
+  generic-exception-typeerror
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'transform':
+    Category: execution_failure
+    Message: Expected str, got int for parameter 'count'
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'transform':
+    Category: execution_failure
+    Message: Expected str, got int for parameter 'count'
+
+
+==============================================================================
+  runtime-shell-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'deploy':
+    Category: execution_failure
+    Message: Command failed with exit code 1
+
+    Shell details:
+      Command: npm run build && npm run deploy
+      Stdout: Building project...
+  Build complete.
+      Stderr: Error: Cannot find module 'react'
+    at Function.Module._resolveFilename
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'deploy':
+    Category: execution_failure
+    Message: Command failed with exit code 1
+
+    Shell details:
+      Command: npm run build && npm run deploy
+      Stdout: Building project...
+  Build complete.
+      Stderr: Error: Cannot find module 'react'
+    at Function.Module._resolveFilename
+
+
+==============================================================================
+  runtime-api-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'create-issue':
+    Category: api_validation
+    Message: HTTP request failed with status 422
+
+    API Response:
+      - Field 'title': Title is required
+      - Field 'labels': Invalid label: 'urgent'
+
+    Documentation: https://docs.github.com/rest/issues
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'create-issue':
+    Category: api_validation
+    Message: HTTP request failed with status 422
+
+    API Response:
+      - Field 'title': Title is required
+      - Field 'labels': Invalid label: 'urgent'
+
+    Documentation: https://docs.github.com/rest/issues
+
+
+==============================================================================
+  runtime-mcp-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'mcp-jira-search_issues':
+    Category: execution_failure
+    Message: MCP tool 'search_issues' returned an error
+
+    MCP Tool Error:
+      Field: jql
+      Expected: valid JQL query
+      Received: project = INVALID
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'mcp-jira-search_issues':
+    Category: execution_failure
+    Message: MCP tool 'search_issues' returned an error
+
+    MCP Tool Error:
+      Field: jql
+      Expected: valid JQL query
+      Received: project = INVALID
+
+
+==============================================================================
+  runtime-template-error
+==============================================================================
+
+--- format_diagnostic() ---
+
+  Error at node 'fetch':
+    Category: template_error
+    Message: Undefined variable '${api_key}' in node 'fetch'
+
+    Available fields in node (showing 5 of 12):
+      - stdout
+      - stderr
+      - exit_code
+      - result
+      - response
+
+    📁 Complete field list available in trace file
+       ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
+
+
+--- format_diagnostic(error_number=1) ---
+
+  Error 1 at node 'fetch':
+    Category: template_error
+    Message: Undefined variable '${api_key}' in node 'fetch'
+
+    Available fields in node (showing 5 of 12):
+      - stdout
+      - stderr
+      - exit_code
+      - result
+      - response
+
+    📁 Complete field list available in trace file
+       ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
+
+
+==============================================================================
+  warning-with-suggestion
+==============================================================================
+
+--- format_diagnostic() ---
+
+    ⚠ Section heading '## Input' looks like a typo
+      → Rename to '## Inputs' (plural) for it to be recognized.
+
+
+==============================================================================
+  warning-with-node-id
+==============================================================================
+
+--- format_diagnostic() ---
+
+    ⚠ [send-alert] Cache enabled but node has side effects
+      → Consider adding 'cache: false' to this node.
+
+
+==============================================================================
+  validation-failure-3-errors
+==============================================================================
+
+--- format_validation_failure(3 errors) ---
+
+  ✗ Static validation failed:
+    • Unknown node type 'httpp'
+    • Missing required field 'type'
+    • Undefined template variable '${api_key}'
+
+  Suggestions:
+    • Use 'registry list' to see available nodes
+    • Check template syntax: ${node.output}
+
+
+==============================================================================
+  validation-failure-15-errors
+==============================================================================
+
+--- format_validation_failure(15 errors, truncation) ---
+
+  ✗ Static validation failed:
+    • Validation error 0
+    • Validation error 1
+    • Validation error 2
+    • Validation error 3
+    • Validation error 4
+    • Validation error 5
+    • Validation error 6
+    • Validation error 7
+    • Validation error 8
+    • Validation error 9
+    ... and 5 more errors
+
+
+==============================================================================
+  mcp-error-text-single-error
+==============================================================================
+
+--- _build_error_text(1 error + 1 warning) ---
+
+  ❌ Command failed with exit code 1 (1 warnings)
+
+  Error details:
+  Error at node 'deploy':
+    Category: execution_failure
+    Message: Command failed with exit code 1
+
+    Shell details:
+      Command: npm run deploy
+      Stderr: Error: EACCES permission denied
+
+  Warnings:
+    ⚠ [send-alert] Cache enabled but node has side effects
+
+
+==============================================================================
+  mcp-error-text-multi-error
+==============================================================================
+
+--- _build_error_text(3 errors + 0 warnings) ---
+
+  ❌ Workflow execution failed
+
+  Error details:
+  Error 1 at node 'fetch':
+    Category: execution_failure
+    Message: Node 'fetch' failed: timeout
+  Error 2 at node 'parse':
+    Category: execution_failure
+    Message: Node 'parse' failed: invalid JSON
+  Error 3 at node 'deploy':
+    Category: execution_failure
+    Message: Node 'deploy' skipped: upstream failure
+
+
+==============================================================================
+  success-text-with-warnings
+==============================================================================
+
+--- format_success_as_text(2 warnings) ---
+
+  analyze was executed
+  ⚠️ Workflow completed with warnings in 1.234s
+  Nodes executed (3):
+    ✓ fetch (400ms)
+    ✓ process (600ms)
+    ✓ send-alert (234ms)
+  💰 Cost: $0.0042 (1,500 tokens)
+
+  ⚠️ Warnings:
+    ⚠ Section heading '## Input' looks like a typo
+      → Rename to '## Inputs'.
+    ⚠ [send-alert] Cache enabled but node has side effects
+
+  Workflow output:
+
+  Analysis complete
+
+
+==============================================================================
+  registry-node-not-found
+==============================================================================
+
+--- format_node_not_found_error() ---
+
+  ❌ Node 'read-fle' not found in registry
+
+  No similar nodes found. Available nodes:
+    - http
+    - llm
+    - read-file
+    - read-url
+    - shell
+    - write-file
+
+  To find the right node:
+    - Use registry_discover to search: "describe what you want to do"
+    - Use registry_list to see all available nodes
+
+
+==============================================================================
+  registry-exec-error-FileNotFoundError
+==============================================================================
+
+--- format_execution_error(FileNotFoundError) ---
+
+  ❌ Failed to execute node 'fetch'
+
+  Error: input.txt
+
+  Verify the file path exists and is accessible.
+
+
+==============================================================================
+  registry-exec-error-PermissionError
+==============================================================================
+
+--- format_execution_error(PermissionError) ---
+
+  ❌ Failed to execute node 'fetch'
+
+  Error: Permission denied: /etc/pflow
+
+  Check file permissions and access rights.
+
+
+==============================================================================
+  registry-exec-error-ValueError-required
+==============================================================================
+
+--- format_execution_error(ValueError-required) ---
+
+  ❌ Failed to execute node 'fetch'
+
+  Error: Required parameter 'url' is missing
+
+  Use 'registry_describe fetch' to see required parameters.
+
+
+==============================================================================
+  registry-exec-error-timeout
+==============================================================================
+
+--- format_execution_error(timeout) ---
+
+  ❌ Failed to execute node 'fetch'
+
+  Error: Node execution timed out
+
+  Try increasing timeout if supported.
+
+
+==============================================================================
+  registry-exec-error-generic
+==============================================================================
+
+--- format_execution_error(generic) ---
+
+  ❌ Failed to execute node 'fetch'
+
+  Error: Unexpected error in node execution
+
+  Use 'registry_describe fetch' to see required parameters.
+
+
+--- format_execution_error(generic, verbose=True) ---
+
+  ❌ Failed to execute node 'fetch'
+
+  Error: Unexpected error in node execution
+
+  Use 'registry_describe fetch' to see required parameters.
+
+  Error type: RuntimeError
+
+
+==============================================================================
+  registry-exec-error-mcp-node
+==============================================================================
+
+--- format_execution_error(mcp-node, verbose=True) ---
+
+  ❌ Failed to execute node 'mcp-github-search'
+
+  Error: Connection refused
+
+  Use 'registry_describe mcp-github-search' to see required parameters.
+
+  Error type: RuntimeError
+
+  For MCP nodes:
+    1. Check if server is configured with settings_show
+    2. Verify credentials are set (environment variables)
+    3. Check the MCP server logs for connection issues
+
+
+==============================================================================
+  registry-ambiguous-node
+==============================================================================
+
+--- format_ambiguous_node_error() ---
+
+  ❌ Ambiguous node name 'search'. Found in multiple servers:
+    - mcp-confluence-search
+    - mcp-github-search
+    - mcp-jira-search
+
+  Please specify the full node ID or use format: {server}-{tool}
+
+  Examples:
+    registry_run('mcp-github-search')  # Full format
+    registry_run('github-search')  # Server-qualified

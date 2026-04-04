@@ -560,8 +560,11 @@ def test_unknown_node_shows_helpful_error(runner, mock_registry):
     result = runner.invoke(registry, ["run", "nonexistent-node"])
 
     assert result.exit_code == 1
+    # Unified titled format: "Error: Node Not Found"
+    assert "Node Not Found" in result.output
     assert "not found in registry" in result.output
-    assert "Did you mean" in result.output or "Available nodes" in result.output
+    # Actionable suggestions are now rendered as numbered list
+    assert "pflow registry" in result.output
 
 
 def test_missing_required_parameter_shows_error(runner, mock_registry):

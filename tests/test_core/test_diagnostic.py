@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import pytest
+
 from pflow.core.diagnostic import (
     Diagnostic,
     Severity,
-    coerce_error_diagnostic,
-    coerce_warning_diagnostic,
     deduplicate_diagnostics,
     exception_to_diagnostics,
     format_diagnostic,
@@ -22,6 +22,20 @@ from pflow.core.exceptions import (
 from pflow.core.user_errors import MCPError, OutputResolutionError, UserFriendlyError
 
 
+def test_suggestions_rejects_bare_string() -> None:
+    """Passing a bare string to suggestions raises TypeError (defense-in-depth for rename)."""
+    with pytest.raises(TypeError, match="must be list"):
+        Diagnostic(severity=Severity.ERROR, message="test", suggestions="bare string")  # type: ignore[arg-type]
+
+
+def test_to_dict_does_not_leak_suggestions_reference() -> None:
+    """Mutating the serialized dict must not corrupt the source Diagnostic."""
+    d = Diagnostic(severity=Severity.ERROR, message="m", suggestions=["original"], source="runtime")
+    payload = d.to_dict()
+    payload["suggestions"].append("injected")
+    assert d.suggestions == ["original"], "to_dict() leaked suggestions by reference"
+
+
 def test_diagnostic_identity_ignores_context() -> None:
     """Diagnostics with the same core fields deduplicate even if context differs."""
     first = Diagnostic(
@@ -29,7 +43,8 @@ def test_diagnostic_identity_ignores_context() -> None:
         source="validator",
         node_id="fetch",
         message="Nested access requires JSON",
-        suggestion="Ensure valid JSON.",
+        title="Template Warning",
+        suggestions=["Ensure valid JSON."],
         context={"template": "${fetch.stdout.value}"},
     )
     second = Diagnostic(
@@ -37,7 +52,8 @@ def test_diagnostic_identity_ignores_context() -> None:
         source="validator",
         node_id="fetch",
         message="Nested access requires JSON",
-        suggestion="Ensure valid JSON.",
+        title="Different Title",
+        suggestions=["Different suggestion."],
         context={"template": "${fetch.stdout.other}"},
     )
 
@@ -53,7 +69,7 @@ def test_to_dict_and_to_display_dict_preserve_context_shape() -> None:
         source="runtime",
         node_id="send",
         message="HTTP request failed",
-        suggestion="Check API credentials.",
+        suggestions=["Check API credentials."],
         context={"category": "api_validation", "raw_response": {"api_key": "secret", "error": "bad"}},
     )
 
@@ -65,7 +81,7 @@ def test_to_dict_and_to_display_dict_preserve_context_shape() -> None:
         "source": "runtime",
         "node_id": "send",
         "message": "HTTP request failed",
-        "suggestion": "Check API credentials.",
+        "suggestions": ["Check API credentials."],
         "context": {
             "category": "api_validation",
             "raw_response": {"api_key": "secret", "error": "bad"},
@@ -88,7 +104,7 @@ def test_format_diagnostic_renders_warning_with_suggestion() -> None:
         severity=Severity.WARNING,
         source="parser",
         message="Line 5: '## Input' looks like a typo for '## Inputs'.",
-        suggestion="Rename to '## Inputs'.",
+        suggestions=["Rename to '## Inputs'."],
     )
 
     rendered = format_diagnostic(diagnostic)
@@ -117,7 +133,8 @@ def test_exception_to_diagnostics_compilation_error() -> None:
             source="compilation",
             node_id="fetch",
             message="Unknown node type",
-            suggestion="Use a registered node type.",
+            title="Compilation Failed",
+            suggestions=["Use a registered node type."],
             context={
                 "category": "compilation",
                 "phase": "node_import",
@@ -141,7 +158,7 @@ def test_exception_to_diagnostics_workflow_validation_error_fans_out() -> None:
 
     assert len(diagnostics) == 2
     assert diagnostics[0].message == "Missing input"
-    assert diagnostics[0].suggestion == "Declare the input."
+    assert diagnostics[0].suggestions == ["Declare the input."]
     assert (diagnostics[0].context or {}).get("path") == "inputs.name"
     assert diagnostics[1].message == "Unknown node type"
 
@@ -154,14 +171,14 @@ def test_exception_to_diagnostics_structured_parser_and_schema_errors() -> None:
     )[0]
 
     assert parse_diag.source == "parser"
-    assert parse_diag.message == "Line 42: Bad heading"
-    assert parse_diag.suggestion == "Use ## Steps."
+    assert parse_diag.message == "Bad heading"  # raw_message, line goes to context
+    assert parse_diag.suggestions == ["Use ## Steps."]
     assert (parse_diag.context or {}).get("category") == "parse_error"
     assert (parse_diag.context or {}).get("line") == 42
 
     assert schema_diag.source == "validation"
     assert schema_diag.message == "Bad node type"
-    assert schema_diag.suggestion == "Use 'shell'."
+    assert schema_diag.suggestions == ["Use 'shell'."]
     assert (schema_diag.context or {}).get("category") == "validation"
     assert (schema_diag.context or {}).get("path") == "nodes[0].type"
 
@@ -171,30 +188,32 @@ def test_exception_to_diagnostics_runtime_and_user_friendly_errors() -> None:
     node_error = ValueError("timeout")
     node_error._pflow_node_id = "fetch-data"  # type: ignore[attr-defined]
 
-    cases = [
+    # Each case: (exception, source, category, suggestions)
+    # suggestions is now list[str] | None (was str | None)
+    cases: list[tuple[Exception, str, str, list[str] | None]] = [
         (
             WorkflowNotFoundError("my-flow", similar_names=["my-flow-v2"]),
             "runtime",
             "not_found",
-            "Did you mean: my-flow-v2",
+            ["Use 'pflow workflow list' to see all available workflows."],
         ),
         (
             MaxNodeVisitsError("loop", visit_count=101, max_visits=100),
             "runtime",
             "max_visits",
-            "Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional.",
+            ["Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional."],
         ),
         (
             UserFriendlyError("Bad input", "Value is invalid.", ["Set foo=bar"]),
             "runtime",
             "cli",
-            "Set foo=bar",
+            ["Set foo=bar"],
         ),
         (
             MCPError(title="Missing MCP", explanation="No tool", suggestions=["Sync MCP"]),
             "runtime",
             "mcp",
-            "Sync MCP",
+            ["Sync MCP"],
         ),
         (
             OutputResolutionError(
@@ -208,32 +227,42 @@ def test_exception_to_diagnostics_runtime_and_user_friendly_errors() -> None:
             ),
             "runtime",
             "runtime",
-            "Check that source expressions reference nodes that always execute on this path",
+            ["Check that source expressions reference nodes that always execute on this path"],
         ),
-        (FileNotFoundError("missing"), "runtime", "file_not_found", None),
-        (PermissionError("denied"), "runtime", "permission_denied", None),
+        (
+            FileNotFoundError("missing"),
+            "runtime",
+            "file_not_found",
+            ["Check the file path and ensure the file exists."],
+        ),
+        (
+            PermissionError("denied"),
+            "runtime",
+            "permission_denied",
+            ["Check file permissions and access rights."],
+        ),
         (node_error, "runtime", "execution_failure", None),
         (RuntimeError("boom"), "runtime", "execution_failure", None),
     ]
 
-    for exception, source, category, suggestion in cases:
+    for exception, source, category, suggestions in cases:
         diagnostic = exception_to_diagnostics(exception)[0]
         assert diagnostic.source == source
         assert (diagnostic.context or {}).get("category") == category
-        assert diagnostic.suggestion == suggestion
+        assert diagnostic.suggestions == suggestions
 
     node_diagnostic = exception_to_diagnostics(node_error)[0]
     assert node_diagnostic.node_id == "fetch-data"
 
 
 def test_format_diagnostic_renders_rich_error_context() -> None:
-    """Error diagnostics render category, node ID, shell details, and suggestions."""
+    """Error diagnostics render title, node ID, shell details, and suggestions."""
     diagnostic = Diagnostic(
         severity=Severity.ERROR,
         source="runtime",
         node_id="build",
         message="Shell command failed",
-        suggestion="Fix the shell command.",
+        suggestions=["Fix the shell command."],
         context={
             "category": "execution_failure",
             "shell_command": "npm run build",
@@ -243,113 +272,10 @@ def test_format_diagnostic_renders_rich_error_context() -> None:
 
     rendered = format_diagnostic(diagnostic)
 
-    assert "Error at node 'build':" in rendered
-    assert "Category: execution_failure" in rendered
-    assert "Message: Shell command failed" in rendered
-    assert "Suggestion: Fix the shell command." in rendered
+    # New titled format: "Error: {title}\n\n{message}\n  At: node 'build'\n..."
+    assert "Error: Execution Failed" in rendered  # title from _CATEGORY_TITLES
+    assert "Shell command failed" in rendered
+    assert "node 'build'" in rendered
+    assert "Fix the shell command." in rendered
     assert "npm run build" in rendered
     assert "Missing dependency" in rendered
-
-
-# ---------------------------------------------------------------------------
-# coerce_warning_diagnostic / coerce_error_diagnostic
-# ---------------------------------------------------------------------------
-
-
-class TestCoerceWarningDiagnostic:
-    """Tests for the legacy-dict-to-Diagnostic bridge used by display consumers."""
-
-    def test_passthrough_for_diagnostic_object(self) -> None:
-        original = Diagnostic(severity=Severity.WARNING, message="already ok", source="runtime")
-        assert coerce_warning_diagnostic(original) is original
-
-    def test_dict_with_all_known_fields(self) -> None:
-        result = coerce_warning_diagnostic({
-            "message": "Template issue",
-            "suggestion": "Fix it",
-            "node_id": "fetch",
-            "source": "validator",
-        })
-        assert result.severity == Severity.WARNING
-        assert result.message == "Template issue"
-        assert result.suggestion == "Fix it"
-        assert result.node_id == "fetch"
-        assert result.source == "validator"
-        assert result.context is None  # no extra keys → None
-
-    def test_dict_extra_keys_go_to_context(self) -> None:
-        result = coerce_warning_diagnostic({
-            "message": "Warn",
-            "node_id": "n1",
-            "template": "${n1.stdout}",
-            "unresolved_templates": ["${n1.stdout}"],
-        })
-        assert result.context is not None
-        assert result.context["template"] == "${n1.stdout}"
-        assert result.context["unresolved_templates"] == ["${n1.stdout}"]
-
-    def test_type_key_falls_back_to_source(self) -> None:
-        """Legacy runtime warning dicts use 'type' not 'source'."""
-        result = coerce_warning_diagnostic({
-            "message": "API rate limited",
-            "node_id": "call-api",
-            "type": "api_warning",
-        })
-        assert result.source == "api_warning"
-        # 'type' is not a known Diagnostic field, so it also lands in context
-        assert (result.context or {}).get("type") == "api_warning"
-
-    def test_source_takes_priority_over_type(self) -> None:
-        result = coerce_warning_diagnostic({
-            "message": "Warn",
-            "source": "validator",
-            "type": "api_warning",
-        })
-        assert result.source == "validator"
-
-    def test_plain_string_input(self) -> None:
-        result = coerce_warning_diagnostic("raw warning string")
-        assert result.severity == Severity.WARNING
-        assert result.message == "raw warning string"
-        assert result.source == "runtime"
-
-    def test_empty_dict_produces_default_message(self) -> None:
-        result = coerce_warning_diagnostic({})
-        assert result.message == "No message"
-        assert result.source == "runtime"
-
-
-class TestCoerceErrorDiagnostic:
-    """Tests for the legacy-error-dict-to-Diagnostic bridge."""
-
-    def test_passthrough_for_diagnostic_object(self) -> None:
-        original = Diagnostic(severity=Severity.ERROR, message="already ok", source="runtime")
-        assert coerce_error_diagnostic(original) is original
-
-    def test_dict_with_enrichment_context(self) -> None:
-        result = coerce_error_diagnostic({
-            "message": "HTTP 422",
-            "node_id": "create-issue",
-            "source": "runtime",
-            "category": "api_validation",
-            "status_code": 422,
-            "raw_response": {"error": "bad request"},
-        })
-        assert result.severity == Severity.ERROR
-        assert result.message == "HTTP 422"
-        assert result.node_id == "create-issue"
-        assert result.source == "runtime"
-        assert result.context is not None
-        assert result.context["category"] == "api_validation"
-        assert result.context["status_code"] == 422
-        assert result.context["raw_response"] == {"error": "bad request"}
-
-    def test_plain_string_input(self) -> None:
-        result = coerce_error_diagnostic("unexpected failure")
-        assert result.severity == Severity.ERROR
-        assert result.message == "unexpected failure"
-
-    def test_empty_dict_produces_default_message(self) -> None:
-        result = coerce_error_diagnostic({})
-        assert result.message == "Unknown error"
-        assert result.source == "runtime"

@@ -398,13 +398,12 @@ def _display_validation_result(
 ) -> None:
     """Display validation result and exit with appropriate code."""
     if output_format == "json":
-        diagnostics = [diagnostic.to_dict() for diagnostic in getattr(vresult, "diagnostics", [])]
         output = {
             "success": vresult.valid,
             "validated_only": True,
-            "errors": [{"message": e, "category": "validation"} for e in vresult.errors],
+            "errors": [e.to_display_dict() for e in vresult.errors],
             "warnings": [warning.to_display_dict() for warning in vresult.warnings],
-            "diagnostics": diagnostics,
+            "diagnostics": [d.to_dict() for d in vresult.diagnostics],
         }
         click.echo(json.dumps(output, indent=2, default=str))
     else:
@@ -412,23 +411,14 @@ def _display_validation_result(
             from pflow.execution.formatters.validation_formatter import format_validation_success
 
             click.echo(format_validation_success())
-            warning_diagnostics = [
-                diagnostic
-                for diagnostic in getattr(vresult, "diagnostics", [])
-                if diagnostic.severity == Severity.WARNING
-            ]
-            if warning_diagnostics:
-                for diagnostic in warning_diagnostics:
+            if vresult.warnings:
+                for diagnostic in vresult.warnings:
                     click.echo(format_diagnostic(diagnostic), err=True)
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
-            click.echo(format_validation_failure(vresult.errors, suggestions=[]))
-            extra_diagnostics = [
-                diagnostic
-                for diagnostic in getattr(vresult, "diagnostics", [])
-                if diagnostic.severity in {Severity.WARNING, Severity.INFO}
-            ]
+            click.echo(format_validation_failure(vresult.errors))
+            extra_diagnostics = [d for d in vresult.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
             if extra_diagnostics:
                 click.echo("", err=True)
                 for diagnostic in extra_diagnostics:
