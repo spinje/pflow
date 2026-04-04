@@ -83,6 +83,29 @@ def test_shell_stdout_also_shown_without_verbose() -> None:
     assert "1 failed, 5 passed" in output
 
 
+def test_single_cli_error_is_not_numbered() -> None:
+    """Single-error display should omit the redundant "Error 1" label."""
+    error: dict[str, Any] = {
+        "node_id": "run-build",
+        "category": "execution_failure",
+        "message": "Shell command failed with exit code 1",
+        "shell_command": "npm run build",
+    }
+
+    captured: list[str] = []
+
+    def capture_echo(message: Any = "", err: bool = False, **kwargs: Any) -> None:
+        if err:
+            captured.append(str(message))
+
+    with patch("pflow.cli.workflow_errors.click.echo", side_effect=capture_echo):
+        _display_single_error(error, error_number=0, verbose=False)
+
+    output = "\n".join(captured)
+    assert "Error at node 'run-build':" in output
+    assert "Error 1 at node 'run-build':" not in output
+
+
 # ---------------------------------------------------------------------------
 # Fix 2a: Trace file "degraded" status
 # ---------------------------------------------------------------------------
@@ -302,7 +325,7 @@ def test_runner_exception_to_result_includes_category() -> None:
     result = runner._exception_to_result(exception, 0.0, None)
 
     assert result.success is False
-    assert result.errors[0]["category"] == "validation"  # ValueError → validation category
+    assert (result.errors[0].context or {}).get("category") == "validation"  # ValueError → validation category
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime.workflow_trace import WorkflowTraceCollector
 
 
@@ -412,6 +413,59 @@ class TestWorkflowTraceCollector:
 
             assert trace_data["final_status"] == "failed"
             assert trace_data["nodes_failed"] == 1
+
+    def test_final_status_success_with_parser_warning(self, collector, temp_home):
+        """Parser warnings should be recorded but should not mark the trace as degraded."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="node-1",
+                node_type="TestNode",
+                duration_ms=10.0,
+                success=True,
+            )
+            collector.set_warnings([
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message="Line 3: '## Input' looks like a typo for '## Inputs'.",
+                    source="parser",
+                    suggestion="Rename to '## Inputs'.",
+                )
+            ])
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert trace_data["final_status"] == "success"
+            assert trace_data["warnings"][0]["source"] == "parser"
+
+    def test_final_status_degraded_with_runtime_warning(self, collector, temp_home):
+        """Runtime warnings should still mark the trace as degraded."""
+        with patch("pathlib.Path.home", return_value=temp_home):
+            collector.record_node_execution(
+                node_id="node-1",
+                node_type="TestNode",
+                duration_ms=10.0,
+                success=True,
+            )
+            collector.set_warnings([
+                Diagnostic(
+                    severity=Severity.WARNING,
+                    message="Template resolution failed for ${fetch.response}",
+                    node_id="node-1",
+                    source="runtime",
+                    suggestion="Fix the template reference.",
+                )
+            ])
+
+            filepath = collector.save_to_file()
+
+            with open(filepath) as f:
+                trace_data = json.load(f)
+
+            assert trace_data["final_status"] == "degraded"
+            assert trace_data["warnings"][0]["source"] == "runtime"
 
     def test_llm_summary_in_trace(self, collector, temp_home):
         """Test that LLM summary is included when LLM calls are present in events.

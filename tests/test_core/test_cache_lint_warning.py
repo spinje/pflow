@@ -24,7 +24,7 @@ class TestCacheLintWarning:
         assert len(warnings) == 1
         assert warnings[0].node_id == "get-branch"
         assert "cache: false" in warnings[0].message
-        assert warnings[0].template is None
+        assert (warnings[0].context or {}).get("template") is None
 
     def test_shell_node_with_templates_no_warning(self):
         """Shell node with template inputs should NOT warn."""
@@ -46,7 +46,7 @@ class TestCacheLintWarning:
             ],
             "edges": [{"from": "upstream", "to": "process"}],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         # upstream should warn (no templates), process should NOT (has template)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
@@ -66,7 +66,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0
 
@@ -84,7 +84,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0
 
@@ -101,7 +101,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0
 
@@ -118,7 +118,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
         assert cache_warnings[0].node_id == "bash-node"
@@ -136,7 +136,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
 
@@ -153,7 +153,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
 
@@ -171,6 +171,6 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0

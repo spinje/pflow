@@ -83,7 +83,7 @@ class TestCheckpointTracking:
 
         # Check with different config
         new_hash = compute_config_hash(compute_node_config("TestNode", {"value": "changed"}, {}, None))
-        cached, cached_action = check_cache_validity("test_node", new_hash, shared)
+        cached, _cached_action = check_cache_validity("test_node", new_hash, shared)
 
         assert cached is False, "Should be cache miss when config changes"
 
@@ -219,7 +219,7 @@ class TestCheckpointIntegration:
         # Create successful execution result
         success_result = ExecutionResult(
             success=True,
-            errors=[],
+            diagnostics=[],
             shared_after={
                 "result": "success",
                 "__execution__": {"completed_nodes": ["node1"], "node_actions": {"node1": "success"}},

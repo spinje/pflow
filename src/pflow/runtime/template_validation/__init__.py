@@ -2,7 +2,6 @@
 
 from pflow.runtime.template_validation.utils import (
     MAX_DISPLAYED_FIELDS,
-    ValidationWarning,
     flatten_output_structure,
     sanitize_for_display,
     split_template_path,
@@ -14,7 +13,6 @@ from pflow.runtime.template_validation.validator import (
 
 __all__ = [
     "MAX_DISPLAYED_FIELDS",
-    "ValidationWarning",
     "extract_node_outputs",
     "flatten_output_structure",
     "sanitize_for_display",

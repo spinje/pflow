@@ -8,10 +8,10 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validation import ValidationWarning
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class WorkflowValidator:
         workflow_file: Optional[Path] = None,
         _seen: Optional[set[str]] = None,
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
-    ) -> tuple[list[str], list[ValidationWarning]]:
+    ) -> tuple[list[str], list[Diagnostic]]:
         """Run complete workflow validation.
 
         Performs multiple validation checks:
@@ -60,10 +60,10 @@ class WorkflowValidator:
         Returns:
             Tuple of (errors, warnings):
             - errors: List of validation errors that prevent execution
-            - warnings: List of ValidationWarning objects for runtime-validated templates
+            - warnings: List of Diagnostic objects for runtime-validated templates
         """
         errors: list[str] = []
-        warnings: list[ValidationWarning] = []
+        warnings: list[Diagnostic] = []
 
         # 1. Structural validation (ALWAYS run)
         struct_errors = WorkflowValidator._validate_structure(workflow_ir)
@@ -106,10 +106,11 @@ class WorkflowValidator:
             errors.extend(unknown_param_errors)
 
         # 8. Sub-workflow validation (recursive)
-        sub_errors = WorkflowValidator._validate_sub_workflows(
+        sub_errors, sub_parser_warnings = WorkflowValidator._validate_sub_workflows(
             workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
         )
         errors.extend(sub_errors)
+        warnings.extend(sub_parser_warnings)
 
         # 9. Cache lint — warn about input-less shell nodes
         cache_warnings = WorkflowValidator._warn_inputless_shell_nodes(workflow_ir)
@@ -190,7 +191,7 @@ class WorkflowValidator:
     @staticmethod
     def _validate_templates(
         workflow_ir: dict[str, Any], extracted_params: dict[str, Any], registry: Registry
-    ) -> tuple[list[str], list[Any]]:
+    ) -> tuple[list[str], list[Diagnostic]]:
         """Validate template variables and parameters.
 
         Args:
@@ -201,7 +202,7 @@ class WorkflowValidator:
         Returns:
             Tuple of (errors, warnings):
             - errors: List of template validation errors
-            - warnings: List of ValidationWarning objects
+            - warnings: List of Diagnostic objects
         """
         from pflow.runtime.template_validation import validate_workflow_templates
 
@@ -250,7 +251,7 @@ class WorkflowValidator:
     @staticmethod
     def _validate_output_sources(
         workflow_ir: dict[str, Any], registry: Optional[Registry] = None
-    ) -> tuple[list[str], list[Any]]:
+    ) -> tuple[list[str], list[Diagnostic]]:
         """Validate that workflow outputs reference valid nodes and output keys.
 
         This validation ensures that output source fields (when specified) point to
@@ -270,7 +271,7 @@ class WorkflowValidator:
             - warnings: List of warnings (template variables, etc.)
         """
         errors: list[str] = []
-        warnings: list[Any] = []
+        warnings: list[Diagnostic] = []
 
         # Early return if no outputs defined
         outputs = workflow_ir.get("outputs", {})
@@ -545,7 +546,7 @@ class WorkflowValidator:
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
         skip_node_types: bool = False,
         workflow_file: Optional[Path] = None,
-    ) -> list[str]:
+    ) -> tuple[list[str], list[Diagnostic]]:
         """Recursively validate sub-workflow references.
 
         For each workflow-type node, loads the child workflow and runs
@@ -557,6 +558,7 @@ class WorkflowValidator:
         from pflow.core.validation_utils import generate_dummy_parameters
 
         errors: list[str] = []
+        parser_warnings: list[Diagnostic] = []
         seen = _seen if _seen is not None else set()
         # Cache loaded child IRs so duplicate references can still run the input check.
         # Shared across recursion levels so a grandchild validated via one path
@@ -574,10 +576,16 @@ class WorkflowValidator:
             # Load child workflow (file, saved name, or inline IR).
             # already_seen=True means the child was loaded before — skip recursive
             # validation (already done) but still check this node's provided inputs.
-            child_ir, child_path, ref_label, load_errors, already_seen = WorkflowValidator._load_child_workflow(
-                node_id, params, seen, ir_cache, workflow_file
-            )
+            (
+                child_ir,
+                child_path,
+                ref_label,
+                load_errors,
+                already_seen,
+                child_parser_warnings,
+            ) = WorkflowValidator._load_child_workflow(node_id, params, seen, ir_cache, workflow_file)
             errors.extend(load_errors)
+            parser_warnings.extend(child_parser_warnings)
 
             if child_ir is None or "nodes" not in child_ir:
                 continue
@@ -619,7 +627,7 @@ class WorkflowValidator:
                 for err in child_errors:
                     errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {err}")
 
-        return errors
+        return errors, parser_warnings
 
     @staticmethod
     def _check_required_inputs(
@@ -652,14 +660,15 @@ class WorkflowValidator:
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
         workflow_file: Optional[Path] = None,
-    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
+    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool, tuple[Diagnostic, ...]]:
         """Load a child workflow from inline IR, file reference, or saved name.
 
         Returns:
-            (child_ir, child_path, ref_label, errors, already_seen)
+            (child_ir, child_path, ref_label, errors, already_seen, parser_warnings)
             already_seen=True means recursive validation should be skipped.
         """
         from pflow.core.file_resolver import is_workflow_file_reference
+        from pflow.core.markdown_parser import parse_markdown
         from pflow.core.workflow.manager import WorkflowManager
 
         inline_ir = params.get("workflow_ir")
@@ -667,17 +676,17 @@ class WorkflowValidator:
 
         if isinstance(inline_ir, dict):
             # Inline IR is embedded, not a file/name reference — no cycle possible
-            return inline_ir, None, "<inline>", [], False
+            return inline_ir, None, "<inline>", [], False, ()
 
         if not isinstance(workflow_ref, str) or not workflow_ref:
-            return None, None, "", [], False
+            return None, None, "", [], False, ()
 
         # Template references can't be resolved statically
         if "${" in workflow_ref:
             logger.debug(
                 "Skipping sub-workflow validation for step '%s': template reference '%s'", node_id, workflow_ref
             )
-            return None, None, "", [], False
+            return None, None, "", [], False, ()
 
         if is_workflow_file_reference(workflow_ref):
             return WorkflowValidator._load_child_from_file(node_id, workflow_ref, seen, ir_cache, workflow_file)
@@ -688,16 +697,23 @@ class WorkflowValidator:
             # Already validated — return cached IR for input check
             cached = ir_cache.get(seen_key)
             if cached:
-                return cached[0], cached[1], workflow_ref, [], True
-            return None, None, workflow_ref, [], True
+                return cached[0], cached[1], workflow_ref, [], True, ()
+            return None, None, workflow_ref, [], True, ()
         seen.add(seen_key)
 
         try:
             wm = WorkflowManager()
             child_ir = wm.load_ir(workflow_ref)
-            child_path = Path(wm.get_path(workflow_ref))
+            child_path_value = wm.get_path(workflow_ref)
+            child_path = Path(child_path_value) if isinstance(child_path_value, str) else None
+            parser_warnings: tuple[Diagnostic, ...] = ()
+            if child_path and child_path.exists():
+                content = child_path.read_text(encoding="utf-8")
+                result = parse_markdown(content)
+                child_ir = result.ir
+                parser_warnings = tuple(result.warnings)
             ir_cache[seen_key] = (child_ir, child_path)
-            return child_ir, child_path, workflow_ref, [], False
+            return child_ir, child_path, workflow_ref, [], False, parser_warnings
         except Exception as e:
             logger.debug("Failed to load saved workflow '%s'", workflow_ref, exc_info=True)
             return (
@@ -706,6 +722,7 @@ class WorkflowValidator:
                 workflow_ref,
                 [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
                 False,
+                (),
             )
 
     @staticmethod
@@ -715,7 +732,7 @@ class WorkflowValidator:
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
         workflow_file: Optional[Path] = None,
-    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool]:
+    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool, tuple[Diagnostic, ...]]:
         """Load a child workflow from a file reference."""
         from pflow.core.markdown_parser import parse_markdown
 
@@ -736,6 +753,7 @@ class WorkflowValidator:
                         f"workflow from a file so relative paths can be resolved"
                     ],
                     False,
+                    (),
                 )
         child_path = path.resolve()
 
@@ -744,8 +762,8 @@ class WorkflowValidator:
             # Already validated — return cached IR for input check
             cached = ir_cache.get(seen_key)
             if cached:
-                return cached[0], cached[1], workflow_ref, [], True
-            return None, None, workflow_ref, [], True
+                return cached[0], cached[1], workflow_ref, [], True, ()
+            return None, None, workflow_ref, [], True, ()
         seen.add(seen_key)
 
         try:
@@ -756,13 +774,21 @@ class WorkflowValidator:
                     workflow_ref,
                     [f"Step '{node_id}': sub-workflow file not found: '{workflow_ref}' (resolved to: {child_path})"],
                     False,
+                    (),
                 )
             content = child_path.read_text(encoding="utf-8")
             result = parse_markdown(content)
             ir_cache[seen_key] = (result.ir, child_path)
-            return result.ir, child_path, workflow_ref, [], False
+            return result.ir, child_path, workflow_ref, [], False, tuple(result.warnings)
         except MarkdownParseError as e:
-            return None, None, workflow_ref, [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): {e}"], False
+            return (
+                None,
+                None,
+                workflow_ref,
+                [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): {e}"],
+                False,
+                (),
+            )
         except Exception as e:
             return (
                 None,
@@ -770,10 +796,11 @@ class WorkflowValidator:
                 workflow_ref,
                 [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
                 False,
+                (),
             )
 
     @staticmethod
-    def _warn_inputless_shell_nodes(workflow_ir: dict[str, Any]) -> list[ValidationWarning]:
+    def _warn_inputless_shell_nodes(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         """Warn when shell nodes have no template inputs and no cache: false.
 
         A shell node with no ${...} variables in its params produces the same
@@ -786,7 +813,7 @@ class WorkflowValidator:
         - No batch config (batch nodes get different cache keys per item)
         - No explicit cache: false already set
         """
-        warnings: list[ValidationWarning] = []
+        warnings: list[Diagnostic] = []
         for node in workflow_ir.get("nodes", []):
             if node.get("type") != "shell":
                 continue
@@ -811,13 +838,16 @@ class WorkflowValidator:
 
             if not has_pflow_templates:
                 warnings.append(
-                    ValidationWarning(
+                    Diagnostic(
+                        severity=Severity.WARNING,
+                        source="validator",
                         node_id=node["id"],
                         message=(
                             "Shell node has no template inputs — cached results will "
                             "persist across runs. Consider '- cache: false' if this "
                             "node reads runtime state (git, env, filesystem)."
                         ),
+                        suggestion=("Add '- cache: false' if this node reads runtime state (git, env, filesystem)."),
                     )
                 )
 

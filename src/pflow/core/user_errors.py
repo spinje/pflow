@@ -42,47 +42,6 @@ class UserFriendlyError(PflowError):
         message = f"{title}\n\n{explanation}"
         super().__init__(message)
 
-    def format_for_cli(self, verbose: bool = False) -> str:
-        """Format the error for CLI display.
-
-        Args:
-            verbose: Whether to include technical details
-
-        Returns:
-            Formatted error message for terminal display
-        """
-        lines = []
-
-        # Error title (in red when displayed by CLI)
-        lines.append(f"Error: {self.title}")
-        lines.append("")
-
-        # Explanation
-        if self.explanation:
-            lines.append(self.explanation)
-            lines.append("")
-
-        # Suggestions
-        if self.suggestions:
-            if len(self.suggestions) == 1:
-                lines.append("To fix this:")
-                lines.append(f"  {self.suggestions[0]}")
-            else:
-                lines.append("To fix this:")
-                for i, suggestion in enumerate(self.suggestions, 1):
-                    lines.append(f"  {i}. {suggestion}")
-            lines.append("")
-
-        # Technical details (only with --verbose)
-        if verbose and self.technical_details:
-            lines.append("Technical details:")
-            lines.append(self.technical_details)
-            lines.append("")
-        elif not verbose and self.technical_details:
-            lines.append("Run with --verbose for technical details.")
-
-        return "\n".join(lines).strip()
-
 
 class MCPError(UserFriendlyError):
     """Error related to MCP (Model Context Protocol) functionality."""

@@ -6,6 +6,7 @@ failure modes, and correct parameter passing through the Runner.
 
 from unittest.mock import patch
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import ExecutionResult, RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -60,13 +61,13 @@ class TestWorkflowExecution:
             assert result.status == WorkflowStatus.FAILED
             assert len(result.errors) == 1
             error = result.errors[0]
-            assert error["source"] == "compilation"
-            assert error["category"] == "compilation"
-            assert "bad template" in error["message"]
-            assert error["phase"] == "template_validation"
-            assert error["node_id"] == "node1"
-            assert error["node_type"] == "shell"
-            assert error["suggestion"] == "Check your template syntax"
+            assert error.source == "compilation"
+            assert (error.context or {}).get("category") == "compilation"
+            assert "bad template" in error.message
+            assert (error.context or {}).get("phase") == "template_validation"
+            assert error.node_id == "node1"
+            assert (error.context or {}).get("node_type") == "shell"
+            assert error.suggestion == "Check your template syntax"
 
     def test_runtime_failure_returns_error(self):
         """Test that runtime failures are returned without repair."""
@@ -77,7 +78,10 @@ class TestWorkflowExecution:
         }
 
         with patch("pflow.execution.runner.WorkflowRunner._compile_and_execute") as mock_exec:
-            mock_exec.return_value = ExecutionResult(success=False, errors=[{"message": "Error"}])
+            mock_exec.return_value = ExecutionResult(
+                success=False,
+                diagnostics=[Diagnostic(severity=Severity.ERROR, message="Error", source="runtime")],
+            )
             result = WorkflowRunner().run(workflow_ir, {}, RunnerConfig())
             assert result.success is False
 

@@ -191,7 +191,7 @@ class TestErrorFormattingSurfacesWarnings:
 
         errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
-        assert "Repository not found" in errors[0]["message"]
+        assert "Repository not found" in errors[0].message
 
     def test_mcp_null_error_with_nested_data_error(self):
         """MCP response {"error": null, "data": {"error": "X"}} must surface "X".
@@ -218,8 +218,8 @@ class TestErrorFormattingSurfacesWarnings:
 
         errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
-        assert "channel_not_found" in errors[0]["message"]
-        assert "None" not in errors[0]["message"]
+        assert "channel_not_found" in errors[0].message
+        assert "None" not in errors[0].message
 
     def test_api_warning_takes_priority_over_node_error(self):
         """When both __warnings__ and node-level error exist, warning wins.
@@ -242,5 +242,5 @@ class TestErrorFormattingSurfacesWarnings:
 
         errors = build_error_list(False, "error", shared)
         assert len(errors) >= 1
-        assert "Rate limit exceeded" in errors[0]["message"]
-        assert "HTTP request failed" not in errors[0]["message"]
+        assert "Rate limit exceeded" in errors[0].message
+        assert "HTTP request failed" not in errors[0].message

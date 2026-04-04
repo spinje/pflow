@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.workflow.status import WorkflowStatus
 
 
@@ -31,6 +32,7 @@ class ResolvedWorkflow:
     ir: dict[str, Any]
     source: str  # "file", "library", "content", "direct"
     file_path: Optional[str] = None  # Absolute path for file/library, None for content/direct
+    diagnostics: tuple[Diagnostic, ...] = ()
 
 
 @dataclass
@@ -38,9 +40,17 @@ class ValidationResult:
     """Result of runner.validate()."""
 
     valid: bool
-    errors: list[str] = field(default_factory=list)
-    warnings: list[dict[str, Any]] = field(default_factory=list)
-    # warnings shape: {"node_id": str, "message": str, "template": str | None}
+    diagnostics: list[Diagnostic] = field(default_factory=list)
+
+    @property
+    def errors(self) -> list[str]:
+        """Validation errors as plain messages for display formatters."""
+        return [d.message for d in self.diagnostics if d.severity == Severity.ERROR]
+
+    @property
+    def warnings(self) -> list[Diagnostic]:
+        """Validation warnings as diagnostics."""
+        return [d for d in self.diagnostics if d.severity == Severity.WARNING]
 
 
 @dataclass
@@ -50,8 +60,16 @@ class ExecutionResult:
     success: bool
     status: WorkflowStatus = WorkflowStatus.SUCCESS
     shared_after: dict[str, Any] = field(default_factory=dict)
-    errors: list[dict[str, Any]] = field(default_factory=list)
-    warnings: list[dict[str, Any]] = field(default_factory=list)
-    validation_warnings: list[dict[str, Any]] = field(default_factory=list)
+    diagnostics: list[Diagnostic] = field(default_factory=list)
     trace: Optional[Any] = None  # WorkflowTraceCollector | None
     metrics: Optional[Any] = None  # MetricsCollector | None
+
+    @property
+    def errors(self) -> list[Diagnostic]:
+        """Execution errors as diagnostics."""
+        return [d for d in self.diagnostics if d.severity == Severity.ERROR]
+
+    @property
+    def warnings(self) -> list[Diagnostic]:
+        """Execution warnings as diagnostics."""
+        return [d for d in self.diagnostics if d.severity == Severity.WARNING]

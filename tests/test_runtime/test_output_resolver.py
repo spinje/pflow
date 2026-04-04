@@ -7,6 +7,7 @@ at the root level of shared storage for workflows with namespacing.
 
 import pytest
 
+from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
 from pflow.core.user_errors import OutputResolutionError
 from pflow.runtime.output_resolver import populate_declared_outputs, resolve_output_source
 
@@ -515,8 +516,8 @@ class TestOutputResolutionErrors:
 
         assert not any("??" in s for s in exc_info.value.suggestions)
 
-    def test_error_format_for_cli(self):
-        """OutputResolutionError.format_for_cli() produces readable output."""
+    def test_error_formats_via_diagnostic(self):
+        """OutputResolutionError renders readable output through Diagnostic formatting."""
         shared = {}
 
         workflow_ir = {
@@ -528,7 +529,8 @@ class TestOutputResolutionErrors:
         with pytest.raises(OutputResolutionError) as exc_info:
             populate_declared_outputs(shared, workflow_ir)
 
-        formatted = exc_info.value.format_for_cli()
+        diagnostic = exception_to_diagnostics(exc_info.value)[0]
+        formatted = format_diagnostic(diagnostic)
         assert "Error:" in formatted
         assert "branch_a" in formatted
         assert "did not execute" in formatted

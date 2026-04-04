@@ -6,6 +6,7 @@ ensuring CLI and MCP return identical output structures.
 
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, coerce_warning_diagnostic, format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 
 
@@ -17,7 +18,7 @@ def format_execution_success(
     output_key: Optional[str] = None,
     trace_path: Optional[str] = None,
     status: Optional[WorkflowStatus] = None,
-    warnings: Optional[list[dict[str, Any]]] = None,
+    warnings: Optional[list[Any]] = None,
 ) -> dict[str, Any]:
     """Format successful workflow execution output.
 
@@ -52,9 +53,11 @@ def format_execution_success(
     # Add workflow metadata (default to unsaved if not provided)
     result["workflow"] = workflow_metadata if workflow_metadata else {"action": "unsaved"}
 
-    # Add warnings if present
-    if warnings:
-        result["warnings"] = warnings
+    warning_diagnostics = [
+        warning if isinstance(warning, Diagnostic) else coerce_warning_diagnostic(warning) for warning in warnings or []
+    ]
+    result["warnings"] = [warning.to_display_dict() for warning in warning_diagnostics]
+    result["diagnostics"] = [warning.to_dict() for warning in warning_diagnostics]
 
     # Add metrics from collector
     if metrics_collector:
@@ -183,6 +186,7 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
     workflow_name = workflow_metadata.get("name", "workflow")
     workflow_action = workflow_metadata.get("action", "executed")
     status = success_dict.get("status", "success")
+    warning_count = len(success_dict.get("warnings", []))
 
     # Show workflow name and action (matches CLI)
     if workflow_action == "reused":
@@ -203,7 +207,12 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
     if status == "degraded":
         lines.append(f"⚠️ Workflow completed with warnings in {duration_sec:.3f}s{cache_suffix}")
     elif status == "failed":
-        lines.append(f"❌ Workflow failed after {duration_sec:.3f}s{cache_suffix}")
+        if warning_count:
+            lines.append(f"❌ Workflow failed ({warning_count} warnings) after {duration_sec:.3f}s{cache_suffix}")
+        else:
+            lines.append(f"❌ Workflow failed after {duration_sec:.3f}s{cache_suffix}")
+    elif warning_count:
+        lines.append(f"⚠️ Workflow completed with {warning_count} warnings in {duration_sec:.3f}s{cache_suffix}")
     else:
         lines.append(f"✓ Workflow completed in {duration_sec:.3f}s{cache_suffix}")
 
@@ -237,17 +246,7 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
         lines.append("")
         lines.append("⚠️ Warnings:")
         for warning in warnings:
-            node_id = warning.get("node_id", "unknown")
-            warning_type = warning.get("type", "warning")
-            message = warning.get("message", "No message")
-
-            # Header line (matches CLI)
-            lines.append(f"  • {node_id} ({warning_type}):")
-
-            # Multi-line message with proper indentation (matches CLI)
-            for line in message.split("\n"):
-                if line.strip():  # Skip empty lines
-                    lines.append(f"    {line}")
+            lines.append(format_diagnostic(coerce_warning_diagnostic(warning)))
 
     # Show outputs if present (matches CLI "Workflow output:" section)
     result = success_dict.get("result", {})

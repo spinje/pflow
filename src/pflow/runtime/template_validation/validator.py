@@ -20,6 +20,7 @@ import logging
 import re
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
@@ -28,12 +29,9 @@ from pflow.runtime.template_validation.type_validation import (
     validate_shell_command_types,
     validate_template_types,
 )
-from pflow.runtime.template_validation.utils import (
-    ValidationWarning,
-    get_node_ids,
-)
+from pflow.runtime.template_validation.utils import get_node_ids
 
-__all__ = ["ValidationWarning", "extract_node_outputs", "validate_workflow_templates"]
+__all__ = ["extract_node_outputs", "validate_workflow_templates"]
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +60,7 @@ BATCH_OUTPUTS: list[dict[str, str]] = [
 
 def validate_workflow_templates(
     workflow_ir: dict[str, Any], available_params: dict[str, Any], registry: Registry
-) -> tuple[list[str], list[ValidationWarning]]:
+) -> tuple[list[str], list[Diagnostic]]:
     """
     Validates all template variables in a workflow.
 
@@ -78,10 +76,10 @@ def validate_workflow_templates(
     Returns:
         Tuple of (errors, warnings):
         - errors: List of validation errors that prevent execution
-        - warnings: List of ValidationWarning objects for runtime-validated templates
+        - warnings: List of Diagnostic objects for runtime-validated templates
     """
     errors: list[str] = []
-    warnings: list[ValidationWarning] = []
+    warnings: list[Diagnostic] = []
 
     # Check for malformed template syntax FIRST
     malformed_errors = _validate_malformed_templates(workflow_ir)

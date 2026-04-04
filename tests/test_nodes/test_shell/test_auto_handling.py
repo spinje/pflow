@@ -233,7 +233,15 @@ class TestAutoHandlingRealErrors:
 
         assert action == "error"  # NOT auto-handled
         assert shared["exit_code"] != 0
-        assert any(msg in shared["stderr"].lower() for msg in ["permission denied", "read-only", "keine berechtigung"])
+        assert any(
+            msg in shared["stderr"].lower()
+            for msg in [
+                "permission denied",
+                "read-only",
+                "keine berechtigung",
+                "operation not permitted",
+            ]
+        )
 
     def test_command_not_found_still_errors(self):
         """Test that command not found (not which/type) still errors."""

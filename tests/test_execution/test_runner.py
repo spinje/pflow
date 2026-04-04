@@ -4,8 +4,10 @@ Verifies that validation gates compilation (spec 9b) and that a valid
 workflow runs through the full pipeline producing structured results.
 """
 
+from pathlib import Path
 from unittest.mock import patch
 
+from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.execution.result import ExecutionResult, RunnerConfig
@@ -151,49 +153,49 @@ class TestExceptionToResultCategorization:
         exc = ValueError("HTTP timeout connecting to api.example.com")
         exc._pflow_node_id = "fetch-data"  # type: ignore[attr-defined]
         result = self._run(exc)
-        assert result.errors[0]["category"] == "execution_failure"
-        assert result.errors[0]["node_id"] == "fetch-data"
+        assert (result.errors[0].context or {}).get("category") == "execution_failure"
+        assert result.errors[0].node_id == "fetch-data"
 
     def test_valueerror_without_annotation_is_validation(self):
         """ValueError from pre-execution (no annotation) -> validation."""
         exc = ValueError("Invalid parameter format")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert "node_id" not in result.errors[0]
+        assert (result.errors[0].context or {}).get("category") == "validation"
+        assert result.errors[0].node_id is None
 
     def test_schema_validation_error_preserves_fields(self):
         """SchemaValidationError (replacing duck-type hack) preserves path and suggestion."""
         exc = SchemaValidationError("bad field", path="nodes[0].type", suggestion="Use 'shell'")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert result.errors[0]["source"] == "validation"
-        assert result.errors[0]["path"] == "nodes[0].type"
-        assert result.errors[0]["suggestion"] == "Use 'shell'"
+        assert (result.errors[0].context or {}).get("category") == "validation"
+        assert result.errors[0].source == "validation"
+        assert (result.errors[0].context or {}).get("path") == "nodes[0].type"
+        assert result.errors[0].suggestion == "Use 'shell'"
 
     def test_markdown_parse_error_preserves_line_and_suggestion(self):
         """MarkdownParseError extracts .line and .suggestion into error dict."""
         exc = MarkdownParseError("bad syntax", line=42, suggestion="Add ## Steps")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert result.errors[0]["line"] == 42
-        assert result.errors[0]["suggestion"] == "Add ## Steps"
+        assert (result.errors[0].context or {}).get("category") == "parse_error"
+        assert (result.errors[0].context or {}).get("line") == 42
+        assert result.errors[0].suggestion == "Add ## Steps"
 
     def test_markdown_parse_error_with_node_annotation(self):
         """MarkdownParseError from nested workflow propagates node_id."""
         exc = MarkdownParseError("bad syntax", line=5)
         exc._pflow_node_id = "load-sub-workflow"  # type: ignore[attr-defined]
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert result.errors[0]["node_id"] == "load-sub-workflow"
-        assert result.errors[0]["line"] == 5
+        assert (result.errors[0].context or {}).get("category") == "parse_error"
+        assert result.errors[0].node_id == "load-sub-workflow"
+        assert (result.errors[0].context or {}).get("line") == 5
 
     def test_markdown_parse_error_omits_none_fields(self):
         """MarkdownParseError with None line/suggestion doesn't write None values."""
         exc = MarkdownParseError("bad syntax")
         result = self._run(exc)
-        assert result.errors[0]["category"] == "validation"
-        assert "line" not in result.errors[0]
-        assert "suggestion" not in result.errors[0]
+        assert (result.errors[0].context or {}).get("category") == "parse_error"
+        assert "line" not in (result.errors[0].context or {})
+        assert result.errors[0].suggestion is None
 
 
 def test_node_valueerror_categorized_as_execution_failure():
@@ -226,9 +228,50 @@ def test_node_valueerror_categorized_as_execution_failure():
     assert result.success is False
     assert len(result.errors) == 1
     error = result.errors[0]
-    assert error["category"] == "execution_failure", (
-        f"Expected 'execution_failure' but got '{error['category']}'. "
+    category = (error.context or {}).get("category")
+    assert category == "execution_failure", (
+        f"Expected 'execution_failure' but got '{category}'. "
         f"This means the engine's _pflow_node_id annotation or the "
         f"runner's ValueError dispatch is broken."
     )
-    assert error["node_id"] == "bad-node"
+    assert error.node_id == "bad-node"
+
+
+def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
+    """Child parser warnings should survive child prep failures and reach the result."""
+    child_workflow = tmp_path / "child.pflow.md"
+    child_workflow.write_text(
+        "# Child\n\n"
+        "## Input\n\n"
+        "Typo section heading.\n\n"
+        "## Inputs\n\n"
+        "### required_value\n\n"
+        "Required input.\n\n"
+        "- type: string\n"
+        "- required: true\n\n"
+        "## Steps\n\n"
+        "### run\n\n"
+        "Use the input.\n\n"
+        "- type: shell\n"
+        "- cache: false\n"
+        "- command: echo ${required_value}\n",
+        encoding="utf-8",
+    )
+
+    parent_workflow = tmp_path / "parent.pflow.md"
+    parent_workflow.write_text(
+        f"# Parent\n\n## Steps\n\n### child\n\nRun child.\n\n- type: workflow\n- workflow: {child_workflow}\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent_workflow), {}, RunnerConfig())
+
+    assert result.success is False
+    assert any(diagnostic.severity == Severity.ERROR for diagnostic in result.diagnostics)
+    parser_warnings = [
+        diagnostic
+        for diagnostic in result.diagnostics
+        if diagnostic.severity == Severity.WARNING and diagnostic.source == "parser"
+    ]
+    assert len(parser_warnings) == 1
+    assert "## Input" in parser_warnings[0].message

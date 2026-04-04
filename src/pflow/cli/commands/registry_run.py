@@ -8,6 +8,7 @@ from typing import Any
 import click
 
 from pflow.cli.param_parsing import parse_workflow_params
+from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
 from pflow.core.execution_cache import ExecutionCache
 from pflow.core.param_coercion import coerce_to_declared_type
 from pflow.core.user_errors import MCPError
@@ -249,13 +250,7 @@ def _execute_and_display_results(
     start_time = time.perf_counter()
 
     if verbose:
-        click.echo(f"🔄 Running node '{resolved_node}'...")
-        if execution_params:
-            from pflow.execution.formatters.node_output_formatter import format_param_value
-
-            click.echo("   Parameters:")
-            for key, value in execution_params.items():
-                click.echo(f"     {key}: {format_param_value(value)}")
+        _display_execution_banner(resolved_node, execution_params)
 
     try:
         # Execute node
@@ -264,31 +259,11 @@ def _execute_and_display_results(
         # Calculate execution time
         execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
-        # Extract outputs (node writes to shared_store by convention)
-        # Try node type key first, then check for common output keys
-        outputs = shared_store.get(resolved_node, {})
-        if not outputs:
-            # Fallback: collect any non-input keys as outputs (excluding internal keys)
-            outputs = {k: v for k, v in shared_store.items() if k not in execution_params and not k.startswith("__")}
+        outputs = _extract_node_outputs(resolved_node, shared_store, execution_params)
 
-        # Cache execution results for structure-only mode (Task 89)
-        # Only cache successful executions
         if action != "error":
-            try:
-                cache.store(
-                    execution_id=execution_id, node_type=resolved_node, params=execution_params, outputs=outputs
-                )
-            except Exception as cache_error:
-                # Log warning but don't fail execution
-                if verbose:
-                    click.echo(f"⚠️  Failed to cache execution: {cache_error}", err=True)
-
-        # Load settings to get output mode
-        from pflow.core.settings import SettingsManager
-
-        settings_manager = SettingsManager()
-        settings = settings_manager.load()
-        output_mode = settings.registry.output_mode
+            _store_registry_execution(cache, execution_id, resolved_node, execution_params, outputs, verbose)
+        output_mode = _load_registry_output_mode()
 
         # Display results based on mode
         _display_results(
@@ -307,12 +282,69 @@ def _execute_and_display_results(
 
     except MCPError as e:
         # MCP-specific user-friendly errors
-        click.echo(e.format_for_cli(verbose=verbose), err=True)
+        diagnostics = exception_to_diagnostics(e)
+        for diagnostic in diagnostics:
+            click.echo(format_diagnostic(diagnostic, verbose=verbose), err=True)
         sys.exit(1)
     except Exception as e:
         # Generic execution errors
         _handle_execution_error(resolved_node, e, verbose)
         sys.exit(1)
+
+
+def _display_execution_banner(resolved_node: str, execution_params: dict[str, Any]) -> None:
+    """Display verbose execution metadata before running a node."""
+    click.echo(f"🔄 Running node '{resolved_node}'...")
+    if not execution_params:
+        return
+
+    from pflow.execution.formatters.node_output_formatter import format_param_value
+
+    click.echo("   Parameters:")
+    for key, value in execution_params.items():
+        click.echo(f"     {key}: {format_param_value(value)}")
+
+
+def _extract_node_outputs(
+    resolved_node: str,
+    shared_store: dict[str, Any],
+    execution_params: dict[str, Any],
+) -> dict[str, Any]:
+    """Extract node outputs from shared storage."""
+    outputs = shared_store.get(resolved_node, {})
+    if isinstance(outputs, dict) and outputs:
+        return outputs
+    return {
+        key: value for key, value in shared_store.items() if key not in execution_params and not key.startswith("__")
+    }
+
+
+def _store_registry_execution(
+    cache: ExecutionCache,
+    execution_id: str,
+    resolved_node: str,
+    execution_params: dict[str, Any],
+    outputs: dict[str, Any],
+    verbose: bool,
+) -> None:
+    """Cache a successful node execution without failing the command on cache errors."""
+    try:
+        cache.store(
+            execution_id=execution_id,
+            node_type=resolved_node,
+            params=execution_params,
+            outputs=outputs,
+        )
+    except Exception as cache_error:
+        if verbose:
+            click.echo(f"⚠️  Failed to cache execution: {cache_error}", err=True)
+
+
+def _load_registry_output_mode() -> str:
+    """Load the registry output mode from settings."""
+    from pflow.core.settings import SettingsManager
+
+    return SettingsManager().load().registry.output_mode
 
 
 def _display_results(

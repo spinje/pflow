@@ -8,6 +8,12 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.diagnostic import (
+    Severity,
+    coerce_error_diagnostic,
+    coerce_warning_diagnostic,
+    format_diagnostic,
+)
 from pflow.core.exceptions import MarkdownParseError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.workflow_resolver import resolve_workflow as _unified_resolve
@@ -67,7 +73,9 @@ def _format_success_result(
         workflow_metadata=workflow_metadata,
         trace_path=trace_path,
         status=result.status,
-        warnings=result.warnings + result.validation_warnings,
+        warnings=[
+            diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
+        ],
     )
 
     return formatted
@@ -126,6 +134,11 @@ def _format_error_result(
         "execution": formatted.get("execution"),
         "metrics": formatted.get("metrics"),
         "trace_path": trace_path,
+        "warnings": [
+            diagnostic.to_display_dict()
+            for diagnostic in getattr(result, "diagnostics", [])
+            if diagnostic.severity == Severity.WARNING
+        ],
     }
 
 
@@ -139,22 +152,25 @@ def _build_error_text(error_dict: dict[str, Any]) -> str:
         Human-readable error text with shell details for agent diagnosis
     """
     error_msg = error_dict.get("error", {}).get("message", "Workflow execution failed")
-    lines = [f"❌ {error_msg}"]
+    warnings = error_dict.get("warnings", [])
+    lines = [f"❌ {error_msg} ({len(warnings)} warnings)"] if warnings else [f"❌ {error_msg}"]
 
     if error_dict.get("errors"):
+        errors = error_dict["errors"][:3]
+        show_error_numbers = len(error_dict["errors"]) > 1
         lines.append("\nError details:")
-        for err in error_dict["errors"][:3]:
-            node_id = err.get("node_id", "unknown")
-            msg = err.get("message", "Unknown error")
-            lines.append(f"  • {node_id}: {msg}")
-            if err.get("shell_command"):
-                cmd = err["shell_command"]
-                cmd_display = cmd[:200] + "..." if len(cmd) > 200 else cmd
-                lines.append(f"    Command: {cmd_display}")
-            if err.get("shell_stderr"):
-                stderr = err["shell_stderr"]
-                stderr_display = stderr[:300] + "..." if len(stderr) > 300 else stderr
-                lines.append(f"    Stderr: {stderr_display}")
+        for index, err in enumerate(errors, 1):
+            lines.append(
+                format_diagnostic(
+                    coerce_error_diagnostic(err),
+                    error_number=index if show_error_numbers else 0,
+                )
+            )
+
+    if warnings:
+        lines.append("\nWarnings:")
+        for warning in warnings:
+            lines.append(format_diagnostic(coerce_warning_diagnostic(warning)))
 
     trace_path = error_dict.get("trace_path", "")
     if trace_path and Path(trace_path).exists():
@@ -224,7 +240,7 @@ class ExecutionService(BaseService):
         # twice (harmless, idempotent) but resolution hits the filesystem only once.
         runner = WorkflowRunner()
         result = runner.run(
-            resolved.ir,
+            resolved,
             validated_params,
             RunnerConfig(),
             workflow_manager=wm,
@@ -266,23 +282,27 @@ class ExecutionService(BaseService):
             from pflow.execution.formatters.validation_formatter import format_validation_success
 
             msg = format_validation_success()
-            if vresult.warnings:
-
-                def _format_warning(w: dict) -> str:
-                    node = w.get("node_id", "?")
-                    template = w.get("template")
-                    message = w.get("message", "")
-                    if template:
-                        return f"  ⚠ [{node}] {template}: {message}"
-                    return f"  ⚠ [{node}] {message}"
-
-                warning_text = "\n".join(_format_warning(w) for w in vresult.warnings)
+            warnings = [
+                diagnostic
+                for diagnostic in getattr(vresult, "diagnostics", [])
+                if diagnostic.severity == Severity.WARNING
+            ]
+            if warnings:
+                warning_text = "\n".join(format_diagnostic(warning) for warning in warnings)
                 msg += f"\n\nWarnings:\n{warning_text}"
             return msg
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
-            return format_validation_failure(vresult.errors)
+            msg = format_validation_failure(vresult.errors, suggestions=[])
+            extra_diagnostics = [
+                diagnostic
+                for diagnostic in getattr(vresult, "diagnostics", [])
+                if diagnostic.severity in {Severity.WARNING, Severity.INFO}
+            ]
+            if extra_diagnostics:
+                msg += "\n\n" + "\n".join(format_diagnostic(diagnostic) for diagnostic in extra_diagnostics)
+            return msg
 
     @classmethod
     @ensure_stateless

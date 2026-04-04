@@ -16,14 +16,26 @@ from typing import Any
 
 from click.testing import CliRunner
 
-from pflow.cli.error_output import _exception_to_errors
 from pflow.cli.main import main
+from pflow.core.diagnostic import exception_to_diagnostics
 from tests.shared.markdown_utils import write_workflow_file
+
+
+def _exception_to_errors(exception: Exception) -> tuple[str, list[dict[str, Any]]]:
+    """Test helper: convert exception to (summary, errors_list) via shared diagnostics."""
+    diagnostics = exception_to_diagnostics(exception)
+    errors = [d.to_display_dict() for d in diagnostics]
+    if len(errors) == 1:
+        summary = errors[0].get("title") or errors[0].get("message") or str(exception)
+    else:
+        summary = getattr(exception, "summary", None) or f"Workflow execution failed ({len(errors)} errors)"
+    return summary, errors
+
 
 # ---------------------------------------------------------------------------
 # Valid error categories
 # ---------------------------------------------------------------------------
-# Categories from _exception_to_errors (pre-execution exceptions)
+# Categories from exception_to_diagnostics (pre-execution exceptions)
 _PRE_EXECUTION_CATEGORIES = {
     "validation",
     "compilation",
@@ -229,7 +241,7 @@ class TestStructuredFieldPreservation:
             path="nodes[0].type",
             suggestion="Did you mean 'file'?",
         )
-        summary, errors = _exception_to_errors(exc)
+        _summary, errors = _exception_to_errors(exc)
 
         assert len(errors) == 1
         err = errors[0]
@@ -246,7 +258,7 @@ class TestStructuredFieldPreservation:
             workflow_name="my-workflo",
             similar_names=["my-workflow", "my-workflow-v2"],
         )
-        summary, errors = _exception_to_errors(exc)
+        _summary, errors = _exception_to_errors(exc)
 
         assert len(errors) == 1
         err = errors[0]

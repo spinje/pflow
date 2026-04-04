@@ -21,6 +21,7 @@ from pflow.cli.workflow_output import (
 )
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
+from pflow.core.diagnostic import Severity, format_diagnostic
 from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
@@ -32,6 +33,7 @@ from pflow.core.shell_integration import (
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution import DisplayManager
+from pflow.execution.result import ResolvedWorkflow
 from pflow.execution.workflow_resolver import resolve_workflow
 
 # Import MCP CLI commands
@@ -144,8 +146,9 @@ def _handle_workflow_success(
 
     # Extract status and warnings from ExecutionResult (Phase 2-5 integration)
     status = getattr(result, "status", None)
-    # Merge runtime + validation warnings for unified output (matches MCP behavior)
-    result_warnings = getattr(result, "warnings", []) + getattr(result, "validation_warnings", [])
+    result_warnings = [
+        diagnostic for diagnostic in getattr(result, "diagnostics", []) if diagnostic.severity == Severity.WARNING
+    ]
 
     output_produced = _handle_workflow_output(
         shared_storage,
@@ -238,7 +241,7 @@ def _echo_target_node_path(ctx: click.Context, report_dir: Path, events: list[di
 
 def execute_json_workflow(  # noqa: C901
     ctx: click.Context,
-    ir_data: dict[str, Any],
+    workflow: dict[str, Any] | ResolvedWorkflow,
     stdin_data: str | StdinData | None = None,
     output_key: str | None = None,
     execution_params: dict[str, Any] | None = None,
@@ -249,6 +252,7 @@ def execute_json_workflow(  # noqa: C901
     from pflow.execution.result import RunnerConfig
     from pflow.execution.runner import WorkflowRunner
 
+    ir_data = workflow.ir if isinstance(workflow, ResolvedWorkflow) else workflow
     params = dict(execution_params or {})
 
     # Route stdin to params (CLI concern -- Runner never knows about stdin)
@@ -265,7 +269,7 @@ def execute_json_workflow(  # noqa: C901
     # Validate-only mode -- separate method, separate result type
     if ctx.obj.get("validate_only"):
         runner = WorkflowRunner()
-        vresult = runner.validate(ir_data, params, source_file_path=ctx.obj.get("source_file_path"))
+        vresult = runner.validate(workflow, params, source_file_path=ctx.obj.get("source_file_path"))
         _display_validation_result(ctx, vresult, output_format)
         return
 
@@ -312,7 +316,7 @@ def execute_json_workflow(  # noqa: C901
     try:
         runner = WorkflowRunner()
         result = runner.run(
-            ir_data,
+            workflow,
             params,
             config,
             output=cli_output,
@@ -394,11 +398,13 @@ def _display_validation_result(
 ) -> None:
     """Display validation result and exit with appropriate code."""
     if output_format == "json":
+        diagnostics = [diagnostic.to_dict() for diagnostic in getattr(vresult, "diagnostics", [])]
         output = {
             "success": vresult.valid,
             "validated_only": True,
             "errors": [{"message": e, "category": "validation"} for e in vresult.errors],
-            "warnings": vresult.warnings,
+            "warnings": [warning.to_display_dict() for warning in vresult.warnings],
+            "diagnostics": diagnostics,
         }
         click.echo(json.dumps(output, indent=2, default=str))
     else:
@@ -406,19 +412,27 @@ def _display_validation_result(
             from pflow.execution.formatters.validation_formatter import format_validation_success
 
             click.echo(format_validation_success())
-            if vresult.warnings:
-                for w in vresult.warnings:
-                    node = w.get("node_id", "?")
-                    template = w.get("template")
-                    message = w.get("message", "")
-                    if template:
-                        click.echo(f"  ⚠ [{node}] {template}: {message}", err=True)
-                    else:
-                        click.echo(f"  ⚠ [{node}] {message}", err=True)
+            warning_diagnostics = [
+                diagnostic
+                for diagnostic in getattr(vresult, "diagnostics", [])
+                if diagnostic.severity == Severity.WARNING
+            ]
+            if warning_diagnostics:
+                for diagnostic in warning_diagnostics:
+                    click.echo(format_diagnostic(diagnostic), err=True)
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
-            click.echo(format_validation_failure(vresult.errors))
+            click.echo(format_validation_failure(vresult.errors, suggestions=[]))
+            extra_diagnostics = [
+                diagnostic
+                for diagnostic in getattr(vresult, "diagnostics", [])
+                if diagnostic.severity in {Severity.WARNING, Severity.INFO}
+            ]
+            if extra_diagnostics:
+                click.echo("", err=True)
+                for diagnostic in extra_diagnostics:
+                    click.echo(format_diagnostic(diagnostic), err=True)
 
     ctx.exit(0 if vresult.valid else 1)
 
@@ -732,8 +746,7 @@ def _handle_named_workflow(
     output_key: str | None,
     output_format: str,
     verbose: bool,
-    workflow_ir: dict[str, Any] | None = None,
-    source: str | None = None,
+    resolved_workflow: ResolvedWorkflow | None = None,
 ) -> bool:
     """Handle execution of a named or file-based workflow.
 
@@ -749,12 +762,13 @@ def _handle_named_workflow(
     Returns:
         True if workflow was executed, False otherwise
     """
-    if workflow_ir is None:
+    if resolved_workflow is None:
         try:
-            resolved = resolve_workflow(first_arg)
+            resolved_workflow = resolve_workflow(first_arg)
         except WorkflowNotFoundError:
             return False
-        workflow_ir, source = resolved.ir, resolved.source
+    workflow_ir = resolved_workflow.ir
+    source = resolved_workflow.source
     if not workflow_ir:
         return False
 
@@ -784,7 +798,7 @@ def _handle_named_workflow(
     _setup_workflow_execution(ctx, first_arg, source, output_format)
 
     # Execute workflow
-    execute_json_workflow(ctx, workflow_ir, stdin_data, output_key, params, output_format)
+    execute_json_workflow(ctx, resolved_workflow, stdin_data, output_key, params, output_format)
     return True
 
 
@@ -823,11 +837,8 @@ def _try_execute_named_workflow(
 
     # Resolve once to avoid duplicate calls — raises WorkflowNotFoundError if not found
     resolved = resolve_workflow(first_arg)
-    workflow_ir, source = resolved.ir, resolved.source
     # Try to execute as named workflow
-    if _handle_named_workflow(
-        ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, workflow_ir, source
-    ):
+    if _handle_named_workflow(ctx, first_arg, workflow[1:], stdin_data, output_key, output_format, verbose, resolved):
         return True
     # Should not reach here — resolve_workflow raises if not found
     raise WorkflowNotFoundError(first_arg, similar_names=[])

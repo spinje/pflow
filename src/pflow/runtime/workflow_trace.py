@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Optional
 
+from pflow.core.diagnostic import Diagnostic
+
 logger = logging.getLogger(__name__)
 
 # Trace format version — breaking change from 1.2.0 (removed shared_before/shared_after)
@@ -257,13 +259,18 @@ class WorkflowTraceCollector:
         """
         self.json_output = json_output
 
-    def set_warnings(self, warnings: list[dict[str, Any]]) -> None:
-        """Store runtime warnings from execution.
+    def set_warnings(self, warnings: list[Diagnostic] | list[dict[str, Any]]) -> None:
+        """Store warning diagnostics from execution.
 
         Args:
-            warnings: List of warning dicts with node_id, type, message
+            warnings: List of warning diagnostics or legacy warning dicts
         """
-        self.execution_warnings = warnings if warnings else None
+        if not warnings:
+            self.execution_warnings = None
+            return
+        self.execution_warnings = [
+            warning.to_display_dict() if isinstance(warning, Diagnostic) else warning for warning in warnings
+        ]
 
     def _determine_trace_status(self) -> str:
         """Determine status from execution events and warnings.
@@ -274,9 +281,16 @@ class WorkflowTraceCollector:
         failed = any(not e.get("success", True) for e in self.events)
         if failed:
             return "failed"
-        if self.execution_warnings:
+        if self.execution_warnings and any(
+            self._warning_changes_status(warning) for warning in self.execution_warnings
+        ):
             return "degraded"
         return "success"
+
+    @staticmethod
+    def _warning_changes_status(warning: dict[str, Any]) -> bool:
+        """Return whether a warning should mark the trace as degraded."""
+        return warning.get("source") not in {"parser", "validator"}
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:
         """Recursively collect LLM call data from tree-structured events.
