@@ -61,9 +61,11 @@ class Diagnostic:
     def to_display_dict(self) -> dict[str, Any]:
         """Serialize with context merged into top-level keys for display consumers."""
         result = self.to_dict()
-        if self.context:
-            for key, value in self.context.items():
-                result.setdefault(key, deepcopy(value))
+        # Reuse the deep copy already made by to_dict() — no second deepcopy.
+        ctx = result.get("context")
+        if ctx:
+            for key, value in ctx.items():
+                result.setdefault(key, value)
         return result
 
 
@@ -78,46 +80,43 @@ def deduplicate_diagnostics(diagnostics: list[Diagnostic]) -> list[Diagnostic]:
     return result
 
 
+def format_child_provenance(step_id: str, message: str) -> str:
+    """Format provenance message for a child sub-workflow diagnostic.
+
+    Used by both validation and runtime propagation paths. Both MUST use this
+    function so dedup collapses identical child diagnostics from the two paths.
+    """
+    return f"In step '{step_id}' sub-workflow: {message}"
+
+
 def coerce_warning_diagnostic(warning: Any) -> Diagnostic:
     """Convert a legacy warning payload to ``Diagnostic``."""
-    if isinstance(warning, Diagnostic):
-        return warning
-    if isinstance(warning, dict):
-        context = {
-            key: value
-            for key, value in warning.items()
-            if key not in {"severity", "message", "suggestion", "node_id", "source"}
-        }
-        return Diagnostic(
-            severity=Severity.WARNING,
-            message=warning.get("message", "No message"),
-            suggestion=warning.get("suggestion"),
-            node_id=warning.get("node_id"),
-            source=str(warning.get("source") or warning.get("type") or "runtime"),
-            context=context or None,
-        )
-    return Diagnostic(severity=Severity.WARNING, message=str(warning), source="runtime")
+    return _coerce_diagnostic(warning, Severity.WARNING, "No message")
 
 
 def coerce_error_diagnostic(error: Any) -> Diagnostic:
     """Convert a legacy error payload to ``Diagnostic``."""
-    if isinstance(error, Diagnostic):
-        return error
-    if isinstance(error, dict):
-        context = {
-            key: value
-            for key, value in error.items()
-            if key not in {"severity", "message", "suggestion", "node_id", "source"}
-        }
+    return _coerce_diagnostic(error, Severity.ERROR, "Unknown error")
+
+
+_KNOWN_FIELDS = {"severity", "message", "suggestion", "node_id", "source"}
+
+
+def _coerce_diagnostic(payload: Any, severity: Severity, default_message: str) -> Diagnostic:
+    """Shared coercion logic for legacy warning/error payloads."""
+    if isinstance(payload, Diagnostic):
+        return payload
+    if isinstance(payload, dict):
+        context = {k: v for k, v in payload.items() if k not in _KNOWN_FIELDS}
         return Diagnostic(
-            severity=Severity.ERROR,
-            message=error.get("message", "Unknown error"),
-            suggestion=error.get("suggestion"),
-            node_id=error.get("node_id"),
-            source=str(error.get("source") or "runtime"),
+            severity=severity,
+            message=payload.get("message", default_message),
+            suggestion=payload.get("suggestion"),
+            node_id=payload.get("node_id"),
+            source=str(payload.get("source") or payload.get("type") or "runtime"),
             context=context or None,
         )
-    return Diagnostic(severity=Severity.ERROR, message=str(error), source="runtime")
+    return Diagnostic(severity=severity, message=str(payload), source="runtime")
 
 
 def format_diagnostic(

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic import Diagnostic, format_child_provenance
 from pflow.core.file_resolver import is_workflow_file_reference
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.node import BaseNode
@@ -337,7 +337,7 @@ class WorkflowExecutor(BaseNode):
                 parser_diagnostics.append(
                     Diagnostic(
                         severity=d.severity,
-                        message=f"In step '{step_id}' sub-workflow: {d.message}",
+                        message=format_child_provenance(step_id, d.message),
                         suggestion=d.suggestion,
                         node_id=step_id,
                         source=d.source,

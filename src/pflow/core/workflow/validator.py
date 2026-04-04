@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic import Diagnostic, Severity, format_child_provenance
 from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
@@ -23,15 +23,13 @@ def _add_child_provenance(warnings: list[Diagnostic] | tuple[Diagnostic, ...], s
     - Siblings with identical warnings don't collapse during dedup (different node_id)
     - Display shows which step produced the warning
 
-    Message format must stay in sync with
-    ``WorkflowExecutor._propagate_child_parser_warnings`` so the validation
-    and runtime propagation paths produce identical diagnostics that dedup
-    naturally when both paths run for the same workflow.
+    Uses ``format_child_provenance`` so the validation and runtime propagation
+    paths produce identical diagnostics that dedup naturally.
     """
     return [
         Diagnostic(
             severity=w.severity,
-            message=f"In step '{step_id}' sub-workflow: {w.message}",
+            message=format_child_provenance(step_id, w.message),
             suggestion=w.suggestion,
             node_id=w.node_id or step_id,
             source=w.source,

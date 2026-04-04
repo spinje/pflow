@@ -289,7 +289,13 @@ class WorkflowTraceCollector:
 
     @staticmethod
     def _warning_changes_status(warning: dict[str, Any]) -> bool:
-        """Return whether a warning should mark the trace as degraded."""
+        """Return whether a warning should mark the trace as degraded.
+
+        Blacklist (not whitelist) is intentional: unknown sources default to
+        degrading, so new source types are fail-closed rather than silently
+        ignored.  Only parser and validator warnings are excluded — they
+        indicate input quality issues, not runtime degradation.
+        """
         return warning.get("source") not in {"parser", "validator"}
 
     def _collect_llm_summary(self, events: list[dict[str, Any]]) -> dict[str, Any]:

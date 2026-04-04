@@ -632,3 +632,58 @@ The `.txt` baselines in the worktree were confirmed to be legitimate pre-impleme
 
 - Deleted `scratchpads/task-143-unified-diagnostics/` from the feature branch (baselines, baselines-current, capture scripts — all verification artifacts, not needed in the repo).
 - Deleted accidentally-written `.txt` files from the main repo's baselines directory (generated during the verification run on `main`).
+
+## [2026-04-04] — Post-PR Review Fixes
+
+Evaluated code review findings from two sources: Claude Code `/code-review` skill (issue comment) and Gemini automated PR review (inline comments). 8 findings total — 4 confirmed and fixed, 1 deferred, 1 no action, 2 disputed.
+
+### Fixes applied
+
+**Fix 1: Shared provenance helper — eliminates dual-path drift risk**
+
+The format string `f"In step '{step_id}' sub-workflow: {message}"` appeared in two files (`validator.py:34`, `workflow_executor.py:340`). If one changed without the other, dedup would silently break — users would see duplicate warnings. A comment documented the coupling but couldn't enforce it.
+
+- Added `format_child_provenance(step_id, message)` to `src/pflow/core/diagnostic.py`
+- Updated `src/pflow/core/workflow/validator.py:_add_child_provenance()` to call it
+- Updated `src/pflow/runtime/workflow_executor.py:_propagate_child_parser_warnings()` to call it
+- 💡 Most valuable review finding. Turns a documented risk into an eliminated risk.
+
+**Fix 2: DRY coerce functions via shared `_coerce_diagnostic` helper**
+
+`coerce_warning_diagnostic` and `coerce_error_diagnostic` shared ~90% logic with 3 differences (severity, default message, source `"type"` fallback). 7 production callers.
+
+- Extracted `_coerce_diagnostic(payload, severity, default_message)` private helper in `diagnostic.py`
+- Both public functions are now one-liners delegating to the shared helper
+
+**Fix 3: Remove redundant deepcopy in `to_display_dict()`**
+
+`to_display_dict()` called `to_dict()` (which deep-copies context), then deep-copied each context value *again* when merging to top-level keys. Changed the merge loop to read from the already-deep-copied `result["context"]` instead of from `self.context`.
+
+- Initial attempt (direct `value` from `self.context`) broke the mutation-safety test — `flattened["raw_response"]["api_key"] = "changed"` was mutating the original diagnostic
+- Fix: read from `result.get("context")` which is already a deep copy from `to_dict()`
+
+**Fix 4: Design intent comment on `_warning_changes_status`**
+
+Reviewer suggested inverting the source exclusion to a whitelist. Evaluated and disagreed — blacklist is fail-closed (unknown sources degrade by default, which is safer). Added a comment explaining the design intent.
+
+- `src/pflow/runtime/workflow_trace.py:290-296`
+
+### Deferred
+
+- **NamedTuple for validator 6-tuple returns** — reviewer explicitly said post-merge. Readability improvement, not a correctness issue.
+
+### Disputed
+
+- **Copy parser diagnostics list** (Gemini inline) — code at `runner.py:212` already does `list(parser_diagnostics)`. Reviewer missed it.
+- **Extract repeated warning filtering** (Gemini inline) — `.warnings` property on both result types already serves this purpose. Remaining inline comprehensions are in pre-construction contexts where no result object exists.
+
+### Review comparison
+
+Claude Code's `/code-review` skill found the one high-value issue (provenance drift), correctly triaged severity, and demonstrated architectural understanding. Gemini's automated review was surface-level — its top finding was already implemented in the code it reviewed. Gemini's `deepcopy` observation was valid and overlapped with Claude Code's.
+
+### Verification
+
+```
+make test: 4546 passed
+make check: clean (ruff, ruff-format, mypy, deptry, pre-commit hooks)
+```
