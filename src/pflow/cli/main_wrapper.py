@@ -42,6 +42,7 @@ def cli_main() -> None:
     from .commands.settings import settings
     from .commands.skills import skill
     from .commands.trace import trace
+    from .commands.visualize import visualize
     from .commands.workflow import workflow
     from .main import workflow_command
 
@@ -62,6 +63,7 @@ def cli_main() -> None:
         "read-fields": read_fields,
         "skill": skill,
         "trace": trace,
+        "visualize": visualize,
     }
 
     if first_arg in subcommand_routes:

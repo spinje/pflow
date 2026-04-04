@@ -8,7 +8,6 @@ API changes from the old version:
 - Reserved params: workflow, workflow_ir, storage_mode, max_depth, error_action, __registry__
 """
 
-from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
@@ -210,7 +209,7 @@ class TestWorkflowExecutorComprehensive:
         node.set_params({"workflow": "/non/existent/file.pflow.md"})
 
         shared = {}
-        with pytest.raises(FileNotFoundError, match="Workflow file not found"):
+        with pytest.raises(FileNotFoundError, match="file not found"):
             node.prep(shared)
 
     # --- Test 8: malformed workflow file ---
@@ -811,13 +810,14 @@ class TestWorkflowExecutorComprehensive:
         prep_res = node.prep({})
         assert prep_res["child_params"]["anything"] == "goes"
 
-    # --- Test 31: relative path falls back to cwd ---
+    # --- Test 31: relative path resolves from base_path ---
 
-    def test_relative_path_falls_back_to_cwd(self):
-        """When _pflow_workflow_file is not set, relative paths resolve from CWD."""
-        node = WorkflowExecutor()
-        resolved = node._resolve_safe_path("./some/relative.pflow.md", {})
-        assert resolved == (Path.cwd() / "some" / "relative.pflow.md").resolve()
+    def test_relative_path_no_base_raises(self):
+        """Shared resolver raises ValueError for relative paths with no base_path."""
+        from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
+
+        with pytest.raises(ValueError, match="Cannot resolve relative sub-workflow"):
+            resolve_sub_workflow({"workflow": "./some/relative.pflow.md"}, base_path=None)
 
     # --- Test 32: _pflow_workflow_file flows to shared store ---
 
@@ -943,17 +943,19 @@ class TestWorkflowExecutorComprehensive:
 
     def test_is_file_reference(self):
         """Test file reference classification logic."""
+        from pflow.core.file_resolver import is_workflow_file_reference
+
         # File references (contain / or \, start with ., or end with .pflow.md)
-        assert WorkflowExecutor._is_file_reference("./child.pflow.md") is True
-        assert WorkflowExecutor._is_file_reference("/absolute/path.pflow.md") is True
-        assert WorkflowExecutor._is_file_reference("path/to/child.pflow.md") is True
-        assert WorkflowExecutor._is_file_reference("..\\windows\\path.pflow.md") is True
-        assert WorkflowExecutor._is_file_reference("child.pflow.md") is True  # ends with .pflow.md
-        assert WorkflowExecutor._is_file_reference("./relative") is True  # starts with .
+        assert is_workflow_file_reference("./child.pflow.md") is True
+        assert is_workflow_file_reference("/absolute/path.pflow.md") is True
+        assert is_workflow_file_reference("path/to/child.pflow.md") is True
+        assert is_workflow_file_reference("..\\windows\\path.pflow.md") is True
+        assert is_workflow_file_reference("child.pflow.md") is True  # ends with .pflow.md
+        assert is_workflow_file_reference("./relative") is True  # starts with .
 
         # Saved names (no path separators, no dots prefix, no .pflow.md suffix)
-        assert WorkflowExecutor._is_file_reference("my-workflow") is False
-        assert WorkflowExecutor._is_file_reference("simple") is False
+        assert is_workflow_file_reference("my-workflow") is False
+        assert is_workflow_file_reference("simple") is False
 
     # --- Test 33: 'inputs' key excluded from child inputs ---
 

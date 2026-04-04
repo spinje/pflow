@@ -46,7 +46,7 @@ class TestWorkflowSavedName:
 
     def test_workflow_name_only(self, workflow_manager, simple_workflow_ir):
         """When workflow param is a plain name (no path chars), load via WorkflowManager."""
-        with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
+        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
@@ -64,12 +64,12 @@ class TestWorkflowSavedName:
             assert prep_res["workflow_source"] == "name:test-workflow"
 
     def test_workflow_name_not_found(self):
-        """When saved workflow name does not exist, raise ValueError with descriptive message."""
+        """When saved workflow name does not exist, raise WorkflowNotFoundError."""
         node = WorkflowExecutor()
         node.set_params({"workflow": "non-existent-workflow"})
 
         shared = {}
-        with pytest.raises(ValueError, match="Failed to load workflow 'non-existent-workflow'"):
+        with pytest.raises(WorkflowNotFoundError, match="non-existent-workflow"):
             node.prep(shared)
 
     def test_workflow_and_workflow_ir_raises_error(self, simple_workflow_ir):
@@ -88,7 +88,7 @@ class TestWorkflowSavedName:
         """When saved workflow is already on the execution stack, detect circular reference."""
         workflow_path = workflow_manager.get_path("test-workflow")
 
-        with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
+        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
@@ -102,7 +102,7 @@ class TestWorkflowSavedName:
 
     def test_workflow_name_with_direct_params(self, workflow_manager):
         """Non-reserved params are passed directly as child inputs (no param_mapping)."""
-        with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
+        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
@@ -119,12 +119,12 @@ class TestWorkflowSavedName:
             assert prep_res["child_params"]["dynamic_value"] == "test123"
 
     def test_workflow_name_logging(self, workflow_manager, caplog):
-        """Verify debug logging when loading a workflow by saved name."""
+        """Verify debug logging during sub-workflow execution."""
         import logging
 
         caplog.set_level(logging.DEBUG, logger="pflow.runtime.workflow_executor")
 
-        with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
+        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()
@@ -133,9 +133,7 @@ class TestWorkflowSavedName:
             shared = {}
             prep_res = node.prep(shared)
 
-            assert "Loading workflow by name: test-workflow" in caplog.text
-
-        # Verify execution logging too
+        # Verify execution logging
         with (
             patch("pflow.runtime.workflow_executor.compile_workflow") as mock_compile,
             patch("pflow.runtime.engine.WorkflowEngine") as mock_engine_class,
@@ -152,9 +150,9 @@ class TestWorkflowSavedName:
 
             assert "Executing sub-workflow from name:test-workflow" in caplog.text
 
-    @patch("pflow.runtime.workflow_executor.WorkflowManager")
+    @patch("pflow.core.workflow.manager.WorkflowManager")
     def test_workflow_manager_error_handling(self, mock_manager_class):
-        """When WorkflowManager raises, wrap in ValueError with workflow name context."""
+        """When WorkflowManager raises, the error propagates from the shared resolver."""
         mock_manager = Mock()
         mock_manager.load_ir.side_effect = WorkflowNotFoundError("test")
         mock_manager_class.return_value = mock_manager
@@ -163,12 +161,12 @@ class TestWorkflowSavedName:
         node.set_params({"workflow": "test"})
 
         shared = {}
-        with pytest.raises(ValueError, match=r"Failed to load workflow 'test'.*not found"):
+        with pytest.raises(WorkflowNotFoundError, match="test"):
             node.prep(shared)
 
     def test_workflow_name_integration(self, workflow_manager, simple_workflow_ir):
         """Full prep-exec cycle: saved name loading with direct params, no output_mapping."""
-        with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_manager_class:
+        with patch("pflow.core.workflow.manager.WorkflowManager") as mock_manager_class:
             mock_manager_class.return_value = workflow_manager
 
             node = WorkflowExecutor()

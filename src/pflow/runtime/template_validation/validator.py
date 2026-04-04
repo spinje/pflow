@@ -492,9 +492,9 @@ def _resolve_child_workflow_outputs(
     if "${" in workflow_ref:
         return None
 
-    from pflow.runtime.workflow_executor import WorkflowExecutor
+    from pflow.core.file_resolver import is_workflow_file_reference
 
-    if WorkflowExecutor._is_file_reference(workflow_ref):
+    if is_workflow_file_reference(workflow_ref):
         # File reference — try to load
         try:
             from pathlib import Path

@@ -37,6 +37,9 @@ pflow [command] [options] [arguments]
   <Card title="pflow settings" icon="file-cog" href="/reference/cli/settings">
     Configure API keys and node filtering
   </Card>
+  <Card title="pflow visualize" icon="git-graph" href="#visualize-command">
+    Generate Mermaid flowchart from a workflow
+  </Card>
   <Card title="pflow instructions" icon="book-open" href="#instructions-command">
     Get AI agent usage guidance
   </Card>
@@ -339,6 +342,64 @@ pflow trace report ~/.pflow/debug/workflow-trace-my-workflow-20260323-160000.jso
 Reports include rendered prompts, responses, cost data, error summaries with fix suggestions, and anomaly warnings.
 
 Disable traces with `--no-trace` for faster execution (the `--report` flag overrides `--no-trace`).
+
+## Visualize command
+
+Generate a [Mermaid](https://mermaid.js.org/) flowchart from a workflow. Shows the graph topology — nodes, edges, conditional branches, error routes — that's otherwise scattered across individual node directives in the `.pflow.md` file.
+
+```bash
+pflow visualize workflow.pflow.md
+pflow visualize my-saved-workflow
+```
+
+The command validates the workflow first (same checks as `--validate-only`). On validation failure, it shows diagnostics and exits with code 1. On success, it outputs Mermaid syntax to stdout.
+
+```bash
+# Save to file
+pflow visualize workflow.pflow.md -o diagram.mmd
+
+# Or pipe to clipboard
+pflow visualize workflow.pflow.md | pbcopy
+```
+
+Mermaid renders natively in GitHub, VS Code, and most markdown viewers — no extra tooling needed.
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output FILE` | Write Mermaid output to file instead of stdout |
+| `--depth N` | Sub-workflow expansion depth (default: 5, 0 = no expansion) |
+| `--direction LR\|TD` | Graph direction: left-to-right or top-down (default: LR) |
+
+Sub-workflow nodes (`type: workflow`) expand into `subgraph` blocks showing their internal structure. Use `--depth 0` to render them as opaque nodes, or `--depth 2` to expand nested sub-workflows:
+
+```bash
+# No sub-workflow expansion
+pflow visualize workflow.pflow.md --depth 0
+
+# Expand two levels deep, top-down layout
+pflow visualize workflow.pflow.md --depth 2 --direction TD
+```
+
+<Expandable title="Example output">
+
+For a workflow with conditional branching:
+
+```mermaid
+graph LR
+    fetch-data["fetch-data (shell)"]
+    classify["classify (code)"]
+    process-small["process-small (shell)"]
+    process-large["process-large (shell)"]
+    handle-error["handle-error (shell)"]
+    fetch-data --> classify
+    classify -->|process-small| process-small
+    classify -->|process-large| process-large
+    classify -.->|error| handle-error
+```
+
+Edge styles: `-->` for normal flow, `-->|action|` for named branches, `-.->|error|` for error routes.
+
+</Expandable>
 
 ## Instructions command
 

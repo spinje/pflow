@@ -10,8 +10,10 @@ core/workflow/
 ├── manager.py               # WorkflowManager: save/load/list/delete workflows (folder-based)
 ├── save_service.py          # Shared save operations for CLI + MCP (with dependency bundling)
 ├── dependency_discovery.py  # Recursive file dependency scanner for bundling
+├── sub_workflow_resolver.py # Shared sub-workflow resolution (inline IR, file, saved name)
 ├── validator.py             # Unified 9-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
+├── mermaid.py               # Mermaid flowchart generation from workflow IR
 ├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── context.py               # Build workflow context for discovery (build_workflows_context)
@@ -31,13 +33,22 @@ save_service.py
   └── skill_service.py        (lazy import in save_workflow_with_options())
 
 validator.py
-  └── data_flow.py       (lazy import in _validate_data_flow())
+  ├── data_flow.py               (lazy import in _validate_data_flow())
+  └── sub_workflow_resolver.py   (lazy import in _load_child_workflow())
+
+sub_workflow_resolver.py
+  ├── file_resolver.py           (lazy import)
+  ├── markdown_parser.py         (lazy import)
+  └── manager.py                 (lazy import)
+
+mermaid.py
+  └── sub_workflow_resolver.py   (top-level import for SubWorkflowResult type)
 
 skill_service.py
   └── manager.py         (top-level import)
 ```
 
-No cycles. `save_service → validator` and `save_service → skill_service` are lazy (inside functions).
+No cycles. All heavy imports are lazy (inside functions).
 
 ## Key Symbols by File
 
@@ -46,8 +57,10 @@ No cycles. `save_service → validator` and `save_service → skill_service` are
 | `manager.py` | `WorkflowManager` |
 | `save_service.py` | `load_and_validate_workflow`, `save_workflow_with_options`, `validate_workflow_name`, `delete_draft_safely`, `generate_workflow_metadata` |
 | `dependency_discovery.py` | `Dependency`, `discover_dependencies` |
+| `sub_workflow_resolver.py` | `resolve_sub_workflow`, `SubWorkflowResult` |
 | `validator.py` | `WorkflowValidator` (static `.validate()` method — 9-step pipeline) |
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
+| `mermaid.py` | `generate_mermaid` |
 | `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
 | `skill_service.py` | `SkillInfo`, `enrich_workflow`, `create_skill_symlink`, `find_pflow_skills`, `remove_skill`, `re_enrich_if_skill` |
 
