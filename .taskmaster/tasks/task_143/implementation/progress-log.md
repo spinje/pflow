@@ -593,3 +593,42 @@ Expected environment-only limitations:
 - `make check` via `uv`
 - pre-commit hook bootstrap
 - 5 subprocess `uv run pflow ...` pipe tests in this sandbox
+
+## [2026-04-04] — Pre-PR Baseline Verification and Scratchpad Cleanup
+
+Independent before/after baseline comparison using the original capture script on `main` and the updated capture script on the feature branch.
+
+### Methodology
+
+1. Ran the **original** `capture-baseline.py` (with old APIs: `format_for_cli()`, `_exception_to_errors()`, `ValidationWarning`, etc.) on the `main` repo at commit `15eee95e` — the exact base commit for this branch. This produced 85 fresh pre-implementation baselines.
+2. Fixed one broken import in the feature branch's `capture_baselines.py` (`_exception_to_errors` → `exception_to_diagnostics`) — the script had been partially updated during implementation but this section was missed.
+3. Ran the fixed capture script on the feature branch with `PFLOW_BASELINE_OUTPUT_DIR=/tmp/task-143-baselines-after`, producing 87 post-implementation baselines.
+4. Diffed all 87 baselines line-by-line (1825 lines of diff output, reviewed in full).
+
+### Findings
+
+**30 files identical** — all user-facing text for: exception display (8 types), format_for_cli (7 types), status lines (5 types), validation output (3 types), validation suggestions (5 types), success display.
+
+**2 new files** — `status_line__success_with_warnings` and `status_line__failed_with_warnings` (new feature per spec).
+
+**55 changed files**, all falling into 3 categories:
+1. **JSON structural additions (additive, no info loss)** — `severity`, `source`, nested `context`, `suggestion` fields added. Original fields preserved via `to_display_dict()`.
+2. **`validation_warnings` → `diagnostics`** — Old separate field becomes unified diagnostics list containing both errors and warnings.
+3. **User-visible text improvements (intentional)**:
+   - Single error: `Error 1 at node` → `Error at node` (no number when only one)
+   - Generic exception: `cli: Workflow execution failed - X` → `✗ X`
+   - Warnings now show `→ suggestion` lines (agent-actionable)
+   - MCP errors use shared format blocks instead of `•` bullets
+   - Validation errors with no tuple get `❌` prefix
+   - `MarkdownParseError` message no longer includes embedded suggestion in the message string
+
+**No information loss. No regressions.**
+
+### Earlier baseline concern resolved
+
+The `.txt` baselines in the worktree were confirmed to be legitimate pre-implementation captures. The only differences from a fresh `main` capture were trailing newline characters — the content was byte-identical.
+
+### Cleanup
+
+- Deleted `scratchpads/task-143-unified-diagnostics/` from the feature branch (baselines, baselines-current, capture scripts — all verification artifacts, not needed in the repo).
+- Deleted accidentally-written `.txt` files from the main repo's baselines directory (generated during the verification run on `main`).
