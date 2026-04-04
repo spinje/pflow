@@ -275,3 +275,83 @@ def test_child_parser_warning_survives_prep_failure(tmp_path: Path):
     ]
     assert len(parser_warnings) == 1
     assert "## Input" in parser_warnings[0].message
+
+
+def test_sibling_child_parser_warnings_not_collapsed_by_dedup(tmp_path: Path):
+    """Two children with identical parser warnings must both survive deduplication.
+
+    Regression test for: parser warnings from sibling sub-workflows had the same
+    (severity, source, node_id, message) hash when node_id was None and the typo
+    appeared on the same line number, causing deduplicate_diagnostics() to drop one.
+    Fix: _propagate_child_parser_warnings adds parent node_id and workflow path
+    as provenance, making the two diagnostics distinguishable.
+    """
+    for name in ("child_a", "child_b"):
+        (tmp_path / f"{name}.pflow.md").write_text(
+            f"# {name}\n\n"
+            "## Input\n\n"  # same typo, same line number in both
+            "Typo section.\n\n"
+            "## Steps\n\n"
+            f"### run-{name}\n\n"
+            "Does a thing.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo hello\n",
+            encoding="utf-8",
+        )
+
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        "# Parent\n\n## Steps\n\n"
+        f"### step-a\n\nRun child A.\n\n- type: workflow\n- workflow: {tmp_path / 'child_a.pflow.md'}\n\n"
+        f"### step-b\n\nRun child B.\n\n- type: workflow\n- workflow: {tmp_path / 'child_b.pflow.md'}\n",
+        encoding="utf-8",
+    )
+
+    result = WorkflowRunner().run(str(parent), {}, RunnerConfig())
+
+    parser_warnings = [d for d in result.diagnostics if d.severity == Severity.WARNING and d.source == "parser"]
+    # Both children's parser warnings must survive — not collapsed by dedup
+    assert len(parser_warnings) == 2, (
+        f"Expected 2 parser warnings (one per child), got {len(parser_warnings)}: "
+        f"{[w.message for w in parser_warnings]}"
+    )
+    # Each should identify its parent step via provenance
+    messages = [w.message for w in parser_warnings]
+    assert any("step-a" in m for m in messages)
+    assert any("step-b" in m for m in messages)
+
+
+def test_child_cache_lint_warning_propagates_to_parent_validation(tmp_path: Path):
+    """Cache-lint warnings from child workflows must reach parent validate-only output.
+
+    Regression test for: _validate_sub_workflows() discarded _child_warnings from
+    recursive WorkflowValidator.validate() calls, so cache-lint warnings from children
+    never reached the parent.
+    """
+    child = tmp_path / "child.pflow.md"
+    child.write_text(
+        "# Child\n\n## Steps\n\n"
+        "### static-shell\n\n"
+        "Runs a command with no template inputs.\n\n"
+        "- type: shell\n"
+        "- command: git branch --show-current\n",  # no templates, no cache:false → lint warning
+        encoding="utf-8",
+    )
+
+    parent = tmp_path / "parent.pflow.md"
+    parent.write_text(
+        f"# Parent\n\n## Steps\n\n### child-step\n\nRun child.\n\n- type: workflow\n- workflow: {child}\n",
+        encoding="utf-8",
+    )
+
+    vresult = WorkflowRunner().validate(str(parent), {})
+
+    assert vresult.valid is True
+    warnings = vresult.warnings
+    cache_warnings = [w for w in warnings if "cache" in w.message.lower() or "template inputs" in w.message.lower()]
+    assert cache_warnings, (
+        f"Expected child cache-lint warning in parent validation, got warnings: {[w.message for w in warnings]}"
+    )
+    # Should include provenance about which sub-workflow produced it
+    assert any("child" in w.message.lower() or "child-step" in (w.node_id or "") for w in cache_warnings)

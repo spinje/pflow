@@ -503,18 +503,57 @@ The core bug this task fixes (parser warnings silently lost) had runner-level te
 
 These bridge functions are used in 4 production files but had no targeted tests. Added 11 tests in `test_diagnostic.py` covering: passthrough for existing Diagnostics, dict field mapping, extra keys to context, `"type"` → `source` fallback for legacy warnings, plain string input, empty dict defaults.
 
-### Final verification
+### Final verification (post-review round 1)
 
 ```
 4543 passed, 9 skipped
 mypy: Success: no issues found in 163 source files
 make check: clean (ruff, ruff-format, mypy, deptry, pre-commit hooks)
 ```
-- Refactored `registry_run._execute_and_display_results()`, `WorkflowExecutor.post()`, `WorkflowExecutor._load_workflow()`, and `core.diagnostic` formatting helpers only enough to satisfy direct `ruff` complexity/style checks on task-touched files; these were intended as behavior-preserving splits, not design changes.
 
-### Concrete Next Steps
-1. Review the remaining old-vs-new baseline diffs in `scratchpads/task-143-unified-diagnostics/baselines-current/` and decide whether the output-shape changes are acceptable.
-2. Decide whether `scratchpads/task-143-unified-diagnostics/baselines-current/` should remain committed/staged as a review artifact or be left local only.
+## [2026-04-04] — Review Round 2: Staged Code Review Findings
+
+An external staged code review (`scratchpads/task-143-staged-review-20260404.md`) found two additional issues.
+
+### Fix 3: Child validation warnings dropped in recursive validation
+
+**Finding**: `_validate_sub_workflows()` discarded `_child_warnings` (named with underscore — intentionally unused) from recursive `WorkflowValidator.validate()` calls. Only parser warnings from file loading propagated to the parent. Cache-lint and template warnings from child workflows were silently lost, so `--validate-only` on a parent reported clean even when a child had actionable warnings.
+
+**What changed:**
+- `src/pflow/core/workflow/validator.py`: `_child_warnings` renamed to `child_warnings` and propagated via new module-level `_add_child_provenance()` helper. Each child warning gets a message prefix (`"In step '{node_id}' sub-workflow: ..."`) and `node_id` set to the parent step ID, matching the runtime propagation format for dedup compatibility.
+- Same provenance treatment applied to `child_parser_warnings` from `_load_child_workflow()` (line 588) — previously propagated raw without provenance.
+
+**Why provenance matters for both paths:** Validation and runtime are two independent propagation paths for the same child parser warnings. Without identical message format, the same underlying warning produces two different `Diagnostic` objects that survive dedup — users see duplicates. With identical format (`"In step '{node_id}' sub-workflow: ..."` using the step ID), both paths produce the same hash and dedup collapses them naturally.
+
+### Fix 4: Parser warnings from sibling children collapsed by dedup
+
+**Finding**: Two child workflows with `## Input` at the same line number produced identical `(severity, source, node_id, message)` tuples — `node_id=None` for both, same message text. `deduplicate_diagnostics()` kept only one, losing the other child's warning.
+
+**What changed:**
+- `src/pflow/runtime/workflow_executor.py`: `_propagate_child_parser_warnings()` now creates new `Diagnostic` objects with `node_id=self.node_id` (the parent step's ID, set by the compiler) and prefixed message. Uses `getattr(self, "node_id", None)` with graceful fallback for test doubles that construct `WorkflowExecutor` without going through the compiler.
+- Removed unused `workflow_path` parameter from `_propagate_child_parser_warnings()` — a leftover from an earlier iteration that included the absolute path in the message (which would break dedup against the validation path's relative path).
+
+### Fix 5: Failure path displays warnings alongside errors (spec requirement)
+
+**Finding**: The spec's Definition of Done requires "Failure path shows warnings (currently doesn't)". The data model correctly includes warnings on failure (tested by `test_child_parser_warning_survives_prep_failure`), but no test verified the full display pipeline — that `_display_text_error_details()` actually renders the warnings section after errors in CLI text output.
+
+**What changed:**
+- `tests/test_cli/test_validate_only.py`: Added `TestFailurePathShowsWarnings` with one test: parent workflow has a parser typo AND calls a child that fails due to missing required input. Asserts that both the error AND the "Warning" section appear in CLI stderr output. This guards the full chain: `result.diagnostics` → `_collect_warning_diagnostics()` → `if warnings:` rendering block → "⚠️ Warnings:" section in output.
+
+**Why this is the highest-value test gap:** Every other display path (success+warnings, validate-only, parser warnings reaching CLI) was covered. But failure+warnings was only tested at the data model level. If `_collect_warning_diagnostics()` broke, warnings would silently vanish on the failure path — exactly when they're most useful for diagnosis.
+
+### Additional regression tests
+
+- `test_sibling_child_parser_warnings_not_collapsed_by_dedup`: Two children with identical `## Input` typos at the same line number. Asserts both warnings survive dedup and each identifies its parent step.
+- `test_child_cache_lint_warning_propagates_to_parent_validation`: Parent with child whose shell node has no template inputs and no `cache: false`. Asserts cache-lint warning reaches parent's `--validate-only` output with provenance.
+
+### Final verification
+
+```
+4546 passed, 9 skipped
+mypy: Success: no issues found in 163 source files
+make check: clean (ruff, ruff-format, mypy, deptry, pre-commit hooks)
+```
 3. Stage or discard the current unstaged patch set intentionally. The new implementation fixes are in source/tests/task docs, but per repo rules they were left unstaged.
 4. If you want the current working tree snapshot staged, run `git add` yourself; the latest cleanup/fix patches were intentionally left unstaged by the agent.
 5. In a non-sandboxed environment, rerun full `make check`, pre-commit, and the subprocess `uv run pflow ...` tests that are sandbox-skipped here.

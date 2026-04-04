@@ -425,6 +425,64 @@ class TestParserWarningsReachCLI:
         )
 
 
+class TestFailurePathShowsWarnings:
+    """Regression test: failure output must show warnings alongside errors.
+
+    The spec requires 'Failure path shows warnings (currently doesn't)'.
+    Before Task 143, warnings were silently dropped on the failure path.
+    This tests the full display pipeline — not just the data model.
+    """
+
+    def test_failed_workflow_shows_parser_warning_in_error_output(self, tmp_path: Path) -> None:
+        """A workflow that fails must show parser warnings alongside the error.
+
+        Scenario: parent workflow has a parser typo AND calls a child that
+        fails due to a missing required input. The error output must show
+        both the error AND the parser warning.
+        """
+        child = tmp_path / "child.pflow.md"
+        child.write_text(
+            "# Child\n\n"
+            "## Inputs\n\n"
+            "### required_value\n\n"
+            "A required input.\n\n"
+            "- type: string\n"
+            "- required: true\n\n"
+            "## Steps\n\n"
+            "### use-it\n\n"
+            "Use the input.\n\n"
+            "- type: shell\n"
+            "- cache: false\n"
+            "- command: echo ${required_value}\n",
+            encoding="utf-8",
+        )
+
+        parent = tmp_path / "parent.pflow.md"
+        parent.write_text(
+            "# Parent\n\n"
+            "## Input\n\n"  # typo — parser warning
+            "### unused\n\n"
+            "Not used.\n\n"
+            "- type: string\n\n"
+            "## Steps\n\n"
+            "### call-child\n\n"
+            "Run the child without providing required_value.\n\n"
+            f"- type: workflow\n"
+            f"- workflow: {child}\n",
+            encoding="utf-8",
+        )
+
+        result = invoke_cli([str(parent)])
+
+        assert result.exit_code != 0, "Workflow should fail (missing required input)"
+        # Error must be present
+        assert "failed" in result.stderr.lower() or "error" in result.stderr.lower(), (
+            f"Expected error in output.\nstderr: {result.stderr}"
+        )
+        # Parser warning must ALSO be present — this is the regression guard
+        assert "Warning" in result.stderr, f"Expected warnings section in failure output.\nstderr: {result.stderr}"
+
+
 class TestValidateOnlyWithComplexWorkflows:
     """Test validation with more complex workflow patterns."""
 

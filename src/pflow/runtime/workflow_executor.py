@@ -321,10 +321,31 @@ class WorkflowExecutor(BaseNode):
         return child_result
 
     def _propagate_child_parser_warnings(self, shared: dict[str, Any]) -> None:
-        """Append parser diagnostics from the child workflow to the parent shared store."""
-        if getattr(self, "_child_parser_warnings", None):
-            parser_diagnostics = shared.setdefault("__parser_diagnostics__", [])
-            parser_diagnostics.extend(self._child_parser_warnings)
+        """Append parser diagnostics from the child workflow to the parent shared store.
+
+        Adds the parent step's node_id as provenance so that:
+        - Sibling children with identical parser warnings don't collapse during dedup
+          (dedup identity includes node_id)
+        - Display shows which step produced each warning
+        """
+        if not getattr(self, "_child_parser_warnings", None):
+            return
+        parser_diagnostics = shared.setdefault("__parser_diagnostics__", [])
+        step_id = getattr(self, "node_id", None)
+        for d in self._child_parser_warnings:
+            if step_id:
+                parser_diagnostics.append(
+                    Diagnostic(
+                        severity=d.severity,
+                        message=f"In step '{step_id}' sub-workflow: {d.message}",
+                        suggestion=d.suggestion,
+                        node_id=step_id,
+                        source=d.source,
+                        context=d.context,
+                    )
+                )
+            else:
+                parser_diagnostics.append(d)
 
     @staticmethod
     def _expose_child_outputs(

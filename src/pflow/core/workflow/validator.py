@@ -16,6 +16,31 @@ from pflow.runtime.template_resolver import TemplateResolver
 logger = logging.getLogger(__name__)
 
 
+def _add_child_provenance(warnings: list[Diagnostic] | tuple[Diagnostic, ...], step_id: str) -> list[Diagnostic]:
+    """Add sub-workflow provenance to child diagnostics.
+
+    Prefixes the message with the parent step ID so that:
+    - Siblings with identical warnings don't collapse during dedup (different node_id)
+    - Display shows which step produced the warning
+
+    Message format must stay in sync with
+    ``WorkflowExecutor._propagate_child_parser_warnings`` so the validation
+    and runtime propagation paths produce identical diagnostics that dedup
+    naturally when both paths run for the same workflow.
+    """
+    return [
+        Diagnostic(
+            severity=w.severity,
+            message=f"In step '{step_id}' sub-workflow: {w.message}",
+            suggestion=w.suggestion,
+            node_id=w.node_id or step_id,
+            source=w.source,
+            context=w.context,
+        )
+        for w in warnings
+    ]
+
+
 class WorkflowValidator:
     """Orchestrates all workflow validation checks.
 
@@ -585,7 +610,7 @@ class WorkflowValidator:
                 child_parser_warnings,
             ) = WorkflowValidator._load_child_workflow(node_id, params, seen, ir_cache, workflow_file)
             errors.extend(load_errors)
-            parser_warnings.extend(child_parser_warnings)
+            parser_warnings.extend(_add_child_provenance(child_parser_warnings, node_id))
 
             if child_ir is None or "nodes" not in child_ir:
                 continue
@@ -615,7 +640,7 @@ class WorkflowValidator:
                 if child_path:
                     dummy_params["_pflow_workflow_file"] = str(child_path)
 
-                child_errors, _child_warnings = WorkflowValidator.validate(
+                child_errors, child_warnings = WorkflowValidator.validate(
                     child_ir,
                     extracted_params=dummy_params,
                     registry=registry,
@@ -626,6 +651,7 @@ class WorkflowValidator:
                 )
                 for err in child_errors:
                     errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {err}")
+                parser_warnings.extend(_add_child_provenance(child_warnings, node_id))
 
         return errors, parser_warnings
 
