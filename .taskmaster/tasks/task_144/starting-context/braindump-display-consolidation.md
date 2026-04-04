@@ -107,17 +107,99 @@ UNEXPLORED: Whether `_display_text_error_details()` in `workflow_errors.py` shou
 - Implementation plan: `.taskmaster/tasks/task_143/implementation/implementation-plan.md`
 - Progress log: `.taskmaster/tasks/task_143/implementation/progress-log.md`
 
+## [2026-04-04] Addendum: Scope Expansion to Rendering Redesign
+
+**The section above that says "This is a mechanical refactor, not a design task" is now wrong.** The task scope expanded significantly during the post-PR review conversation. What follows captures the knowledge from that conversation that isn't in the task spec.
+
+### How the scope expanded — the user's exact reasoning
+
+After the PR review, we analyzed `diagnostic.py`'s 683 lines. I broke it down: ~70 lines type, ~30 coercion, ~240 exception conversion, ~340 rendering. The user asked: "what does the new file do that was not done before?" I explained that the rendering code produces the same output as the old scattered `format_for_cli()` methods — it's consolidation, not new functionality (aside from parser warning threading and suggestions).
+
+The user then asked the pivotal question: **"how many of the special cases in the if/elif chains really requires special cases, what could be consolidated without losing agent clarity and actionability, or even improve it? And what could potentially be added to all the cases that now ignores this extra information entirely?"**
+
+This shifted the task from "clean up dict round-trips" to "redesign the rendering to be both simpler AND more informative."
+
+I did a surface analysis (6 paths → 2, ~185 lines saved) and the user immediately asked: **"Is it possible you don't have explored this fully?"** I admitted I hadn't — I'd counted branches and estimated savings without thinking through what the ideal output actually looks like.
+
+The user then said the task should **"make sure to explore how this could be done as cleanly as possible, handling all types of errors and warnings with as much information as possible that is available now. Your findings should be a starting point not a final conclusion."**
+
+### Why my "6 paths → 2" analysis is incomplete
+
+I identified that the 6 rendering paths could collapse to 2 (structured block + user-friendly block). But I only looked at the STRUCTURE, not the CONTENT. Specifically:
+
+**What I did**: counted branches, identified duplicates, estimated line savings.
+
+**What I didn't do**:
+- Look at what a UserFriendlyError WITH shell stderr would look like if context blocks were universal
+- Consider whether the structured block format (`Category: / Message: / Suggestion:`) is even good compared to the user-friendly format (`Error: title / explanation / suggestions`)
+- Enumerate every context key that `exception_to_diagnostics()` populates and check which ones `format_diagnostic()` ignores
+- Think about what "agent-actionable" means concretely for each error type
+- Consider whether warnings should show context in text (currently they don't — validator warnings have `context={"template": "..."}` but it's invisible)
+- Check if information is LOST in exception→Diagnostic conversion (OutputResolutionError collapses a `failures` list)
+
+The implementing agent must do this exploration in Phase 1 before assuming my "2 patterns" conclusion is correct.
+
+### The production LOC story — why it matters for Phase 3
+
+The user pushed hard on understanding why `diagnostic.py` isn't net-negative. The answer:
+
+- **~350 lines** are moved/consolidated rendering code that previously lived in `format_for_cli()` methods and display helpers
+- **~150 lines** are genuinely new (threading, suggestions, provenance, coercion bridges)
+- **~140 lines** are the cost of **explicit routing** — the old code had typed exceptions that knew how to render themselves (`exc.title`, `exc.suggestions`). The new code has a generic `Diagnostic` with `context: dict` and must inspect keys to figure out rendering.
+
+That +140 is the architectural cost of "one render path." The implementing agent should understand this trade-off: centralization eliminates drift between CLI/MCP but costs lines because implicit type-based dispatch became explicit if/elif chains reading dict keys. Phase 3 should find a way to reduce this cost without reintroducing scattered rendering.
+
+CONSIDER: Is there a middle ground? A small number of "render strategies" selected by a key field (like `source` or a new `render_style` field) rather than deep context inspection? This wasn't explored.
+
+### The baseline philosophy shift
+
+Task 143 baselines: "prove nothing was lost" — regression guard.
+Task 144 baselines: "prove everything got better" — quality gate.
+
+The user said the post-implementation comparison should **"verify that every single item has become BETTER and not worse."** Unchanged output isn't a pass — it's a missed opportunity that needs justification. This is a fundamentally different verification mindset. The implementing agent needs to annotate the BEFORE captures with gaps ("this error has API response data in context but doesn't show it") so the AFTER can be scored against specific improvement targets.
+
+The user also added: make sure "no important information that was present in the previous version was not removed." So it's bidirectional — improve everything, lose nothing.
+
+### What the PR review cycle taught us
+
+We went through a full PR review with both Claude Code (`/code-review` skill, 8 specialized agents) and Gemini (automated PR review). Findings relevant to Task 144:
+
+1. **The shared provenance helper** was the highest-value finding — it turned a documented coupling risk into an eliminated one. Pattern: when two code paths must produce identical output for dedup, extract the shared format into a function. The implementing agent should look for similar patterns in the rendering code.
+
+2. **The coerce functions we just DRY-refactored** (`_coerce_diagnostic` shared helper) will be deleted entirely in Task 144. Don't spend time improving them — eliminate them.
+
+3. **The `to_display_dict()` redundant deepcopy** was fixed by reading from the already-deep-copied `result["context"]` instead of deep-copying `self.context` again. A mutation-safety test caught the initial naive fix. The implementing agent should be aware that `to_display_dict()` has a mutation-safety contract tested at `test_diagnostic.py:49`.
+
+### User's priority ordering (updated)
+
+The braindump above says "(1) validation errors gaining suggestions, (2) clean code, (3) no display regressions." This is now:
+
+1. **Every output becomes more informative and agent-actionable** — not just validation
+2. **The rendering is simpler** — fewer paths, less code, but NOT at the cost of information
+3. **No information loss** — bidirectional quality gate
+4. Clean code (dict round-trips eliminated) is a means, not an end
+
+### Suspicions not yet proven
+
+SUSPICION: The user-friendly format (title / explanation / numbered suggestions / --verbose technical details) might be the right structure for ALL errors, not just UserFriendlyError. It's the most readable pattern we have. Compilation errors, runtime errors, validation errors — they all HAVE a title (the category), explanation (the message), and suggestions. The structured block format (`Category: X / Message: Y`) is just a worse version of the same information.
+
+SUSPICION: `Diagnostic.suggestion` (joined string) and `context["suggestions"]` (list) is a design smell. The user-friendly renderer reads the list from context for numbered display but falls back to the string. This split might be unnecessary — if `suggestion` were always a list, the renderer could always render numbered items (or a single line for length-1 lists).
+
+SUSPICION: OutputResolutionError's conversion to one Diagnostic with `context["failures"]` as an opaque list might be wrong. Per-failure Diagnostics with individual messages might be more agent-actionable. The progress log notes this was a deliberate choice to "avoid duplicate user-facing blocks" but it wasn't explored from the agent-consumer perspective.
+
 ## For the Next Agent
 
 **Start by** reading the Task 144 spec (`.taskmaster/tasks/task_144/task-144.md`). It has the complete problem description, requirements, and implementation notes with exact file:line references.
 
-**Then read** `src/pflow/core/diagnostic.py` to understand the Diagnostic type, the bridge functions you'll delete, and `format_diagnostic()` which is the canonical text renderer.
+**Then read** `src/pflow/core/diagnostic.py` — the full file. Understand the type, the exception conversion (13 types), and the rendering (6 paths). Your Phase 1 research starts here.
 
-**Don't bother** re-auditing the display paths — the audit was thorough and the spec captures it. If you want to verify, grep for `coerce_warning_diagnostic` and `coerce_error_diagnostic` — those are the bridge functions and their call sites are the exact places that need changing.
+**Critically**: the spec's Phase 1 research requirements are not optional. The user explicitly rejected a "consolidate what exists" approach. You must explore what the output SHOULD be, produce concrete before/after examples, and get approval before implementing Phase 3. Phase 2 (dict round-trip cleanup) is mechanical and well-specified — you can start that while the rendering research is in progress.
 
-**The user cares most about**: (1) validation errors gaining suggestions in text output, (2) clean code with no unnecessary conversion hops, (3) no display regressions. In that order.
+**Don't trust my rendering analysis.** I said "6 paths → 2, ~185 lines saved." The user pushed back and I admitted it was surface-level. Your research may find a different optimal structure. Start from the question "what should an agent see when this error occurs?" not "how do I consolidate these branches?"
 
-**Ask the user** about the two open questions in the spec before implementing: how `format_success_as_text()` and `_display_execution_summary()` should receive Diagnostics (parameter addition vs restructure).
+**The user cares most about**: output quality for AI agents. Every diagnostic should tell an agent what went wrong, where, and what to do about it. Lines of code saved is a side effect, not a goal.
+
+**The baseline is a scorecard.** Annotate before-captures with gaps. Score after-captures against specific improvement targets. Unchanged output needs justification.
 
 ---
 

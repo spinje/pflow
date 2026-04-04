@@ -2,7 +2,8 @@
 
 ## Metadata
 - Implementation Date: 2026-04-02 to 2026-04-04
-- Commits: `13a49dc9` (feat), `2871bd64` (review fixes)
+- Commits: `13a49dc9` (feat), `2871bd64` (review fixes), `efa7a2d7` (task review + baseline), `c7304d0d` (PR review fixes)
+- PR: #218
 - Branch: `feat/unified-diagnostic-system`
 - Base: `15eee95e`
 
@@ -74,11 +75,17 @@ Dual-write transition: added `diagnostics` field alongside old fields (`errors`,
 
 **`ValidationResult.errors` returns `list[str]`** — Pragmatic: `format_validation_failure()` takes `list[str]`. Changing to `list[Diagnostic]` would require updating the formatter and all callers. `vresult.diagnostics` gives full Diagnostic access. Task 144 tracks unification.
 
-### Technical Debt
+### Technical Debt → Task 144
 
-- `diagnostic.py` at 684 lines combines type, coercion, exception conversion (13 types), and ~15 formatting functions. Could be split into `diagnostic.py` + `diagnostic_formatting.py`.
-- `to_display_dict()` is a transition bridge. Once all display consumers read Diagnostic attributes directly, it can be removed.
-- `coerce_warning_diagnostic()`/`coerce_error_diagnostic()` exist for backward compat with any code that might still produce dicts. Once all producers are Diagnostic-native, these become dead code.
+The following items are scoped into **Task 144: Display Consolidation — Diagnostic Rendering Redesign**:
+
+- `diagnostic.py` rendering has 6 special-case paths (~260 lines) where 2-3 patterns would suffice. Context blocks (API response, shell stderr, MCP error) only render for the runtime default path — other error types silently ignore context even when populated.
+- `to_display_dict()` is a transition bridge for text consumers that receive dicts instead of Diagnostics. Three text paths still round-trip: Diagnostic → dict → coerce back → format.
+- `coerce_warning_diagnostic()`/`coerce_error_diagnostic()` (7 call sites) exist solely because display code receives dicts. Dead code once text paths receive Diagnostics natively.
+- `ValidationResult.errors` returns `list[str]` not `list[Diagnostic]` — loses suggestion, node_id, source, context.
+- `exception_to_diagnostics()` has 3 near-identical branch groups (UserFriendlyError/MCPError/OutputResolutionError, FileNotFoundError/PermissionError/generic, SchemaValidationError/MarkdownParseError).
+
+**Not scoped into Task 144:**
 - Library resolution reparses files instead of extending `load_ir()` to return warnings. The proper fix is to change the `WorkflowManager` API, but that's a larger change.
 
 ## Unexpected Discoveries
