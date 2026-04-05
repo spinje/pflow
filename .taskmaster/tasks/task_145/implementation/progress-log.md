@@ -346,10 +346,31 @@ This tests Python `for` loop semantics on an empty list, not our code.
 
 ---
 
+## Post-PR Enhancements (2026-04-05)
+
+### Rebase onto Task 144
+
+Rebased onto `b9c41bd8` (Task 144: Diagnostic Rendering Redesign). One call-site fix required: `format_validation_failure` signature changed from `(errors: list[str], suggestions=None)` to `(errors: list[Diagnostic])`. The `Diagnostic` objects now carry their own suggestions — no separate kwarg needed.
+
+### Added `-o`/`--output` flag
+
+User feedback: mermaid output should save to a file, not just stdout. Added `--output`/`-o` flag that writes to the specified file and prints a confirmation to stderr. Without `-o`, behavior is unchanged (stdout). Test added: `test_output_writes_file`.
+
+### Changed `--depth` default from 1 to 5
+
+User feedback: sub-workflows should expand fully by default. Changed default from 1 to 5. In practice this expands everything (few workflows nest deeper than 3). Users can `--depth 0` to collapse.
+
+### Documentation updates
+
+- `docs/reference/cli/index.mdx` — added Visualize command section with options table, examples, expandable mermaid output sample
+- `src/pflow/cli/resources/cli-basic-usage.md` — added `pflow visualize` to agent iteration commands
+
+---
+
 ## Final State
 
 - `make check` passes (ruff + mypy + deptry)
-- `make test` passes (4460 tests)
+- `make test` passes (4461 tests)
 - PR: https://github.com/spinje/pflow/pull/222
 - No backwards-incompatible changes to public APIs
 - One behavioral change: executor propagates `WorkflowNotFoundError` instead of wrapping in `ValueError` (better error output, Runner catches both)
