@@ -198,7 +198,7 @@ class WorkflowExecutor(BaseNode):
         try:
             params = dict(child_params)  # Copy — don't mutate caller's dict
             if workflow_path and workflow_path != "<inline>":
-                params["_pflow_workflow_file"] = str(Path(workflow_path).resolve())
+                params[f"{self.RESERVED_KEY_PREFIX}workflow_file"] = str(Path(workflow_path).resolve())
             compiled = compile_workflow(
                 copy.deepcopy(workflow_ir),  # Protect against concurrent mutation in parallel batch
                 registry=registry or Registry(),
