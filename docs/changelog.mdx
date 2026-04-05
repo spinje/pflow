@@ -88,6 +88,10 @@ rss: true
   - Fixed issues with template deduplication, double validation, raw string parsing in single-line YAML, and bash syntax correctness.
   - Fixed missing error details in JSON output, dead code in error display paths, and redundant template resolution.
 
+  ## Under the hood
+
+  This release includes a major structural overhaul: 18,000 lines of production code removed across 16 refactoring PRs. The PocketFlow framework was replaced with a standalone orchestration engine, the exception hierarchy was consolidated under a single base class, and the CLI, compiler, and runtime were each decomposed into focused modules. These changes don't add features directly — they're what made the compile-once optimization, unified diagnostics, and shared execution pipeline possible.
+
   <Accordion title="Breaking changes">
     ### Workflow save format
     Workflows are now saved as folders (`~/.pflow/workflows/{name}/{name}.pflow.md`), not flat files. This change enables proper file dependency bundling but will break existing symlinks for published skills.

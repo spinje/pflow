@@ -104,6 +104,10 @@ make check
 
 The version bump in `pyproject.toml` makes `uv.lock` stale. CI runs `uv lock --locked` which will fail if the lockfile isn't updated. Always run `make check` before committing to catch this.
 
+### 5b. Check roadmap
+
+Read `docs/roadmap.mdx` and check if any items listed under "Now" or "Next" were completed in this release. If the roadmap looks stale, ask the user if they want to update it before committing.
+
 ### 6. Commit
 
 Stage and commit the release artifacts together:
