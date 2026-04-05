@@ -13,6 +13,7 @@ All Click command groups for pflow. Each file defines one subcommand group route
 | `workflow.py` | list, describe, history, discover, save | `pflow.core.workflow.*` |
 | `skills.py` | save, list, remove | `pflow.core.workflow.skill_service` |
 | `settings.py` | init, show, allow, deny, remove, reset, check, set-env, unset-env, list-env, llm (subgroup), registry (subgroup) | `pflow.core.settings` |
+| `visualize.py` | (standalone command) | `pflow.core.workflow.mermaid`, `pflow.execution.*` |
 | `instructions.py` | usage, create | Reads from `../resources/` |
 
 ## Cross-References Within commands/
@@ -138,5 +139,6 @@ LLM model resolution chain (genuinely hard to discover):
 | `read_fields.py` | `test_read_fields.py` | None |
 | `workflow.py` | `test_workflow_resolution.py` (partial) | None |
 | `skills.py` | `test_skills.py` | `pflow.cli.commands.skills.WorkflowManager`, `.create_skill_symlink`, `.enrich_workflow`, `.find_skill_for_workflow`, `.find_pflow_skills`, `.remove_skill_service` |
+| `visualize.py` | `test_visualize.py` | None |
 | `settings.py` | (tested via integration) | None |
 | `instructions.py` | `test_instructions.py` | None |

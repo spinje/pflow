@@ -7,9 +7,7 @@ from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_child_provenance
 from pflow.core.file_resolver import is_workflow_file_reference
-from pflow.core.markdown_parser import parse_markdown
 from pflow.core.node import BaseNode
-from pflow.core.workflow.manager import WorkflowManager
 from pflow.registry import Registry
 from pflow.runtime import CompilationError, compile_workflow
 
@@ -371,11 +369,6 @@ class WorkflowExecutor(BaseNode):
             shared[key] = value
 
     @staticmethod
-    def _is_file_reference(value: str) -> bool:
-        """Determine if a workflow param value is a file path or saved name."""
-        return is_workflow_file_reference(value)
-
-    @staticmethod
     def _extract_child_error(child_storage: dict[str, Any], workflow_path: str) -> str:
         """Extract a meaningful error message from child storage after sub-workflow failure.
 
@@ -412,6 +405,8 @@ class WorkflowExecutor(BaseNode):
         Returns:
             (workflow_ir, workflow_path, workflow_source, parser_warnings)
         """
+        from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
+
         workflow = self.params.get("workflow")
         workflow_ir = self.params.get("workflow_ir")
 
@@ -420,68 +415,38 @@ class WorkflowExecutor(BaseNode):
         if workflow and workflow_ir:
             raise ValueError("Only one of 'workflow' or 'workflow_ir' should be provided")
 
-        workflow_path: Optional[Path] = None
-        parser_warnings: list[Diagnostic] = []
+        # Determine base_path for relative file resolution
+        parent_file = shared.get(f"{self.RESERVED_KEY_PREFIX}workflow_file")
+        base_path = Path(parent_file).parent if parent_file else Path.cwd()
 
-        if workflow:
-            if self._is_file_reference(workflow):
-                workflow_ir, workflow_path, parser_warnings = self._load_workflow_from_reference(
-                    workflow,
-                    shared,
-                    execution_stack,
-                )
-                workflow_source = f"ref:{workflow}"
-            else:
-                workflow_ir, workflow_path, parser_warnings = self._load_workflow_by_name(
-                    workflow,
-                    execution_stack,
-                )
-                workflow_source = f"name:{workflow}"
-        else:
-            logger.debug("Using inline workflow definition")
-            workflow_source = "inline"
+        # Use shared resolver
+        result = resolve_sub_workflow(self.params, base_path=base_path)
 
-        if workflow_ir is None:
+        if result is None:
+            # Template references (${...}) return None from resolver — give a clear error
+            if isinstance(workflow, str) and "${" in workflow:
+                raise ValueError(f"Cannot execute sub-workflow with unresolved template reference: '{workflow}'")
             raise ValueError("WorkflowExecutor requires either 'workflow' or 'workflow_ir' parameter")
+
+        workflow_ir = result.ir
+        workflow_path = result.path
+
+        # Cycle detection (executor-specific: uses runtime execution stack)
+        if workflow_path:
+            self._check_workflow_cycle(workflow_path, execution_stack)
+
+        # Determine source label for tracing
+        if isinstance(self.params.get("workflow_ir"), dict):
+            workflow_source = "inline"
+        elif workflow_path and is_workflow_file_reference(workflow or ""):
+            workflow_source = f"ref:{workflow}"
+        else:
+            workflow_source = f"name:{workflow}"
+
         if "nodes" not in workflow_ir:
             raise ValueError("Workflow IR must contain 'nodes' (use '## Steps' section in .pflow.md files)")
 
-        return workflow_ir, workflow_path, workflow_source, parser_warnings
-
-    def _load_workflow_from_reference(
-        self,
-        workflow: str,
-        shared: dict[str, Any],
-        execution_stack: list[str],
-    ) -> tuple[dict[str, Any], Path, list[Diagnostic]]:
-        """Load a child workflow from a file reference and collect parser warnings."""
-        logger.debug(f"Loading workflow from file: {workflow}")
-        workflow_path = self._resolve_safe_path(workflow, shared)
-        self._check_workflow_cycle(workflow_path, execution_stack)
-        workflow_ir, parser_warnings = self._load_workflow_file(workflow_path)
-        return workflow_ir, workflow_path, parser_warnings
-
-    def _load_workflow_by_name(
-        self,
-        workflow: str,
-        execution_stack: list[str],
-    ) -> tuple[dict[str, Any], Optional[Path], list[Diagnostic]]:
-        """Load a child workflow from the saved library and collect parser warnings."""
-        logger.debug(f"Loading workflow by name: {workflow}")
-        workflow_manager = WorkflowManager()
-        workflow_path: Optional[Path] = None
-        parser_warnings: list[Diagnostic] = []
-        try:
-            workflow_ir = workflow_manager.load_ir(workflow)
-            workflow_path_value = workflow_manager.get_path(workflow)
-            if isinstance(workflow_path_value, str):
-                workflow_path = Path(workflow_path_value)
-                self._check_workflow_cycle(workflow_path, execution_stack)
-                if workflow_path.exists():
-                    workflow_ir, parser_warnings = self._load_workflow_file(workflow_path)
-            return workflow_ir, workflow_path, parser_warnings
-        except Exception as e:
-            raise ValueError(f"Failed to load workflow '{workflow}': {e!s}") from e
+        return workflow_ir, workflow_path, workflow_source, list(result.warnings)
 
     @staticmethod
     def _check_workflow_cycle(workflow_path: Path, execution_stack: list[str]) -> None:
@@ -489,31 +454,6 @@ class WorkflowExecutor(BaseNode):
         if str(workflow_path) in execution_stack:
             cycle = " -> ".join([*execution_stack, str(workflow_path)])
             raise ValueError(f"Circular workflow reference detected: {cycle}")
-
-    def _resolve_safe_path(self, workflow_ref: str, shared: dict[str, Any]) -> Path:
-        """Resolve workflow path, relative to parent workflow or CWD."""
-        path = Path(workflow_ref)
-        if not path.is_absolute():
-            parent_file = shared.get(f"{self.RESERVED_KEY_PREFIX}workflow_file")
-            base_dir = Path(parent_file).parent if parent_file else Path.cwd()
-            path = base_dir / path
-        return path.resolve()
-
-    def _load_workflow_file(self, path: Path) -> tuple[dict[str, Any], list[Diagnostic]]:
-        """Load and parse a .pflow.md workflow file."""
-        if not path.exists():
-            raise FileNotFoundError(f"Workflow file not found: {path}")
-
-        try:
-            content = path.read_text(encoding="utf-8")
-        except Exception as e:
-            raise OSError(f"Error reading workflow file: {e}") from e
-
-        result = parse_markdown(content)
-        workflow_ir = result.ir
-        if "nodes" not in workflow_ir:
-            raise ValueError(f"Workflow file {path} must contain a '## Steps' section with at least one node")
-        return workflow_ir, list(result.warnings)
 
     def _validate_child_params(
         self, workflow_ir: dict[str, Any], child_params: dict[str, Any], workflow_path: Any

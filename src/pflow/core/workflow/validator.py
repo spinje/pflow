@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity, format_child_provenance
-from pflow.core.exceptions import MarkdownParseError, SchemaValidationError
+from pflow.core.exceptions import SchemaValidationError
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 
@@ -685,137 +685,59 @@ class WorkflowValidator:
             (child_ir, child_path, ref_label, errors, already_seen, parser_warnings)
             already_seen=True means recursive validation should be skipped.
         """
-        from pflow.core.file_resolver import is_workflow_file_reference
-        from pflow.core.markdown_parser import parse_markdown
-        from pflow.core.workflow.manager import WorkflowManager
+        from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
 
-        inline_ir = params.get("workflow_ir")
+        # Determine the reference label for error messages
         workflow_ref = params.get("workflow")
-
+        inline_ir = params.get("workflow_ir")
         if isinstance(inline_ir, dict):
-            # Inline IR is embedded, not a file/name reference — no cycle possible
-            return inline_ir, None, "<inline>", [], False, ()
+            ref_label = "<inline>"
+        elif isinstance(workflow_ref, str) and workflow_ref:
+            ref_label = workflow_ref
+        else:
+            ref_label = ""
 
-        if not isinstance(workflow_ref, str) or not workflow_ref:
-            return None, None, "", [], False, ()
-
-        # Template references can't be resolved statically
-        if "${" in workflow_ref:
-            logger.debug(
-                "Skipping sub-workflow validation for step '%s': template reference '%s'", node_id, workflow_ref
+        # Resolve using shared resolver
+        base_path = workflow_file.parent if workflow_file else None
+        try:
+            result = resolve_sub_workflow(params, base_path=base_path)
+        except Exception as e:
+            logger.debug("Failed to load sub-workflow for step '%s'", node_id, exc_info=True)
+            msg = (
+                f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}"
+                if ref_label
+                else f"Step '{node_id}': failed to load sub-workflow: {e}"
             )
-            return None, None, "", [], False, ()
+            return None, None, ref_label, [msg], False, ()
 
-        if is_workflow_file_reference(workflow_ref):
-            return WorkflowValidator._load_child_from_file(node_id, workflow_ref, seen, ir_cache, workflow_file)
+        # None means template ref or missing — skip silently
+        if result is None:
+            if isinstance(workflow_ref, str) and "${" in workflow_ref:
+                logger.debug(
+                    "Skipping sub-workflow validation for step '%s': template reference '%s'",
+                    node_id,
+                    workflow_ref,
+                )
+            return None, None, ref_label, [], False, ()
 
-        # Saved workflow name
-        seen_key = f"name:{workflow_ref}"
+        # Inline IR has no cycle concerns
+        if isinstance(inline_ir, dict):
+            return result.ir, result.path, ref_label, [], False, result.warnings
+
+        # Dedup/cycle detection via seen set
+        seen_key = str(result.path) if result.path else f"name:{workflow_ref}"
+
         if seen_key in seen:
             # Already validated — return cached IR for input check
             cached = ir_cache.get(seen_key)
             if cached:
-                return cached[0], cached[1], workflow_ref, [], True, ()
-            return None, None, workflow_ref, [], True, ()
+                return cached[0], cached[1], ref_label, [], True, ()
+            return None, None, ref_label, [], True, ()
         seen.add(seen_key)
 
-        try:
-            wm = WorkflowManager()
-            child_ir = wm.load_ir(workflow_ref)
-            child_path_value = wm.get_path(workflow_ref)
-            child_path = Path(child_path_value) if isinstance(child_path_value, str) else None
-            parser_warnings: tuple[Diagnostic, ...] = ()
-            if child_path and child_path.exists():
-                content = child_path.read_text(encoding="utf-8")
-                result = parse_markdown(content)
-                child_ir = result.ir
-                parser_warnings = tuple(result.warnings)
-            ir_cache[seen_key] = (child_ir, child_path)
-            return child_ir, child_path, workflow_ref, [], False, parser_warnings
-        except Exception as e:
-            logger.debug("Failed to load saved workflow '%s'", workflow_ref, exc_info=True)
-            return (
-                None,
-                None,
-                workflow_ref,
-                [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
-                False,
-                (),
-            )
-
-    @staticmethod
-    def _load_child_from_file(
-        node_id: str,
-        workflow_ref: str,
-        seen: set[str],
-        ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
-        workflow_file: Optional[Path] = None,
-    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool, tuple[Diagnostic, ...]]:
-        """Load a child workflow from a file reference."""
-        from pflow.core.markdown_parser import parse_markdown
-
-        path = Path(workflow_ref)
-        if not path.is_absolute():
-            if workflow_file is not None:
-                base_dir = workflow_file.parent
-                path = base_dir / path
-            else:
-                # Relative path with no file context will also fail at runtime
-                return (
-                    None,
-                    None,
-                    workflow_ref,
-                    [
-                        f"Step '{node_id}': cannot resolve relative sub-workflow "
-                        f"'{workflow_ref}' -- use an absolute path or load the "
-                        f"workflow from a file so relative paths can be resolved"
-                    ],
-                    False,
-                    (),
-                )
-        child_path = path.resolve()
-
-        seen_key = str(child_path)
-        if seen_key in seen:
-            # Already validated — return cached IR for input check
-            cached = ir_cache.get(seen_key)
-            if cached:
-                return cached[0], cached[1], workflow_ref, [], True, ()
-            return None, None, workflow_ref, [], True, ()
-        seen.add(seen_key)
-
-        try:
-            if not child_path.exists():
-                return (
-                    None,
-                    None,
-                    workflow_ref,
-                    [f"Step '{node_id}': sub-workflow file not found: '{workflow_ref}' (resolved to: {child_path})"],
-                    False,
-                    (),
-                )
-            content = child_path.read_text(encoding="utf-8")
-            result = parse_markdown(content)
-            ir_cache[seen_key] = (result.ir, child_path)
-            return result.ir, child_path, workflow_ref, [], False, tuple(result.warnings)
-        except MarkdownParseError as e:
-            return (
-                None,
-                None,
-                workflow_ref,
-                [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): {e}"],
-                False,
-                (),
-            )
-        except Exception as e:
-            return (
-                None,
-                None,
-                workflow_ref,
-                [f"In sub-workflow '{workflow_ref}' (step '{node_id}'): failed to load: {e}"],
-                False,
-                (),
-            )
+        # Cache for cross-reference input checking
+        ir_cache[seen_key] = (result.ir, result.path)
+        return result.ir, result.path, ref_label, [], False, result.warnings
 
     @staticmethod
     def _warn_inputless_shell_nodes(workflow_ir: dict[str, Any]) -> list[Diagnostic]:

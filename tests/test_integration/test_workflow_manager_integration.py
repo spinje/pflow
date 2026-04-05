@@ -307,7 +307,7 @@ class TestWorkflowExecutorIntegration:
         workflow_manager.save(workflow_name, sample_markdown)
 
         # Create WorkflowExecutor node
-        with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
+        with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             # Mock importlib for the compiler
             mock_module = MagicMock()
             mock_module.EchoTestNode = EchoTestNode
@@ -340,19 +340,21 @@ class TestWorkflowExecutorIntegration:
 
     def test_workflow_executor_handles_missing_workflow(self, workflow_manager):
         """Test WorkflowExecutor error handling for missing workflows."""
-        with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
+        from pflow.core.exceptions import WorkflowNotFoundError
+
+        with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
             executor.params = {"workflow": "non-existent"}
 
             shared = {}
-            with pytest.raises(ValueError, match="Failed to load workflow 'non-existent'"):
+            with pytest.raises(WorkflowNotFoundError, match="non-existent"):
                 executor.prep(shared)
 
     def test_workflow_executor_mutual_exclusivity(self, workflow_manager, sample_markdown, tmp_path):
         """Test that providing both workflow and workflow_ir raises error."""
         workflow_manager.save("priority-test", sample_markdown)
 
-        with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
+        with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
             executor.params = {
                 "workflow": "priority-test",
@@ -423,7 +425,7 @@ class TestFormatCompatibility:
         """Test that WorkflowExecutor receives raw IR, not metadata wrapper."""
         workflow_manager.save("raw-ir-test", sample_markdown)
 
-        with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
+        with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             # Mock importlib for the compiler
             mock_module = MagicMock()
             mock_module.EchoTestNode = EchoTestNode
@@ -454,10 +456,12 @@ class TestErrorHandling:
         assert workflows == []  # Empty list, no error
 
         # WorkflowExecutor should raise error
-        with patch("pflow.runtime.workflow_executor.WorkflowManager", return_value=workflow_manager):
+        from pflow.core.exceptions import WorkflowNotFoundError
+
+        with patch("pflow.core.workflow.manager.WorkflowManager", return_value=workflow_manager):
             executor = WorkflowExecutor()
             executor.set_params({"workflow": "missing"})
-            with pytest.raises(ValueError, match="Failed to load workflow 'missing'"):
+            with pytest.raises(WorkflowNotFoundError, match="missing"):
                 executor.prep({})
 
     def test_corrupted_workflow_file(self, workflow_manager, sample_markdown):
@@ -645,7 +649,7 @@ def test_nested_workflow_with_real_nodes(tmp_path):
     registry = Registry()
 
     # Mock the WorkflowManager to use our test instance
-    with patch("pflow.runtime.workflow_executor.WorkflowManager") as mock_wm_class:
+    with patch("pflow.core.workflow.manager.WorkflowManager") as mock_wm_class:
         mock_wm_class.return_value = workflow_manager
 
         workflow = compile_workflow(outer_workflow, registry)

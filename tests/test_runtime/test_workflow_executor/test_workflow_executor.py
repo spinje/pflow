@@ -35,15 +35,24 @@ class TestWorkflowExecutor:
         with pytest.raises(ValueError, match="Only one of 'workflow' or 'workflow_ir'"):
             node.prep(shared)
 
-    def test_circular_dependency_detection(self):
+    def test_circular_dependency_detection(self, tmp_path):
         """Test circular dependency detection."""
+        from tests.shared.markdown_utils import write_workflow_file
+
+        # Create a real workflow file so the resolver can load it
+        workflow_file = tmp_path / "workflow1.pflow.md"
+        write_workflow_file(
+            {"nodes": [{"id": "step", "type": "shell", "params": {"command": "echo hi"}}], "edges": []},
+            workflow_file,
+        )
+
         node = WorkflowExecutor()
 
-        # Set up circular reference — /path/to/workflow1.json is already in the stack
-        shared = {"_pflow_stack": ["/path/to/workflow1.json", "/path/to/workflow2.json"]}
+        # Set up circular reference — workflow1 is already in the stack
+        shared = {"_pflow_stack": [str(workflow_file), "/path/to/workflow2.json"]}
 
         node.set_params({
-            "workflow": "/path/to/workflow1.json"  # Already in stack
+            "workflow": str(workflow_file),  # Already in stack
         })
 
         with pytest.raises(ValueError, match="Circular workflow reference"):
