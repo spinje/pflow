@@ -133,6 +133,32 @@ class TestVisualizeDirectionFlag:
         assert "graph LR" not in result.output
 
 
+class TestVisualizeOutputFlag:
+    """The -o/--output flag writes mermaid to a file."""
+
+    def test_output_writes_file(self, tmp_path: Path) -> None:
+        """--output writes mermaid to the specified file and confirms on stderr."""
+        ir = {
+            "nodes": [
+                {"id": "step1", "type": "shell", "params": {"command": "echo hi"}},
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(ir, workflow_path)
+        output_path = tmp_path / "diagram.mmd"
+
+        result = _invoke([str(workflow_path), "-o", str(output_path)])
+
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}\noutput: {result.output}"
+        assert output_path.exists()
+        content = output_path.read_text()
+        assert "graph LR" in content
+        assert "step1" in content
+        # Mermaid should NOT be on stdout (it went to file)
+        assert "graph LR" not in result.output
+
+
 class TestVisualizeNestedWorkflowExpansion:
     """Nested workflow files are expanded into subgraphs."""
 
