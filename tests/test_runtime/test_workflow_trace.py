@@ -428,7 +428,7 @@ class TestWorkflowTraceCollector:
                     severity=Severity.WARNING,
                     message="Line 3: '## Input' looks like a typo for '## Inputs'.",
                     source="parser",
-                    suggestion="Rename to '## Inputs'.",
+                    suggestions=["Rename to '## Inputs'."],
                 )
             ])
 
@@ -455,7 +455,7 @@ class TestWorkflowTraceCollector:
                     message="Template resolution failed for ${fetch.response}",
                     node_id="node-1",
                     source="runtime",
-                    suggestion="Fix the template reference.",
+                    suggestions=["Fix the template reference."],
                 )
             ])
 

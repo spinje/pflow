@@ -208,7 +208,7 @@ def test_node_execution_failure(tmp_path):
         # Should report failure
         assert result.exit_code == 1
         # New enhanced error format shows detailed error information
-        assert "Workflow execution failed" in result.output or "Workflow failed" in result.output
+        assert "Error:" in result.output or "failed" in result.output.lower()
         assert "Error at node 'read':" in result.output or "failed" in result.output.lower()
         # The node error details are shown with category and message
 
@@ -329,7 +329,7 @@ def test_permission_error_read(tmp_path):
 
                 # Should report failure
                 assert result.exit_code == 1
-                assert "Workflow execution failed" in result.output or "Workflow failed" in result.output
+                assert "Error:" in result.output or "failed" in result.output.lower()
             finally:
                 # Restore permissions for cleanup
                 os.chmod("protected.txt", 0o644)
@@ -373,7 +373,7 @@ def test_permission_error_write(tmp_path):
 
                 # Should report failure
                 assert result.exit_code == 1
-                assert "Workflow execution failed" in result.output or "Workflow failed" in result.output
+                assert "Error:" in result.output or "failed" in result.output.lower()
             finally:
                 # Restore permissions for cleanup
                 os.chmod("readonly_dir", 0o755)  # noqa: S103

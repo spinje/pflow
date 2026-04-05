@@ -128,14 +128,14 @@ Three responsibilities:
 
 ## workflow_errors.py
 
-Text-mode error display for `ExecutionResult` failures. `_display_text_error_details` → `_display_single_error`: per-error with node ID, category, message. Special handling for API responses, MCP errors, template errors (shows available fields), shell errors (command/stdout/stderr always shown on failure). Compilation errors also flow through this path — `execute_workflow()` wraps `CompilationError` in `ExecutionResult` with structured fields (`node_id`, `node_type`, `suggestion`). Security: sanitizes raw responses via `sanitize_parameters`.
+Text-mode error display for `ExecutionResult` failures. `_display_text_error_details` → `_display_single_error`: accepts `Diagnostic` objects directly (no dict coercion), renders via `format_diagnostic()`. Context blocks (API responses, MCP errors, template fields, shell command/stdout/stderr) are rendered universally by `_format_all_context_blocks()` in `diagnostic.py`. Compilation errors also flow through this path.
 
 ## error_output.py
 
 Unified error output for ALL error types (Task 137). Single entry point: `output_error()` handles both JSON and text modes for both exceptions and `ExecutionResult` failures.
 
 - `format_error_json()` — builds unified JSON shape: `{success, status, error, errors, diagnostics, workflow}`
-- `display_exception_text()` — text-mode display using `exception_to_diagnostics()` + `format_diagnostic()`
+- `display_exception_text()` — text-mode display using `exception_to_diagnostics()` + `format_diagnostic()`. No special cases — all exceptions go through the diagnostic pipeline.
 - `output_error()` — THE single error output function (JSON delegates to `_serialize_json_result`, text delegates to `display_exception_text` or `_display_text_error_details`)
 
 ## Workflow Resolution
@@ -229,7 +229,7 @@ See `core/CLAUDE.md` (shell_integration section) for FIFO detection, StdinData m
 CLI uses formatters from `execution/formatters/` for output consistency with MCP server:
 - `main.py`: `success_formatter`, `error_formatter`, `validation_formatter`
 - `commands/registry.py`: `registry_list_formatter`, `registry_search_formatter`
-- `commands/registry_run.py`: `node_output_formatter`, `registry_run_formatter`
+- `commands/registry_run.py`: `node_output_formatter`
 - `commands/workflow.py`: `workflow_list_formatter`, `workflow_describe_formatter`, `discovery_formatter`, `workflow_save_formatter`, `history_formatter`
 
 Note: `commands/mcp.py` still uses inline formatting (not yet migrated to shared formatters).

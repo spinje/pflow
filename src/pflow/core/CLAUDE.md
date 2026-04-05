@@ -84,7 +84,9 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
-`format_for_cli()` methods were removed in Task 143. Convert exceptions to `Diagnostic` via `pflow.core.diagnostic.exception_to_diagnostics()` and render text with `format_diagnostic()`.
+`format_for_cli()` methods were removed in Task 143. Task 144 added `to_diagnostics() -> list[Diagnostic]` methods — data conversion (coupled to `Diagnostic` type only, not CLI text). `PflowError` has a default implementation; 8 subclasses override it: `CompilationError`, `WorkflowValidationError`, `SchemaValidationError`, `MarkdownParseError`, `WorkflowNotFoundError`, `UserFriendlyError`, `MCPError`, `OutputResolutionError`. `MaxNodeVisitsError` also has `to_diagnostics()`. `exception_to_diagnostics()` is now a thin dispatcher (~30 lines) that calls `to_diagnostics()` on exceptions that have it, and falls back to `_builtin_exception_diagnostic()` for built-in types. No lazy imports.
+
+`MarkdownParseError` has a `raw_message` attribute (the message without line prefix or suggestion suffix), used by `to_diagnostics()` to produce a clean message for the unified rendering format.
 
 **Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
 - Validation phase returns error **strings** (never raises)
@@ -212,7 +214,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### user_errors.py
 
-Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). Specialized: `MCPError`, `OutputResolutionError` (raised when non-coalesce output sources cannot be resolved after execution, e.g., a declared output references a node that didn't run on the taken branch).
+Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). `UserFriendlyError` has `to_diagnostics()` with a `_diagnostic_category` class variable (`"cli"` by default). `MCPError` overrides to `_diagnostic_category = "mcp"` and inherits the base `to_diagnostics()`. `OutputResolutionError` overrides `to_diagnostics()` entirely (unique `failures` data in context).
 
 ### validation_utils.py
 

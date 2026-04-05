@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import difflib
 import sys
-import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # pflow imports — keep these at the top so import errors surface immediately
@@ -30,8 +29,6 @@ from typing import Any, Callable
 from pflow.core.diagnostic import (
     Diagnostic,
     Severity,
-    coerce_error_diagnostic,
-    coerce_warning_diagnostic,
     exception_to_diagnostics,
     format_diagnostic,
 )
@@ -493,7 +490,7 @@ def build_fixtures() -> list[Fixture]:
             diagnostic=Diagnostic(
                 severity=Severity.WARNING,
                 message="Section heading '## Input' looks like a typo",
-                suggestion="Rename to '## Inputs' (plural) for it to be recognized.",
+                suggestions=["Rename to '## Inputs' (plural) for it to be recognized."],
                 source="parser",
                 node_id=None,
                 context={"template": "## Input"},
@@ -512,7 +509,7 @@ def build_fixtures() -> list[Fixture]:
             diagnostic=Diagnostic(
                 severity=Severity.WARNING,
                 message="Cache enabled but node has side effects",
-                suggestion="Consider adding 'cache: false' to this node.",
+                suggestions=["Consider adding 'cache: false' to this node."],
                 source="validator",
                 node_id="send-alert",
             ),
@@ -600,13 +597,11 @@ def render_wrappers(fixtures: list[Fixture]) -> list[RenderResult]:
         RenderResult(
             fixture_name="validation-failure-3-errors",
             path_name="format_validation_failure(3 errors)",
-            rendered=format_validation_failure(
-                [
-                    "Unknown node type 'httpp'",
-                    "Missing required field 'type'",
-                    "Undefined template variable '${api_key}'",
-                ]
-            ),
+            rendered=format_validation_failure([
+                "Unknown node type 'httpp'",
+                "Missing required field 'type'",
+                "Undefined template variable '${api_key}'",
+            ]),
         )
     )
     results.append(
@@ -621,51 +616,69 @@ def render_wrappers(fixtures: list[Fixture]) -> list[RenderResult]:
     from pflow.mcp_server.services.execution_service import _build_error_text
 
     # Single error with warnings
-    error_dict_single = {
-        "error": {"message": "Command failed with exit code 1"},
-        "errors": [
-            {
-                "message": "Command failed with exit code 1",
-                "node_id": "deploy",
+    single_errors = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="Command failed with exit code 1",
+            title="Execution Failed",
+            node_id="deploy",
+            source="runtime",
+            context={
                 "category": "execution_failure",
                 "shell_command": "npm run deploy",
                 "shell_stderr": "Error: EACCES permission denied",
-            }
-        ],
-        "warnings": [
-            {
-                "severity": "warning",
-                "message": "Cache enabled but node has side effects",
-                "source": "validator",
-                "node_id": "send-alert",
-            }
-        ],
-        "trace_path": "",
-    }
+            },
+        )
+    ]
+    single_warnings = [
+        Diagnostic(
+            severity=Severity.WARNING,
+            message="Cache enabled but node has side effects",
+            suggestions=["Consider adding 'cache: false' to this node."],
+            source="validator",
+            node_id="send-alert",
+        )
+    ]
     results.append(
         RenderResult(
             fixture_name="mcp-error-text-single-error",
             path_name="_build_error_text(1 error + 1 warning)",
-            rendered=_build_error_text(error_dict_single),
+            rendered=_build_error_text(single_errors, single_warnings),
         )
     )
 
     # Multiple errors
-    error_dict_multi = {
-        "error": {"message": "Workflow execution failed"},
-        "errors": [
-            {"message": "Node 'fetch' failed: timeout", "node_id": "fetch", "category": "execution_failure"},
-            {"message": "Node 'parse' failed: invalid JSON", "node_id": "parse", "category": "execution_failure"},
-            {"message": "Node 'deploy' skipped: upstream failure", "node_id": "deploy", "category": "execution_failure"},
-        ],
-        "warnings": [],
-        "trace_path": "",
-    }
+    multi_errors = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="Node 'fetch' failed: timeout",
+            title="Execution Failed",
+            node_id="fetch",
+            source="runtime",
+            context={"category": "execution_failure"},
+        ),
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="Node 'parse' failed: invalid JSON",
+            title="Execution Failed",
+            node_id="parse",
+            source="runtime",
+            context={"category": "execution_failure"},
+        ),
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="Node 'deploy' skipped: upstream failure",
+            title="Execution Failed",
+            node_id="deploy",
+            source="runtime",
+            context={"category": "execution_failure"},
+        ),
+    ]
     results.append(
         RenderResult(
             fixture_name="mcp-error-text-multi-error",
             path_name="_build_error_text(3 errors + 0 warnings)",
-            rendered=_build_error_text(error_dict_multi),
+            rendered=_build_error_text(multi_errors, []),
         )
     )
 
@@ -707,11 +720,28 @@ def render_wrappers(fixtures: list[Fixture]) -> list[RenderResult]:
         },
         "metrics": {"workflow": {"total_tokens": 1500}},
     }
+    success_warning_diagnostics = [
+        Diagnostic(
+            severity=Severity.WARNING,
+            message="Section heading '## Input' looks like a typo",
+            suggestions=["Rename to '## Inputs'."],
+            source="parser",
+        ),
+        Diagnostic(
+            severity=Severity.WARNING,
+            message="Cache enabled but node has side effects",
+            source="validator",
+            node_id="send-alert",
+        ),
+    ]
     results.append(
         RenderResult(
             fixture_name="success-text-with-warnings",
             path_name="format_success_as_text(2 warnings)",
-            rendered=format_success_as_text(success_dict_with_warnings),
+            rendered=format_success_as_text(
+                success_dict_with_warnings,
+                warning_diagnostics=success_warning_diagnostics,
+            ),
         )
     )
 
@@ -719,28 +749,46 @@ def render_wrappers(fixtures: list[Fixture]) -> list[RenderResult]:
 
 
 def render_bypasses(fixtures: list[Fixture]) -> list[RenderResult]:
-    """Render through bypass functions that DON'T use format_diagnostic()."""
-    from pflow.execution.formatters.registry_run_formatter import (
-        format_ambiguous_node_error,
-        format_execution_error,
-        format_node_not_found_error,
-    )
+    """Render registry error scenarios through the diagnostic pipeline.
+
+    Previously these used bypass formatters (registry_run_formatter.py).
+    Now they all go through format_diagnostic() — this section verifies
+    the new output matches or improves on the old.
+    """
+    from pflow.core.suggestion_utils import find_similar_items
 
     results: list[RenderResult] = []
 
-    # --- format_node_not_found_error ---
+    # --- Node not found (was format_node_not_found_error) ---
+    available_nodes = ["read-file", "read-url", "write-file", "shell", "http", "llm"]
+    similar = find_similar_items("read-fle", available_nodes, max_results=5, method="substring")
+    # When no fuzzy matches, show available nodes (same logic as _handle_unknown_node)
+    if not similar:
+        similar = sorted(available_nodes)[:10]
+    not_found_diag = Diagnostic(
+        severity=Severity.ERROR,
+        message="Node 'read-fle' not found in registry.",
+        title="Node Not Found",
+        suggestions=[
+            "Use 'pflow registry discover' to search for nodes",
+            "Use 'pflow registry list' to see all available nodes",
+        ],
+        source="registry",
+        context={"category": "not_found", "similar_names": similar},
+    )
     results.append(
         RenderResult(
             fixture_name="registry-node-not-found",
-            path_name="format_node_not_found_error()",
-            rendered=format_node_not_found_error(
-                "read-fle",
-                ["read-file", "read-url", "write-file", "shell", "http", "llm"],
-            ),
+            path_name="format_diagnostic(node-not-found)",
+            rendered=format_diagnostic(not_found_diag),
         )
     )
 
-    # --- format_execution_error (various exception types) ---
+    # --- Execution errors (was format_execution_error) ---
+    # Simulate the enrichment that _handle_execution_error does in registry_run.py
+    from dataclasses import replace as dc_replace
+
+    node_type = "fetch"
     for exc, label in [
         (FileNotFoundError("input.txt"), "FileNotFoundError"),
         (PermissionError("Permission denied: /etc/pflow"), "PermissionError"),
@@ -748,47 +796,45 @@ def render_bypasses(fixtures: list[Fixture]) -> list[RenderResult]:
         (RuntimeError("Connection timeout after 30s"), "timeout"),
         (RuntimeError("Unexpected error in node execution"), "generic"),
     ]:
-        results.append(
-            RenderResult(
-                fixture_name=f"registry-exec-error-{label}",
-                path_name=f"format_execution_error({label})",
-                rendered=format_execution_error("fetch", exc, verbose=False),
-            )
-        )
-        # Also with verbose
-        verbose_out = format_execution_error("fetch", exc, verbose=True)
-        default_out = format_execution_error("fetch", exc, verbose=False)
-        if verbose_out != default_out:
+        diagnostics = exception_to_diagnostics(exc)
+        for diag in diagnostics:
+            # Enrich with registry-run suggestions (same logic as _registry_run_suggestions)
+            extra = list(diag.suggestions or [])
+            if not isinstance(exc, (FileNotFoundError, PermissionError)):
+                if isinstance(exc, ValueError) and "required" in str(exc).lower():
+                    extra.append(f"Use 'pflow registry describe {node_type}' to see required parameters")
+                elif "timeout" in str(exc).lower():
+                    extra.append("Try increasing timeout if supported")
+                    extra.append(f"Use 'pflow registry describe {node_type}' to check parameters")
+                else:
+                    extra.append(f"Use 'pflow registry describe {node_type}' to see required parameters")
+            enriched = dc_replace(diag, node_id=diag.node_id or node_type, suggestions=extra or None)
             results.append(
                 RenderResult(
                     fixture_name=f"registry-exec-error-{label}",
-                    path_name=f"format_execution_error({label}, verbose=True)",
-                    rendered=verbose_out,
+                    path_name=f"exception_to_diagnostics({label})",
+                    rendered=format_diagnostic(enriched),
                 )
             )
 
-    # MCP-prefixed node (triggers MCP-specific guidance in verbose mode)
-    results.append(
-        RenderResult(
-            fixture_name="registry-exec-error-mcp-node",
-            path_name="format_execution_error(mcp-node, verbose=True)",
-            rendered=format_execution_error(
-                "mcp-github-search",
-                RuntimeError("Connection refused"),
-                verbose=True,
-            ),
-        )
+    # --- Ambiguous node (was format_ambiguous_node_error) ---
+    matches = ["mcp-github-search", "mcp-jira-search", "mcp-confluence-search"]
+    ambiguous_diag = Diagnostic(
+        severity=Severity.ERROR,
+        message="Ambiguous node name 'search'. Found in multiple servers.",
+        title="Ambiguous Node Name",
+        suggestions=[
+            f"Specify the full node ID (e.g., '{matches[0]}')",
+            "Use format: {server}-{tool}",
+        ],
+        source="registry",
+        context={"category": "not_found", "similar_names": sorted(matches)},
     )
-
-    # --- format_ambiguous_node_error ---
     results.append(
         RenderResult(
             fixture_name="registry-ambiguous-node",
-            path_name="format_ambiguous_node_error()",
-            rendered=format_ambiguous_node_error(
-                "search",
-                ["mcp-github-search", "mcp-jira-search", "mcp-confluence-search"],
-            ),
+            path_name="format_diagnostic(ambiguous-node)",
+            rendered=format_diagnostic(ambiguous_diag),
         )
     )
 

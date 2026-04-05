@@ -6,7 +6,7 @@ ensuring CLI and MCP return identical output structures.
 
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic, coerce_warning_diagnostic, format_diagnostic
+from pflow.core.diagnostic import Diagnostic, format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 
 
@@ -53,9 +53,7 @@ def format_execution_success(
     # Add workflow metadata (default to unsaved if not provided)
     result["workflow"] = workflow_metadata if workflow_metadata else {"action": "unsaved"}
 
-    warning_diagnostics = [
-        warning if isinstance(warning, Diagnostic) else coerce_warning_diagnostic(warning) for warning in warnings or []
-    ]
+    warning_diagnostics = warnings or []
     result["warnings"] = [warning.to_display_dict() for warning in warning_diagnostics]
     result["diagnostics"] = [warning.to_dict() for warning in warning_diagnostics]
 
@@ -167,7 +165,10 @@ def _collect_outputs(
     return result
 
 
-def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
+def format_success_as_text(  # noqa: C901
+    success_dict: dict[str, Any],
+    warning_diagnostics: list[Diagnostic] | None = None,
+) -> str:
     """Convert success dictionary to human-readable text (matches CLI format exactly).
 
     Args:
@@ -241,12 +242,11 @@ def format_success_as_text(success_dict: dict[str, Any]) -> str:  # noqa: C901
             lines.append(f"💰 Cost: ${total_cost:.4f}")
 
     # Show warnings if present (matches CLI format with proper indentation)
-    warnings = success_dict.get("warnings", [])
-    if warnings:
+    if warning_diagnostics:
         lines.append("")
         lines.append("⚠️ Warnings:")
-        for warning in warnings:
-            lines.append(format_diagnostic(coerce_warning_diagnostic(warning)))
+        for warning in warning_diagnostics:
+            lines.append(format_diagnostic(warning))
 
     # Show outputs if present (matches CLI "Workflow output:" section)
     result = success_dict.get("result", {})

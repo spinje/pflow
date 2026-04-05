@@ -221,8 +221,10 @@ class TestWorkflowResolutionCLI:
                 result = runner.invoke(main, ["unknown-workflow"])
 
             assert result.exit_code == 1
+            # Unified titled format: "Error: Workflow Not Found"
+            assert "Workflow Not Found" in result.output
             assert "Workflow 'unknown-workflow' not found" in result.output
-            assert "Use 'pflow workflow list' to see available workflows" in result.output
+            assert "pflow workflow list" in result.output
 
     def test_pass_parameters_to_named_workflow(self):
         """Test passing parameters to a named workflow - simplified test."""

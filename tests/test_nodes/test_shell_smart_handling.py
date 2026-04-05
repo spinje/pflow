@@ -87,7 +87,7 @@ class TestSmartHandlingStderrCheck:
 
         assert result.exit_code != 0
         combined = result.output + (result.stderr or "")
-        assert "Workflow failed" in combined
+        assert "Error:" in combined or "failed" in combined.lower()
         # Error message should mention the missing file
         assert "No such file" in combined or "nonexistent" in combined.lower()
 
@@ -171,7 +171,7 @@ class TestSmartHandlingStderrCheck:
 
         assert result.exit_code != 0
         combined = result.output + (result.stderr or "")
-        assert "Workflow failed" in combined
+        assert "Error:" in combined or "failed" in combined.lower()
 
     def test_command_v_not_found_succeeds(self, tmp_path):
         """command -v for missing command should succeed."""
@@ -222,7 +222,7 @@ class TestSmartHandlingStderrCheck:
 
         assert result.exit_code != 0
         combined = result.output + (result.stderr or "")
-        assert "Workflow failed" in combined
+        assert "Error:" in combined or "failed" in combined.lower()
 
     def test_type_downstream_error_fails(self, tmp_path):
         """type + downstream error should fail (not be masked by 'not found' check)."""
@@ -251,7 +251,7 @@ class TestSmartHandlingStderrCheck:
 
         assert result.exit_code != 0
         combined = result.output + (result.stderr or "")
-        assert "Workflow failed" in combined
+        assert "Error:" in combined or "failed" in combined.lower()
 
 
 class TestSmartHandlingKnownLimitations:

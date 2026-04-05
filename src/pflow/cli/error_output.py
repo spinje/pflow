@@ -61,13 +61,7 @@ def _format_from_result(
         sanitize=True,
     )
 
-    # Errors array
-    if "errors" in formatted:
-        errors_list = formatted["errors"]
-    elif hasattr(result, "errors") and result.errors:
-        errors_list = [error.to_display_dict() if isinstance(error, Diagnostic) else error for error in result.errors]
-    else:
-        errors_list = [{"message": "Unknown error", "category": "unknown"}]
+    errors_list = formatted["errors"]
 
     # Derive summary from actual errors
     if len(errors_list) == 1:
@@ -153,20 +147,10 @@ def _format_from_exception(
 
 
 def display_exception_text(exception: Exception, verbose: bool = False) -> None:
-    """Display exception in text mode, preserving rich formatting.
-
-    Uses shared diagnostic formatting for known pflow exceptions.
-    """
-    if isinstance(exception, UnicodeDecodeError):
-        click.echo("\u2717 File must be valid UTF-8 text.", err=True)
-    elif isinstance(exception, RuntimeError) and "registry" in str(exception).lower():
-        click.echo(f"cli: Error - Failed to load registry: {exception}", err=True)
-        click.echo("cli: Try 'pflow registry list' to see available nodes.", err=True)
-        click.echo("cli: Or 'pflow registry scan <path>' to add custom nodes.", err=True)
-    else:
-        diagnostics = exception_to_diagnostics(exception)
-        for diagnostic in diagnostics:
-            click.echo(format_diagnostic(diagnostic, verbose=verbose), err=True)
+    """Display exception in text mode using the diagnostic pipeline."""
+    diagnostics = exception_to_diagnostics(exception)
+    for diagnostic in diagnostics:
+        click.echo(format_diagnostic(diagnostic, verbose=verbose), err=True)
 
 
 def output_error(

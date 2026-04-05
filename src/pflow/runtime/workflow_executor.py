@@ -330,19 +330,14 @@ class WorkflowExecutor(BaseNode):
         """
         if not getattr(self, "_child_parser_warnings", None):
             return
+        from dataclasses import replace
+
         parser_diagnostics = shared.setdefault("__parser_diagnostics__", [])
         step_id = getattr(self, "node_id", None)
         for d in self._child_parser_warnings:
             if step_id:
                 parser_diagnostics.append(
-                    Diagnostic(
-                        severity=d.severity,
-                        message=format_child_provenance(step_id, d.message),
-                        suggestion=d.suggestion,
-                        node_id=step_id,
-                        source=d.source,
-                        context=d.context,
-                    )
+                    replace(d, message=format_child_provenance(step_id, d.message), node_id=step_id)
                 )
             else:
                 parser_diagnostics.append(d)

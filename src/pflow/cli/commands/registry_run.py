@@ -400,26 +400,33 @@ def _display_results(
 
 def _handle_ambiguous_node(node_type: str, matches: list[str]) -> None:
     """Handle ambiguous node name with helpful error message."""
-    # Use shared formatter for CLI/MCP parity
-    from pflow.execution.formatters.registry_run_formatter import format_ambiguous_node_error
+    from pflow.core.diagnostic import Diagnostic, Severity, format_diagnostic
 
-    error_msg = format_ambiguous_node_error(node_type, matches)
-    click.echo(error_msg, err=True)
+    d = Diagnostic(
+        severity=Severity.ERROR,
+        message=f"Ambiguous node name '{node_type}'. Found in multiple servers.",
+        title="Ambiguous Node Name",
+        suggestions=[
+            f"Specify the full node ID (e.g., '{matches[0]}')" if matches else "Specify the full node ID",
+            "Use format: {server}-{tool}",
+        ],
+        source="registry",
+        context={"category": "not_found", "similar_names": sorted(matches)},
+    )
+    click.echo(format_diagnostic(d), err=True)
 
 
 def _handle_unknown_node(node_type: str, nodes: dict[str, Any]) -> None:
     """Handle unknown node with helpful suggestions."""
-    # Use shared formatter for CLI/MCP parity
-    from pflow.execution.formatters.registry_run_formatter import format_node_not_found_error
+    from pflow.execution.formatters.registry_error_helpers import build_node_not_found_diagnostic
 
-    error_msg = format_node_not_found_error(node_type, list(nodes.keys()))
-    click.echo(error_msg, err=True)
+    d = build_node_not_found_diagnostic(node_type, list(nodes.keys()))
+    click.echo(format_diagnostic(d), err=True)
 
 
 def _handle_execution_error(node_type: str, exc: Exception, verbose: bool) -> None:
-    """Handle node execution errors with context."""
-    # Use shared formatter for CLI/MCP parity
-    from pflow.execution.formatters.registry_run_formatter import format_execution_error
+    """Handle node execution errors with registry-run context."""
+    from pflow.execution.formatters.registry_error_helpers import enrich_for_registry_run
 
-    error_msg = format_execution_error(node_type, exc, verbose=verbose)
-    click.echo(error_msg, err=True)
+    for d in enrich_for_registry_run(exc, node_type):
+        click.echo(format_diagnostic(d, verbose=verbose), err=True)

@@ -67,7 +67,7 @@ class TestWorkflowExecution:
             assert (error.context or {}).get("phase") == "template_validation"
             assert error.node_id == "node1"
             assert (error.context or {}).get("node_type") == "shell"
-            assert error.suggestion == "Check your template syntax"
+            assert error.suggestions == ["Check your template syntax"]
 
     def test_runtime_failure_returns_error(self):
         """Test that runtime failures are returned without repair."""

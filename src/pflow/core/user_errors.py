@@ -4,8 +4,11 @@ This module provides base classes and utilities for creating clear, actionable
 error messages that help users resolve issues independently.
 """
 
-from typing import Any, Optional
+from __future__ import annotations
 
+from typing import Any
+
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.core.exceptions import PflowError
 
 
@@ -22,8 +25,8 @@ class UserFriendlyError(PflowError):
         self,
         title: str,
         explanation: str,
-        suggestions: Optional[list[str]] = None,
-        technical_details: Optional[str] = None,
+        suggestions: list[str] | None = None,
+        technical_details: str | None = None,
     ):
         """Initialize a user-friendly error.
 
@@ -42,16 +45,36 @@ class UserFriendlyError(PflowError):
         message = f"{title}\n\n{explanation}"
         super().__init__(message)
 
+    _diagnostic_category: str = "cli"
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.explanation,
+                title=self.title,
+                suggestions=self.suggestions or None,
+                source="runtime",
+                context={
+                    "category": self._diagnostic_category,
+                    "explanation": self.explanation,
+                    "technical_details": self.technical_details,
+                },
+            )
+        ]
+
 
 class MCPError(UserFriendlyError):
     """Error related to MCP (Model Context Protocol) functionality."""
 
+    _diagnostic_category: str = "mcp"
+
     def __init__(
         self,
         title: str = "MCP tools not available",
-        explanation: Optional[str] = None,
-        suggestions: Optional[list[str]] = None,
-        technical_details: Optional[str] = None,
+        explanation: str | None = None,
+        suggestions: list[str] | None = None,
+        technical_details: str | None = None,
     ):
         if explanation is None:
             explanation = (
@@ -76,7 +99,7 @@ class OutputResolutionError(UserFriendlyError):
     def __init__(
         self,
         failures: list[dict[str, Any]],
-        technical_details: Optional[str] = None,
+        technical_details: str | None = None,
     ):
         self.failures = failures
 
@@ -102,3 +125,27 @@ class OutputResolutionError(UserFriendlyError):
         suggestions.append("Check that source expressions reference nodes that always execute on this path")
 
         super().__init__(title, explanation, suggestions, technical_details)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        output_context: dict[str, Any] = {
+            "category": "runtime",
+            "explanation": self.explanation,
+            "technical_details": self.technical_details,
+            "failures": self.failures,
+        }
+        if self.failures:
+            first_failure = self.failures[0]
+            if first_failure.get("output_name"):
+                output_context["output_name"] = first_failure["output_name"]
+            if first_failure.get("source_expr"):
+                output_context["source_expr"] = first_failure["source_expr"]
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.explanation,
+                title=self.title,
+                suggestions=self.suggestions or None,
+                source="runtime",
+                context=output_context,
+            )
+        ]

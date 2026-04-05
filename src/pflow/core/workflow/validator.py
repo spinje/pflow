@@ -26,16 +26,10 @@ def _add_child_provenance(warnings: list[Diagnostic] | tuple[Diagnostic, ...], s
     Uses ``format_child_provenance`` so the validation and runtime propagation
     paths produce identical diagnostics that dedup naturally.
     """
+    from dataclasses import replace
+
     return [
-        Diagnostic(
-            severity=w.severity,
-            message=format_child_provenance(step_id, w.message),
-            suggestion=w.suggestion,
-            node_id=w.node_id or step_id,
-            source=w.source,
-            context=w.context,
-        )
-        for w in warnings
+        replace(w, message=format_child_provenance(step_id, w.message), node_id=w.node_id or step_id) for w in warnings
     ]
 
 
@@ -871,7 +865,7 @@ class WorkflowValidator:
                             "persist across runs. Consider '- cache: false' if this "
                             "node reads runtime state (git, env, filesystem)."
                         ),
-                        suggestion=("Add '- cache: false' if this node reads runtime state (git, env, filesystem)."),
+                        suggestions=["Add '- cache: false' if this node reads runtime state (git, env, filesystem)."],
                     )
                 )
 

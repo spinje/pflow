@@ -1,12 +1,29 @@
 """Custom exceptions for pflow."""
 
-from typing import Any, Optional
+from __future__ import annotations
+
+from typing import Any
+
+from pflow.core.diagnostic import Diagnostic, Severity
 
 
 class PflowError(Exception):
     """Base exception for all pflow errors."""
 
-    pass
+    def to_diagnostics(self) -> list[Diagnostic]:
+        """Convert to diagnostic representation. Override in subclasses for rich output."""
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Error",
+                source="runtime",
+                context={
+                    "category": "execution_failure",
+                    "exception_type": type(self).__name__,
+                },
+            )
+        ]
 
 
 class WorkflowExistsError(PflowError):
@@ -21,13 +38,33 @@ class WorkflowNotFoundError(PflowError):
     def __init__(
         self,
         workflow_name: str,
-        similar_names: Optional[list[str]] = None,
+        similar_names: list[str] | None = None,
         hint: str | None = None,
     ):
         self.workflow_name = workflow_name
         self.similar_names = similar_names or []
         self.hint = hint
         super().__init__(hint or f"Workflow '{workflow_name}' not found")
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        # When hint provides specific guidance (e.g., "convert .json to .pflow.md"),
+        # don't dilute it with generic "list workflows" suggestion.
+        suggestions = None if self.hint else ["Use 'pflow workflow list' to see all available workflows."]
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Workflow Not Found",
+                suggestions=suggestions,
+                source="runtime",
+                context={
+                    "category": "not_found",
+                    "workflow_name": self.workflow_name,
+                    "similar_names": self.similar_names,
+                    "hint": self.hint,
+                },
+            )
+        ]
 
 
 class WorkflowValidationError(PflowError):
@@ -36,11 +73,51 @@ class WorkflowValidationError(PflowError):
     def __init__(
         self,
         summary: str = "Workflow validation failed",
-        validation_errors: Optional[list[str | tuple[str, str, str]]] = None,
+        validation_errors: list[str | tuple[str, str, str]] | None = None,
     ):
         self.summary = summary
         self.validation_errors = validation_errors or []
         super().__init__(summary)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        diagnostics: list[Diagnostic] = []
+        for error in self.validation_errors:
+            if isinstance(error, tuple):
+                message = error[0] if len(error) >= 1 else str(self)
+                path = error[1] if len(error) >= 2 else ""
+                suggestion_str = error[2] or None if len(error) >= 3 else None
+                ctx: dict[str, Any] = {"category": "validation"}
+                if path:
+                    ctx["path"] = path
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        message=message,
+                        title="Validation Error",
+                        suggestions=[suggestion_str] if suggestion_str else None,
+                        source="validation",
+                        context=ctx,
+                    )
+                )
+            else:
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        message=str(error),
+                        title="Validation Error",
+                        source="validation",
+                        context={"category": "validation"},
+                    )
+                )
+        return diagnostics or [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=str(self),
+                title="Validation Error",
+                source="validation",
+                context={"category": "validation"},
+            )
+        ]
 
 
 class CriticalDiscoveryError(PflowError):
@@ -50,7 +127,7 @@ class CriticalDiscoveryError(PflowError):
     would produce nonsensical or invalid results.
     """
 
-    def __init__(self, node_name: str, reason: str, original_error: Optional[Exception] = None):
+    def __init__(self, node_name: str, reason: str, original_error: Exception | None = None):
         self.node_name = node_name
         self.reason = reason
         self.original_error = original_error
@@ -85,6 +162,21 @@ class SchemaValidationError(PflowError):
 
         super().__init__(full_message)
 
+    def to_diagnostics(self) -> list[Diagnostic]:
+        ctx: dict[str, Any] = {"category": "validation"}
+        if self.path:
+            ctx["path"] = self.path
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.message,
+                title="Validation Error",
+                suggestions=[self.suggestion] if self.suggestion else None,
+                source="validation",
+                context=ctx,
+            )
+        ]
+
 
 class MarkdownParseError(PflowError):
     """Error raised when markdown workflow content cannot be parsed.
@@ -100,6 +192,7 @@ class MarkdownParseError(PflowError):
         line: int | None = None,
         suggestion: str | None = None,
     ):
+        self.raw_message = message
         self.line = line
         self.suggestion = suggestion
         prefix = f"Line {line}: " if line is not None else ""
@@ -107,6 +200,21 @@ class MarkdownParseError(PflowError):
         if suggestion:
             full += f"\n\n{suggestion}"
         super().__init__(full)
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        ctx: dict[str, Any] = {"category": "parse_error"}
+        if self.line is not None:
+            ctx["line"] = self.line
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.raw_message,
+                title="Parse Error",
+                suggestions=[self.suggestion] if self.suggestion else None,
+                source="parser",
+                context=ctx,
+            )
+        ]
 
 
 class CompilationError(PflowError):
@@ -148,6 +256,24 @@ class CompilationError(PflowError):
 
         super().__init__("\n".join(parts))
 
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=self.raw_message,
+                title="Compilation Failed",
+                suggestions=[self.suggestion] if self.suggestion else None,
+                node_id=self.node_id,
+                source="compilation",
+                context={
+                    "category": "compilation",
+                    "phase": self.phase,
+                    "node_type": self.node_type,
+                    "sub_workflow_path": self.details.get("sub_workflow_path"),
+                },
+            )
+        ]
+
 
 class MaxNodeVisitsError(RuntimeError):
     """Raised when a node exceeds the maximum allowed visits (loop guard)."""
@@ -161,3 +287,24 @@ class MaxNodeVisitsError(RuntimeError):
             f"This likely indicates an infinite loop in the workflow. "
             f"Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional."
         )
+
+    def to_diagnostics(self) -> list[Diagnostic]:
+        return [
+            Diagnostic(
+                severity=Severity.ERROR,
+                message=(
+                    f"Node '{self.node_id}' exceeded maximum visits "
+                    f"({self.visit_count}/{self.max_visits}). "
+                    f"This likely indicates an infinite loop in the workflow."
+                ),
+                title="Infinite Loop Detected",
+                suggestions=["Set PFLOW_MAX_NODE_VISITS to increase the limit if this is intentional."],
+                node_id=self.node_id,
+                source="runtime",
+                context={
+                    "category": "max_visits",
+                    "visit_count": self.visit_count,
+                    "max_visits": self.max_visits,
+                },
+            )
+        ]

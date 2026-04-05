@@ -435,7 +435,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                         f"Unparsed content in '{section_name}' section ({line_ref}). "
                         "Content before the first ### heading is not captured."
                     ),
-                    suggestion="Move content under a ### heading, or remove it.",
+                    suggestions=["Move content under a ### heading, or remove it."],
                     source="parser",
                 )
             )
@@ -580,7 +580,7 @@ def _resolve_section(section_name: str, line_num: int) -> tuple[_SectionType, bo
         warning = Diagnostic(
             severity=Severity.WARNING,
             message=f"Line {line_num}: '## {section_name}' looks like a typo for '## {expected}'.",
-            suggestion=f"Rename to '## {expected}'.",
+            suggestions=[f"Rename to '## {expected}'."],
             source="parser",
         )
     return _SectionType.UNKNOWN, False, warning

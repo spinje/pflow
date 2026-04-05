@@ -520,3 +520,189 @@ These can be done in parallel or sequentially. The data flow cleanup is mechanic
 - Per-exception-class `to_diagnostics()` tests (in `test_exception_hierarchy.py` or `test_diagnostic.py`)
 - Rendering tests for the new one-format output (in `test_diagnostic.py`)
 - Baseline comparison test (optional: automated scorecard check)
+
+---
+
+## Phase 2: Implementation — In Progress
+
+### [2026-04-04] — Step 1: Diagnostic type changes
+
+**Changes made:**
+- `Diagnostic` dataclass: `suggestion: str | None` → `title: str | None` + `suggestions: list[str] | None`
+- Added `__post_init__` guard that raises `TypeError` if `suggestions` is a bare string (defense-in-depth against `suggestions="text"` mistakes)
+- Updated `to_dict()`: emits `"title"` and `"suggestions"` keys
+- Updated `_KNOWN_FIELDS`: added `"title"` and `"suggestions"`
+- Updated `_coerce_diagnostic()`: handles both old `"suggestion"` (wraps in list) and new `"suggestions"` keys from dicts
+- Updated ALL 28 Diagnostic constructor sites across 8 production files
+- Updated ALL `.suggestion` → `.suggestions` reads across rendering functions
+- Added `raw_message` attribute to `MarkdownParseError.__init__` (matching `CompilationError` pattern)
+- Used `dataclasses.replace()` for provenance cloning in `validator.py` and `workflow_executor.py` (future-proof against new fields)
+
+**Deviation from plan:** None. All constructors and reads updated mechanically. mypy caught every site.
+
+**Verification:** `mypy src/pflow/` → 163 files, 0 errors. `ruff check` → clean.
+
+### [2026-04-04] — Step 2: to_diagnostics() on exception classes
+
+**Changes made:**
+- Added `to_diagnostics()` to `PflowError` base class (default implementation)
+- Added `to_diagnostics()` to 6 PflowError subclasses: `CompilationError`, `WorkflowValidationError`, `SchemaValidationError`, `MarkdownParseError`, `WorkflowNotFoundError`
+- Added `to_diagnostics()` to `MaxNodeVisitsError` (RuntimeError, not PflowError)
+- Added `to_diagnostics()` to `UserFriendlyError` (base with `_diagnostic_category` class var)
+- Added `_diagnostic_category = "mcp"` override to `MCPError`
+- Added `to_diagnostics()` override to `OutputResolutionError` (unique failures data)
+- Rewrote `exception_to_diagnostics()` from 230 lines / 13 branches to ~30 lines / 2 paths (has method + builtin fallback)
+- Deleted 7 lazy imports in `exception_to_diagnostics()`
+- Added `_CATEGORY_TITLES` dict (module-level constant for title lookup)
+- Import direction flipped: `exceptions.py` now imports `Diagnostic, Severity` from `diagnostic.py`; `diagnostic.py` has zero imports from `exceptions.py`
+
+**Key insight:** The `_diagnostic_category` class variable pattern for `UserFriendlyError` → `MCPError` inheritance is cleaner than the plan's suggestion of a per-class override. MCPError just sets `_diagnostic_category = "mcp"` and inherits the base `to_diagnostics()`.
+
+**Deviation from plan:** Used class variable `_diagnostic_category` instead of separate per-class methods for UserFriendlyError hierarchy. Simpler.
+
+**Verification:** All 5 exception type round-trips tested manually. mypy clean. No circular imports.
+
+### [2026-04-04] — Step 3: One rendering format
+
+**Changes made:**
+- Replaced 6 rendering functions with single `_format_error_diagnostic()` that uses the titled format universally
+- Added `_format_location()` — builds `At:` line from node_id, path, line
+- Added `_format_all_context_blocks()` — calls ALL block renderers for ALL error types
+- Added `_format_similar_names_block()` — "Did you mean" list from `context["similar_names"]`
+- Added `_format_exception_type_line()` — shows `Type: TypeError` for generic exceptions
+- Updated `_format_compilation_context_lines()` to render `phase` (was silently dropped)
+- Deleted: `_format_validation_diagnostic`, `_format_not_found_diagnostic`, `_format_user_friendly_diagnostic`, `_format_simple_error_diagnostic`, `_format_runtime_error_diagnostic`, `_format_runtime_error_header_lines`, `_is_simple_error_diagnostic`
+
+**Deviation from plan:** None. The unified format matches target-output-design.md exactly.
+
+**Verification:** Manual test of compilation, file-not-found, and output-resolution errors. Format matches targets.
+
+### [2026-04-04] — Step 4: Data flow cleanup
+
+**Changes made:**
+- `ValidationResult.errors` now returns `list[Diagnostic]` (was `list[str]`)
+- Decided NOT to add `error_messages` property — YAGNI, no caller needs it
+- Rewrote `format_validation_failure()` — accepts both `list[Diagnostic]` and `list[str]`, compact numbered format, truncation at 5 (was 10)
+- Updated `_display_validation_result()` in `main.py` — JSON uses `to_display_dict()` for errors
+- Rewrote `_build_error_text()` in MCP `execution_service.py` — takes `list[Diagnostic]` directly instead of dict
+- Updated `build_error_list()` in `executor_service.py` — adds `title` to Diagnostics via `_CATEGORY_TITLES`
+- Simplified `_display_single_error()` — accepts `Diagnostic` directly (removed dict union type, removed coerce)
+- Simplified `_collect_warning_diagnostics()` — reads only from `result.diagnostics` (removed legacy fallback)
+- Updated `success_formatter.py` — `format_success_as_text` takes optional `warning_diagnostics` parameter
+- Kept `coerce_warning_diagnostic` alive — still used by `_display_execution_summary` which reads from serialized dict
+- Fixed `workflow_output.py:258-259` — OutputResolutionError now renders through `exception_to_diagnostics()` + `format_diagnostic()`
+- Fixed MCP `run_registry_node()` not-found path — uses Diagnostic pipeline instead of deleted formatter
+
+**Deviation from plan:** Kept coerce functions (not deleted yet) because `_display_execution_summary` reads warnings from the serialized dict format. Full deletion deferred to when we pass Diagnostics through the text path directly.
+
+### [2026-04-04] — Step 5: Bypass elimination
+
+**Changes made:**
+- Deleted `registry_run_formatter.py` entirely (3 functions, 133 lines)
+- Rewrote `_handle_unknown_node()` in `registry_run.py` — constructs `Diagnostic` directly, renders via `format_diagnostic()`
+- Rewrote `_handle_ambiguous_node()` in `registry_run.py` — constructs `Diagnostic` directly
+- Rewrote `_handle_execution_error()` in `registry_run.py` — uses `exception_to_diagnostics()` + `format_diagnostic()`
+- Updated MCP `run_registry_node()` error/except branches — uses `exception_to_diagnostics()` + `format_diagnostic()` directly
+- Removed `error_output.py` special cases for `UnicodeDecodeError` and registry `RuntimeError` — all now routed through diagnostic pipeline
+- Updated MCP `run_registry_node()` not-found path — constructs `Diagnostic` with similar names context
+
+**Deviation from plan:** Combined Step 5's MCP changes with Step 4 because they shared the same blocked mypy errors (both imported from `registry_run_formatter.py`).
+
+**Verification:** mypy passes on 162 source files (1 file deleted). ruff clean.
+
+### [2026-04-04] — Step 6: Fix all tests
+
+**42 test failures fixed** across 20 test files using 4 parallel subagents.
+
+**Failure categories and fixes:**
+1. `suggestion=` → `suggestions=[]` in test Diagnostic constructors (5 files)
+2. `.suggestion` → `.suggestions` in test assertions (4 files)
+3. Dict → Diagnostic in test data for `_display_single_error` (test_agent_ux_fixes.py)
+4. Rendering format assertions (test_validation_formatter.py completely rewritten)
+5. JSON key `"suggestion"` → `"suggestions"` (test_unified_error_output.py, test_validate_only.py)
+6. `_build_error_text` signature change (test_registry_run_mcp.py)
+7. `❌` prefix → `Error: Title` format (test_registry_run_errors.py, test_workflow_resolution.py)
+
+**Key test changes:**
+- `test_validation_formatter.py` — complete rewrite: bullet format → numbered format, truncation at 5 (was 10)
+- `test_agent_ux_fixes.py` — converted dict test data to Diagnostic objects
+- `test_registry_run_errors.py` — updated from `❌` prefix to titled format assertions
+
+### [2026-04-04] — Step 7: Final verification
+
+- `make test` → 4550 passed, 0 failed
+- `make check` → all clean (mypy, ruff, deptry)
+- Fixed pre-existing `Optional[X]` ruff warnings in `exceptions.py` and `user_errors.py` (converted to `X | None`)
+- Restored `# noqa: C901` on `format_success_as_text` (displaced by signature change)
+
+**Coerce functions kept (not deleted):** `coerce_warning_diagnostic` and `coerce_error_diagnostic` remain because `_display_execution_summary` in `workflow_output.py` reads warnings from the serialized dict format (output of `format_execution_success`). Full deletion requires passing Diagnostics through the text path directly — deferred.
+
+**Net impact:**
+- 1 file deleted (`registry_run_formatter.py`, 133 lines)
+- ~230 lines of converter code replaced by ~30 lines of thin dispatcher
+- 6 rendering paths replaced by 1 unified format
+- 9 exception classes now self-describing via `to_diagnostics()`
+- All bypass paths eliminated
+
+### [2026-04-04] — Post-implementation review fixes
+
+Ran 3 parallel review agents (silent-failures, exception-methods, impact-completeness) + self-review. All agreed: no critical issues. Fixed the warnings they surfaced:
+
+1. **Warning suggestion truncation** — `_format_warning_or_info_diagnostic` only rendered `suggestions[0]`. Now renders all items with `→` prefix each. The `suggestions` field was changed from `str` to `list[str]` specifically to support multiple items — silently dropping them defeats the purpose.
+
+2. **`PflowError.to_diagnostics()` base used `source="unknown"`** — changed to `source="runtime"` with `context={"category": "execution_failure", "exception_type": ...}` to match the old generic fallthrough. Future subclasses that don't override now get decent output instead of blank.
+
+3. **`UnicodeDecodeError` rendered as generic "Validation Error"** — `UnicodeDecodeError` is a `ValueError` subclass, so it hit the ValueError branch. Added specific branch in `_builtin_exception_diagnostic` BEFORE ValueError with user-friendly message: "File must be valid UTF-8 text."
+
+4. **`shell_command=None` crash** — pre-existing, but trivial: `context.get("shell_command", "")` doesn't protect against explicit `None` value. Changed to `context.get("shell_command") or ""`.
+
+5. **Missing test for `__post_init__` guard** — the entire rename safety net (raises TypeError on `suggestions="string"`) had no test. Added `test_suggestions_rejects_bare_string`.
+
+6. **MCP text output silently lost warnings** — `format_success_as_text()` gained a `warning_diagnostics` parameter but MCP caller didn't pass it. Updated MCP caller to pass `result.warnings`. CLI path updated to pass diagnostics directly to `_display_execution_summary`.
+
+7. **Coerce functions deleted** — `coerce_warning_diagnostic` and `coerce_error_diagnostic` had zero production consumers after the MCP/CLI fixes. Deleted both functions and their 11 tests.
+
+8. **CLAUDE.md files updated** — `src/pflow/core/CLAUDE.md` (exceptions section + user_errors section), `src/pflow/execution/CLAUDE.md` (ValidationResult.errors type), `src/pflow/execution/formatters/CLAUDE.md` (removed deleted formatter), `src/pflow/cli/CLAUDE.md` (removed formatter ref, updated workflow_errors and error_output sections).
+
+### [2026-04-04] — Baseline evaluation and regression fixes
+
+Ran `capture_baselines.py after` + `compare` against the before-baselines. The automated context-coverage metric dropped from 76% to 54%, which initially looked alarming but turned out to be a measurement artifact: the old code rendered `Category: compilation` as literal text (detected by substring), the new code expresses the same information via `title="Compilation Failed"` (not detected). The only legitimately dropped keys are `category` (expressed through title), `action` (always "error", low value), and `technical_details` (shown only with `--verbose`).
+
+**However, fixture-by-fixture comparison revealed 3 real regressions in registry bypass paths:**
+
+1. **`registry-node-not-found` lost the available nodes fallback.** When `find_similar_items` returns empty (no fuzzy match for "read-fle"), the old formatter showed "Available nodes: http, llm, read-file..." as fallback. The new Diagnostic had empty `similar_names` and showed nothing.
+
+   **Fix:** When no similar names found, fall back to `sorted(available)[:10]`. Applied to both CLI `_handle_unknown_node` and MCP `_format_node_not_found`.
+
+2. **Registry execution errors lost node_type as location context.** Old format: `"❌ Failed to execute node 'fetch'"`. New format: just the raw exception message with no node reference. The generic `exception_to_diagnostics()` path doesn't know about registry-run context.
+
+   **Fix:** Enrichment at the call site — `_handle_execution_error` and MCP `_format_registry_run_exception` set `node_id = d.node_id or node_type` on every diagnostic via `dataclasses.replace()`.
+
+3. **Registry execution errors lost node-specific suggestions.** Old `format_execution_error()` had type-aware guidance: `"Use 'registry_describe fetch'"` for generic errors, `"Try increasing timeout"` for timeouts, `"Use registry_describe"` for missing-required ValueErrors. New generic path had no suggestions for RuntimeError/ValueError.
+
+   **Fix:** `_registry_run_suggestions()` helper in `registry_run.py` adds context-aware suggestions based on exception type. Same pattern applied in MCP via `_format_registry_run_exception`.
+
+**Design principle confirmed:** The call site owns the context, the Diagnostic carries the data, the renderer is generic. When we deleted the bypass formatters and routed through the generic pipeline, we lost the context that only the call site had. The fix is enrichment at the call site, not adding special cases to the renderer.
+
+**One accepted loss:** The old `format_execution_error` had MCP-specific verbose guidance (3-step debugging checklist for `mcp-` prefixed nodes). This was highly niche and referenced internal tool names (`settings_show`) that agents wouldn't know. The `registry describe` suggestion covers the common case. Not worth adding MCP-specific branching to the enrichment.
+
+### [2026-04-04] — High-value regression tests
+
+Added 2 tests that guard the `ValidationResult.errors` type change (`list[str]` → `list[Diagnostic]`) at its actual integration points:
+
+1. `test_json_errors_are_diagnostic_dicts_not_strings` — verifies JSON validate-only output has `"severity"`, `"title"`, `"source"` keys (from `Diagnostic.to_display_dict()`), not the old `{"message": str, "category": str}` shape. Catches regression to string wrapping.
+2. `test_text_validation_failure_renders_diagnostic_fields` — verifies text output uses numbered format and does NOT contain `Diagnostic(` repr (the failure mode if Diagnostics are treated as strings by the formatter).
+
+Also filed spinje/pflow#219 for the pre-existing gap: `WorkflowValidator.validate()` returns `list[str]` errors that lack structured path/suggestion data.
+
+### [2026-04-04] — Code review fixes
+
+External code review found 2 warnings, 1 suggestion. Evaluated against current code:
+
+1. **W1 (Disputed):** "Registry run paths lose node_type" — already fixed in working tree during baseline evaluation. The review was against the staged snapshot, not the current code.
+
+2. **W2 (Confirmed):** `Diagnostic.to_dict()` leaked `suggestions` by reference — `context` was deep-copied but `suggestions` was assigned directly. Mutating the returned dict would corrupt the source Diagnostic. Fixed: `list(self.suggestions)` shallow copy. Regression test added (`test_to_dict_does_not_leak_suggestions_reference`).
+
+3. **S1 (Confirmed, different fix):** `WorkflowNotFoundError.to_diagnostics()` always appended generic "Use pflow workflow list" even when `self.hint` carried specific guidance (e.g., "Convert .json to .pflow.md"). Fixed: `suggestions=None if self.hint else [...]`. When the hint IS the guidance, don't dilute it.
+
+**Final state:** `make test` → 4543 passed, `make check` → all clean.

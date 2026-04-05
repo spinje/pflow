@@ -164,21 +164,21 @@ class TestExceptionToResultCategorization:
         assert result.errors[0].node_id is None
 
     def test_schema_validation_error_preserves_fields(self):
-        """SchemaValidationError (replacing duck-type hack) preserves path and suggestion."""
+        """SchemaValidationError (replacing duck-type hack) preserves path and suggestions."""
         exc = SchemaValidationError("bad field", path="nodes[0].type", suggestion="Use 'shell'")
         result = self._run(exc)
         assert (result.errors[0].context or {}).get("category") == "validation"
         assert result.errors[0].source == "validation"
         assert (result.errors[0].context or {}).get("path") == "nodes[0].type"
-        assert result.errors[0].suggestion == "Use 'shell'"
+        assert result.errors[0].suggestions == ["Use 'shell'"]
 
-    def test_markdown_parse_error_preserves_line_and_suggestion(self):
-        """MarkdownParseError extracts .line and .suggestion into error dict."""
+    def test_markdown_parse_error_preserves_line_and_suggestions(self):
+        """MarkdownParseError extracts .line and .suggestions into error dict."""
         exc = MarkdownParseError("bad syntax", line=42, suggestion="Add ## Steps")
         result = self._run(exc)
         assert (result.errors[0].context or {}).get("category") == "parse_error"
         assert (result.errors[0].context or {}).get("line") == 42
-        assert result.errors[0].suggestion == "Add ## Steps"
+        assert result.errors[0].suggestions == ["Add ## Steps"]
 
     def test_markdown_parse_error_with_node_annotation(self):
         """MarkdownParseError from nested workflow propagates node_id."""
@@ -190,12 +190,12 @@ class TestExceptionToResultCategorization:
         assert (result.errors[0].context or {}).get("line") == 5
 
     def test_markdown_parse_error_omits_none_fields(self):
-        """MarkdownParseError with None line/suggestion doesn't write None values."""
+        """MarkdownParseError with None line/suggestions doesn't write None values."""
         exc = MarkdownParseError("bad syntax")
         result = self._run(exc)
         assert (result.errors[0].context or {}).get("category") == "parse_error"
         assert "line" not in (result.errors[0].context or {})
-        assert result.errors[0].suggestion is None
+        assert result.errors[0].suggestions is None
 
 
 def test_node_valueerror_categorized_as_execution_failure():

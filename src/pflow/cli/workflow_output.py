@@ -8,7 +8,7 @@ from typing import Any
 
 import click
 
-from pflow.core.diagnostic import coerce_warning_diagnostic, format_diagnostic
+from pflow.core.diagnostic import Diagnostic, format_diagnostic
 
 
 def safe_output(value: Any) -> bool:
@@ -132,7 +132,9 @@ def _handle_text_output(
             warnings=warnings,
         )
 
-        _display_execution_summary(formatted, verbose)
+        # Pass warning Diagnostics directly — don't round-trip through dict
+        warning_diags = [w for w in (warnings or []) if isinstance(w, Diagnostic)]
+        _display_execution_summary(formatted, verbose, warning_diagnostics=warning_diags or None)
 
     # Now show the actual output
     output_found = False
@@ -256,7 +258,10 @@ def _populate_declared_outputs_best_effort(shared_storage: dict[str, Any], workf
     try:
         populate_declared_outputs(shared_storage, workflow_ir)
     except OutputResolutionError as e:
-        click.echo(f"Warning: {e.title}\n{e.explanation}", err=True)
+        from pflow.core.diagnostic import exception_to_diagnostics
+
+        for d in exception_to_diagnostics(e):
+            click.echo(format_diagnostic(d), err=True)
     except Exception:  # noqa: S110
         pass  # Best-effort: non-diagnostic errors silently ignored
 
@@ -512,7 +517,11 @@ def _display_workflow_completion_status(
         click.echo(f"✓ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
 
 
-def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) -> None:
+def _display_execution_summary(
+    formatted_result: dict[str, Any],
+    verbose: bool,
+    warning_diagnostics: list[Diagnostic] | None = None,
+) -> None:
     """Display execution summary with metrics in text mode.
 
     Always shows:
@@ -524,6 +533,7 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
     Args:
         formatted_result: Formatted result from format_execution_success()
         verbose: Currently unused, kept for compatibility
+        warning_diagnostics: Warning Diagnostics to render (passed directly, not from dict)
     """
     duration_ms = formatted_result.get("duration_ms")
     total_cost = formatted_result.get("total_cost_usd")
@@ -592,12 +602,11 @@ def _display_execution_summary(formatted_result: dict[str, Any], verbose: bool) 
     _display_cost_summary(total_cost, formatted_result)
 
     # Show warnings if present
-    warnings = formatted_result.get("warnings", [])
-    if warnings:
+    if warning_diagnostics:
         click.echo("", err=True)
         click.echo("⚠️ Warnings:", err=True)
-        for warning in warnings:
-            click.echo(format_diagnostic(coerce_warning_diagnostic(warning)), err=True)
+        for warning in warning_diagnostics:
+            click.echo(format_diagnostic(warning), err=True)
 
 
 def _handle_json_output(

@@ -9,9 +9,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from pflow.core.diagnostic import (
+    Diagnostic,
     Severity,
-    coerce_error_diagnostic,
-    coerce_warning_diagnostic,
     format_diagnostic,
 )
 from pflow.core.exceptions import MarkdownParseError, WorkflowNotFoundError, WorkflowValidationError
@@ -142,37 +141,40 @@ def _format_error_result(
     }
 
 
-def _build_error_text(error_dict: dict[str, Any]) -> str:
-    """Build detailed error text from error dict for MCP agent consumption.
+def _build_error_text(
+    errors: list[Diagnostic],
+    warnings: list[Diagnostic],
+    trace_path: str = "",
+) -> str:
+    """Build detailed error text from diagnostics for MCP agent consumption.
 
     Args:
-        error_dict: Formatted error dictionary from _format_error_result
+        errors: Error diagnostics from ExecutionResult
+        warnings: Warning diagnostics from ExecutionResult
+        trace_path: Optional trace file path
 
     Returns:
         Human-readable error text with shell details for agent diagnosis
     """
-    error_msg = error_dict.get("error", {}).get("message", "Workflow execution failed")
-    warnings = error_dict.get("warnings", [])
-    lines = [f"❌ {error_msg} ({len(warnings)} warnings)"] if warnings else [f"❌ {error_msg}"]
+    if not errors:
+        return "❌ Workflow execution failed"
 
-    if error_dict.get("errors"):
-        errors = error_dict["errors"][:3]
-        show_error_numbers = len(error_dict["errors"]) > 1
-        lines.append("\nError details:")
-        for index, err in enumerate(errors, 1):
-            lines.append(
-                format_diagnostic(
-                    coerce_error_diagnostic(err),
-                    error_number=index if show_error_numbers else 0,
-                )
-            )
+    lines: list[str] = []
+    if len(errors) > 1:
+        # Multi-error: summary header, then numbered diagnostics
+        lines.append("❌ Workflow execution failed")
+        for index, err in enumerate(errors[:3], 1):
+            lines.append("")
+            lines.append(format_diagnostic(err, error_number=index))
+    else:
+        # Single error: format_diagnostic provides the complete titled output
+        lines.append(format_diagnostic(errors[0]))
 
     if warnings:
         lines.append("\nWarnings:")
         for warning in warnings:
-            lines.append(format_diagnostic(coerce_warning_diagnostic(warning)))
+            lines.append(format_diagnostic(warning))
 
-    trace_path = error_dict.get("trace_path", "")
     if trace_path and Path(trace_path).exists():
         lines.append(f"\nTrace: {trace_path}")
 
@@ -252,10 +254,14 @@ class ExecutionService(BaseService):
                 success_dict = _format_success_result(result, resolved, str(workflow))
                 from pflow.execution.formatters.success_formatter import format_success_as_text
 
-                return format_success_as_text(success_dict)
+                return format_success_as_text(success_dict, warning_diagnostics=result.warnings)
             else:
-                error_dict = _format_error_result(result, resolved.ir)
-                raise RuntimeError(_build_error_text(error_dict))
+                error_diagnostics = [d for d in result.diagnostics if d.severity == Severity.ERROR]
+                warning_diagnostics = [d for d in result.diagnostics if d.severity == Severity.WARNING]
+                trace_path = (
+                    str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
+                )
+                raise RuntimeError(_build_error_text(error_diagnostics, warning_diagnostics, trace_path))
         except RuntimeError:
             raise
         except Exception as e:
@@ -282,24 +288,15 @@ class ExecutionService(BaseService):
             from pflow.execution.formatters.validation_formatter import format_validation_success
 
             msg = format_validation_success()
-            warnings = [
-                diagnostic
-                for diagnostic in getattr(vresult, "diagnostics", [])
-                if diagnostic.severity == Severity.WARNING
-            ]
-            if warnings:
-                warning_text = "\n".join(format_diagnostic(warning) for warning in warnings)
+            if vresult.warnings:
+                warning_text = "\n".join(format_diagnostic(warning) for warning in vresult.warnings)
                 msg += f"\n\nWarnings:\n{warning_text}"
             return msg
         else:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
-            msg = format_validation_failure(vresult.errors, suggestions=[])
-            extra_diagnostics = [
-                diagnostic
-                for diagnostic in getattr(vresult, "diagnostics", [])
-                if diagnostic.severity in {Severity.WARNING, Severity.INFO}
-            ]
+            msg = format_validation_failure(vresult.errors)
+            extra_diagnostics = [d for d in vresult.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
             if extra_diagnostics:
                 msg += "\n\n" + "\n".join(format_diagnostic(diagnostic) for diagnostic in extra_diagnostics)
             return msg
@@ -476,9 +473,9 @@ class ExecutionService(BaseService):
         registry = Registry()
         nodes = registry.load()
         if node_type not in nodes:
-            from pflow.execution.formatters.registry_run_formatter import format_node_not_found_error
+            from pflow.execution.formatters.registry_error_helpers import build_node_not_found_diagnostic
 
-            return format_node_not_found_error(node_type, list(nodes.keys()))
+            return format_diagnostic(build_node_not_found_diagnostic(node_type, list(nodes.keys())))
 
         # Validate parameters at system boundary (MCP concern)
         node_params: dict[str, Any] = {}
@@ -559,15 +556,17 @@ class ExecutionService(BaseService):
                     raise TypeError(f"Expected str from structure format, got {type(formatted)}")
                 return formatted
             else:
-                # Format through _format_error_result (same shape _build_error_text expects)
-                formatted_error = _format_error_result(result, synthetic_ir)
-                error_text = _build_error_text(formatted_error)
-                from pflow.execution.formatters.registry_run_formatter import format_execution_error
+                # Use diagnostic pipeline directly
 
-                return format_execution_error(node_type, RuntimeError(error_text), verbose=False)
+                error_diagnostics = result.errors
+                warning_diagnostics = result.warnings
+                trace_path = (
+                    str(result.trace.trace_path) if result.trace and hasattr(result.trace, "trace_path") else ""
+                )
+                return _build_error_text(error_diagnostics, warning_diagnostics, trace_path)
 
         except Exception as e:
             logger.error(f"Failed to run node {node_type}: {e}", exc_info=True)
-            from pflow.execution.formatters.registry_run_formatter import format_execution_error
+            from pflow.execution.formatters.registry_error_helpers import enrich_for_registry_run
 
-            return format_execution_error(node_type, e, verbose=False)
+            return "\n".join(format_diagnostic(d) for d in enrich_for_registry_run(e, node_type))
