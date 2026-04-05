@@ -207,11 +207,12 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 135: Execution Core Compile-Once Redesign
 - ✅ Task 141: Consolidate Exception Hierarchy
 - ✅ Task 143: Unified Diagnostic System
+- ✅ Task 144: Display Consolidation — Diagnostic Rendering Redesign
+- ✅ Task 145: Mermaid Workflow Visualization
 
 ### Planned Features (in order of priority)
 
 **Next**
-- Task 144: Display Consolidation — Diagnostic Rendering Redesign
 - Task 125: Human-in-the-Loop Approval Gates
 
 **v0.12.0**

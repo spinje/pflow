@@ -74,11 +74,6 @@ def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, out
         ctx.exit(1)
         return
 
-    # Show warnings on stderr (non-fatal)
-    for diagnostic in vresult.diagnostics:
-        if diagnostic.severity == Severity.WARNING:
-            click.echo(format_diagnostic(diagnostic), err=True)
-
     # Generate mermaid
     base_path = Path(resolved.file_path).parent if resolved.file_path else None
     mermaid = generate_mermaid(
