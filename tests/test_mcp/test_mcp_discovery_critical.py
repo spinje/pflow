@@ -5,12 +5,21 @@ Without these components working, users cannot discover or use MCP tools at all.
 These tests prevent complete feature failure in production.
 """
 
+import builtins
+import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.mcp import MCPDiscovery, MCPRegistrar, MCPServerManager
 from pflow.registry import Registry
+
+httpx = pytest.importorskip("httpx")
+
+_ExceptionGroup = getattr(builtins, "ExceptionGroup", None)
 
 
 class TestMCPDiscoveryCritical:
@@ -226,3 +235,44 @@ class TestMCPRegistrarCritical:
             assert "mcp-github-list-issues" not in remaining
             assert "mcp-slack-send-message" in remaining  # Different server
             assert "read-file" in remaining  # Non-MCP node
+
+    @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup requires Python 3.11+")
+    def test_sync_server_returns_diagnostic_with_suggestions_on_failure(self):
+        """When discovery fails, sync_server should return a Diagnostic with suggestions.
+
+        CRITICAL: Without this, the CLI falls back to raw ExceptionGroup text
+        with no actionable guidance — the exact bug this refactor fixes.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "mcp-servers.json"
+            registry_path = Path(tmpdir) / "registry.json"
+
+            manager = MCPServerManager(config_path=config_path)
+            registry = Registry(registry_path=registry_path)
+            discovery = MCPDiscovery(manager=manager)
+            registrar = MCPRegistrar(registry=registry, manager=manager, discovery=discovery)
+
+            manager.add_server(name="test", transport="stdio", command="test-cmd", args=[])
+
+            # Simulate a 401 wrapped in ExceptionGroup (the real MCP SDK pattern)
+            response_mock = type("Response", (), {"status_code": 401, "text": ""})()
+            inner_exc = httpx.HTTPStatusError("Client error '401 Unauthorized'", request=None, response=response_mock)
+            exc_group = _ExceptionGroup("unhandled errors in a TaskGroup", [inner_exc])
+
+            with patch.object(discovery, "discover_tools", side_effect=exc_group):
+                result = registrar.sync_server("test")
+
+            # Must have structured error, not ExceptionGroup garbage
+            assert "error" in result
+            assert "unhandled errors" not in result["error"]
+            assert "Authentication failed" in result["error"]
+
+            # Must have Diagnostic with suggestions for CLI rendering
+            assert "diagnostic" in result
+            diagnostic = result["diagnostic"]
+            assert isinstance(diagnostic, Diagnostic)
+            assert diagnostic.severity == Severity.ERROR
+            assert diagnostic.suggestions is not None
+            assert len(diagnostic.suggestions) > 0
+            assert diagnostic.context is not None
+            assert "technical_details" in diagnostic.context

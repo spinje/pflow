@@ -12,6 +12,7 @@ mcp/
 ├── types.py           # TypedDicts for server configs, tool schemas, registry entries
 ├── utils.py           # Parse mcp-<server>-<tool> names (handles hyphenated server names)
 ├── auth_utils.py      # Env var expansion (${VAR}, ${VAR:-default}) + auth header building
+├── errors.py          # Shared MCP SDK error handling: ExceptionGroup unwrapping + Diagnostic creation
 ├── discovery.py       # Connect to MCP servers, list tools, convert schemas to pflow format
 ├── manager.py         # CRUD for ~/.pflow/mcp-servers.json (standard MCP config format)
 ├── registrar.py       # Bridge: discovered tools → virtual pflow registry entries

@@ -111,8 +111,18 @@ class MCPRegistrar:
             # Don't show server output during sync (not verbose)
             tools = self.discovery.discover_tools(server_name, verbose=False)
         except Exception as e:
-            logger.exception("Failed to discover tools")
-            return {"server": server_name, "tools_discovered": 0, "tools_registered": 0, "error": str(e)}
+            from pflow.mcp.errors import describe_mcp_error
+
+            # Get the original MCP exception (before RuntimeError wrapping in discover_tools)
+            original = e.__cause__ if e.__cause__ else e
+            diagnostic = describe_mcp_error(original)
+            return {
+                "server": server_name,
+                "tools_discovered": 0,
+                "tools_registered": 0,
+                "error": diagnostic.message,
+                "diagnostic": diagnostic,
+            }
 
         # Load complete registry (unfiltered) to avoid persisting a filtered subset
         nodes = self.registry.load(include_filtered=True)
