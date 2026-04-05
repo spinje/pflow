@@ -12,19 +12,28 @@ import click
     default="LR",
     help="Graph direction: LR (left-to-right) or TD (top-down)",
 )
+@click.option(
+    "-o",
+    "--output",
+    type=click.Path(),
+    default=None,
+    help="Write Mermaid output to file instead of stdout",
+)
 @click.pass_context
-def visualize(ctx: click.Context, workflow: str, depth: int, direction: str) -> None:
+def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, output: str | None) -> None:
     """Generate a Mermaid flowchart from a workflow.
 
     Validates the workflow first (same checks as --validate-only).
     On validation failure, shows diagnostics and exits with code 1.
-    On success, outputs Mermaid syntax to stdout.
+    On success, outputs Mermaid syntax to stdout (or to file with -o).
 
     Examples:
 
         pflow visualize workflow.pflow.md
 
         pflow visualize my-saved-workflow --depth 2
+
+        pflow visualize workflow.pflow.md -o diagram.mmd
 
         pflow visualize workflow.pflow.md --direction TD
     """
@@ -80,4 +89,8 @@ def visualize(ctx: click.Context, workflow: str, depth: int, direction: str) -> 
         direction=direction,
     )
 
-    click.echo(mermaid)
+    if output:
+        Path(output).write_text(mermaid, encoding="utf-8")
+        click.echo(f"Mermaid diagram written to {output}", err=True)
+    else:
+        click.echo(mermaid)

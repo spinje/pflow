@@ -355,17 +355,18 @@ pflow visualize my-saved-workflow
 The command validates the workflow first (same checks as `--validate-only`). On validation failure, it shows diagnostics and exits with code 1. On success, it outputs Mermaid syntax to stdout.
 
 ```bash
-# Copy diagram to clipboard
-pflow visualize workflow.pflow.md | pbcopy
-
 # Save to file
-pflow visualize workflow.pflow.md > diagram.mmd
+pflow visualize workflow.pflow.md -o diagram.mmd
+
+# Or pipe to clipboard
+pflow visualize workflow.pflow.md | pbcopy
 ```
 
 Mermaid renders natively in GitHub, VS Code, and most markdown viewers — no extra tooling needed.
 
 | Option | Description |
 |--------|-------------|
+| `-o, --output FILE` | Write Mermaid output to file instead of stdout |
 | `--depth N` | Sub-workflow expansion depth (default: 1, 0 = no expansion) |
 | `--direction LR\|TD` | Graph direction: left-to-right or top-down (default: LR) |
 

@@ -83,8 +83,8 @@ pflow ./workflow.pflow.md --no-cache
 # Inspect a node in detail (resolved command, stderr, timing)
 pflow ./workflow.pflow.md --only node-name --report
 
-# See the workflow graph (outputs Mermaid flowchart)
-pflow visualize ./workflow.pflow.md
+# See the workflow graph (saves Mermaid flowchart to file)
+pflow visualize ./workflow.pflow.md -o graph.mmd
 ```
 
 ### Instructions for building workflows
