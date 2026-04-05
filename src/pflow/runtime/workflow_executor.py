@@ -196,10 +196,13 @@ class WorkflowExecutor(BaseNode):
             registry = None
 
         try:
+            params = dict(child_params)  # Copy — don't mutate caller's dict
+            if workflow_path and workflow_path != "<inline>":
+                params["_pflow_workflow_file"] = str(Path(workflow_path).resolve())
             compiled = compile_workflow(
                 copy.deepcopy(workflow_ir),  # Protect against concurrent mutation in parallel batch
                 registry=registry or Registry(),
-                initial_params=dict(child_params),  # Copy — don't mutate caller's dict
+                initial_params=params,
             )
         except CompilationError as e:
             if not e.details:
@@ -229,10 +232,6 @@ class WorkflowExecutor(BaseNode):
         child_params = prep_res["child_params"]
         storage_mode = prep_res["storage_mode"]
         parent_shared = prep_res.get("parent_shared", {})
-
-        # Ensure child workflow can resolve file references relative to its own location
-        if workflow_path and workflow_path != "<inline>":
-            child_params["_pflow_workflow_file"] = str(Path(workflow_path).resolve())
 
         logger.debug(f"Executing sub-workflow from {workflow_source} (path: {workflow_path})")
 

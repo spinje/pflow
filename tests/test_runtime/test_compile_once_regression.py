@@ -433,6 +433,56 @@ def test_compile_once_for_file_based_sub_workflow(tmp_path: Path):
     assert len(results) == 3, f"Expected 3 batch results, got {len(results)}"
 
 
+def test_parallel_batch_workflow_resolves_child_file_refs(tmp_path: Path):
+    """File references in child workflows resolve correctly under parallel batch.
+
+    Regression test for GH-225: when a workflow node is in a parallel batch,
+    _pre_warm_compile_cache() compiles the sub-workflow. If _compile_sub_workflow()
+    doesn't inject _pflow_workflow_file, file references in the child resolve
+    relative to CWD instead of the child's directory.
+    """
+    # Create child workflow in a subdirectory with a sibling script
+    child_dir = tmp_path / "child"
+    child_dir.mkdir()
+    (child_dir / "greet.sh").write_text('echo "hello from child dir"')
+
+    child_md = child_dir / "child.pflow.md"
+    child_md.write_text(
+        "# Child\n\nA child workflow.\n\n## Steps\n\n### greet\n\nRun greeting.\n\n"
+        "- type: shell\n- command: ./greet.sh\n"
+    )
+
+    # Parent workflow: workflow node in a parallel batch
+    parent_ir: dict[str, Any] = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "run-children",
+                "type": "workflow",
+                "params": {"workflow": str(child_md)},
+                "batch": {
+                    "items": [{"name": "a"}, {"name": "b"}],
+                    "parallel": True,
+                },
+            },
+        ],
+        "edges": [],
+    }
+
+    registry = Registry()
+    workflow = compile_workflow(parent_ir, registry=registry)
+    shared: dict[str, Any] = dict(workflow.resolved_defaults)
+    engine = WorkflowEngine()
+    result = engine.run(workflow, shared)
+
+    assert result == "default", f"Workflow failed: {shared}"
+    results = shared.get("run-children", {}).get("results", [])
+    assert len(results) == 2
+    for item_result in results:
+        greet_output = item_result.get("greet", {})
+        assert greet_output.get("stdout") == "hello from child dir"
+
+
 def test_resolved_defaults_do_not_leak_between_batch_items(tmp_path: Path):
     """Cached resolved_defaults must not leak per-item coerced values between items.
 
