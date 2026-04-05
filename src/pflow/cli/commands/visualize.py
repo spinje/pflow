@@ -5,7 +5,7 @@ import click
 
 @click.command("visualize")
 @click.argument("workflow")
-@click.option("--depth", type=int, default=1, help="Sub-workflow expansion depth (0 = no expansion)")
+@click.option("--depth", type=click.IntRange(min=0), default=1, help="Sub-workflow expansion depth (0 = no expansion)")
 @click.option(
     "--direction",
     type=click.Choice(["LR", "TD"], case_sensitive=True),
@@ -56,7 +56,7 @@ def visualize(ctx: click.Context, workflow: str, depth: int, direction: str) -> 
     if not vresult.valid:
         from pflow.execution.formatters.validation_formatter import format_validation_failure
 
-        click.echo(format_validation_failure(vresult.errors, suggestions=None), err=True)
+        click.echo(format_validation_failure(vresult.errors), err=True)
         extra = [d for d in vresult.diagnostics if d.severity in {Severity.WARNING, Severity.INFO}]
         if extra:
             click.echo("", err=True)

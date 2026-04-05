@@ -308,9 +308,48 @@ This is consistent with how `main.py` handles the same exception type. The `form
 
 ---
 
+## PR Review Fixes (2026-04-05)
+
+PR #222 review (claude[bot]) found 2 warnings and 4 suggestions. Accepted 3, disputed 3.
+
+### Fix 4: Pipe character escaping in `_escape_label`
+
+**Warning**: `_escape_label` only escaped `"` but edge labels use `-->|label|` syntax — a pipe in the label would break the Mermaid output.
+
+**Assessment**: Action values are node IDs today (constrained to `^[a-z][a-z0-9_-]*$`, no pipes possible), but the fix is one `.replace()` call and makes the function correct for any future use.
+
+**Fix**: Added `.replace("|", "&#124;")` to `_escape_label`.
+
+### Fix 5: Negative `--depth` values accepted silently
+
+**Warning**: `--depth -1` is accepted by Click and behaves like `--depth 0`, which is confusing.
+
+**Fix**: Changed `type=int` to `type=click.IntRange(min=0)`. Click now rejects negative values with a clear error message.
+
+### Fix 6: Debug logging in `_try_resolve_child`
+
+**Suggestion**: The bare `except Exception` swallows errors without logging, making it hard to debug why a workflow node renders as opaque.
+
+**Fix**: Added `logger.debug("Failed to resolve sub-workflow for node '%s'", node.get("id", "?"), exc_info=True)`. Matches the validator's equivalent pattern in `_load_child_workflow`.
+
+### Disputed: `direction` validation in `generate_mermaid`
+
+The CLI validates via `click.Choice`. The function just formats `f"graph {direction}"`. Adding validation to a pure formatting function for a parameter that only one consumer passes is over-engineering.
+
+### Disputed: Re-export from `workflow/__init__.py`
+
+The `__init__.py` has only a docstring — no re-exports. Every consumer uses direct imports. Adding selective re-exports would break this established pattern.
+
+### Disputed: Test for empty `nodes: []`
+
+This tests Python `for` loop semantics on an empty list, not our code.
+
+---
+
 ## Final State
 
 - `make check` passes (ruff + mypy + deptry)
-- `make test` passes (4460 tests, +2 from review fixes)
+- `make test` passes (4460 tests)
+- PR: https://github.com/spinje/pflow/pull/222
 - No backwards-incompatible changes to public APIs
 - One behavioral change: executor propagates `WorkflowNotFoundError` instead of wrapping in `ValueError` (better error output, Runner catches both)

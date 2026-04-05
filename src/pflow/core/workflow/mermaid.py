@@ -1,9 +1,12 @@
 """Generate Mermaid flowchart diagrams from workflow IR."""
 
+import logging
 from pathlib import Path
 from typing import Any, Callable, Optional
 
 from pflow.core.workflow.sub_workflow_resolver import SubWorkflowResult
+
+logger = logging.getLogger(__name__)
 
 
 def generate_mermaid(
@@ -130,6 +133,7 @@ def _try_resolve_child(
     try:
         result = resolve_child(params, base_path)
     except Exception:
+        logger.debug("Failed to resolve sub-workflow for node '%s'", node.get("id", "?"), exc_info=True)
         return None
 
     if result is None:
@@ -154,5 +158,5 @@ def _to_mermaid_id(node_id: str) -> str:
 
 
 def _escape_label(text: str) -> str:
-    """Escape special characters for Mermaid node labels."""
-    return text.replace('"', "&quot;")
+    """Escape special characters for Mermaid node and edge labels."""
+    return text.replace('"', "&quot;").replace("|", "&#124;")
