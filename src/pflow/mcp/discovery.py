@@ -72,7 +72,6 @@ class MCPDiscovery:
             raise ValueError(f"MCP server '{server_name}' not found. Available servers: {available}")
 
         try:
-            # Run async discovery in sync context
             return asyncio.run(self._discover_async(server_name, server_config, verbose))
         except Exception as e:
             from pflow.mcp.errors import describe_mcp_error

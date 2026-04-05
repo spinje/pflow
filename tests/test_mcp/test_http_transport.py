@@ -423,12 +423,13 @@ class TestHTTPTransportExecution:
         result = node.exec_fallback(prep_res, exc)
         assert "timed out" in result["error"]
 
-        # Test 401 error
+        # Test 401 error — must include both message AND suggestion
         response_mock = Mock()
         response_mock.status_code = 401
         exc = httpx.HTTPStatusError("Auth failed", request=None, response=response_mock)
         result = node.exec_fallback(prep_res, exc)
         assert "Authentication failed" in result["error"]
+        assert "credentials" in result["error"].lower() or "token" in result["error"].lower()
 
         # Test 429 error
         response_mock.status_code = 429

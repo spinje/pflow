@@ -472,8 +472,11 @@ class MCPNode(Node):
 
         diagnostic = describe_mcp_error(exc, timeout=self._timeout)
         error_msg = f"MCP tool failed: {diagnostic.message}"
+        if diagnostic.suggestions:
+            error_msg += f" {diagnostic.suggestions[0]}"
         logger.debug(
             error_msg,
+            exc_info=True,
             extra={
                 "server": prep_res.get("server"),
                 "tool": prep_res.get("tool"),

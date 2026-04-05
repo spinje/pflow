@@ -46,10 +46,15 @@ def configure_logging(verbose: bool) -> None:
         "httpcore.http11",
         "urllib3",
         "composio",
-        "mcp",
         "streamable_http",
     ]:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
+
+    # Fully silence the MCP SDK — pflow handles all MCP errors through its own
+    # diagnostic pipeline. The SDK's internal ERROR logs (e.g., JSON parse failures
+    # from stdio servers) are redundant and produce raw tracebacks that contradict
+    # pflow's clean error output.
+    logging.getLogger("mcp").setLevel(logging.CRITICAL)
 
     if not verbose:
         # In non-verbose mode, also suppress INFO from pflow itself

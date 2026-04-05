@@ -40,7 +40,7 @@ def describe_mcp_error(exc: BaseException, *, timeout: Optional[int] = None) -> 
     """
     root = unwrap_exception_group(exc)
     name = type(root).__name__
-    technical_details = str(exc)
+    technical_details = str(root)
 
     # httpx HTTP status errors (401, 403, 429, 5xx, etc.)
     if name == "HTTPStatusError":
@@ -160,6 +160,15 @@ def _describe_http_status_error(exc: BaseException, technical_details: str) -> D
             title="Server Error",
             message=f"Server error (HTTP {status}).",
             suggestions=["The server encountered an internal error — try again later"],
+            context={"technical_details": technical_details},
+        )
+
+    if status is None:
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="mcp",
+            title="HTTP Error",
+            message=str(exc)[:200],
             context={"technical_details": technical_details},
         )
 

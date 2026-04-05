@@ -390,6 +390,7 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbos
 
     total_discovered = 0
     total_registered = 0
+    has_failures = False
 
     for result in results:
         server = result["server"]
@@ -400,6 +401,7 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbos
         total_registered += registered
 
         if "error" in result:
+            has_failures = True
             click.echo(f"  ✗ {server}: {result['error']}", err=True)
             diagnostic = result.get("diagnostic")
             if diagnostic:
@@ -414,6 +416,9 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbos
             click.echo(f"  ✓ {server}: {discovered} discovered, {registered} registered")
 
     click.echo(f"\nTotal: {total_discovered} tools discovered, {total_registered} registered")
+
+    if has_failures and not verbose:
+        click.echo("Run with --verbose for technical error details.", err=True)
 
     # Update sync metadata after successful sync
     registry = Registry()

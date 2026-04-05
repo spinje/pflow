@@ -164,3 +164,19 @@ class TestDescribeMcpError:
         exc = ValueError("any error")
         d = describe_mcp_error(exc)
         assert d.source == "mcp"
+
+    @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup requires Python 3.11+")
+    def test_technical_details_contains_inner_error_not_wrapper(self):
+        """technical_details should contain the actual error, not the ExceptionGroup wrapper.
+
+        str(ExceptionGroup) is just 'unhandled errors in a TaskGroup (1 sub-exception)'
+        which is useless for --verbose output. Must show the inner exception's details.
+        """
+        inner = self._make_http_status_error(401)
+        group = _ExceptionGroup("unhandled errors in a TaskGroup", [inner])
+
+        d = describe_mcp_error(group)
+
+        technical = d.context["technical_details"]
+        assert "unhandled errors" not in technical
+        assert "401" in technical
