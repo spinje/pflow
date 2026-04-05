@@ -5,6 +5,135 @@ icon: "clock"
 rss: true
 ---
 
+<Update label="April 2026" description="v0.11.0" tags={["New releases", "Improvements", "Breaking changes"]}>
+  ## Execution core and iteration speed
+
+  We rebuilt the execution core with a standalone orchestration engine that compiles workflows once per batch, dropping compilation overhead to near zero. A new SQLite-backed memoization cache lets you iterate rapidly by re-using results for unchanged nodes.
+
+  ```bash
+  # Re-run a workflow, executing only 'target-node' and its dependencies
+  pflow my-workflow.pflow.md --only target-node
+  ```
+
+  <Note>
+    The memoization cache is automatically propagated to all nesting levels, meaning unchanged sub-workflows and nodes safely serve cached results without re-executing.
+  </Note>
+
+  **Highlights**
+  - Redesigned the execution core to compile sub-workflows once per batch, yielding a ~7x speedup for large parallel iterations.
+  - Added a persistent memoization cache system with `--only` and `--no-cache` CLI flags for precise, rapid iteration control.
+  - Added per-node cache opt-out support via the `cache: false` property.
+  - Fixed concurrent mutation issues in the workflow executor during compilation.
+  - Fixed an intermittent bug where zombie threads caused stream corruption (`I/O operation on closed file`) in Python code nodes.
+
+  ## Execution reports and traces
+
+  The trace system has been redesigned from flat JSON snapshots to a tree-structured format. You can now generate navigable Markdown reports that display exact rendered prompts, outputs, and LLM costs for every node.
+
+  ```bash
+  # Generate a directory of Markdown execution reports
+  pflow my-workflow.pflow.md --report-dir ./report/
+  ```
+
+  <Tip>
+    Because execution reports are saved as standard directories of Markdown files, you can use `git diff report/` to easily compare prompt renders and outputs between workflow runs.
+  </Tip>
+
+  **Highlights**
+  - Added the `--report` flag to generate a directory of Markdown files detailing execution, including input/output token breakdowns and rendered templates.
+  - Upgraded trace format to 2.0.0: uses tree-structured events that correctly nest batch items and sub-workflows without truncating data.
+  - Added smart anomaly detection in reports to flag empty outputs (like dropped HTTP bodies) and provide template fix suggestions.
+  - Cross-cutting infrastructure keys and LLM costs now propagate correctly through deeply nested sub-workflows.
+  - Added LLM parameters (temperature, reasoning effort, system prompt) to node metadata in reports.
+  - Fixed cache invalidation for sub-workflow changes and eliminated phantom cost reporting in traces.
+
+  ## File references and workflow bundling
+
+  Code block parameters can now reference external files directly. To support this safely, `pflow workflow save` now bundles workflows and their file dependencies into self-contained directories.
+
+  ```markdown
+  ### analyze-code
+  - type: llm
+  - prompt: ./prompts/code-review.md
+  ```
+
+  **Highlights**
+  - Code-block parameters (`prompt`, `code`, `command`, `batch`, `output_schema`) can now reference external files. The system auto-detects paths, reads the files, and resolves templates inside them at compile time.
+  - `pflow workflow save` now packages workflows as folders containing the entry point and all referenced dependencies, preserving relative directory structures.
+  - Added per-item parameter overrides in batch nodes — each item can set its own `model`, `reasoning_effort`, or any other node parameter, so a single batch can mix providers or effort levels.
+  - Added the `inputs` parameter as template context for all node types, not just code nodes.
+  - Fixed relative path resolution so sub-workflow dependencies always resolve against the sub-workflow's directory, not the current working directory.
+  - File references in sub-workflows are now fully resolved before validation.
+
+  ## Validation and diagnostics
+
+  We rebuilt the CLI error output pipeline and validation engine. Every error now renders in a single diagnostic format — title, location, context block, and fix suggestion (e.g., "Did you mean 'file_path'?") — consistent across text and JSON output. The parser catches deeper structural issues before execution begins.
+
+  ```bash
+  # Visualize workflow structure using Mermaid
+  pflow visualize workflow.pflow.md --direction TD
+  ```
+
+  **Highlights**
+  - Added the `pflow visualize` command to generate Mermaid flowcharts of workflow topologies.
+  - Unified diagnostic rendering into a single, structured format with self-describing exceptions for both CLI text and JSON outputs.
+  - Added recursive sub-workflow validation at parse time to catch structural errors, unknown node types, and missing required inputs before execution.
+  - Added a 120-second default timeout to LLM nodes to prevent workflows from hanging indefinitely on stalled API calls.
+  - LLM nodes now catch `JSONDecodeError` when `output_schema` fails, preserving the raw text in the response and returning a soft error.
+  - Improved the markdown parser to detect orphaned content, duplicate section headings, and provide actionable errors for unquoted colons in YAML parameters.
+  - Fixed a bug where type annotations in Python code YAML inputs (e.g., `text: str = ${ref}`) were incorrectly parsed as literal values.
+  - Unified output auto-detection across CLI, JSON, and MCP interfaces.
+  - Added a CLI hint suggesting `pflow mcp sync` when a registry search returns no results but matching MCP servers exist.
+  - Fixed an issue where the registry cache would not refresh after a package upgrade.
+  - Fixed issues with template deduplication, double validation, raw string parsing in single-line YAML, and bash syntax correctness.
+  - Fixed missing error details in JSON output, dead code in error display paths, and redundant template resolution.
+
+  <Accordion title="Breaking changes">
+    ### Workflow save format
+    Workflows are now saved as folders (`~/.pflow/workflows/{name}/{name}.pflow.md`), not flat files. This change enables proper file dependency bundling but will break existing symlinks for published skills.
+
+    ### Unknown parameters block execution
+    Unknown parameter detection was promoted from non-blocking warnings to blocking validation errors to catch typos early. Typos like `- path:` instead of `- file_path:` will now prevent execution.
+
+    ### Unified JSON error shape
+    All error paths in the CLI now produce a single, unified JSON shape.
+
+    <CodeGroup>
+      ```json Before
+      {
+        "success": false,
+        "is_error": true,
+        "failed_node": "fetch"
+      }
+      ```
+
+      ```json After
+      {
+        "success": false,
+        "status": "failed",
+        "error": "Execution failed",
+        "errors": [{"message": "...", "category": "..."}]
+      }
+      ```
+    </CodeGroup>
+
+    ### Batch error handling
+    - Batch nodes now abort with a `RuntimeError` when all items fail and `error_handling: continue` is set, rather than returning garbage data.
+    - Batch nodes no longer swallow compilation errors under `continue` mode.
+    - When `continue` mode recovers from partial failures, it now returns a `"default"` action and sets a `DEGRADED` status instead of returning an `"error"` action that halts the workflow.
+    - Sub-workflow error actions and permissive batch template errors are now properly propagated and detected in batch processing.
+
+    ### Removal of internal nodes
+    The experimental `git`, `github`, `test`, and `echo` nodes have been completely removed from the registry and documentation.
+
+    ### Workflow termination
+    The engine now recognizes `"end"` and error-only successors as intentional workflow terminations rather than validation failures.
+
+    ### Trace format and LLM calls
+    The parallel `__llm_calls__` accumulator was removed. Trace events are now the single source of truth for LLM costs. Trace format has been bumped to 2.0.0, removing all value truncation and replacing full-store snapshots (`shared_before`/`shared_after`) with focused per-node parameters.
+  </Accordion>
+</Update>
+
 <Update label="March 2026" description="v0.10.0" tags={["New releases", "Improvements", "Bug fixes", "Breaking changes"]}>
   ## Branch convergence
 
