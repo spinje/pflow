@@ -29,6 +29,9 @@ pflow examples/real-workflows/generate-changelog/workflow.pflow.md mintlify_file
 pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
   since_tag=v0.5.0 to_ref=v0.6.0
 
+# Force a minor release (skip auto-detection)
+pflow examples/real-workflows/generate-changelog/workflow.pflow.md version_type=minor
+
 # Custom output paths
 pflow examples/real-workflows/generate-changelog/workflow.pflow.md \
   changelog_file=RELEASE_NOTES.md releases_dir=release-notes
@@ -98,6 +101,16 @@ changelog entries after all files are written.
 - type: string
 - required: false
 - default: releases
+
+### version_type
+
+Force a specific release type instead of computing it from changelog
+entries. When empty, the type is auto-detected: Removed/Changed = major,
+Added = minor, otherwise patch.
+
+- type: string
+- required: false
+- default: ""
 
 ## Steps
 
@@ -451,11 +464,13 @@ triggers minor, anything else is patch, and the date is today.
     entries: ${enrich-drafts.result}
     current_tag: ${resolve-tag.result}
     to_ref: ${to_ref}
+    version_type: ${version_type}
 
 ```python code
 entries: list
 current_tag: str
 to_ref: str
+version_type: str
 
 import subprocess
 from datetime import datetime
@@ -464,7 +479,9 @@ drafts = [e['draft'] for e in entries]
 has_breaking = any(d.startswith(('Removed', 'Changed')) for d in drafts)
 has_features = any(d.startswith('Added') for d in drafts)
 
-if has_breaking:
+if version_type in ('major', 'minor', 'patch'):
+    bump_type = version_type
+elif has_breaking:
     bump_type = 'major'
 elif has_features:
     bump_type = 'minor'

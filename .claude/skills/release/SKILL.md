@@ -48,14 +48,20 @@ git log --oneline <since_tag>..HEAD | wc -l
 
 ### 3. Run the changelog workflow
 
+If the user hasn't specified a release type (major, minor, or patch), ask them before running:
+
+> "Do you want to force a release type (major/minor/patch), or let the workflow auto-detect from the changelog entries? Auto-detection uses: Removed/Changed = major, Added = minor, otherwise patch."
+
+Then run the workflow, passing `version_type=<choice>` if they specified one:
+
 ```bash
-uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag>
+uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> version_type=<type>
 ```
 
 To skip the Slack notification, pass an empty channel (the workflow uses conditional branching to skip Slack steps automatically):
 
 ```bash
-uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> slack_channel=""
+uv run pflow examples/real-workflows/generate-changelog/workflow.pflow.md since_tag=<tag> version_type=<type> slack_channel=""
 ```
 
 This produces three file outputs:
