@@ -5,7 +5,7 @@ import click
 
 @click.command("visualize")
 @click.argument("workflow")
-@click.option("--depth", type=click.IntRange(min=0), default=1, help="Sub-workflow expansion depth (0 = no expansion)")
+@click.option("--depth", type=click.IntRange(min=0), default=5, help="Sub-workflow expansion depth (0 = no expansion)")
 @click.option(
     "--direction",
     type=click.Choice(["LR", "TD"], case_sensitive=True),

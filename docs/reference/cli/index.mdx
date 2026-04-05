@@ -367,7 +367,7 @@ Mermaid renders natively in GitHub, VS Code, and most markdown viewers — no ex
 | Option | Description |
 |--------|-------------|
 | `-o, --output FILE` | Write Mermaid output to file instead of stdout |
-| `--depth N` | Sub-workflow expansion depth (default: 1, 0 = no expansion) |
+| `--depth N` | Sub-workflow expansion depth (default: 5, 0 = no expansion) |
 | `--direction LR\|TD` | Graph direction: left-to-right or top-down (default: LR) |
 
 Sub-workflow nodes (`type: workflow`) expand into `subgraph` blocks showing their internal structure. Use `--depth 0` to render them as opaque nodes, or `--depth 2` to expand nested sub-workflows:
