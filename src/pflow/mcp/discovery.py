@@ -72,11 +72,13 @@ class MCPDiscovery:
             raise ValueError(f"MCP server '{server_name}' not found. Available servers: {available}")
 
         try:
-            # Run async discovery in sync context
             return asyncio.run(self._discover_async(server_name, server_config, verbose))
         except Exception as e:
-            logger.exception(f"Failed to discover tools from {server_name}")
-            raise RuntimeError(f"Tool discovery failed for {server_name}: {e}") from e
+            from pflow.mcp.errors import describe_mcp_error
+
+            diagnostic = describe_mcp_error(e)
+            logger.debug("Discovery failed for %s: %s", server_name, diagnostic.message, exc_info=True)
+            raise RuntimeError(f"Tool discovery failed for {server_name}: {diagnostic.message}") from e
 
     async def _discover_async(
         self, server_name: str, server_config: dict[str, Any], verbose: bool = False
@@ -203,54 +205,49 @@ class MCPDiscovery:
 
         tools_list = []
 
-        try:
-            async with (
-                streamablehttp_client(url=url, headers=headers, timeout=timeout, sse_read_timeout=sse_timeout) as (
-                    read,
-                    write,
-                    get_session_id,
-                ),
-                ClientSession(read, write) as session,
-            ):
-                # Initialize handshake
-                await session.initialize()
+        async with (
+            streamablehttp_client(url=url, headers=headers, timeout=timeout, sse_read_timeout=sse_timeout) as (
+                read,
+                write,
+                get_session_id,
+            ),
+            ClientSession(read, write) as session,
+        ):
+            # Initialize handshake
+            await session.initialize()
 
-                session_id = get_session_id()
-                logger.debug(f"Initialized HTTP connection to {server_name}, session: {session_id}")
+            session_id = get_session_id()
+            logger.debug(f"Initialized HTTP connection to {server_name}, session: {session_id}")
 
-                # List available tools (same as stdio)
-                tools_response = await session.list_tools()
+            # List available tools (same as stdio)
+            tools_response = await session.list_tools()
 
-                for tool in tools_response.tools:
-                    tool_def: dict[str, Any] = {
-                        "name": tool.name,
-                        "description": tool.description or f"MCP tool from {server_name}",
-                        "server": server_name,
-                    }
+            for tool in tools_response.tools:
+                tool_def: dict[str, Any] = {
+                    "name": tool.name,
+                    "description": tool.description or f"MCP tool from {server_name}",
+                    "server": server_name,
+                }
 
-                    # Extract input schema (same as stdio)
-                    if hasattr(tool, "inputSchema") and tool.inputSchema:
-                        schema = tool.inputSchema
-                        if hasattr(schema, "model_dump"):
-                            schema = schema.model_dump()
-                        tool_def["inputSchema"] = dict(schema)
-                    else:
-                        tool_def["inputSchema"] = {"type": "object", "properties": {}, "required": []}
+                # Extract input schema (same as stdio)
+                if hasattr(tool, "inputSchema") and tool.inputSchema:
+                    schema = tool.inputSchema
+                    if hasattr(schema, "model_dump"):
+                        schema = schema.model_dump()
+                    tool_def["inputSchema"] = dict(schema)
+                else:
+                    tool_def["inputSchema"] = {"type": "object", "properties": {}, "required": []}
 
-                    # Extract output schema if available (same as stdio)
-                    if hasattr(tool, "outputSchema") and tool.outputSchema:
-                        schema = tool.outputSchema
-                        if hasattr(schema, "model_dump"):
-                            schema = schema.model_dump()
-                        tool_def["outputSchema"] = dict(schema)
+                # Extract output schema if available (same as stdio)
+                if hasattr(tool, "outputSchema") and tool.outputSchema:
+                    schema = tool.outputSchema
+                    if hasattr(schema, "model_dump"):
+                        schema = schema.model_dump()
+                    tool_def["outputSchema"] = dict(schema)
 
-                    tools_list.append(tool_def)
+                tools_list.append(tool_def)
 
-                logger.info(f"Discovered {len(tools_list)} tools from HTTP server {server_name}")
-
-        except Exception:
-            logger.exception(f"Error during HTTP discovery for {server_name}")
-            raise
+            logger.info(f"Discovered {len(tools_list)} tools from HTTP server {server_name}")
 
         return tools_list
 
@@ -280,7 +277,7 @@ class MCPDiscovery:
                 all_tools[server_name] = tools
                 logger.info(f"Discovered {len(tools)} tools from {server_name}")
             except Exception:
-                logger.exception(f"Failed to discover tools from {server_name}")
+                logger.debug("Failed to discover tools from %s", server_name, exc_info=True)
                 all_tools[server_name] = []  # Empty list for failed servers
 
         return all_tools

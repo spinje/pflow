@@ -423,18 +423,19 @@ class TestHTTPTransportExecution:
         result = node.exec_fallback(prep_res, exc)
         assert "timed out" in result["error"]
 
-        # Test 401 error
+        # Test 401 error — must include both message AND suggestion
         response_mock = Mock()
         response_mock.status_code = 401
         exc = httpx.HTTPStatusError("Auth failed", request=None, response=response_mock)
         result = node.exec_fallback(prep_res, exc)
         assert "Authentication failed" in result["error"]
+        assert "credentials" in result["error"].lower() or "token" in result["error"].lower()
 
         # Test 429 error
         response_mock.status_code = 429
         exc = httpx.HTTPStatusError("Rate limited", request=None, response=response_mock)
         result = node.exec_fallback(prep_res, exc)
-        assert "Rate limited" in result["error"]
+        assert "Too many requests" in result["error"]
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="ExceptionGroup requires Python 3.11+")
@@ -504,20 +505,19 @@ class TestExceptionGroupUnwrapping:
         assert "Authentication failed" in result["error"]
         assert "outer group" not in result["error"]
 
-    def test_extract_error_regex_fallback_for_http_401(self):
-        """_extract_error_from_exception_group regex should catch 401 in string form.
+    def test_describe_mcp_error_handles_mcp_error_string(self):
+        """describe_mcp_error should extract McpError message from plain exceptions.
 
-        This is the safety net for when ExceptionGroup unwrapping fails to find
-        a real httpx object (e.g., if the exception is serialized or from a
-        different library).
+        When the exception is not an ExceptionGroup but contains McpError text,
+        the shared function should extract the meaningful message.
         """
-        node = MCPNode()
-        exc_str = "ExceptionGroup: unhandled errors in a TaskGroup (1 sub-exception)\nClient error '401 Unauthorized'"
+        from pflow.mcp.errors import describe_mcp_error
 
-        result = node._extract_error_from_exception_group(exc_str)
+        exc = Exception("McpError: Connection closed")
+        diagnostic = describe_mcp_error(exc)
 
-        assert "Authentication failed" in result
-        assert "credentials" in result.lower()
+        assert "Connection closed" in diagnostic.message
+        assert "McpError" not in diagnostic.message
 
 
 class TestHTTPDiscovery:

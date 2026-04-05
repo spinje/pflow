@@ -370,12 +370,13 @@ def _validate_sync_arguments(name: Optional[str], all_servers: bool) -> None:
         sys.exit(1)
 
 
-def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> None:
+def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar, verbose: bool = False) -> None:
     """Sync tools from all configured servers.
 
     Args:
         manager: MCPServerManager instance
         registrar: MCPRegistrar instance
+        verbose: Whether to show technical error details
     """
     from pflow.registry import Registry
 
@@ -389,6 +390,7 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> Non
 
     total_discovered = 0
     total_registered = 0
+    has_failures = False
 
     for result in results:
         server = result["server"]
@@ -399,11 +401,24 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> Non
         total_registered += registered
 
         if "error" in result:
+            has_failures = True
             click.echo(f"  ✗ {server}: {result['error']}", err=True)
+            diagnostic = result.get("diagnostic")
+            if diagnostic:
+                if diagnostic.suggestions:
+                    for suggestion in diagnostic.suggestions:
+                        click.echo(f"    → {suggestion}", err=True)
+                context = diagnostic.context or {}
+                technical = context.get("technical_details")
+                if verbose and technical:
+                    click.echo(f"    Detail: {technical[:200]}", err=True)
         else:
             click.echo(f"  ✓ {server}: {discovered} discovered, {registered} registered")
 
     click.echo(f"\nTotal: {total_discovered} tools discovered, {total_registered} registered")
+
+    if has_failures and not verbose:
+        click.echo("Run with --verbose for technical error details.", err=True)
 
     # Update sync metadata after successful sync
     registry = Registry()
@@ -415,13 +430,14 @@ def _sync_all_servers(manager: MCPServerManager, registrar: MCPRegistrar) -> Non
     registry.set_metadata("mcp_servers_hash", servers_hash)
 
 
-def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegistrar) -> None:
+def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegistrar, verbose: bool = False) -> None:
     """Sync tools from a single server.
 
     Args:
         name: Server name to sync
         manager: MCPServerManager instance
         registrar: MCPRegistrar instance
+        verbose: Whether to show technical error details
 
     Raises:
         SystemExit: If server not found or sync fails
@@ -434,7 +450,13 @@ def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegi
     result = registrar.sync_server(name)
 
     if "error" in result:
-        click.echo(f"Error: {result['error']}", err=True)
+        diagnostic = result.get("diagnostic")
+        if diagnostic:
+            from pflow.core.diagnostic import format_diagnostic
+
+            click.echo(format_diagnostic(diagnostic, verbose=verbose), err=True)
+        else:
+            click.echo(f"Error: {result['error']}", err=True)
         sys.exit(1)
 
     discovered = result["tools_discovered"]
@@ -466,7 +488,8 @@ def _display_registered_tools(server_name: str, registered_count: int, registrar
 @mcp.command(name="sync")
 @click.argument("name", required=False)
 @click.option("--all", "-a", "all_servers", is_flag=True, help="Sync all configured servers")
-def sync(name: Optional[str], all_servers: bool) -> None:
+@click.option("--verbose", "-v", is_flag=True, help="Show technical error details for failed servers")
+def sync(name: Optional[str], all_servers: bool, verbose: bool) -> None:
     """Discover and register tools from MCP servers.
 
     Examples:
@@ -480,10 +503,10 @@ def sync(name: Optional[str], all_servers: bool) -> None:
 
     try:
         if all_servers:
-            _sync_all_servers(manager, registrar)
+            _sync_all_servers(manager, registrar, verbose=verbose)
         else:
             if name:
-                _sync_single_server(name, manager, registrar)
+                _sync_single_server(name, manager, registrar, verbose=verbose)
             else:
                 click.echo("Error: No server name provided", err=True)
                 return
