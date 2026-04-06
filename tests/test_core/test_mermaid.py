@@ -928,7 +928,7 @@ def test_data_flow_edges_from_params() -> None:
     # Data-flow edge: producer → consumer's data input
     assert "producer --> consumer__in_data" in out
     # Data-flow edge: parent input → consumer's config input
-    assert "in_my_input --> consumer__in_config" in out
+    assert "input_my_input --> consumer__in_config" in out
     # Structural edge routes through outputs (consumer has none, so subgraph box)
     assert "producer --> consumer" in out
 

@@ -123,6 +123,8 @@ def _resolve_ref_source(
             return next(iter(out_dict.values()))
         return mermaid_id
     if ref_name in ctx.parent_inputs:
+        if not ctx.prefix:
+            return None  # Depth 0: handled by _connect_top_level_inputs
         return _to_mermaid_id(f"{ctx.prefix}in_{ref_name}")
     return None
 
@@ -216,20 +218,23 @@ def _generate_data_flow_edges(
     child_ir: dict[str, Any],
     child_prefix: str,
     ctx: MermaidContext,
-) -> None:
+) -> bool:
     """Generate edges from upstream nodes to sub-workflow input nodes.
 
     Parses template refs in the parent node's ``params`` to find which
     sibling nodes or parent inputs feed each child input.  For example,
     ``creative_direction: ${creative-direction.response}`` generates an
     edge from ``creative-direction`` to the child's ``in_creative_direction``.
+
+    Returns True if at least one data-flow edge was generated.
     """
     child_inputs = child_ir.get("inputs", {})
     if not child_inputs:
-        return
+        return False
 
     params = node.get("params", {})
     batch_source = _extract_batch_source(node, ctx)
+    generated = False
 
     for param_name, param_value in params.items():
         if param_name in _RESERVED_PARAMS or param_name not in child_inputs:
@@ -242,6 +247,9 @@ def _generate_data_flow_edges(
             source_mid = _resolve_ref_source(ref_name, batch_source, ctx)
             if source_mid:
                 ctx.lines.append(f"{ctx.indent}{source_mid} --> {target_mid}")
+                generated = True
+
+    return generated
 
 
 def _generate_batch_item_data_flow(

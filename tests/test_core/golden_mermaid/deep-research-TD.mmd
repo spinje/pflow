@@ -1,0 +1,105 @@
+graph TD
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph workflow-inputs ["workflow inputs"]
+        input_sources[/"sources (array, required)"/]:::input
+        input_focus[/"focus (string, required)"/]:::input
+    end
+    style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    prepare["prepare (code)"]:::code
+    subgraph analyze-sources-in ["analyze-sources inputs"]
+        analyze-sources__in_content[/"content (string)"/]:::input
+        analyze-sources__in_focus[/"focus (string)"/]:::input
+    end
+    style analyze-sources-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    analyze-sources__in_content --> analyze-sources__extract
+    analyze-sources__in_focus --> analyze-sources__extract
+    subgraph analyze-sources ["analyze-sources (parallel x|prepare|)"]
+        analyze-sources__extract(["extract (llm)"]):::llm
+        subgraph analyze-sources__score-in ["score inputs"]
+            analyze-sources__score__in_text[/"text (string)"/]:::input
+            analyze-sources__score__in_criteria[/"criteria (string)"/]:::input
+        end
+        style analyze-sources__score-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        analyze-sources__score__in_text --> analyze-sources__score__evaluate
+        analyze-sources__score__in_criteria --> analyze-sources__score__evaluate
+        subgraph analyze-sources__score ["score (workflow)"]
+            analyze-sources__score__evaluate(["evaluate (llm)"]):::llm
+            analyze-sources__score__normalize["normalize (code)"]:::code
+            analyze-sources__score__evaluate --> analyze-sources__score__normalize
+        end
+        style analyze-sources__score fill:#808080,fill-opacity:0.21,stroke:#999
+        subgraph analyze-sources__score-out ["score outputs"]
+            analyze-sources__score__out_score(["score"]):::output
+            analyze-sources__score__out_reasoning(["reasoning"]):::output
+        end
+        style analyze-sources__score-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        analyze-sources__score__normalize --> analyze-sources__score__out_score
+        analyze-sources__score__evaluate --> analyze-sources__score__out_reasoning
+        analyze-sources__extract --> analyze-sources__score__in_text
+        analyze-sources__in_focus --> analyze-sources__score__in_criteria
+        analyze-sources__compile["compile (code)"]:::code
+        analyze-sources__score__out_score --> analyze-sources__compile
+        analyze-sources__score__out_reasoning --> analyze-sources__compile
+    end
+    style analyze-sources fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph analyze-sources-out ["analyze-sources outputs"]
+        analyze-sources__out_analysis(["analysis"]):::output
+        analyze-sources__out_quality_score(["quality_score"]):::output
+    end
+    style analyze-sources-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    analyze-sources__compile --> analyze-sources__out_analysis
+    analyze-sources__score__out_score --> analyze-sources__out_quality_score
+    prepare --> analyze-sources__in_content
+    prepare --> analyze-sources__in_focus
+    combine["combine (code)"]:::code
+    subgraph reviews ["reviews (parallel x5)"]
+        subgraph reviews__accuracy ["accuracy (workflow)"]
+        reviews__accuracy__in_summary[/"summary (string)"/]:::input
+        reviews__accuracy__in_aspect[/"aspect (string)"/]:::input
+        reviews__accuracy__in_summary --> reviews__accuracy__critique
+        reviews__accuracy__in_aspect --> reviews__accuracy__critique
+        reviews__accuracy__critique(["critique (llm)"]):::llm
+        reviews__accuracy__out_review_text(["review_text"]):::output
+        reviews__accuracy__critique --> reviews__accuracy__out_review_text
+        end
+        style reviews__accuracy fill:#808080,fill-opacity:0.14,stroke:#999
+        subgraph reviews__completeness ["completeness (workflow)"]
+        reviews__completeness__in_summary[/"summary (string)"/]:::input
+        reviews__completeness__in_aspect[/"aspect (string)"/]:::input
+        reviews__completeness__in_summary --> reviews__completeness__critique
+        reviews__completeness__in_aspect --> reviews__completeness__critique
+        reviews__completeness__critique(["critique (llm)"]):::llm
+        reviews__completeness__out_review_text(["review_text"]):::output
+        reviews__completeness__critique --> reviews__completeness__out_review_text
+        end
+        style reviews__completeness fill:#808080,fill-opacity:0.14,stroke:#999
+        reviews__dots@{ shape: procs, label: "... x5" }
+        style reviews__dots fill:#FFF2CC,stroke:#D6B656,color:#000
+    end
+    style reviews fill:#808080,fill-opacity:0.14,stroke:#999
+    combine --> reviews__accuracy__in_summary
+    combine --> reviews__completeness__in_summary
+    final-report["final-report (code)"]:::code
+    input_sources --> prepare
+    input_focus --> prepare
+    subgraph workflow-outputs ["workflow outputs"]
+        out_report(["report"]):::output
+    end
+    style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    final-report --> out_report
+    analyze-sources__out_analysis --> combine
+    analyze-sources__out_quality_score --> combine
+    combine --> reviews__accuracy
+    combine --> reviews__completeness
+    combine --> reviews__dots
+    reviews__accuracy__out_review_text --> final-report
+    reviews__completeness__out_review_text --> final-report
+    reviews__dots --> final-report

@@ -178,12 +178,13 @@ def _render_node(node: dict[str, Any], ctx: MermaidContext) -> None:
             # 3. External output wrapper (AFTER subgraph, replaces _populate_outgoing_map)
             _render_external_outputs(child_result.ir, node_id, ctx, child_outgoing)
 
-            # 4. Data-flow edges and routing maps (SAME as before)
+            # 4. Data-flow edges and routing maps
             child_inputs = child_result.ir.get("inputs", {})
             if child_inputs:
                 child_prefix = ctx.prefix + node_id + "__"
-                _generate_data_flow_edges(node, child_result.ir, child_prefix, ctx)
-                ctx.data_flow_targets.add(mermaid_id)
+                has_data_flow = _generate_data_flow_edges(node, child_result.ir, child_prefix, ctx)
+                if has_data_flow:
+                    ctx.data_flow_targets.add(mermaid_id)
                 ctx.incoming_map[mermaid_id] = {
                     name: _to_mermaid_id(f"{child_prefix}in_{name}") for name in child_inputs
                 }

@@ -708,3 +708,79 @@ The change is entirely in `_render_inputs` in `_io.py` — input node mermaid ID
 
 - 72 mermaid tests pass, `make check` clean, 4653 full suite pass
 - Visual review of lyrics-generator in both TD and LR directions confirmed clean layout
+
+## PR #228 Code Review Fixes (2026-04-06)
+
+Addressed two findings from the code review. Two others were disputed.
+
+### Addressed
+
+1. **`_SUBGRAPH_OPACITIES` comment** (S3) — added `# linear ramp, each depth level gets 7% more opaque`.
+
+2. **Hardcoded local path in golden tests** (W1) — replaced lyrics-generator golden tests (external repo at `/Users/andfal/projects/music-generation/...`) with a new in-repo `deep-research` example that covers all 9 unique structural patterns the lyrics-generator exercised.
+
+### Disputed (no action)
+
+- **W2: `__init__.py` exports private names** — deliberate. The 5 underscore-prefixed functions are internal to the package but need test access. Re-exporting in `__init__.py` avoids tests reaching into `_context` or `_edges` directly. Dropping the underscore would incorrectly signal public API.
+- **S1: `_to_mermaid_id` no-op** — serves as semantic marker (call sites say "this is a mermaid ID") and future extension point. Docstring explains why no transformation is needed. Removing it would scatter that reasoning across 40+ call sites.
+
+## Deep Research Example (2026-04-06)
+
+### Design
+
+Created `examples/nested/deep-research/` with 4 workflow files covering 9 structural patterns no other in-repo example exercises:
+
+```
+deep-research.pflow.md          # Main: dynamic batch + static parallel with 5 items
+├── analyze-source.pflow.md     # Per-document analysis (depth 1)
+│   └── score-section.pflow.md  # Quality scoring (depth 2)
+└── review-aspect.pflow.md      # Single reviewer template (depth 1, 5 parallel items)
+```
+
+| Pattern | Where |
+|---------|-------|
+| Batch items as workflow subgraphs | `analyze-sources` dynamic batch → `analyze-source.pflow.md` |
+| Depth 3 nesting | main → analyze-source → score-section |
+| IO wrappers on dynamic batch | `analyze-sources` input/output boxes |
+| Output-box → input-box chains | `analyze-sources` output → `combine` → `reviews` input |
+| Static parallel with workflow items | `reviews` with 5 items → `review-aspect.pflow.md` |
+| `... xN` dots elision | 5 review items (>4, shows 2 + dots) |
+| Cross-boundary data-flow edges | `prepare` → `analyze-sources__in_*` |
+| Nested output passthrough | `score-section` output surfaced through `analyze-source` outputs |
+
+### Bugs Exposed and Fixed
+
+The deep-research example exposed three interconnected bugs in the rendering pipeline that the lyrics-generator never triggered:
+
+**Bug 1: Phantom `in_focus` node at depth 0.** `_resolve_ref_source` returned `_to_mermaid_id(f"{prefix}in_{ref_name}")` for parent input refs. At depth 0, prefix is empty, producing `in_focus` — but top-level input nodes use `input_focus`. Mermaid auto-created a phantom node from the dangling edge reference.
+
+**Root cause**: At depth 0, parent input connections are handled by `_connect_top_level_inputs`, not data-flow edges. `_resolve_ref_source` should return None.
+
+**Fix**: In `_resolve_ref_source` (`_edges.py:125`), return None when `ctx.prefix` is empty.
+
+**Bug 2: Structural edge suppression too aggressive.** `data_flow_targets` was populated unconditionally when a sub-workflow had child inputs, even when `_generate_data_flow_edges` generated zero edges (all refs skipped). This caused `prepare → analyze-sources` to be suppressed — `prepare` appeared as a dead end with no outgoing connections.
+
+**Root cause**: `ctx.data_flow_targets.add(mermaid_id)` ran whenever `child_inputs` was non-empty, independent of whether any data-flow edges were actually generated.
+
+**Fix**: `_generate_data_flow_edges` now returns `bool`. Only add to `data_flow_targets` when True.
+
+**Bug 3: `_connect_top_level_inputs` wrong name mapping.** When a node param maps a workflow input to a differently-named child input (`config: ${my_input}` where child input is `config`, workflow input is `my_input`), `_connect_top_level_inputs` failed to route through the input wrapper. It looked up `my_input` in `incoming_map` (keyed by child input names), missed, and fell back to the subgraph box.
+
+**Root cause**: `_connect_input_from_params` collected all param string values but lost the param NAME. It checked `in_dict.get(input_name)` (workflow input name) when it should check `in_dict.get(param_name)` (child input name).
+
+**Fix**: Rewrote `_connect_input_from_params` to iterate `(param_name, param_value)` pairs, trying `in_dict.get(param_name)` first, then `in_dict.get(input_name)` as fallback.
+
+**Why the lyrics-generator never triggered these**: (1) No depth-0 node directly referenced parent inputs in sub-workflow params — all refs were `${item.*}` (skipped) or sibling refs. (2) Since all data-flow refs at depth 0 were skipped, no data-flow edges were generated, so `data_flow_targets` was empty for sub-workflows that only had batch item refs. (3) The lyrics-generator's sub-workflow params used matching names (`content: ${item.content}` where child input is also `content`).
+
+### Updated CLI Help and Docs
+
+- Updated `visualize --help` to document `.md` output wrapping and show `--descriptions` in examples
+- Updated `docs/reference/cli/index.mdx` with `--descriptions` flag, `.md` output docs, and current mermaid example syntax
+- Updated `cli-basic-usage.md` agent instructions: `.mmd` → `.md` in example
+
+### Final Test Counts
+
+- `test_mermaid.py`: 55 unit tests
+- `test_mermaid_golden.py`: 7 golden tests (5 original + 2 deep-research, lyrics-generator removed)
+- `test_visualize.py`: 10 CLI tests
+- Full suite: 4653 passing, `make check` clean

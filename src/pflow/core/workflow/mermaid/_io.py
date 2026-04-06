@@ -5,7 +5,6 @@ from typing import Any, Optional
 from pflow.core.workflow.mermaid._context import (
     _SOURCE_NODE_FIELD_RE,
     MermaidContext,
-    _collect_param_refs,
     _escape_label,
     _refs_input,
     _to_mermaid_id,
@@ -80,17 +79,29 @@ def _connect_input_from_params(
     ctx: MermaidContext,
 ) -> None:
     """Connect top-level inputs referenced in node params."""
-    all_refs = _collect_param_refs(node.get("params", {}))
-    for ref_value in all_refs:
-        for input_name in inputs:
-            if not _refs_input(ref_value, input_name):
-                continue
-            target = in_dict.get(input_name, mermaid_id)
-            source = _to_mermaid_id(f"input_{input_name}")
-            edge_key = f"{source}->{target}"
-            if edge_key not in connected:
-                ctx.lines.append(f"    {source} --> {target}")
-                connected.add(edge_key)
+    params = node.get("params", {})
+    for param_name, param_value in params.items():
+        # Check direct string values
+        values_to_check = []
+        if isinstance(param_value, str):
+            values_to_check.append((param_name, param_value))
+        elif isinstance(param_value, dict):
+            # Nested dicts (e.g., code node inputs: {name: "${ref}"})
+            for nested_name, nested_val in param_value.items():
+                if isinstance(nested_val, str):
+                    values_to_check.append((nested_name, nested_val))
+
+        for child_param_name, ref_value in values_to_check:
+            for input_name in inputs:
+                if not _refs_input(ref_value, input_name):
+                    continue
+                # Route through input wrapper if the child param name matches
+                target = in_dict.get(child_param_name, in_dict.get(input_name, mermaid_id))
+                source = _to_mermaid_id(f"input_{input_name}")
+                edge_key = f"{source}->{target}"
+                if edge_key not in connected:
+                    ctx.lines.append(f"    {source} --> {target}")
+                    connected.add(edge_key)
 
 
 def _connect_input_from_batch(

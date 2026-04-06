@@ -49,7 +49,7 @@ _PARAM_REF_RE = re.compile(r"\$\{([a-zA-Z0-9_-]+)(?:\.|\})")
 # Workflow types eligible for sub-workflow expansion
 _WORKFLOW_TYPES = {"workflow", "pflow.runtime.workflow_executor"}
 
-# Subgraph nesting opacity levels
+# Subgraph nesting opacity: linear ramp, each depth level gets 7% more opaque
 _SUBGRAPH_OPACITIES = [0.07, 0.14, 0.21, 0.28]
 
 
