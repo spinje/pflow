@@ -193,6 +193,48 @@ class TestVisualizeNestedWorkflowExpansion:
         assert "subgraph" in result.output
 
 
+class TestVisualizeMarkdownOutput:
+    """The -o flag with .md extension wraps mermaid in a markdown document."""
+
+    def test_md_output_wraps_with_title_and_description(self, tmp_path: Path) -> None:
+        """Output to .md wraps mermaid in a markdown doc with title and description."""
+        workflow_path = tmp_path / "wf.pflow.md"
+        workflow_path.write_text(
+            "# My Cool Workflow\n\nThis workflow does amazing things.\n\n"
+            "## Steps\n\n### step1\n\nDoes a thing nicely.\n\n- type: shell\n- command: echo hi\n"
+        )
+        output_path = tmp_path / "diagram.md"
+
+        result = _invoke([str(workflow_path), "-o", str(output_path)])
+
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}\noutput: {result.output}"
+        content = output_path.read_text()
+        assert content.startswith("# My Cool Workflow\n")
+        assert "This workflow does amazing things." in content
+        assert "```mermaid\n" in content
+        assert "graph LR" in content
+        assert content.rstrip().endswith("```")
+
+    def test_mmd_output_is_raw(self, tmp_path: Path) -> None:
+        """Output to .mmd stays raw mermaid (no markdown wrapping)."""
+        ir = {
+            "nodes": [
+                {"id": "step1", "type": "shell", "params": {"command": "echo hi"}},
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "wf.pflow.md"
+        write_workflow_file(ir, workflow_path)
+        output_path = tmp_path / "diagram.mmd"
+
+        result = _invoke([str(workflow_path), "-o", str(output_path)])
+
+        assert result.exit_code == 0
+        content = output_path.read_text()
+        assert content.startswith("graph LR\n")
+        assert "```mermaid" not in content
+
+
 class TestVisualizeDescriptionsFlag:
     """The --descriptions flag adds node purpose text to labels."""
 

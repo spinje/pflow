@@ -273,7 +273,11 @@ def _connect_top_level_inputs(
 
 
 def _collect_param_refs(params: dict[str, Any]) -> list[str]:
-    """Collect all string values from params, including nested dicts."""
+    """Collect all string values from params, including one level of nested dicts.
+
+    Code nodes store declared inputs at ``params.inputs`` (a nested dict),
+    so we recurse one level to find those refs too.
+    """
     refs: list[str] = []
     for value in params.values():
         if isinstance(value, str):
@@ -359,23 +363,12 @@ def _render_top_level_outputs(
         out_name_map[name] = out_mid
 
     lines.append("    end")
-    lines.append("    style workflow-outputs fill:#fafafa,stroke:#bbb,stroke-dasharray:4 4")
+    lines.append("    style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4")
 
     # Connect producing nodes to outputs
     for name, config in outputs.items():
-        out_mid = out_name_map[name]
         source = config.get("source", "") if isinstance(config, dict) else ""
-        for src_node, field in _SOURCE_NODE_FIELD_RE.findall(source):
-            if src_node not in node_ids:
-                continue
-            src_mid = _to_mermaid_id(src_node)
-            child_outputs = outgoing_map.get(src_mid, {})
-            if field in child_outputs:
-                lines.append(f"    {child_outputs[field]} --> {out_mid}")
-            elif len(child_outputs) == 1:
-                lines.append(f"    {next(iter(child_outputs.values()))} --> {out_mid}")
-            else:
-                lines.append(f"    {src_mid} --> {out_mid}")
+        _connect_sources_to_output(source, out_name_map[name], node_ids, "", lines, "    ", outgoing_map)
 
     return output_ids
 
@@ -404,8 +397,45 @@ def _render_subworkflow_inputs(ir: dict[str, Any], lines: list[str], indent: str
         lines.append(f"{indent}{mermaid_id} --> {_to_mermaid_id(prefix + start_node)}")
 
 
-_SOURCE_NODE_RE = re.compile(r"(?:^|[\s{?])([a-zA-Z0-9_-]+)\.")
 _SOURCE_NODE_FIELD_RE = re.compile(r"(?:^|[\s{?])([a-zA-Z0-9_-]+)\.([a-zA-Z0-9_-]+)")
+
+
+def _connect_sources_to_output(
+    source: str,
+    out_mid: str,
+    node_ids: set[str],
+    id_prefix: str,
+    lines: list[str],
+    indent: str,
+    *outgoing_maps: dict[str, dict[str, str]],
+) -> None:
+    """Connect producing nodes to an output node by parsing a source expression.
+
+    Scans ``source`` for ``${node.field}`` refs and emits edges from each
+    producing node (or its output node, if expanded) to ``out_mid``.
+
+    Args:
+        id_prefix: Prepended to source node IDs for mermaid ID lookup.
+        outgoing_maps: One or more outgoing maps, checked in order.
+            First map with a match wins (supports child→parent cascade).
+    """
+    for src_node, field in _SOURCE_NODE_FIELD_RE.findall(source):
+        if src_node not in node_ids:
+            continue
+        src_mid = _to_mermaid_id(id_prefix + src_node)
+        # Find the first outgoing map that has this source
+        child_outputs: dict[str, str] = {}
+        for omap in outgoing_maps:
+            found = omap.get(src_mid)
+            if found:
+                child_outputs = found
+                break
+        if field in child_outputs:
+            lines.append(f"{indent}{child_outputs[field]} --> {out_mid}")
+        elif len(child_outputs) == 1:
+            lines.append(f"{indent}{next(iter(child_outputs.values()))} --> {out_mid}")
+        else:
+            lines.append(f"{indent}{src_mid} --> {out_mid}")
 
 
 def _render_subworkflow_outputs(
@@ -438,20 +468,8 @@ def _render_subworkflow_outputs(
         lines.append(f'{indent}{out_mid}(["{label}"]):::output')
         output_ids.append(out_mid)
 
-        # Parse source to find producing nodes (with field names for output matching)
         source = config.get("source", "") if isinstance(config, dict) else ""
-        for src_node, field in _SOURCE_NODE_FIELD_RE.findall(source):
-            if src_node not in node_ids:
-                continue
-            src_mid = _to_mermaid_id(prefix + src_node)
-            # Route through subgraph's output if it has a matching one
-            child_outputs = _outgoing.get(src_mid, {})
-            if field in child_outputs:
-                lines.append(f"{indent}{child_outputs[field]} --> {out_mid}")
-            elif len(child_outputs) == 1:
-                lines.append(f"{indent}{next(iter(child_outputs.values()))} --> {out_mid}")
-            else:
-                lines.append(f"{indent}{src_mid} --> {out_mid}")
+        _connect_sources_to_output(source, out_mid, node_ids, prefix, lines, indent, _outgoing)
 
     return output_ids
 
@@ -590,7 +608,7 @@ def _render_external_inputs(
         mermaid_id = _to_mermaid_id(f"{child_prefix}in_{name}")
         lines.append(f'{inner_indent}{mermaid_id}[/"{label}"/]:::input')
     lines.append(f"{indent}end")
-    lines.append(f"{indent}style {wrapper_id} fill:#fafafa,stroke:#bbb,stroke-dasharray:4 4")
+    lines.append(f"{indent}style {wrapper_id} fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4")
 
     # Cross-boundary edges: input → child's start node
     start_mid = _to_mermaid_id(child_prefix + start_node)
@@ -645,28 +663,17 @@ def _render_external_outputs(
         out_name_map[name] = out_mid
 
     lines.append(f"{indent}end")
-    lines.append(f"{indent}style {wrapper_id} fill:#fafafa,stroke:#bbb,stroke-dasharray:4 4")
+    lines.append(f"{indent}style {wrapper_id} fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4")
 
-    # Cross-boundary edges: internal producing nodes → external outputs
-    # Same source-field parsing as _render_subworkflow_outputs.
+    # Cross-boundary edges: internal producing nodes → external outputs.
     # Check child_outgoing_map first (nested sub-workflow outputs from
     # the child's own _render_workflow), then fall back to parent outgoing_map.
     _child_out = child_outgoing_map or {}
     for name, config in outputs.items():
-        out_mid = out_name_map[name]
         source = config.get("source", "") if isinstance(config, dict) else ""
-        for src_node, field in _SOURCE_NODE_FIELD_RE.findall(source):
-            if src_node not in node_ids:
-                continue
-            src_mid = _to_mermaid_id(child_prefix + src_node)
-            # Route through nested subgraph's output if it has a matching one
-            child_outputs = _child_out.get(src_mid) or outgoing_map.get(src_mid, {})
-            if field in child_outputs:
-                lines.append(f"{indent}{child_outputs[field]} --> {out_mid}")
-            elif len(child_outputs) == 1:
-                lines.append(f"{indent}{next(iter(child_outputs.values()))} --> {out_mid}")
-            else:
-                lines.append(f"{indent}{src_mid} --> {out_mid}")
+        _connect_sources_to_output(
+            source, out_name_map[name], node_ids, child_prefix, lines, indent, _child_out, outgoing_map
+        )
 
     # Populate outgoing_map for structural edge routing
     outgoing_map[mermaid_id] = out_name_map
@@ -1124,6 +1131,7 @@ def _render_node(
                 seen,
                 direction,
                 descriptions,
+                purpose=purpose,
                 suppress_io=True,
             )
 
@@ -1164,22 +1172,17 @@ def _render_node(
         lines.append(f'{indent}{mermaid_id}{shape_open}"{label}"{shape_close}:::{css_class}')
 
 
-_SUBGRAPH_FILLS = [
-    "#f5f5f5",  # depth 1: lightest
-    "#ebebeb",  # depth 2
-    "#e0e0e0",  # depth 3
-    "#d6d6d6",  # depth 4+: most contrast
-]
+_SUBGRAPH_OPACITIES = [0.07, 0.14, 0.21, 0.28]
 
 
 def _subgraph_style(mermaid_id: str, depth: int) -> str:
     """Return a Mermaid style directive for subgraph nesting depth.
 
-    Uses progressively darker neutral grays. Mermaid's parser does not
-    support ``rgba()`` so we use fixed hex values.
+    Uses a neutral gray with increasing ``fill-opacity`` so nesting is
+    visible on both light and dark themes.
     """
-    fill = _SUBGRAPH_FILLS[min(depth, len(_SUBGRAPH_FILLS) - 1)]
-    return f"style {mermaid_id} fill:{fill},stroke:#999"
+    opacity = _SUBGRAPH_OPACITIES[min(depth, len(_SUBGRAPH_OPACITIES) - 1)]
+    return f"style {mermaid_id} fill:#808080,fill-opacity:{opacity},stroke:#999"
 
 
 def _dynamic_batch_label(batch: Optional[dict[str, Any]]) -> str:
@@ -1215,6 +1218,7 @@ def _render_subgraph(
     seen: set[str],
     direction: str,
     descriptions: bool,
+    purpose: str = "",
     suppress_io: bool = False,
 ) -> dict[str, dict[str, str]]:
     """Render a sub-workflow as a mermaid subgraph.
@@ -1230,6 +1234,8 @@ def _render_subgraph(
         subgraph_label = _escape_label(node_id) + dynamic_batch_label
     else:
         subgraph_label = _escape_label(f"{node_id} ({node_type})")
+    if descriptions and purpose:
+        subgraph_label += f"<br/>{_escape_label(_first_sentence(purpose))}"
 
     lines.append(f'{indent}subgraph {mermaid_id} ["{subgraph_label}"]')
     child_base = child_result.path.parent if child_result.path else base_path
@@ -1400,7 +1406,7 @@ def _try_resolve_child(
     """Try to resolve a sub-workflow, returning None on failure.
 
     Checks the ``seen`` recursion stack for cycles and swallows
-    resolution errors (the workflow was already validated -- errors
+    resolution errors (the workflow was already validated — errors
     here are non-fatal for visualization).
 
     The caller is responsible for adding/removing from ``seen``
@@ -1431,7 +1437,7 @@ def _try_resolve_child(
 def _to_mermaid_id(node_id: str) -> str:
     """Convert a pflow node ID to a valid Mermaid node ID.
 
-    Returns the ID unchanged -- hyphens and underscores are both valid
+    Returns the ID unchanged — hyphens and underscores are both valid
     in Mermaid's bracket syntax (``id["label"]``), so no sanitization
     is needed. Replacing hyphens with underscores would cause ID
     collisions between ``foo-bar`` and ``foo_bar``.

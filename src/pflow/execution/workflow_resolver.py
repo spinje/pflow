@@ -130,6 +130,8 @@ def _try_load_from_file(identifier: str) -> ResolvedWorkflow | None:
         ir=result.ir,
         source="file",
         file_path=str(path),
+        title=result.title,
+        description=result.description,
         diagnostics=tuple(result.warnings),
     )
 
@@ -162,10 +164,14 @@ def _load_library_workflow(name: str, wm: WorkflowManager) -> ResolvedWorkflow:
     file_path = wm.get_path(name)
     diagnostics: tuple[Diagnostic, ...] = ()
     path = Path(file_path)
+    title: str | None = None
+    description: str | None = None
     if path.exists():
         content = path.read_text(encoding="utf-8")
         result = parse_markdown(content)
         ir = result.ir
+        title = result.title
+        description = result.description
         diagnostics = tuple(result.warnings)
     else:
         ir = wm.load_ir(name)
@@ -174,6 +180,8 @@ def _load_library_workflow(name: str, wm: WorkflowManager) -> ResolvedWorkflow:
         ir=ir,
         source="library",
         file_path=file_path,
+        title=title,
+        description=description,
         diagnostics=diagnostics,
     )
 

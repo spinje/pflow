@@ -717,7 +717,7 @@ def test_batch_item_template_workflow_not_expanded() -> None:
 
     # Should NOT expand (template ref), render as opaque
     assert "subgraph reviews__quality" not in out
-    assert 'quality ("quality (workflow)")' not in out  # rendered as flat node
+    assert 'reviews__quality("quality (workflow)"):::workflow' in out
 
 
 # ===========================================================================
@@ -815,6 +815,11 @@ def test_no_inputs_section_when_empty() -> None:
     out = generate_mermaid(ir)
 
     assert "[/" not in out
+
+
+# ===========================================================================
+# Phase 6: Sub-workflow IO and data-flow edges
+# ===========================================================================
 
 
 def test_subworkflow_outputs_replace_end_node() -> None:
@@ -1008,6 +1013,32 @@ def test_descriptions_flag_off() -> None:
     assert "<br/>This is the first sentence." not in out
 
 
+def test_descriptions_on_subgraph() -> None:
+    """With descriptions=True, sub-workflow subgraph label includes purpose."""
+    child_ir = _ir(nodes=[_node("inner", "code")])
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
+
+    parent_ir = _ir(
+        nodes=[
+            {
+                "id": "sub",
+                "type": "workflow",
+                "params": {"workflow": "child"},
+                "purpose": "Fetches content from multiple sources. More details here.",
+            },
+        ],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver, descriptions=True)
+
+    assert "Fetches content from multiple sources." in out
+
+    # Without descriptions, purpose should not appear in subgraph label
+    out_no_desc = generate_mermaid(parent_ir, resolve_child=resolver, descriptions=False)
+    assert "Fetches content from multiple sources." not in out_no_desc
+
+
 def test_first_sentence_extraction() -> None:
     """_first_sentence extracts first sentence and strips markdown."""
     assert _first_sentence("Hello world. More text.") == "Hello world."
@@ -1069,6 +1100,59 @@ def test_detect_decision_nodes_ignores_default() -> None:
 # ===========================================================================
 # High-value regression tests
 # ===========================================================================
+
+
+def test_nested_subworkflow_output_routes_through_child_output() -> None:
+    """When an outer sub-workflow's output references an inner sub-workflow's
+    output, the edge must route through the inner sub-workflow's specific
+    output node — not the inner subgraph box.
+
+    This tests the two-map cascade in _connect_sources_to_output: the child
+    outgoing map (from the inner sub-workflow) must be checked BEFORE the
+    parent outgoing map. If the order is wrong, the edge goes to the
+    subgraph box instead of the output node.
+    """
+    # Inner sub-workflow: has an output "winning"
+    inner_ir = _ir(
+        nodes=[_node("pick", "llm")],
+    )
+    inner_ir["outputs"] = {"winning": {"source": "${pick.response}"}}
+
+    # Outer sub-workflow: contains "inner" and references its output
+    outer_ir = _ir(
+        nodes=[
+            _node("prep", "code"),
+            {"id": "inner", "type": "workflow", "params": {"workflow": "inner.pflow.md"}},
+        ],
+        edges=[{"from": "prep", "to": "inner"}],
+    )
+    outer_ir["outputs"] = {"result": {"source": "${inner.winning}"}}
+
+    call_count = 0
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        nonlocal call_count
+        wf = params.get("workflow", "")
+        if "inner" in wf:
+            call_count += 1
+            return SubWorkflowResult(ir=inner_ir, path=Path(f"/fake/inner{call_count}.pflow.md"), warnings=())
+        if "outer" in wf:
+            return SubWorkflowResult(ir=outer_ir, path=Path("/fake/outer.pflow.md"), warnings=())
+        return None
+
+    parent_ir = _ir(
+        nodes=[{"id": "outer", "type": "workflow", "params": {"workflow": "outer.pflow.md"}}],
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver, max_depth=3)
+
+    # The outer output "result" must connect through inner's output node,
+    # not through the inner subgraph box
+    lines = out.strip().splitlines()
+    result_edges = [line for line in lines if "out_result" in line and "-->" in line]
+    assert any("out_winning" in edge for edge in result_edges), (
+        f"Outer output 'result' should route through inner's 'out_winning' node, "
+        f"but edges to out_result are: {result_edges}"
+    )
 
 
 def test_suppression_without_replacement_keeps_structural_edge() -> None:

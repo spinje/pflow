@@ -94,7 +94,12 @@ def visualize(
     )
 
     if output:
-        Path(output).write_text(mermaid, encoding="utf-8")
+        content = mermaid
+        if output.endswith(".md"):
+            title = resolved.title or Path(workflow).stem
+            desc = f"\n{resolved.description}\n" if resolved.description else ""
+            content = f"# {title}\n{desc}\n```mermaid\n{mermaid}```\n"
+        Path(output).write_text(content, encoding="utf-8")
         click.echo(f"Mermaid diagram written to {output}", err=True)
     else:
         click.echo(mermaid)

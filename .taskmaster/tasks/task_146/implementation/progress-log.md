@@ -504,18 +504,106 @@ These can't be separated without splitting the map into two separate data struct
 
 2. **`_connect_top_level_inputs` is first-consumer-only**: Each top-level input connects to the first node that references it. If an input is referenced by multiple nodes at different pipeline stages, only the first connection is shown. Connecting to all consumers would create long-range edges that destroy layout.
 
+## Code Review Fixes (2026-04-06, PR #228 review)
+
+Addressed findings from automated code review (Google Code Review Agent + claude-code review agent). Most findings were disputed after evidence gathering — the reviewer misunderstood upstream guarantees or suggested changes that would produce worse behavior. Three substantive fixes and three minor cleanups.
+
+### 1. Extracted `_connect_sources_to_output` helper (DRY fix)
+
+**Problem**: Three functions contained identical 10-line source-field parsing loops:
+- `_render_top_level_outputs` (lines 365-378)
+- `_render_subworkflow_outputs` (lines 441-454)
+- `_render_external_outputs` (lines 655-669)
+
+All three: parse `source` with `_SOURCE_NODE_FIELD_RE.findall()`, filter by `node_ids`, compute `src_mid` with a prefix, look up in outgoing map(s), emit edge via 3-way routing decision (exact field match → single-output fallback → direct node fallback).
+
+**Differences**: (a) ID prefix for `_to_mermaid_id` (empty, `prefix`, or `child_prefix`), (b) outgoing map lookup strategy (single map vs child→parent cascade in `_render_external_outputs`).
+
+**Fix**: New `_connect_sources_to_output(source, out_mid, node_ids, id_prefix, lines, indent, *outgoing_maps)` — accepts varargs outgoing maps checked in order (first match wins). Three call sites reduced from ~10 lines each to 1-2 lines.
+
+### 2. Removed dead `_SOURCE_NODE_RE` regex
+
+`_SOURCE_NODE_RE` (captured node only, no field) was defined but never used anywhere. Superseded by `_SOURCE_NODE_FIELD_RE` (captures both node and field). Removed.
+
+### 3. Fixed vacuous test assertion
+
+`test_batch_item_template_workflow_not_expanded` line 720 asserted `'quality ("quality (workflow)")' not in out` — but that string (with a space before the paren) can never appear in Mermaid output. The assertion was vacuously true. Replaced with positive assertion: `'reviews__quality("quality (workflow)"):::workflow' in out`.
+
+### 4. Minor cleanups
+
+- **Em-dash consistency**: Two `--` in docstrings (`_try_resolve_child`, `_to_mermaid_id`) changed to `—` to match the file's dominant style (9 em-dash occurrences vs 2 double-dash).
+- **Test phase numbering**: Added missing `Phase 6: Sub-workflow IO and data-flow edges` header between Phase 5 and Phase 7.
+- **`_collect_param_refs` docstring**: Clarified that it goes one level deep intentionally (code node `params.inputs` is a nested dict), not "nested dicts" generically.
+
+### Disputed review findings (no action)
+
+| Finding | Why disputed |
+|---------|-------------|
+| `re.match` → `re.search` in `_first_sentence` | Input is pre-stripped by markdown parser (`line.strip()` at parse time). Even without stripping, whitespace matches `[^.!?]` so `re.match` works. `re.search` could return mid-text fragments in edge cases — worse behavior. |
+| Tests import private functions | Direct testing of `_deduplicate_edges`, `_detect_decision_nodes`, etc. is valuable — they have specific isolated logic. Making them public is a worse API decision. Standard Python practice. |
+| Hardcoded local paths in implementation-plan.md | Internal `.taskmaster/` artifact, not user-facing docs. The path is intentional context for the developer. |
+| `_first_sentence` mid-word truncation at 80 chars | Diagram labels — not worth the complexity for a rare cosmetic edge case. |
+| Duplicate `_find_terminal_nodes` test | Reviewer cited non-existent line numbers (file is 1173 lines, reviewer cited 2083). The test at line 763 combines integration smoke check + unit assertions for a specific edge case (error-only edges). Not redundant. |
+
+## Post-Review Features (2026-04-06, same session)
+
+### Markdown output wrapping (`-o diagram.md`)
+
+When the `-o` output path ends with `.md`, the mermaid output is wrapped in a markdown document with the workflow's H1 title and description:
+
+```markdown
+# Workflow Title
+
+Description prose from the H1 section.
+
+```mermaid
+graph TD
+...
+```​
+```
+
+`.mmd` output remains raw mermaid (no wrapping).
+
+**Implementation**: Added `title: Optional[str]` and `description: Optional[str]` to `ResolvedWorkflow` in `result.py`. Populated from `MarkdownParseResult` in the two `workflow_resolver.py` paths that already call `parse_markdown` (`_try_load_from_file`, `_load_library_workflow`). The visualize command checks the output extension and wraps accordingly. Falls back to filename stem when title is unavailable (dict/content sources).
+
+### Subgraph descriptions with `--descriptions`
+
+When `--descriptions` is enabled, expanded sub-workflow subgraph labels now include the node's purpose (first sentence), matching the behavior of regular nodes:
+
+```
+subgraph fetch-sources ["fetch-sources (workflow)<br/>Fetches content from multiple source types."]
+```
+
+**Implementation**: Added `purpose` parameter to `_render_subgraph`, passed from the call site in `_render_node` where `purpose = node.get("purpose", "")` is already available. Appends `<br/>{_first_sentence(purpose)}` to the subgraph label when `descriptions=True` and purpose is non-empty.
+
+### Theme-safe subgraph depth coloring (`fill-opacity`)
+
+Replaced hardcoded light-theme hex fills (`#f5f5f5`, `#ebebeb`, etc.) with `fill:#808080,fill-opacity:N` — a neutral gray overlay that darkens on light backgrounds and lightens on dark backgrounds. Verified in mermaid.live on both themes.
+
+**Depth levels**: 0.07, 0.14, 0.21, 0.28 (progressively more contrast at deeper nesting).
+
+**IO wrappers**: `fill:#808080,fill-opacity:0.04` (subtler than depth fills, with `stroke-dasharray:4 4`).
+
+**Why this works**: Mermaid generates SVG, and SVG natively supports `fill-opacity` as a separate property from `fill`. `rgba()` is NOT supported by Mermaid's style parser, but `fill-opacity` passes through correctly.
+
+### Nested sub-workflow output routing test
+
+Added `test_nested_subworkflow_output_routes_through_child_output` — verifies that when an outer sub-workflow's output references an inner sub-workflow's output (e.g., `source: ${choose-chorus.winning_chorus}`), the edge routes through the inner's specific output node (`out_winning_chorus`), not through the inner subgraph box. This is the only test that exercises the two-map cascade in `_connect_sources_to_output` — the mechanism that was the focus of the most debugging effort in the original implementation.
+
 ## Final State
 
 ### Files Modified
 | File | Lines |
 |------|-------|
-| `src/pflow/core/workflow/mermaid.py` | 1444 (from 163) |
-| `src/pflow/cli/commands/visualize.py` | 100 (from 92) |
-| `tests/test_core/test_mermaid.py` | 1061 (from 392) |
-| `tests/test_cli/test_visualize.py` | 216 (from 199) |
+| `src/pflow/core/workflow/mermaid.py` | ~1440 (from 163) |
+| `src/pflow/cli/commands/visualize.py` | 105 (from 92) |
+| `src/pflow/execution/result.py` | +2 lines (title, description fields) |
+| `src/pflow/execution/workflow_resolver.py` | +5 lines (populate title, description) |
+| `tests/test_core/test_mermaid.py` | ~1200 (from 392) |
+| `tests/test_cli/test_visualize.py` | ~255 (from 199) |
 
 ### Test Counts
-- `test_mermaid.py`: 50 tests (15 original updated + 35 new)
-- `test_visualize.py`: 8 tests (7 original + 1 new)
-- Full suite: 4639 tests passing
+- `test_mermaid.py`: 55 tests (15 original updated + 40 new)
+- `test_visualize.py`: 10 tests (7 original + 3 new)
+- Full suite: 65 mermaid + visualize tests passing
 - `make check`: clean (ruff, mypy, deptry)
