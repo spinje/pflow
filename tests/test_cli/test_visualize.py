@@ -191,3 +191,26 @@ class TestVisualizeNestedWorkflowExpansion:
         assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}\noutput: {result.output}"
         assert "graph LR" in result.output
         assert "subgraph" in result.output
+
+
+class TestVisualizeDescriptionsFlag:
+    """The --descriptions flag adds node purpose text to labels."""
+
+    def test_descriptions_cli_flag(self, tmp_path: Path) -> None:
+        """--descriptions includes node purpose in mermaid labels."""
+        # Write a workflow with a purpose (prose between heading and params)
+        workflow_path = tmp_path / "desc.pflow.md"
+        workflow_md = (
+            "# Descriptions Test\n\n"
+            "## Steps\n\n"
+            "### greet\n\n"
+            "This step greets the user warmly. It does other things too.\n\n"
+            "- type: shell\n"
+            "- command: echo hello\n"
+        )
+        workflow_path.write_text(workflow_md)
+
+        result = _invoke(["--descriptions", str(workflow_path)])
+
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}\noutput: {result.output}"
+        assert "<br/>This step greets the user warmly." in result.output

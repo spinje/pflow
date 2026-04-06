@@ -19,8 +19,16 @@ import click
     default=None,
     help="Write Mermaid output to file instead of stdout",
 )
+@click.option(
+    "--descriptions",
+    is_flag=True,
+    default=False,
+    help="Add first sentence of node descriptions to labels",
+)
 @click.pass_context
-def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, output: str | None) -> None:
+def visualize(
+    ctx: click.Context, workflow: str, depth: int, direction: str, output: str | None, descriptions: bool
+) -> None:
     """Generate a Mermaid flowchart from a workflow.
 
     Validates the workflow first (same checks as --validate-only).
@@ -82,6 +90,7 @@ def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, out
         base_path=base_path,
         max_depth=depth,
         direction=direction,
+        descriptions=descriptions,
     )
 
     if output:
