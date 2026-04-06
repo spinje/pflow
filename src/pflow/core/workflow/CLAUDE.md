@@ -13,7 +13,12 @@ core/workflow/
 ├── sub_workflow_resolver.py # Shared sub-workflow resolution (inline IR, file, saved name)
 ├── validator.py             # Unified 9-step validation orchestrator
 ├── data_flow.py             # Execution order (topological sort) and dependency validation
-├── mermaid.py               # Mermaid flowchart generation from workflow IR
+├── mermaid/                 # Mermaid flowchart generation from workflow IR
+│   ├── __init__.py          # Re-exports: generate_mermaid + test-visible helpers
+│   ├── _context.py          # MermaidConfig, MermaidContext, constants, pure utilities
+│   ├── _edges.py            # Edge preprocessing, routing resolution, data-flow edges
+│   ├── _io.py               # Input/output boundary rendering (top-level, sub-workflow, external)
+│   └── _render.py           # Core pipeline: generate_mermaid, render_workflow, render_node
 ├── status.py                # WorkflowStatus enum: SUCCESS/DEGRADED/FAILED
 ├── skill_service.py         # Publish workflows as AI agent skills (symlinks)
 ├── context.py               # Build workflow context for discovery (build_workflows_context)
@@ -41,7 +46,7 @@ sub_workflow_resolver.py
   ├── markdown_parser.py         (lazy import)
   └── manager.py                 (lazy import)
 
-mermaid.py
+mermaid/
   └── sub_workflow_resolver.py   (top-level import for SubWorkflowResult type)
 
 skill_service.py
@@ -60,7 +65,7 @@ No cycles. All heavy imports are lazy (inside functions).
 | `sub_workflow_resolver.py` | `resolve_sub_workflow`, `SubWorkflowResult` |
 | `validator.py` | `WorkflowValidator` (static `.validate()` method — 9-step pipeline) |
 | `data_flow.py` | `validate_data_flow`, `build_execution_order`, `CycleError` |
-| `mermaid.py` | `generate_mermaid` |
+| `mermaid/` | `generate_mermaid` |
 | `status.py` | `WorkflowStatus` (enum: SUCCESS, DEGRADED, FAILED) |
 | `skill_service.py` | `SkillInfo`, `enrich_workflow`, `create_skill_symlink`, `find_pflow_skills`, `remove_skill`, `re_enrich_if_skill` |
 

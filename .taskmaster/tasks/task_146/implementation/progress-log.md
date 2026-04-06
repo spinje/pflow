@@ -590,20 +590,121 @@ Replaced hardcoded light-theme hex fills (`#f5f5f5`, `#ebebeb`, etc.) with `fill
 
 Added `test_nested_subworkflow_output_routes_through_child_output` — verifies that when an outer sub-workflow's output references an inner sub-workflow's output (e.g., `source: ${choose-chorus.winning_chorus}`), the edge routes through the inner's specific output node (`out_winning_chorus`), not through the inner subgraph box. This is the only test that exercises the two-map cascade in `_connect_sources_to_output` — the mechanism that was the focus of the most debugging effort in the original implementation.
 
+## Package Decomposition Refactor (2026-04-06, fourth session)
+
+Refactored `mermaid.py` (1450 lines, 40 functions) into a `mermaid/` package with 5 files + CLAUDE.md. Introduced `MermaidContext` object replacing 18-parameter function threading. Split `outgoing_map` dual-purpose field into two separate fields.
+
+### Architecture
+
+```
+mermaid/
+├── __init__.py    # Re-exports generate_mermaid + 5 test-visible names
+├── _context.py    # MermaidConfig, MermaidContext, constants, 13 pure utilities (289 lines)
+├── _edges.py      # Edge dedup, routing, data-flow generation — 9 functions (293 lines)
+├── _io.py         # IO boundary rendering — 10 functions (351 lines)
+├── _render.py     # Core pipeline — 8 functions (470 lines)
+└── CLAUDE.md      # Package docs with shared/per-level state table, split explanation
+```
+
+Import DAG (verified cycle-free): `_context` ← `_edges`, `_io` ← `_render`. No cross-calls between `_edges` and `_io`.
+
+### MermaidContext Design
+
+**Key decision: `ctx.child()` for recursive rendering.** Each `_render_workflow` call receives its own `MermaidContext` with fresh routing maps. `lines` and `seen` are shared across all levels (same object reference). Per-level state (`prefix`, `indent`, `current_depth`, `suppress_io`, `base_path`, all 5 routing maps) is fresh per context.
+
+**Function signature reduction**: `_render_node` went from 18 parameters to 2 (`node`, `ctx`). `_render_batch_inline` went from 19 to 5. `_render_edge` went from 8 to 2. `_render_end_nodes_and_edges` went from 13 to 4.
+
+**`base_path` moved from `MermaidConfig` to `MermaidContext`.** This was a deviation from the original plan. Reason: sub-workflows in different directories need different `base_path` values for resolving relative file references. `_render_subgraph` and `_try_expand_batch_item` compute `child_base = child_result.path.parent if child_result.path else ctx.base_path` and pass it to `ctx.child(base_path=child_base)`. If `base_path` were on the frozen `MermaidConfig`, all recursion levels would share the same path.
+
+### `outgoing_map` Split
+
+Split the single `outgoing_map: dict[str, dict[str, str]]` into two fields:
+- **`outgoing_routes`**: Edge routing — maps subgraph mermaid IDs to `{output_name: output_mermaid_id}`. Read by `_resolve_edge_endpoints`, `_render_edge`.
+- **`has_expanded_outputs`**: Skip signal for `_resolve_ref_source` — "this node has expanded outputs, structural edges handle it". Read only by `_resolve_ref_source` (line 115 of `_edges.py`) and `_render_edge` (line 186).
+
+**Invariant**: Both must always be written together. There are exactly 2 write sites:
+1. `_render_external_outputs` in `_io.py:348-349`
+2. `_render_batch_inline` in `_render.py:272-275`
+
+**This enables a future fix for the batch output fan limitation** — `outgoing_routes` could exclude batch-level entries (stopping structural edge fan-through) while `has_expanded_outputs` keeps them (preserving the `_resolve_ref_source` skip signal). Not applied in this refactor — both fields are populated identically for byte-exact output.
+
+### Logger Name
+
+All files use `logging.getLogger("pflow.core.workflow.mermaid")` instead of `__name__` (which would now be `pflow.core.workflow.mermaid._render`, etc.). This preserves the same logger hierarchy as the old single-file module.
+
+### `_try_resolve_child` Guard
+
+Added `if ctx.config.resolve_child is None: return None` guard at line 454 of `_render.py`. The old code never called `_try_resolve_child` when `resolve_child` was None (the caller checked first). But with the context object, callers pass `ctx` which always has `config.resolve_child` — the guard makes the function self-contained rather than relying on caller discipline. This prevents a `TypeError` if someone calls it without checking.
+
+### CLAUDE.md Documentation
+
+Created `mermaid/CLAUDE.md` with:
+- File map and import DAG
+- Two kinds of edges explanation (structural vs data-flow)
+- `MermaidContext` shared vs per-level state table
+- `outgoing_routes` / `has_expanded_outputs` split explanation with write site locations
+- `base_path` per-level rationale
+- `suppress_io` pattern description
+- `_connect_sources_to_output` varargs explanation
+- `fork_join_map` purpose
+- Known limitation (batch output fan)
+
+Updated `core/workflow/CLAUDE.md` to reflect the new `mermaid/` package structure.
+
+### Zero External Changes
+
+All import sites (`visualize.py`, `test_mermaid.py`, `test_mermaid_golden.py`) work unchanged via `__init__.py` re-exports. The 6 names imported by `test_mermaid.py` (`generate_mermaid`, `_deduplicate_edges`, `_detect_decision_nodes`, `_find_terminal_nodes`, `_first_sentence`, `_get_item_label`) are all re-exported.
+
+### Verification
+
+All three safety layers pass:
+1. **55 unit tests** — fine-grained assertions on specific features (unchanged)
+2. **8 golden file tests** — byte-exact comparison against committed baselines
+3. **`make check`** — ruff, mypy (171 source files), deptry all clean
+
+Total: 73 mermaid-related tests passing. Full test suite clean.
+
 ## Final State
 
 ### Files Modified
 | File | Lines |
 |------|-------|
-| `src/pflow/core/workflow/mermaid.py` | ~1440 (from 163) |
-| `src/pflow/cli/commands/visualize.py` | 105 (from 92) |
-| `src/pflow/execution/result.py` | +2 lines (title, description fields) |
-| `src/pflow/execution/workflow_resolver.py` | +5 lines (populate title, description) |
-| `tests/test_core/test_mermaid.py` | ~1200 (from 392) |
-| `tests/test_cli/test_visualize.py` | ~255 (from 199) |
+| `src/pflow/core/workflow/mermaid/__init__.py` | 22 (NEW) |
+| `src/pflow/core/workflow/mermaid/_context.py` | 289 (NEW) |
+| `src/pflow/core/workflow/mermaid/_edges.py` | 293 (NEW) |
+| `src/pflow/core/workflow/mermaid/_io.py` | 351 (NEW) |
+| `src/pflow/core/workflow/mermaid/_render.py` | 470 (NEW) |
+| `src/pflow/core/workflow/mermaid/CLAUDE.md` | 76 (NEW) |
+| `src/pflow/core/workflow/CLAUDE.md` | Updated for package structure |
+| `src/pflow/core/workflow/mermaid.py` | DELETED (1450 lines) |
+| `src/pflow/cli/commands/visualize.py` | 105 (unchanged) |
+| `src/pflow/execution/result.py` | unchanged |
+| `src/pflow/execution/workflow_resolver.py` | unchanged |
+| `tests/test_core/test_mermaid.py` | ~1257 (unchanged) |
+| `tests/test_core/test_mermaid_golden.py` | ~112 (unchanged) |
+| `tests/test_cli/test_visualize.py` | ~258 (unchanged) |
+| `tests/golden/mermaid/*.mmd` | 8 files (unchanged) |
 
 ### Test Counts
 - `test_mermaid.py`: 55 tests (15 original updated + 40 new)
+- `test_mermaid_golden.py`: 8 golden file tests (5 in-repo + 3 lyrics-generator)
 - `test_visualize.py`: 10 tests (7 original + 3 new)
-- Full suite: 65 mermaid + visualize tests passing
+- Full suite: 73 mermaid + visualize tests passing
 - `make check`: clean (ruff, mypy, deptry)
+
+## Top-Level Input Wrapper Box (2026-04-06)
+
+### Problem
+
+Visual asymmetry: top-level outputs were wrapped in a dashed `workflow-outputs` subgraph, but top-level inputs were loose parallelogram nodes. Sub-workflows had dashed wrappers around both inputs and outputs.
+
+### Change
+
+Wrapped top-level inputs in a matching dashed `workflow-inputs` subgraph. Same `fill-opacity:0.04, stroke-dasharray:4 4` styling as the output wrapper. Renamed both labels from "inputs"/"outputs" to "workflow inputs"/"workflow outputs" for clarity.
+
+The change is entirely in `_render_inputs` in `_io.py` — input node mermaid IDs stay the same, so all edge connections remain valid. All 8 golden files regenerated.
+
+### Verification
+
+- 72 mermaid tests pass, `make check` clean, 4653 full suite pass
+- Visual review of lyrics-generator in both TD and LR directions confirmed clean layout

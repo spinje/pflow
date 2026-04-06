@@ -1,0 +1,50 @@
+graph LR
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph workflow-inputs ["workflow inputs"]
+        input_title[/"title (string)"/]:::input
+        input_body[/"body (string)"/]:::input
+    end
+    style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    subgraph process_title-in ["process_title inputs"]
+        process_title__in_text[/"text (string)"/]:::input
+    end
+    style process_title-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    process_title__in_text --> process_title__transform
+    subgraph process_title ["process_title (workflow)"]
+        process_title__transform[["transform (shell)"]]:::shell
+    end
+    style process_title fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph process_title-out ["process_title outputs"]
+        process_title__out_result(["result"]):::output
+    end
+    style process_title-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    process_title__transform --> process_title__out_result
+    in_title --> process_title__in_text
+    subgraph process_body-in ["process_body inputs"]
+        process_body__in_text[/"text (string)"/]:::input
+    end
+    style process_body-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    process_body__in_text --> process_body__transform
+    subgraph process_body ["process_body (workflow)"]
+        process_body__transform[["transform (shell)"]]:::shell
+    end
+    style process_body fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph process_body-out ["process_body outputs"]
+        process_body__out_result(["result"]):::output
+    end
+    style process_body-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    process_body__transform --> process_body__out_result
+    in_body --> process_body__in_text
+    combine[["combine (shell)"]]:::shell
+    input_title --> process_title
+    input_body --> process_body
+    process_title --> process_body
+    process_body__out_result --> combine

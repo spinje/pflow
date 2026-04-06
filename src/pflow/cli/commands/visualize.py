@@ -17,7 +17,7 @@ import click
     "--output",
     type=click.Path(),
     default=None,
-    help="Write Mermaid output to file instead of stdout",
+    help="Write to file (.md wraps in markdown with title; other extensions write raw Mermaid)",
 )
 @click.option(
     "--descriptions",
@@ -41,9 +41,9 @@ def visualize(
 
         pflow visualize my-saved-workflow --depth 2
 
-        pflow visualize workflow.pflow.md -o diagram.mmd
+        pflow visualize workflow.pflow.md -o diagram.md
 
-        pflow visualize workflow.pflow.md --direction TD
+        pflow visualize workflow.pflow.md --direction TD --descriptions
     """
     from pathlib import Path
 

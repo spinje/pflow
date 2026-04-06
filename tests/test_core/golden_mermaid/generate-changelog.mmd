@@ -1,0 +1,96 @@
+graph LR
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph workflow-inputs ["workflow inputs"]
+        input_since_tag[/"since_tag (string)"/]:::input
+        input_to_ref[/"to_ref (string)"/]:::input
+        input_changelog_file[/"changelog_file (string)"/]:::input
+        input_mintlify_file[/"mintlify_file (string)"/]:::input
+        input_releases_dir[/"releases_dir (string)"/]:::input
+        input_slack_channel[/"slack_channel (string)"/]:::input
+        input_version_type[/"version_type (string)"/]:::input
+    end
+    style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    get-latest-tag[["get-latest-tag (shell)"]]:::shell
+    resolve-tag["resolve-tag (code)"]:::code
+    gather-commit-data["gather-commit-data (code)"]:::code
+    get-task-reviews["get-task-reviews (code)"]:::code
+    classify-commits@{ shape: procs, label: "classify-commits (llm)<br/> (parallel x|gather-commit-data|)" }
+    style classify-commits fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    split-classifications["split-classifications (code)"]:::code
+    enrich-drafts["enrich-drafts (code)"]:::code
+    compute-version["compute-version (code)"]:::code
+    format-draft-entries["format-draft-entries (code)"]:::code
+    get-docs-diff["get-docs-diff (code)"]:::code
+    summarize-docs-diff@{ shape: procs, label: "summarize-docs-diff (llm)<br/> (parallel x|get-docs-diff|)" }
+    style summarize-docs-diff fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    join-docs-summary["join-docs-summary (code)"]:::code
+    get-style-reference["get-style-reference (code)"]:::code
+    subgraph render-changelogs ["render-changelogs (parallel x2)"]
+        render-changelogs__markdown(["markdown (llm)"]):::llm
+        render-changelogs__mintlify(["mintlify (llm)"]):::llm
+    end
+    style render-changelogs fill:#808080,fill-opacity:0.14,stroke:#999
+    save-release-context["save-release-context (code)"]:::code
+    update-changelog-file["update-changelog-file (code)"]:::code
+    update-mintlify-file["update-mintlify-file (code)"]:::code
+    check-slack{"check-slack (code)"}:::decision
+    format-slack-message["format-slack-message (code)"]:::code
+    notify-slack{{"notify-slack (mcp:<br/>composio-slack-SLACK_SEND_MESSAGE)"}}:::mcp
+    create-summary["create-summary (code)"]:::code
+    input_since_tag --> resolve-tag
+    input_to_ref --> gather-commit-data
+    input_to_ref --> get-task-reviews
+    input_to_ref --> compute-version
+    input_version_type --> compute-version
+    input_to_ref --> get-docs-diff
+    input_mintlify_file --> get-style-reference
+    input_releases_dir --> save-release-context
+    input_changelog_file --> update-changelog-file
+    input_mintlify_file --> update-mintlify-file
+    input_slack_channel --> check-slack
+    input_slack_channel --> notify-slack
+    input_slack_channel --> create-summary
+    subgraph workflow-outputs ["workflow outputs"]
+        out_summary(["summary"]):::output
+        out_suggested_version(["suggested_version"]):::output
+        out_changelog_file(["changelog_file"]):::output
+        out_mintlify_file(["mintlify_file"]):::output
+        out_context_file(["context_file"]):::output
+    end
+    style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    create-summary --> out_summary
+    compute-version --> out_suggested_version
+    update-changelog-file --> out_changelog_file
+    update-mintlify-file --> out_mintlify_file
+    save-release-context --> out_context_file
+    get-latest-tag --> resolve-tag
+    resolve-tag --> gather-commit-data
+    gather-commit-data --> get-task-reviews
+    get-task-reviews --> classify-commits
+    classify-commits --> split-classifications
+    split-classifications --> enrich-drafts
+    enrich-drafts --> compute-version
+    compute-version --> format-draft-entries
+    format-draft-entries --> get-docs-diff
+    get-docs-diff --> summarize-docs-diff
+    summarize-docs-diff --> join-docs-summary
+    join-docs-summary --> get-style-reference
+    get-style-reference --> render-changelogs__markdown
+    get-style-reference --> render-changelogs__mintlify
+    render-changelogs__markdown --> save-release-context
+    render-changelogs__mintlify --> save-release-context
+    save-release-context --> update-changelog-file
+    update-changelog-file --> update-mintlify-file
+    update-mintlify-file --> check-slack
+    check-slack -->|format-slack-message| format-slack-message
+    check-slack -->|create-summary| create-summary
+    format-slack-message --> notify-slack
+    notify-slack --> create-summary

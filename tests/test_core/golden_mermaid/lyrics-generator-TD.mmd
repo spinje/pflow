@@ -1,0 +1,360 @@
+graph TD
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef llm fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef mcp fill:#FFE6CC,stroke:#D79B00,color:#000
+    classDef writefile fill:#F8CECC,stroke:#B85450,color:#000
+    classDef workflow fill:#FFF2CC,stroke:#D6B656,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    classDef input fill:#F5F5F5,stroke:#666666,stroke-dasharray:5 5,color:#000
+    classDef output fill:#E8E8E8,stroke:#666666,color:#000
+    subgraph workflow-inputs ["workflow inputs"]
+        input_sources[/"sources (array, required)"/]:::input
+        input_output_base[/"output_base (string)"/]:::input
+    end
+    style workflow-inputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    subgraph fetch-sources-in ["fetch-sources inputs"]
+        fetch-sources__in_source[/"source (string)"/]:::input
+    end
+    style fetch-sources-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    fetch-sources__in_source --> fetch-sources__classify
+    subgraph fetch-sources ["fetch-sources (parallel x|sources|)"]
+        fetch-sources__classify{"classify (code)"}:::decision
+        fetch-sources__fetch-youtube[["fetch-youtube (shell)"]]:::shell
+        fetch-sources__fetch-youtube-mcp{{"fetch-youtube-mcp (mcp:<br/>klavis-youtube-get_youtube_video_transcript)"}}:::mcp
+        fetch-sources__fetch-webpage[["fetch-webpage (shell)"]]:::shell
+        fetch-sources__read-file[["read-file (shell)"]]:::shell
+        fetch-sources__pass-text[["pass-text (shell)"]]:::shell
+        fetch-sources__classify -->|fetch-youtube| fetch-sources__fetch-youtube
+        fetch-sources__classify -->|fetch-webpage| fetch-sources__fetch-webpage
+        fetch-sources__classify -->|read-file| fetch-sources__read-file
+        fetch-sources__classify -->|pass-text| fetch-sources__pass-text
+        fetch-sources__fetch-youtube -.->|error| fetch-sources__fetch-youtube-mcp
+    end
+    style fetch-sources fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph fetch-sources-out ["fetch-sources outputs"]
+        fetch-sources__out_content(["content"]):::output
+        fetch-sources__out_source_type(["source_type"]):::output
+    end
+    style fetch-sources-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    fetch-sources__fetch-youtube --> fetch-sources__out_content
+    fetch-sources__fetch-youtube-mcp --> fetch-sources__out_content
+    fetch-sources__fetch-webpage --> fetch-sources__out_content
+    fetch-sources__read-file --> fetch-sources__out_content
+    fetch-sources__pass-text --> fetch-sources__out_content
+    fetch-sources__classify --> fetch-sources__out_source_type
+    subgraph analyze-sources-in ["analyze-sources inputs"]
+        analyze-sources__in_content[/"content (string)"/]:::input
+    end
+    style analyze-sources-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    analyze-sources__in_content --> analyze-sources__analyze
+    subgraph analyze-sources ["analyze-sources (parallel x|fetch-sources|)"]
+        subgraph analyze-sources__analyze ["analyze (parallel x6)"]
+            analyze-sources__analyze__emotional(["emotional (llm)"]):::llm
+            analyze-sources__analyze__details(["details (llm)"]):::llm
+            analyze-sources__analyze__dots@{ shape: procs, label: "... x6" }
+            style analyze-sources__analyze__dots fill:#E8D5F5,stroke:#7B2D8E,color:#000
+        end
+        style analyze-sources__analyze fill:#808080,fill-opacity:0.21,stroke:#999
+        analyze-sources__format["format (code)"]:::code
+        analyze-sources__analyze__emotional --> analyze-sources__format
+        analyze-sources__analyze__details --> analyze-sources__format
+        analyze-sources__analyze__dots --> analyze-sources__format
+    end
+    style analyze-sources fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph analyze-sources-out ["analyze-sources outputs"]
+        analyze-sources__out_analysis(["analysis"]):::output
+    end
+    style analyze-sources-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    analyze-sources__format --> analyze-sources__out_analysis
+    validate-sources["validate-sources (code)"]:::code
+    format-all-analyses["format-all-analyses (code)"]:::code
+    subgraph choose-concepts-in ["choose-concepts inputs"]
+        choose-concepts__in_analyses[/"analyses (object)"/]:::input
+        choose-concepts__in_brief[/"brief (string)"/]:::input
+    end
+    style choose-concepts-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    choose-concepts__in_analyses --> choose-concepts__build-analysis-subsets
+    choose-concepts__in_brief --> choose-concepts__build-analysis-subsets
+    subgraph choose-concepts ["choose-concepts (workflow)"]
+        choose-concepts__build-analysis-subsets["build-analysis-subsets (code)"]:::code
+        subgraph choose-concepts__generate-concepts ["generate-concepts (parallel x4)"]
+            choose-concepts__generate-concepts__heart(["heart (llm)"]):::llm
+            choose-concepts__generate-concepts__mind(["mind (llm)"]):::llm
+            choose-concepts__generate-concepts__body(["body (llm)"]):::llm
+            choose-concepts__generate-concepts__full(["full (llm)"]):::llm
+        end
+        style choose-concepts__generate-concepts fill:#808080,fill-opacity:0.21,stroke:#999
+        choose-concepts__format-concepts["format-concepts (code)"]:::code
+        choose-concepts__select-concepts(["select-concepts (llm)"]):::llm
+        choose-concepts__structure-selected-concepts["structure-selected-concepts (code)"]:::code
+        choose-concepts__build-analysis-subsets --> choose-concepts__generate-concepts__heart
+        choose-concepts__build-analysis-subsets --> choose-concepts__generate-concepts__mind
+        choose-concepts__build-analysis-subsets --> choose-concepts__generate-concepts__body
+        choose-concepts__build-analysis-subsets --> choose-concepts__generate-concepts__full
+        choose-concepts__generate-concepts__heart --> choose-concepts__format-concepts
+        choose-concepts__generate-concepts__mind --> choose-concepts__format-concepts
+        choose-concepts__generate-concepts__body --> choose-concepts__format-concepts
+        choose-concepts__generate-concepts__full --> choose-concepts__format-concepts
+        choose-concepts__format-concepts --> choose-concepts__select-concepts
+        choose-concepts__select-concepts --> choose-concepts__structure-selected-concepts
+    end
+    style choose-concepts fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph choose-concepts-out ["choose-concepts outputs"]
+        choose-concepts__out_selected_concepts(["selected_concepts"]):::output
+        choose-concepts__out_all_concepts_text(["all_concepts_text"]):::output
+        choose-concepts__out_selection_text(["selection_text"]):::output
+        choose-concepts__out_parse_warnings(["parse_warnings"]):::output
+    end
+    style choose-concepts-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    choose-concepts__structure-selected-concepts --> choose-concepts__out_selected_concepts
+    choose-concepts__format-concepts --> choose-concepts__out_all_concepts_text
+    choose-concepts__select-concepts --> choose-concepts__out_selection_text
+    choose-concepts__structure-selected-concepts --> choose-concepts__out_parse_warnings
+    analyze-sources__out_analysis --> choose-concepts__in_analyses
+    format-all-analyses --> choose-concepts__in_brief
+    enforce-diversity(["enforce-diversity (llm)"]):::llm
+    prepare-brief-inputs["prepare-brief-inputs (code)"]:::code
+    curate-briefs@{ shape: procs, label: "curate-briefs (llm)<br/> (parallel x|prepare-brief-inputs|)" }
+    style curate-briefs fill:#E8D5F5,stroke:#7B2D8E,color:#000
+    zip-concepts-with-briefs["zip-concepts-with-briefs (code)"]:::code
+    subgraph create-songs-in ["create-songs inputs"]
+        create-songs__in_concept[/"concept (object)"/]:::input
+        create-songs__in_concept_brief[/"concept_brief (string)"/]:::input
+    end
+    style create-songs-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    create-songs__in_concept --> create-songs__creative-direction
+    create-songs__in_concept_brief --> create-songs__creative-direction
+    subgraph create-songs ["create-songs (parallel x|zip-concepts-with-briefs|)"]
+        create-songs__creative-direction(["creative-direction (llm)"]):::llm
+        create-songs__song-architecture(["song-architecture (llm)"]):::llm
+        create-songs__easter-eggs(["easter-eggs (llm)"]):::llm
+        subgraph create-songs__choose-chorus-in ["choose-chorus inputs"]
+            create-songs__choose-chorus__in_concept[/"concept (object)"/]:::input
+            create-songs__choose-chorus__in_creative_direction[/"creative_direction (string)"/]:::input
+            create-songs__choose-chorus__in_architecture[/"architecture (string)"/]:::input
+            create-songs__choose-chorus__in_creative_brief[/"creative_brief (string)"/]:::input
+        end
+        style create-songs__choose-chorus-in fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        create-songs__choose-chorus__in_concept --> create-songs__choose-chorus__build-grouped-items
+        create-songs__choose-chorus__in_creative_direction --> create-songs__choose-chorus__build-grouped-items
+        create-songs__choose-chorus__in_architecture --> create-songs__choose-chorus__build-grouped-items
+        create-songs__choose-chorus__in_creative_brief --> create-songs__choose-chorus__build-grouped-items
+        subgraph create-songs__choose-chorus ["choose-chorus (workflow)"]
+            create-songs__choose-chorus__build-grouped-items["build-grouped-items (code)"]:::code
+            create-songs__choose-chorus__generate-chorus-options@{ shape: procs, label: "generate-chorus-options (llm)<br/> (parallel x|build-grouped-items|)" }
+            style create-songs__choose-chorus__generate-chorus-options fill:#E8D5F5,stroke:#7B2D8E,color:#000
+            create-songs__choose-chorus__extract-individual-choruses["extract-individual-choruses (code)"]:::code
+            create-songs__choose-chorus__build-scoring-items["build-scoring-items (code)"]:::code
+            create-songs__choose-chorus__score-choruses@{ shape: procs, label: "score-choruses (llm)<br/> (parallel x|build-scoring-items|)" }
+            style create-songs__choose-chorus__score-choruses fill:#E8D5F5,stroke:#7B2D8E,color:#000
+            create-songs__choose-chorus__rank-choruses["rank-choruses (code)"]:::code
+            create-songs__choose-chorus__select-chorus(["select-chorus (llm)"]):::llm
+            create-songs__choose-chorus__extract-winners["extract-winners (code)"]:::code
+            create-songs__choose-chorus__build-grouped-items --> create-songs__choose-chorus__generate-chorus-options
+            create-songs__choose-chorus__generate-chorus-options --> create-songs__choose-chorus__extract-individual-choruses
+            create-songs__choose-chorus__extract-individual-choruses --> create-songs__choose-chorus__build-scoring-items
+            create-songs__choose-chorus__build-scoring-items --> create-songs__choose-chorus__score-choruses
+            create-songs__choose-chorus__score-choruses --> create-songs__choose-chorus__rank-choruses
+            create-songs__choose-chorus__rank-choruses --> create-songs__choose-chorus__select-chorus
+            create-songs__choose-chorus__select-chorus --> create-songs__choose-chorus__extract-winners
+        end
+        style create-songs__choose-chorus fill:#808080,fill-opacity:0.21,stroke:#999
+        subgraph create-songs__choose-chorus-out ["choose-chorus outputs"]
+            create-songs__choose-chorus__out_winning_chorus(["winning_chorus"]):::output
+            create-songs__choose-chorus__out_runner_up_choruses(["runner_up_choruses"]):::output
+            create-songs__choose-chorus__out_all_scored_text(["all_scored_text"]):::output
+            create-songs__choose-chorus__out_selection_text(["selection_text"]):::output
+            create-songs__choose-chorus__out_chorus_guide(["chorus_guide"]):::output
+            create-songs__choose-chorus__out_total_generated(["total_generated"]):::output
+        end
+        style create-songs__choose-chorus-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+        create-songs__choose-chorus__extract-winners --> create-songs__choose-chorus__out_winning_chorus
+        create-songs__choose-chorus__extract-winners --> create-songs__choose-chorus__out_runner_up_choruses
+        create-songs__choose-chorus__rank-choruses --> create-songs__choose-chorus__out_all_scored_text
+        create-songs__choose-chorus__select-chorus --> create-songs__choose-chorus__out_selection_text
+        create-songs__choose-chorus__extract-winners --> create-songs__choose-chorus__out_chorus_guide
+        create-songs__choose-chorus__rank-choruses --> create-songs__choose-chorus__out_total_generated
+        create-songs__in_concept --> create-songs__choose-chorus__in_concept
+        create-songs__creative-direction --> create-songs__choose-chorus__in_creative_direction
+        create-songs__song-architecture --> create-songs__choose-chorus__in_architecture
+        create-songs__in_concept_brief --> create-songs__choose-chorus__in_creative_brief
+        create-songs__write-lyrics(["write-lyrics (llm)"]):::llm
+        subgraph create-songs__emotional-reviews ["emotional-reviews (parallel x3)"]
+            subgraph create-songs__emotional-reviews__emotional-architecture ["emotional-architecture (workflow)"]
+            create-songs__emotional-reviews__emotional-architecture__in_lyrics[/"lyrics (string)"/]:::input
+            create-songs__emotional-reviews__emotional-architecture__in_concept_brief[/"concept_brief (string)"/]:::input
+            create-songs__emotional-reviews__emotional-architecture__in_creative_direction[/"creative_direction (string)"/]:::input
+            create-songs__emotional-reviews__emotional-architecture__in_lyrics --> create-songs__emotional-reviews__emotional-architecture__review
+            create-songs__emotional-reviews__emotional-architecture__in_concept_brief --> create-songs__emotional-reviews__emotional-architecture__review
+            create-songs__emotional-reviews__emotional-architecture__in_creative_direction --> create-songs__emotional-reviews__emotional-architecture__review
+            create-songs__emotional-reviews__emotional-architecture__review(["review (llm)"]):::llm
+            create-songs__emotional-reviews__emotional-architecture__out_review_text(["review_text"]):::output
+            create-songs__emotional-reviews__emotional-architecture__review --> create-songs__emotional-reviews__emotional-architecture__out_review_text
+            end
+            style create-songs__emotional-reviews__emotional-architecture fill:#808080,fill-opacity:0.21,stroke:#999
+            subgraph create-songs__emotional-reviews__narrative ["narrative (workflow)"]
+            create-songs__emotional-reviews__narrative__in_lyrics[/"lyrics (string)"/]:::input
+            create-songs__emotional-reviews__narrative__in_song_architecture[/"song_architecture (string)"/]:::input
+            create-songs__emotional-reviews__narrative__in_lyrics --> create-songs__emotional-reviews__narrative__review
+            create-songs__emotional-reviews__narrative__in_song_architecture --> create-songs__emotional-reviews__narrative__review
+            create-songs__emotional-reviews__narrative__review(["review (llm)"]):::llm
+            create-songs__emotional-reviews__narrative__out_review_text(["review_text"]):::output
+            create-songs__emotional-reviews__narrative__review --> create-songs__emotional-reviews__narrative__out_review_text
+            end
+            style create-songs__emotional-reviews__narrative fill:#808080,fill-opacity:0.21,stroke:#999
+            subgraph create-songs__emotional-reviews__imagery ["imagery (workflow)"]
+            create-songs__emotional-reviews__imagery__in_lyrics[/"lyrics (string)"/]:::input
+            create-songs__emotional-reviews__imagery__in_song_architecture[/"song_architecture (string)"/]:::input
+            create-songs__emotional-reviews__imagery__in_lyrics --> create-songs__emotional-reviews__imagery__review
+            create-songs__emotional-reviews__imagery__in_song_architecture --> create-songs__emotional-reviews__imagery__review
+            create-songs__emotional-reviews__imagery__review(["review (llm)"]):::llm
+            create-songs__emotional-reviews__imagery__out_review_text(["review_text"]):::output
+            create-songs__emotional-reviews__imagery__review --> create-songs__emotional-reviews__imagery__out_review_text
+            end
+            style create-songs__emotional-reviews__imagery fill:#808080,fill-opacity:0.21,stroke:#999
+        end
+        style create-songs__emotional-reviews fill:#808080,fill-opacity:0.21,stroke:#999
+        create-songs__write-lyrics --> create-songs__emotional-reviews__emotional-architecture__in_lyrics
+        create-songs__write-lyrics --> create-songs__emotional-reviews__narrative__in_lyrics
+        create-songs__write-lyrics --> create-songs__emotional-reviews__imagery__in_lyrics
+        create-songs__creative-direction --> create-songs__emotional-reviews__emotional-architecture__in_creative_direction
+        create-songs__song-architecture --> create-songs__emotional-reviews__narrative__in_song_architecture
+        create-songs__song-architecture --> create-songs__emotional-reviews__imagery__in_song_architecture
+        create-songs__format-emotional-reviews["format-emotional-reviews (code)"]:::code
+        create-songs__rewrite-emotional(["rewrite-emotional (llm)"]):::llm
+        create-songs__extract-emotional-lyrics["extract-emotional-lyrics (code)"]:::code
+        subgraph create-songs__craft-reviews ["craft-reviews (parallel x3)"]
+            subgraph create-songs__craft-reviews__ai-tells ["ai-tells (workflow)"]
+            create-songs__craft-reviews__ai-tells__in_lyrics[/"lyrics (string)"/]:::input
+            create-songs__craft-reviews__ai-tells__in_lyrics --> create-songs__craft-reviews__ai-tells__review
+            create-songs__craft-reviews__ai-tells__review(["review (llm)"]):::llm
+            create-songs__craft-reviews__ai-tells__out_review_text(["review_text"]):::output
+            create-songs__craft-reviews__ai-tells__review --> create-songs__craft-reviews__ai-tells__out_review_text
+            end
+            style create-songs__craft-reviews__ai-tells fill:#808080,fill-opacity:0.21,stroke:#999
+            subgraph create-songs__craft-reviews__cliche ["cliche (workflow)"]
+            create-songs__craft-reviews__cliche__in_lyrics[/"lyrics (string)"/]:::input
+            create-songs__craft-reviews__cliche__in_lyrics --> create-songs__craft-reviews__cliche__review
+            create-songs__craft-reviews__cliche__review(["review (llm)"]):::llm
+            create-songs__craft-reviews__cliche__out_review_text(["review_text"]):::output
+            create-songs__craft-reviews__cliche__review --> create-songs__craft-reviews__cliche__out_review_text
+            end
+            style create-songs__craft-reviews__cliche fill:#808080,fill-opacity:0.21,stroke:#999
+            subgraph create-songs__craft-reviews__genre ["genre (workflow)"]
+            create-songs__craft-reviews__genre__in_lyrics[/"lyrics (string)"/]:::input
+            create-songs__craft-reviews__genre__in_creative_direction[/"creative_direction (string)"/]:::input
+            create-songs__craft-reviews__genre__in_song_architecture[/"song_architecture (string)"/]:::input
+            create-songs__craft-reviews__genre__in_lyrics --> create-songs__craft-reviews__genre__review
+            create-songs__craft-reviews__genre__in_creative_direction --> create-songs__craft-reviews__genre__review
+            create-songs__craft-reviews__genre__in_song_architecture --> create-songs__craft-reviews__genre__review
+            create-songs__craft-reviews__genre__review(["review (llm)"]):::llm
+            create-songs__craft-reviews__genre__out_review_text(["review_text"]):::output
+            create-songs__craft-reviews__genre__review --> create-songs__craft-reviews__genre__out_review_text
+            end
+            style create-songs__craft-reviews__genre fill:#808080,fill-opacity:0.21,stroke:#999
+        end
+        style create-songs__craft-reviews fill:#808080,fill-opacity:0.21,stroke:#999
+        create-songs__extract-emotional-lyrics --> create-songs__craft-reviews__ai-tells__in_lyrics
+        create-songs__extract-emotional-lyrics --> create-songs__craft-reviews__cliche__in_lyrics
+        create-songs__extract-emotional-lyrics --> create-songs__craft-reviews__genre__in_lyrics
+        create-songs__creative-direction --> create-songs__craft-reviews__genre__in_creative_direction
+        create-songs__song-architecture --> create-songs__craft-reviews__genre__in_song_architecture
+        create-songs__format-craft-reviews["format-craft-reviews (code)"]:::code
+        create-songs__rewrite-craft(["rewrite-craft (llm)"]):::llm
+        create-songs__extract-lyrics["extract-lyrics (code)"]:::code
+        create-songs__generate-suno-prompt(["generate-suno-prompt (llm)"]):::llm
+        create-songs__creative-direction --> create-songs__song-architecture
+        create-songs__song-architecture --> create-songs__easter-eggs
+        create-songs__choose-chorus__out_winning_chorus --> create-songs__write-lyrics
+        create-songs__choose-chorus__out_runner_up_choruses --> create-songs__write-lyrics
+        create-songs__choose-chorus__out_all_scored_text --> create-songs__write-lyrics
+        create-songs__choose-chorus__out_selection_text --> create-songs__write-lyrics
+        create-songs__choose-chorus__out_chorus_guide --> create-songs__write-lyrics
+        create-songs__choose-chorus__out_total_generated --> create-songs__write-lyrics
+        create-songs__emotional-reviews__emotional-architecture__out_review_text --> create-songs__format-emotional-reviews
+        create-songs__emotional-reviews__narrative__out_review_text --> create-songs__format-emotional-reviews
+        create-songs__emotional-reviews__imagery__out_review_text --> create-songs__format-emotional-reviews
+        create-songs__format-emotional-reviews --> create-songs__rewrite-emotional
+        create-songs__rewrite-emotional --> create-songs__extract-emotional-lyrics
+        create-songs__craft-reviews__ai-tells__out_review_text --> create-songs__format-craft-reviews
+        create-songs__craft-reviews__cliche__out_review_text --> create-songs__format-craft-reviews
+        create-songs__craft-reviews__genre__out_review_text --> create-songs__format-craft-reviews
+        create-songs__format-craft-reviews --> create-songs__rewrite-craft
+        create-songs__rewrite-craft --> create-songs__extract-lyrics
+        create-songs__extract-lyrics --> create-songs__generate-suno-prompt
+    end
+    style create-songs fill:#808080,fill-opacity:0.14,stroke:#999
+    subgraph create-songs-out ["create-songs outputs"]
+        create-songs__out_finished_song(["finished_song"]):::output
+        create-songs__out_emotional_rewrite_deliberation(["emotional_rewrite_deliberation"]):::output
+        create-songs__out_revision_deliberation(["revision_deliberation"]):::output
+        create-songs__out_creative_direction_text(["creative_direction_text"]):::output
+        create-songs__out_song_architecture_text(["song_architecture_text"]):::output
+        create-songs__out_easter_eggs_text(["easter_eggs_text"]):::output
+        create-songs__out_draft_lyrics(["draft_lyrics"]):::output
+        create-songs__out_emotional_reviews(["emotional_reviews"]):::output
+        create-songs__out_craft_reviews(["craft_reviews"]):::output
+        create-songs__out_chorus_options_text(["chorus_options_text"]):::output
+        create-songs__out_chorus_selection_text(["chorus_selection_text"]):::output
+        create-songs__out_winning_chorus(["winning_chorus"]):::output
+        create-songs__out_suno_style_prompt(["suno_style_prompt"]):::output
+    end
+    style create-songs-out fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    create-songs__extract-lyrics --> create-songs__out_finished_song
+    create-songs__extract-emotional-lyrics --> create-songs__out_emotional_rewrite_deliberation
+    create-songs__extract-lyrics --> create-songs__out_revision_deliberation
+    create-songs__creative-direction --> create-songs__out_creative_direction_text
+    create-songs__song-architecture --> create-songs__out_song_architecture_text
+    create-songs__easter-eggs --> create-songs__out_easter_eggs_text
+    create-songs__write-lyrics --> create-songs__out_draft_lyrics
+    create-songs__format-emotional-reviews --> create-songs__out_emotional_reviews
+    create-songs__format-craft-reviews --> create-songs__out_craft_reviews
+    create-songs__choose-chorus__out_all_scored_text --> create-songs__out_chorus_options_text
+    create-songs__choose-chorus__out_selection_text --> create-songs__out_chorus_selection_text
+    create-songs__choose-chorus__out_winning_chorus --> create-songs__out_winning_chorus
+    create-songs__generate-suno-prompt --> create-songs__out_suno_style_prompt
+    zip-concepts-with-briefs --> create-songs__in_concept
+    zip-concepts-with-briefs --> create-songs__in_concept_brief
+    prepare-evaluation["prepare-evaluation (code)"]:::code
+    evaluate-songs(["evaluate-songs (llm)"]):::llm
+    build-file-list["build-file-list (code)"]:::code
+    save-outputs@{ shape: procs, label: "save-outputs (write-file)<br/> (parallel x|build-file-list|)" }
+    style save-outputs fill:#F8CECC,stroke:#B85450,color:#000
+    build-report["build-report (code)"]:::code
+    input_sources --> fetch-sources__in_source
+    input_sources --> validate-sources
+    input_output_base --> build-file-list
+    input_sources --> build-file-list
+    subgraph workflow-outputs ["workflow outputs"]
+        out_report(["report"]):::output
+    end
+    style workflow-outputs fill:#808080,fill-opacity:0.04,stroke:#999,stroke-dasharray:4 4
+    build-report --> out_report
+    fetch-sources__out_content --> analyze-sources__in_content
+    analyze-sources__out_analysis --> validate-sources
+    validate-sources --> format-all-analyses
+    choose-concepts__out_selected_concepts --> enforce-diversity
+    choose-concepts__out_all_concepts_text --> enforce-diversity
+    choose-concepts__out_selection_text --> enforce-diversity
+    choose-concepts__out_parse_warnings --> enforce-diversity
+    enforce-diversity --> prepare-brief-inputs
+    prepare-brief-inputs --> curate-briefs
+    curate-briefs --> zip-concepts-with-briefs
+    create-songs__out_finished_song --> prepare-evaluation
+    create-songs__out_emotional_rewrite_deliberation --> prepare-evaluation
+    create-songs__out_revision_deliberation --> prepare-evaluation
+    create-songs__out_creative_direction_text --> prepare-evaluation
+    create-songs__out_song_architecture_text --> prepare-evaluation
+    create-songs__out_easter_eggs_text --> prepare-evaluation
+    create-songs__out_draft_lyrics --> prepare-evaluation
+    create-songs__out_emotional_reviews --> prepare-evaluation
+    create-songs__out_craft_reviews --> prepare-evaluation
+    create-songs__out_chorus_options_text --> prepare-evaluation
+    create-songs__out_chorus_selection_text --> prepare-evaluation
+    create-songs__out_winning_chorus --> prepare-evaluation
+    create-songs__out_suno_style_prompt --> prepare-evaluation
+    prepare-evaluation --> evaluate-songs
+    evaluate-songs --> build-file-list
+    build-file-list --> save-outputs
+    save-outputs --> build-report

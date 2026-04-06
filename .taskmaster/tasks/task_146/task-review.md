@@ -32,17 +32,23 @@ Three sessions with different implementation stages:
 
 **Session 3** (this agent, second pass): Successful external IO refactor using `suppress_io` flag. Preserved all routing maps. Added `procs` shape, variable names, top-level outputs, smart input connections. Fixed batch item output routing and data-flow edge suppression.
 
+**Session 4**: Code review fixes (DRY extraction, vacuous test fix, em-dash consistency). New features: `.md` output wrapping with title/description, subgraph descriptions, theme-safe `fill-opacity` styling. Golden file test suite. Package decomposition refactor: single 1450-line file → `mermaid/` package with `MermaidContext` object and `outgoing_map` split.
+
 ## Files Modified/Created
 
 ### Core Changes
 
-- `src/pflow/core/workflow/mermaid.py` (163 → 1444 lines) — Complete rewrite. The public API (`generate_mermaid`) is unchanged. Internally: 5 routing maps, external IO rendering, data-flow edge generation, `procs` shape support, source-field parsing, batch item expansion.
-- `src/pflow/cli/commands/visualize.py` (92 → 100 lines) — Added `--descriptions` flag.
+- `src/pflow/core/workflow/mermaid/` — Package (5 files, ~1500 lines total, from single 163-line file). `_context.py` (289), `_edges.py` (293), `_io.py` (351), `_render.py` (470), `__init__.py` (22). Public API (`generate_mermaid`) unchanged.
+- `src/pflow/cli/commands/visualize.py` (92 → 106 lines) — Added `--descriptions` flag, `.md` output wrapping.
+- `src/pflow/execution/result.py` — Added `title`, `description` fields to `ResolvedWorkflow`.
+- `src/pflow/execution/workflow_resolver.py` — Populates `title`/`description` from `parse_markdown`.
 
 ### Test Files
 
-- `tests/test_core/test_mermaid.py` (392 → ~1100 lines, 53 tests) — All 15 original tests updated for new shape syntax. 38 new tests. Three high-value regression tests added last.
-- `tests/test_cli/test_visualize.py` (199 → ~216 lines, 8 tests) — 1 new test for `--descriptions`.
+- `tests/test_core/test_mermaid.py` (392 → ~1257 lines, 55 tests) — All 15 original tests updated for new shape syntax. 40 new tests including 4 high-value regression tests.
+- `tests/test_core/test_mermaid_golden.py` (new, 7 tests) — Byte-exact golden file comparisons against real workflows.
+- `tests/test_core/golden_mermaid/` (new, 7 files) — Golden baselines for 5 in-repo + 2 lyrics-generator workflows.
+- `tests/test_cli/test_visualize.py` (199 → ~258 lines, 10 tests) — 3 new tests (descriptions, `.md` output, `.mmd` output).
 
 **Critical tests** (catch real bugs, not just coverage):
 - `test_suppression_without_replacement_keeps_structural_edge` — guards against silent disconnection when data-flow name matching fails
@@ -69,8 +75,8 @@ Mermaid's `@{ shape: procs }` syntax is incompatible with `:::classDef`. Batch n
 
 ### Technical Debt
 
-- **`outgoing_map` dual purpose** — serves as both routing data and skip signal for `_resolve_ref_source`. Can't filter batch entries without cascading side effects. Four attempts to fix the 13-output fan failed (documented in `scratchpads/mermaid-improvements/change1-failed-analysis.md`). Would need to split into two separate maps.
-- **`_render_node` has 18 parameters** — threading routing maps through the call stack. A context object would be cleaner but was deferred to avoid scope creep.
+- **`outgoing_map` dual purpose** — now split into `outgoing_routes` (routing) and `has_expanded_outputs` (signal). Both populated identically today. The split enables a future fix for the batch output fan — `outgoing_routes` could exclude batch entries while `has_expanded_outputs` preserves the skip signal.
+- ~~**`_render_node` has 18 parameters**~~ — resolved. `MermaidContext` object reduces to 2 params (`node`, `ctx`).
 - **Internal IO still exists for batch items** — expanded batch items use `suppress_io=False` (internal IO). External IO would add 3 wrapper subgraphs per item for what are often single-node pipelines.
 
 ## Unexpected Discoveries
@@ -91,9 +97,9 @@ Any edge that skips pipeline stages (e.g., `input_sources → prepare-brief-inpu
 
 Code nodes store declared inputs at `params.inputs` (a nested dict), not at the top level. `_collect_param_refs` must recurse one level into nested dicts.
 
-### Mermaid doesn't support `rgba()`
+### Mermaid doesn't support `rgba()` but does support `fill-opacity`
 
-Subgraph fills must use hex values, not `rgba()`. Fixed to neutral grays that work on both light and dark themes.
+Subgraph fills use `fill:#808080,fill-opacity:N` — neutral gray overlay that works on both light and dark themes. `rgba()` fails in Mermaid's style parser, but SVG `fill-opacity` passes through correctly.
 
 ## Patterns Established
 
@@ -127,7 +133,7 @@ For `@{ shape: ... }` nodes that can't use `:::classDef`: emit a `style` directi
 
 ## Known Limitations
 
-1. **Batch sub-workflow output fan** — create-songs' 13 outputs all fan to prepare-evaluation. Can't fix without splitting `outgoing_map`'s dual purpose.
+1. **Batch sub-workflow output fan** — create-songs' 13 outputs all fan to prepare-evaluation. The `outgoing_routes`/`has_expanded_outputs` split now enables fixing this (not yet applied).
 2. **Top-level inputs first-consumer-only** — connecting to all consumers creates long-range edges that destroy layout.
 3. **`procs` shape + `:::classDef` incompatible** — requires `style` directive workaround.
 
@@ -135,34 +141,26 @@ For `@{ shape: ... }` nodes that can't use `:::classDef`: emit a `style` directi
 
 ### Quick Start for Related Tasks
 
-Read in order:
-1. `src/pflow/core/workflow/mermaid.py` — start with `generate_mermaid` (line ~60), then `_render_workflow` (~870), then `_render_node` (~900)
-2. `.taskmaster/tasks/task_146/implementation/progress-log.md` — every design decision and trap documented
-3. `scratchpads/mermaid-improvements/lyrics-generator-v3.mmd` — current output to render in mermaid.live
-4. `scratchpads/mermaid-improvements/external-io-prototype.mmd` — the hand-crafted target that guided the design
+Read `src/pflow/core/workflow/mermaid/CLAUDE.md` — contains file map, function-to-file map, context state table, common pitfalls, and testing commands.
 
-### Common Pitfalls
-
-1. **Don't remove routing maps.** They look redundant with external IO. They're not — `outgoing_map` is a shared signal for `_resolve_ref_source`. Removing entries creates cascading failures.
-2. **Don't change the mermaid ID convention.** `{prefix}{node_id}__in_{name}` and `__out_{name}` are referenced by every routing mechanism.
-3. **Always render and visually verify.** String-level checks (grep) confirm "correct" edges while the rendered diagram is broken. Render in mermaid.live after every change.
-4. **`suppress_io` and end nodes are coupled.** Changing one without the other causes end node regression.
-5. **`_render_workflow` return value is essential.** It returns `outgoing_map` for nested output routing. Ignoring it causes edges to connect to subgraph boxes.
+Then read in order:
+1. `_render.py` — start with `generate_mermaid`, then `_render_workflow`, then `_render_node`
+2. `_context.py` — `MermaidContext` class and all constants/utilities
+3. `.taskmaster/tasks/task_146/implementation/progress-log.md` — design evolution and traps
 
 ### Test-First Recommendations
 
 ```bash
-# After any change to mermaid.py:
-uv run pytest tests/test_core/test_mermaid.py -v
+# After any change to mermaid/:
+uv run pytest tests/test_core/test_mermaid.py tests/test_core/test_mermaid_golden.py tests/test_cli/test_visualize.py -v
 make check
-
-# Manual verification (REQUIRED for edge routing changes):
-uv run pflow visualize /Users/andfal/projects/music-generation/workflows/lyrics-generator/lyrics-generator.pflow.md \
-  --depth 5 --direction TD -o scratchpads/mermaid-improvements/lyrics-generator-v3.mmd
-# Then render in mermaid.live
 ```
 
-The three high-value regression tests (`test_suppression_without_replacement_keeps_structural_edge`, `test_external_io_does_not_duplicate_with_internal_io`, `test_top_level_input_connects_to_actual_consumer`) catch the most dangerous failure modes. If any of these fail, do NOT proceed — the fix has broken a critical invariant.
+The four high-value regression tests catch the most dangerous failure modes. If any fail, do NOT proceed:
+- `test_suppression_without_replacement_keeps_structural_edge`
+- `test_external_io_does_not_duplicate_with_internal_io`
+- `test_top_level_input_connects_to_actual_consumer`
+- `test_nested_subworkflow_output_routes_through_child_output`
 
 ---
 
