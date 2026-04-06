@@ -17,10 +17,18 @@ import click
     "--output",
     type=click.Path(),
     default=None,
-    help="Write Mermaid output to file instead of stdout",
+    help="Write to file (.md wraps in markdown with title; other extensions write raw Mermaid)",
+)
+@click.option(
+    "--descriptions",
+    is_flag=True,
+    default=False,
+    help="Add first sentence of node descriptions to labels",
 )
 @click.pass_context
-def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, output: str | None) -> None:
+def visualize(
+    ctx: click.Context, workflow: str, depth: int, direction: str, output: str | None, descriptions: bool
+) -> None:
     """Generate a Mermaid flowchart from a workflow.
 
     Validates the workflow first (same checks as --validate-only).
@@ -33,9 +41,9 @@ def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, out
 
         pflow visualize my-saved-workflow --depth 2
 
-        pflow visualize workflow.pflow.md -o diagram.mmd
+        pflow visualize workflow.pflow.md -o diagram.md
 
-        pflow visualize workflow.pflow.md --direction TD
+        pflow visualize workflow.pflow.md --direction TD --descriptions
     """
     from pathlib import Path
 
@@ -82,10 +90,16 @@ def visualize(ctx: click.Context, workflow: str, depth: int, direction: str, out
         base_path=base_path,
         max_depth=depth,
         direction=direction,
+        descriptions=descriptions,
     )
 
     if output:
-        Path(output).write_text(mermaid, encoding="utf-8")
+        content = mermaid
+        if output.endswith(".md"):
+            title = resolved.title or Path(workflow).stem
+            desc = f"\n{resolved.description}\n" if resolved.description else ""
+            content = f"# {title}\n{desc}\n```mermaid\n{mermaid}```\n"
+        Path(output).write_text(content, encoding="utf-8")
         click.echo(f"Mermaid diagram written to {output}", err=True)
     else:
         click.echo(mermaid)

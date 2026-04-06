@@ -345,7 +345,7 @@ Disable traces with `--no-trace` for faster execution (the `--report` flag overr
 
 ## Visualize command
 
-Generate a [Mermaid](https://mermaid.js.org/) flowchart from a workflow. Shows the graph topology — nodes, edges, conditional branches, error routes — that's otherwise scattered across individual node directives in the `.pflow.md` file.
+Generate a [Mermaid](https://mermaid.js.org/) flowchart from a workflow. Shows the graph topology — nodes, edges, conditional branches, error routes, inputs, outputs — that's otherwise scattered across individual node directives in the `.pflow.md` file.
 
 ```bash
 pflow visualize workflow.pflow.md
@@ -355,20 +355,24 @@ pflow visualize my-saved-workflow
 The command validates the workflow first (same checks as `--validate-only`). On validation failure, it shows diagnostics and exits with code 1. On success, it outputs Mermaid syntax to stdout.
 
 ```bash
-# Save to file
+# Save to file (raw Mermaid syntax)
 pflow visualize workflow.pflow.md -o diagram.mmd
+
+# Save as markdown with title, optional description, and fenced mermaid block
+pflow visualize workflow.pflow.md -o diagram.md
 
 # Or pipe to clipboard
 pflow visualize workflow.pflow.md | pbcopy
 ```
 
-Mermaid renders natively in GitHub, VS Code, and most markdown viewers — no extra tooling needed.
+Mermaid renders natively in GitHub, VS Code, and most markdown viewers — no extra tooling needed. The `.md` output wraps the diagram in a markdown document with the workflow's title and description, ready to commit or share.
 
 | Option | Description |
 |--------|-------------|
-| `-o, --output FILE` | Write Mermaid output to file instead of stdout |
+| `-o, --output FILE` | Write to file. `.md` extension wraps in markdown with title and fenced code block. Any other extension writes raw Mermaid syntax. |
 | `--depth N` | Sub-workflow expansion depth (default: 5, 0 = no expansion) |
 | `--direction LR\|TD` | Graph direction: left-to-right or top-down (default: LR) |
+| `--descriptions` | Add first sentence of each node's purpose to its label |
 
 Sub-workflow nodes (`type: workflow`) expand into `subgraph` blocks showing their internal structure. Use `--depth 0` to render them as opaque nodes, or `--depth 2` to expand nested sub-workflows:
 
@@ -378,6 +382,9 @@ pflow visualize workflow.pflow.md --depth 0
 
 # Expand two levels deep, top-down layout
 pflow visualize workflow.pflow.md --depth 2 --direction TD
+
+# Include node descriptions in labels
+pflow visualize workflow.pflow.md --descriptions
 ```
 
 <Expandable title="Example output">
@@ -386,18 +393,29 @@ For a workflow with conditional branching:
 
 ```mermaid
 graph LR
-    fetch-data["fetch-data (shell)"]
-    classify["classify (code)"]
-    process-small["process-small (shell)"]
-    process-large["process-large (shell)"]
-    handle-error["handle-error (shell)"]
+    classDef code fill:#D5E8D4,stroke:#82B366,color:#000
+    classDef shell fill:#DAE8FC,stroke:#6C8EBF,color:#000
+    classDef decision fill:#F5F5F5,stroke:#666666,color:#000
+    fetch-data[["fetch-data (shell)"]]:::shell
+    classify{"classify (code)"}:::decision
+    process-small[["process-small (shell)"]]:::shell
+    process-large[["process-large (shell)"]]:::shell
+    handle-error[["handle-error (shell)"]]:::shell
+    done[["done (shell)"]]:::shell
+    pflow_end(("end"))
     fetch-data --> classify
-    classify -->|process-small| process-small
-    classify -->|process-large| process-large
     classify -.->|error| handle-error
+    classify -->|process-large| process-large
+    classify -->|process-small| process-small
+    process-small --> done
+    process-large --> done
+    done --> pflow_end
+    handle-error --> pflow_end
 ```
 
-Edge styles: `-->` for normal flow, `-->|action|` for named branches, `-.->|error|` for error routes.
+Node shapes indicate type: `[["shell"]]` rectangles for shell, `{"code"}` diamonds for decision nodes, `(["output"])` stadiums for outputs. Edge styles: `-->` for normal flow, `-->|action|` for named branches, `-.->|error|` for error routes.
+
+Workflow inputs and outputs render as dashed-border groups. Batch nodes show as subgraphs with their items. Sub-workflows expand into nested subgraphs with input/output wrappers showing data flow across boundaries.
 
 </Expandable>
 

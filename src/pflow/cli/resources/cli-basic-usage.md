@@ -84,7 +84,7 @@ pflow ./workflow.pflow.md --no-cache
 pflow ./workflow.pflow.md --only node-name --report
 
 # See the workflow graph (saves Mermaid flowchart to file)
-pflow visualize ./workflow.pflow.md -o graph.mmd
+pflow visualize ./workflow.pflow.md -o graph.md
 ```
 
 ### Instructions for building workflows

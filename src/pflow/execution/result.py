@@ -32,6 +32,8 @@ class ResolvedWorkflow:
     ir: dict[str, Any]
     source: str  # "file", "library", "content", "direct"
     file_path: Optional[str] = None  # Absolute path for file/library, None for content/direct
+    title: Optional[str] = None  # H1 title from .pflow.md (None for dict/content sources)
+    description: Optional[str] = None  # H1 prose from .pflow.md (None for dict/content sources)
     diagnostics: tuple[Diagnostic, ...] = ()
 
 
