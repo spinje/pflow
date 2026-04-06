@@ -933,6 +933,41 @@ def test_data_flow_edges_from_params() -> None:
     assert "producer --> consumer" in out
 
 
+def test_structural_edge_not_suppressed_when_subwf_inputs_are_only_from_parent() -> None:
+    """Structural edge survives when sub-workflow inputs come only from workflow inputs.
+
+    Regression test: data_flow_targets was populated unconditionally when a
+    sub-workflow had child inputs, even when _generate_data_flow_edges produced
+    zero edges (all refs resolved to parent inputs, which are skipped at depth 0).
+    This suppressed the structural edge, making the preceding node a dead end.
+    """
+    child_ir = _ir(
+        nodes=[_node("inner", "llm")],
+        inputs={"config": {"type": "string"}},
+    )
+
+    def resolver(params: dict[str, Any], base: Optional[Path]) -> Optional[SubWorkflowResult]:
+        return SubWorkflowResult(ir=child_ir, path=Path("/fake/child.pflow.md"), warnings=())
+
+    # prepare → subwf, but subwf's only param references a workflow input (not prepare)
+    parent_ir = _ir(
+        nodes=[
+            _node("prepare", "code"),
+            {
+                "id": "subwf",
+                "type": "workflow",
+                "params": {"workflow": "child", "config": "${my_setting}"},
+            },
+        ],
+        edges=[{"from": "prepare", "to": "subwf"}],
+        inputs={"my_setting": {"type": "string"}},
+    )
+    out = generate_mermaid(parent_ir, resolve_child=resolver)
+
+    # Structural edge prepare → subwf must survive (not suppressed)
+    assert "prepare --> subwf" in out
+
+
 def test_data_flow_skips_item_refs() -> None:
     """Batch item refs (${item.*}) don't generate data-flow edges."""
     child_ir = _ir(
