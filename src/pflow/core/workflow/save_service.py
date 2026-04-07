@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Severity
 from pflow.core.exceptions import MarkdownParseError, WorkflowValidationError
 from pflow.core.ir_schema import normalize_ir, validate_ir
 from pflow.core.markdown_parser import parse_markdown
@@ -128,19 +129,20 @@ def _validate_and_normalize_ir(
         dummy_params = generate_dummy_parameters(inputs)
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(
+        validator_diagnostics = WorkflowValidator.validate(
             workflow_ir=workflow_ir,
             extracted_params=dummy_params,  # Use dummy params for template validation
             registry=registry,
             skip_node_types=False,  # Validate node types
             workflow_file=source_path,
         )
+        errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
 
         if errors:
-            error_msg = f"{source_desc} - Validation errors:\n"
-            for i, error in enumerate(errors, 1):
-                error_msg += f"  {i}. {error}\n"
-            raise WorkflowValidationError(error_msg.rstrip())
+            summary = f"{source_desc} - Validation errors:\n" + "\n".join(
+                f"  {i}. {diagnostic.message}" for i, diagnostic in enumerate(errors, 1)
+            )
+            raise WorkflowValidationError(summary=summary, validation_errors=errors)
 
         return workflow_ir
     except WorkflowValidationError:

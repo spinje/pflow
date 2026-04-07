@@ -334,7 +334,7 @@ class WorkflowExecutor(BaseNode):
         for d in self._child_parser_warnings:
             if step_id:
                 parser_diagnostics.append(
-                    replace(d, message=format_child_provenance(step_id, d.message), node_id=step_id)
+                    replace(d, message=format_child_provenance(step_id, d.message), node_id=d.node_id or step_id)
                 )
             else:
                 parser_diagnostics.append(d)

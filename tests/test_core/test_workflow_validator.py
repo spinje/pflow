@@ -4,6 +4,26 @@ import pytest
 
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
+from pflow.runtime.template_validation import validate_workflow_templates
+
+
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
+def _split_template_diagnostics(*args, **kwargs):
+    diagnostics = validate_workflow_templates(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
 
 # Note: Removed autouse fixture that was modifying user's registry.
 # The global test isolation in tests/conftest.py now ensures tests use
@@ -38,7 +58,7 @@ class TestWorkflowValidator:
             "inputs": {"input_file": {"type": "string", "required": True}},
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow, extracted_params={"input_file": "test.txt"}, registry=registry_with_nodes, skip_node_types=True
         )
 
@@ -53,10 +73,9 @@ class TestWorkflowValidator:
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow)
+        errors, _warnings = _split_validator_diagnostics(workflow)
 
         assert len(errors) > 0
-        assert any("Structure:" in e for e in errors)
         assert any("ir_version" in e for e in errors)
 
     def test_data_flow_validation_errors(self):
@@ -73,7 +92,7 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
 
         assert len(errors) > 0
         assert any("after" in e for e in errors)
@@ -95,7 +114,7 @@ class TestWorkflowValidator:
             },
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
 
         assert len(errors) > 0
         assert any("stdin" in e.lower() for e in errors)
@@ -113,7 +132,7 @@ class TestWorkflowValidator:
             },
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
 
         # Should not have stdin-related errors
         assert not any("stdin" in e.lower() for e in errors)
@@ -128,7 +147,7 @@ class TestWorkflowValidator:
         }
 
         # With extracted_params but missing the required param
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow,
             extracted_params={},  # Empty params
             registry=registry_with_nodes,
@@ -147,7 +166,7 @@ class TestWorkflowValidator:
         }
 
         # Without extracted_params - should skip template validation
-        errors, _warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
 
         # Should not have template errors
         assert not any("missing_param" in e for e in errors)
@@ -162,7 +181,7 @@ class TestWorkflowValidator:
         }
 
         # With node type validation enabled
-        errors, _warnings = WorkflowValidator.validate(workflow, registry=registry_with_nodes, skip_node_types=False)
+        errors, _warnings = _split_validator_diagnostics(workflow, registry=registry_with_nodes, skip_node_types=False)
 
         assert len(errors) > 0
         assert any("Unknown node type" in e for e in errors)
@@ -190,7 +209,7 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow, registry=registry_with_nodes, skip_node_types=False)
+        errors, _warnings = _split_validator_diagnostics(workflow, registry=registry_with_nodes, skip_node_types=False)
 
         # Should not have "Unknown node type" for workflow
         assert not any("Unknown node type" in e for e in errors)
@@ -242,9 +261,7 @@ Do something.
         }
 
         # The template validator should resolve ${process.result} successfully
-        from pflow.runtime.template_validation import validate_workflow_templates
-
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry_with_nodes)
 
         template_errors = [e for e in errors if "process" in e and "result" in e]
         assert len(template_errors) == 0, f"Unexpected errors for workflow output: {template_errors}"
@@ -273,9 +290,7 @@ Do something.
             "edges": [{"from": "process", "to": "use_output"}],
         }
 
-        from pflow.runtime.template_validation import validate_workflow_templates
-
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry_with_nodes)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry_with_nodes)
 
         # Dynamic workflow should NOT produce errors for any output reference
         template_errors = [e for e in errors if "process" in e and "anything" in e]
@@ -291,13 +306,13 @@ Do something.
         }
 
         # With node type validation - should fail
-        errors_with_validation, _ = WorkflowValidator.validate(
+        errors_with_validation, _ = _split_validator_diagnostics(
             workflow, registry=registry_with_nodes, skip_node_types=False
         )
         assert any("Unknown node type" in e for e in errors_with_validation)
 
         # Without node type validation - should pass
-        errors_without_validation, _ = WorkflowValidator.validate(
+        errors_without_validation, _ = _split_validator_diagnostics(
             workflow, registry=registry_with_nodes, skip_node_types=True
         )
         assert not any("Unknown node type" in e for e in errors_without_validation)
@@ -314,7 +329,7 @@ Do something.
             "inputs": {},
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow, extracted_params={}, registry=registry_with_nodes)
+        errors, _warnings = _split_validator_diagnostics(workflow, extracted_params={}, registry=registry_with_nodes)
 
         # Should have multiple error types
         assert len(errors) >= 3
@@ -341,7 +356,7 @@ Do something.
             "inputs": {},
         }
 
-        errors, _warnings = WorkflowValidator.validate(workflow, skip_node_types=True)
+        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
 
         assert len(errors) > 0
         assert any("Circular dependency" in e for e in errors)
@@ -386,7 +401,7 @@ Do something.
             },
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow,
             extracted_params={
                 "api_url": "https://api.example.com/data",

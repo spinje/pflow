@@ -134,9 +134,29 @@ def build_fixtures() -> list[Fixture]:
             exception=WorkflowValidationError(
                 summary="Workflow validation failed",
                 validation_errors=[
-                    ("Unknown node type 'httpp'", "nodes[0].type", "Use 'shell', 'http', 'llm', 'file', or 'mcp'"),
-                    ("Missing required field 'type'", "nodes[1]", "Every node must have a 'type' field"),
-                    ("Undefined template variable '${api_key}'", "nodes[2].params.url", None),
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        message="Unknown node type 'httpp'",
+                        title="Validation Error",
+                        suggestions=["Use 'shell', 'http', 'llm', 'file', or 'mcp'"],
+                        source="validation",
+                        context={"category": "validation", "path": "nodes[0].type"},
+                    ),
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        message="Missing required field 'type'",
+                        title="Validation Error",
+                        suggestions=["Every node must have a 'type' field"],
+                        source="validation",
+                        context={"category": "validation", "path": "nodes[1]"},
+                    ),
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        message="Undefined template variable '${api_key}'",
+                        title="Validation Error",
+                        source="validation",
+                        context={"category": "validation", "path": "nodes[2].params.url"},
+                    ),
                 ],
             ),
             expected_context={
@@ -598,9 +618,27 @@ def render_wrappers(fixtures: list[Fixture]) -> list[RenderResult]:
             fixture_name="validation-failure-3-errors",
             path_name="format_validation_failure(3 errors)",
             rendered=format_validation_failure([
-                "Unknown node type 'httpp'",
-                "Missing required field 'type'",
-                "Undefined template variable '${api_key}'",
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    message="Unknown node type 'httpp'",
+                    title="Validation Error",
+                    source="validation",
+                    context={"category": "validation"},
+                ),
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    message="Missing required field 'type'",
+                    title="Validation Error",
+                    source="validation",
+                    context={"category": "validation"},
+                ),
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    message="Undefined template variable '${api_key}'",
+                    title="Validation Error",
+                    source="validation",
+                    context={"category": "validation"},
+                ),
             ]),
         )
     )
@@ -608,7 +646,16 @@ def render_wrappers(fixtures: list[Fixture]) -> list[RenderResult]:
         RenderResult(
             fixture_name="validation-failure-15-errors",
             path_name="format_validation_failure(15 errors, truncation)",
-            rendered=format_validation_failure([f"Validation error {i}" for i in range(15)]),
+            rendered=format_validation_failure([
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    message=f"Validation error {i}",
+                    title="Validation Error",
+                    source="validation",
+                    context={"category": "validation"},
+                )
+                for i in range(15)
+            ]),
         )
     )
 

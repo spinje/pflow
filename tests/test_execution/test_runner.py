@@ -14,6 +14,15 @@ from pflow.execution.result import ExecutionResult, RunnerConfig
 from pflow.execution.runner import WorkflowRunner
 
 
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 def test_validation_error_prevents_compilation():
     """When a workflow has a cycle, validation should fail and compilation should never be called.
 

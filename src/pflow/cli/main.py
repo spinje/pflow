@@ -21,7 +21,7 @@ from pflow.cli.workflow_output import (
 )
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
-from pflow.core.diagnostic import Severity, format_diagnostic
+from pflow.core.diagnostic import Diagnostic, Severity, format_diagnostic
 from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (
@@ -624,10 +624,15 @@ def _validate_and_prepare_workflow_params(
         raise WorkflowValidationError(
             summary="Invalid parameter names",
             validation_errors=[
-                (
-                    f"Invalid parameter name(s): {', '.join(invalid_keys)}",
-                    "",
-                    "Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)",
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validation",
+                    title="Validation Error",
+                    message=f"Invalid parameter name(s): {', '.join(invalid_keys)}",
+                    suggestions=[
+                        "Parameter names cannot contain shell special characters ($, |, >, <, &, ;, etc.)",
+                    ],
+                    context={"category": "validation"},
                 )
             ],
         )

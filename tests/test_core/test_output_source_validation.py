@@ -4,6 +4,15 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 class TestOutputSourceValidation:
     """Test output source validation functionality."""
 
@@ -16,7 +25,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "node1", "description": "Node output"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0, f"Expected no errors, got: {errors}"
 
     def test_valid_output_source_with_dot_notation(self):
@@ -28,7 +37,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "node1.stdout", "description": "Shell stdout"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_valid_output_source_with_nested_path(self):
@@ -40,7 +49,7 @@ class TestOutputSourceValidation:
             "outputs": {"deep": {"source": "node1.result.data.items", "description": "Nested"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_invalid_output_source_nonexistent_node(self):
@@ -52,7 +61,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "nonexistent.output"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 1
         assert "nonexistent" in errors[0].lower()
         assert "result" in errors[0]
@@ -70,7 +79,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "missing"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 1
         assert "missing" in errors[0]
         # Should show available nodes
@@ -85,7 +94,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"description": "No source specified", "type": "string"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_valid_output_with_template_variable_in_source(self):
@@ -97,7 +106,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "${dynamic_node}.output"}},  # Template variable
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         # Should NOT error - template variables are skipped
         assert len(errors) == 0
 
@@ -118,7 +127,7 @@ class TestOutputSourceValidation:
             },
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 2
         # Check both invalid outputs are caught
         assert any("invalid1" in e and "fake" in e for e in errors)
@@ -133,7 +142,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "mynode.output"}},  # Wrong case
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 1
         assert "mynode" in errors[0].lower()
 
@@ -146,7 +155,7 @@ class TestOutputSourceValidation:
             "outputs": {},  # No outputs
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_missing_outputs_key_is_valid(self):
@@ -158,7 +167,7 @@ class TestOutputSourceValidation:
             # No "outputs" key at all
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_empty_source_string_is_invalid(self):
@@ -170,7 +179,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": ""}},  # Empty string
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 1
         assert "empty" in errors[0].lower()
 
@@ -183,7 +192,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "   "}},  # Whitespace only
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 1
         assert "empty" in errors[0].lower()
 
@@ -208,7 +217,7 @@ class TestOutputSourceValidation:
             },
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_validation_with_no_nodes_but_outputs(self):
@@ -220,7 +229,7 @@ class TestOutputSourceValidation:
             "outputs": {"result": {"source": "node1.output"}},
         }
 
-        errors, _ = WorkflowValidator.validate(workflow, {}, Registry(), skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         # Should have at least one error (output references non-existent node)
         assert len(errors) >= 1
         assert any("node1" in e for e in errors)

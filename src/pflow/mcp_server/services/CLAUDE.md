@@ -79,7 +79,8 @@ Validation fails on templates without parameter values. Use `generate_dummy_para
 
 ```python
 dummy = generate_dummy_parameters(workflow_ir.get("inputs", {}))
-errors, warnings = WorkflowValidator.validate(workflow_ir, extracted_params=dummy)
+diagnostics = WorkflowValidator.validate(workflow_ir, extracted_params=dummy)
+errors = [d for d in diagnostics if d.severity.value == "error"]
 ```
 
 ### ExecutionResult Field Sync (Hard-Won)

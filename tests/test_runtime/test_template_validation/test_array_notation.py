@@ -14,6 +14,15 @@ from pflow.runtime.template_validation import validate_workflow_templates
 from pflow.runtime.template_validation.validator import _extract_all_templates
 
 
+def _split_template_diagnostics(*args, **kwargs):
+    diagnostics = validate_workflow_templates(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 class TestTemplateArrayNotation:
     """Test array notation support in template validation and resolution."""
 
@@ -159,7 +168,7 @@ class TestTemplateArrayNotation:
             mock_metadata.side_effect = get_metadata
 
             # Should validate - array notation is in templates
-            errors, _warnings = validate_workflow_templates(
+            errors, _warnings = _split_template_diagnostics(
                 workflow_ir,
                 {},  # No external params needed
                 registry,

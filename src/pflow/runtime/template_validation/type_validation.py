@@ -7,6 +7,7 @@ Pass 7: Blocks structured data (dict/list) in shell command parameters.
 import re
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.type_checker import (
@@ -84,7 +85,9 @@ def _is_shell_safe_type(inferred_type: str, blocked_types: set[str]) -> tuple[bo
 # ---------------------------------------------------------------------------
 
 
-def validate_template_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any], registry: Registry) -> list[str]:
+def validate_template_types(
+    workflow_ir: dict[str, Any], node_outputs: dict[str, Any], registry: Registry
+) -> list[Diagnostic]:
     """Validate template variable types match parameter expectations.
 
     Args:
@@ -93,9 +96,9 @@ def validate_template_types(workflow_ir: dict[str, Any], node_outputs: dict[str,
         registry: Registry instance
 
     Returns:
-        List of type mismatch errors
+        Type mismatch diagnostics
     """
-    errors: list[str] = []
+    diagnostics: list[Diagnostic] = []
 
     for node in workflow_ir.get("nodes", []):
         node_type = node.get("type")
@@ -104,9 +107,9 @@ def validate_template_types(workflow_ir: dict[str, Any], node_outputs: dict[str,
 
         for param_name, param_value in params.items():
             expected_type = get_parameter_type(node_type, param_name, registry)
-            _check_param_type(param_name, param_value, expected_type, node_id, workflow_ir, node_outputs, errors)
+            _check_param_type(param_name, param_value, expected_type, node_id, workflow_ir, node_outputs, diagnostics)
 
-    return errors
+    return diagnostics
 
 
 def _check_param_type(
@@ -116,18 +119,26 @@ def _check_param_type(
     node_id: str,
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
-    errors: list[str],
+    diagnostics: list[Diagnostic],
 ) -> None:
     """Recursively validate template types in a parameter value."""
     if isinstance(value, str) and TemplateResolver.has_templates(value):
         if expected_type and expected_type != "any":
-            _check_string_template_types(param_name, value, expected_type, node_id, workflow_ir, node_outputs, errors)
+            _check_string_template_types(
+                param_name,
+                value,
+                expected_type,
+                node_id,
+                workflow_ir,
+                node_outputs,
+                diagnostics,
+            )
     elif isinstance(value, dict):
         for val in value.values():
-            _check_param_type(param_name, val, None, node_id, workflow_ir, node_outputs, errors)
+            _check_param_type(param_name, val, None, node_id, workflow_ir, node_outputs, diagnostics)
     elif isinstance(value, list):
         for item in value:
-            _check_param_type(param_name, item, None, node_id, workflow_ir, node_outputs, errors)
+            _check_param_type(param_name, item, None, node_id, workflow_ir, node_outputs, diagnostics)
 
 
 def _check_string_template_types(
@@ -137,7 +148,7 @@ def _check_string_template_types(
     node_id: str,
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
-    errors: list[str],
+    diagnostics: list[Diagnostic],
 ) -> None:
     """Validate template types in a string parameter value."""
     templates = TemplateResolver.extract_variables(value)
@@ -146,14 +157,33 @@ def _check_string_template_types(
         if not inferred_type or inferred_type == "any":
             continue
         if not is_type_compatible(inferred_type, expected_type):
-            error_msg = (
-                f"Type mismatch in node '{node_id}' parameter '{param_name}': "
-                f"template ${{{template}}} has type '{inferred_type}' "
-                f"but parameter expects '{expected_type}'"
-            )
+            suggestions: list[str] | None = None
+            available_fields: list[str] = []
             if inferred_type in ["dict", "list", "object"] and expected_type in ["str", "string"]:
-                error_msg += _generate_type_fix_suggestion(template, node_outputs, expected_type)
-            errors.append(error_msg)
+                suggestions, available_fields = _generate_type_fix_suggestions(template, node_outputs, expected_type)
+
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    node_id=node_id,
+                    message=(
+                        f"Type mismatch in parameter '{param_name}': template ${{{template}}} has type "
+                        f"'{inferred_type}' but parameter expects '{expected_type}'."
+                    ),
+                    suggestions=suggestions,
+                    context={
+                        "category": "validation",
+                        "path": f"nodes[id={node_id}].params.{param_name}",
+                        "template": f"${{{template}}}",
+                        "inferred_type": inferred_type,
+                        "expected_type": expected_type,
+                        "available_fields": available_fields or None,
+                        "available_fields_total": len(available_fields) if available_fields else None,
+                    },
+                )
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +203,7 @@ def _build_quoted_templates(command: str) -> set[str]:
     return result
 
 
-def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[str]:
+def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict[str, Any]) -> list[Diagnostic]:
     """Block dict/list types in shell command parameters.
 
     Shell commands cannot safely handle JSON embedded in command strings
@@ -193,9 +223,9 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
         node_outputs: Node output metadata from registry
 
     Returns:
-        List of errors for structured data in shell commands
+        Diagnostics for structured data in shell commands
     """
-    errors = []
+    diagnostics: list[Diagnostic] = []
     # Types that cannot be safely embedded in shell command strings.
     # Includes both Python type names (dict, list) and JSON Schema names (object, array)
     # since workflow IR may use either convention.
@@ -247,52 +277,62 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
             if len(blocked_templates) == 1:
                 # Single template - simple case
                 template, blocked_type = blocked_templates[0]
-                errors.append(
-                    f"Shell node '{node_id}': cannot use ${{{template}}} (type: {blocked_type}) "
-                    f"in command parameter.\n\n"
-                    f"PROBLEM: {blocked_type} data embedded in shell commands breaks parsing "
-                    f"(quotes, backticks, $() cause errors).\n\n"
-                    f"CURRENT (breaks):\n"
-                    f'  "command": "{display_cmd}"\n\n'
-                    f"FIX OPTIONS:\n\n"
-                    f"1. Access specific fields (if they're strings/numbers):\n"
-                    f"   ${{{template}.fieldname}}, ${{{template}.count}}, etc.\n\n"
-                    f"2. Use stdin for the whole object:\n"
-                    f'   {{"stdin": "${{{template}}}", "command": "jq \'.field\'"}}\n\n'
-                    f"3. Quote the template to accept JSON coercion (if you've verified it's safe):\n"
-                    f"   '${{{template}}}' - wrapping in single quotes signals you accept runtime coercion"
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node_id,
+                        message=(
+                            f"Shell node '{node_id}': cannot use ${{{template}}} (type: {blocked_type}) "
+                            f"in command parameter — embedded {blocked_type} breaks shell parsing."
+                        ),
+                        suggestions=[
+                            f"Access a specific field: ${{{template}.fieldname}}",
+                            f'Use stdin for the whole object: stdin: "${{{template}}}", command: "jq \'.field\'"',
+                            f"Quote the template to accept JSON coercion: '${{{template}}}'",
+                        ],
+                        context={
+                            "category": "validation",
+                            "path": f"nodes[id={node_id}].params.command",
+                            "template": f"${{{template}}}",
+                            "blocked_type": blocked_type,
+                            "shell_command": display_cmd,
+                        },
+                    )
                 )
             else:
                 # Multiple templates - need different approach
                 template_list = ", ".join(f"${{{t}}} ({typ})" for t, typ in blocked_templates)
-                errors.append(
-                    f"Shell node '{node_id}': multiple structured data templates in command: "
-                    f"{template_list}\n\n"
-                    f"PROBLEM: Shell commands can only receive ONE data source via stdin.\n\n"
-                    f"CURRENT (breaks):\n"
-                    f'  "command": "{display_cmd}"\n\n'
-                    f"FIX OPTIONS:\n\n"
-                    f"1. Use temp files - write each data source to a file, then read in shell:\n"
-                    f"   ### save-a\n"
-                    f"   - type: write-file\n"
-                    f"   - file_path: /tmp/a.json\n"
-                    f"   - content: ${{data-a}}\n\n"
-                    f"   ### save-b\n"
-                    f"   - type: write-file\n"
-                    f"   - file_path: /tmp/b.json\n"
-                    f"   - content: ${{data-b}}\n\n"
-                    f"   ### process\n"
-                    f"   - type: shell\n"
-                    f"   ```shell command\n"
-                    f"   jq -s '.[0] * .[1]' /tmp/a.json /tmp/b.json\n"
-                    f"   ```\n\n"
-                    f"2. Process each data source in separate shell nodes, combine results after\n\n"
-                    f"3. Pass one via stdin, reference another via file\n\n"
-                    f"4. Quote templates to accept JSON coercion (if you've verified they're safe):\n"
-                    f"   '${{template}}' - wrapping in single quotes signals you accept runtime coercion"
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node_id,
+                        message=(
+                            f"Shell node '{node_id}': multiple structured data templates in command: "
+                            f"{template_list}. Shell commands can only receive ONE data source via stdin."
+                        ),
+                        suggestions=[
+                            "Use temp files: write each data source via write-file nodes, then read in shell.",
+                            "Process each data source in separate shell nodes, then combine results.",
+                            "Pass one via stdin and reference another via file.",
+                            "Quote the template to accept JSON coercion: '${var}'",
+                        ],
+                        context={
+                            "category": "validation",
+                            "path": f"nodes[id={node_id}].params.command",
+                            "shell_command": display_cmd,
+                            "blocked_templates": [
+                                {"template": f"${{{template_name}}}", "type": blocked_type_name}
+                                for template_name, blocked_type_name in blocked_templates
+                            ],
+                        },
+                    )
                 )
 
-    return errors
+    return diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -300,10 +340,10 @@ def validate_shell_command_types(workflow_ir: dict[str, Any], node_outputs: dict
 # ---------------------------------------------------------------------------
 
 
-def _generate_type_fix_suggestion(  # noqa: C901
+def _generate_type_fix_suggestions(
     template: str, node_outputs: dict[str, Any], expected_type: str
-) -> str:
-    """Generate helpful suggestions for type mismatches with actual available fields.
+) -> tuple[list[str], list[str]]:
+    """Generate structured suggestions for type mismatches with actual available fields.
 
     Args:
         template: The template variable that has the wrong type
@@ -311,7 +351,7 @@ def _generate_type_fix_suggestion(  # noqa: C901
         expected_type: The type that was expected
 
     Returns:
-        Suggestion string with available fields
+        Tuple of (suggestions, available_fields)
     """
     # For nested templates like node.output.field, we need to traverse to find structure
     # Find the structure for this template by traversing
@@ -332,8 +372,7 @@ def _generate_type_fix_suggestion(  # noqa: C901
                     break
 
     if not structure:
-        # Generic fallback
-        return f"\n  \U0001f4a1 Suggestion: Access a specific field (e.g., ${{{template}.field}}) or serialize to JSON"
+        return ([f"Access a specific field, for example ${{{template}.field}}.", "Serialize the value to JSON."], [])
 
     # Find fields that match the expected type
     matching_fields = []
@@ -345,14 +384,10 @@ def _generate_type_fix_suggestion(  # noqa: C901
                 matching_fields.append(field_name)
 
     if matching_fields:
-        suggestion = "\n  \U0001f4a1 Available fields with correct type:"
-        for field in matching_fields[:5]:  # Show up to 5
-            suggestion += f"\n     - ${{{template}.{field}}}"
-        if len(matching_fields) > 5:
-            suggestion += f"\n     ... and {len(matching_fields) - 5} more"
-        return suggestion
-    else:
-        return "\n  \U0001f4a1 Suggestion: Access a nested field or serialize to JSON"
+        suggestions = [f"Use ${{{template}.{field}}}" for field in matching_fields[:5]]
+        available_fields = [f"${{{template}.{field}}}" for field in matching_fields]
+        return (suggestions, available_fields)
+    return (["Access a nested field or serialize the value to JSON."], [])
 
 
 def _traverse_to_structure(structure: dict[str, Any], path: str) -> Optional[dict[str, Any]]:

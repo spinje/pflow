@@ -73,46 +73,17 @@ class WorkflowValidationError(PflowError):
     def __init__(
         self,
         summary: str = "Workflow validation failed",
-        validation_errors: list[str | tuple[str, str, str]] | None = None,
+        validation_errors: list[Diagnostic] | None = None,
     ):
         self.summary = summary
         self.validation_errors = validation_errors or []
         super().__init__(summary)
 
     def to_diagnostics(self) -> list[Diagnostic]:
-        diagnostics: list[Diagnostic] = []
-        for error in self.validation_errors:
-            if isinstance(error, tuple):
-                message = error[0] if len(error) >= 1 else str(self)
-                path = error[1] if len(error) >= 2 else ""
-                suggestion_str = error[2] or None if len(error) >= 3 else None
-                ctx: dict[str, Any] = {"category": "validation"}
-                if path:
-                    ctx["path"] = path
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=message,
-                        title="Validation Error",
-                        suggestions=[suggestion_str] if suggestion_str else None,
-                        source="validation",
-                        context=ctx,
-                    )
-                )
-            else:
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=str(error),
-                        title="Validation Error",
-                        source="validation",
-                        context={"category": "validation"},
-                    )
-                )
-        return diagnostics or [
+        return self.validation_errors or [
             Diagnostic(
                 severity=Severity.ERROR,
-                message=str(self),
+                message=self.summary,
                 title="Validation Error",
                 source="validation",
                 context={"category": "validation"},

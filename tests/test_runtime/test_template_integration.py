@@ -6,9 +6,19 @@ from unittest.mock import Mock
 import pytest
 
 from pflow.core.node import Node
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
+
+
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
 
 
 class MockNode(Node):
@@ -126,12 +136,10 @@ class TestCompilerIntegration:
         WorkflowValidator. The compiler no longer raises for missing params.
         WorkflowValidator catches undefined template references as errors.
         """
-        from pflow.core.workflow.validator import WorkflowValidator
-
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}], "edges": []}
 
         # WorkflowValidator catches missing template variables as errors
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=mock_registry,

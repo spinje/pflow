@@ -204,8 +204,7 @@ def _format_all_context_blocks(diagnostic: Diagnostic, context: dict[str, Any]) 
     if (mcp_error := context.get("mcp_error")) and isinstance(mcp_error, dict):
         lines.extend(_format_mcp_error_lines(mcp_error))
 
-    if context.get("category") == "template_error":
-        lines.extend(_format_template_error_lines(context))
+    lines.extend(_format_available_fields_block(context))
 
     if "shell_command" in context:
         lines.extend(_format_shell_error_lines(context))
@@ -222,6 +221,8 @@ def _format_compilation_context_lines(context: dict[str, Any]) -> list[str]:
         lines.append(f"  Node type: {node_type}")
     if sub_path := context.get("sub_workflow_path"):
         lines.append(f"  Sub-workflow: {sub_path}")
+    if source_file := context.get("source_file"):
+        lines.append(f"  Loaded from file: {source_file}")
     return lines
 
 
@@ -243,8 +244,8 @@ def _format_exception_type_line(context: dict[str, Any]) -> list[str]:
     return []
 
 
-def _format_template_error_lines(context: dict[str, Any]) -> list[str]:
-    """Render template field suggestions for template errors."""
+def _format_available_fields_block(context: dict[str, Any]) -> list[str]:
+    """Render available field suggestions when provided in diagnostic context."""
     available = context.get("available_fields")
     if not available:
         return []

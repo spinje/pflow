@@ -7,6 +7,7 @@ that referenced fields actually exist on each item.
 
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.path_validation import validate_nested_path
 from pflow.runtime.template_validation.utils import (
@@ -18,7 +19,7 @@ from pflow.runtime.template_validation.utils import (
 def validate_batch_item_fields(
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
-) -> list[str]:
+) -> list[Diagnostic]:
     """Validate ${item.field} references against inferred item structure.
 
     For batch nodes where items come from an upstream batch node's results,
@@ -28,7 +29,7 @@ def validate_batch_item_fields(
     be inferred (e.g., items from workflow input, inline array, or
     non-batch source).
     """
-    errors: list[str] = []
+    diagnostics: list[Diagnostic] = []
 
     for node in workflow_ir.get("nodes", []):
         node_id = node.get("id")
@@ -53,9 +54,9 @@ def validate_batch_item_fields(
                 field_path, full_template, item_structure, item_alias, items_template, node_id, seen_errors
             )
             if error:
-                errors.append(error)
+                diagnostics.append(error)
 
-    return errors
+    return diagnostics
 
 
 def _infer_batch_item_structure(
@@ -142,8 +143,8 @@ def _check_batch_item_ref(
     items_template: Any,
     node_id: str,
     seen_errors: set[str],
-) -> Optional[str]:
-    """Check a single ${item.field} reference against item structure. Returns error or None."""
+) -> Optional[Diagnostic]:
+    """Check a single ${item.field} reference against item structure."""
     parts = field_path.split(".")
     first_field = parts[0].split("[")[0]
 
@@ -151,7 +152,7 @@ def _check_batch_item_ref(
         if first_field in seen_errors:
             return None
         seen_errors.add(first_field)
-        return _format_batch_item_field_error(
+        return _build_batch_item_field_diagnostic(
             node_id, item_alias, items_template, first_field, full_template, item_structure
         )
 
@@ -162,64 +163,69 @@ def _check_batch_item_ref(
             is_valid, _ = validate_nested_path(parts[1:], field_info, f"${{{full_template}}}", item_alias)
             if not is_valid and full_template not in seen_errors:
                 seen_errors.add(full_template)
-                return _format_batch_item_nested_error(node_id, item_alias, parts, full_template, field_info)
+                return _build_batch_item_nested_diagnostic(node_id, item_alias, parts, full_template, field_info)
 
     return None
 
 
-def _format_batch_item_field_error(
+def _build_batch_item_field_diagnostic(
     node_id: str,
     item_alias: str,
     items_template: Any,
     first_field: str,
     full_template: str,
     item_structure: dict[str, Any],
-) -> str:
-    """Format error message for invalid batch item field access."""
+) -> Diagnostic:
+    """Build diagnostic for invalid batch item field access."""
     safe_node_id = sanitize_for_display(node_id)
     safe_alias = sanitize_for_display(item_alias)
     items_source = items_template if isinstance(items_template, str) else str(items_template)
     safe_source = sanitize_for_display(items_source)
 
+    available_fields: list[str] = []
+    for field_name, field_info in item_structure.items():
+        field_type = field_info.get("type", "any") if isinstance(field_info, dict) else "any"
+        available_fields.append(f"${{{safe_alias}.{field_name}}} ({field_type})")
+
     available_paths = [
         (f"{safe_alias}.{field}", info.get("type", "any") if isinstance(info, dict) else "any")
         for field, info in item_structure.items()
     ]
-    suggestions = find_similar_paths(first_field, available_paths)
+    similar = find_similar_paths(first_field, available_paths)
 
-    lines = [
-        f"Node '{safe_node_id}': ${{{full_template}}} references "
-        f"field '{first_field}' which is not available on batch items.",
-        "",
-        f"Items come from: {safe_source}",
-        f"Available fields on ${{{safe_alias}}}:",
-    ]
+    context: dict[str, Any] = {
+        "category": "template_error",
+        "template": f"${{{full_template}}}",
+        "available_fields": available_fields,
+        "available_fields_total": len(available_fields),
+        "items_source": safe_source,
+        "batch_alias": safe_alias,
+    }
+    if similar:
+        context["similar_names"] = [f"${{{path}}}" for path, _ in similar]
 
-    for field_name, field_info in item_structure.items():
-        field_type = field_info.get("type", "any") if isinstance(field_info, dict) else "any"
-        lines.append(f"  ${{{safe_alias}.{field_name}}} ({field_type})")
-
-    if suggestions:
-        lines.append("")
-        if len(suggestions) == 1:
-            sugg_path, _ = suggestions[0]
-            lines.append(f"Did you mean: ${{{sugg_path}}}?")
-        else:
-            lines.append("Did you mean one of these?")
-            for sugg_path, _ in suggestions:
-                lines.append(f"  - ${{{sugg_path}}}")
-
-    return "\n".join(lines)
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id,
+        message=(
+            f"Node '{safe_node_id}': ${{{full_template}}} references field '{first_field}' "
+            f"which is not available on batch items (items come from: {safe_source})."
+        ),
+        suggestions=[f"Use ${{{path}}}" for path, _ in similar] if similar else None,
+        context=context,
+    )
 
 
-def _format_batch_item_nested_error(
+def _build_batch_item_nested_diagnostic(
     node_id: str,
     item_alias: str,
     parts: list[str],
     full_template: str,
     field_info: dict[str, Any],
-) -> str:
-    """Format error for invalid nested path on a batch item field.
+) -> Diagnostic:
+    """Build diagnostic for invalid nested path on a batch item field.
 
     Example: ${item.llm_usage.nope} where llm_usage has known structure.
     """
@@ -245,36 +251,47 @@ def _format_batch_item_nested_error(
     parent_type = current_info.get("type", "any") if isinstance(current_info, dict) else "any"
     nested_structure = current_info.get("structure", {}) if isinstance(current_info, dict) else {}
 
-    lines = [
-        f"Node '{safe_node_id}': ${{{full_template}}} \u2014 "
-        f"'{bad_field}' does not exist on '{parent_name}' ({parent_type}).",
-    ]
-
+    available_fields: list[str] = []
+    similar: list[tuple[str, str]] = []
     if nested_structure:
-        lines.append("")
-        lines.append(f"Available fields on ${{{parent_path}}}:")
         for field_name, sub_info in nested_structure.items():
             sub_type = sub_info.get("type", "any") if isinstance(sub_info, dict) else "any"
-            lines.append(f"  ${{{parent_path}.{field_name}}} ({sub_type})")
+            available_fields.append(f"${{{parent_path}.{field_name}}} ({sub_type})")
 
         available_paths = [
             (f"{parent_path}.{f}", i.get("type", "any") if isinstance(i, dict) else "any")
             for f, i in nested_structure.items()
         ]
-        suggestions = find_similar_paths(bad_field, available_paths)
-        if suggestions:
-            lines.append("")
-            if len(suggestions) == 1:
-                sugg_path, _ = suggestions[0]
-                lines.append(f"Did you mean: ${{{sugg_path}}}?")
-            else:
-                lines.append("Did you mean one of these?")
-                for sugg_path, _ in suggestions:
-                    lines.append(f"  - ${{{sugg_path}}}")
-    else:
-        lines.append("")
-        lines.append(
-            f"'{parent_name}' has type '{parent_type}' with no known sub-fields. Nested access may fail at runtime."
-        )
+        similar = find_similar_paths(bad_field, available_paths)
 
-    return "\n".join(lines)
+    if similar:
+        suggestions: list[str] | None = [f"Use ${{{path}}}" for path, _ in similar]
+    elif not nested_structure:
+        suggestions = [f"'{parent_name}' has no known sub-fields. Nested access may fail at runtime."]
+    else:
+        suggestions = None
+
+    context: dict[str, Any] = {
+        "category": "template_error",
+        "template": f"${{{full_template}}}",
+        "parent_path": parent_path,
+        "parent_type": parent_type,
+    }
+    if available_fields:
+        context["available_fields"] = available_fields
+        context["available_fields_total"] = len(available_fields)
+    if similar:
+        context["similar_names"] = [f"${{{path}}}" for path, _ in similar]
+
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id,
+        message=(
+            f"Node '{safe_node_id}': ${{{full_template}}} — '{bad_field}' does not exist on "
+            f"'{parent_name}' ({parent_type})."
+        ),
+        suggestions=suggestions,
+        context=context,
+    )

@@ -20,7 +20,7 @@ import logging
 import re
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
 from pflow.runtime.template_validation.batch_item_validation import validate_batch_item_fields
@@ -60,7 +60,7 @@ BATCH_OUTPUTS: list[dict[str, str]] = [
 
 def validate_workflow_templates(
     workflow_ir: dict[str, Any], available_params: dict[str, Any], registry: Registry
-) -> tuple[list[str], list[Diagnostic]]:
+) -> list[Diagnostic]:
     """
     Validates all template variables in a workflow.
 
@@ -74,21 +74,21 @@ def validate_workflow_templates(
         registry: Registry instance with parsed node metadata
 
     Returns:
-        Tuple of (errors, warnings):
-        - errors: List of validation errors that prevent execution
-        - warnings: List of Diagnostic objects for runtime-validated templates
+        Validation diagnostics. Severity distinguishes errors from warnings.
     """
-    errors: list[str] = []
-    warnings: list[Diagnostic] = []
+    diagnostics: list[Diagnostic] = []
 
     # Check for malformed template syntax FIRST
-    malformed_errors = _validate_malformed_templates(workflow_ir)
-    errors.extend(malformed_errors)
+    malformed_diagnostics = _validate_malformed_templates(workflow_ir)
+    diagnostics.extend(malformed_diagnostics)
 
     # If malformed syntax found, return early with those errors
-    if malformed_errors:
-        logger.error(f"Found {len(malformed_errors)} malformed template(s)", extra={"errors": malformed_errors})
-        return (errors, warnings)
+    if malformed_diagnostics:
+        logger.error(
+            f"Found {len(malformed_diagnostics)} malformed template(s)",
+            extra={"errors": [d.message for d in malformed_diagnostics]},
+        )
+        return diagnostics
 
     # Extract all templates from workflow
     all_templates = _extract_all_templates(workflow_ir)
@@ -101,12 +101,12 @@ def validate_workflow_templates(
         logger.debug("No template variables found in workflow")
 
     # Check for unused inputs
-    unused_input_errors = _validate_unused_inputs(workflow_ir, all_templates)
-    errors.extend(unused_input_errors)
+    unused_input_diagnostics = _validate_unused_inputs(workflow_ir, all_templates)
+    diagnostics.extend(unused_input_diagnostics)
 
     # If no templates, we can return early (after checking for unused inputs)
     if not all_templates:
-        return (errors, warnings)
+        return diagnostics
 
     # Get full output structure from nodes
     node_outputs = extract_node_outputs(workflow_ir, registry, available_params)
@@ -126,23 +126,19 @@ def validate_workflow_templates(
     )
 
     # Pass 5: Validate each template path
-    path_errors, path_warnings = validate_template_paths(
-        all_templates, available_params, node_outputs, workflow_ir, registry
-    )
-    errors.extend(path_errors)
-    warnings.extend(path_warnings)
+    diagnostics.extend(validate_template_paths(all_templates, available_params, node_outputs, workflow_ir, registry))
 
     # Pass 6: Validate template types match parameter expectations
-    type_errors = validate_template_types(workflow_ir, node_outputs, registry)
-    errors.extend(type_errors)
+    diagnostics.extend(validate_template_types(workflow_ir, node_outputs, registry))
 
     # Pass 7: Block structured data (dict/list) in shell command parameters
-    shell_errors = validate_shell_command_types(workflow_ir, node_outputs)
-    errors.extend(shell_errors)
+    diagnostics.extend(validate_shell_command_types(workflow_ir, node_outputs))
 
     # Pass 8: Validate batch item field access (${item.field} against inferred structure)
-    batch_item_errors = validate_batch_item_fields(workflow_ir, node_outputs)
-    errors.extend(batch_item_errors)
+    diagnostics.extend(validate_batch_item_fields(workflow_ir, node_outputs))
+
+    errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+    warnings = [d for d in diagnostics if d.severity != Severity.ERROR]
 
     if errors:
         logger.warning(
@@ -156,7 +152,7 @@ def validate_workflow_templates(
     else:
         logger.info("Template validation passed")
 
-    return (errors, warnings)
+    return diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +160,7 @@ def validate_workflow_templates(
 # ---------------------------------------------------------------------------
 
 
-def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]) -> list[str]:
+def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]) -> list[Diagnostic]:
     """Validate that all declared inputs are actually used.
 
     Args:
@@ -172,9 +168,9 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
         all_templates: Set of all template variables found
 
     Returns:
-        List of error messages for unused inputs
+        Diagnostics for unused inputs
     """
-    errors: list[str] = []
+    diagnostics: list[Diagnostic] = []
     declared_inputs = set(workflow_ir.get("inputs", {}).keys())
 
     if declared_inputs:
@@ -193,13 +189,27 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
 
         unused_inputs = declared_inputs - used_inputs
         if unused_inputs:
-            errors.append(f"Declared input(s) never used as template variable: {', '.join(sorted(unused_inputs))}")
+            sorted_unused = sorted(unused_inputs)
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    message=f"Declared input(s) never used as template variable: {', '.join(sorted_unused)}",
+                    suggestions=["Remove unused declarations from '## Inputs' or reference them in a node parameter."],
+                    context={
+                        "category": "validation",
+                        "path": "inputs",
+                        "unused_inputs": sorted_unused,
+                    },
+                )
+            )
             logger.warning(f"Found {len(unused_inputs)} unused inputs", extra={"unused": sorted(unused_inputs)})
 
-    return errors
+    return diagnostics
 
 
-def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[str]:
+def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
     """Detect malformed template syntax by counting ${ vs valid template matches.
 
     A malformed template is one where we find ${ but it doesn't form a valid template.
@@ -209,9 +219,9 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[str]:
         workflow_ir: The workflow IR
 
     Returns:
-        List of error messages for malformed templates
+        Diagnostics for malformed templates
     """
-    errors: list[str] = []
+    diagnostics: list[Diagnostic] = []
 
     for node in workflow_ir.get("nodes", []):
         node_id = node.get("id", "unknown")
@@ -237,11 +247,27 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[str]:
 
                 # If mismatch (accounting for nested), we have malformed syntax
                 if len(valid_matches) + nested_count < dollar_brace_count:
-                    location = f"node '{node_id}' parameter '{param_path}'" if param_path else f"node '{node_id}'"
-                    errors.append(
-                        f"Malformed template syntax in {location}: "
-                        f"Found {dollar_brace_count} '${{' but only {len(valid_matches)} valid template(s). "
-                        f"Check for missing '}}' or empty templates like '${{}}'"
+                    diagnostics.append(
+                        Diagnostic(
+                            severity=Severity.ERROR,
+                            source="validator",
+                            title="Template Error",
+                            node_id=node_id,
+                            message=(
+                                f"Malformed template syntax: found {dollar_brace_count} '${{' but only "
+                                f"{len(valid_matches)} valid template(s)."
+                            ),
+                            suggestions=["Check for missing '}' or empty templates like '${}'."],
+                            context={
+                                "category": "template_error",
+                                "path": (
+                                    f"nodes[id={node_id}].params.{param_path}"
+                                    if param_path
+                                    else f"nodes[id={node_id}].params"
+                                ),
+                                "template": value if isinstance(value, str) else None,
+                            },
+                        )
                     )
             elif isinstance(value, dict):
                 for key, val in value.items():
@@ -253,7 +279,7 @@ def _validate_malformed_templates(workflow_ir: dict[str, Any]) -> list[str]:
         for param_key, param_value in params.items():
             check_value(param_value, node_id, param_key)
 
-    return errors
+    return diagnostics
 
 
 # ---------------------------------------------------------------------------

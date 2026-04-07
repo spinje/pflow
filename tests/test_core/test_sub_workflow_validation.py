@@ -11,6 +11,15 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 def write_pflow_md(path: Path, content: str) -> None:
     """Write raw markdown content to a .pflow.md file."""
     path.write_text(content, encoding="utf-8")
@@ -69,7 +78,7 @@ This child workflow has a broken step.
         )
 
         parent_ir = _parent_ir(str(broken_child))
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -115,7 +124,7 @@ This step greets the user nicely.
         )
 
         parent_ir = _parent_ir(str(valid_child))
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -174,7 +183,7 @@ Delegate to the grandchild workflow.
         )
 
         parent_ir = _parent_ir(str(middle))
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -241,7 +250,7 @@ This step delegates to workflow A.
 
         parent_ir = _parent_ir(str(a_path))
         # Must terminate without hanging or raising
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -301,7 +310,7 @@ Perform the configured operation now.
 
         # Parent only provides 'text', not 'count'
         parent_ir = _parent_ir(str(child), provided_params={"text": "hello"})
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -325,7 +334,7 @@ class TestTemplateWorkflowRef:
         """When the workflow param is a template like ${dynamic_path}, the
         validator cannot resolve it statically and should skip it gracefully."""
         parent_ir = _parent_ir("${dynamic_path}")
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -373,7 +382,7 @@ class TestInlineWorkflowIR:
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             registry=None,
@@ -445,7 +454,7 @@ Second step used by first step.
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             registry=None,
@@ -492,7 +501,7 @@ This step uses a nonexistent node type.
         registry = Registry()
         registry.load()
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -536,7 +545,7 @@ First step that references a non-existent node.
         )
 
         parent_ir = _parent_ir(str(child))
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -588,7 +597,7 @@ Execute the main operation now.
 
         # Parent provides nothing for the optional input
         parent_ir = _parent_ir(str(child))
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -612,7 +621,7 @@ class TestSubWorkflowFileNotFound:
         nonexistent = str(tmp_path / "does-not-exist.pflow.md")
         parent_ir = _parent_ir(nonexistent)
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -661,7 +670,7 @@ class TestDuplicateSubWorkflowReference:
             "edges": [{"from": "step-a", "to": "step-b"}],
         }
 
-        errors, _ = WorkflowValidator.validate(
+        errors, _ = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -723,7 +732,7 @@ class TestDuplicateSubWorkflowReference:
             "edges": [{"from": "via-child", "to": "direct-grandchild"}],
         }
 
-        errors, _ = WorkflowValidator.validate(
+        errors, _ = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -746,7 +755,7 @@ class TestRelativePathWithoutWorkflowFile:
         the validator should skip with a clear warning instead of resolving
         against CWD."""
         parent_ir = _parent_ir("./child.pflow.md")
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             skip_node_types=True,
@@ -788,7 +797,7 @@ Execute the main step now.
         )
 
         parent_ir = _parent_ir(str(child))  # absolute path
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             skip_node_types=True,
@@ -828,7 +837,7 @@ Execute the main step now.
         )
 
         parent_ir = _parent_ir("./child.pflow.md")  # relative path
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             skip_node_types=True,

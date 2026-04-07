@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from pflow.core.diagnostic import format_diagnostic
+
 if TYPE_CHECKING:
     from pflow.core.diagnostic import Diagnostic
 
@@ -29,7 +31,7 @@ def format_validation_success() -> str:
 
 
 def format_validation_failure(errors: list[Diagnostic]) -> str:
-    """Format validation failure message with per-error locations and suggestions.
+    """Format validation failure message with full unified diagnostic rendering.
 
     Args:
         errors: Validation error diagnostics
@@ -41,16 +43,11 @@ def format_validation_failure(errors: list[Diagnostic]) -> str:
     lines = [f"✗ Validation failed ({error_count} error{'s' if error_count != 1 else ''}):", ""]
 
     for i, error in enumerate(errors[:5], 1):
-        lines.append(f"  {i}. {error.message}")
-        context = error.context or {}
-        if (path := context.get("path")) and path != "root":
-            lines.append(f"     At: {path}")
-        if error.suggestions:
-            lines.append(f"     → {error.suggestions[0]}")
+        lines.append(format_diagnostic(error, error_number=i))
+        lines.append("")
 
     if error_count > 5:
         remaining = error_count - 5
-        lines.append("")
         lines.append(f"  ... and {remaining} more error{'s' if remaining != 1 else ''}")
 
-    return "\n".join(lines)
+    return "\n".join(lines).rstrip()

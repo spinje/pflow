@@ -145,16 +145,26 @@ def test_exception_to_diagnostics_compilation_error() -> None:
     ]
 
 
-def test_exception_to_diagnostics_workflow_validation_error_fans_out() -> None:
-    """WorkflowValidationError produces one Diagnostic per validation error tuple."""
-    diagnostics = exception_to_diagnostics(
-        WorkflowValidationError(
-            validation_errors=[
-                ("Missing input", "inputs.name", "Declare the input."),
-                "Unknown node type",
-            ]
-        )
-    )
+def test_exception_to_diagnostics_workflow_validation_error_passes_through() -> None:
+    """WorkflowValidationError preserves already-constructed validation Diagnostics."""
+    original = [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="Missing input",
+            title="Validation Error",
+            suggestions=["Declare the input."],
+            source="validation",
+            context={"category": "validation", "path": "inputs.name"},
+        ),
+        Diagnostic(
+            severity=Severity.ERROR,
+            message="Unknown node type",
+            title="Validation Error",
+            source="validation",
+            context={"category": "validation"},
+        ),
+    ]
+    diagnostics = exception_to_diagnostics(WorkflowValidationError(validation_errors=original))
 
     assert len(diagnostics) == 2
     assert diagnostics[0].message == "Missing input"

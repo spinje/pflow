@@ -12,6 +12,15 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 class TestOutputTemplateValidation:
     """Test template reference validation catches semantic errors."""
 
@@ -32,7 +41,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(workflow, {}, registry, skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
         error_msg = "\n".join(errors)
@@ -55,7 +64,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(workflow, {}, registry, skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) == 0
 
@@ -73,7 +82,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(workflow, {}, registry, skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
         assert "malformed" in "\n".join(errors).lower()
@@ -93,7 +102,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(workflow, {}, registry, skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) == 0
 
@@ -112,7 +121,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(workflow, {}, registry, skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
         assert "non-existent node 'missing'" in "\n".join(errors)
@@ -135,7 +144,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = WorkflowValidator.validate(workflow, {}, registry, skip_node_types=True)
+        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         # Should have 2 errors (missing1 and missing2)
         assert len(errors) == 2

@@ -375,6 +375,39 @@ class TestValidationErrorDiagnosticShape:
         assert "message" in err
         assert "title" in err, f"Missing 'title' — Diagnostic should have title set: {err}"
 
+    def test_json_rich_validation_error_preserves_context_fields(self, tmp_path: Path) -> None:
+        """Rich validator errors should keep suggestions and valid-options structure in JSON."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {
+                        "file_pat": "out.txt",
+                        "content": "hello",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "rich-error.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        result = invoke_cli(["--validate-only", "--output-format", "json", str(workflow_path)])
+        assert result.exit_code != 0
+
+        output_data = json.loads(result.output)
+        rich_error = next(error for error in output_data["errors"] if "file_pat" in error["message"])
+
+        assert rich_error["title"] == "Validation Error"
+        assert rich_error["node_id"] == "writer"
+        assert rich_error["path"] == "nodes[id=writer].params.file_pat"
+        assert rich_error["suggestions"]
+        assert "file_path" in rich_error["suggestions"][0]
+        assert "file_path" in rich_error["available_fields"]
+        assert "file_path" in rich_error["similar_names"]
+
     def test_text_validation_failure_renders_diagnostic_fields(self, tmp_path: Path) -> None:
         """Text output must render per-error location and suggestions from Diagnostic fields.
 
@@ -399,7 +432,7 @@ class TestValidationErrorDiagnosticShape:
 
         combined = result.output + result.stderr
         # Must use numbered format (from Diagnostic-aware formatter), not bullet format
-        assert "1." in combined, f"Expected numbered errors, got:\n{combined}"
+        assert "Error 1:" in combined, f"Expected numbered errors, got:\n{combined}"
         # Must NOT contain Diagnostic repr (the failure mode if treated as string)
         assert "Diagnostic(" not in combined, f"Diagnostic repr leaked into output:\n{combined}"
 

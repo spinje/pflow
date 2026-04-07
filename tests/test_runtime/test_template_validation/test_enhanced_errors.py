@@ -5,6 +5,13 @@ from unittest.mock import Mock
 from pflow.runtime.template_validation import validate_workflow_templates
 
 
+def _split_template_diagnostics(*args, **kwargs):
+    diagnostics = validate_workflow_templates(*args, **kwargs)
+    errors = [d.message for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 def create_mock_registry():
     """Create a mock registry with test node metadata."""
     registry = Mock()
@@ -77,10 +84,10 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '${issue_number}' not provided - GitHub issue number to fix (required)"
+        assert errors[0] == "Required input '${issue_number}' not provided - GitHub issue number to fix (required)."
 
     def test_optional_input_with_default_error(self):
         """Test error message for optional input with default."""
@@ -103,11 +110,11 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert (
-            errors[0] == "Required input '${model}' not provided - LLM model to use (optional, default: gpt-3.5-turbo)"
+            errors[0] == "Required input '${model}' not provided - LLM model to use (optional, default: gpt-3.5-turbo)."
         )
 
     def test_path_access_on_declared_input_error(self):
@@ -130,7 +137,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Required input '${config}' not provided - API configuration object (required)" in errors[0]
@@ -158,7 +165,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should have 2 errors: one for missing required input, one for undeclared variable
         assert len(errors) == 2
@@ -183,7 +190,7 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert "Template variable ${some_var} has no valid source" in errors[0]
@@ -215,13 +222,19 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 2
         # Check both errors are present (order not guaranteed)
         error_messages = set(errors)
-        assert "Required input '${repo}' not provided - GitHub repository name (required)" in error_messages
-        assert "Required input '${issue_number}' not provided - Issue number to process (required)" in error_messages
+        assert any(
+            message == "Required input '${repo}' not provided - GitHub repository name (required)."
+            for message in error_messages
+        )
+        assert any(
+            message == "Required input '${issue_number}' not provided - Issue number to process (required)."
+            for message in error_messages
+        )
 
     def test_no_description_still_shows_required_status(self):
         """Test that inputs without descriptions still show required status."""
@@ -243,10 +256,10 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '${my_input}' not provided - (required)"
+        assert errors[0] == "Required input '${my_input}' not provided - (required)."
 
     def test_provided_inputs_no_error(self):
         """Test that provided inputs don't generate errors."""
@@ -269,6 +282,6 @@ class TestEnhancedTemplateErrors:
 
         registry = create_mock_registry()
         # Provide the required input
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"issue_number": "123"}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"issue_number": "123"}, registry)
 
         assert len(errors) == 0

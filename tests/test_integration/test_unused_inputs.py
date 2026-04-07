@@ -18,6 +18,24 @@ from pflow.runtime.template_validation import validate_workflow_templates
 from tests.shared.markdown_utils import write_workflow_file
 
 
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
+def _split_template_diagnostics(*args, **kwargs):
+    diagnostics = validate_workflow_templates(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 class MockRegistry(Registry):
     """Mock registry for testing with predefined node metadata."""
 
@@ -120,7 +138,7 @@ def test_unused_inputs_detected_before_execution(tmp_path):
         # Note: unused_option and another_unused are not provided but have defaults or are optional
     }
 
-    errors, _warnings = validate_workflow_templates(workflow_ir, initial_params, registry)
+    errors, _warnings = _split_template_diagnostics(workflow_ir, initial_params, registry)
 
     # Should detect the unused inputs
     assert len(errors) == 1
@@ -185,7 +203,7 @@ def test_workflow_with_all_inputs_used(tmp_path):
         "backup_file": str(tmp_path / "backup.txt"),
     }
 
-    errors, _warnings = validate_workflow_templates(workflow_ir, initial_params, registry)
+    errors, _warnings = _split_template_diagnostics(workflow_ir, initial_params, registry)
 
     # Should have no errors since all inputs are used
     assert len(errors) == 0
@@ -232,7 +250,7 @@ def test_unused_inputs_with_nested_workflows(tmp_path):
 
     initial_params = {"config_path": str(tmp_path / "config.json")}
 
-    errors, _warnings = validate_workflow_templates(parent_workflow, initial_params, registry)
+    errors, _warnings = _split_template_diagnostics(parent_workflow, initial_params, registry)
 
     # Should detect the unused debug flag
     assert any("unused_debug_flag" in error for error in errors)
@@ -313,7 +331,7 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
     dummy_params = generate_dummy_parameters(inputs)
     dummy_params["_pflow_workflow_file"] = str(parent_path)
 
-    errors, _warnings = WorkflowValidator.validate(
+    errors, _warnings = _split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
         skip_node_types=True,
@@ -394,7 +412,7 @@ def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_pa
     dummy_params = generate_dummy_parameters(ir.get("inputs", {}))
     dummy_params["_pflow_workflow_file"] = str(parent_path)
 
-    errors, _warnings = WorkflowValidator.validate(
+    errors, _warnings = _split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
         skip_node_types=True,
@@ -477,7 +495,7 @@ def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: 
     dummy_params = generate_dummy_parameters(inputs)
     dummy_params["_pflow_workflow_file"] = str(parent_path)
 
-    errors, _warnings = WorkflowValidator.validate(
+    errors, _warnings = _split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
         skip_node_types=True,

@@ -227,4 +227,4 @@ class TestValidationResponseFormat:
         # Check text format structure
         assert isinstance(result, str), "Should return string"
         assert result.startswith("\u2717"), "Should start with failure indicator"
-        assert "1. " in result, "Should use numbered format for errors"
+        assert "Error 1:" in result, "Should use numbered format for errors"

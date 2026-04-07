@@ -110,13 +110,15 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
     Raises:
         CompilationError: If data flow validation finds errors
     """
+    from pflow.core.diagnostic import Severity
     from pflow.core.workflow.data_flow import validate_data_flow
 
-    data_flow_errors = validate_data_flow(ir_dict, check_inputs=False)
-    if data_flow_errors:
-        lines = [f"  - {e}" for e in data_flow_errors[:5]]
-        if len(data_flow_errors) > 5:
-            lines.append(f"  ... and {len(data_flow_errors) - 5} more errors")
+    data_flow_diagnostics = validate_data_flow(ir_dict, check_inputs=False)
+    errors = [diagnostic for diagnostic in data_flow_diagnostics if diagnostic.severity == Severity.ERROR]
+    if errors:
+        lines = [f"  - {diagnostic.message}" for diagnostic in errors[:5]]
+        if len(errors) > 5:
+            lines.append(f"  ... and {len(errors) - 5} more errors")
         error_msg = "Data flow validation failed:\n" + "\n".join(lines)
         raise CompilationError(
             message=error_msg,

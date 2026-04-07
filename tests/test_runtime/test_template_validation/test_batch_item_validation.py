@@ -10,6 +10,15 @@ from unittest.mock import Mock
 from pflow.runtime.template_validation import validate_workflow_templates
 
 
+def _split_template_diagnostics(*args, **kwargs):
+    diagnostics = validate_workflow_templates(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 def create_mock_registry():
     """Create a mock registry with test node metadata."""
     registry = Mock()
@@ -85,7 +94,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_invalid_field_caught(self):
@@ -110,7 +119,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "nonexistent" in errors[0]
         assert "not available on batch items" in errors[0]
@@ -138,7 +147,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "Did you mean" in errors[0]
         assert "item.response" in errors[0]
@@ -159,7 +168,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_permissive_when_items_is_inline_array(self):
@@ -178,7 +187,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_permissive_when_items_from_non_batch_source(self):
@@ -202,7 +211,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_multiple_batch_nodes_validated_independently(self):
@@ -242,7 +251,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_multiple_batch_nodes_wrong_field_caught(self):
@@ -267,7 +276,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "stdout" in errors[0]
         assert "not available on batch items" in errors[0]
@@ -294,7 +303,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_custom_alias_invalid_field_caught(self):
@@ -319,7 +328,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "nonexistent" in errors[0]
 
@@ -360,7 +369,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_bare_item_not_checked(self):
@@ -385,7 +394,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_item_field_original_input_accessible(self):
@@ -410,7 +419,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_error_shows_available_fields(self):
@@ -435,7 +444,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         # Should show available shell output fields
         assert "${item.stdout}" in errors[0]
@@ -463,7 +472,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "${fetch.results}" in errors[0]
         # Must NOT double-wrap: ${${fetch.results}} would be wrong
@@ -491,7 +500,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
 
     def test_workflow_batch_item_fields_validated(self):
@@ -529,7 +538,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"sources": ["a"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"sources": ["a"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_workflow_batch_item_invalid_field_caught(self):
@@ -562,7 +571,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"sources": ["a"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"sources": ["a"]}, registry)
         assert len(errors) == 1
         assert "stdout" in errors[0]
         assert "not available on batch items" in errors[0]
@@ -595,7 +604,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(
+        errors, _warnings = _split_template_diagnostics(
             workflow_ir, {"sources": ["a"], "workflow_path": "some.pflow.md"}, registry
         )
         # Should NOT produce item field errors — structure is unknown
@@ -624,7 +633,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_nested_item_path_invalid_caught(self):
@@ -649,7 +658,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "nope" in errors[0]
         assert "llm_usage" in errors[0]
@@ -678,7 +687,7 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 1
         assert "Did you mean" in errors[0]
         assert "item.llm_usage.model" in errors[0]
@@ -705,5 +714,5 @@ class TestBatchItemFieldValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"

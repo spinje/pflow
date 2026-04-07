@@ -2,8 +2,27 @@
 
 import pytest
 
+from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry.registry import Registry
 from pflow.runtime.template_validation import validate_workflow_templates
+
+
+def _split_template_diagnostics(*args, **kwargs):
+    diagnostics = validate_workflow_templates(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
 
 
 @pytest.fixture
@@ -175,7 +194,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -196,7 +215,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0  # No error - dict serializes to JSON string
@@ -217,7 +236,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 1
@@ -241,7 +260,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -262,7 +281,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 1
@@ -281,7 +300,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -302,7 +321,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         # dict|str → str now passes because both dict and str can serialize to str
@@ -324,7 +343,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         # dict|str → int should fail because neither dict nor str can convert to int
@@ -360,7 +379,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 0
@@ -390,7 +409,7 @@ class TestTypeValidationIntegration:
             ],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 2  # str→int and dict→int both fail
@@ -411,7 +430,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         type_errors = [e for e in errors if "Type mismatch" in e]
         assert len(type_errors) == 1
@@ -441,7 +460,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should have error about dict in shell command
         shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
@@ -467,7 +486,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should have error about list in shell command
         shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
@@ -494,7 +513,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # No shell-specific errors for stdin
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -516,7 +535,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # No errors for string in command
         assert len(errors) == 0
@@ -542,7 +561,7 @@ class TestTypeValidationIntegration:
             "edges": [],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should block dict workflow input in shell command
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -569,7 +588,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # No errors - accessing string field from dict is safe
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -598,7 +617,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm-node", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should pass - dict|str contains str, which is a safe type
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -624,7 +643,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -645,7 +664,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -666,7 +685,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -688,7 +707,7 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -717,7 +736,7 @@ class TestShellCommandGenericTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should block - base type "list" is blocked
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -741,7 +760,7 @@ class TestShellCommandGenericTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should pass - quoted template bypasses type check
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -771,7 +790,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -792,7 +811,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -814,7 +833,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -841,7 +860,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should pass - quoted template with nested path is escaped
         shell_errors = [e for e in errors if "Shell node" in e]
@@ -864,7 +883,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1  # Still blocked
@@ -886,7 +905,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1  # Still blocked
@@ -912,7 +931,7 @@ class TestShellCommandQuoteEscape:
             ],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0  # Both escaped
@@ -938,7 +957,7 @@ class TestShellCommandQuoteEscape:
             ],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1  # Only unquoted one blocked
@@ -960,7 +979,7 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -987,7 +1006,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -1008,7 +1027,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
@@ -1029,7 +1048,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -1051,7 +1070,7 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, test_registry)
 
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 0
@@ -1071,7 +1090,6 @@ class TestShellCommandValidationTiming:
         WorkflowValidator. The behavior (catching dict-in-shell-command
         before execution) is preserved, just at a different stage.
         """
-        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry.registry import Registry
 
         workflow_ir = {
@@ -1091,7 +1109,7 @@ class TestShellCommandValidationTiming:
         registry = Registry()
 
         # WorkflowValidator catches type-incompatible templates
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=workflow_ir,
             extracted_params={"data": {"key": "value"}},
             registry=registry,
@@ -1107,7 +1125,6 @@ class TestShellCommandValidationTiming:
         After Task 138, type validation moved from the compiler to
         WorkflowValidator. The behavior is preserved at the validation stage.
         """
-        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry.registry import Registry
 
         workflow_ir = {
@@ -1126,7 +1143,7 @@ class TestShellCommandValidationTiming:
 
         registry = Registry()
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=workflow_ir,
             extracted_params={"items": [1, 2, 3]},
             registry=registry,

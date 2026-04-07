@@ -74,7 +74,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 | IR schema validation (bad field types, missing required fields) | `SchemaValidationError` | `message`, `path="nodes[0].type"`, `suggestion="Use 'shell'"` |
 | Markdown parsing failures (malformed `.pflow.md`) | `MarkdownParseError` | `message`, `line=42`, `suggestion="Add ## Steps"` |
 | Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
-| Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[(msg, path, suggestion), ...]` |
+| Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[Diagnostic(...), ...]` |
 | Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
 | User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
 | MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
@@ -221,7 +221,7 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 
 **Forbidden in parameter names**: `$` (template conflict), `|><&;` (shell injection), spaces/tabs (CLI parsing). Allowed: hyphens, dots, numbers at start.
 
-**`generate_validation_suggestions()`**: Converts validation error messages into actionable fix suggestions. Input-aware: "no inputs declared" errors get an input declaration suggestion instead of the generic "check template syntax." Errors that already contain specific guidance ("undefined input" with declared inputs list, "did you mean" typo matches) are excluded from generic suggestion generation to avoid noise.
+Validation utilities here are now limited to parameter-name rules and dummy-parameter generation. Structured validation suggestions are produced directly by validator Diagnostics at the source rather than reverse-engineered from flattened error strings.
 
 **🚨 Security gaps identified**:
 - Template variables NOT validated for dangerous characters

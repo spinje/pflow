@@ -2,8 +2,12 @@
 
 import pytest
 
-from pflow.core.validation_utils import generate_validation_suggestions
+from pflow.core.diagnostic import format_diagnostic
 from pflow.core.workflow.data_flow import CycleError, build_execution_order, validate_data_flow
+
+
+def _data_flow_error_messages(workflow_ir: dict) -> list[str]:
+    return [format_diagnostic(diagnostic) for diagnostic in validate_data_flow(workflow_ir)]
 
 
 class TestBuildExecutionOrder:
@@ -119,7 +123,7 @@ class TestValidateDataFlow:
             ],
             "inputs": {"input_file": {"type": "string"}},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == []
 
     def test_forward_reference_detection(self):
@@ -134,7 +138,7 @@ class TestValidateDataFlow:
             ],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) > 0
         assert "node2" in errors[0]
         assert "node1" in errors[0]
@@ -152,7 +156,7 @@ class TestValidateDataFlow:
             ],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) > 0
         assert "non-existent node 'nonexistent'" in errors[0]
         assert "node2" in errors[0]
@@ -175,7 +179,7 @@ class TestValidateDataFlow:
                 "repo_name": {"type": "string"}  # Missing 'owner'
             },
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) > 0
         assert "undefined input '${owner}'" in errors[0]
         assert "fetch" in errors[0]
@@ -189,9 +193,9 @@ class TestValidateDataFlow:
             "edges": [],
             "inputs": {"reponame": {"type": "string"}},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) > 0
-        assert "did you mean '${reponame}'?" in errors[0]
+        assert "did you mean '${reponame}'?" in errors[0].lower()
 
     def test_circular_dependency_detection(self):
         """Test that circular dependencies are caught."""
@@ -208,7 +212,7 @@ class TestValidateDataFlow:
             ],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) > 0
         assert "Circular dependency" in errors[0]
 
@@ -229,7 +233,7 @@ class TestValidateDataFlow:
             ],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == []
 
     def test_complex_valid_workflow(self):
@@ -270,7 +274,7 @@ class TestValidateDataFlow:
                 "output_file": {"type": "string"},
             },
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == []
 
     def test_shell_command_with_mixed_syntax(self):
@@ -300,7 +304,7 @@ class TestValidateDataFlow:
                 "limit": {"type": "number"},
             },
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         # Should pass: pflow templates are valid, bash syntax is ignored
         assert errors == []
 
@@ -325,7 +329,7 @@ class TestValidateDataFlow:
             "edges": [],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         # Should fail: undefined_input is not declared
         assert len(errors) == 1
         assert "undefined_input" in errors[0]
@@ -349,7 +353,7 @@ class TestArrayAccessValidation:
             "edges": [],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "non-existent node 'nonexistent_node'" in errors[0]
 
@@ -363,7 +367,7 @@ class TestArrayAccessValidation:
             "edges": [{"from": "early", "to": "late"}],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "'late'" in errors[0]
         assert "after" in errors[0]
@@ -377,7 +381,7 @@ class TestArrayAccessValidation:
             "edges": [],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "non-existent node 'undefined_input'" in errors[0]
 
@@ -391,7 +395,7 @@ class TestArrayAccessValidation:
             "edges": [{"from": "data", "to": "process"}],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == []
 
     def test_valid_dotted_array_access_passes(self):
@@ -404,7 +408,7 @@ class TestArrayAccessValidation:
             "edges": [{"from": "fetch", "to": "process"}],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == []
 
 
@@ -425,7 +429,7 @@ class TestBatchDataFlowValidation:
             "edges": [],
             "inputs": {"items": {"type": "array"}},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_item_alias_custom_valid(self):
@@ -442,7 +446,7 @@ class TestBatchDataFlowValidation:
             "edges": [],
             "inputs": {"records": {"type": "array"}},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_item_alias_wrong_name_fails(self):
@@ -460,7 +464,7 @@ class TestBatchDataFlowValidation:
             "edges": [],
             "inputs": {"items": {"type": "array"}},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) > 0
         assert any("item" in e for e in errors)
 
@@ -487,7 +491,7 @@ class TestBatchDataFlowValidation:
                 "items_b": {"type": "array"},
             },
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_with_node_output_reference(self):
@@ -512,7 +516,7 @@ class TestBatchDataFlowValidation:
                 "items": {"type": "array"},
             },
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_item_dotted_reference_valid(self):
@@ -535,7 +539,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [{"from": "source", "to": "process"}],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_item_deeply_nested_dotted_reference(self):
@@ -552,7 +556,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [{"from": "source", "to": "process"}],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_custom_alias_dotted_reference(self):
@@ -569,7 +573,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [{"from": "source", "to": "process"}],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_multiple_dotted_references_in_command(self):
@@ -586,7 +590,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [{"from": "source", "to": "process"}],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Unexpected errors: {errors}"
 
     def test_batch_dunder_index_valid(self):
@@ -602,7 +606,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"__index__ should be valid in batch context: {errors}"
 
     def test_batch_dunder_index_with_nested_template(self):
@@ -624,7 +628,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [{"from": "first", "to": "second"}],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert errors == [], f"Nested __index__ template should be valid: {errors}"
 
     def test_dunder_index_invalid_without_batch(self):
@@ -640,7 +644,7 @@ class TestBatchDataFlowValidation:
             ],
             "edges": [],
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1, f"Expected error for __index__ without batch: {errors}"
         assert "__index__" in errors[0]
 
@@ -664,7 +668,7 @@ class TestNestedParamValidation:
                 {"from": "merge", "to": "later-node"},  # merge runs first, but refs later-node
             ],
         }
-        errors = validate_data_flow(workflow_ir)
+        errors = _data_flow_error_messages(workflow_ir)
         assert len(errors) == 1
         assert "later-node" in errors[0]
         assert "merge" in errors[0]
@@ -676,7 +680,7 @@ class TestNestedParamValidation:
                 {"id": "merge", "type": "code", "params": {"inputs": {"x": "${no-such-node.stdout}"}, "code": "x"}},
             ],
         }
-        errors = validate_data_flow(workflow_ir)
+        errors = _data_flow_error_messages(workflow_ir)
         assert len(errors) == 1
         assert "non-existent" in errors[0].lower() or "no-such-node" in errors[0]
 
@@ -691,7 +695,7 @@ class TestNestedParamValidation:
                 {"from": "process", "to": "future"},  # process runs first, but refs future
             ],
         }
-        errors = validate_data_flow(workflow_ir)
+        errors = _data_flow_error_messages(workflow_ir)
         assert len(errors) == 1
         assert "future" in errors[0]
 
@@ -706,7 +710,7 @@ class TestNestedParamValidation:
                 },
             ],
         }
-        errors = validate_data_flow(workflow_ir)
+        errors = _data_flow_error_messages(workflow_ir)
         assert len(errors) == 1
         assert "ghost" in errors[0]
 
@@ -721,7 +725,7 @@ class TestNestedParamValidation:
                 {"from": "first", "to": "merge"},
             ],
         }
-        errors = validate_data_flow(workflow_ir)
+        errors = _data_flow_error_messages(workflow_ir)
         assert errors == []
 
     def test_coalesce_expression_inside_dict_param_is_validated(self):
@@ -737,7 +741,7 @@ class TestNestedParamValidation:
                 {"from": "a", "to": "b"},
             ],
         }
-        errors = validate_data_flow(workflow_ir)
+        errors = _data_flow_error_messages(workflow_ir)
         # Both a and b come after merge — should get errors for both
         assert len(errors) == 2
         assert any("'a'" in e for e in errors)
@@ -760,7 +764,7 @@ class TestImprovedErrorMessages:
             "edges": [],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "no inputs are declared" in errors[0]
         assert "echo" in errors[0]
@@ -782,9 +786,9 @@ class TestImprovedErrorMessages:
                 "method": {"type": "string"},
             },
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
-        assert "Declared inputs:" in errors[0]
+        assert "Available fields" in errors[0]
         assert "method" in errors[0]
         assert "url" in errors[0]
 
@@ -802,9 +806,9 @@ class TestImprovedErrorMessages:
             "edges": [],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
-        assert "Declared inputs:" in errors[0]
+        assert "Available fields" in errors[0]
         assert "item" in errors[0]
 
     def test_node_level_inputs_listed_in_error(self):
@@ -828,11 +832,11 @@ class TestImprovedErrorMessages:
             "edges": [{"from": "source", "to": "process"}],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "audience" in errors[0]
         # Should list node-level input 'brief', not say "no inputs are declared"
-        assert "Declared inputs:" in errors[0]
+        assert "Available fields" in errors[0]
         assert "brief" in errors[0]
         assert "no inputs are declared" not in errors[0]
 
@@ -849,60 +853,6 @@ class TestImprovedErrorMessages:
             "edges": [],
             "inputs": {},
         }
-        errors = validate_data_flow(workflow)
+        errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
         assert "no inputs are declared" in errors[0]
-
-
-class TestValidationSuggestions:
-    """Test validation suggestion generation."""
-
-    def test_no_template_suggestion_for_no_inputs_error(self):
-        """'No inputs declared' errors get input declaration suggestion, not template syntax."""
-        errors = [
-            {
-                "message": "Node 'echo' references '${message}' in parameter 'command' but no inputs are declared in this workflow",
-                "type": "validation",
-            }
-        ]
-        suggestions = generate_validation_suggestions(errors)
-        assert "Check template syntax: ${node.output}" not in suggestions
-        assert any("Declare inputs" in s for s in suggestions)
-
-    def test_template_suggestion_suppressed_when_no_inputs_with_multiple_errors(self):
-        """When 'no inputs' and 'no valid source' errors both fire, only the input suggestion shows."""
-        errors = [
-            {
-                "message": "Node 'echo' references '${message}' in parameter 'command' but no inputs are declared in this workflow",
-                "type": "validation",
-            },
-            {
-                "message": "Template variable ${message} has no valid source - not provided in initial_params and not written by any node",
-                "type": "validation",
-            },
-        ]
-        suggestions = generate_validation_suggestions(errors)
-        assert "Check template syntax: ${node.output}" not in suggestions
-        assert any("Declare inputs" in s for s in suggestions)
-
-    def test_no_template_suggestion_for_declared_inputs_error(self):
-        """'Declared inputs:' errors don't get misleading template syntax suggestion."""
-        errors = [
-            {
-                "message": "Node 'fetch' references undefined input '${urll}' in parameter 'command'. Declared inputs: method, url",
-                "type": "validation",
-            }
-        ]
-        suggestions = generate_validation_suggestions(errors)
-        assert "Check template syntax: ${node.output}" not in suggestions
-
-    def test_no_template_suggestion_for_did_you_mean_error(self):
-        """'did you mean' errors don't get misleading template syntax suggestion."""
-        errors = [
-            {
-                "message": "Node 'fetch' references undefined input '${URL}' in parameter 'command' - did you mean '${url}'?",
-                "type": "validation",
-            }
-        ]
-        suggestions = generate_validation_suggestions(errors)
-        assert "Check template syntax: ${node.output}" not in suggestions

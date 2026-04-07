@@ -283,3 +283,270 @@ Without the review loop, the implementing agent would have hit the 3 critical fi
 **This should be standard practice for any plan that touches more than ~5 files.** For trivial plans (single file, <100 LOC), the overhead isn't worth it.
 
 ---
+
+## 2026-04-07 — Implementation step 1: audit and preflight
+
+**Step completed**: Read the task brief, planning artifacts, prior task reviews (141/143/144), and all critical source files named in the implementation plan before making changes. I also ran the pre-implementation grep audit against the live tree to confirm the plan still matches the codebase shape.
+
+**Verified against live code**:
+- `WorkflowValidator.validate()` still returns `tuple[list[str], list[Diagnostic]]`.
+- `validate_workflow_templates()` still returns tuple `(errors, warnings)`.
+- `validate_data_flow()` still returns `list[str]`.
+- `runner.py` still fabricates generic Diagnostics from validation strings and still calls `generate_validation_suggestions()`.
+- `WorkflowValidationError.validation_errors` still uses the `list[str | tuple[str, str, str]]` union.
+- `validation_formatter.py` still only renders `message`, `path`, and the first suggestion.
+- `workflow_executor.py` still overwrites child parser-warning `node_id` with `step_id`, confirming the dedup asymmetry the plan called out.
+
+**Audit findings that matter for implementation**:
+- The plan's scope is still accurate. No new consumer surfaced beyond the already-listed docs/tests/fixtures.
+- The largest rewrite surface is still tests, not production call sites. Production remains tightly scoped to validator layers, renderer, exception, runner, formatter, compiler/save-service consumers, and one CLI constructor site.
+- The strongest leverage point remains unchanged: converting producer sites directly to `Diagnostic` will unlock richer output without adding new rendering concepts beyond the existing context blocks.
+
+**Environment deviation (recorded, not a design deviation)**:
+- `uv` cannot complete the requested preflight commands in this sandbox. First it was blocked by the default cache path, which I worked around with `UV_CACHE_DIR=.uv-cache`. After that, `uv` panicked during environment bootstrap (`system-configuration` / `Attempted to create a NULL object`), so `capture_baselines.py`, `pytest`, and `mypy` could not be run through `uv`.
+- I checked for a direct fallback. `python3` does not have `pytest` or `mypy` installed, and the partially created `.venv` also lacks those modules. Result: pre-implementation verification is **blocked by environment**, not by code.
+
+**Decision taken**:
+- Proceed with implementation anyway, because the task plan is explicit, the source audit is complete, and the verification failure is environmental rather than architectural. I will keep recording this as an execution constraint and rerun the intended checks at the end if the environment becomes usable.
+
+**Trust boundary after step 1**:
+- **Verified**: task framing, architectural intent, affected code paths, and live-code alignment with the implementation plan.
+- **Unable to verify due environment**: pre-change baseline capture, targeted pytest run, and mypy preflight.
+
+---
+
+## 2026-04-07 — Implementation step 2: renderer gate + data-flow layer + compiler consumer
+
+**Step completed**: Implemented the first planned code slice:
+- `src/pflow/core/diagnostic.py`
+- `src/pflow/core/workflow/data_flow.py`
+- `src/pflow/runtime/compilation/compile_validation.py`
+
+**What changed**:
+- Broadened the renderer’s `available_fields` block from template-only to unconditional dispatch, and renamed the helper from `_format_template_error_lines` to `_format_available_fields_block`.
+- Converted `validate_data_flow()` from `list[str]` to `list[Diagnostic]`.
+- Converted the primitive producer sites in `data_flow.py` to build Diagnostics directly:
+  - cycle detection
+  - forward-reference errors
+  - non-existent node references
+  - undefined input references (case-insensitive match, no-inputs-declared, and declared-inputs-list variants)
+- Added structured `CycleError.nodes_in_cycle` so the cycle producer does not have to parse its own exception string.
+- Updated the compiler consumer to filter `Severity.ERROR` explicitly before raising `CompilationError`, matching the plan’s review correction.
+
+**Decisions made during implementation**:
+- Kept the `available_fields` renderer body unchanged apart from the rename. The header text still says "Available fields in node" even for inputs/params. This matches the implementation plan’s explicit instruction to broaden the gate without redesigning the block text in this task.
+- Imported `find_similar_items` directly in `data_flow.py` instead of function-local imports because this module already sits at the producer layer and the helper is used in a hot path for structured suggestion generation.
+- Preserved the existing permissive semantics around non-`pflow` shell syntax and runtime-dependent refs. This step is a representation change, not a policy change.
+
+**Critical insight from this slice**:
+- The lowest-level validator conversion is mechanically straightforward once the `Diagnostic` context keys are treated as the contract. The real complexity is not producer construction; it is downstream consumers and tests that still assume strings. That confirms the plan’s sequencing is correct: convert the producer first, then climb outward.
+
+**Verification performed**:
+- `python3 -m py_compile src/pflow/core/diagnostic.py src/pflow/core/workflow/data_flow.py src/pflow/runtime/compilation/compile_validation.py`
+- Result: syntax OK on all three touched files.
+
+**Verification still blocked**:
+- `pytest`, `mypy`, and baseline capture remain blocked by the sandboxed `uv` bootstrap failure described in step 1.
+
+**Trust boundary after step 2**:
+- **Verified**: syntax of the changed files and alignment with the plan’s DF1-DF6 and compiler-filter requirements.
+- **Assumed until broader integration step**: downstream callers/tests that still expect string-returning `validate_data_flow()`.
+
+---
+
+## 2026-04-07 — Implementation step 3: template validation layer conversion
+
+**Step completed**: Converted the template-validation producer layer to native `Diagnostic` output:
+- `src/pflow/runtime/template_validation/path_validation.py`
+- `src/pflow/runtime/template_validation/type_validation.py`
+- `src/pflow/runtime/template_validation/batch_item_validation.py`
+- `src/pflow/runtime/template_validation/validator.py`
+- plus the planned renderer support for `source_file` provenance in `src/pflow/core/diagnostic.py`
+
+**What changed**:
+- `validate_workflow_templates()` now returns `list[Diagnostic]` rather than `(errors, warnings)`.
+- `validate_template_paths()` now returns one diagnostic list instead of split string/warning collections.
+- The path-validation dispatcher now builds Diagnostics directly and attaches external-file provenance via context (`source_file`) instead of string-appending `Loaded from file: ...`.
+- The highest-value producer (`format_enhanced_node_error`) was converted into `_build_enhanced_node_diagnostic()`, promoting available outputs and fuzzy matches into structured fields rather than multi-line string sections.
+- Batch-item validation producers now return Diagnostics with available-field and similar-name context instead of manual string assembly.
+- Type-validation producers now emit Diagnostics directly, including structured fix suggestions and shell-command guidance.
+- Added `source_file` rendering support in the diagnostic renderer so provenance attached by template producers actually reaches text output.
+
+**Decisions made during implementation**:
+- Kept the task’s core principle intact: represent existing knowledge structurally rather than trying to preserve every exact line break of the old string messages. In practice this meant shorter `message=` text and moving “available options” / “did you mean” / “loaded from file” into structured context where the unified renderer already knows how to display them.
+- Used `title="Template Error"` for template-class failures and `title="Validation Error"` for general validator mismatches, matching the plan’s separation between template and non-template producers.
+- Chose to render `source_file` through `_format_compilation_context_lines()` rather than inventing a new standalone renderer helper. This is a small deviation in placement, not in behavior: the hint still renders as `Loaded from file: ...` from diagnostic context as the plan required.
+- For shell-command validation, stored the truncated display command in `context["shell_command"]`. That preserves the existing ergonomics of the shell-context block without reintroducing bespoke string formatting.
+
+**Critical insight from this slice**:
+- The template layer was exactly where the architecture paid off. Once `available_fields`, `similar_names`, `shell_command`, and `source_file` were treated as the contract, the conversion stopped being “rewrite pretty errors” and became “stop throwing away already-known structure.” The output surface will now improve automatically once the outer validator and formatter stop flattening it again.
+
+**Verification performed**:
+- `python3 -m py_compile src/pflow/runtime/template_validation/path_validation.py src/pflow/runtime/template_validation/type_validation.py src/pflow/runtime/template_validation/batch_item_validation.py src/pflow/runtime/template_validation/validator.py src/pflow/core/diagnostic.py`
+- Result: syntax OK on all touched files.
+
+**Known temporary inconsistency after this step**:
+- `core/workflow/validator.py` still expects `validate_workflow_templates()` to return `(errors, warnings)`. This is the expected intermediate state between step 3 and step 4, not an accidental deviation.
+
+**Trust boundary after step 3**:
+- **Verified**: syntax of the converted template-validation layer and renderer support for `source_file`.
+- **Assumed until next slice**: outer validator integration and any test assertions that still expect string-returning/template-tuple APIs.
+
+---
+
+## 2026-04-07 — Implementation step 4: outer validator and WorkflowValidationError cutover
+
+**Step completed**: Converted the outer validator layer and validation exception boundary:
+- `src/pflow/core/workflow/validator.py`
+- `src/pflow/core/exceptions.py`
+
+**What changed**:
+- `WorkflowValidator.validate()` now returns `list[Diagnostic]`.
+- All outer validator helpers were converted from string/tuple returns to `Diagnostic` returns, including:
+  - structure validation
+  - stdin validation
+  - template wrapper
+  - node-type validation
+  - output-source validation
+  - unknown-parameter validation
+  - sub-workflow validation and required-input checks
+- Output-source helper formatters were rewritten as Diagnostic builders (`_build_node_not_found_diagnostic`, `_build_template_node_diagnostic`) instead of multi-line string assemblers.
+- `_add_child_provenance()` now handles child errors and warnings symmetrically and enriches context with `sub_workflow_step` and optional `sub_workflow_path`.
+- `WorkflowValidationError.validation_errors` now stores `list[Diagnostic]`, and `to_diagnostics()` is a pass-through with the existing single-summary fallback intact.
+
+**Decisions made during implementation**:
+- Preserved `SchemaValidationError.to_diagnostics()` as the source of truth for structural errors instead of reconstructing the same information in the validator wrapper. This is exactly the “self-describing producer” principle task 147 is completing.
+- Kept the generic exception wrappers in `_validate_structure`, `_validate_data_flow`, and `_validate_templates` rather than trying to delete them as “impossible” code. The planning review was right: they are still load-bearing defense against producer-construction mistakes and unexpected runtime exceptions.
+- Used per-node unknown-type diagnostics instead of one error per unknown type string. This keeps the diagnostic location concrete (`nodes[i].type`) and matches the plan’s “call site owns the context” rule.
+- Routed sub-workflow child diagnostics through the generalized provenance helper rather than preserving separate code paths for child errors and child warnings. This removes the remaining asymmetry inside validator recursion.
+
+**Critical insight from this slice**:
+- Once the outer validator stopped splitting “errors” and “warnings” by collection type, the code simplified immediately. The tuple shape had been compensating for the old type mismatch; after producer conversion, it became pure bookkeeping noise. The implementation confirmed the plan’s decision to remove the tuple entirely rather than carrying it as transitional debt.
+
+**Verification performed**:
+- `python3 -m py_compile src/pflow/core/workflow/validator.py src/pflow/core/exceptions.py src/pflow/runtime/template_validation/path_validation.py src/pflow/runtime/template_validation/type_validation.py src/pflow/runtime/template_validation/batch_item_validation.py src/pflow/runtime/template_validation/validator.py src/pflow/core/diagnostic.py src/pflow/core/workflow/data_flow.py src/pflow/runtime/compilation/compile_validation.py`
+- Result: syntax OK across the validator stack after the cutover.
+
+**Known temporary inconsistency after this step**:
+- Downstream consumers still assume old shapes in several places (`runner.py`, validation formatter, save service, CLI invalid-parameter constructor, docs, and tests). This is expected and isolated to the final cleanup slice.
+
+**Trust boundary after step 4**:
+- **Verified**: syntax of the full validator stack after end-to-end producer conversion and exception-type alignment.
+- **Assumed until final slice**: downstream consumer compatibility and test-suite rewrites.
+
+---
+
+## 2026-04-07 — Implementation step 5: consumer cleanup, deletions, docs, and test migration
+
+**Step completed**: Finished the downstream migration layer:
+- production consumers (`runner.py`, `save_service.py`, `validation_formatter.py`, `workflow_executor.py`, `cli/main.py`)
+- dead-code deletion (`generate_validation_suggestions()` and its dedicated tests)
+- docs/examples (`core/CLAUDE.md`, `mcp_server/services/CLAUDE.md`, `architecture/reference/template-variables.md`)
+- fixture update (`capture_baselines.py`)
+- broad mechanical test migration across the validator/template test surface
+
+**What changed**:
+- `runner.py` no longer fabricates generic validation Diagnostics from strings and no longer post-processes them with `generate_validation_suggestions()`.
+- `runner._validate()` now filters the validator’s single diagnostic list by severity and raises `WorkflowValidationError(validation_errors=errors)` without the old `# type: ignore[arg-type]`.
+- `save_service.py` now preserves structured validation Diagnostics on `WorkflowValidationError` while keeping a one-line summary for the exception text.
+- `format_validation_failure()` now delegates to `format_diagnostic()` so validate-only text output uses the same unified rendering shape as runtime and compilation errors.
+- `workflow_executor.py` now preserves child `node_id` when propagating parser warnings, matching the validator path and fixing the latent dedup asymmetry identified in plan review.
+- `cli/main.py` invalid-parameter validation now constructs a real `Diagnostic` instead of the old `(message, path, suggestion)` tuple form.
+- `generate_validation_suggestions()` was deleted, and `TestValidationSuggestions` in `test_workflow_data_flow.py` was removed with it.
+
+**Test migration approach (intentional deviation in mechanics, not in outcome)**:
+- The implementation plan described mostly inline assertion rewrites (`errors[0] -> errors[0].message`, etc.). I used a slightly different mechanical strategy for many test modules: introduced tiny local helpers like `_split_validator_diagnostics()` and `_split_template_diagnostics()` that preserve the old test ergonomics (`errors` as message strings, `warnings` as Diagnostics) while calling the new single-list production API underneath.
+- Reason: this kept the test diff smaller and reduced the chance of accidentally rewriting dozens of semantically unrelated assertions while still validating the new contract at the boundary.
+- This is a **mechanical deviation only**. The architectural outcome is the same: no tests still call the old tuple-returning production APIs.
+
+**Critical insight from this slice**:
+- The biggest cleanup win was not in the validator itself; it was deleting the bridges around it. Once `runner.py` stopped fabricating Diagnostics and `format_validation_failure()` stopped under-rendering them, the whole 141 → 143 → 144 → 147 arc became visible in one path: producer creates `Diagnostic`, exception carries `Diagnostic`, formatter renders `Diagnostic`. No reconstruction layer remains.
+
+**Verification performed in this slice**:
+- `python3 -m compileall tests`
+- `python3 -m compileall src tests .taskmaster/tasks/task_144/research/capture_baselines.py`
+- Grep verification:
+  - no remaining `generate_validation_suggestions` references in `src/` or `tests/`
+  - no remaining tuple-style `validation_errors=[(...)]` constructors in live code/tests
+  - no remaining tuple-unpack call sites against `WorkflowValidator.validate()` or `validate_workflow_templates()` in live code/tests/docs
+  - the specific `type: ignore[arg-type]` in production is gone; the only remaining `[arg-type]` match is the deliberate negative test in `tests/test_core/test_diagnostic.py`
+
+**Environment constraint still in force**:
+- Full pytest, mypy, and baseline-render comparison remain blocked by the same sandbox/`uv` bootstrap panic recorded earlier. This is no longer a code-structure blocker; it is a tool-execution blocker.
+
+**Trust boundary after step 5**:
+- **Verified**: syntax of the migrated source/test surface and removal of the old API/dead-code patterns by grep.
+- **Unable to verify here**: behavioral test pass/fail and baseline-render diffs, because the environment still cannot run the intended Python toolchain.
+
+---
+
+## 2026-04-07 — Verification wrap-up
+
+**What I could verify locally**:
+- The entire `src/` tree, the `tests/` tree, and the updated baseline fixture script compile successfully with `python3 -m compileall`.
+- The targeted grep checks required by the plan now come back clean for the live codebase:
+  - deleted suggestion bridge
+  - removed tuple-style validation-error payloads
+  - removed validator/template tuple-unpack consumers
+  - removed production `# type: ignore[arg-type]`
+
+**What remains blocked by environment**:
+- `uv run pytest ...`
+- `uv run mypy ...`
+- `uv run python .taskmaster/tasks/task_144/research/capture_baselines.py before/after/compare`
+
+**Net assessment**:
+- The implementation is structurally complete according to task 147’s plan.
+- Verification is strong at the syntax/API-surface level and incomplete at the runtime/assertion/baseline level because the sandbox cannot execute the project’s intended toolchain.
+
+---
+
+## 2026-04-07 — Post-fix test hardening (high-value only)
+
+**Why I revisited tests**: After the implementation stabilized and the broad migration churn settled, the user explicitly asked whether there were any *high-value* tests still worth adding. The bar was not coverage. The bar was: would this catch a real regression in the architectural outcome of Task 147?
+
+**Tests added**:
+
+1. **Direct producer-structure test for unknown params** in `tests/test_core/test_unknown_param_validation.py`
+   - New test: `test_unknown_param_diagnostic_preserves_structure`
+   - Why it matters: `_validate_unknown_params()` is the canonical Task 147 case where the validator used to throw away the richest structure (path, similar names, valid params, concrete suggestion). This test now asserts the returned `Diagnostic` preserves:
+     - `severity`
+     - `node_id`
+     - `title`
+     - `context["path"]`
+     - `context["available_fields"]`
+     - `context["similar_names"]`
+     - `suggestions`
+   - This is the best direct guard that the validator has not regressed back into “string-first” behavior.
+
+2. **Validate-only JSON shape test for a rich validator error** in `tests/test_cli/test_validate_only.py`
+   - New test: `test_json_rich_validation_error_preserves_context_fields`
+   - Why it matters: Task 147 is not just about prettier text. It is about preserving structure for downstream agent consumers. This test exercises a real typoed unknown-param case through `--validate-only --output-format json` and asserts the JSON error preserves:
+     - `title`
+     - `node_id`
+     - `path`
+     - `suggestions`
+     - `available_fields`
+     - `similar_names`
+   - This is the highest-leverage end-to-end guard on the user-visible/agent-visible JSON contract.
+
+3. **Compile-time warning-filter regression test** in `tests/test_runtime/test_compiler_basic.py`
+   - New test class: `TestCompileTimeDataFlowValidation`
+   - New test: `test_warning_only_data_flow_does_not_raise`
+   - Why it matters: this locks in the plan-review correction that `_validate_data_flow_at_compile_time()` must filter `Severity.ERROR` explicitly instead of truth-testing the whole validator list. Without this test, a future warning-only producer in `data_flow.py` could accidentally start failing compilation.
+
+**Why I did NOT add more**:
+- I considered adding a direct sub-workflow provenance structure test. I still think it would be valuable, but compared to the three tests above it is less central to the core #219 regression and would have taken more setup relative to its incremental value.
+- I did **not** add broad “assert every context key everywhere” tests. Those would optimize for coverage, not for bug prevention, which the user explicitly asked me not to do.
+
+**Verification performed**:
+- `python3 -m py_compile tests/test_core/test_unknown_param_validation.py tests/test_cli/test_validate_only.py tests/test_runtime/test_compiler_basic.py`
+- Result: syntax OK.
+
+**Assessment**:
+- These tests materially improve confidence in the exact architectural promises of Task 147:
+  - producers keep structure
+  - validate-only JSON preserves structure
+  - compiler consumers filter by severity correctly
+
+---

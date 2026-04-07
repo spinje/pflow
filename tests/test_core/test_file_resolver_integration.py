@@ -13,6 +13,15 @@ from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 
 
+def _split_validator_diagnostics(*args, **kwargs):
+    diagnostics = WorkflowValidator.validate(*args, **kwargs)
+    from pflow.core.diagnostic import format_diagnostic
+
+    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
+    warnings = [d for d in diagnostics if d.severity.value == "warning"]
+    return errors, warnings
+
+
 class TestFileResolverWithParser:
     """Test file resolution with real parsed workflows."""
 
@@ -436,7 +445,7 @@ Uses external prompt.
 
         # Generate dummy params and validate
         registry = Registry()
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=registry,
@@ -470,7 +479,7 @@ Hello ${nonexistent_node.output}
         normalize_ir(ir)
 
         registry = Registry()
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = _split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=registry,

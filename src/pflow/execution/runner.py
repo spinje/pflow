@@ -286,40 +286,15 @@ class WorkflowRunner:
             from pflow.registry import Registry
 
             registry = Registry()
-            errors, warnings = WorkflowValidator.validate(
+            validator_diagnostics = WorkflowValidator.validate(
                 workflow_ir=ir,
                 extracted_params=dummy_params,
                 registry=registry,
                 skip_node_types=False,
                 workflow_file=Path(file_path) if file_path else None,
             )
-            diagnostics = [
-                *resolved.diagnostics,
-                *warnings,
-                *[
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=error,
-                        title="Validation Error",
-                        source="validation",
-                        context={"category": "validation"},
-                    )
-                    for error in errors
-                ],
-            ]
-            if errors:
-                from pflow.core.validation_utils import generate_validation_suggestions
-
-                for suggestion in generate_validation_suggestions([
-                    {"message": error, "type": "validation"} for error in errors
-                ]):
-                    diagnostics.append(
-                        Diagnostic(
-                            severity=Severity.INFO,
-                            message=suggestion,
-                            source="validation",
-                        )
-                    )
+            diagnostics = [*resolved.diagnostics, *validator_diagnostics]
+            errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
 
             return ValidationResult(
                 valid=len(errors) == 0,
@@ -386,17 +361,18 @@ class WorkflowRunner:
 
         wf_path = params.get("_pflow_workflow_file")
         registry = Registry()
-        errors, warnings = WorkflowValidator.validate(
+        validator_diagnostics = WorkflowValidator.validate(
             workflow_ir=ir,
             extracted_params=params,
             registry=registry,
             skip_node_types=False,
             workflow_file=Path(wf_path) if wf_path else None,
         )
+        errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
+        warnings = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.WARNING]
 
         if errors:
-            # errors is list[str]; WorkflowValidationError accepts list[str | tuple]
-            error = WorkflowValidationError(validation_errors=errors)  # type: ignore[arg-type]
+            error = WorkflowValidationError(validation_errors=errors)
             error._pflow_validation_warnings = list(warnings)  # type: ignore[attr-defined]
             raise error
 

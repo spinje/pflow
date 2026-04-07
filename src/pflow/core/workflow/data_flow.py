@@ -7,6 +7,8 @@ all data dependencies are satisfied before nodes execute.
 import re
 from typing import Any, Optional
 
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.suggestion_utils import find_similar_items
 from pflow.runtime.template_resolver import TemplateResolver
 
 # Positive match for pflow variable paths (e.g., "node", "node.field", "node[0].field").
@@ -19,7 +21,9 @@ _PFLOW_VAR_RE = re.compile(rf"^{TemplateResolver._VAR_NAME_PATTERN}$")
 class CycleError(Exception):
     """Raised when circular dependency is detected in workflow."""
 
-    pass
+    def __init__(self, nodes_in_cycle: set[str]) -> None:
+        self.nodes_in_cycle = sorted(nodes_in_cycle)
+        super().__init__(f"Circular dependency detected involving nodes: {', '.join(self.nodes_in_cycle)}")
 
 
 def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
@@ -90,21 +94,22 @@ def build_execution_order(workflow_ir: dict[str, Any]) -> list[str]:
     if len(order) != len(nodes):
         # Find nodes involved in cycle
         remaining = nodes - set(order)
-        raise CycleError(f"Circular dependency detected involving nodes: {', '.join(sorted(remaining))}")
+        raise CycleError(remaining)
 
     return order
 
 
 def _check_forward_reference(
     node_id: str,
+    param_name: str,
     ref_node_id: str,
     node_position: int,
     node_positions: dict[str, int],
     loop_forward_limits: dict[str, int],
-) -> Optional[str]:
+) -> Optional[Diagnostic]:
     """Check if a node reference is a disallowed forward reference.
 
-    Returns error message if ref_node_id comes after node_id in execution order
+    Returns error diagnostic if ref_node_id comes after node_id in execution order
     and is not part of a valid loop pattern. Returns None if the reference is valid.
     """
     if ref_node_id not in node_positions:
@@ -117,9 +122,22 @@ def _check_forward_reference(
     max_allowed = loop_forward_limits.get(node_id)
     if max_allowed is not None and ref_position <= max_allowed:
         return None
-    return (
-        f"Node '{node_id}' references '{ref_node_id}' which comes "
-        f"after it in execution order (position {ref_position} >= {node_position})"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Validation Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' references '{ref_node_id}' in parameter '{param_name}', "
+            f"but '{ref_node_id}' comes after this node in execution order "
+            f"(position {ref_position} >= {node_position})."
+        ),
+        suggestions=[f"Reorder nodes so '{ref_node_id}' appears before '{node_id}'."],
+        context={
+            "category": "validation",
+            "path": f"nodes[id={node_id}].params.{param_name}",
+            "referenced_node": ref_node_id,
+        },
     )
 
 
@@ -133,7 +151,7 @@ def _validate_template_reference(
     declared_inputs: set[str],
     loop_forward_limits: dict[str, int],
     check_inputs: bool,
-) -> Optional[str]:
+) -> Optional[Diagnostic]:
     """Validate a single template reference.
 
     Args:
@@ -149,7 +167,7 @@ def _validate_template_reference(
         check_inputs: Whether to validate undefined input references
 
     Returns:
-        Error message if invalid, None if valid
+        Error diagnostic if invalid, None if valid
     """
     # Only validate refs that match pflow variable syntax. Non-matching refs
     # are bash syntax (${#count}, ${var:-default}, ${array[@]}), or truncated
@@ -169,9 +187,34 @@ def _validate_template_reference(
         if ref_node_id not in nodes_by_id and ref_node_id not in declared_inputs:
             if not check_inputs:
                 return None  # Could be a runtime param — compiler lacks context
-            return f"Node '{node_id}' references non-existent node '{ref_node_id}' in parameter '{param_name}'"
+            candidates = sorted(set(nodes_by_id.keys()) | declared_inputs)
+            similar = find_similar_items(ref_node_id, candidates, max_results=3, method="fuzzy")
+            context: dict[str, Any] = {
+                "category": "validation",
+                "path": f"nodes[id={node_id}].params.{param_name}",
+                "available_fields": sorted(nodes_by_id.keys()),
+                "available_fields_total": len(nodes_by_id),
+            }
+            if similar:
+                context["similar_names"] = similar
+            return Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=node_id,
+                message=f"Node '{node_id}' references non-existent node '{ref_node_id}' in parameter '{param_name}'.",
+                suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+                context=context,
+            )
         # Check if referenced node comes before this node
-        return _check_forward_reference(node_id, ref_node_id, node_position, node_positions, loop_forward_limits)
+        return _check_forward_reference(
+            node_id,
+            param_name,
+            ref_node_id,
+            node_position,
+            node_positions,
+            loop_forward_limits,
+        )
 
     # Input parameter reference like ${repo_name}
     if not check_inputs:
@@ -179,19 +222,53 @@ def _validate_template_reference(
     if ref not in declared_inputs:
         close_matches = [inp for inp in declared_inputs if inp.lower() == ref.lower()]
         if close_matches:
-            return (
-                f"Node '{node_id}' references undefined input '${{{ref}}}' "
-                f"in parameter '{param_name}' - did you mean '${{{close_matches[0]}}}'?"
+            return Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=node_id,
+                message=f"Node '{node_id}' references undefined input '${{{ref}}}' in parameter '{param_name}'.",
+                suggestions=[f"Did you mean '${{{close_matches[0]}}}'?"],
+                context={
+                    "category": "validation",
+                    "path": f"nodes[id={node_id}].params.{param_name}",
+                    "template": f"${{{ref}}}",
+                    "similar_names": [f"${{{match}}}" for match in close_matches[:3]],
+                },
             )
         if not declared_inputs:
-            return (
-                f"Node '{node_id}' references '${{{ref}}}' in parameter '{param_name}' "
-                f"but no inputs are declared in this workflow"
+            return Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                node_id=node_id,
+                message=(
+                    f"Node '{node_id}' references '${{{ref}}}' in parameter '{param_name}' "
+                    f"but no inputs are declared in this workflow."
+                ),
+                suggestions=[
+                    f"Declare '{ref}' under '## Inputs' or use a node output reference like ${{node_id.field}}."
+                ],
+                context={
+                    "category": "validation",
+                    "path": f"nodes[id={node_id}].params.{param_name}",
+                    "template": f"${{{ref}}}",
+                },
             )
-        return (
-            f"Node '{node_id}' references undefined input '${{{ref}}}' "
-            f"in parameter '{param_name}'. "
-            f"Declared inputs: {', '.join(sorted(declared_inputs))}"
+        sorted_inputs = sorted(declared_inputs)
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Validation Error",
+            node_id=node_id,
+            message=f"Node '{node_id}' references undefined input '${{{ref}}}' in parameter '{param_name}'.",
+            context={
+                "category": "validation",
+                "path": f"nodes[id={node_id}].params.{param_name}",
+                "template": f"${{{ref}}}",
+                "available_fields": sorted_inputs,
+                "available_fields_total": len(sorted_inputs),
+            },
         )
     return None
 
@@ -199,7 +276,7 @@ def _validate_template_reference(
 def validate_data_flow(
     workflow_ir: dict[str, Any],
     check_inputs: bool = True,
-) -> list[str]:
+) -> list[Diagnostic]:
     """Validate that data flows correctly between nodes.
 
     This function checks:
@@ -220,9 +297,9 @@ def validate_data_flow(
         check_inputs: Whether to validate undefined input references
 
     Returns:
-        List of error messages (empty if valid)
+        List of validation diagnostics (empty if valid)
     """
-    errors: list[str] = []
+    diagnostics: list[Diagnostic] = []
 
     nodes_by_id = {node["id"]: node for node in workflow_ir.get("nodes", [])}
     declared_inputs = set(workflow_ir.get("inputs", {}).keys())
@@ -251,8 +328,20 @@ def validate_data_flow(
         node_order = build_execution_order(workflow_ir)
         node_positions = {node_id: i for i, node_id in enumerate(node_order)}
     except CycleError as e:
-        errors.append(f"Data flow error: {e!s}")
-        return errors
+        diagnostics.append(
+            Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Validation Error",
+                message=f"Circular dependency detected involving nodes: {', '.join(e.nodes_in_cycle)}",
+                suggestions=["Remove or reorder edges to break the cycle."],
+                context={
+                    "category": "validation",
+                    "cycle_nodes": e.nodes_in_cycle,
+                },
+            )
+        )
+        return diagnostics
 
     # Compute loop forward limits: for each backward edge B→A (with action),
     # node A can reference nodes up to B's position (valid in subsequent iterations).
@@ -279,10 +368,10 @@ def validate_data_flow(
             valid_simple_refs,
             loop_forward_limits,
             check_inputs,
-            errors,
+            diagnostics,
         )
 
-    return errors
+    return diagnostics
 
 
 def _check_param_value(
@@ -295,7 +384,7 @@ def _check_param_value(
     valid_simple_refs: set[str],
     loop_forward_limits: dict[str, int],
     check_inputs: bool,
-    errors: list[str],
+    errors: list[Diagnostic],
 ) -> None:
     """Recursively validate template references in a parameter value."""
     if isinstance(value, str) and "${" in value:
@@ -353,7 +442,7 @@ def _validate_node_params(
     valid_simple_refs: set[str],
     loop_forward_limits: dict[str, int],
     check_inputs: bool,
-    errors: list[str],
+    errors: list[Diagnostic],
 ) -> None:
     """Validate template references in a single node's parameters."""
     # If node has 'inputs' mapping, its keys are valid template references
