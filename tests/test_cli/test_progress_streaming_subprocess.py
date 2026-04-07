@@ -72,6 +72,55 @@ def _run_pflow(uv_exe: str, env: dict, workflow_path) -> subprocess.CompletedPro
     )
 
 
+def _wait_for_stderr_marker(proc: subprocess.Popen, marker: str, deadline: float) -> bool:
+    """Read ``proc.stderr`` line by line until a line containing ``marker`` arrives.
+
+    Returns True if the marker was seen before ``deadline`` (wall-clock time
+    from ``time.monotonic()``). Returns False on timeout or on subprocess exit
+    without the marker.
+    """
+    import select
+    import time
+
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([proc.stderr], [], [], 0.1)
+        if ready:
+            line = proc.stderr.readline()
+            if not line:
+                return False  # EOF: subprocess exited
+            if marker in line:
+                return True
+        if proc.poll() is not None:
+            return False  # Subprocess exited before the marker
+    return False
+
+
+def _unblock_barrier_fifo(barrier_path: str, proc: subprocess.Popen, timeout: float = 2.0) -> None:
+    """Open a barrier FIFO for writing to unblock a workflow step reading from it.
+
+    Retries with short sleeps because there's a small race between the parent
+    test process observing stderr and the subprocess opening the FIFO for
+    read. ENXIO from ``open(O_WRONLY | O_NONBLOCK)`` means "no reader yet";
+    we give the subprocess up to ``timeout`` seconds to become a reader and
+    bail out early if the subprocess is already dead.
+    """
+    import time
+
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            fd = os.open(barrier_path, os.O_WRONLY | os.O_NONBLOCK)
+            try:
+                os.write(fd, b"go\n")
+            finally:
+                os.close(fd)
+            return
+        except OSError:
+            if proc.poll() is not None:
+                return  # Subprocess is dead; nothing to unblock
+            time.sleep(0.05)
+
+
 class TestRealSubprocessProgressRendering:
     """Subprocess-based regression tests for partial-line corruption modes."""
 
@@ -222,3 +271,98 @@ class TestRealSubprocessProgressRendering:
         assert "    inner_b... ✓" in result.stderr, (
             f"Child 'inner_b' progress line missing or corrupted.\nstderr: {result.stderr!r}"
         )
+
+    def test_progress_streams_before_downstream_nodes_complete(self, tmp_path, uv_exe, subprocess_env):
+        """Step_0's completion line must be visible on stderr WHILE step_1 is still running.
+
+        This is the *causal* version of the streaming test: instead of measuring
+        wall-clock gaps between progress lines (flaky on slow CI), we pin step_1
+        in a known-blocked state via a FIFO barrier and assert that step_0's
+        completion line has already arrived on stderr at that moment.
+
+        If live streaming works, the test reads ``step_0... ✓`` from the stderr
+        pipe while step_1 is blocked in ``cat <barrier_fifo>``, then unblocks
+        step_1 so the workflow can finish. If streaming is broken — someone
+        re-introduces the TTY gate, adds buffering to click.echo, removes the
+        progress callback gate correctly but installs a buffer somewhere else —
+        the bytes sit in a buffer that never flushes (because the subprocess
+        is blocked on the barrier and has no reason to flush), the readline
+        loop times out, and the assertion fails cleanly.
+
+        This is the only test in the suite that proves live streaming works
+        end-to-end, which was Task 149's *primary* stated motivation:
+        agents running pflow via a Bash tool need to see live per-node
+        visibility, not silence followed by a post-hoc summary.
+
+        Cannot be done via ``CliRunner`` (captures everything until exit) or
+        via unit tests of ``OutputController`` (mock ``click.echo``). Only a
+        real subprocess with a line-buffered stderr pipe can observe whether
+        bytes actually flow as nodes complete.
+        """
+        import time
+
+        # Named pipe that step_1 will read from. Step_1 blocks until the test
+        # writes to it. tmp_path is auto-cleaned by pytest.
+        barrier = tmp_path / "barrier.fifo"
+        os.mkfifo(str(barrier))
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "step_0",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo step_0_ran"},
+                },
+                {
+                    # `cat <fifo>` blocks until a writer opens the FIFO for
+                    # writing and closes it. The test controls when that happens.
+                    "id": "step_1",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": f"cat {barrier}"},
+                },
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "barrier.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        proc = subprocess.Popen(  # noqa: S603
+            [uv_exe, "run", "pflow", str(workflow_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,  # line-buffered reads so readline returns as data arrives
+            env=subprocess_env,
+            shell=False,
+        )
+
+        try:
+            # 10s hard deadline: subprocess startup + fast step_0 execution +
+            # callback + click.echo + pipe delivery should complete in ~1-2s.
+            # The generous ceiling only matters if streaming is broken — a
+            # passing test exits _wait_for_stderr_marker almost immediately.
+            step_0_seen = _wait_for_stderr_marker(proc, "step_0... ✓", time.monotonic() + 10.0)
+
+            # If uv panicked in the sandbox, skip cleanly — we recognize the
+            # signature after the subprocess has exited.
+            if proc.returncode == 101:
+                leftover = proc.stderr.read() or ""
+                if "Attempted to create a NULL object" in leftover:
+                    pytest.skip("uv subprocess panics in this sandbox before pflow starts")
+
+            assert step_0_seen, (
+                "step_0's completion line did not arrive on stderr while "
+                "step_1 was still blocked on the barrier FIFO. Progress is "
+                "buffered instead of streaming live — Task 149's primary "
+                "motivation (agents seeing live per-node progress) is broken."
+            )
+        finally:
+            _unblock_barrier_fifo(str(barrier), proc)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
