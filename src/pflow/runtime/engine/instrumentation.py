@@ -394,6 +394,12 @@ def call_completion_callback(
         batch_total = node_output.get("count", 0)
         batch_success_count = node_output.get("success_count", 0)
 
+    smart_handled = False
+    smart_handled_reason = None
+    if isinstance(node_output, dict):
+        smart_handled = bool(node_output.get("smart_handled", False))
+        smart_handled_reason = node_output.get("smart_handled_reason")
+
     with contextlib.suppress(Exception):
         callback(
             node_id,
@@ -406,6 +412,8 @@ def call_completion_callback(
             is_batch=is_batch,
             batch_total=batch_total,
             batch_success_count=batch_success_count,
+            smart_handled=smart_handled,
+            smart_handled_reason=smart_handled_reason,
         )
 
 

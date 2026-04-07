@@ -11,7 +11,7 @@ import json
 from click.testing import CliRunner
 
 from pflow.cli.main import main
-from pflow.cli.workflow_output import _display_stderr_warnings, _format_node_status_line
+from pflow.cli.workflow_output import _display_stderr_warnings
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -420,58 +420,3 @@ class TestDisplayStderrWarnings:
         # Check that newlines are replaced with indented newlines
         assert "Line 1" in captured.err
         assert "Line 2" in captured.err
-
-
-class TestFormatNodeStatusLine:
-    """Unit tests for _format_node_status_line with stderr indicator."""
-
-    def test_warning_indicator_when_has_stderr(self):
-        """Should show warning indicator when node has stderr."""
-        step = {
-            "node_id": "stderr-node",
-            "status": "completed",
-            "duration_ms": 100,
-            "has_stderr": True,
-        }
-
-        result = _format_node_status_line(step)
-
-        # Should have warning indicator instead of checkmark
-        assert result.startswith("  \u26a0")  # Warning symbol
-        assert "stderr-node" in result
-
-    def test_checkmark_when_no_stderr(self):
-        """Should show checkmark when node has no stderr."""
-        step = {
-            "node_id": "clean-node",
-            "status": "completed",
-            "duration_ms": 100,
-        }
-
-        result = _format_node_status_line(step)
-
-        # Should have checkmark
-        assert "\u2713" in result  # Checkmark
-        assert "clean-node" in result
-
-    def test_has_stderr_only_set_for_completed_nodes(self):
-        """has_stderr is only set by build_execution_steps when status=completed.
-
-        This test documents that build_execution_steps guards against the
-        impossible state of has_stderr=True with status=failed. The display
-        function trusts this invariant and doesn't need redundant checks.
-        """
-        # In practice, build_execution_steps only sets has_stderr for completed nodes
-        # (see execution_state.py line 139: status == "completed" check)
-        step = {
-            "node_id": "failed-node",
-            "status": "failed",
-            "duration_ms": 100,
-            # has_stderr is NOT set here - this matches real behavior
-        }
-
-        result = _format_node_status_line(step)
-
-        # Should have error indicator
-        assert "\u2717" in result  # Cross mark
-        assert "failed-node" in result

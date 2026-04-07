@@ -281,39 +281,18 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
 
 
 def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None:
-    """Append execution step details to lines list.
-
-    For batch nodes with errors, also appends a batch errors section
-    showing failed item indices and error messages.
-    When --only is active, filters out not_executed steps and shows a summary line.
-    """
+    """Append supplementary execution details: --only summary line + batch errors."""
     if not execution or "steps" not in execution:
         return
 
     steps = execution["steps"]
     only_node_val = execution.get("only_node")
     nodes_skipped = execution.get("nodes_skipped", 0)
-    nodes_total = execution.get("nodes_total", len(steps))
 
-    # When --only is active, show only executed steps
-    if only_node_val:
-        display_steps = [s for s in steps if s["status"] != "not_executed"]
-        lines.append(f"Nodes executed ({len(display_steps)}/{nodes_total}):")
-    else:
-        display_steps = steps
-        nodes_executed = execution.get("nodes_executed", 0)
-        lines.append(f"Nodes executed ({nodes_executed}):")
-
-    for step in display_steps:
-        formatted_step = _format_execution_step(step)
-        lines.append(formatted_step)
-
-    # --only summary line
     if only_node_val and nodes_skipped > 0:
         noun = "node" if nodes_skipped == 1 else "nodes"
         lines.append(f"  ⤷ Stopped after '{only_node_val}' (--only), {nodes_skipped} remaining {noun} skipped")
 
-    # Add batch errors section if any batch nodes had failures
     batch_error_lines = _format_batch_errors_section(steps)
     if batch_error_lines:
         lines.extend(batch_error_lines)
@@ -332,42 +311,6 @@ def _truncate_error_message(message: str, max_length: int = 200) -> str:
     if len(message) <= max_length:
         return message
     return message[: max_length - 3] + "..."
-
-
-def _format_batch_node_line(step: dict[str, Any]) -> str:
-    """Format a batch node's status line with summary.
-
-    Examples:
-        "  ✓ process (31ms) - 10/10 items succeeded"
-        "  ⚠ process (31ms) - 8/10 items succeeded, 2 failed"
-
-    Args:
-        step: Execution step dict with batch metadata
-
-    Returns:
-        Formatted status line string
-    """
-    node_id = step.get("node_id", "unknown")
-    duration = step.get("duration_ms") or 0
-    total = step.get("batch_total", 0)
-    success = step.get("batch_success", 0)
-    errors = step.get("batch_errors", 0)
-    cached = step.get("cached", False)
-    # Build timing string
-    timing = f"({int(duration)}ms)"
-
-    # Build additional tags
-    tags = []
-    if cached:
-        tags.append("cached")
-    tag_str = f" [{', '.join(tags)}]" if tags else ""
-
-    if errors > 0:
-        # Partial success - warning indicator
-        return f"  ⚠ {node_id} {timing} - {success}/{total} items succeeded, {errors} failed{tag_str}"
-    else:
-        # Full success - checkmark
-        return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
 
 
 def _format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
@@ -405,32 +348,3 @@ def _format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
             lines.append(f"  ...and {truncated} more errors")
 
     return lines
-
-
-def _format_execution_step(step: dict[str, Any]) -> str:
-    """Format a single execution step.
-
-    For batch nodes, delegates to _format_batch_node_line() for enhanced display.
-    For regular nodes, shows standard status line.
-    """
-    # Check if this is a batch node
-    if step.get("is_batch"):
-        return _format_batch_node_line(step)
-
-    # Regular node formatting
-    node_id = step.get("node_id", "unknown")
-    status = step.get("status", "unknown")
-    duration = step.get("duration_ms") or 0  # Handle explicit None
-    cached = step.get("cached", False)
-    # Build status indicator
-    indicator_map = {"completed": "✓", "failed": "❌"}
-    indicator = indicator_map.get(status, "⚠️")
-
-    # Build additional tags
-    tags = []
-    if cached:
-        tags.append("cached")
-
-    tag_str = f" [{', '.join(tags)}]" if tags else ""
-    # Round duration to integer for readability (matches CLI format)
-    return f"  {indicator} {node_id} ({int(duration)}ms){tag_str}"

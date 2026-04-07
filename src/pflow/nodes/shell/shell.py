@@ -197,8 +197,9 @@ class ShellNode(Node):
 
         IMPORTANT: When adding new patterns here, the reason string MUST contain
         either "no matches" or "not found" for proper tag display in CLI output.
-        See src/pflow/cli/main.py _format_node_status_line() for the tag mapping.
-        If neither phrase fits your pattern, update the tag mapping in main.py.
+        See src/pflow/core/output_controller.py _handle_node_complete() for the
+        tag mapping. If neither phrase fits your pattern, the raw reason is
+        shown as-is as a yellow tag so agents can still diagnose the case.
         """
         # Check if stderr has content - this usually indicates a real error
         # from a command in the pipeline, not a "no results" case

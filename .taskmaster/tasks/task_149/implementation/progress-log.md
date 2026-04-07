@@ -121,3 +121,63 @@
   - with workspace cache override: `uv` panicked in the environment's macOS system-configuration path
 - System `python3` is available for syntax checks but does not have `pytest` installed.
 - Because of the environment constraint above, runtime test execution is still pending and must be done in a working project environment.
+
+## 2026-04-07 - Follow-up from real test run
+
+### Observed failures from user environment
+- Two failures in `tests/test_mcp_server/test_execution_workflow.py`
+- Both failures expected a literal `✓` in the returned success string from `ExecutionService.execute_workflow(...)`
+
+### Root cause
+- This was not a formatter bug.
+- The tested workflow uses a plain shell node with no template inputs, which triggers the existing validator warning about cache safety.
+- After Task 149, CLI and MCP success summaries are intentionally aligned:
+  - clean success: `✓ Workflow completed ...`
+  - degraded / warnings: `⚠️ Workflow completed with warnings ...` or `⚠️ Workflow completed with N warnings ...`
+- So the old assertion "success string must contain a checkmark" became invalid for degraded-success cases.
+
+### Fix applied
+- Updated `tests/test_mcp_server/test_execution_workflow.py` to assert on stable success semantics instead:
+  - contains `"Workflow completed"`
+  - contains `"Workflow output:"`
+  - contains `"hello"`
+- This keeps the test aligned with the public contract of `ExecutionService.execute_workflow()` without overfitting to a specific glyph for degraded success.
+
+## 2026-04-07 - Ruff follow-up
+
+### Observed issue
+- `ruff` flagged `src/pflow/core/output_controller.py::_handle_node_complete` with `C901` complexity 12 > 10.
+
+### Fix applied
+- Extracted two tiny helpers:
+  - `_build_smart_handled_tag(...)`
+  - `_emit_non_batch_completion(...)`
+- `_handle_node_complete(...)` now only routes between:
+  - fatal error
+  - batch completion
+  - non-batch completion
+
+### Rationale
+- Kept the logic local to `OutputController` instead of suppressing the rule.
+- This preserves the approved behavior while making the success/warning rendering path easier to read and modify.
+
+## 2026-04-07 - High-value regression tests added
+
+### Why these tests
+- Added only tests that protect the riskiest behaviors introduced by this refactor:
+  1. callsite gating for `-p`
+  2. callsite gating for JSON mode
+  3. real failure-path progress line termination through the actual CLI/engine path
+
+### Added tests
+- In `tests/test_cli/test_workflow_output_handling.py`:
+  - `test_print_mode_suppresses_progress_header_and_summary`
+  - `test_json_mode_suppresses_progress_header_and_summary`
+  - `test_real_failing_shell_node_terminates_progress_line`
+
+### Value
+- These catch regressions that would be easy to reintroduce later if someone:
+  - moves the `progress_enabled` gate
+  - reinstalls progress callback in JSON mode
+  - reinstalls progress callback in `-p` mode
+  - breaks the live failure terminator while refactoring callback rendering

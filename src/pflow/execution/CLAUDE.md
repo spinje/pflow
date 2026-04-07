@@ -6,14 +6,11 @@ Unified execution system. Both CLI and MCP call `WorkflowRunner().run()` which o
 
 ```
 src/pflow/execution/
-├── __init__.py              # Exports: OutputInterface, DisplayManager, WorkflowRunner, ExecutionResult, etc.
+├── __init__.py              # Exports: WorkflowRunner, ExecutionResult, RunnerConfig, etc.
 ├── runner.py                # THE shared execution pipeline (resolve→validate→compile→execute→return)
 ├── result.py                # Result types: ExecutionResult, ValidationResult, RunnerConfig, ResolvedWorkflow
 ├── workflow_resolver.py     # Unified workflow resolution (file, library, markdown, dict → ResolvedWorkflow)
-├── output_interface.py      # Protocol for display abstraction (CLI, MCP, etc.)
-├── display_manager.py       # UX logic (context-aware messages, progress tracking)
 ├── executor_service.py      # Internal utility: error extraction helpers (_build_error_list, etc.)
-├── null_output.py           # Silent output (default when no OutputInterface)
 ├── execution_state.py       # Per-node execution state building (shared CLI/MCP)
 └── formatters/              # Shared output formatters (return strings/dicts, NEVER print)
     ├── error_formatter.py
@@ -27,7 +24,7 @@ src/pflow/execution/
 
 ```python
 class WorkflowRunner:
-    def run(workflow, params, config, *, output=None, workflow_manager=None, workflow_name=None) -> ExecutionResult
+    def run(workflow, params, config, *, progress_callback=None, workflow_manager=None, workflow_name=None) -> ExecutionResult
     def validate(workflow, params, *, source_file_path=None) -> ValidationResult
 ```
 
@@ -117,17 +114,11 @@ Diagnostic(
 )
 ```
 
-## OutputInterface Protocol
-
-Methods: `show_progress()`, `show_result()`, `show_error()`, `show_success()`, `show_warning()`, `create_node_callback()`, `is_interactive()`.
-
-Implementations: `CliOutput` (cli/cli_output.py), `NullOutput` (null_output.py for MCP server).
-
 ## Integration
 
-**CLI**: `cli/main.py:execute_json_workflow()` calls `WorkflowRunner().run()` with `CliOutput`. Handles: stdin routing, logging suppression, trace saving, display.
+**CLI**: `cli/main.py:execute_json_workflow()` calls `WorkflowRunner().run()`, passing `progress_callback=output_controller.create_progress_callback()` when progress is enabled. Handles: stdin routing, logging suppression, trace saving, display.
 
-**MCP Server**: `mcp_server/services/execution_service.py` calls `WorkflowRunner().run()` with no output. Three methods: `execute_workflow()`, `validate_workflow()`, `run_registry_node()`.
+**MCP Server**: `mcp_server/services/execution_service.py` calls `WorkflowRunner().run()` without a progress callback (defaults to `None`). Three methods: `execute_workflow()`, `validate_workflow()`, `run_registry_node()`.
 
 **Registry run**: `run_registry_node()` builds synthetic single-node IR, resolves `${ENV_VAR}` from env/settings, and routes through `WorkflowRunner().run()` with `RunnerConfig(cache_enabled=False)`.
 
@@ -142,7 +133,7 @@ Implementations: `CliOutput` (cli/cli_output.py), `NullOutput` (null_output.py f
 
 ## Gotchas
 
-- **Display-agnostic**: Never import Click or add CLI concerns here. Use OutputInterface.
+- **Display-agnostic**: Never import Click or add CLI concerns here. Progress events flow through the optional `progress_callback` stored under `shared_store["__progress_callback__"]`.
 - **Don't cache errors**: Never cache nodes that return "error" action.
 - **Dict passthrough skips file ref guard**: When Runner receives dict input, `_check_inline_file_references()` is bypassed. CLI/MCP callers who pre-resolve to dict must handle this.
 - **MCPNode error detection**: `MCPNode.post()` returns "default" action even on errors (workaround for missing error edges). Formatters also check for `"error"` key in outputs/shared_store.

@@ -32,7 +32,6 @@ from pflow.core.shell_integration import (
 )
 from pflow.core.validation_utils import is_valid_parameter_name
 from pflow.core.workflow.manager import WorkflowManager
-from pflow.execution import DisplayManager
 from pflow.execution.result import ResolvedWorkflow
 from pflow.execution.workflow_resolver import resolve_workflow
 
@@ -160,7 +159,6 @@ def _handle_workflow_success(
         print_flag=print_flag,
         workflow_metadata=workflow_metadata,
         workflow_trace=workflow_trace,
-        output_controller=ctx.obj.get("output_controller"),
         status=status,
         warnings=result_warnings,
     )
@@ -295,31 +293,26 @@ def execute_json_workflow(  # noqa: C901
     # Store total nodes for --report
     ctx.obj["total_nodes"] = len(ir_data.get("nodes", []))
 
-    # Build output interface
-    from pflow.cli.cli_output import CliOutput
-
     output_controller = _get_output_controller(ctx)
-    # CliOutput gets raw verbose (not effective_verbose) — it controls its own
-    # JSON/interactive suppression internally. effective_verbose is for CLI-level
-    # messages (echo) and the Runner's shared store __verbose__ flag.
-    cli_output = CliOutput(output_controller, verbose, output_format)
+    progress_enabled = not print_flag and output_format != "json"
 
     # Show execution starting
     if effective_verbose:
         click.echo(f"cli: Starting workflow execution with {ctx.obj['total_nodes']} node(s)")
-    display = DisplayManager(cli_output)
-    display.show_execution_start(len(ir_data.get("nodes", [])))
+    if progress_enabled:
+        click.echo(f"Executing workflow ({len(ir_data.get('nodes', []))} nodes):", err=True)
 
     workflow_name = ctx.obj.get("workflow_name")
     result = None
 
     try:
         runner = WorkflowRunner()
+        progress_callback = output_controller.create_progress_callback() if progress_enabled else None
         result = runner.run(
             workflow,
             params,
             config,
-            output=cli_output,
+            progress_callback=progress_callback,
             workflow_manager=WorkflowManager() if ctx.obj.get("workflow_source") == "library" else None,
             workflow_name=workflow_name,
         )
@@ -885,7 +878,13 @@ def _handle_invalid_workflow_input(workflow: tuple[str, ...]) -> None:
     default="text",
     help="Output format: text (default) or json",
 )
-@click.option("-p", "--print", "print_flag", is_flag=True, help="Force non-interactive output (print mode)")
+@click.option(
+    "-p",
+    "--print",
+    "print_flag",
+    is_flag=True,
+    help="Minimal output: suppress header, summary, and warnings on stderr. Data still goes to stdout.",
+)
 @click.option(
     "--no-trace",
     is_flag=True,

@@ -41,7 +41,6 @@ src/pflow/cli/
 ├── workflow_resolution.py   # CLI routing heuristic (is_likely_workflow_name only — resolve_workflow moved to execution/workflow_resolver.py)
 ├── mcp_sync.py              # MCP auto-discovery at startup
 ├── param_parsing.py         # infer_type, parse_workflow_params, format_param_value
-├── cli_output.py            # CliOutput: OutputInterface implementation for Click
 ├── rerun_display.py         # Rerun command display with secret masking
 ├── discovery_errors.py      # Shared error handling for LLM discovery commands
 ├── logging_config.py        # CLI logging configuration
@@ -92,15 +91,16 @@ Contains the Click command definition (`workflow_command`) and everything that c
 
 This split is critical: `pflow workflow.pflow.md | jq` works because progress noise goes to stderr. `BrokenPipeError` handled via `os._exit(0)` for clean pipe termination.
 
-### Three Output Modes (`_output_with_header` in workflow_output.py)
+### Output routing (`_output_with_header` in workflow_output.py)
+
+Single rule: data → stdout, diagnostics → stderr. Always. Fixed in GH #194.
 
 | Mode | When | Header | Data | Summary |
 |------|------|--------|------|---------|
 | `--print` (`-p`) | Explicitly requested | None | stdout | None |
-| Interactive | TTY detected | stderr | stdout | stderr |
-| Non-interactive | CI/CD, agents, pipes | stderr | stderr | stderr |
+| Default | Everything else (TTY, non-TTY, agents, CI/CD, pipes) | stderr | stdout | stderr |
 
-Non-interactive sends data to stderr too — this prevents output appearing before summary when tools capture streams separately.
+`--print` is a minimal-output convenience that suppresses the header, summary, and warnings on stderr. Data still goes to stdout. Use it for clean piping into `jq` or similar tools: `pflow -p foo.pflow.md | jq`. Without `-p`, pipes still work correctly because data is already on stdout.
 
 ### Output Auto-Detection (`find_auto_output`)
 
@@ -123,7 +123,7 @@ Error output is unified: `output_error()` in `error_output.py` handles JSON/text
 Three responsibilities:
 
 1. **Output routing**: `_handle_workflow_output` → `_handle_text_output` / `_handle_json_output`. Checks user-specified key, then declared outputs (skipped when `--only` active), then auto-detection.
-2. **Execution summary**: `_display_execution_summary` with per-node timing, cache/batch/stderr tags, LLM cost display, and warnings. Always shown except in `--print` mode. When `--only` is active: filters `not_executed` steps, shows `⤷ Stopped after 'X' (--only)` summary line. `_display_workflow_completion_status` shows cache stats suffix `(N cached, M executed)` when `cache_hits > 0`.
+2. **Execution summary**: `_display_execution_summary` emits a one-line completion tag (`✓ Workflow completed in Xs`) plus supplementary diagnostics (batch error details, shell stderr warnings, LLM cost, warning diagnostics) only when present. The previous "Nodes executed (N):" per-node listing was removed because it duplicated the live progress stream that is now always visible (TTY and non-TTY alike). When `--only` is active: the live progress and the completion tag reflect only the executed nodes.
 3. **Shared utilities**: `safe_output` (BrokenPipeError handling), `_serialize_json_result` (JSON serialization with custom type handling), `_create_workflow_metadata`.
 
 ## workflow_errors.py
@@ -180,7 +180,7 @@ Note: has its own copy of `_get_output_controller` (duplicated from main.py to a
 --verbose, -v          # Detailed output (extra error context)
 --output-key, -o       # Extract specific shared store key instead of auto-detection
 --output-format        # "text" (default) or "json" — json forces non-interactive
---print, -p            # Force non-interactive, clean output for piping
+--print, -p            # Minimal output: suppress stderr header/summary/warnings
 --no-trace             # Disable automatic workflow trace saving
 --cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
 --only <node>          # Execute up to and including this node, then stop. Upstream from cache.
@@ -236,11 +236,10 @@ Note: `commands/mcp.py` still uses inline formatting (not yet migrated to shared
 
 ## Interactive Mode
 
-Interactive detection rules are in `core/CLAUDE.md` (output_controller). CLI-specific impacts:
-- Progress display: only in interactive
-- Save prompts: auto-save in non-interactive
-- Warning messages: suppressed in non-interactive
-- Trace file paths: only shown in interactive
+`OutputController.is_interactive()` is still defined but is only used by `cli/mcp_sync.py` for MCP discovery progress gating. CLI-specific impacts after the GH #194 refactor:
+- Progress display: streamed to stderr in default mode (TTY and non-TTY alike). Suppressed in `-p` mode and JSON output mode by the CLI callsite gate, not by TTY detection.
+- Save prompts: whatever logic currently gates the "save workflow?" interactive prompt is unchanged by this refactor. Production prompt usage relies on direct `click.confirm(...)`, not `OutputController.should_show_prompts()` (which was dead and removed).
+- Trace file paths: shown in default mode, suppressed in `--print` or JSON mode by `_echo_trace`.
 
 ## Common Usage
 
@@ -267,7 +266,7 @@ pflow instructions usage                   # Agent guide
 ## Known Issues
 
 1. **MCP connection cleanup** — handled by `MCPConnectionPool.shutdown()` in `runner.py:_cleanup()`; `pflow registry run` still creates ephemeral connections
-2. **Click testing limitation** — `CliRunner` always returns `False` for `isatty()`, preventing interactive mode testing in unit tests
+2. **Click testing limitation** — `CliRunner` always returns `False` for `isatty()`. Batch-progress tests that exercise `\r` rendering need to patch `sys.stderr.isatty()` to `True`.
 3. **Registry format inconsistency** — two save methods create format confusion, pattern matching checks multiple fields
 
 ## Gotchas
@@ -275,7 +274,7 @@ pflow instructions usage                   # Agent guide
 - **Don't combine catch-all args with subcommands** — the wrapper pattern exists because Click can't handle this
 - **Use lazy imports** in command files and main.py to avoid circular dependencies
 - **Don't mix output streams** — errors→stderr, results→stdout. This makes piping work.
-- **Don't assume TTY** — always check interactive mode before showing progress or prompts
+- **Don't mix routing and rendering** — stdout/stderr routing is unified; only TTY-specific cursor rendering (`\r` batch updates) should inspect `isatty()`
 
 ## Test Mapping
 

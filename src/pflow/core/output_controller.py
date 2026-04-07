@@ -87,21 +87,49 @@ class OutputController:
         batch_total: int,
         batch_success: bool,
     ) -> None:
-        """Handle batch_progress event - update line in place.
+        """Handle batch_progress event - update line in place (TTY only)."""
+        if not sys.stderr.isatty():
+            return
 
-        Uses carriage return to overwrite the current line with updated progress.
-        Shows per-item success/failure status.
-
-        Args:
-            node_id: The node identifier
-            indent: Indentation string based on depth
-            batch_current: Number of items completed so far
-            batch_total: Total number of items to process
-            batch_success: Whether the just-completed item succeeded
-        """
         status = click.style("✓", fg="green") if batch_success else click.style("✗", fg="red")
-        # Use \r to return to line start and overwrite
         click.echo(f"\r{indent}  {node_id}... {batch_current}/{batch_total} {status}", err=True, nl=False)
+
+    def _build_smart_handled_tag(self, smart_handled: bool, smart_handled_reason: Optional[str]) -> str:
+        """Build display suffix for smart-handled shell outcomes."""
+        if not smart_handled:
+            return ""
+
+        reason = smart_handled_reason or ""
+        if "no matches" in reason:
+            return click.style(" [no matches]", fg="yellow")
+        if "not found" in reason:
+            return click.style(" [not found]", fg="yellow")
+        if reason:
+            return click.style(f" [{reason}]", fg="yellow")
+        return ""
+
+    def _emit_non_batch_completion(
+        self,
+        duration_ms: Optional[float],
+        error_message: Optional[str],
+        ignore_errors: bool,
+        tag_suffix: str,
+    ) -> None:
+        """Emit completion text for non-batch success/warning cases."""
+        if error_message and ignore_errors:
+            warning_text = click.style(f" ⚠️  {error_message} but continuing", fg="yellow")
+            if duration_ms is not None:
+                success_text = click.style(f" | ✓ {duration_ms / 1000:.1f}s", fg="green")
+                click.echo(f"{warning_text}{success_text}{tag_suffix}", err=True)
+                return
+            click.echo(f"{warning_text}{tag_suffix}", err=True)
+            return
+
+        if duration_ms is not None:
+            click.echo(click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green") + tag_suffix, err=True)
+            return
+
+        click.echo(click.style(" ✓", fg="green") + tag_suffix, err=True)
 
     def _handle_node_complete(
         self,
@@ -112,47 +140,27 @@ class OutputController:
         is_batch: bool = False,
         batch_total: Optional[int] = None,
         batch_success_count: Optional[int] = None,
+        smart_handled: bool = False,
+        smart_handled_reason: Optional[str] = None,
     ) -> None:
-        """Handle node_complete event display.
-
-        Args:
-            duration_ms: Execution duration in milliseconds
-            error_message: Error message for failed nodes
-            ignore_errors: Whether errors are being ignored
-            is_error: Whether this is a fatal error
-            is_batch: Whether this is a batch node completion
-            batch_total: Total items in batch (for batch nodes)
-            batch_success_count: Number of successful items (for batch nodes)
-        """
+        """Handle node_complete event display."""
         if is_error:
             if is_batch:
-                # For batch errors, complete the line with error indicator
                 click.echo(click.style(" FAILED", fg="red"), err=True)
-            # For non-batch errors, shell node already logged - return to avoid double output
+            else:
+                click.echo(click.style(" ✗ Failed", fg="red"), err=True)
             return
 
         if is_batch:
-            # Batch node: progress already showed count/status, just add timing
             if duration_ms is not None:
                 timing_text = click.style(f" {duration_ms / 1000:.1f}s", fg="green")
                 click.echo(timing_text, err=True)
             else:
-                click.echo("", err=True)  # Just newline to complete the line
+                click.echo("", err=True)
             return
 
-        if error_message and ignore_errors:
-            # Warning - command failed but continuing
-            warning_text = click.style(f" ⚠️  {error_message} but continuing", fg="yellow")
-            if duration_ms is not None:
-                success_text = click.style(f" | ✓ {duration_ms / 1000:.1f}s", fg="green")
-                click.echo(f"{warning_text}{success_text}", err=True)
-            else:
-                click.echo(warning_text, err=True)
-        elif duration_ms is not None:
-            # Normal success
-            click.echo(click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green"), err=True)
-        else:
-            click.echo(click.style(" ✓", fg="green"), err=True)
+        tag_suffix = self._build_smart_handled_tag(smart_handled, smart_handled_reason)
+        self._emit_non_batch_completion(duration_ms, error_message, ignore_errors, tag_suffix)
 
     def _handle_node_cached(self) -> None:
         """Handle node_cached event display."""
@@ -168,23 +176,12 @@ class OutputController:
         warning_text = click.style(f" ⚠️  {warning_msg}", fg="yellow")
         click.echo(warning_text, err=True)
 
-    def _handle_workflow_start(self, node_id: str, indent: str) -> None:
-        """Handle workflow_start event display.
-
-        Args:
-            node_id: Contains node count for workflow_start
-            indent: Indentation string based on depth
-        """
-        click.echo(f"{indent}Executing workflow ({node_id} nodes):", err=True)
-
-    def create_progress_callback(self) -> Optional[Callable]:
+    def create_progress_callback(self) -> Callable:
         """Create progress callback for workflow execution.
 
         Returns:
-            Callback function if interactive, None if non-interactive
+            Callback function for streaming progress to stderr
         """
-        if not self.is_interactive():
-            return None
 
         def progress_callback(
             node_id: str,
@@ -200,12 +197,14 @@ class OutputController:
             batch_success: Optional[bool] = None,
             is_batch: bool = False,
             batch_success_count: Optional[int] = None,
+            smart_handled: bool = False,
+            smart_handled_reason: Optional[str] = None,
         ) -> None:
             """Display progress for node execution.
 
             Args:
-                node_id: The node identifier or count for workflow_start
-                event: Event type (node_start, node_complete, node_cached, workflow_start, batch_progress)
+                node_id: The node identifier
+                event: Event type (node_start, node_complete, node_cached, batch_progress)
                 duration_ms: Execution duration in milliseconds (for complete events)
                 depth: Nesting depth for indentation
                 error_message: Error message for failed nodes
@@ -216,10 +215,11 @@ class OutputController:
                 batch_success: Whether just-completed item succeeded (for batch_progress)
                 is_batch: Whether this is a batch node (for node_complete)
                 batch_success_count: Number of successful items (for node_complete)
+                smart_handled: Whether shell node was treated as a safe non-error
+                smart_handled_reason: Display tag reason for smart-handled shell nodes
             """
             indent = "  " * depth
 
-            # Dispatch to appropriate handler based on event type
             if event == "node_start":
                 self._handle_node_start(node_id, indent)
             elif event == "node_complete":
@@ -231,6 +231,8 @@ class OutputController:
                     is_batch=is_batch,
                     batch_total=batch_total,
                     batch_success_count=batch_success_count,
+                    smart_handled=smart_handled,
+                    smart_handled_reason=smart_handled_reason,
                 )
             elif event == "batch_progress":
                 if batch_current is not None and batch_total is not None and batch_success is not None:
@@ -239,34 +241,5 @@ class OutputController:
                 self._handle_node_cached()
             elif event == "node_warning":
                 self._handle_node_warning(duration_ms)
-            elif event == "workflow_start":
-                self._handle_workflow_start(node_id, indent)
 
         return progress_callback
-
-    def echo_progress(self, message: str) -> None:
-        """Output progress message if interactive.
-
-        Args:
-            message: Progress message to display
-        """
-        if self.is_interactive():
-            click.echo(message, err=True)
-
-    def echo_result(self, data: str) -> None:
-        """Output result data to stdout.
-
-        Always outputs to stdout regardless of mode.
-
-        Args:
-            data: Result data to output
-        """
-        click.echo(data)
-
-    def should_show_prompts(self) -> bool:
-        """Check if interactive prompts should be shown.
-
-        Returns:
-            True if prompts should be displayed, False otherwise
-        """
-        return self.is_interactive()

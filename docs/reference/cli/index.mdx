@@ -74,7 +74,7 @@ pflow ~/workflows/analysis.pflow.md param=value
 | `-v, --verbose` | Show detailed execution output |
 | `-o, --output-key KEY` | Specific shared store key to output |
 | `--output-format text\|json` | Output format (default: text) |
-| `-p, --print` | Force non-interactive output |
+| `-p, --print` | Minimal output: suppress header, summary, and warnings |
 | `--no-trace` | Disable workflow trace saving |
 | `--cache/--no-cache` | Enable/disable memoization cache reads (default: enabled) |
 | `--only NODE` | Run workflow through this node then stop |
@@ -141,19 +141,23 @@ pflow -p step1 | pflow -p step2 | pflow step3
 
 ### Text mode (default)
 
-Human-readable output with progress indicators in interactive terminals:
+Human-readable output with live progress streamed to stderr and results on stdout. Works the same way in a terminal, CI log, agent bash tool, or subprocess capture:
 
 ```bash
-pflow my-workflow
+pflow workflow.pflow.md
 ```
+
+Progress lines and execution summary go to stderr. Declared workflow outputs go to stdout.
 
 ### JSON mode
 
-Structured output for parsing:
+Structured output on stdout for machine parsing:
 
 ```bash
-pflow --output-format json my-workflow | jq '.result'
+pflow --output-format json workflow.pflow.md
 ```
+
+All workflow results, metrics, and errors serialize to a single JSON object on stdout. Progress display is suppressed.
 
 <Expandable title="JSON output structure">
 
@@ -242,13 +246,15 @@ pflow --output-format json my-workflow | jq '.result'
 
 </Expandable>
 
-### Print mode
+### Print mode (`-p`)
 
-Clean output for piping (no progress indicators):
+Minimal stderr output when you want the cleanest possible data stream:
 
 ```bash
-pflow -p my-workflow > output.txt
+pflow -p workflow.pflow.md | jq '.data'
 ```
+
+Suppresses the "Workflow output:" header, the execution summary, and stderr warnings. Data still goes to stdout (same as default mode). Useful for piping into tools that should only see the result.
 
 ## Validation mode
 

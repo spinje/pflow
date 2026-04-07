@@ -171,14 +171,9 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### output_controller.py
 
-**5 rules for interactive mode** (ALL must pass):
-1. No `-p/--print` flag
-2. Output format is not `json`
-3. stdin is TTY
-4. stdout is TTY
-5. Only if all pass → interactive
+**`is_interactive()` rules** (ALL must pass): no `-p/--print` flag, output format is not `json`, stdin is TTY, stdout is TTY. After the GH #194 refactor, this is only used by `cli/mcp_sync.py` for MCP discovery progress gating. Progress display during workflow execution is **not** gated on `is_interactive()` — progress streams in default mode via `create_progress_callback()`. The one TTY-specific behavior is `_handle_batch_progress()`'s `\r`-based inline counter, gated internally via `sys.stderr.isatty()`.
 
-**Progress indicators**: ✓ success (green), ❌ error (red), ⚠️ warning (yellow), ↻ cached (blue/dimmed), [repaired] modified (cyan).
+**Progress indicators**: ✓ success (green), ✗ Failed (red terminator for non-batch fatal errors), ⚠️ warning (yellow), ↻ cached (blue/dimmed), `[no matches]` / `[not found]` smart-handled shell tags (yellow).
 
 ### settings.py
 

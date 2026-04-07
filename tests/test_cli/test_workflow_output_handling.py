@@ -198,6 +198,85 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
+    def test_workflow_data_goes_to_stdout_not_stderr_gh194(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """Regression for GH #194: workflow data must go to stdout, not stderr."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {"result": {"description": "Test result", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {
+                        "output_key": "result",
+                        "output_value": "HELLO_STDOUT_CANARY_GH194",
+                    },
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, [workflow_file])
+
+            assert result.exit_code == 0, (
+                f"Workflow invocation failed.\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+            )
+            assert "HELLO_STDOUT_CANARY_GH194" in result.stdout
+            assert "HELLO_STDOUT_CANARY_GH194" not in result.stderr
+            assert "Workflow output" in result.stderr
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_failing_node_emits_terminator_in_live_progress(self, mock_registry_instance, mock_validate_ir):
+        """Failure output should not concatenate with an unterminated progress line."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "failing_node",
+                    "type": "test-node",
+                    "params": {"raise_error": True},
+                }
+            ],
+        }
+
+        with patch("pflow.execution.runner.WorkflowRunner.run") as mock_run:
+            from pflow.core.diagnostic import Diagnostic, Severity
+            from pflow.execution.result import ExecutionResult
+
+            mock_run.return_value = ExecutionResult(
+                success=False,
+                diagnostics=[
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="runtime",
+                        message="Simulated node failure",
+                        node_id="failing_node",
+                    )
+                ],
+                shared_after={},
+            )
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+                f.write(ir_to_markdown(workflow))
+                workflow_file = f.name
+
+            try:
+                result = runner.invoke(main, [workflow_file])
+                assert "failing_node...❌" not in result.stderr
+            finally:
+                Path(workflow_file).unlink()
+
     def test_output_key_override(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key flag overrides both declared outputs and hardcoded keys."""
         runner = click.testing.CliRunner()

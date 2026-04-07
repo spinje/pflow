@@ -4,7 +4,7 @@ import contextlib
 import logging
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from pflow.core.diagnostic import Diagnostic, Severity, deduplicate_diagnostics, exception_to_diagnostics
 from pflow.core.exceptions import (
@@ -17,7 +17,6 @@ from pflow.core.exceptions import (
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.core.workflow.status import WorkflowStatus
 
-from .output_interface import OutputInterface
 from .result import ExecutionResult, ResolvedWorkflow, RunnerConfig, ValidationResult
 from .workflow_resolver import resolve_workflow
 
@@ -41,7 +40,7 @@ class WorkflowRunner:
     - Exception boundary (always returns ExecutionResult)
 
     The Runner does NOT own:
-    - Display/formatting (caller's OutputInterface)
+    - Display/formatting (caller renders results/progress)
     - Trace saving to disk (caller reads result.trace)
     - Logging suppression (caller sets before calling)
     - Stdin reading (caller puts value in params)
@@ -53,7 +52,7 @@ class WorkflowRunner:
         params: dict[str, Any],
         config: RunnerConfig,
         *,
-        output: Optional[OutputInterface] = None,
+        progress_callback: Optional[Callable] = None,
         workflow_manager: Optional[WorkflowManager] = None,
         workflow_name: Optional[str] = None,
     ) -> ExecutionResult:
@@ -63,7 +62,7 @@ class WorkflowRunner:
             workflow: File path, saved name, raw markdown, or IR dict.
             params: User-provided parameters. Copied at boundary.
             config: Immutable execution configuration.
-            output: Display interface (CliOutput for CLI, NullOutput/None for MCP).
+            progress_callback: Optional per-node progress callback for CLI streaming.
             workflow_manager: For metadata update on saved workflows. None = skip.
             workflow_name: Saved workflow name for metadata. None = skip.
 
@@ -104,7 +103,7 @@ class WorkflowRunner:
                 resolved,
                 params,
                 config,
-                output,
+                progress_callback,
                 workflow_manager,
                 workflow_name,
                 validation_warnings,
@@ -159,7 +158,7 @@ class WorkflowRunner:
         resolved: ResolvedWorkflow,
         params: dict[str, Any],
         config: RunnerConfig,
-        output: Optional[OutputInterface],
+        progress_callback: Optional[Callable],
         workflow_manager: Optional[WorkflowManager],
         workflow_name: Optional[str],
         validation_warnings: list[Diagnostic],
@@ -182,7 +181,14 @@ class WorkflowRunner:
         # on direct shared["input"] access is more honest than a placeholder string.
         self._strip_placeholders(params)
 
-        shared_store = self._initialize_shared_store(params, config.verbose, output, mcp_pool, cache, trace_collector)
+        shared_store = self._initialize_shared_store(
+            params,
+            config.verbose,
+            progress_callback,
+            mcp_pool,
+            cache,
+            trace_collector,
+        )
 
         registry = Registry()
         workflow = compile_workflow(resolved.ir, registry=registry, initial_params=params)
@@ -400,7 +406,7 @@ class WorkflowRunner:
         self,
         params: dict[str, Any],
         verbose: bool,
-        output: Optional[OutputInterface],
+        progress_callback: Optional[Callable],
         mcp_pool: Any,
         cache: Any,
         trace_collector: Any,
@@ -413,10 +419,8 @@ class WorkflowRunner:
         shared_store["__warnings__"] = {}
         shared_store["__parser_diagnostics__"] = []
 
-        if output:
-            callback = output.create_node_callback()
-            if callback:
-                shared_store["__progress_callback__"] = callback
+        if progress_callback is not None:
+            shared_store["__progress_callback__"] = progress_callback
 
         shared_store["__mcp_pool__"] = mcp_pool
         shared_store["__memoization_cache__"] = cache

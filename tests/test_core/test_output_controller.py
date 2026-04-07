@@ -1,6 +1,7 @@
 """Tests for OutputController class - interactive vs non-interactive mode detection."""
 
 import contextlib
+import sys
 from unittest.mock import patch
 
 from pflow.core.output_controller import OutputController
@@ -36,69 +37,28 @@ class TestOutputController:
         controller = OutputController(stdin_tty=True, stdout_tty=False)
         assert controller.is_interactive() is False
 
-    # Test requirements 5-6: Progress message behavior
-
-    @patch("click.echo")
-    def test_interactive_progress_messages_to_stderr(self, mock_echo):
-        """Test requirement 5: is_interactive=True, progress messages → appear in stderr."""
-        controller = OutputController(stdin_tty=True, stdout_tty=True)
-        controller.echo_progress("Test progress")
-
-        mock_echo.assert_called_once_with("Test progress", err=True)
-
-    @patch("click.echo")
-    def test_non_interactive_no_progress_output(self, mock_echo):
-        """Test requirement 6: is_interactive=False, progress messages → no output."""
-        controller = OutputController(stdin_tty=False, stdout_tty=True)
-        controller.echo_progress("Test progress")
-
-        mock_echo.assert_not_called()
-
-    # Test requirement 7: Result output always to stdout
-
-    @patch("click.echo")
-    def test_result_always_to_stdout(self, mock_echo):
-        """Test requirement 7: result("data") → "data" appears in stdout always."""
-        # Test with interactive mode
-        controller_interactive = OutputController(stdin_tty=True, stdout_tty=True)
-        controller_interactive.echo_result("test data")
-        mock_echo.assert_called_with("test data")
-
-        mock_echo.reset_mock()
-
-        # Test with non-interactive mode
-        controller_non_interactive = OutputController(stdin_tty=False, stdout_tty=False)
-        controller_non_interactive.echo_result("test data")
-        mock_echo.assert_called_with("test data")
-
-    # Test requirement 8: Save prompt display
-
-    def test_interactive_shows_prompts(self):
-        """Test requirement 8: is_interactive=True → save prompt displayed (should_show_prompts returns True)."""
-        controller = OutputController(stdin_tty=True, stdout_tty=True)
-        assert controller.should_show_prompts() is True
-
-    # Test requirements 9-10: Progress callback creation
+    # Test requirements 5-6: Progress callback creation
 
     def test_create_progress_callback_when_interactive(self):
-        """Test requirement 9: OutputController.create_progress_callback() → returns callback if interactive."""
+        """OutputController.create_progress_callback() returns a callable in interactive mode."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
         assert callback is not None
         assert callable(callback)
 
-    def test_create_progress_callback_returns_none_when_not_interactive(self):
-        """Test requirement 10: create_progress_callback returns None if not interactive."""
+    def test_create_progress_callback_always_returns_callable(self):
+        """create_progress_callback always returns a callable regardless of TTY state."""
         controller = OutputController(stdin_tty=False, stdout_tty=True)
         callback = controller.create_progress_callback()
-        assert callback is None
+        assert callback is not None
+        assert callable(callback)
 
-    # Test requirements 11-15: Progress callback behavior
+    # Test requirements 7-11: Progress callback behavior
 
     @patch("click.style", side_effect=mock_click_style)
     @patch("click.echo")
     def test_progress_callback_handles_events(self, mock_echo, mock_style):
-        """Test requirement 11: Progress callback handles node_start, node_complete, workflow_start events correctly."""
+        """Progress callback handles node_start and node_complete events correctly."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
@@ -111,12 +71,6 @@ class TestOutputController:
         # Test node_complete event
         callback("test_node", "node_complete", duration_ms=1500)
         mock_echo.assert_called_with(" ✓ 1.5s", err=True)
-
-        mock_echo.reset_mock()
-
-        # Test workflow_start event
-        callback("5", "workflow_start")
-        mock_echo.assert_called_with("Executing workflow (5 nodes):", err=True)
 
     @patch("click.echo")
     def test_callback_uses_depth_for_indentation(self, mock_echo):
@@ -158,17 +112,8 @@ class TestOutputController:
         mock_echo.assert_called_with(" ✓ 2.3s", err=True)
 
     @patch("click.echo")
-    def test_execution_header_format(self, mock_echo):
-        """Test requirement 14: Execution header shows 'Executing workflow (N nodes):'."""
-        controller = OutputController(stdin_tty=True, stdout_tty=True)
-        callback = controller.create_progress_callback()
-
-        callback("3", "workflow_start")
-        mock_echo.assert_called_with("Executing workflow (3 nodes):", err=True)
-
-    @patch("click.echo")
     def test_node_execution_indentation(self, mock_echo):
-        """Test requirement 15: Node execution shows '  {node_id}...' with proper indentation."""
+        """Node execution shows '  {node_id}...' with proper indentation."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
@@ -188,55 +133,16 @@ class TestOutputController:
         controller = OutputController(stdin_tty=True, stdout_tty=False)
         assert controller.is_interactive() is False
 
-    # Test requirement 18: Empty workflow
-
-    @patch("click.echo")
-    def test_empty_workflow_still_calls_workflow_start(self, mock_echo):
-        """Test requirement 18: Empty workflow (0 nodes) → workflow_start still called."""
-        controller = OutputController(stdin_tty=True, stdout_tty=True)
-        callback = controller.create_progress_callback()
-
-        callback("0", "workflow_start")
-        mock_echo.assert_called_with("Executing workflow (0 nodes):", err=True)
-
-    # Test requirement 19: Nested workflow indentation
-
-    @patch("click.echo")
-    def test_nested_workflow_indentation(self, mock_echo):
-        """Test requirement 19: Nested workflow with depth=1 → indented by 2 spaces."""
-        controller = OutputController(stdin_tty=True, stdout_tty=True)
-        callback = controller.create_progress_callback()
-
-        # Workflow start with depth=1
-        callback("2", "workflow_start", depth=1)
-        mock_echo.assert_called_with("  Executing workflow (2 nodes):", err=True)
-
-        mock_echo.reset_mock()
-
-        # Node within nested workflow (depth=1)
-        callback("nested_node", "node_start", depth=1)
-        mock_echo.assert_called_with("    nested_node...", err=True, nl=False)
-
-    # Test requirement 20: Callback not callable
-
-    def test_callback_not_callable_handled_gracefully(self):
-        """Test requirement 20: callback not callable → no exception raised (handled gracefully)."""
-        controller = OutputController(stdin_tty=False, stdout_tty=False)
-        callback = controller.create_progress_callback()
-
-        # Should return None, not raise exception
-        assert callback is None
-
-    # Test requirement 21: Windows edge case - None stdin
+    # Test requirement 18: Windows edge case - None stdin
 
     @patch("sys.stdin", None)
     def test_none_stdin_forces_non_interactive(self):
-        """Test requirement 21: sys.stdin is None → is_interactive=False (Windows edge case)."""
+        """sys.stdin is None → is_interactive=False (Windows edge case)."""
         controller = OutputController()
         assert controller.is_interactive() is False
         assert controller.stdin_tty is False
 
-    # Test requirement 22: Exception in progress callback
+    # Test requirement 19: Exception in progress callback
 
     @patch("click.echo")
     def test_progress_callback_exception_handled(self, mock_echo):
@@ -290,10 +196,28 @@ class TestOutputController:
         callback("test", "node_complete")
         mock_echo.assert_called_with(" ✓", err=True)
 
-    def test_should_show_prompts_non_interactive(self):
-        """Test should_show_prompts returns False when non-interactive."""
-        controller = OutputController(stdin_tty=False, stdout_tty=True)
-        assert controller.should_show_prompts() is False
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_non_batch_error_terminates_progress_line(self, mock_echo, mock_style):
+        """Non-batch failures terminate the hanging progress line visibly."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        callback("failing", "node_start")
+        callback("failing", "node_complete", is_error=True)
+
+        assert mock_echo.call_args_list[-1] == ((" ✗ Failed",), {"err": True})
+
+    @patch("click.style", side_effect=mock_click_style)
+    @patch("click.echo")
+    def test_smart_handled_reason_maps_to_tag(self, mock_echo, mock_style):
+        """Smart-handled shell reasons show a diagnostic tag on the success line."""
+        controller = OutputController(stdin_tty=True, stdout_tty=True)
+        callback = controller.create_progress_callback()
+
+        callback("search", "node_complete", duration_ms=100, smart_handled=True, smart_handled_reason="no matches")
+
+        assert mock_echo.call_args_list[-1] == ((" ✓ 0.1s [no matches]",), {"err": True})
 
     def test_multiple_flags_forcing_non_interactive(self):
         """Test multiple flags all forcing non-interactive mode."""
@@ -306,10 +230,6 @@ class TestOutputController:
         """Test a complete workflow execution flow with progress callbacks."""
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
-
-        # Start workflow
-        callback("3", "workflow_start")
-        assert mock_echo.call_args_list[-1] == (("Executing workflow (3 nodes):",), {"err": True})
 
         # Execute first node
         callback("read_file", "node_start")
@@ -343,19 +263,19 @@ class TestBatchProgressDisplay:
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
-        # Simulate batch execution
-        callback("process", "node_start")
-        mock_echo.reset_mock()
+        with patch.object(sys.stderr, "isatty", return_value=True):
+            callback("process", "node_start")
+            mock_echo.reset_mock()
 
-        callback(
-            "process",
-            "batch_progress",
-            duration_ms=100,
-            depth=0,
-            batch_current=1,
-            batch_total=3,
-            batch_success=True,
-        )
+            callback(
+                "process",
+                "batch_progress",
+                duration_ms=100,
+                depth=0,
+                batch_current=1,
+                batch_total=3,
+                batch_success=True,
+            )
 
         # Check that carriage return is used to update in place
         call_args = mock_echo.call_args
@@ -371,13 +291,14 @@ class TestBatchProgressDisplay:
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
-        callback(
-            "process",
-            "batch_progress",
-            batch_current=2,
-            batch_total=5,
-            batch_success=True,
-        )
+        with patch.object(sys.stderr, "isatty", return_value=True):
+            callback(
+                "process",
+                "batch_progress",
+                batch_current=2,
+                batch_total=5,
+                batch_success=True,
+            )
 
         call_args = mock_echo.call_args[0][0]
         assert "2/5" in call_args
@@ -390,13 +311,14 @@ class TestBatchProgressDisplay:
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
-        callback(
-            "process",
-            "batch_progress",
-            batch_current=3,
-            batch_total=5,
-            batch_success=False,
-        )
+        with patch.object(sys.stderr, "isatty", return_value=True):
+            callback(
+                "process",
+                "batch_progress",
+                batch_current=3,
+                batch_total=5,
+                batch_success=False,
+            )
 
         call_args = mock_echo.call_args[0][0]
         assert "3/5" in call_args
@@ -449,15 +371,15 @@ class TestBatchProgressDisplay:
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
-        # depth=1 means one level of indentation (2 spaces)
-        callback(
-            "process",
-            "batch_progress",
-            depth=1,
-            batch_current=1,
-            batch_total=3,
-            batch_success=True,
-        )
+        with patch.object(sys.stderr, "isatty", return_value=True):
+            callback(
+                "process",
+                "batch_progress",
+                depth=1,
+                batch_current=1,
+                batch_total=3,
+                batch_success=True,
+            )
 
         call_args = mock_echo.call_args[0][0]
         # Should have extra indentation
@@ -470,28 +392,27 @@ class TestBatchProgressDisplay:
         controller = OutputController(stdin_tty=True, stdout_tty=True)
         callback = controller.create_progress_callback()
 
-        # Start batch node
-        callback("convert-sections", "node_start")
-        assert "convert-sections..." in mock_echo.call_args[0][0]
+        with patch.object(sys.stderr, "isatty", return_value=True):
+            callback("convert-sections", "node_start")
+            assert "convert-sections..." in mock_echo.call_args[0][0]
 
-        # Progress updates
-        callback(
-            "convert-sections",
-            "batch_progress",
-            batch_current=1,
-            batch_total=8,
-            batch_success=True,
-        )
-        assert "1/8" in mock_echo.call_args[0][0]
+            callback(
+                "convert-sections",
+                "batch_progress",
+                batch_current=1,
+                batch_total=8,
+                batch_success=True,
+            )
+            assert "1/8" in mock_echo.call_args[0][0]
 
-        callback(
-            "convert-sections",
-            "batch_progress",
-            batch_current=8,
-            batch_total=8,
-            batch_success=True,
-        )
-        assert "8/8" in mock_echo.call_args[0][0]
+            callback(
+                "convert-sections",
+                "batch_progress",
+                batch_current=8,
+                batch_total=8,
+                batch_success=True,
+            )
+            assert "8/8" in mock_echo.call_args[0][0]
 
         # Complete with timing
         callback(
