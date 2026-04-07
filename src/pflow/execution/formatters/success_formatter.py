@@ -4,6 +4,7 @@ This module provides a shared formatter for successful workflow execution result
 ensuring CLI and MCP return identical output structures.
 """
 
+import json
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_diagnostic
@@ -266,18 +267,50 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
     """Append formatted outputs to lines list (matches CLI behavior).
 
     CLI outputs the FIRST output's value directly (not key: value format).
+    Mirrors ``cli/workflow_output.py::safe_output``: strings pass through
+    verbatim, structured values are JSON-encoded so MCP consumers can parse
+    them with ``jq`` or ``json.loads``.
     """
     if not result:
         return
 
-    # Get the first output value (matches CLI behavior)
     first_value = next(iter(result.values()))
 
-    # Output the value directly as string (matches CLI safe_output())
     if isinstance(first_value, str):
         lines.append(first_value)
-    else:
+        return
+
+    try:
+        lines.append(json.dumps(first_value, ensure_ascii=False, allow_nan=False, default=str))
+    except (TypeError, ValueError):
         lines.append(str(first_value))
+
+
+def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
+    """Format the ``--only`` mode confirmation line.
+
+    Single source of truth for the ``--only`` indicator text. Used by:
+    - CLI text summary (``cli/workflow_output.py::_display_execution_summary``)
+    - CLI ``-p`` mode emission (``cli/workflow_output.py::_emit_only_indicator``)
+    - MCP text summary (``_append_execution_steps`` below)
+
+    Architecturally, ``--only`` is a **mode signal**, not a summary detail.
+    Mode flags (which change what the workflow does) are always announced
+    regardless of verbosity flags (which hide details). This matches the
+    convention of ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
+    ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+
+    Two forms:
+    - Some downstream nodes were skipped: ``Stopped after 'X' (--only), N remaining nodes skipped``
+    - No nodes were skipped (``--only`` targeted the last node): ``Stopped after 'X' (--only)``
+    The shorter form is the fix for the case where the rendered output
+    was previously indistinguishable from a full run (sub-issue 8a in
+    Task 149's code review).
+    """
+    if nodes_skipped > 0:
+        noun = "node" if nodes_skipped == 1 else "nodes"
+        return f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped"
+    return f"  ⤷ Stopped after '{only_node}' (--only)"
 
 
 def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None:
@@ -289,9 +322,12 @@ def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None
     only_node_val = execution.get("only_node")
     nodes_skipped = execution.get("nodes_skipped", 0)
 
-    if only_node_val and nodes_skipped > 0:
-        noun = "node" if nodes_skipped == 1 else "nodes"
-        lines.append(f"  ⤷ Stopped after '{only_node_val}' (--only), {nodes_skipped} remaining {noun} skipped")
+    # Emit the --only mode confirmation whenever --only is active, even
+    # when no downstream nodes were skipped (e.g., --only targeted the
+    # last node). Without this, the rendered output is byte-identical to
+    # a full run and agents doing iterative debugging cannot disambiguate.
+    if only_node_val:
+        lines.append(format_only_indicator(only_node_val, nodes_skipped))
 
     batch_error_lines = _format_batch_errors_section(steps)
     if batch_error_lines:

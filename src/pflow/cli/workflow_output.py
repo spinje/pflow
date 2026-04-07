@@ -15,32 +15,43 @@ def safe_output(value: Any) -> bool:
     """Safely output a value to stdout, handling broken pipes.
 
     Strings pass through verbatim. Structured values (dict, list, tuple,
-    bool, int, float, None) are emitted as JSON so consumers can parse
-    them with ``jq`` or similar tools — the GH #194 routing fix means
-    agents now actually receive these on stdout, so the format must be
-    parseable. Non-JSON-serializable objects fall back to ``str(value)``
-    so we never raise from the output path.
+    bool, int, float, None) are emitted as **strict JSON** so consumers
+    can parse them with ``jq`` or ``json.loads`` — the GH #194 routing
+    fix means agents now actually receive these on stdout, so the format
+    must be parseable.
+
+    - ``allow_nan=False``: rejects NaN/Infinity (jq and most strict
+      parsers reject these literals).
+    - ``default=str``: non-natively-serializable values (datetime, Path,
+      set, dataclass, etc.) are coerced to their ``str()`` form INSIDE
+      the JSON document, so the value lands as a JSON string and the
+      pipeline keeps working.
+    - Last-resort fallback: if even ``default=str`` cannot serialize the
+      value (e.g. NaN inside an otherwise valid dict), we emit a stderr
+      warning so agents can diagnose, then write ``repr(value)`` to
+      stdout so something is visible.
 
     Returns True if output was successful, False otherwise.
     """
     try:
         if isinstance(value, bytes):
-            # Skip binary output with warning
             click.echo("cli: Skipping binary output (use --output-key with text values)", err=True)
             return False
         if isinstance(value, str):
             click.echo(value)
             return True
-        # Structured values: emit as JSON so `pflow foo | jq` works.
         try:
-            click.echo(json.dumps(value, ensure_ascii=False))
-        except (TypeError, ValueError):
-            # Unserializable object — fall back to str() to avoid raising
-            # from the output path. The agent gets *something* it can show.
-            click.echo(str(value))
+            click.echo(json.dumps(value, ensure_ascii=False, allow_nan=False, default=str))
+        except (TypeError, ValueError) as exc:
+            click.echo(
+                f"cli: Output value of type {type(value).__name__} is not JSON-serializable "
+                f"({exc}); emitting repr() so the value is still visible. "
+                "Convert it in your workflow before output for parseable results.",
+                err=True,
+            )
+            click.echo(repr(value))
         return True
     except BrokenPipeError:
-        # Exit cleanly when pipe is closed
         os._exit(0)
     except OSError as e:
         if hasattr(e, "errno") and e.errno == 32:  # EPIPE
@@ -94,25 +105,18 @@ def _handle_text_output(
     Returns:
         True if output was produced, False otherwise.
     """
-    # Display execution summary FIRST (if metrics collector provided)
-    # Skip summary entirely in --print mode (user wants ONLY raw output)
-    if metrics_collector and not print_flag:
-        from pflow.execution.formatters.success_formatter import format_execution_success
-
-        formatted = format_execution_success(
-            shared_storage=shared_storage,
-            workflow_ir=workflow_ir or {},
-            metrics_collector=metrics_collector,
-            workflow_metadata=workflow_metadata,
-            output_key=output_key,
-            trace_path=None,  # Text mode doesn't include trace_path
-            status=status,
-            warnings=warnings,
-        )
-
-        # Pass warning Diagnostics directly — don't round-trip through dict
-        warning_diags = [w for w in (warnings or []) if isinstance(w, Diagnostic)]
-        _display_execution_summary(formatted, verbose, warning_diagnostics=warning_diags or None)
+    # Display execution summary or --only mode indicator (dispatch in helper)
+    _emit_summary_or_only_indicator(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir,
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        status=status,
+        warnings=warnings,
+        verbose=verbose,
+        print_flag=print_flag,
+    )
 
     # Now show the actual output
     output_found = False
@@ -398,6 +402,89 @@ def _display_workflow_completion_status(
         click.echo(f"✓ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
 
 
+def _emit_summary_or_only_indicator(
+    *,
+    shared_storage: dict[str, Any],
+    workflow_ir: dict[str, Any] | None,
+    metrics_collector: Any | None,
+    workflow_metadata: dict[str, Any] | None,
+    output_key: str | None,
+    status: Any,
+    warnings: list[Any] | None,
+    verbose: bool,
+    print_flag: bool,
+) -> None:
+    """Dispatch between full summary, --only-only emission, or nothing.
+
+    The full summary (workflow action + completion tag + batch errors +
+    cost + warnings + --only line) is suppressed in ``-p`` mode because
+    the user explicitly asked for minimal stderr. The ``--only`` mode
+    confirmation is a mode signal (not a suppressible detail) and is
+    emitted even in ``-p`` mode when ``--only`` is active. Verbosity
+    flags hide details; mode flags survive verbosity. Matches the
+    convention of ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
+    ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+
+    No-op when there's no metrics collector OR when neither path applies.
+    """
+    if not metrics_collector:
+        return
+
+    only_node = shared_storage.get("__execution__", {}).get("only_node") if shared_storage else None
+    if print_flag and not only_node:
+        return  # -p mode without --only: nothing to emit
+
+    from pflow.execution.formatters.success_formatter import format_execution_success
+
+    formatted = format_execution_success(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir or {},
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        trace_path=None,
+        status=status,
+        warnings=warnings,
+    )
+
+    if print_flag:
+        # -p + --only: emit just the mode confirmation, nothing else
+        _emit_only_indicator(formatted)
+        return
+
+    # Default mode: full summary (which already includes the --only line
+    # internally via the shared format_only_indicator helper)
+    warning_diags = [w for w in (warnings or []) if isinstance(w, Diagnostic)]
+    _display_execution_summary(formatted, verbose, warning_diagnostics=warning_diags or None)
+
+
+def _emit_only_indicator(formatted_result: dict[str, Any]) -> None:
+    """Emit the ``--only`` mode confirmation line to stderr.
+
+    Used by ``_handle_text_output`` in ``-p`` mode (where the full summary
+    is suppressed). The full default-mode summary path
+    (``_display_execution_summary``) emits the same line via the same
+    shared formatter — see ``format_only_indicator`` in
+    ``success_formatter.py``.
+
+    Why this exists: ``--only`` is a mode signal, not a summary detail.
+    Without this emission, ``pflow -p foo --only target`` produces zero
+    bytes on stderr, leaving agents unable to disambiguate constrained
+    runs from full runs. Verbosity flags hide details; mode flags
+    survive verbosity (matches ``make -k``, ``pytest --maxfail``,
+    ``rsync --dry-run``, ``apt-get --simulate``, ``kubectl --dry-run``,
+    etc.).
+    """
+    from pflow.execution.formatters.success_formatter import format_only_indicator
+
+    execution = formatted_result.get("execution", {})
+    only_node = execution.get("only_node")
+    if not only_node:
+        return
+    nodes_skipped = execution.get("nodes_skipped", 0)
+    click.echo(format_only_indicator(only_node, nodes_skipped), err=True)
+
+
 def _display_execution_summary(
     formatted_result: dict[str, Any],
     verbose: bool,
@@ -429,11 +516,16 @@ def _display_execution_summary(
             warning_count=warning_count,
         )
 
+    # --only mode confirmation: always emit when --only is active, even
+    # when no downstream nodes were skipped (e.g., --only targeted the
+    # last node). Uses the shared formatter so this line stays in lockstep
+    # with the MCP path and the -p mode emission below.
     only_node = execution.get("only_node")
-    nodes_skipped = execution.get("nodes_skipped", 0)
-    if only_node and nodes_skipped > 0:
-        noun = "node" if nodes_skipped == 1 else "nodes"
-        click.echo(f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped", err=True)
+    if only_node:
+        from pflow.execution.formatters.success_formatter import format_only_indicator
+
+        nodes_skipped = execution.get("nodes_skipped", 0)
+        click.echo(format_only_indicator(only_node, nodes_skipped), err=True)
 
     if steps:
         _display_batch_errors(steps)

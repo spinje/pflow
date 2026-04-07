@@ -11,6 +11,7 @@ from pflow.execution.formatters.success_formatter import (
     _format_batch_errors_section,
     _truncate_error_message,
     format_execution_success,
+    format_only_indicator,
     format_success_as_text,
 )
 
@@ -530,11 +531,24 @@ class TestOnlyNodeDisplay:
         assert "1 remaining node skipped" in text
         assert "1 remaining nodes skipped" not in text
 
-    def test_only_node_zero_skipped_no_summary_line(self):
-        """CORRECTNESS: No summary line when --only is set but all nodes executed.
+    def test_only_node_zero_skipped_emits_short_form(self):
+        """CORRECTNESS: --only mode confirmation is emitted even when no
+        downstream nodes were skipped (e.g., --only targeted the last node).
 
-        Real bug this catches: Showing "0 remaining nodes skipped" is confusing
-        and adds noise when the target was the last node.
+        Real bug this catches (Task 149 review sub-issue 8a): without this
+        line, the rendered output of ``pflow foo --only target_c`` (where
+        target_c is the last node) is byte-identical to a full ``pflow foo``
+        run. Agents doing iterative debugging cannot disambiguate
+        constrained runs from full runs from the rendered output alone.
+
+        ``--only`` is a mode signal, not a summary detail. Mode flags are
+        always announced regardless of verbosity (matches ``make -k``,
+        ``pytest --maxfail``, ``rsync --dry-run``, etc.).
+
+        The original concern this test guarded against — "showing '0
+        remaining nodes skipped' is confusing" — is preserved by emitting
+        a short form (``Stopped after 'X' (--only)``) without any
+        "N remaining" suffix when no nodes were skipped.
         """
         steps = [
             {"node_id": "fetch", "status": "completed", "duration_ms": 50},
@@ -543,7 +557,12 @@ class TestOnlyNodeDisplay:
         result_dict = self._make_result_dict(steps, only_node="process", nodes_skipped=0)
         text = format_success_as_text(result_dict)
 
-        assert "⤷" not in text
+        # The mode confirmation must be emitted (sub-issue 8a fix)
+        assert "⤷ Stopped after 'process' (--only)" in text
+        # But not the "0 remaining" noise (original test's valid concern)
+        assert "0 remaining" not in text
+        assert "remaining node skipped" not in text
+        assert "remaining nodes skipped" not in text
 
 
 class TestCacheStatsDisplay:
@@ -678,6 +697,166 @@ class TestAppendExecutionStepsOnlyNode:
         _append_execution_steps(lines, execution)
 
         assert lines == []
+
+    def test_only_with_zero_skipped_emits_short_form(self):
+        """SUB-ISSUE 8a: --only with 0 nodes skipped (target was the last node)
+        must still emit the mode confirmation, in short form.
+
+        Without this, the rendered output is byte-identical to a full run
+        and agents cannot disambiguate constrained runs from full runs.
+        """
+        execution = {
+            "only_node": "target_c",
+            "nodes_skipped": 0,
+            "nodes_executed": 3,
+            "steps": [
+                {"node_id": "target_a", "status": "completed", "duration_ms": 10},
+                {"node_id": "target_b", "status": "completed", "duration_ms": 10},
+                {"node_id": "target_c", "status": "completed", "duration_ms": 10},
+            ],
+        }
+        lines: list[str] = []
+        _append_execution_steps(lines, execution)
+
+        joined = "\n".join(lines)
+        assert "⤷ Stopped after 'target_c' (--only)" in joined
+        # Short form: no "N remaining" suffix when nothing was skipped
+        assert "remaining" not in joined
+        assert "0 " not in joined  # no "0 remaining" anywhere
+
+
+class TestFormatOnlyIndicator:
+    """Tests for the shared --only indicator formatter (single source of truth).
+
+    PARITY GUARDRAIL — three call sites depend on this formatter producing
+    consistent text:
+    - CLI default-mode summary (workflow_output.py::_display_execution_summary)
+    - CLI -p mode emission (workflow_output.py::_emit_only_indicator)
+    - MCP text summary (success_formatter.py::_append_execution_steps)
+    """
+
+    def test_long_form_when_nodes_skipped(self):
+        """With skipped nodes, the long form shows the count and grammar."""
+        line = format_only_indicator("target_b", nodes_skipped=2)
+
+        assert "⤷ Stopped after 'target_b' (--only)" in line
+        assert "2 remaining nodes skipped" in line
+
+    def test_short_form_when_no_nodes_skipped(self):
+        """SUB-ISSUE 8a: with 0 skipped nodes (target was last), the short
+        form omits the 'N remaining' suffix to avoid '0 remaining nodes
+        skipped' noise while still announcing the --only mode."""
+        line = format_only_indicator("target_c", nodes_skipped=0)
+
+        assert "⤷ Stopped after 'target_c' (--only)" in line
+        assert "remaining" not in line
+        assert "0 " not in line
+
+    def test_singular_grammar_for_one_skipped_node(self):
+        """One skipped node uses singular 'node', not plural 'nodes'."""
+        line = format_only_indicator("target_a", nodes_skipped=1)
+
+        assert "1 remaining node skipped" in line
+        assert "1 remaining nodes skipped" not in line
+
+    def test_node_id_with_special_characters_quoted_correctly(self):
+        """Node IDs are quoted with single quotes — no escaping shenanigans."""
+        line = format_only_indicator("my-node.with.dots", nodes_skipped=3)
+
+        assert "'my-node.with.dots'" in line
+
+
+class TestAppendOutputsCliMcpParity:
+    """Tests for `_append_outputs` MCP-side rendering matching CLI ``safe_output``.
+
+    PARITY GUARDRAIL — the CLI ``safe_output`` and the MCP success formatter
+    must agree on how structured workflow outputs are rendered. The plan's
+    Decision 1 caught the per-node block twin; the post-merge Fix #1 (commit
+    7f2d61b3) updated CLI ``safe_output`` to JSON-encode dict/list/bool/None
+    outputs, but the MCP twin in ``_append_outputs`` was missed and kept
+    using ``str(value)`` (Python repr). These tests prevent that drift from
+    coming back.
+    """
+
+    def _make_result_dict_with_output(self, output_value: object) -> dict:
+        return {
+            "success": True,
+            "status": "success",
+            "duration_ms": 100,
+            "execution": {"nodes_executed": 1, "steps": []},
+            "result": {"value": output_value},
+        }
+
+    def test_string_output_passes_through_verbatim(self):
+        """CORRECTNESS: String outputs are not JSON-quoted (matches CLI safe_output)."""
+        result_dict = self._make_result_dict_with_output("hello world")
+        text = format_success_as_text(result_dict)
+
+        assert "hello world" in text
+        # Must NOT be JSON-quoted ("hello world" with quotes)
+        assert '"hello world"' not in text
+
+    def test_dict_output_emits_valid_json(self):
+        """REGRESSION: Dict outputs must serialize as JSON, not Python repr.
+
+        Real bug this catches: ``str({"key": "value"})`` produces single-quoted
+        ``{'key': 'value'}`` which jq and json.loads cannot parse. Agents using
+        the MCP ``workflow_execute`` tool with structured outputs get
+        unparseable text and have to fall back to text munging.
+        """
+        import json as _json
+
+        result_dict = self._make_result_dict_with_output({"key": "value", "n": 42})
+        text = format_success_as_text(result_dict)
+
+        # Find the JSON line and round-trip through json.loads
+        lines = text.split("\n")
+        json_lines = [line for line in lines if line.startswith("{")]
+        assert json_lines, f"No JSON output line in:\n{text}"
+        parsed = _json.loads(json_lines[0])
+        assert parsed == {"key": "value", "n": 42}
+
+    def test_list_output_emits_valid_json(self):
+        """REGRESSION: List outputs must serialize as JSON arrays."""
+        import json as _json
+
+        result_dict = self._make_result_dict_with_output(["a", "b", "c"])
+        text = format_success_as_text(result_dict)
+
+        json_lines = [line for line in text.split("\n") if line.startswith("[")]
+        assert json_lines, f"No JSON array line in:\n{text}"
+        assert _json.loads(json_lines[0]) == ["a", "b", "c"]
+
+    def test_bool_output_emits_lowercase_json_token(self):
+        """REGRESSION: Bool outputs must be JSON ``true``/``false``, not Python ``True``/``False``."""
+        result_dict = self._make_result_dict_with_output(True)
+        text = format_success_as_text(result_dict)
+
+        assert "\ntrue" in text or text.endswith("true")
+        assert "True" not in text
+
+    def test_none_output_emits_json_null(self):
+        """REGRESSION: None outputs must be JSON ``null``, not Python ``None``."""
+        result_dict = self._make_result_dict_with_output(None)
+        text = format_success_as_text(result_dict)
+
+        assert "\nnull" in text or text.endswith("null")
+        assert "None" not in text
+
+    def test_unserializable_output_falls_back_without_raising(self):
+        """SAFETY: Non-serializable values fall back to ``str()`` instead of raising.
+
+        ``default=str`` inside json.dumps catches datetime, Path, set, etc.,
+        so the value lands in a JSON string. The except clause only fires for
+        truly catastrophic failures (e.g. NaN inside a dict with default=str).
+        """
+        from datetime import datetime
+
+        result_dict = self._make_result_dict_with_output(datetime(2026, 4, 7, 12, 0, 0))
+        text = format_success_as_text(result_dict)
+
+        # Must not raise, must contain something parseable as the date
+        assert "2026-04-07" in text
 
 
 class TestFindAutoOutputNamespaceAware:

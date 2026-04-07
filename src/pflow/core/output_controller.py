@@ -1,9 +1,46 @@
 """Central output control for interactive vs non-interactive execution modes."""
 
+import logging
 import sys
+import weakref
 from typing import Callable, Optional
 
 import click
+
+
+class _ProgressPartialLineFilter(logging.Filter):
+    """Closes any open progress partial line before each log record is emitted.
+
+    Without this filter, ``logger.warning``/``logger.error`` calls from a node's
+    ``prep``/``exec``/``post`` write directly to ``sys.stderr`` while
+    ``OutputController`` has a ``node_id...`` partial line open, producing
+    ``node_id...WARNING: ...`` corruption in the live progress stream.
+
+    Architecturally, this is the single coordination point that makes
+    ``OutputController._partial_line_open`` an honest abstraction: install
+    once, all current and future ``logger.*`` sites in node code are
+    automatically protected. Without it, every node that adds a
+    ``logger.warning`` re-introduces the same partial-line corruption bug.
+
+    Always returns True (does not filter records). The side effect IS the
+    point — Python's ``logging`` machinery runs filters before each handler's
+    ``emit``, so this is the canonical place to perform "before each log
+    record is written" coordination.
+
+    Holds a ``weakref`` to the controller so installed filters do not pin a
+    destroyed ``OutputController`` instance alive (matters in test runs that
+    create and discard many controllers).
+    """
+
+    def __init__(self, controller: "OutputController") -> None:
+        super().__init__()
+        self._controller_ref: weakref.ref[OutputController] = weakref.ref(controller)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        controller = self._controller_ref()
+        if controller is not None:
+            controller._close_partial_line_if_open()
+        return True
 
 
 class OutputController:
@@ -60,6 +97,13 @@ class OutputController:
         # it. Without this, captured stderr in non-TTY mode shows
         # `node_id...WARNING: ...` style corruption.
         self._partial_line_open = False
+
+        # Tracks whether the partial-line-aware logging filter has been
+        # installed on the root logger's stderr handlers. Set by
+        # _install_log_partial_line_guard() the first time
+        # create_progress_callback() is invoked. Idempotent — repeated
+        # installs are no-ops.
+        self._log_filter_installed = False
 
     def is_interactive(self) -> bool:
         """Determine if running in interactive mode.
@@ -133,11 +177,14 @@ class OutputController:
         """Ensure there is a partial `node_id...` line to append a completion to.
 
         If a previous handler call (or external write) closed the line, re-emit
-        a fresh `  node_id` lead-in so the appended completion text isn't
+        a fresh `  node_id...` lead-in so the appended completion text isn't
         orphaned on its own line. Used by every non-batch completion path.
+        Re-emits with the same trailing ``...`` shape as ``_handle_node_start``
+        so structured stderr parsers see one canonical format for completed
+        node lines, regardless of whether interleaving forced a re-emit.
         """
         if not self._partial_line_open:
-            click.echo(f"{indent}  {node_id}", err=True, nl=False)
+            click.echo(f"{indent}  {node_id}...", err=True, nl=False)
             self._partial_line_open = True
 
     def _emit_non_batch_completion(
@@ -200,11 +247,21 @@ class OutputController:
             return
 
         if is_batch:
+            # Render success/failure counts on the live line so partial-failure
+            # batches don't look like full successes during the live stream.
+            # The supplementary "Batch 'X' errors:" block still carries the
+            # per-item details after execution finishes.
+            count_tag = ""
+            if batch_total is not None and batch_success_count is not None:
+                if batch_success_count < batch_total:
+                    count_tag = click.style(f" {batch_success_count}/{batch_total} ⚠️", fg="yellow")
+                else:
+                    count_tag = click.style(f" {batch_total}/{batch_total}", fg="green")
             if duration_ms is not None:
                 timing_text = click.style(f" {duration_ms / 1000:.1f}s", fg="green")
-                click.echo(timing_text, err=True)
+                click.echo(f"{count_tag}{timing_text}", err=True)
             else:
-                click.echo("", err=True)
+                click.echo(count_tag, err=True)
             self._partial_line_open = False
             return
 
@@ -218,26 +275,69 @@ class OutputController:
         click.echo(click.style(" ↻ cached", fg="blue", dim=True), err=True)
         self._partial_line_open = False
 
-    def _handle_node_warning(self, node_id: str, indent: str, duration_ms: Optional[float]) -> None:
+    def _handle_node_warning(self, node_id: str, indent: str, warning_message: Optional[str]) -> None:
         """Handle node_warning event display.
+
+        Renders a yellow ⚠️ marker on the live progress line and closes
+        the partial. The warning message comes from
+        ``handle_api_warning`` in ``runtime/engine/instrumentation.py`` —
+        typically an API response classification (HTTP 401, Slack
+        ``ok=False``, GraphQL ``errors``) or an LLM response error.
 
         Args:
             node_id: The node identifier
             indent: Indentation string based on depth
-            duration_ms: Contains warning message when event is node_warning
+            warning_message: The warning text to display (None falls back
+                to a generic "API warning" label)
         """
         self._ensure_node_line_open(node_id, indent)
-        warning_msg = duration_ms if isinstance(duration_ms, str) else "API warning"
-        warning_text = click.style(f" ⚠️  {warning_msg}", fg="yellow")
+        warning_text = click.style(f" ⚠️  {warning_message or 'API warning'}", fg="yellow")
         click.echo(warning_text, err=True)
         self._partial_line_open = False
+
+    def _install_log_partial_line_guard(self) -> None:
+        """Install a logging filter that closes any open progress partial line
+        before each log record is emitted.
+
+        Idempotent. Attaches a ``_ProgressPartialLineFilter`` to every
+        ``StreamHandler`` on the root logger whose stream is ``sys.stderr``,
+        which (after ``cli/logging_config.py::configure_logging`` runs at
+        startup) is the single handler pflow installs.
+
+        This is the architectural answer to the partial-line corruption bug
+        whose first symptom was Finding #3 (``shell.py:713``). Without this,
+        every ``logger.warning``/``logger.error`` call in a node's
+        ``prep``/``exec``/``post`` writes directly to stderr while a
+        ``node_id...`` partial progress line is open and produces
+        ``node_id...WARNING: ...`` corruption. With this filter installed,
+        all 28 current ``logger.*`` sites in node files — and any future
+        sites added by any future node — are automatically protected by
+        Python's logging machinery running the filter before each emit.
+
+        Only called from ``create_progress_callback`` so non-progress modes
+        (``-p``, ``--output-format json``, MCP server) never install the
+        filter and never pay its (negligible) cost.
+        """
+        if self._log_filter_installed:
+            return
+        filt = _ProgressPartialLineFilter(self)
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, logging.StreamHandler) and getattr(handler, "stream", None) is sys.stderr:
+                handler.addFilter(filt)
+        self._log_filter_installed = True
 
     def create_progress_callback(self) -> Callable:
         """Create progress callback for workflow execution.
 
+        Side effect: installs a logging filter on root-logger stderr handlers
+        so ``logger.warning``/``logger.error`` calls from a node's
+        ``prep``/``exec``/``post`` cannot corrupt open progress partial
+        lines. See ``_install_log_partial_line_guard`` for the rationale.
+
         Returns:
             Callback function for streaming progress to stderr
         """
+        self._install_log_partial_line_guard()
 
         def progress_callback(
             node_id: str,
@@ -298,6 +398,9 @@ class OutputController:
             elif event == "node_cached":
                 self._handle_node_cached(node_id, indent)
             elif event == "node_warning":
-                self._handle_node_warning(node_id, indent, duration_ms)
+                # Warning text comes via the properly-named `error_message`
+                # kwarg from instrumentation.py::handle_api_warning. The
+                # earlier convention abused `duration_ms` as a string slot.
+                self._handle_node_warning(node_id, indent, error_message)
 
         return progress_callback

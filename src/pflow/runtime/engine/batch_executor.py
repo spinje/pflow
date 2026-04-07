@@ -401,6 +401,29 @@ def _report_batch_progress(
             )
 
 
+def _drain_worker_buffer(callback: Any, buffered_events: list[tuple[tuple, dict]]) -> None:
+    """Drain a worker's buffered progress events through the real callback.
+
+    Called from the main thread inside ``_collect_parallel_results``. Each
+    worker accumulates its sub-workflow's child engine events into a
+    per-thread buffer; this helper plays them back through the real
+    ``OutputController`` callback as one atomic block per item.
+    Single-threaded by construction (only the main thread reaches here,
+    one item at a time via ``as_completed``), so the OutputController
+    never sees concurrent calls and each item's transcript renders as a
+    coherent contiguous block.
+
+    Suppression matches the patterns in ``instrumentation.py``
+    (``call_start_callback`` etc.) so a rendering exception cannot crash
+    workflow execution.
+    """
+    if not buffered_events or not callable(callback):
+        return
+    for args, kwargs in buffered_events:
+        with contextlib.suppress(Exception):
+            callback(*args, **kwargs)
+
+
 def _collect_parallel_results(
     future_to_idx: dict,
     items: list[Any],
@@ -414,7 +437,10 @@ def _collect_parallel_results(
 ) -> None:
     """Collect results from parallel futures as they complete.
 
-    Modifies results, timings, pending_errors in place.
+    Modifies results, timings, pending_errors in place. Drains each
+    worker's buffered progress events (see ``_drain_worker_buffer``)
+    before reporting batch progress, producing atomic per-item
+    transcripts in completion order.
     """
     should_stop = False
     completed_count = 0
@@ -422,10 +448,12 @@ def _collect_parallel_results(
 
     for future in as_completed(future_to_idx):
         try:
-            idx, result, error, duration_ms = future.result()
+            idx, result, error, duration_ms, buffered_events = future.result()
             results[idx] = result
             timings[idx] = duration_ms
             completed_count += 1
+
+            _drain_worker_buffer(callback, buffered_events)
             _report_batch_progress(callback, config.node_id, duration_ms, depth, completed_count, total, error is None)
 
             if error:
@@ -470,14 +498,43 @@ def _execute_parallel(
     callback = shared.get("__progress_callback__")
     depth = shared.get("_pflow_depth", 0)
 
-    def process_item(idx: int, item: Any) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None, float]:
-        """Process single item in thread."""
+    def process_item(
+        idx: int, item: Any
+    ) -> tuple[int, dict[str, Any] | None, dict[str, Any] | None, float, list[tuple[tuple, dict]]]:
+        """Process single item in thread.
+
+        Buffers progress callback events from the sub-workflow's child engine
+        into a per-thread list. Events accumulate locally with no shared
+        state contention. The main thread drains the list through the real
+        callback when this future completes (see ``_collect_parallel_results``)
+        so each item's child node transcript renders as one atomic block.
+
+        This preserves per-child node visibility, smart-handled tags,
+        warnings, and cache-hit indicators in the live progress stream
+        while avoiding races on the shared ``OutputController`` state that
+        would otherwise occur when multiple worker threads concurrently
+        fire ``node_start``/``node_complete`` events from a sub-workflow's
+        child engine.
+        """
         # THREADING: shallow copy — nested dicts (_batch_trace, __execution__)
         # are shared across threads. Writes to nested keys are GIL-protected (CPython).
         item_shared = dict(shared)
         item_shared[config.node_id] = {}
         item_shared[batch_config.item_alias] = item
         item_shared["__index__"] = idx
+
+        # Replace the inherited progress callback with a per-worker buffer.
+        # The sub-workflow's child engine will fire its events into this
+        # buffer instead of touching the shared OutputController. The main
+        # thread drains the buffer atomically when the future completes.
+        buffered_events: list[tuple[tuple, dict]] = []
+        if callable(callback):
+
+            def buffer_callback(*args: Any, **kwargs: Any) -> None:
+                buffered_events.append((args, kwargs))
+
+            item_shared["__progress_callback__"] = buffer_callback
+
         thread_node = copy.deepcopy(node)
 
         result, error, duration_ms, _, _ = _execute_batch_item(
@@ -490,7 +547,7 @@ def _execute_parallel(
             batch_config,
             item_shared=item_shared,
         )
-        return idx, result, error, duration_ms
+        return idx, result, error, duration_ms, buffered_events
 
     pool = ThreadPoolExecutor(max_workers=batch_config.max_concurrent)
     try:

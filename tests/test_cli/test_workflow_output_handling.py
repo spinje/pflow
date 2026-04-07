@@ -15,7 +15,7 @@ import pytest
 
 from pflow.cli.main import main
 from pflow.core.node import BaseNode
-from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
+from tests.shared.markdown_utils import ir_to_markdown
 
 
 class MockOutputNode(BaseNode):
@@ -235,48 +235,6 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
-    def test_failing_node_emits_terminator_in_live_progress(self, mock_registry_instance, mock_validate_ir):
-        """Failure output should not concatenate with an unterminated progress line."""
-        runner = click.testing.CliRunner()
-
-        workflow = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "failing_node",
-                    "type": "test-node",
-                    "params": {"raise_error": True},
-                }
-            ],
-        }
-
-        with patch("pflow.execution.runner.WorkflowRunner.run") as mock_run:
-            from pflow.core.diagnostic import Diagnostic, Severity
-            from pflow.execution.result import ExecutionResult
-
-            mock_run.return_value = ExecutionResult(
-                success=False,
-                diagnostics=[
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        source="runtime",
-                        message="Simulated node failure",
-                        node_id="failing_node",
-                    )
-                ],
-                shared_after={},
-            )
-
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
-                f.write(ir_to_markdown(workflow))
-                workflow_file = f.name
-
-            try:
-                result = runner.invoke(main, [workflow_file])
-                assert "failing_node...❌" not in result.stderr
-            finally:
-                Path(workflow_file).unlink()
-
     def test_print_mode_suppresses_progress_header_and_summary(
         self, mock_registry_instance, mock_compile, mock_validate_ir
     ):
@@ -343,31 +301,6 @@ class TestWorkflowOutputHandling:
             assert result.stderr.strip() == ""
         finally:
             Path(workflow_file).unlink()
-
-    def test_real_failing_shell_node_terminates_progress_line(self, tmp_path):
-        """A real failing shell workflow should emit a terminated failure line on stderr."""
-        workflow = {
-            "ir_version": "0.1.0",
-            "nodes": [
-                {
-                    "id": "fail_stage",
-                    "type": "shell",
-                    "cache": False,
-                    "params": {"command": "exit 1"},
-                }
-            ],
-            "edges": [],
-        }
-
-        workflow_path = tmp_path / "fail.pflow.md"
-        write_workflow_file(workflow, workflow_path)
-
-        runner = click.testing.CliRunner()
-        result = runner.invoke(main, [str(workflow_path)])
-
-        assert result.exit_code != 0
-        assert "fail_stage... ✗ Failed" in result.stderr
-        assert "fail_stage...❌" not in result.stderr
 
     def test_output_key_override(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key flag overrides both declared outputs and hardcoded keys."""
@@ -678,20 +611,26 @@ class TestWorkflowOutputHandling:
         After the GH #194 fix, `safe_output` JSON-encodes non-string values
         so that `pflow foo | jq` works for dict/list/bool/number/null outputs.
         Strings still pass through verbatim.
+
+        Round-trips each emitted value through ``json.loads`` to verify
+        the stdout is *parseable JSON*, not just substring-matchable. This
+        catches subtle regressions like trailing whitespace, prefix/suffix
+        corruption, or any other byte the substring check would miss.
         """
         runner = click.testing.CliRunner()
 
-        # Test different data types: each entry maps a Python value to the
-        # exact stdout token we expect after JSON encoding.
-        test_cases: list[tuple[dict, str]] = [
-            ({"dict_output": {"key": "value", "nested": {"data": 123}}}, '{"key": "value", "nested": {"data": 123}}'),
-            ({"list_output": ["item1", "item2", "item3"]}, '["item1", "item2", "item3"]'),
-            ({"number_output": 42.5}, "42.5"),
-            ({"bool_output": True}, "true"),  # Python True -> JSON true (lowercase)
-            ({"null_output": None}, "null"),  # Python None -> JSON null
+        # Each entry: (declared output dict, the Python value we expect
+        # to round-trip back from json.loads(stdout)). Strings are tested
+        # separately because they pass through verbatim and aren't JSON.
+        test_cases: list[tuple[dict, object]] = [
+            ({"dict_output": {"key": "value", "nested": {"data": 123}}}, {"key": "value", "nested": {"data": 123}}),
+            ({"list_output": ["item1", "item2", "item3"]}, ["item1", "item2", "item3"]),
+            ({"number_output": 42.5}, 42.5),
+            ({"bool_output": True}, True),
+            ({"null_output": None}, None),
         ]
 
-        for output_data, expected_token in test_cases:
+        for output_data, expected_value in test_cases:
             output_key = next(iter(output_data.keys()))
             workflow = {
                 "ir_version": "0.1.0",
@@ -707,9 +646,21 @@ class TestWorkflowOutputHandling:
                 result = runner.invoke(main, [workflow_file])
 
                 assert result.exit_code == 0, f"exit={result.exit_code} for {output_key}\nstderr: {result.stderr!r}"
-                assert expected_token in result.stdout, (
-                    f"Expected JSON token {expected_token!r} for {output_key} "
-                    f"(value={output_data[output_key]!r})\nstdout: {result.stdout!r}"
+
+                # Round-trip-parse the stdout to prove it's valid JSON.
+                # Strip whitespace because click.echo adds a trailing newline.
+                stdout_stripped = result.stdout.strip()
+                try:
+                    parsed = json.loads(stdout_stripped)
+                except json.JSONDecodeError as e:
+                    raise AssertionError(
+                        f"stdout for {output_key} (value={output_data[output_key]!r}) "
+                        f"is not parseable JSON: {e}\nstdout: {result.stdout!r}"
+                    ) from e
+
+                assert parsed == expected_value, (
+                    f"Round-trip mismatch for {output_key}: "
+                    f"expected {expected_value!r}, got {parsed!r}\nstdout: {result.stdout!r}"
                 )
             finally:
                 Path(workflow_file).unlink()

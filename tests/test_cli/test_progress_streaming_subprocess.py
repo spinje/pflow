@@ -184,8 +184,10 @@ class TestRealSubprocessProgressRendering:
 
         After the partial-line tracking fix in ``OutputController``, the child's
         first ``node_start`` terminates the parent's partial line, and the
-        parent's ``node_complete`` re-emits a fresh ``  nested_call`` lead-in
-        before appending its completion text.
+        parent's ``node_complete`` re-emits a fresh ``  nested_call...`` lead-in
+        (with the same trailing dots as the original ``node_start`` so
+        structured stderr parsers see one canonical format) before appending
+        its completion text.
         """
         inner_path = tmp_path / "inner.pflow.md"
         inner_path.write_text(
@@ -260,7 +262,9 @@ class TestRealSubprocessProgressRendering:
         assert "  nested_call...\n" in result.stderr, (
             f"Parent partial line was not closed when child progress started.\nstderr: {result.stderr!r}"
         )
-        assert "nested_call ✓" in result.stderr, (
+        # Re-emitted lead-in keeps the same `node_id...` shape as the original
+        # node_start so structured stderr parsers see one canonical format.
+        assert "nested_call... ✓" in result.stderr, (
             f"Parent completion line is missing or detached from its node id.\nstderr: {result.stderr!r}"
         )
 
@@ -271,6 +275,487 @@ class TestRealSubprocessProgressRendering:
         assert "    inner_b... ✓" in result.stderr, (
             f"Child 'inner_b' progress line missing or corrupted.\nstderr: {result.stderr!r}"
         )
+
+    def test_parallel_batch_sub_workflow_renders_coherent_per_item_blocks(self, tmp_path, uv_exe, subprocess_env):
+        """Parallel batch where each item runs a sub-workflow must render each
+        item's child events as a coherent atomic block — not interleaved with
+        other items' events.
+
+        Regression for the race condition where multiple worker threads
+        concurrently fired ``node_start``/``node_complete`` events on the
+        shared ``OutputController`` while the sub-workflow's child engine
+        ran inside each batch item. The race produced semantically-wrong
+        rendering: completion text could attach to the wrong node's
+        partial line because ``_partial_line_open`` only tracked *whether*
+        a partial was open, not *which node's*. With N concurrent workers
+        running identical sub-workflows (same child node names), label
+        swaps were silent — agents reading stderr saw "child_a finished"
+        when actually child_b finished.
+
+        After the per-worker buffering fix in
+        ``batch_executor.py::_execute_parallel.process_item``, each worker
+        accumulates its child engine's events into a per-thread buffer.
+        The main thread (``_collect_parallel_results``) drains the buffer
+        through the real callback as one atomic block per item — coherent
+        per-item transcripts in completion order, no interleaving.
+
+        This test runs 4 items in parallel, each executing a sub-workflow
+        with two children (child_a, child_b). Without the fix, the 8 child
+        completion lines could appear in any order. With the fix, they
+        must form 4 consecutive (child_a, child_b) pairs.
+        """
+        # Inner sub-workflow: two distinguishable child nodes that run fast
+        inner_path = tmp_path / "inner.pflow.md"
+        inner_path.write_text(
+            ir_to_markdown({
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "child_a",
+                        "type": "shell",
+                        "cache": False,
+                        "params": {"command": "echo child_a_done"},
+                    },
+                    {
+                        "id": "child_b",
+                        "type": "shell",
+                        "cache": False,
+                        "params": {"command": "echo child_b_done"},
+                    },
+                ],
+                "edges": [],
+            })
+        )
+
+        # Parent workflow: parallel batch over 4 items, each runs the inner workflow
+        outer_path = tmp_path / "outer.pflow.md"
+        outer_path.write_text(
+            ir_to_markdown({
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "process_items",
+                        "type": "workflow",
+                        "batch": {
+                            "items": ["alpha", "beta", "gamma", "delta"],
+                            "as": "item",
+                            "parallel": True,
+                            "max_concurrent": 4,
+                        },
+                        "params": {"workflow": str(inner_path)},
+                    },
+                ],
+                "edges": [],
+            })
+        )
+
+        result = _run_pflow(uv_exe, subprocess_env, outer_path)
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, f"workflow failed unexpectedly\nstderr: {result.stderr!r}"
+
+        stderr = result.stderr
+
+        # Extract child completion lines in the order they appear on stderr.
+        # We look for "child_a..." or "child_b..." with a green checkmark
+        # (the completion terminator). Order is the rendering order — what
+        # an agent grep'ing stderr would actually see.
+        child_lines = [
+            line for line in stderr.split("\n") if ("child_a..." in line or "child_b..." in line) and "✓" in line
+        ]
+
+        # 4 items x 2 children = 8 completion lines expected
+        assert len(child_lines) == 8, (
+            f"Expected 8 child completion lines (4 items x 2 children), found {len(child_lines)}.\n"
+            f"Lines: {child_lines}\nFull stderr:\n{stderr}"
+        )
+
+        # Coherent per-item blocks: pairs must alternate (child_a, child_b),
+        # (child_a, child_b), ... — never (child_a, child_a) which would
+        # mean two items' child_a events appeared back-to-back.
+        for i in range(0, 8, 2):
+            assert "child_a..." in child_lines[i], (
+                f"Position {i} (item #{i // 2}): expected child_a (start of pair), got {child_lines[i]!r}\n"
+                f"This means a different item's events interleaved with this one — the per-worker "
+                f"buffering in batch_executor.py::process_item is broken.\n"
+                f"Full child line sequence:\n  " + "\n  ".join(child_lines)
+            )
+            assert "child_b..." in child_lines[i + 1], (
+                f"Position {i + 1} (item #{i // 2}): expected child_b (end of pair), got {child_lines[i + 1]!r}\n"
+                f"This means child_a's pair-mate is from a different item — atomic-block drain "
+                f"in _collect_parallel_results is broken.\n"
+                f"Full child line sequence:\n  " + "\n  ".join(child_lines)
+            )
+
+        # Negative invariant: no concatenated/corrupted lines
+        for line in child_lines:
+            # Each child line must contain exactly one node id (no concatenation)
+            assert not ("child_a" in line and "child_b" in line), (
+                f"Line contains BOTH child_a and child_b — concatenation corruption.\n"
+                f"Line: {line!r}\nFull stderr:\n{stderr}"
+            )
+
+    def test_verbose_mode_keeps_cli_diagnostics_off_stdout(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow -v foo.pflow.md`` must NOT emit any ``cli:`` diagnostic
+        lines on stdout. They belong on stderr per the GH #194 routing
+        rule (data → stdout, diagnostics → stderr).
+
+        Pre-existing bug surfaced by Task 149's #194 fix: before the fix,
+        all output went to stderr in non-TTY mode, so the ``cli:``
+        diagnostics were lost in stderr noise. After the fix, data lives
+        on stdout — and any ``cli:`` line missing ``err=True`` mixes with
+        workflow data, breaking ``pflow -v foo | jq``.
+
+        Catches any future regression where someone adds a ``cli:`` echo
+        without ``err=True`` (a common slip).
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "echo_data",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo VERBOSE_STDOUT_CANARY"},
+                },
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "verbose.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", "-v", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, f"workflow failed unexpectedly\nstderr: {result.stderr!r}"
+
+        # The data canary must be on stdout (GH #194 invariant)
+        assert "VERBOSE_STDOUT_CANARY" in result.stdout
+
+        # No `cli:` diagnostic lines on stdout — they pollute pipes to jq
+        cli_lines_on_stdout = [line for line in result.stdout.split("\n") if line.startswith("cli:")]
+        assert cli_lines_on_stdout == [], (
+            "`-v` mode emitted `cli:` diagnostic line(s) on stdout — they belong on stderr.\n"
+            f"Polluting lines: {cli_lines_on_stdout}\nFull stdout:\n{result.stdout}"
+        )
+
+        # And the verbose `cli:` lines should actually be on stderr (proves
+        # the test isn't passing because the lines were silently dropped)
+        cli_lines_on_stderr = [line for line in result.stderr.split("\n") if line.startswith("cli:")]
+        assert cli_lines_on_stderr, (
+            f"`-v` mode produced no `cli:` diagnostics at all — verbose mode appears broken.\nstderr:\n{result.stderr}"
+        )
+
+    def test_nested_parallel_batch_recursive_buffering(self, tmp_path, uv_exe, subprocess_env):
+        """Parallel batch where each item runs a sub-workflow that ITSELF
+        runs a parallel batch must produce coherent rendering at every
+        nesting level.
+
+        Strengthens the #6 per-worker buffering coverage. The implementation
+        is recursive by construction: when a worker thread (running an
+        inner sub-workflow) hits its OWN parallel batch, the inner batch's
+        ``process_item`` installs ANOTHER buffering wrapper on its
+        sub-items' shared store. The inner buffer captures the deepest
+        events; the inner drain (running in the worker thread that's
+        single-threaded for this nesting level) flushes them into the
+        outer worker's buffer; the outermost main thread eventually
+        drains the outer buffer to the real OutputController.
+
+        I claimed this works via mental tracing in the #6 analysis but
+        didn't write a test. This is the regression guard.
+        """
+        # Innermost workflow: 2 leaf nodes
+        innermost_path = tmp_path / "innermost.pflow.md"
+        innermost_path.write_text(
+            ir_to_markdown({
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "leaf_x",
+                        "type": "shell",
+                        "cache": False,
+                        "params": {"command": "echo x"},
+                    },
+                    {
+                        "id": "leaf_y",
+                        "type": "shell",
+                        "cache": False,
+                        "params": {"command": "echo y"},
+                    },
+                ],
+                "edges": [],
+            })
+        )
+
+        # Middle workflow: parallel batch over the innermost workflow
+        middle_path = tmp_path / "middle.pflow.md"
+        middle_path.write_text(
+            ir_to_markdown({
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "inner_batch",
+                        "type": "workflow",
+                        "batch": {
+                            "items": ["one", "two"],
+                            "as": "item",
+                            "parallel": True,
+                            "max_concurrent": 2,
+                        },
+                        "params": {"workflow": str(innermost_path)},
+                    },
+                ],
+                "edges": [],
+            })
+        )
+
+        # Outer workflow: parallel batch over the middle workflow
+        outer_path = tmp_path / "outer.pflow.md"
+        outer_path.write_text(
+            ir_to_markdown({
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "outer_batch",
+                        "type": "workflow",
+                        "batch": {
+                            "items": ["alpha", "beta"],
+                            "as": "item",
+                            "parallel": True,
+                            "max_concurrent": 2,
+                        },
+                        "params": {"workflow": str(middle_path)},
+                    },
+                ],
+                "edges": [],
+            })
+        )
+
+        result = _run_pflow(uv_exe, subprocess_env, outer_path)
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, f"nested parallel batch workflow failed unexpectedly\nstderr: {result.stderr!r}"
+
+        stderr = result.stderr
+
+        # Total leaf events expected: 2 outer items x 2 inner items x 2 leaves = 8
+        leaf_lines = [
+            line for line in stderr.split("\n") if ("leaf_x..." in line or "leaf_y..." in line) and "✓" in line
+        ]
+        assert len(leaf_lines) == 8, (
+            f"Expected 8 leaf completion lines (2 outer x 2 inner x 2 leaves), found {len(leaf_lines)}.\n"
+            f"Lines: {leaf_lines}\nFull stderr:\n{stderr}"
+        )
+
+        # Each leaf line must contain ONLY one node id (no concatenation
+        # corruption from interleaved worker writes at any nesting level)
+        for line in leaf_lines:
+            assert not ("leaf_x" in line and "leaf_y" in line), (
+                f"Leaf line contains both leaf_x and leaf_y — concatenation at some nesting level.\n"
+                f"Line: {line!r}\nFull stderr:\n{stderr}"
+            )
+
+        # Coherent atomic blocks: at the deepest level, each innermost
+        # invocation produces (leaf_x, leaf_y) as a consecutive pair.
+        # 4 innermost invocations total = 4 pairs.
+        for i in range(0, 8, 2):
+            assert "leaf_x..." in leaf_lines[i], (
+                f"Position {i} (innermost #{i // 2}): expected leaf_x, got {leaf_lines[i]!r}\n"
+                f"Recursive buffering broken at some nesting level.\n"
+                f"Full leaf sequence:\n  " + "\n  ".join(leaf_lines)
+            )
+            assert "leaf_y..." in leaf_lines[i + 1], (
+                f"Position {i + 1} (innermost #{i // 2}): expected leaf_y, got {leaf_lines[i + 1]!r}\n"
+                f"Recursive buffering broken at some nesting level.\n"
+                f"Full leaf sequence:\n  " + "\n  ".join(leaf_lines)
+            )
+
+    def test_only_with_last_node_emits_indicator(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow foo --only target`` where ``target`` is the LAST node must
+        emit the ``--only`` mode confirmation on stderr.
+
+        Sub-issue 8a from Task 149's code review: the previous gate
+        ``if only_node and nodes_skipped > 0:`` hid the indicator when
+        nothing was skipped (because the target was the last node, or
+        downstream branches were conditional and didn't run anyway).
+        Result: rendered output was byte-identical to a full run; agents
+        doing iterative debugging couldn't disambiguate.
+
+        Verified with a real subprocess to catch any CLI rendering
+        regression including any future change that re-introduces the
+        ``> 0`` gate or moves the indicator to a code path that's gated
+        by a verbosity flag.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "step_a",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo a"},
+                },
+                {
+                    "id": "step_b",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo b"},
+                },
+                {
+                    "id": "last_step",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo c"},
+                },
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "only_last.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        # Use --only on the LAST node so nodes_skipped == 0
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", str(workflow_path), "--only", "last_step"],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, f"workflow failed unexpectedly\nstderr: {result.stderr!r}"
+
+        # The mode confirmation MUST appear on stderr — without this,
+        # the run is indistinguishable from a full run.
+        assert "⤷ Stopped after 'last_step' (--only)" in result.stderr, (
+            "Sub-issue 8a regression: --only confirmation missing when target was the last node.\n"
+            f"stderr:\n{result.stderr}"
+        )
+        # Short form: no "0 remaining" or "N remaining" since 0 nodes were skipped
+        assert "remaining" not in result.stderr, (
+            f"Short form expected (0 nodes skipped) but found 'remaining' suffix.\nstderr:\n{result.stderr}"
+        )
+
+    def test_print_mode_with_only_emits_indicator(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow -p foo --only target`` must emit the ``--only`` mode
+        confirmation on stderr even though ``-p`` suppresses the rest of
+        the summary.
+
+        Sub-issue 8b from Task 149's code review: ``-p`` mode previously
+        suppressed the entire summary block including the ``--only``
+        line. Result: ``pflow -p foo --only target`` produced 0 bytes on
+        stderr, leaving agents iteratively debugging with -p + --only
+        unable to detect that the run was constrained.
+
+        ``--only`` is a mode signal, not a summary detail. Mode flags
+        survive verbosity flags. This matches the convention of
+        ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
+        ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "step_a",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo first"},
+                },
+                {
+                    "id": "step_b",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo PRINT_ONLY_CANARY"},
+                },
+                {
+                    "id": "step_c",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo never"},
+                },
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "print_only.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", "-p", str(workflow_path), "--only", "step_b"],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, f"workflow failed unexpectedly\nstderr: {result.stderr!r}"
+
+        # stdout: data from step_b (the --only target)
+        assert "PRINT_ONLY_CANARY" in result.stdout, (
+            f"Workflow output missing from stdout in -p + --only mode.\nstdout: {result.stdout!r}"
+        )
+
+        # stderr: ONLY the --only mode confirmation, nothing else
+        # (no "Executing workflow", no "Workflow completed", no progress lines)
+        assert "⤷ Stopped after 'step_b' (--only)" in result.stderr, (
+            "Sub-issue 8b regression: --only mode confirmation missing in -p mode.\n"
+            "Mode flags must survive verbosity flags.\n"
+            f"stderr:\n{result.stderr}"
+        )
+        assert "Executing workflow" not in result.stderr, (
+            f"-p mode should suppress 'Executing workflow' header.\nstderr:\n{result.stderr}"
+        )
+        assert "Workflow completed" not in result.stderr, (
+            f"-p mode should suppress completion summary.\nstderr:\n{result.stderr}"
+        )
+
+    def test_print_mode_without_only_stays_silent(self, tmp_path, uv_exe, subprocess_env):
+        """REGRESSION GUARD: ``-p`` mode without ``--only`` must remain silent
+        on stderr.
+
+        Confirms the --only fix didn't accidentally break the existing
+        ``-p`` minimal-output contract for the common case (no --only).
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "step_a",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo PLAIN_PRINT_CANARY"},
+                },
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "print_plain.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", "-p", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, f"workflow failed unexpectedly\nstderr: {result.stderr!r}"
+        assert "PLAIN_PRINT_CANARY" in result.stdout
+        # stderr must be empty or near-empty (no progress, no header, no
+        # --only line because --only is not active)
+        assert "⤷" not in result.stderr, (
+            f"-p mode without --only should not emit any --only indicator.\nstderr:\n{result.stderr!r}"
+        )
+        assert "Executing workflow" not in result.stderr
+        assert "Workflow completed" not in result.stderr
+        assert "Stopped after" not in result.stderr
 
     def test_progress_streams_before_downstream_nodes_complete(self, tmp_path, uv_exe, subprocess_env):
         """Step_0's completion line must be visible on stderr WHILE step_1 is still running.

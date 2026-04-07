@@ -65,8 +65,13 @@ async def workflow_execute(
         parameters={...}
 
     Returns:
-        Formatted text with execution results
-        Success: "✓ Workflow completed in 0.5s\n\nOutputs:\n  result: ...\n\nNodes executed (3)..."
+        Formatted text with execution results.
+        Success: one-line completion tag, optional supplementary info (batch
+            errors, stderr warnings, LLM cost, validation warnings) when
+            present, then ``Workflow output:`` followed by the declared
+            output value (JSON-encoded for structured types so agents can
+            parse it directly).
+            Example: "✓ Workflow completed in 0.5s\n\nWorkflow output:\n\n{\"key\": \"value\"}"
         Error: "❌ Workflow execution failed\n\nError details:\n  • node-id: error message..."
     """
     logger.debug(f"workflow_execute called: workflow type={type(workflow)}")

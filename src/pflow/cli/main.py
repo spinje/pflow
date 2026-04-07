@@ -116,7 +116,7 @@ def _cleanup_temp_files(stdin_data: str | StdinData | None, verbose: bool) -> No
 
             os.unlink(stdin_data.temp_path)
             if verbose:
-                click.echo(f"cli: Cleaned up temp file: {stdin_data.temp_path}")
+                click.echo(f"cli: Cleaned up temp file: {stdin_data.temp_path}", err=True)
         except OSError:
             # Log warning but don't fail
             if verbose:
@@ -136,7 +136,7 @@ def _handle_workflow_success(
 ) -> None:
     """Handle successful workflow execution."""
     if verbose and output_format != "json":
-        click.echo("cli: Workflow execution completed")
+        click.echo("cli: Workflow execution completed", err=True)
 
     # Check for output from shared store (now with metrics)
     # NOTE: We handle output BEFORE saving trace so the JSON output can be included in the trace
@@ -298,7 +298,7 @@ def execute_json_workflow(  # noqa: C901
 
     # Show execution starting
     if effective_verbose:
-        click.echo(f"cli: Starting workflow execution with {ctx.obj['total_nodes']} node(s)")
+        click.echo(f"cli: Starting workflow execution with {ctx.obj['total_nodes']} node(s)", err=True)
     if progress_enabled:
         click.echo(f"Executing workflow ({len(ir_data.get('nodes', []))} nodes):", err=True)
 
@@ -768,14 +768,18 @@ def _handle_named_workflow(
 
     ctx.obj["execution_params"] = filter_user_params(params)
 
-    # Show what we're doing if verbose (but not in JSON mode)
+    # Show what we're doing if verbose (but not in JSON mode).
+    # All `cli:` diagnostic lines go to stderr per the GH #194 fix
+    # convention (data → stdout, diagnostics → stderr) so that
+    # ``pflow -v workflow.pflow.md | jq`` does not mix CLI diagnostic
+    # noise with parseable workflow output on stdout.
     if verbose and output_format != "json":
         if source == "library":
-            click.echo(f"cli: Loading workflow '{first_arg}' from registry")
+            click.echo(f"cli: Loading workflow '{first_arg}' from registry", err=True)
         else:
-            click.echo(f"cli: Loading workflow from file: {first_arg}")
+            click.echo(f"cli: Loading workflow from file: {first_arg}", err=True)
         if params:
-            click.echo(f"cli: With parameters: {params}")
+            click.echo(f"cli: With parameters: {params}", err=True)
 
     # Setup workflow execution context
     _setup_workflow_execution(ctx, first_arg, source, output_format)

@@ -483,12 +483,18 @@ def handle_api_warning(
     if metrics:
         metrics.record_node_execution(node_id, duration_ms)
 
-    # Call progress callback with warning
+    # Call progress callback with warning. Pass `warning` via the
+    # `error_message` kwarg so the OutputController callback closure
+    # receives the warning text in a properly-named parameter (the
+    # earlier positional convention abused the `duration_ms` slot to
+    # smuggle a string through, which forced an ``isinstance`` type
+    # check on the receiving end and made the parameter name lie about
+    # what it held).
     callback = shared.get("__progress_callback__")
     if callable(callback):
         depth = shared.get("_pflow_depth", 0)
         with contextlib.suppress(Exception):
-            callback(node_id, "node_warning", warning, depth)
+            callback(node_id, "node_warning", depth=depth, error_message=warning)
 
     # Record trace
     record_trace(
