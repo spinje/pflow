@@ -15,7 +15,7 @@ import pytest
 
 from pflow.cli.main import main
 from pflow.core.node import BaseNode
-from tests.shared.markdown_utils import ir_to_markdown
+from tests.shared.markdown_utils import ir_to_markdown, write_workflow_file
 
 
 class MockOutputNode(BaseNode):
@@ -276,6 +276,98 @@ class TestWorkflowOutputHandling:
                 assert "failing_node...❌" not in result.stderr
             finally:
                 Path(workflow_file).unlink()
+
+    def test_print_mode_suppresses_progress_header_and_summary(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """`-p` keeps stdout clean and suppresses stderr noise from the callback gate."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {"result": {"description": "Test result", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"output_key": "result", "output_value": "PRINT_MODE_CANARY"},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, ["-p", workflow_file])
+
+            assert result.exit_code == 0
+            assert "PRINT_MODE_CANARY" in result.stdout
+            assert "Executing workflow" not in result.stderr
+            assert "Workflow output:" not in result.stderr
+            assert "Workflow completed" not in result.stderr
+            assert "test..." not in result.stderr
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_json_mode_suppresses_progress_header_and_summary(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """`--output-format json` must keep stderr machine-clean."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {"result": {"description": "Test result", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {"output_key": "result", "output_value": "JSON_MODE_CANARY"},
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, ["--output-format", "json", workflow_file])
+
+            assert result.exit_code == 0
+            parsed = json.loads(result.stdout)
+            assert parsed["success"] is True
+            assert parsed["result"]["result"] == "JSON_MODE_CANARY"
+            assert result.stderr.strip() == ""
+        finally:
+            Path(workflow_file).unlink()
+
+    def test_real_failing_shell_node_terminates_progress_line(self, tmp_path):
+        """A real failing shell workflow should emit a terminated failure line on stderr."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "fail_stage",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "exit 1"},
+                }
+            ],
+            "edges": [],
+        }
+
+        workflow_path = tmp_path / "fail.pflow.md"
+        write_workflow_file(workflow, workflow_path)
+
+        runner = click.testing.CliRunner()
+        result = runner.invoke(main, [str(workflow_path)])
+
+        assert result.exit_code != 0
+        assert "fail_stage... ✗ Failed" in result.stderr
+        assert "fail_stage...❌" not in result.stderr
 
     def test_output_key_override(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key flag overrides both declared outputs and hardcoded keys."""
@@ -581,19 +673,25 @@ class TestWorkflowOutputHandling:
             Path(workflow_file).unlink()
 
     def test_complex_output_types(self, mock_registry_instance, mock_compile, mock_validate_ir):
-        """Test that various output types are handled correctly."""
+        """Test that various output types are emitted as valid JSON on stdout.
+
+        After the GH #194 fix, `safe_output` JSON-encodes non-string values
+        so that `pflow foo | jq` works for dict/list/bool/number/null outputs.
+        Strings still pass through verbatim.
+        """
         runner = click.testing.CliRunner()
 
-        # Test different data types
-        test_cases = [
-            {"dict_output": {"key": "value", "nested": {"data": 123}}},
-            {"list_output": ["item1", "item2", "item3"]},
-            {"number_output": 42.5},
-            {"bool_output": True},
-            {"null_output": None},
+        # Test different data types: each entry maps a Python value to the
+        # exact stdout token we expect after JSON encoding.
+        test_cases: list[tuple[dict, str]] = [
+            ({"dict_output": {"key": "value", "nested": {"data": 123}}}, '{"key": "value", "nested": {"data": 123}}'),
+            ({"list_output": ["item1", "item2", "item3"]}, '["item1", "item2", "item3"]'),
+            ({"number_output": 42.5}, "42.5"),
+            ({"bool_output": True}, "true"),  # Python True -> JSON true (lowercase)
+            ({"null_output": None}, "null"),  # Python None -> JSON null
         ]
 
-        for output_data in test_cases:
+        for output_data, expected_token in test_cases:
             output_key = next(iter(output_data.keys()))
             workflow = {
                 "ir_version": "0.1.0",
@@ -608,15 +706,11 @@ class TestWorkflowOutputHandling:
             try:
                 result = runner.invoke(main, [workflow_file])
 
-                assert result.exit_code == 0
-                # Output should be in the result (formatted as string/JSON)
-                output_value = output_data[output_key]
-                if output_value is not None:
-                    if isinstance(output_value, (dict, list)):
-                        # JSON output should be present
-                        assert json.dumps(output_value) in result.output or str(output_value) in result.output
-                    else:
-                        assert str(output_value) in result.output
+                assert result.exit_code == 0, f"exit={result.exit_code} for {output_key}\nstderr: {result.stderr!r}"
+                assert expected_token in result.stdout, (
+                    f"Expected JSON token {expected_token!r} for {output_key} "
+                    f"(value={output_data[output_key]!r})\nstdout: {result.stdout!r}"
+                )
             finally:
                 Path(workflow_file).unlink()
 

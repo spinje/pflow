@@ -14,6 +14,13 @@ from pflow.core.diagnostic import Diagnostic, format_diagnostic
 def safe_output(value: Any) -> bool:
     """Safely output a value to stdout, handling broken pipes.
 
+    Strings pass through verbatim. Structured values (dict, list, tuple,
+    bool, int, float, None) are emitted as JSON so consumers can parse
+    them with ``jq`` or similar tools — the GH #194 routing fix means
+    agents now actually receive these on stdout, so the format must be
+    parseable. Non-JSON-serializable objects fall back to ``str(value)``
+    so we never raise from the output path.
+
     Returns True if output was successful, False otherwise.
     """
     try:
@@ -21,13 +28,17 @@ def safe_output(value: Any) -> bool:
             # Skip binary output with warning
             click.echo("cli: Skipping binary output (use --output-key with text values)", err=True)
             return False
-        elif isinstance(value, str):
+        if isinstance(value, str):
             click.echo(value)
             return True
-        else:
-            # Convert other types to string
+        # Structured values: emit as JSON so `pflow foo | jq` works.
+        try:
+            click.echo(json.dumps(value, ensure_ascii=False))
+        except (TypeError, ValueError):
+            # Unserializable object — fall back to str() to avoid raising
+            # from the output path. The agent gets *something* it can show.
             click.echo(str(value))
-            return True
+        return True
     except BrokenPipeError:
         # Exit cleanly when pipe is closed
         os._exit(0)

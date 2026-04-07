@@ -181,3 +181,19 @@
   - reinstalls progress callback in JSON mode
   - reinstalls progress callback in `-p` mode
   - breaks the live failure terminator while refactoring callback rendering
+
+## 2026-04-07 - Test restoration after accidental checkout
+
+### What happened
+- The working copy of `tests/test_cli/test_workflow_output_handling.py` was reverted with `git checkout`, wiping three unstaged tests that only existed in the working tree.
+
+### Restored
+- Re-added:
+  - `test_print_mode_suppresses_progress_header_and_summary`
+  - `test_json_mode_suppresses_progress_header_and_summary`
+  - `test_real_failing_shell_node_terminates_progress_line`
+- Also restored the supporting import:
+  - `from tests.shared.markdown_utils import write_workflow_file`
+
+### Verification
+- `python3 -m py_compile tests/test_cli/test_workflow_output_handling.py` passed after restoration.

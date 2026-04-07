@@ -710,10 +710,12 @@ class ShellNode(Node):
         # Build descriptive error message for non-zero exit codes
         shared["error"] = self._build_shell_error_message(exit_code, shared.get("stderr", ""))
 
-        logger.warning(
-            f"Command failed with exit code {exit_code}",
-            extra={"phase": "post", "exit_code": exit_code},
-        )
+        # Intentionally no logger.warning here — pflow's diagnostic pipeline
+        # already surfaces this exact message via call_completion_callback
+        # (which builds "Command failed with exit code N" from
+        # shared["exit_code"]) and via the post-execution diagnostic block.
+        # Logging it here would write directly to stderr and corrupt the
+        # live progress callback's partial `node_id...` line.
         return "error"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:
