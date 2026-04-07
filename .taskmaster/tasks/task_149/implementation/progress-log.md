@@ -421,3 +421,64 @@ so the usability gap is visible for the first time.
   internal buffering (via the re-emission behavior), so the causal
   streaming test + the nested test together cover the full progress
   pipeline end-to-end.
+
+## 2026-04-07 - Task 149 closeout
+
+### Branch state
+- Branch: `fix/non-interactive-output-stderr`
+- Commits (newest first):
+  - `945ac6b3` test: add causal streaming regression test (FIFO barrier)
+  - `7f2d61b3` fix: partial-line corruption + JSON-encode structured outputs
+  - `8606f645` feat: fix #194 + consolidate output pipeline (Task 149)
+- All three commits pass pre-commit hooks (ruff, ruff-format, mypy, deptry).
+
+### Final test state
+- `make test`: **4642 passed, 9 skipped** (0 failures, 0 errors).
+- `make check`: clean.
+- +3 new tests vs `main`:
+  - `test_failing_shell_node_progress_line_is_clean` (subprocess)
+  - `test_nested_workflow_progress_lines_are_not_concatenated` (subprocess)
+  - `test_progress_streams_before_downstream_nodes_complete` (subprocess, causal)
+
+### What actually ships
+The committed state delivers everything in the original Task 149 plan
+plus four follow-up fixes from adversarial verification:
+
+1. **#194 fix** — data → stdout, diagnostics → stderr, always. Real
+   subprocess verified.
+2. **Live progress streaming** — TTY gate removed; gated at callsite for
+   `-p` and JSON modes only. Causal streaming test verifies bytes arrive
+   incrementally.
+3. **Dead scaffolding deleted** — `OutputInterface`, `CliOutput`,
+   `NullOutput`, `DisplayManager`, `test_cli_mcp_parity.py`.
+4. **CLI/MCP summary parity** — both paths lost the `Nodes executed (N):`
+   per-node block; each emits one-line completion tag + supplementary
+   diagnostics.
+5. **Smart-handled tags** — `[no matches]` / `[not found]` ported to the
+   live progress callback via `NamespacedSharedStore` access pattern.
+6. **Failure terminator** — `✗ Failed` closes the partial line on
+   non-batch errors.
+7. **Partial-line tracking** — `OutputController` self-terminates open
+   partial lines on interleaved writes, re-emits `  node_id` lead-in on
+   completion if the partial was closed. Fixes nested workflow rendering.
+8. **`logger.warning` removal** — redundant warning in `shell.py:713`
+   deleted (diagnostic pipeline already surfaces the same info).
+9. **JSON-encoded structured outputs** — `safe_output` now emits valid
+   JSON for dict/list/bool/number/null values so `pflow foo | jq` works.
+
+### Deferred (intentional, low value)
+- Defense-in-depth logging handler for the 32 other `logger.warning/error`
+  sites across node files. Rare edge cases; the subprocess failing-shell
+  test is the canary. If any start corrupting in practice, we'll see it
+  there and can revisit.
+- Finding #5: unreachable `elif reason:` fallback branch in
+  `_build_smart_handled_tag`. Defensive dead code, fine to leave.
+
+### Requires human verification before merge
+- TTY-only behavior (colors, `\r` batch counter in-place updates,
+  interactive save prompts, visual spacing/layout). Cannot be exercised
+  from the Bash sandbox — see `scratchpads/streaming-baseline/manual-tests.md`
+  for the checklist.
+
+### Status
+**Ready to merge pending manual TTY verification.**
