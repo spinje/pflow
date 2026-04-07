@@ -194,6 +194,7 @@ def _validate_template_reference(
                 "path": f"nodes[id={node_id}].params.{param_name}",
                 "available_fields": sorted(nodes_by_id.keys()),
                 "available_fields_total": len(nodes_by_id),
+                "available_fields_label": "nodes",
             }
             if similar:
                 context["similar_names"] = similar
@@ -268,6 +269,7 @@ def _validate_template_reference(
                 "template": f"${{{ref}}}",
                 "available_fields": sorted_inputs,
                 "available_fields_total": len(sorted_inputs),
+                "available_fields_label": "inputs",
             },
         )
     return None

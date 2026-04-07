@@ -705,7 +705,7 @@ def _build_enhanced_node_diagnostic(
         "node_type": node_type,
         "available_fields": available_fields_display,
         "available_fields_total": len(available_paths),
-        "available_fields_truncated": len(available_paths) > MAX_DISPLAYED_FIELDS,
+        "available_fields_label": "outputs",
     }
     if similar:
         context["similar_names"] = [
@@ -891,5 +891,6 @@ def _build_batch_inner_field_diagnostic(node_id: str, attempted_key: str, node_e
             "category": "template_error",
             "available_fields": available_fields,
             "available_fields_total": len(available_fields),
+            "available_fields_label": "outputs",
         },
     )

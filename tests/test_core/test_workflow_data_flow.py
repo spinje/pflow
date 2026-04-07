@@ -197,6 +197,18 @@ class TestValidateDataFlow:
         assert len(errors) > 0
         assert "did you mean '${reponame}'?" in errors[0].lower()
 
+        # Structural assertion (task 147): the data_flow producer must preserve
+        # path, template, similar_names, and suggestions. Without this, the
+        # producer could regress to bare-message form and the substring
+        # assertion above would still pass.
+        diagnostics = validate_data_flow(workflow)
+        diag = diagnostics[0]
+        assert diag.node_id == "node"
+        assert diag.context["path"] == "nodes[id=node].params.data"
+        assert diag.context["template"] == "${RepoName}"
+        assert diag.context["similar_names"] == ["${reponame}"]
+        assert diag.suggestions == ["Did you mean '${reponame}'?"]
+
     def test_circular_dependency_detection(self):
         """Test that circular dependencies are caught."""
         workflow = {
@@ -788,7 +800,7 @@ class TestImprovedErrorMessages:
         }
         errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
-        assert "Available fields" in errors[0]
+        assert "Available inputs" in errors[0]
         assert "method" in errors[0]
         assert "url" in errors[0]
 
@@ -808,7 +820,7 @@ class TestImprovedErrorMessages:
         }
         errors = _data_flow_error_messages(workflow)
         assert len(errors) == 1
-        assert "Available fields" in errors[0]
+        assert "Available inputs" in errors[0]
         assert "item" in errors[0]
 
     def test_node_level_inputs_listed_in_error(self):
@@ -836,7 +848,7 @@ class TestImprovedErrorMessages:
         assert len(errors) == 1
         assert "audience" in errors[0]
         # Should list node-level input 'brief', not say "no inputs are declared"
-        assert "Available fields" in errors[0]
+        assert "Available inputs" in errors[0]
         assert "brief" in errors[0]
         assert "no inputs are declared" not in errors[0]
 

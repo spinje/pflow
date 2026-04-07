@@ -197,6 +197,13 @@ class CompilationError(PflowError):
         node_type: Type of the node being compiled (if applicable)
         details: Additional context about the error
         suggestion: Helpful suggestion for fixing the error
+        wrapped_diagnostics: Structured diagnostics collected by a sub-validator
+            before this exception was raised. When present, ``to_diagnostics()``
+            returns them directly so the compile-time path preserves the same
+            rich structure (paths, suggestions, similar_names, available_fields)
+            that the pre-execution validator produces. Used by
+            ``compile_validation.py`` to carry the ``validate_data_flow()`` list
+            through the compiler boundary without flattening it to a string.
     """
 
     def __init__(
@@ -207,6 +214,7 @@ class CompilationError(PflowError):
         node_type: str | None = None,
         details: dict[str, Any] | None = None,
         suggestion: str | None = None,
+        wrapped_diagnostics: list[Diagnostic] | None = None,
     ):
         self.raw_message = message
         self.phase = phase
@@ -214,6 +222,7 @@ class CompilationError(PflowError):
         self.node_type = node_type
         self.details = details or {}
         self.suggestion = suggestion
+        self.wrapped_diagnostics = wrapped_diagnostics
 
         parts = [f"compiler: {message}"]
         if phase != "unknown":
@@ -228,6 +237,8 @@ class CompilationError(PflowError):
         super().__init__("\n".join(parts))
 
     def to_diagnostics(self) -> list[Diagnostic]:
+        if self.wrapped_diagnostics:
+            return list(self.wrapped_diagnostics)
         return [
             Diagnostic(
                 severity=Severity.ERROR,

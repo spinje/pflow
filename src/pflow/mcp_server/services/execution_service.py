@@ -352,10 +352,19 @@ class ExecutionService(BaseService):
         except MarkdownParseError as e:
             raise ValueError(f"Invalid workflow: {e}") from e
 
-        # Validate the parsed IR
+        # Validate the parsed IR. WorkflowValidationError carries structured
+        # diagnostics (post task 147) — render them through format_validation_failure
+        # so the agent receives the same rich text the validate_workflow path produces.
         try:
             load_and_validate_workflow(result.ir, auto_normalize=True)
-        except (ValueError, WorkflowValidationError) as e:
+        except WorkflowValidationError as e:
+            from pflow.execution.formatters.validation_formatter import format_validation_failure
+
+            rendered = (
+                format_validation_failure(e.validation_errors) if e.validation_errors else f"Invalid workflow: {e}"
+            )
+            raise ValueError(rendered) from e
+        except ValueError as e:
             raise ValueError(f"Invalid workflow: {e}") from e
 
         # Determine source path for dependency discovery (file-based saves only)

@@ -245,24 +245,27 @@ def _format_exception_type_line(context: dict[str, Any]) -> list[str]:
 
 
 def _format_available_fields_block(context: dict[str, Any]) -> list[str]:
-    """Render available field suggestions when provided in diagnostic context."""
+    """Render available field suggestions when provided in diagnostic context.
+
+    Producers populate ``available_fields_label`` to describe what the list
+    contains (e.g. "outputs", "nodes", "inputs", "parameters"). The fallback
+    ``"fields"`` is deliberately generic so it is never technically wrong —
+    producers that want accurate wording must set the label explicitly.
+    """
     available = context.get("available_fields")
     if not available:
         return []
 
+    label = context.get("available_fields_label", "fields")
     total = context.get("available_fields_total", len(available))
     lines = [
         "",
-        f"  Available fields in node (showing {min(len(available), 5)} of {total}):",
+        f"  Available {label} (showing {min(len(available), 5)} of {total}):",
     ]
     for field_name in available[:5]:
         lines.append(f"    - {field_name}")
     if len(available) > 5:
         lines.append(f"    ... and {len(available) - 5} more (in error details)")
-    if context.get("available_fields_truncated"):
-        lines.append("")
-        lines.append("  📁 Complete field list available in trace file")
-        lines.append("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json")
     return lines
 
 

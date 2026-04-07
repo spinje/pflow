@@ -244,6 +244,17 @@ class TestTypeValidationIntegration:
         assert "'dict'" in type_errors[0]
         assert "'int'" in type_errors[0]
 
+        # Structural assertion (task 147): the type-validation producer must
+        # preserve the structural context fields — path, inferred_type,
+        # expected_type, node_id. Without this, the substring assertions above
+        # would pass even if the producer regressed to a bare message string.
+        diagnostics = validate_workflow_templates(workflow_ir, {}, test_registry)
+        type_diag = next(d for d in diagnostics if "Type mismatch" in d.message)
+        assert type_diag.node_id == "consumer"
+        assert type_diag.context["path"] == "nodes[id=consumer].params.count"
+        assert type_diag.context["inferred_type"] == "dict"
+        assert type_diag.context["expected_type"] == "int"
+
     def test_nested_field_access_passes(self, test_registry):
         """Accessing a nested field with correct type should pass."""
         workflow_ir = {
@@ -690,6 +701,21 @@ class TestShellCommandUnionTypes:
         shell_errors = [e for e in errors if "Shell node" in e]
         assert len(shell_errors) == 1
         assert "dict" in shell_errors[0] or "list" in shell_errors[0]
+
+        # Structural assertion (task 147): _build_shell_command_diagnostic is one of
+        # the most user-visible task 147 producer rewrites — 3 concrete fix options
+        # plus structured context. Without this, the producer could regress to a
+        # bare Diagnostic(message=...) with suggestions=None and the substring
+        # assertion above would still pass.
+        diagnostics = validate_workflow_templates(workflow_ir, {}, test_registry)
+        shell_diag = next(d for d in diagnostics if d.message.startswith("Shell node"))
+        assert shell_diag.node_id == "shell-node"
+        assert shell_diag.context["path"] == "nodes[id=shell-node].params.command"
+        assert shell_diag.context["template"] == "${producer.data}"
+        assert shell_diag.context["shell_command"] == "echo ${producer.data}"
+        assert shell_diag.suggestions is not None
+        assert len(shell_diag.suggestions) == 3
+        assert any("stdin" in s for s in shell_diag.suggestions)
 
     def test_shell_allows_any_type(self, test_registry):
         """Pure 'any' type is allowed (safe type)."""

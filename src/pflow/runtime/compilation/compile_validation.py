@@ -104,6 +104,12 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
     variables not declared in IR inputs — undefined input checking is a semantic
     concern for WorkflowValidator.
 
+    The structured diagnostics produced by ``validate_data_flow`` are attached
+    to ``CompilationError.wrapped_diagnostics`` so the compile-time path carries
+    the same rich structure (paths, suggestions, similar_names, available_fields)
+    that the pre-execution validator produces — instead of flattening them into
+    a single bullet-list message.
+
     Args:
         ir_dict: The workflow IR dictionary
 
@@ -116,13 +122,11 @@ def _validate_data_flow_at_compile_time(ir_dict: dict[str, Any]) -> None:
     data_flow_diagnostics = validate_data_flow(ir_dict, check_inputs=False)
     errors = [diagnostic for diagnostic in data_flow_diagnostics if diagnostic.severity == Severity.ERROR]
     if errors:
-        lines = [f"  - {diagnostic.message}" for diagnostic in errors[:5]]
-        if len(errors) > 5:
-            lines.append(f"  ... and {len(errors) - 5} more errors")
-        error_msg = "Data flow validation failed:\n" + "\n".join(lines)
+        summary = f"Data flow validation failed ({len(errors)} error{'s' if len(errors) != 1 else ''})"
         raise CompilationError(
-            message=error_msg,
+            message=summary,
             phase="data_flow_validation",
+            wrapped_diagnostics=errors,
         )
 
 

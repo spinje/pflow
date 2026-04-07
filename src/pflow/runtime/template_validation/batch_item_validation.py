@@ -198,6 +198,7 @@ def _build_batch_item_field_diagnostic(
         "template": f"${{{full_template}}}",
         "available_fields": available_fields,
         "available_fields_total": len(available_fields),
+        "available_fields_label": "batch item fields",
         "items_source": safe_source,
         "batch_alias": safe_alias,
     }
@@ -280,6 +281,7 @@ def _build_batch_item_nested_diagnostic(
     if available_fields:
         context["available_fields"] = available_fields
         context["available_fields_total"] = len(available_fields)
+        context["available_fields_label"] = "nested fields"
     if similar:
         context["similar_names"] = [f"${{{path}}}" for path, _ in similar]
 

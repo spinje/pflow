@@ -115,8 +115,8 @@ def mock_compile():
 def mock_validate_ir():
     """Mock IR validation to always pass."""
     with patch("pflow.core.workflow.validator.WorkflowValidator.validate") as mock:
-        # Return (errors=[], warnings=[]) to indicate validation passed
-        mock.return_value = ([], [])
+        # Empty list[Diagnostic] indicates validation passed (post task 147)
+        mock.return_value = []
         yield mock
 
 

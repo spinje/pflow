@@ -143,6 +143,17 @@ class TestEnhancedTemplateErrors:
         assert "Required input '${config}' not provided - API configuration object (required)" in errors[0]
         assert "attempted to access path 'endpoint'" in errors[0]
 
+        # Structural assertion (task 147): the path_validation producer for
+        # the declared-input-with-path-access case must preserve the offending
+        # template in context["template"] and the error category. Without this,
+        # the producer could regress to bare-message form and the substring
+        # assertions above would still pass — a downstream JSON consumer would
+        # lose the ability to programmatically identify which template failed.
+        diagnostics = validate_workflow_templates(workflow_ir, {}, registry)
+        err_diag = next(d for d in diagnostics if d.severity.value == "error")
+        assert err_diag.context.get("template") == "${config.endpoint}"
+        assert err_diag.context.get("category") == "template_error"
+
     def test_undeclared_variable_keeps_original_error(self):
         """Test that undeclared variables keep original error message."""
         workflow_ir = {

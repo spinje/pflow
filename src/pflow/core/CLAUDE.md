@@ -24,7 +24,7 @@ src/pflow/core/
 ├── shell_integration.py     # Unix pipe and stdin handling
 ├── suggestion_utils.py      # "Did you mean" fuzzy matching
 ├── user_errors.py           # User-friendly CLI error formatting
-├── validation_utils.py      # Parameter name validation, validation suggestion generation
+├── validation_utils.py      # Parameter name validation, dummy parameter generation
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
 ├── execution_cache.py       # Two-phase execution cache for registry run
@@ -88,10 +88,10 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 `MarkdownParseError` has a `raw_message` attribute (the message without line prefix or suggestion suffix), used by `to_diagnostics()` to produce a clean message for the unified rendering format.
 
-**Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
-- Validation phase returns error **strings** (never raises)
-- Runtime phase catches exceptions and converts to **Diagnostic** objects
-- CLI formats errors based on output mode (text/JSON)
+**Error handling philosophy**: Producers are self-describing — they build `Diagnostic` objects directly at the source rather than flattening structured data into strings that downstream code reverse-engineers.
+- Validation phase returns `list[Diagnostic]` natively (Task 147) — every validator helper populates `context["path"]`, `similar_names`, `available_fields`, `suggestions`, etc. at the call site
+- Runtime phase raises exceptions that implement `to_diagnostics()` (Task 144) — `exception_to_diagnostics()` is a thin dispatcher, not a central converter
+- CLI formats errors through a single unified rendering path (`format_diagnostic`) regardless of whether they originated from validation, runtime, or exceptions
 
 ### ir_schema.py
 

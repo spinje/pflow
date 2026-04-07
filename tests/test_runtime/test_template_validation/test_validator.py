@@ -743,7 +743,7 @@ class TestBatchTemplateValidation:
 
         # Error should show actual LLM outputs
         assert "${analyze.response}" in error, f"Error should show actual outputs: {error}"
-        assert "Available fields" in error, f"Error should include available outputs block: {error}"
+        assert "Available outputs" in error, f"Error should include available outputs block: {error}"
 
         # Error should NOT mention batch
         assert "batch" not in error.lower(), f"Error should not mention batch for non-batch node: {error}"
@@ -911,6 +911,22 @@ class TestBatchTemplateValidation:
         # Should produce an error - typo_field is not a valid output
         assert len(errors) == 1, f"Expected 1 error for invalid path, got: {errors}"
         assert "typo_field" in errors[0] or "results[0]" in errors[0]
+
+        # Structural assertion (task 147): the highest-value producer rewrite
+        # (_build_enhanced_node_diagnostic) must preserve available_fields (the
+        # node's actual outputs with types). Without this, the producer could
+        # regress to bare-message form and the substring assertion above would
+        # still pass.
+        diagnostics = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        diag = next(d for d in diagnostics if d.severity.value == "error")
+        assert diag.context.get("available_fields_label") == "outputs"
+        available = diag.context["available_fields"]
+        assert available, "available_fields must list the node's outputs"
+        # Verify the known real outputs of the llm batch node are present as
+        # structured entries — these are what a future regression to bare-string
+        # form would drop.
+        assert any("response" in entry for entry in available)
+        assert any("llm_usage" in entry for entry in available)
 
     def test_nested_index_template_not_flagged_as_malformed(self):
         """${results[${__index__}]} should not be flagged as malformed syntax."""

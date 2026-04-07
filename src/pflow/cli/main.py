@@ -626,7 +626,7 @@ def _validate_and_prepare_workflow_params(
             validation_errors=[
                 Diagnostic(
                     severity=Severity.ERROR,
-                    source="validation",
+                    source="validator",
                     title="Validation Error",
                     message=f"Invalid parameter name(s): {', '.join(invalid_keys)}",
                     suggestions=[

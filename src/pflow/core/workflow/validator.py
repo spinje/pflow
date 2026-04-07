@@ -501,6 +501,7 @@ class WorkflowValidator:
                 "path": f"outputs.{output_name}.source",
                 "available_fields": available,
                 "available_fields_total": len(available),
+                "available_fields_label": "nodes",
                 "similar_names": similar or None,
             },
         )
@@ -540,6 +541,7 @@ class WorkflowValidator:
                 "template": source,
                 "available_fields": available,
                 "available_fields_total": len(available),
+                "available_fields_label": "nodes",
                 "similar_names": similar or None,
             },
         )
@@ -625,6 +627,7 @@ class WorkflowValidator:
                                 "node_type": node_type,
                                 "available_fields": sorted_known,
                                 "available_fields_total": len(sorted_known),
+                                "available_fields_label": "parameters",
                                 "similar_names": similar or None,
                             },
                         )
@@ -772,6 +775,7 @@ class WorkflowValidator:
                             "sub_workflow_step": node_id,
                             "available_fields": sorted_inputs,
                             "available_fields_total": len(sorted_inputs),
+                            "available_fields_label": "required inputs",
                         },
                     )
                 )

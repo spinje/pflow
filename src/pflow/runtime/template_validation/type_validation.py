@@ -181,6 +181,7 @@ def _check_string_template_types(
                         "expected_type": expected_type,
                         "available_fields": available_fields or None,
                         "available_fields_total": len(available_fields) if available_fields else None,
+                        "available_fields_label": "matching outputs" if available_fields else None,
                     },
                 )
             )
