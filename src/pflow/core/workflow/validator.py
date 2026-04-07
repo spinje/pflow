@@ -29,14 +29,22 @@ def _add_child_provenance(
 
     Uses ``format_child_provenance`` so the validation and runtime propagation
     paths produce identical diagnostics that dedup naturally.
+
+    For nested sub-workflows (parent → child → grandchild), ``sub_workflow_step``
+    and ``sub_workflow_path`` are first-write-wins: the innermost wrapping (closest
+    to the error) is preserved as recursion unwinds. This keeps the structured
+    provenance fields aligned with ``node_id`` and ``context['path']``, which both
+    point at the deepest level.
     """
     from dataclasses import replace
 
     result: list[Diagnostic] = []
     for diagnostic in child_diagnostics:
-        new_context = {**(diagnostic.context or {}), "sub_workflow_step": step_id}
+        existing_context = diagnostic.context or {}
+        new_context = dict(existing_context)
+        new_context.setdefault("sub_workflow_step", step_id)
         if ref_label:
-            new_context["sub_workflow_path"] = ref_label
+            new_context.setdefault("sub_workflow_path", ref_label)
         result.append(
             replace(
                 diagnostic,
@@ -169,7 +177,7 @@ class WorkflowValidator:
                     source="validator",
                     title="Validation Error",
                     message=f"Unexpected error during structural validation: {e}",
-                    context={"category": "validation", "exception_type": type(e).__name__},
+                    context={"category": "validation"},
                 )
             ]
 
@@ -227,7 +235,7 @@ class WorkflowValidator:
                     source="validator",
                     title="Validation Error",
                     message=f"Data flow validation error: {e!s}",
-                    context={"category": "validation", "exception_type": type(e).__name__},
+                    context={"category": "validation"},
                 )
             ]
 
@@ -256,7 +264,7 @@ class WorkflowValidator:
                     source="validator",
                     title="Template Error",
                     message=f"Template validation error: {e!s}",
-                    context={"category": "template_error", "exception_type": type(e).__name__},
+                    context={"category": "template_error"},
                 )
             ]
 
@@ -323,7 +331,7 @@ class WorkflowValidator:
                     source="validator",
                     title="Validation Error",
                     message=f"Registry validation error: {e!s}",
-                    context={"category": "validation", "exception_type": type(e).__name__},
+                    context={"category": "validation"},
                 )
             )
 

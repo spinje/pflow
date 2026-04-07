@@ -7,15 +7,14 @@ logic will be tested in future subtasks.
 
 import json
 import logging
-from unittest.mock import MagicMock
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime import compile_workflow
-from pflow.runtime.compilation.compiler import CompilationError, _parse_ir_input
 from pflow.runtime.compilation.compile_validation import _validate_data_flow_at_compile_time
+from pflow.runtime.compilation.compiler import CompilationError, _parse_ir_input
 from pflow.runtime.compilation.ir_preparation import validate_ir_structure
 from pflow.runtime.engine import WorkflowEngine
 from pflow.runtime.engine.types import CompiledWorkflow

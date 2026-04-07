@@ -117,7 +117,7 @@ Unified validation orchestrator. Replaces scattered validation that previously e
 4. Templates (variable resolution) — if params provided
 5. Node types (registry verification) — unless `skip_node_types=True`
 6. Output sources — validates `${node.key}` refs in outputs, with fuzzy "did you mean?" suggestions
-7. Unknown param warnings — flags params not in node interface metadata (warnings, not errors)
+7. Unknown param errors — flags params not in node interface metadata as hard errors with structured suggestions (fuzzy-matched valid keys, `context["available_fields"]`, `context["similar_names"]`)
 8. Sub-workflow validation — recursive validation of referenced child workflows (file, saved name, inline IR)
 9. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
 

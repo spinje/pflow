@@ -550,3 +550,286 @@ Without the review loop, the implementing agent would have hit the 3 critical fi
   - compiler consumers filter by severity correctly
 
 ---
+
+## 2026-04-07 — Manual verification round 1: test suite + manual reproduction
+
+After context-window rotation, picked the work back up with the user as a verification round. The implementing agent had completed the implementation but left a note that pytest, mypy, and the baseline tool were all blocked by a sandbox `uv` bootstrap panic — no behavioral verification had been done. The plan was: run the suite first to give reviewers a working baseline, then manual reproduction.
+
+**Test suite results**:
+- `make test`: 4653 tests pass.
+- `make check`: ruff failed with 1 remaining error after auto-fixing imports — `S108` flagged `/tmp/out.txt` as insecure tempfile usage in a test fixture.
+
+**Two small fixes during this round**:
+1. `tests/test_core/test_unknown_param_validation.py:112` — changed `/tmp/out.txt` to `output.txt` (the value is irrelevant; the test only checks that `file_pat` is recognized as a typo of `file_path`).
+2. `tests/test_runtime/test_compiler_basic.py` — accepted ruff's auto-consolidation of the `from unittest.mock import` line (cosmetic).
+
+After both fixes, `make check` passes cleanly: ruff/ruff-format/mypy/deptry all clean. The mypy success is the strongest signal that the `# type: ignore[arg-type]` removal worked end-to-end.
+
+**Manual reproduction (text mode)** with `${nonexistant.stdout}` and a typoed `file_pat` parameter both delivered the unified rich format: title, message, `At:` location, `Did you mean`, available fields, `→` suggestion. Output matched the task spec's promised shape.
+
+**Manual reproduction (JSON mode)**: structured fields all present — `node_id`, `context.path`, `context.available_fields`, `context.similar_names`, `context.template`, `context.node_type`. The full `--validate-only --output-format json` JSON contract that downstream agents will read.
+
+**Verdict at this point**: implementation works as designed. Ready for verification specialist round.
+
+---
+
+## 2026-04-07 — Manual verification round 2: try-to-break-it specialist mode
+
+The user reframed the next round as "you are a verification specialist trying to break this — the test suite is context, not evidence". The implementer is also an LLM; its tests may be heavy on substring matching, mocks, or happy-path coverage. Build a manual testing plan that probes the parts a test suite is least likely to catch.
+
+Created a reusable testing plan at `.taskmaster/tasks/task_147/verification/manual-testing-plan.md` and executed it.
+
+**Probes performed**:
+1. Test-helper smell inspection (no execution) — found and characterized below
+2. Bypass paths: `pflow run` text + JSON, CLI save, compile-time validation
+3. Single-level sub-workflow provenance (parent → child)
+4. Three-level sub-workflow provenance (parent → middle → grandchild)
+5. Sibling sub-workflows (dedup behavior)
+6. Multi-error workflow (rendering + truncation behavior)
+7. Negative tests (clean workflow — should validate)
+8. Batch with unresolved template (`batch: ${items}` in `--validate-only`)
+9. `compile_validation.py` severity filter (source-level review)
+
+### Findings during this round
+
+#### 🔴 Bug 1: `_add_child_provenance` overwrites context on recursion unwind (NEW IN TASK 147)
+
+**Location**: `src/pflow/core/workflow/validator.py:37-39` (in the implementer's original implementation)
+
+For 3-level nested workflows (parent → middle → grandchild), each recursion unwind overwrote `sub_workflow_step` and `sub_workflow_path` in the diagnostic's context. The OUTERMOST hop won, but `node_id` and `context["path"]` still pointed at the DEEPEST hop. A downstream JSON consumer using `sub_workflow_path` to locate the source file would land on `./middle.pflow.md`, but the actual error is in `./grandchild-broken.pflow.md`.
+
+The text message chained correctly (`In step 'invoke-middle' sub-workflow: In step 'invoke-grandchild' sub-workflow: ...`), so humans reading the message could follow the trail — but the structured context fields were inconsistent with the location fields, breaking programmatic consumers.
+
+**Verified end-to-end via JSON output before the fix**:
+```json
+{
+  "node_id": "grandchild-writer",
+  "context": {
+    "path": "nodes[id=grandchild-writer].params.file_pat",
+    "sub_workflow_step": "invoke-middle",         // ← outermost (wrong)
+    "sub_workflow_path": "./middle.pflow.md"      // ← outermost (wrong)
+  }
+}
+```
+
+#### 🔴 Bug 2: Defensive wrappers set `exception_type` (TASK 147 SELF-CONSISTENCY VIOLATION)
+
+**Location**: `src/pflow/core/workflow/validator.py:172, 230, 259, 326` (in the implementer's original implementation)
+
+Four `except Exception` wrappers in `_validate_structure`, `_validate_data_flow`, `_validate_templates`, and `_validate_node_types` set `context["exception_type"] = type(e).__name__`. Verified all four were ADDED by `d8e7252c` (the task 147 commit) — none predated it.
+
+This directly contradicts the task's own progress log section "Keys validator producers MUST NEVER set":
+
+> `exception_type` | Runtime wrapped-exception path. Renders "Type: X" — suggests unhandled exception.
+
+Triggering case I hit during the batch-with-unresolved-template probe rendered as:
+
+```
+Error 2: Validation Error
+Data flow validation error: 'str' object has no attribute 'get'
+  Type: AttributeError       ← misleading — looks like a runtime crash
+```
+
+The implementer wrote the guideline AND violated it in the same task. The wrappers themselves are pre-existing and load-bearing (they catch real producer-construction bugs and unexpected lower-level crashes), but populating `context["exception_type"]` is new in task 147 and undermines the task's own architectural principle.
+
+#### 🟡 P2: Malformed `nodes[0]batch` paths (PRE-EXISTING — matches open issue spinje/pflow#214)
+
+**Location**: `src/pflow/core/ir_schema.py:_format_path:335`
+
+For a path like `[0, "batch"]`, `_format_path` produced `[0]batch` instead of `[0].batch`. The condition `if i > 0 and not formatted.endswith("]"):` suppressed the dot when the previous component was an int. Verified pre-existing: task 147 didn't touch `ir_schema.py` (`git show d8e7252c -- src/pflow/core/ir_schema.py` returned empty).
+
+This bug had a pre-existing open issue: **spinje/pflow#214** — exact match including code location and example output.
+
+#### 🟡 P5: Stale CLAUDE.md doc (`src/pflow/core/workflow/CLAUDE.md:120`)
+
+The doc said:
+> 7. Unknown param warnings — flags params not in node interface metadata (warnings, not errors)
+
+But `_validate_unknown_params` actually emits `Severity.ERROR` (verified by reading `validator.py:608`). Doc was stale relative to the implementation — possibly drifted between an earlier draft and the final implementation.
+
+#### 🟡 Smell 1: 19 test-helper splits flatten Task 147 structural assertion power
+
+The implementer's "mechanical deviation" of introducing local `_split_validator_diagnostics` / `_split_template_diagnostics` helpers in 19 test files preserved old `(errors_str, warnings_diag)` ergonomics by **converting errors to `format_diagnostic()` rendered strings**. The result: substring matching against multi-line rendered output is more permissive than against raw messages, and the structural fields the task was supposed to verify (`context["path"]`, `.suggestions`, `.context["available_fields"]`, `.context["similar_names"]`, `.node_id`, `.title`) are not individually checked by 99% of tests.
+
+After this round, the structural promise of #219 is verified by 8 tests out of ~309 migrated assertions. The remaining ~301 tests verify "rendered string contains substring X" — same depth as pre-task-147, just behind a slightly different facade.
+
+Filed as **spinje/pflow#238** in the cleanup phase.
+
+#### 🟡 Pre-existing finding: CLI save bypasses comprehensive validation
+
+`pflow workflow save` only runs `validate_ir()` (schema-only). It never calls `WorkflowValidator.validate()` or `_validate_and_normalize_ir()`, so a workflow with unknown parameters / unresolved templates / non-existent node references gets accepted into the library. The bug only surfaces later when the user tries to **run** the saved workflow.
+
+Verified pre-existing: task 147 didn't touch `cli/commands/workflow.py`. But the implication for task 147 is that the new `Severity.ERROR` filter at `save_service.py:139` is **only reachable from `mcp_server/services/execution_service.py`**, never from CLI save. The new code has narrower production exposure than it appears.
+
+Filed as **spinje/pflow#236**.
+
+#### 🟡 Pre-existing finding: Batch unresolved template crash
+
+`data_flow.py` and the template validators crash with `'str' object has no attribute 'get'` when `batch` is a template string `${items}` in validate-only mode (no runtime values to resolve the template). Both crashes are caught by the defensive wrappers, so the validator doesn't crash, but the user sees three confusingly duplicated errors for the same root cause.
+
+Verified pre-existing via `git stash` round (running against a state without my unstaged tweaks produced identical output — the crash sites and the wrapper behavior both predated the implementation work).
+
+**Important methodology note**: my first stash test was misleading. I thought I was stashing the task 147 implementation, but task 147 had already been committed at `d8e7252c full implementation` before my session started — my stash only contained small unstaged tweaks. Running against my "pre-task-147" state was actually still running task 147 code. I corrected this by confirming via `git show d8e7252c -- src/pflow/core/ir_schema.py` (empty result → not touched in task 147).
+
+Filed as **spinje/pflow#237**.
+
+#### 🟢 Confirmed working
+
+- `--validate-only` text + JSON: full rich format
+- `pflow run` (non-validate-only) text + JSON: same rich format reaches users on actual run failures
+- Single-level sub-workflow provenance: child's `node_id` preserved, `sub_workflow_step` set
+- Sibling sub-workflows: distinct errors, no false dedup
+- Multi-error rendering: 7 errors + 1 warning all flow through to JSON; text mode truncates display to 5 (hardcoded in `format_validation_failure`)
+- Clean workflow negative test: zero errors, cache lint warning correctly placed
+- Compile-time data-flow filter: `Severity.ERROR` filter present and correct, dormant but defensive
+- All 4 defensive `except Exception` wrappers reachable and function as nets
+
+---
+
+## 2026-04-07 — Bug fix round: addressing both critical findings
+
+After the user approved fixing the two 🔴 bugs, applied tightly-scoped fixes plus regression tests.
+
+### Fix 1: `_add_child_provenance` first-write-wins
+
+**File**: `src/pflow/core/workflow/validator.py:19-49`
+
+Changed the dict update from overwrite-semantics to `setdefault`, so the innermost wrapping (closest to the error) is preserved as recursion unwinds:
+
+```python
+# Before
+new_context = {**(diagnostic.context or {}), "sub_workflow_step": step_id}
+if ref_label:
+    new_context["sub_workflow_path"] = ref_label
+
+# After
+existing_context = diagnostic.context or {}
+new_context = dict(existing_context)
+new_context.setdefault("sub_workflow_step", step_id)
+if ref_label:
+    new_context.setdefault("sub_workflow_path", ref_label)
+```
+
+Updated the docstring to explicitly explain the first-write-wins semantics for nested workflows.
+
+**Why first-write-wins** instead of accumulating a chain: simpler, keeps the structured fields aligned with `node_id` and `context["path"]` (both of which point at the deepest level). A future feature could add `context["sub_workflow_chain"]` if breadcrumbs are needed.
+
+### Fix 2: Remove `exception_type` from 4 defensive wrappers
+
+**Files**: `src/pflow/core/workflow/validator.py:180, 238, 267, 334`
+
+Removed `"exception_type": type(e).__name__` from each wrapper context. The message prefix (`"Data flow validation error:"`, `"Template validation error:"`, etc.) is sufficient provenance — the user knows the wrapper fired without seeing internal Python exception type names.
+
+### Fix 3: P2 — `_format_path` malformed paths (closes spinje/pflow#214)
+
+**File**: `src/pflow/core/ir_schema.py:330-337`
+
+Removed the `not formatted.endswith("]")` check so the dot separator is always added before a string component when there's a previous component:
+
+```python
+# Before
+if i > 0 and not formatted.endswith("]"):
+    formatted += "."
+
+# After
+if i > 0:
+    formatted += "."
+```
+
+For path `[0, "batch"]`: now produces `[0].batch` (was `[0]batch`).
+
+### Fix 4: P5 — CLAUDE.md doc update
+
+**File**: `src/pflow/core/workflow/CLAUDE.md:120`
+
+Updated step 7 description from "warnings, not errors" to "hard errors with structured suggestions". Brings the doc into alignment with `_validate_unknown_params` actual behavior.
+
+### Regression tests added (12 new)
+
+| File | Tests | Purpose |
+|---|---|---|
+| `tests/test_core/test_workflow_validator.py::TestDefensiveWrapperDiagnostics` | 4 | Mock lower-level call to raise, verify wrapper diagnostic does NOT contain `exception_type` in context. One test per wrapper site. |
+| `tests/test_core/test_sub_workflow_validation.py::TestDeepNestedProvenance::test_three_level_nesting_keeps_innermost_sub_workflow_provenance` | 1 | Builds real parent → middle → grandchild workflow, asserts `node_id`, `context["path"]`, `context["sub_workflow_step"]`, and `context["sub_workflow_path"]` all point at the innermost (grandchild) level. |
+| `tests/test_core/test_ir_schema_output_suggestions.py::TestFormatPath` | 6 | 5 unit tests for `_format_path` (int+str, str+str, consecutive ints, empty, single int) plus 1 end-to-end test that triggers the bug via `validate_ir` on a malformed batch field. |
+
+### Verification after fixes
+
+| Check | Result |
+|---|---|
+| `pytest` (12 new tests in isolation) | 12/12 pass |
+| `make test` (full suite) | 4664 / 4664 pass (was 4653 baseline → +11 net counting the test fix file changes) |
+| `make check` (mypy + ruff + deptry) | clean |
+| Manual repro Bug 1 (text) | Fixed — `Sub-workflow: ./grandchild-broken.pflow.md` (innermost) |
+| Manual repro Bug 1 (JSON) | Fixed — `sub_workflow_step: invoke-grandchild`, `sub_workflow_path: ./grandchild-broken.pflow.md` |
+| Manual repro Bug 2 (batch case) | Fixed — `Type: AttributeError` line gone from output |
+
+### Files modified in this round
+
+- `src/pflow/core/workflow/validator.py` — Bug 1 fix + Bug 2 fix
+- `src/pflow/core/ir_schema.py` — P2 fix
+- `src/pflow/core/workflow/CLAUDE.md` — P5 doc update
+- `tests/test_core/test_workflow_validator.py` — 4 new wrapper tests
+- `tests/test_core/test_sub_workflow_validation.py` — 1 new deep-nesting test
+- `tests/test_core/test_ir_schema_output_suggestions.py` — 6 new format_path tests
+- `tests/test_core/test_unknown_param_validation.py` — S108 test fixture fix (`/tmp/out.txt` → `output.txt`)
+- `tests/test_runtime/test_compiler_basic.py` — ruff import auto-consolidation
+
+---
+
+## 2026-04-07 — Issue triage: avoid filing duplicates
+
+Before filing follow-up issues for the findings I wasn't fixing in this PR, searched `spinje/pflow` for existing matches to avoid duplicates.
+
+### Existing issues that match my findings
+
+| My finding | Existing issue | Status |
+|---|---|---|
+| P2 (malformed `nodes[0]batch`) | **spinje/pflow#214** | OPEN — exact match. **Closed by my P2 fix.** |
+| U2 (cache lint warning placement) | **spinje/pflow#197** | OPEN — broader issue about mixed errors/warnings output. My observation is a sub-case; don't file separately. |
+
+### Filed as new issues
+
+| Filed as | Title | Severity |
+|---|---|---|
+| **spinje/pflow#236** | CLI `pflow workflow save` bypasses WorkflowValidator — accepts broken workflows into the library | Medium |
+| **spinje/pflow#237** | Validator crashes on unresolved batch template in `--validate-only` mode — data_flow and template validators raise AttributeError | Medium |
+| **spinje/pflow#238** | Test-helper splits flatten Task 147 structural assertions into rendered-string substring matching | Medium |
+
+Each issue includes: reproduction steps, root-cause file paths and line numbers, proposed fix with code sketch, scope/out-of-scope split, related-issues references, and acceptance criteria where applicable.
+
+### Issues confirmed NOT to be duplicates of my findings
+
+- **spinje/pflow#233** ("Sub-workflow Diagnostic propagation flattens to plain string at parent boundary") — different code path. #233 is about runtime `WorkflowExecutor._extract_child_error` flattening to string. My Bug 1 was about validation-time `_add_child_provenance` overwriting context. Different functions, different lifecycles, different root causes.
+- **spinje/pflow#224** ("~41 CLI command error handlers bypass the diagnostic pipeline") — broader concern about inline `click.echo` in error handlers. My P1 (#236) is about a specific upstream gap where comprehensive validation isn't even called. Adjacent but different.
+- **spinje/pflow#66** (CLOSED — "Pre-execution validation is weaker than --validate-only validation") — same category as P1 (#236) but for the `pflow run` path. #66 was fixed for run; save was never addressed. #236 references #66 as prior art.
+
+---
+
+## Final state at end of this round
+
+| Action | Result |
+|---|---|
+| Bugs found by verification | 4 (2 task 147 internal, 2 pre-existing) |
+| Bugs fixed in this PR | 4 (Bug 1, Bug 2, P2, P5) |
+| Existing GitHub issue closed by this PR | spinje/pflow#214 (via P2 fix) |
+| New issues filed for follow-up | spinje/pflow#236, #237, #238 |
+| Tests added in this PR (verification round) | 12 (5 for Bug 1+2, 6 for P2, 1 end-to-end) |
+| Total test count | 4664 (was 4653 baseline) |
+| `make test` | clean |
+| `make check` | clean |
+
+### Meta-learnings from the verification round
+
+1. **The test-helper smell wasn't visible in the test count.** 4653 passing tests felt like strong evidence; reading the helper revealed that ~301 of those assertions are weaker than they look. **Lesson**: verification should ALWAYS read what tests assert, not just count what passes.
+
+2. **`git stash` is not the right tool for "test against pre-feature state" when the feature is committed.** My first stash attempt was misleading because I had assumed the implementation was unstaged. Verifying via `git show <commit> -- <file>` is more reliable for "did this commit touch this file".
+
+3. **Self-consistency checks catch the most surprising bugs.** Bug 2 was a case where the implementer wrote the rule AND violated it in the same task. The bug would have been invisible to anyone who just read either the guideline OR the wrapper code in isolation. Cross-referencing the two surfaced it.
+
+4. **Three-level nesting is a different test from one-level nesting.** The single-level sub-workflow case passed cleanly; the three-level case revealed the recursion-unwind bug. Recursive code needs at least one test that exercises 2+ levels of recursion or the unwind behavior is unverified.
+
+5. **Filing duplicates is the second-biggest waste of issue-tracker effort, after filing nothing.** The 30-second `gh issue list --search` round saved one duplicate filing (#214) and confirmed three were genuinely new.
+
+6. **Pre-existing bugs that block verification of new code are still relevant findings.** The CLI save bypass is pre-existing, but it makes the new task 147 error filter unreachable from CLI — which means manual `pflow workflow save` testing won't exercise the new code. Reporting "this is pre-existing but it has implications for your new code" is more useful than "this is pre-existing, not in scope".
+
+---

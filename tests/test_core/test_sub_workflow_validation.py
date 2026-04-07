@@ -902,3 +902,120 @@ Delegate work to child workflow.
         ir = _load_from_file(parent, auto_normalize=True)
         assert ir is not None
         assert "nodes" in ir
+
+
+class TestDeepNestedProvenance:
+    """Task 147 regression: for parent → child → grandchild, the innermost
+    sub-workflow provenance (closest to the error) must be preserved.
+
+    ``_add_child_provenance`` previously overwrote ``sub_workflow_step`` and
+    ``sub_workflow_path`` on each recursion unwind, so the OUTERMOST hop won
+    while ``node_id`` and ``context['path']`` still pointed at the DEEPEST
+    level. This made the structured provenance fields inconsistent with the
+    location fields — a JSON consumer using ``sub_workflow_path`` to open the
+    source file would land on the wrong file. First-write-wins keeps the
+    structured fields aligned with the location fields.
+    """
+
+    def test_three_level_nesting_keeps_innermost_sub_workflow_provenance(self, tmp_path: Path) -> None:
+        from pflow.core.diagnostic import Severity
+
+        grandchild = tmp_path / "grandchild.pflow.md"
+        write_pflow_md(
+            grandchild,
+            """\
+# Grandchild
+
+Deepest workflow with an unknown parameter typo.
+
+## Steps
+
+### grandchild-writer
+
+Writes using a typoed parameter name.
+
+- type: write-file
+- file_pat: gc.txt
+- content: from grandchild
+""",
+        )
+
+        middle = tmp_path / "middle.pflow.md"
+        write_pflow_md(
+            middle,
+            """\
+# Middle
+
+Middle workflow that invokes grandchild.
+
+## Steps
+
+### invoke-grandchild
+
+Invokes the grandchild workflow.
+
+- type: workflow
+- workflow: ./grandchild.pflow.md
+""",
+        )
+
+        parent = tmp_path / "parent.pflow.md"
+        write_pflow_md(
+            parent,
+            """\
+# Parent
+
+Parent workflow that invokes middle.
+
+## Steps
+
+### invoke-middle
+
+Invokes the middle workflow.
+
+- type: workflow
+- workflow: ./middle.pflow.md
+""",
+        )
+
+        registry = Registry()
+        registry.load()
+
+        diagnostics = WorkflowValidator.validate(
+            workflow_ir={
+                "ir_version": "0.1.0",
+                "nodes": [
+                    {
+                        "id": "invoke-middle",
+                        "type": "workflow",
+                        "params": {"workflow": str(middle)},
+                    }
+                ],
+                "edges": [],
+            },
+            extracted_params={},
+            registry=registry,
+            skip_node_types=False,
+            workflow_file=parent,
+        )
+
+        errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+        unknown_param_errors = [e for e in errors if "file_pat" in e.message]
+        assert len(unknown_param_errors) >= 1, f"Expected unknown-param error, got: {[e.message for e in errors]}"
+
+        diagnostic = unknown_param_errors[0]
+        context = diagnostic.context or {}
+
+        # Message chains through both hops.
+        assert "invoke-middle" in diagnostic.message
+        assert "invoke-grandchild" in diagnostic.message
+
+        # node_id and path point at the DEEPEST level (the grandchild's node).
+        assert diagnostic.node_id == "grandchild-writer"
+        assert context.get("path") == "nodes[id=grandchild-writer].params.file_pat"
+
+        # sub_workflow_step / sub_workflow_path must be the INNERMOST hop
+        # (closest to the error), not the outermost. This is the regression
+        # guard against the overwrite bug.
+        assert context.get("sub_workflow_step") == "invoke-grandchild"
+        assert "grandchild.pflow.md" in str(context.get("sub_workflow_path", ""))

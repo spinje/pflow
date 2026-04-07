@@ -83,3 +83,59 @@ class TestOutputSchemaSuggestions:
 
         # Should not raise
         validate_ir(ir)
+
+
+class TestFormatPath:
+    """Regression tests for ir_schema._format_path.
+
+    Bug: when an int component preceded a string component, the dot separator
+    was suppressed because ``formatted.endswith(']')`` was True. Result: paths
+    like ``nodes[0]batch`` instead of ``nodes[0].batch``. The malformed path
+    surfaced in every schema validation error that mixed array indices and
+    object keys (e.g., batch field type errors).
+    """
+
+    def test_int_followed_by_string_inserts_dot(self):
+        from pflow.core.ir_schema import _format_path
+
+        assert _format_path([0, "batch"]) == "[0].batch"
+        assert _format_path(["nodes", 0, "batch"]) == "nodes[0].batch"
+        assert _format_path(["nodes", 0, "params", "command"]) == "nodes[0].params.command"
+
+    def test_string_followed_by_string_inserts_dot(self):
+        from pflow.core.ir_schema import _format_path
+
+        assert _format_path(["nodes", "type"]) == "nodes.type"
+
+    def test_consecutive_ints_have_no_dot(self):
+        from pflow.core.ir_schema import _format_path
+
+        assert _format_path(["matrix", 0, 1]) == "matrix[0][1]"
+
+    def test_empty_path_renders_root(self):
+        from pflow.core.ir_schema import _format_path
+
+        assert _format_path([]) == "root"
+
+    def test_single_int_renders_bracketed(self):
+        from pflow.core.ir_schema import _format_path
+
+        assert _format_path([0]) == "[0]"
+
+    def test_real_batch_field_path(self):
+        """End-to-end: triggering the bug via validate_ir on a malformed batch field."""
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "n",
+                    "type": "shell",
+                    "params": {"command": "echo"},
+                    "batch": "${items}",  # batch must be object — this triggers schema error
+                }
+            ],
+        }
+        with pytest.raises(SchemaValidationError) as exc_info:
+            validate_ir(ir)
+        # The path must contain the dot separator between [0] and 'batch'
+        assert exc_info.value.path == "nodes[0].batch"

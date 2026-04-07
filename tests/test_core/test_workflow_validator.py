@@ -1,7 +1,10 @@
 """Test the unified WorkflowValidator."""
 
+from unittest.mock import patch
+
 import pytest
 
+from pflow.core.diagnostic import Severity
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 from pflow.runtime.template_validation import validate_workflow_templates
@@ -413,3 +416,72 @@ Do something.
 
         # Should pass all validations
         assert errors == []
+
+
+class TestDefensiveWrapperDiagnostics:
+    """Defensive ``except Exception`` wrappers in the validator must not set
+    ``context['exception_type']``.
+
+    Reason: the Task 147 renderer treats ``exception_type`` as a runtime-only
+    context key — it renders as ``Type: X`` which makes a validation error look
+    like an unhandled runtime crash. Producers are explicitly forbidden from
+    populating it. The message prefix (``"Data flow validation error:"`` etc.)
+    is enough provenance to identify that the wrapper fired.
+    """
+
+    def test_structural_wrapper_diagnostic_has_no_exception_type(self) -> None:
+        with patch("pflow.core.ir_schema.validate_ir", side_effect=RuntimeError("boom")):
+            diagnostics = WorkflowValidator._validate_structure({"ir_version": "0.1.0", "nodes": []})
+
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert "Unexpected error during structural validation" in diagnostic.message
+        assert "boom" in diagnostic.message
+        assert "exception_type" not in (diagnostic.context or {})
+
+    def test_data_flow_wrapper_diagnostic_has_no_exception_type(self) -> None:
+        with patch(
+            "pflow.core.workflow.data_flow.validate_data_flow",
+            side_effect=AttributeError("'str' object has no attribute 'get'"),
+        ):
+            diagnostics = WorkflowValidator._validate_data_flow({"ir_version": "0.1.0", "nodes": []})
+
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.message.startswith("Data flow validation error:")
+        assert "exception_type" not in (diagnostic.context or {})
+
+    def test_template_wrapper_diagnostic_has_no_exception_type(self, registry_with_nodes) -> None:
+        with patch(
+            "pflow.runtime.template_validation.validate_workflow_templates",
+            side_effect=AttributeError("'str' object has no attribute 'get'"),
+        ):
+            diagnostics = WorkflowValidator._validate_templates(
+                {"ir_version": "0.1.0", "nodes": []}, {}, registry_with_nodes
+            )
+
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.title == "Template Error"
+        assert diagnostic.message.startswith("Template validation error:")
+        assert "exception_type" not in (diagnostic.context or {})
+
+    def test_node_types_wrapper_diagnostic_has_no_exception_type(self, registry_with_nodes) -> None:
+        with patch.object(
+            registry_with_nodes,
+            "get_nodes_metadata",
+            side_effect=RuntimeError("registry boom"),
+        ):
+            diagnostics = WorkflowValidator._validate_node_types(
+                {"ir_version": "0.1.0", "nodes": [{"id": "n", "type": "shell", "params": {}}]},
+                registry_with_nodes,
+            )
+
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.message.startswith("Registry validation error:")
+        assert "exception_type" not in (diagnostic.context or {})

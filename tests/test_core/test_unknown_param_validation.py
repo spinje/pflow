@@ -109,7 +109,7 @@ class TestValidateUnknownParams:
                     "id": "writer",
                     "type": "write-file",
                     "params": {
-                        "file_pat": "/tmp/out.txt",
+                        "file_pat": "output.txt",
                         "content": "hello",
                     },
                 }

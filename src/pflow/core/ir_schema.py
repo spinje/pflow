@@ -332,7 +332,7 @@ def _format_path(path: list) -> str:
         if isinstance(component, int):
             formatted += f"[{component}]"
         else:
-            if i > 0 and not formatted.endswith("]"):
+            if i > 0:
                 formatted += "."
             formatted += str(component)
     return formatted or "root"
