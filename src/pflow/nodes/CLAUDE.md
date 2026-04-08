@@ -226,6 +226,7 @@ You can write this in a node's docstring:
 4. **Not testing retries** - Always verify retry behavior
 5. **Using `redirect_stdout`/`redirect_stderr` in threads** — Not thread-safe; zombie threads corrupt streams. See `python_code.py:_execute_code` docstring and issue #138 for details.
 6. **Storing execution state on `self`** — Nodes may be reused across sequential batch items (compile-once cache). Never set `self.X = result` in `exec()`/`post()` — communicate between lifecycle methods via the return value (`prep_res`, `exec_res`) or the shared store. Exception: `self.params` is set by the engine before each `_run()` call.
+7. **Writing directly to stderr from `prep`/`exec`/`post`** — Direct `click.echo(..., err=True)`, `print(..., file=sys.stderr)`, or `sys.stderr.write(...)` during live progress rendering corrupts the partial `node_id...` line emitted by `OutputController._handle_node_start`. Use `logger.warning`/`logger.error` instead — a logging filter installed by `OutputController` closes the partial line as a side effect before each log record emits, so `logger.*` calls render cleanly on their own lines. Raw stderr writes bypass the filter.
 
 ## References
 

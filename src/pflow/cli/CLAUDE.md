@@ -93,7 +93,7 @@ This split is critical: `pflow workflow.pflow.md | jq` works because progress no
 
 ### Output routing (`_output_with_header` in workflow_output.py)
 
-Single rule: data → stdout, diagnostics → stderr. Always. Fixed in GH #194.
+Single rule: data → stdout, diagnostics → stderr. Always — no TTY checks, no mode branching.
 
 | Mode | When | Header | Data | Summary |
 |------|------|--------|------|---------|
@@ -236,10 +236,10 @@ Note: `commands/mcp.py` still uses inline formatting (not yet migrated to shared
 
 ## Interactive Mode
 
-`OutputController.is_interactive()` is still defined but is only used by `cli/mcp_sync.py` for MCP discovery progress gating. CLI-specific impacts after the GH #194 refactor:
-- Progress display: streamed to stderr in default mode (TTY and non-TTY alike). Suppressed in `-p` mode and JSON output mode by the CLI callsite gate, not by TTY detection.
-- Save prompts: whatever logic currently gates the "save workflow?" interactive prompt is unchanged by this refactor. Production prompt usage relies on direct `click.confirm(...)`, not `OutputController.should_show_prompts()` (which was dead and removed).
-- Trace file paths: shown in default mode, suppressed in `--print` or JSON mode by `_echo_trace`.
+`OutputController.is_interactive()` has exactly one caller: `cli/mcp_sync.py` for MCP discovery progress gating. It does NOT gate workflow-execution progress.
+- **Progress display**: always streams to stderr via `create_progress_callback()` (TTY and non-TTY alike). Suppressed in `-p` and `--output-format json` by the callsite gate `progress_enabled = not print_flag and output_format != "json"` in `main.py`, not by TTY detection. The one TTY-specific branch is `_handle_batch_progress`'s `\r` inline counter.
+- **Save prompts**: use `click.confirm(...)` directly. There is no `OutputController` method for this.
+- **Trace path echo**: `_echo_trace` suppresses the "📊 Workflow trace saved" line in `-p` and JSON mode.
 
 ## Common Usage
 

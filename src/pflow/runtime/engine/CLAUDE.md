@@ -159,6 +159,18 @@ Merges the old `_exec_single` + `_exec_single_with_node` (170 lines of duplicati
 - `_batch_trace` list append is GIL-protected (CPython only)
 - `fail_fast` cancels pending futures but can't interrupt running threads (LLM/HTTP calls)
 
+### Per-worker progress buffer (parallel batch)
+
+Sub-workflow nodes inside a parallel batch create a child `WorkflowEngine` that fires `call_start_callback`/`call_completion_callback` from the **worker thread**. Firing these on the shared `OutputController` concurrently doesn't just corrupt bytes — it swaps semantic labels (valid output, wrong node id attached). A `threading.Lock` wouldn't fix it: `_partial_line_open` tracks *whether* a partial is open, not *whose*.
+
+Pattern: workers produce transcripts, main thread drains atomically.
+- `process_item` replaces the inherited `__progress_callback__` in `item_shared` with a per-thread buffering wrapper that captures `(args, kwargs)` tuples. The child engine fires into this local buffer instead of touching the real callback.
+- The buffer is returned as the 5th element of the future result.
+- `_collect_parallel_results` (main thread) calls `_drain_worker_buffer(real_callback, events)` via `as_completed` **before** `_report_batch_progress`. Single-threaded by construction — one future at a time in the calling thread.
+- Recursively correct: nested parallel batches install their own buffers inside worker threads; inner drains flush into outer buffers; the outermost main thread reaches the real `OutputController`. No depth-specific code.
+
+Peak memory is `O(events_per_item x max_concurrent)`. No hard cap today.
+
 ### Output shape
 
 `{results, count, success_count, error_count, errors, batch_metadata}` — identical to old `PflowBatchNode.post()`. Verified by `BATCH_OUTPUTS` contract in `template_validation/validator.py`.
@@ -194,8 +206,12 @@ Builds a deterministic config dict for cache key computation:
 
 ### Progress callbacks
 
-- `call_start_callback` — `node_start` event
-- `call_completion_callback` — `node_complete` with duration, error info, batch metadata. Detects batch nodes by checking for `batch_metadata` key in output.
+All emitters wrap the callback in `contextlib.suppress(Exception)` so rendering bugs can't crash execution.
+
+- `call_start_callback` → `node_start`.
+- `call_completion_callback` → `node_complete`. Reads `batch_metadata`, `smart_handled`, and `smart_handled_reason` from the node output namespace (via `NamespacedSharedStore` rewriting — `shared[node_id][key]`). Shell nodes write `smart_handled=True` + reason string to signal safe non-error exits; reason strings MUST contain `"no matches"` or `"not found"` for the tag mapping in `OutputController._build_smart_handled_tag` to fire (contract pinned in `shell.py`).
+- `handle_api_warning` → `node_warning`. Warning text flows through the `error_message` kwarg; do NOT pass strings via `duration_ms` (that was a smuggler pattern; the receiving end no longer tolerates it).
+- `handle_cached_execution` fires `node_start` then `node_cached` as a pair from the main thread — the callback sees both events for a single cached node.
 
 ## Utility Files
 

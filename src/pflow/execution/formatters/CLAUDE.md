@@ -53,10 +53,18 @@ Single-source-of-truth formatters ensuring CLI and MCP return identical output. 
 | `node_output_formatter` | `smart_filter_fields_cached` (registry) | LLM-based field filtering in smart mode |
 | `error_formatter` | `sanitize_parameters` (mcp_server.utils) | Security sanitization (lazy import) |
 
-## Hard-Won: Update BOTH Call Sites
+## CLI/MCP Parity
 
-When adding parameters to a formatter, update BOTH consumers or CLI/MCP parity breaks:
+When adding parameters to a formatter, update BOTH consumers or parity breaks:
 1. CLI call site (`cli/main.py`)
 2. MCP call site (`mcp_server/services/execution_service.py`)
 
-**Task 85 bug**: Added `status`/`warnings` to `format_execution_success()`, forgot MCP call site. CLI showed warnings, MCP didn't.
+Parity gaps have shipped before — e.g. adding `status`/`warnings` to `format_execution_success()` and forgetting the MCP call site, leaving the MCP text path without warning rendering.
+
+**Shared SSoT helpers in `success_formatter.py`** enforce text-rendering parity structurally for the tricky parts:
+- `format_only_indicator(only_node, nodes_skipped)` — `--only` mode confirmation line. Called from CLI default summary (`_display_execution_summary`), CLI `-p` mode emission (`_emit_only_indicator`), and MCP text (`_append_execution_steps`).
+- `format_stderr_warnings(steps)` — shell-stderr warning block (`⚠️  Shell stderr (exit code 0):` + per-node bullets with 300-char truncation). Called from CLI `_display_stderr_warnings` and MCP `format_success_as_text`.
+- `_append_outputs` (MCP text) and `cli/workflow_output.py::safe_output` (CLI stdout) both JSON-encode non-string output values with `ensure_ascii=False, allow_nan=False, default=str` and fall back to `repr(value)` on serialization failure. MCP can't emit a side-channel warning on failure, so the divergence is the warning emission only; the fallback VALUE is aligned.
+- `format_success_as_text` upgrades the ✓ completion glyph to ⚠️ when any step has `has_stderr` — mirroring CLI `_display_workflow_completion_status`.
+
+Parity tests: `TestAppendOutputsCliMcpParity` and `TestStderrWarningsCliMcpParity` in `tests/test_execution/formatters/test_success_formatter.py`. Add to these when expanding the shared helpers rather than documenting the parity contract by comment.
