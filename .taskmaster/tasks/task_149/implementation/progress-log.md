@@ -1573,6 +1573,251 @@ Tests:
 - ``tests/test_execution/formatters/test_success_formatter.py`` (9 new
   tests across 2 classes)
 
+## 2026-04-08 - PR #243 opened + manual verification + GH #242 filed
+
+### PR created
+- Branch pushed: ``fix/non-interactive-output-stderr`` → origin
+- PR: ``spinje/pflow#243`` — "fix: non-interactive output routing + output
+  pipeline consolidation (Task 149, fixes #194)"
+- 9 commits at PR creation time:
+  - ``2f377c23`` docs: Task 149 code review evaluation + task review
+  - ``eca9d526`` test: real subprocess coverage for JSON mode + shell
+    timeout, fix PYTEST_CURRENT_TEST leak
+  - ``8a81c71c`` fix: CLI/MCP parity for shell stderr warnings + fallback
+    alignment
+  - ``8cf9d0d0`` fix: address Task 149 code review findings (16 issues,
+    mutation-verified)
+  - ``bf2b08b1`` progress log
+  - ``945ac6b3`` test: add causal streaming regression test (FIFO barrier)
+  - ``7f2d61b3`` fix: partial-line corruption + JSON-encode structured
+    outputs (Task 149 follow-up)
+  - ``8606f645`` feat: fix #194 + consolidate output pipeline (Task 149)
+  - ``b4d60e70`` task files and context
+
+### High-impact manual verification (7 scenarios)
+
+Before pushing the PR, ran real ``uv run pflow`` smoke tests for the
+highest-risk scenarios. All 7 passed:
+
+1. **V1 GH #194 canary** — workflow with declared output via
+   ``${node.stdout}`` source expression. Asserted: canary string on
+   stdout, header on stderr, no cross-contamination. PASS.
+2. **V2 Shell stderr warning (CLI)** — workflow with
+   ``echo WARN_ON_STDERR >&2; echo clean_stdout``. Asserted: ``⚠️``
+   glyph upgrade, full ``⚠️  Shell stderr (exit code 0):`` block with
+   per-node bullet, clean stdout. PASS.
+3. **V3 JSON mode silence** — ``pflow --output-format json foo``.
+   Asserted: 0 bytes on stderr, valid JSON on stdout with
+   ``success: true``. PASS.
+4. **V4 Shell timeout clean rendering** — workflow with
+   ``sleep 10`` + ``timeout: 0.1``. Asserted: clean
+   ``slow_node... ✗ Failed`` terminator, none of the historical
+   corruption shapes (``slow_node...WARNING:``, ``slow_node...Command
+   timed``, ``slow_node...ERROR:``). PASS.
+5. **V5 ``-p`` + stderr warning** — ``pflow -p`` on V2 workflow.
+   Asserted: stderr is 0 bytes (mode flag wins over verbosity). PASS.
+6. **V6 JSON + stderr warning** — ``pflow --output-format json`` on V2
+   workflow. Asserted: 0 bytes stderr, ``has_stderr: true`` + actual
+   stderr text in the JSON ``execution.steps[].stderr`` field. PASS.
+7. **V7 MCP text output end-to-end** — fed V6's JSON back through
+   ``format_success_as_text()`` to simulate the MCP server path.
+   Asserted: same ``⚠️`` glyph + stderr block as CLI. PASS.
+
+### Pre-existing bug discovered during V4
+
+The timeout test surfaced a pre-existing noise issue that predates
+Task 149: ``src/pflow/nodes/shell/shell.py:583`` uses
+``logger.exception`` for ``subprocess.TimeoutExpired`` (a fully
+expected, handled case), which dumps a ~15-line Python traceback to
+stderr on every shell node timeout. The filter correctly handles the
+partial-line coordination (no concatenation corruption), but the
+traceback itself is noise that makes handled timeouts look like
+unhandled crashes to agents.
+
+**Filed as ``spinje/pflow#242``** with concrete fix (swap
+``logger.exception`` → ``logger.warning``) and context. Deliberately
+left out of scope for this PR because it predates Task 149 and would
+muddy the scope — the new subprocess test already asserts the clean
+terminator is present.
+
+### Commit ``d2cd6f76``: PR #243 review fix-up (W1-W3, S1-S4)
+
+Second-round PR review from ``claude[bot]`` on PR #243 identified 3
+warnings + 4 suggestions. Tone was positive ("Strong PR. No critical
+(blocking) issues found."). Addressed all 7 in a single fix-up commit.
+
+**Evaluation phase** (direct code reads, no subagents — questions
+were specific and local):
+
+- **W1** (duplicated ``--only`` indicator): CONFIRMED. Lines 511-520 of
+  ``_display_execution_summary`` literally duplicate lines 470-477 of
+  ``_emit_only_indicator``. Clean in-place substitution.
+- **W2** (filter install silent no-op): CONFIRMED structural. The
+  existing ``test_install_log_partial_line_guard_is_idempotent`` tests
+  no-stacking; neither it nor the behavior test catches a regression
+  where the install path is refactored to iterate the wrong logger
+  or check the wrong stream attribute.
+- **W3** (``_partial_line_open`` single bool): CONFIRMED but mitigation
+  is minimal. No current code path bypasses the callback; hypothetical
+  concern only.
+- **S1** (dead ``elif reason:`` branch): CONFIRMED unreachable given
+  ``shell.py:200`` contract. Kept as defensive safety net.
+- **S2** (rename ``_close_partial_line_if_open`` → ``_close_partial_line``):
+  CONFIRMED. 3 references in ``output_controller.py``, 0 in tests.
+- **S3** (per-worker buffer memory cap): CONFIRMED LOW priority.
+  Current workloads nowhere near concern. Reviewer explicitly marked
+  "document at minimum".
+- **S4** (subprocess #194 routing test): CONFIRMED. Existing
+  ``test_workflow_data_goes_to_stdout_not_stderr_gh194`` is CliRunner-
+  based and uses substring assertions; a subprocess version catches
+  fd-level corruption CliRunner can't detect.
+
+**Fixes shipped** (single commit):
+
+- **W1**: Replaced the inline 10-line ``--only`` block in
+  ``_display_execution_summary`` with a direct
+  ``_emit_only_indicator(formatted_result)`` call. One call site for
+  the indicator now.
+- **W2**: New
+  ``test_install_log_partial_line_guard_attaches_to_stderr_handler``
+  in ``tests/test_core/test_output_controller.py``. Installs TWO
+  handlers (one stderr, one non-stderr backed by ``io.StringIO``),
+  calls ``create_progress_callback``, asserts positive (filter IS on
+  stderr handler) + negative (filter is NOT on non-stderr handler).
+- **W3**: Expanded ``_partial_line_open`` instance variable comment
+  with an explicit "**Invariant**" paragraph: only
+  ``_handle_node_start`` and ``_ensure_node_line_open`` may set the
+  flag to ``True``; bypass paths (``click.echo(..., nl=False, err=True)``,
+  direct ``sys.stderr.write``) listed; notes that the logging filter
+  catches ``logger.*`` but not these direct-write cases.
+- **S1**: Expanded ``_build_smart_handled_tag`` docstring +
+  inline comment marking the ``if reason:`` branch explicitly as
+  "unreachable today — kept as a safety net for future reason-string
+  additions".
+- **S2**: Renamed ``_close_partial_line_if_open`` →
+  ``_close_partial_line`` via ``replace_all`` in
+  ``output_controller.py`` (3 refs) and ``task-review.md`` (6 refs).
+  Left ``progress-log.md`` references alone as historical record.
+- **S3**: Added "Memory scaling" paragraph to ``_drain_worker_buffer``
+  docstring. Typical workloads (4-16 items x 5-20 child nodes) = few
+  thousand tuples, negligible. Documented the ``_MAX_BUFFERED_EVENTS_PER_ITEM``
+  cap recipe for if it ever becomes a real concern. Skipped
+  implementing the hard cap.
+- **S4**: New
+  ``test_gh194_routing_invariant_exact_byte_separation`` in
+  ``tests/test_cli/test_progress_streaming_subprocess.py``. Real
+  subprocess with 4 invariants:
+  1. ``stdout`` exactly equals ``<canary>\n`` (exact match, not substring)
+  2. ``stderr`` contains both ``Executing workflow`` + ``✓ Workflow completed``
+  3. ``stdout`` contains no diagnostic markers (``Executing workflow``,
+     ``Workflow completed``, ``📊``)
+  4. ``stderr`` does not contain the canary
+
+**Judgment calls** (decisions NOT taken that the reviewer had
+proposed as alternatives):
+
+- **W2 debug log** when no handlers matched: skipped. Adds noise for
+  a hypothetical library-consumer scenario; docstring already
+  documents the contract.
+- **W3 debug breadcrumb**: skipped. Over-engineering for a
+  hypothetical scenario.
+- **S3 hard cap**: skipped. Silent drops would be worse than
+  unbounded-but-small growth, and the reviewer explicitly marked this
+  as "low priority — document at minimum".
+- **S4 keep or replace CliRunner test**: kept both. The CliRunner
+  version is a fast smoke path; the subprocess version catches
+  fd-level corruption. Neither is redundant.
+
+### Ruff fix-up
+
+During ``make check``, ruff flagged RUF002 "ambiguous Unicode ``×``
+(MULTIPLICATION SIGN)" in the S3 docstring. Replaced two instances
+of ``×`` with ASCII ``x`` and re-ran. Clean.
+
+### Final verification (after the fix-up commit)
+
+- ``make test``: **4675 passed** (up from 4673 before this commit —
+  +2 net from the W2 install invariant test and the S4 GH #194
+  subprocess test)
+- ``make check``: ruff + ruff-format + mypy + deptry all clean
+- Focused re-run of affected tests
+  (``test_core/test_output_controller.py``,
+  ``test_execution/formatters/test_success_formatter.py``,
+  ``test_cli/test_workflow_output_handling.py``,
+  ``test_cli/test_progress_streaming_subprocess.py``,
+  ``test_cli/test_shell_stderr_warnings.py``): 140 passed
+
+### Files modified (``d2cd6f76``)
+
+Production:
+- ``src/pflow/cli/workflow_output.py`` — W1
+- ``src/pflow/core/output_controller.py`` — W3 + S1 + S2
+- ``src/pflow/runtime/engine/batch_executor.py`` — S3
+
+Tests:
+- ``tests/test_core/test_output_controller.py`` — W2
+- ``tests/test_cli/test_progress_streaming_subprocess.py`` — S4
+
+Docs:
+- ``.taskmaster/tasks/task_149/task-review.md`` — S2 rename
+  (6 references updated)
+
+### Production LOC accounting (final, for PR #243 vs ``origin/main``)
+
+Scope: ``src/pflow/**/*.py`` only. Excludes tests, ``.md`` files
+(including ``CLAUDE.md`` files in source dirs), docs, architecture,
+``.taskmaster/``, and scratchpads.
+
+**Headline: −70 net production LOC** (660 insertions, 730 deletions).
+
+Growth (architectural additions, all heavily documented):
+- ``core/output_controller.py`` +161 (+250/-89) —
+  ``_ProgressPartialLineFilter``, partial-line state machine,
+  smart-handled tag helper, extensive docstrings
+- ``runtime/engine/batch_executor.py`` +69 (+74/-5) — per-worker
+  event buffer + drain helper
+- ``runtime/engine/instrumentation.py`` +14 (+16/-2) —
+  ``smart_handled`` passthrough + ``error_message`` kwarg rename
+- ``execution/formatters/success_formatter.py`` +14 (+106/-92) —
+  new ``format_only_indicator``, new ``format_stderr_warnings``, JSON
+  encoding + ``repr`` fallback, ``has_stderr`` glyph branch
+- ``mcp_server/tools/execution_tools.py`` +5, ``execution/runner.py``
+  +4, ``cli/main.py`` +3, ``nodes/shell/shell.py`` +3
+
+Deletions (pure scaffolding removal):
+- ``cli/workflow_output.py`` −83 (+157/-240) — three-mode routing
+  collapsed; dead helpers deleted
+- ``execution/display_manager.py`` −76 — **file deleted**
+- ``cli/cli_output.py`` −72 — **file deleted**
+- ``execution/output_interface.py`` −71 — **file deleted**
+- ``execution/null_output.py`` −37 — **file deleted**
+- ``execution/__init__.py`` −4
+
+**Scaffolding deleted: −260 LOC** (4 files fully removed).
+**Architectural additions: ~+260 LOC in 3 files**, heavily
+documentation-weighted. The ``−70`` headline understates the
+simplification because the growth sites are mostly docstrings
+explaining load-bearing "why" context for future agents. Rough "pure
+code" estimate if you deduct docstrings is closer to **−200 LOC**,
+but the docstrings are not dead weight — they're the knowledge
+transfer mechanism the Task 149 task review explicitly targets.
+
+### Branch state at end of Task 149
+
+- **Branch**: ``fix/non-interactive-output-stderr``
+- **Latest commit**: ``d2cd6f76`` (PR #243 review fix-up)
+- **Total commits on branch**: 10 (1 task setup + 5 initial Task 149
+  + 3 code review evaluation batch + 1 PR review fix-up)
+- **Test count**: 4675 passing, 9 skipped (+17 net vs ``origin/main``
+  baseline across all Task 149 work)
+- **Make check**: clean
+- **PR**: ``spinje/pflow#243`` — awaiting human review + TTY manual
+  verification
+- **Follow-up issue**: ``spinje/pflow#242`` — shell timeout
+  ``logger.exception`` traceback noise (pre-existing, out of scope)
+
+**Ready for final review and merge pending human TTY verification.**
+
 
 
 
