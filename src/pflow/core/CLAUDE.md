@@ -84,14 +84,11 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
-`format_for_cli()` methods were removed in Task 143. Task 144 added `to_diagnostics() -> list[Diagnostic]` methods — data conversion (coupled to `Diagnostic` type only, not CLI text). `PflowError` has a default implementation; 8 subclasses override it: `CompilationError`, `WorkflowValidationError`, `SchemaValidationError`, `MarkdownParseError`, `WorkflowNotFoundError`, `UserFriendlyError`, `MCPError`, `OutputResolutionError`. `MaxNodeVisitsError` also has `to_diagnostics()`. `exception_to_diagnostics()` is now a thin dispatcher (~30 lines) that calls `to_diagnostics()` on exceptions that have it, and falls back to `_builtin_exception_diagnostic()` for built-in types. No lazy imports.
+**Self-describing exceptions** — `PflowError` (and 8 subclasses) implement `to_diagnostics() -> list[Diagnostic]`. `exception_to_diagnostics()` is a thin dispatcher: call `to_diagnostics()` if present, else `_builtin_exception_diagnostic()` for stdlib types. When adding a new exception class, override `to_diagnostics()` rather than extending the dispatcher. `MarkdownParseError.raw_message` holds the message without the `Line N:` prefix/suggestion suffix — `to_diagnostics()` uses this for clean rendering.
 
-`MarkdownParseError` has a `raw_message` attribute (the message without line prefix or suggestion suffix), used by `to_diagnostics()` to produce a clean message for the unified rendering format.
+**Error handling philosophy — producers are self-describing**: validators, exceptions, and runtime events all construct `Diagnostic` objects at the detection site. Never flatten structured data (paths, fuzzy matches, available fields, suggestions) into string messages for downstream code to reverse-engineer. CLI, JSON, and MCP all flow through the same `format_diagnostic()` pipeline — the only place rendering happens.
 
-**Error handling philosophy**: Producers are self-describing — they build `Diagnostic` objects directly at the source rather than flattening structured data into strings that downstream code reverse-engineers.
-- Validation phase returns `list[Diagnostic]` natively (Task 147) — every validator helper populates `context["path"]`, `similar_names`, `available_fields`, `suggestions`, etc. at the call site
-- Runtime phase raises exceptions that implement `to_diagnostics()` (Task 144) — `exception_to_diagnostics()` is a thin dispatcher, not a central converter
-- CLI formats errors through a single unified rendering path (`format_diagnostic`) regardless of whether they originated from validation, runtime, or exceptions
+**`Diagnostic.__hash__` excludes `context`, `title`, and `suggestions`** — load-bearing. Child workflow diagnostics flow through two independent paths (validation-time and runtime) that produce semantically-identical errors with potentially-different enrichment. Dedup only collapses them if identity ignores the display-only fields. Adding `context` to the hash silently breaks sub-workflow warning dedup. Hash identity tuple: `(severity, source, node_id, message)` — keep it that way.
 
 ### ir_schema.py
 
