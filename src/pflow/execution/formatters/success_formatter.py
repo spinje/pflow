@@ -201,6 +201,8 @@ def format_success_as_text(  # noqa: C901
     execution_data = success_dict.get("execution", {})
     cache_hits = execution_data.get("cache_hits", 0)
     completed_count = execution_data.get("nodes_executed", 0)
+    steps = execution_data.get("steps", [])
+    has_stderr_warnings = any(step.get("has_stderr") for step in steps)
     cache_suffix = ""
     if cache_hits > 0:
         executed_fresh = completed_count - cache_hits
@@ -215,11 +217,19 @@ def format_success_as_text(  # noqa: C901
             lines.append(f"❌ Workflow failed after {duration_sec:.3f}s{cache_suffix}")
     elif warning_count:
         lines.append(f"⚠️ Workflow completed with {warning_count} warnings in {duration_sec:.3f}s{cache_suffix}")
+    elif has_stderr_warnings:
+        # Shell node(s) exited 0 but wrote to stderr — upgrade glyph to ⚠️
+        # so MCP consumers see the same signal CLI users do. The per-node
+        # stderr block is rendered below via format_stderr_warnings().
+        lines.append(f"⚠️ Workflow completed in {duration_sec:.3f}s{cache_suffix}")
     else:
         lines.append(f"✓ Workflow completed in {duration_sec:.3f}s{cache_suffix}")
 
     # Show node execution details (matches CLI lines 646-655)
     _append_execution_steps(lines, execution_data)
+
+    # Shell-stderr warnings (CLI/MCP parity — mirrors CLI _display_stderr_warnings)
+    lines.extend(format_stderr_warnings(steps))
 
     # Show cost (matches CLI _display_cost_summary)
     metrics = success_dict.get("metrics", {})
@@ -270,6 +280,13 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
     Mirrors ``cli/workflow_output.py::safe_output``: strings pass through
     verbatim, structured values are JSON-encoded so MCP consumers can parse
     them with ``jq`` or ``json.loads``.
+
+    On serialization failure (e.g., NaN/Infinity inside an otherwise-valid
+    structure, or a custom class whose ``__str__`` raises inside ``default=str``),
+    falls back to ``repr(first_value)`` — **not** ``str(first_value)`` — to match
+    CLI ``safe_output``'s fallback. The CLI also emits a stderr diagnostic in
+    this case; MCP returns strings so it cannot do that, and the divergence on
+    warning emission is accepted as a documented gap (see the Task 149 review).
     """
     if not result:
         return
@@ -283,7 +300,8 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
     try:
         lines.append(json.dumps(first_value, ensure_ascii=False, allow_nan=False, default=str))
     except (TypeError, ValueError):
-        lines.append(str(first_value))
+        # CLI safe_output falls back to repr(); match it for parity.
+        lines.append(repr(first_value))
 
 
 def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
@@ -311,6 +329,52 @@ def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
         noun = "node" if nodes_skipped == 1 else "nodes"
         return f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped"
     return f"  ⤷ Stopped after '{only_node}' (--only)"
+
+
+def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:
+    """Format shell-stderr warning block for nodes that exited 0 with non-empty stderr.
+
+    Single source of truth used by both:
+    - CLI ``cli/workflow_output.py::_display_stderr_warnings`` (emits via ``click.echo`` in a loop)
+    - MCP ``format_success_as_text`` below (extends the lines list)
+
+    Mirrors the CLI/MCP parity pattern established by ``format_only_indicator`` and
+    ``_append_outputs``. Without this helper, MCP text output would silently omit
+    shell-stderr warnings for workflows where a shell node wrote to stderr but
+    exited 0 — agents calling the MCP ``workflow_execute`` tool would get a
+    misleading ``✓ Workflow completed`` summary with no visibility into the
+    hidden shell pipeline failures.
+
+    Args:
+        steps: List of execution step dicts (may contain ``has_stderr`` and ``stderr`` fields)
+
+    Returns:
+        Lines to append to output. Empty list when no step has stderr warnings.
+        First line is a blank (to separate from preceding content); second is the
+        ``⚠️  Shell stderr (exit code 0):`` header; remaining lines are per-node
+        bullets with stderr previews truncated to 300 chars and multiline stderr
+        indented for readability.
+    """
+    stderr_warnings = [
+        (step.get("node_id", "unknown"), step.get("stderr", ""))
+        for step in steps
+        if step.get("has_stderr") and step.get("stderr")
+    ]
+
+    if not stderr_warnings:
+        return []
+
+    lines = ["", "⚠️  Shell stderr (exit code 0):"]
+    for node_id, stderr in stderr_warnings:
+        # Truncate long stderr to 300 chars
+        stderr_preview = stderr[:300]
+        if len(stderr) > 300:
+            stderr_preview += "..."
+        # Indent multiline stderr for readability
+        indented = stderr_preview.replace("\n", "\n     ")
+        lines.append(f"  • {node_id}: {indented}")
+
+    return lines
 
 
 def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None:

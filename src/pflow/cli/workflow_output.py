@@ -289,27 +289,19 @@ def _display_stderr_warnings(steps: list[dict[str, Any]]) -> None:
     This helps surface hidden errors from shell pipeline failures where
     intermediate commands fail but the overall exit code is 0.
 
+    Delegates to ``format_stderr_warnings`` in ``success_formatter.py`` so CLI
+    and MCP text output stay in lockstep (same bullet shape, same truncation,
+    same ⚠️ header). MCP consumers of this block are in
+    ``success_formatter.format_success_as_text``; any change to the block
+    shape must be made in the shared helper, not here.
+
     Args:
         steps: List of execution step dicts (may contain has_stderr and stderr fields)
     """
-    stderr_warnings = [
-        (step.get("node_id", "unknown"), step.get("stderr", ""))
-        for step in steps
-        if step.get("has_stderr") and step.get("stderr")
-    ]
+    from pflow.execution.formatters.success_formatter import format_stderr_warnings
 
-    if not stderr_warnings:
-        return
-
-    click.echo("\n⚠️  Shell stderr (exit code 0):", err=True)
-    for node_id, stderr in stderr_warnings:
-        # Truncate long stderr to 300 chars
-        stderr_preview = stderr[:300]
-        if len(stderr) > 300:
-            stderr_preview += "..."
-        # Indent multiline stderr for readability
-        indented = stderr_preview.replace("\n", "\n     ")
-        click.echo(f"  • {node_id}: {indented}", err=True)
+    for line in format_stderr_warnings(steps):
+        click.echo(line, err=True)
 
 
 def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:

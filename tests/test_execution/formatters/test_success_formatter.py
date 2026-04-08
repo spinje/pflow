@@ -12,6 +12,7 @@ from pflow.execution.formatters.success_formatter import (
     _truncate_error_message,
     format_execution_success,
     format_only_indicator,
+    format_stderr_warnings,
     format_success_as_text,
 )
 
@@ -857,6 +858,177 @@ class TestAppendOutputsCliMcpParity:
 
         # Must not raise, must contain something parseable as the date
         assert "2026-04-07" in text
+
+    def test_nan_output_falls_back_to_repr_without_raising(self):
+        """PARITY: Values that defeat ``default=str`` (e.g., NaN with
+        ``allow_nan=False``) must fall through to the ``repr()`` fallback —
+        **not** ``str()`` — to match CLI ``safe_output``.
+
+        ``allow_nan=False`` makes ``json.dumps`` raise ``ValueError`` on NaN
+        before ``default=str`` gets a chance, so a dict containing a NaN value
+        triggers the except clause. Before Task 149's review fix, MCP used
+        ``str(first_value)`` here while CLI used ``repr(first_value)`` — this
+        test locks them to the same fallback shape.
+        """
+        nan_value = {"x": float("nan")}
+        result_dict = self._make_result_dict_with_output(nan_value)
+        text = format_success_as_text(result_dict)
+
+        # Must not raise, must contain some non-empty representation
+        assert text
+        # The repr fallback is exercised (either "nan" or "NaN" visible somewhere)
+        assert "nan" in text.lower()
+
+
+class TestStderrWarningsCliMcpParity:
+    """Tests for ``format_stderr_warnings`` shared helper + MCP rendering parity.
+
+    PARITY GUARDRAIL — shell nodes that exit 0 but wrote to stderr are an
+    important agent signal (hidden pipeline failures). CLI ``_display_stderr_warnings``
+    has emitted a ``⚠️  Shell stderr (exit code 0):`` block and upgraded the
+    completion glyph from ``✓`` to ``⚠️`` since GH #194 shipped. The MCP side
+    (``format_success_as_text``) was silently missing both behaviors, so an
+    agent calling the MCP ``workflow_execute`` tool on a workflow with a
+    failing grep pipeline would see ``✓ Workflow completed`` with no visibility.
+
+    These tests lock CLI and MCP into the same rendering so that drift
+    between them is caught at test time rather than by a confused agent.
+    """
+
+    def _make_result_dict_with_stderr_step(
+        self,
+        *,
+        stderr_text: str = "warning: something wrong",
+        node_id: str = "run_pipeline",
+    ) -> dict:
+        """Build a minimal success dict with one shell step that wrote to stderr."""
+        return {
+            "success": True,
+            "status": "success",  # exit 0 — DEGRADED is not involved
+            "duration_ms": 100,
+            "execution": {
+                "nodes_executed": 1,
+                "nodes_total": 1,
+                "steps": [
+                    {
+                        "node_id": node_id,
+                        "status": "completed",
+                        "has_stderr": True,
+                        "stderr": stderr_text,
+                    }
+                ],
+            },
+            "result": {"output": "ok"},
+        }
+
+    def test_format_stderr_warnings_returns_empty_when_no_warnings(self):
+        """No steps with has_stderr → empty list (helper is a no-op signal)."""
+        lines = format_stderr_warnings([
+            {"node_id": "clean", "has_stderr": False, "stderr": ""},
+            {"node_id": "also_clean", "status": "completed"},
+        ])
+        assert lines == []
+
+    def test_format_stderr_warnings_skips_empty_stderr(self):
+        """has_stderr=True but empty stderr string → skipped.
+
+        Defensive: if the step dict has a stale has_stderr flag but no actual
+        stderr content, don't render an empty bullet.
+        """
+        lines = format_stderr_warnings([
+            {"node_id": "flagged_but_empty", "has_stderr": True, "stderr": ""},
+        ])
+        assert lines == []
+
+    def test_format_stderr_warnings_returns_header_and_bullet(self):
+        """Single stderr warning → blank line + header + one bullet."""
+        lines = format_stderr_warnings([
+            {"node_id": "grep_pipe", "has_stderr": True, "stderr": "grep: foo: No such file"},
+        ])
+        assert lines[0] == ""  # blank line separates from preceding content
+        assert "⚠️  Shell stderr (exit code 0):" in lines[1]
+        assert any("grep_pipe" in line and "No such file" in line for line in lines[2:])
+
+    def test_format_stderr_warnings_truncates_long_stderr(self):
+        """Stderr over 300 chars → truncated with ellipsis."""
+        long_stderr = "x" * 500
+        lines = format_stderr_warnings([
+            {"node_id": "noisy", "has_stderr": True, "stderr": long_stderr},
+        ])
+        bullet = next(line for line in lines if "noisy" in line)
+        assert "..." in bullet
+        # Bullet contains "x" * 300 + "..." (plus the "  • noisy: " prefix)
+        assert bullet.count("x") == 300
+
+    def test_format_stderr_warnings_indents_multiline_stderr(self):
+        """Multi-line stderr → each continuation line indented 5 spaces for readability."""
+        lines = format_stderr_warnings([
+            {"node_id": "multi", "has_stderr": True, "stderr": "first line\nsecond line"},
+        ])
+        bullet = next(line for line in lines if "multi" in line)
+        assert "first line" in bullet
+        assert "\n     second line" in bullet  # 5-space continuation indent
+
+    def test_mcp_text_upgrades_glyph_when_shell_node_wrote_stderr(self):
+        """REGRESSION: MCP ``format_success_as_text`` must render ``⚠️ Workflow completed``
+        (not ``✓``) when any step has ``has_stderr``, matching CLI behavior.
+
+        Before this fix, MCP callers got ``✓ Workflow completed in Xs`` for
+        workflows where a shell pipeline silently failed (e.g., a failed grep
+        inside a chain that produced a non-empty `final_result`). Agents relying
+        on the glyph to detect "something needs attention" saw a clean success.
+        """
+        result_dict = self._make_result_dict_with_stderr_step(stderr_text="ERR: upstream failed")
+        text = format_success_as_text(result_dict)
+
+        assert "⚠️ Workflow completed" in text
+        # Must NOT render the clean-success glyph
+        # (starts-with check avoids matching ``✓`` inside the stderr preview)
+        completion_lines = [line for line in text.split("\n") if "Workflow completed" in line]
+        assert completion_lines, f"No completion line in:\n{text}"
+        for line in completion_lines:
+            assert "✓" not in line, f"Completion line contains ✓ but shell stderr was present: {line!r}"
+
+    def test_mcp_text_renders_stderr_warning_block(self):
+        """REGRESSION: MCP ``format_success_as_text`` must include the
+        ``⚠️  Shell stderr (exit code 0):`` block + per-node bullet.
+        """
+        result_dict = self._make_result_dict_with_stderr_step(
+            stderr_text="grep: /tmp/missing: No such file or directory",
+            node_id="search_logs",
+        )
+        text = format_success_as_text(result_dict)
+
+        assert "⚠️  Shell stderr (exit code 0):" in text
+        assert "search_logs" in text
+        assert "No such file" in text
+
+    def test_mcp_text_clean_success_stays_clean(self):
+        """REGRESSION GUARD: workflows without shell stderr still get ``✓`` glyph
+        and no stderr block. Protects against over-correction where every
+        workflow starts showing ⚠️.
+        """
+        result_dict = {
+            "success": True,
+            "status": "success",
+            "duration_ms": 50,
+            "execution": {
+                "nodes_executed": 1,
+                "nodes_total": 1,
+                "steps": [
+                    {"node_id": "clean", "status": "completed", "has_stderr": False},
+                ],
+            },
+            "result": {"output": "ok"},
+        }
+        text = format_success_as_text(result_dict)
+
+        assert "✓ Workflow completed" in text
+        assert "Shell stderr" not in text
+        # Must not upgrade glyph
+        completion_lines = [line for line in text.split("\n") if "Workflow completed" in line]
+        for line in completion_lines:
+            assert "⚠️" not in line
 
 
 class TestFindAutoOutputNamespaceAware:
