@@ -1341,6 +1341,238 @@ $ grep -c "^cli:" err.txt    # 4  (all on stderr now)
 
 **16 of 18 review findings addressed.** Branch ready for final commit.
 
+## 2026-04-08 - Second-round code review evaluation (scratchpads/code-review-task149-pr-20260407-1.md)
+
+Evaluated an older 3-finding code review file that predated the 16-fix batch.
+Deployed 3 parallel ``pflow-codebase-searcher`` subagents to verify each
+finding against the CURRENT code state (not against my memory of the
+progress log). Then cross-read the relevant production files myself before
+rendering verdicts.
+
+### Findings evaluated
+
+**Finding #1 — Critical: 4 logger.warning sites still corrupt partial lines**
+
+Reviewer flagged ``shell.py:344`` (stdin JSON fallback), ``shell.py:456``
+(dangerous command detection), ``shell.py:648`` (shell timeout warning in
+post()), ``mcp/node.py:580`` (MCP Python repr parsing).
+
+**Verdict: Core claim disputed, secondary claim confirmed.**
+
+- All 4 sites still exist at exactly the flagged lines (verified by subagent)
+- BUT: both ``shell.py`` and ``mcp/node.py`` use ``logging.getLogger(__name__)``
+  (child loggers), so records propagate to the root logger's StreamHandler
+  and the ``_ProgressPartialLineFilter`` runs before each emit. The filter
+  architecturally handles all of them via propagation — they are protected
+  in production.
+- BUT the reviewer's secondary request ("add a real subprocess regression
+  test for at least the timeout path") is legitimate — there is zero
+  coverage for the shell.py:648 timeout warning interacting with live
+  progress rendering. → Actionable as test addition.
+
+**Finding #2 — Warning: CLI/MCP text output divergence**
+
+Two sub-issues:
+- Sub-A: Structured output formatting. CLI ``safe_output`` JSON-encodes,
+  MCP ``_append_outputs`` did ``str(first_value)``.
+- Sub-B: Shell stderr warnings. CLI has ``_display_stderr_warnings`` block
+  + ``has_stderr_warnings`` glyph upgrade; MCP ``success_formatter.py`` had
+  zero references to stderr.
+
+**Verdict: Sub-A happy path resolved (by earlier Fix #1 batch). Sub-A
+fallback divergence still present (LOW priority). Sub-B completely
+unaddressed — real gap.**
+
+- Sub-A happy path: `_append_outputs` now uses `json.dumps(..., default=str)`.
+  `TestAppendOutputsCliMcpParity` locks the parity.
+- Sub-A fallback: CLI falls back to ``repr(value)`` + stderr warning; MCP
+  fell back to ``str(first_value)`` silently. Alignment gap. Actionable.
+- Sub-B: confirmed. ``format_success_as_text`` has no ``has_stderr`` branch
+  and no stderr-warning rendering at all. MCP agents calling
+  ``workflow_execute`` on workflows with shell nodes that wrote stderr +
+  exit 0 would see ``✓ Workflow completed`` with zero visibility. Real
+  CLI/MCP parity gap. Actionable.
+
+**Finding #3 — Suggestion: vacuous test assertions**
+
+Reviewer: ``mock_compile`` fixture returns ``ExecutionResult(metrics=None)``;
+``_emit_summary_or_only_indicator`` short-circuits on ``if not metrics_collector:
+return``; therefore ``"Workflow completed" not in stderr`` assertions are
+vacuous — pass regardless of whether ``-p``/JSON suppression works.
+
+**Verdict: Confirmed and still applicable.**
+
+Verified:
+- ``mock_compile`` at ``test_workflow_output_handling.py:82-111`` returns
+  ``ExecutionResult(success=True, diagnostics=[], shared_after=shared_storage)``
+  — ``metrics`` defaults to ``None``
+- ``_emit_summary_or_only_indicator`` line 430-431: ``if not metrics_collector:
+  return`` — first statement in the function
+- ``test_print_mode_suppresses_progress_header_and_summary`` and
+  ``test_json_mode_suppresses_progress_header_and_summary`` both use
+  ``mock_compile`` → their ``"Workflow completed" not in stderr`` assertions
+  can never fail. Test theater.
+- Real coverage exists for ``-p`` mode in subprocess tests
+  (``test_print_mode_without_only_stays_silent``,
+  ``test_print_mode_with_only_emits_indicator``). NO subprocess test for
+  JSON mode suppression exists.
+- ``mock_compile`` is used by 22 tests — option (b) "update fixture to
+  provide metrics" has unacceptable cascade risk. Deletion + subprocess
+  replacement is the cleaner fix.
+
+### Actions implemented
+
+All four actions committed locally (not yet in git — awaiting PR).
+
+**Action [1] — MCP shell-stderr warning parity (Finding #2B)**
+
+- ``src/pflow/execution/formatters/success_formatter.py``:
+  - New ``format_stderr_warnings(steps) -> list[str]`` shared helper.
+    Single source of truth for the ``⚠️  Shell stderr (exit code 0):``
+    block. Returns empty list when no warnings. First line is blank
+    (separator); second is header; remaining are per-node bullets with
+    300-char truncation and 5-space multiline indent.
+  - ``format_success_as_text``: extracts ``has_stderr_warnings = any(step.get(
+    "has_stderr") for step in steps)``, adds ``elif has_stderr_warnings:``
+    branch that upgrades ``✓`` to ``⚠️`` (matching CLI), and calls
+    ``lines.extend(format_stderr_warnings(steps))`` after the execution
+    steps section.
+- ``src/pflow/cli/workflow_output.py::_display_stderr_warnings``: refactored
+  to delegate to the shared helper via ``for line in format_stderr_warnings(
+  steps): click.echo(line, err=True)``. No behavior change for CLI; just
+  routing through the shared helper to lock drift.
+- ``tests/test_execution/formatters/test_success_formatter.py``: new
+  ``TestStderrWarningsCliMcpParity`` class with 8 tests:
+  - ``test_format_stderr_warnings_returns_empty_when_no_warnings``
+  - ``test_format_stderr_warnings_skips_empty_stderr`` (defensive: flagged
+    but empty)
+  - ``test_format_stderr_warnings_returns_header_and_bullet``
+  - ``test_format_stderr_warnings_truncates_long_stderr`` (>300 chars)
+  - ``test_format_stderr_warnings_indents_multiline_stderr``
+  - ``test_mcp_text_upgrades_glyph_when_shell_node_wrote_stderr``
+  - ``test_mcp_text_renders_stderr_warning_block``
+  - ``test_mcp_text_clean_success_stays_clean`` (regression guard against
+    over-correcting ✓ to ⚠️)
+
+**Action [2] — Replace vacuous mocked suppression tests (Finding #3)**
+
+- ``tests/test_cli/test_workflow_output_handling.py``: deleted
+  ``test_print_mode_suppresses_progress_header_and_summary`` and
+  ``test_json_mode_suppresses_progress_header_and_summary``. Replaced with
+  an inline comment explaining why, pointing readers at the subprocess
+  tests that provide real coverage.
+- ``tests/test_cli/test_progress_streaming_subprocess.py``: added
+  ``test_json_mode_keeps_stderr_silent`` — real subprocess, minimal shell
+  workflow, asserts ``parsed["success"] is True`` and ``result.stderr.strip()
+  == ""``. This is the only JSON-mode stderr-silence regression guard.
+
+**Action [3] — Shell timeout subprocess regression test (Finding #1 secondary)**
+
+- ``tests/test_cli/test_progress_streaming_subprocess.py``: added
+  ``test_shell_timeout_warning_does_not_corrupt_progress_line`` — real
+  subprocess with ``sleep 10`` + ``timeout: 0.1``, asserts clean
+  ``timeout_node... ✗ Failed`` terminator and rejects the historical
+  corruption shapes (``timeout_node...WARNING:``, ``timeout_node...Command
+  timed``). Exercises both the ``logger.exception`` at ``shell.py:583``
+  (via ``subprocess.TimeoutExpired``) AND the ``logger.warning`` at
+  ``shell.py:648`` (from ``post()``).
+
+**Action [4] — CLI/MCP fallback alignment (Finding #2A edge case)**
+
+- ``src/pflow/execution/formatters/success_formatter.py::_append_outputs``:
+  changed ``lines.append(str(first_value))`` to ``lines.append(repr(first_value))``
+  in the except clause to match CLI ``safe_output``. Expanded docstring
+  explains the CLI stderr-warning divergence (accepted as documented gap
+  — MCP formatters return strings and can't emit side-channel warnings).
+- ``tests/test_execution/formatters/test_success_formatter.py``: added
+  ``test_nan_output_falls_back_to_repr_without_raising`` — uses
+  ``{"x": float("nan")}`` which triggers ``ValueError`` via ``allow_nan=False``
+  before ``default=str`` runs, exercising the except branch.
+
+### Bonus infrastructure fix: subprocess test ``PYTEST_CURRENT_TEST`` leak
+
+Action [3]'s timeout test **initially failed**, revealing a latent test
+infrastructure bug that had been silently invalidating logging-filter
+coverage in EVERY existing subprocess test.
+
+**Symptom**: The test caught actual corruption:
+```
+  timeout_node...Command timed out after 0.1 seconds
+Traceback (most recent call last):
+  File ".../shell.py", line 539, in exec
+    ...
+subprocess.TimeoutExpired: ...
+Command timed out
+ ✗ Failed
+```
+
+**Investigation**: Manually reproduced the corruption outside pytest (via
+a plain ``uv run pflow ...``) — got CLEAN output with proper ``ERROR:`` /
+``WARNING:`` log prefixes and correct ``timeout_node... ✗ Failed`` terminator.
+Reproduced the corruption with ``PYTEST_CURRENT_TEST="dummy" uv run pflow ...``
+— got exact same corruption the test was catching.
+
+**Root cause**: ``subprocess_env`` fixture did ``env = os.environ.copy()``
+which inherited ``PYTEST_CURRENT_TEST`` from pytest. In the child subprocess:
+1. ``cli/logging_config.py:27`` sees the marker and makes ``configure_logging``
+   a no-op (early return)
+2. Root logger has no ``StreamHandler`` installed
+3. Python's ``lastResort`` handler writes log records directly to ``sys.stderr``
+   (with no prefix, no filter pipeline)
+4. ``OutputController._install_log_partial_line_guard`` iterates
+   ``logging.getLogger().handlers`` and finds nothing — filter attaches to
+   ZERO handlers
+5. Any ``logger.*`` call during a progress partial line lands directly on
+   stderr, bypassing the filter entirely
+
+**This silently invalidated the "logger.* coordination" coverage of the
+existing subprocess tests**. The existing
+``test_failing_shell_node_progress_line_is_clean`` works because its
+corruption-causing ``logger.warning`` in ``shell.py:713`` was DELETED
+during Task 149 — not because the filter is functioning in tests.
+
+**Fix**: ``subprocess_env`` now does ``env.pop("PYTEST_CURRENT_TEST", None)``
+with a thorough docstring explaining the chain. Documented as an open
+fragility in Task 149's task-review.md (``configure_logging`` pytest
+bypass is a bear trap for future test authors).
+
+**Scope check**: verified the other ``PYTEST_CURRENT_TEST`` guards in
+production (``llm_config.py``, ``mcp_server/main.py``) are only hit from
+LLM-feature code paths. Current subprocess tests are all shell-only, so
+scrubbing the marker is safe. Future subprocess tests that use LLM features
+will need to mock the LLM detection path differently (documented in the
+fixture docstring).
+
+### Verification
+
+- ``make test``: **4673 passed** (+9 net vs main: +11 new tests − 2 deleted)
+  - +8 ``TestStderrWarningsCliMcpParity``
+  - +1 ``test_nan_output_falls_back_to_repr_without_raising``
+  - +1 ``test_json_mode_keeps_stderr_silent`` (subprocess)
+  - +1 ``test_shell_timeout_warning_does_not_corrupt_progress_line`` (subprocess)
+  - −2 vacuous mocked suppression tests
+- ``make check``: ruff + ruff-format + mypy + deptry all clean (one ruff-format
+  auto-fix on the new ``format_success_as_text`` edit)
+- Smoke-tested Action [1] end-to-end: ``format_success_as_text`` with a
+  shell-stderr step produces ``⚠️ Workflow completed`` + full ``⚠️  Shell
+  stderr (exit code 0):`` block with per-node bullet. Byte-exact parity
+  with CLI behavior.
+
+### Files modified (code review evaluation batch)
+
+Production:
+- ``src/pflow/cli/workflow_output.py`` (CLI helper delegation)
+- ``src/pflow/execution/formatters/success_formatter.py`` (shared helper +
+  glyph branch + repr fallback)
+
+Tests:
+- ``tests/test_cli/test_progress_streaming_subprocess.py`` (fixture fix +
+  2 new tests)
+- ``tests/test_cli/test_workflow_output_handling.py`` (2 deletions +
+  pointer comment)
+- ``tests/test_execution/formatters/test_success_formatter.py`` (9 new
+  tests across 2 classes)
+
 
 
 
