@@ -197,6 +197,45 @@ class TestExceptionToResultCategorization:
         assert "line" not in (result.errors[0].context or {})
         assert result.errors[0].suggestions is None
 
+    def test_workflow_validation_error_warnings_survive_via_kwarg(self):
+        """WorkflowValidationError.validation_warnings round-trips through
+        the exception-to-result boundary (PR #244 review Warning #3 follow-up).
+
+        Before the fix, warnings were smuggled via a dynamic
+        ``_pflow_validation_warnings`` attribute with ``# type: ignore[attr-defined]``.
+        After the fix, they're a first-class constructor kwarg on
+        ``WorkflowValidationError``, and ``_exception_to_result`` reads
+        ``exception.validation_warnings`` to include them in the final
+        ExecutionResult.diagnostics list.
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+        from pflow.core.exceptions import WorkflowValidationError
+
+        error = Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Validation Error",
+            message="structural failure",
+        )
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            source="validator",
+            message="cache lint: shell node without template inputs",
+            node_id="fetch",
+        )
+        exc = WorkflowValidationError(
+            validation_errors=[error],
+            validation_warnings=[warning],
+        )
+        result = self._run(exc)
+
+        # Error survives via to_diagnostics() pass-through
+        assert any(d.severity == Severity.ERROR and "structural failure" in d.message for d in result.diagnostics)
+        # Warning survives via the validation_warnings kwarg reader
+        assert any(d.severity == Severity.WARNING and "cache lint" in d.message for d in result.diagnostics), (
+            f"Expected warning to survive exception boundary, got: {result.diagnostics}"
+        )
+
 
 def test_node_valueerror_categorized_as_execution_failure():
     """E2E: ValueError raised inside a node gets 'execution_failure', not 'validation'.

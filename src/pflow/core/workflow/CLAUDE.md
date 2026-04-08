@@ -108,7 +108,7 @@ The entry point has YAML frontmatter for system metadata (timestamps, execution 
 
 ### validator.py
 
-Unified validation orchestrator. Replaces scattered validation that previously existed in multiple places.
+Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Every helper builds `Diagnostic` objects at the detection site with `context["path"]`, `similar_names`, `available_fields`, and `suggestions` populated by the producer. No string intermediates, no pattern-matching post-processing.
 
 **9-step validation pipeline**:
 1. Structural (IR schema) — always runs
@@ -117,9 +117,15 @@ Unified validation orchestrator. Replaces scattered validation that previously e
 4. Templates (variable resolution) — if params provided
 5. Node types (registry verification) — unless `skip_node_types=True`
 6. Output sources — validates `${node.key}` refs in outputs, with fuzzy "did you mean?" suggestions
-7. Unknown param warnings — flags params not in node interface metadata (warnings, not errors)
+7. Unknown param errors — hard errors for params not in node interface metadata, with fuzzy-matched valid keys
 8. Sub-workflow validation — recursive validation of referenced child workflows (file, saved name, inline IR)
 9. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
+
+**Pipeline order is load-bearing**: step 4 (templates) runs BEFORE step 5 (node types). Template validation silently skips unknown node types via `_register_node_outputs_from_registry` — step 5 produces the rich "Unknown node type" diagnostic. Reversing the order or making step 4 raise on unknown types produces duplicate diagnostics (one generic wrapper + one rich V6).
+
+**`_add_child_provenance` first-write-wins semantics** — sub-workflow diagnostics flow recursively up through nested parents. `sub_workflow_step` and `sub_workflow_path` use `dict.setdefault()` so the innermost wrapping (closest to the error) wins as recursion unwinds. This keeps structured provenance aligned with `node_id` and `context["path"]` (both of which already point at the deepest level). Regressing to overwrite semantics silently breaks 3-level nested workflows.
+
+**Dual-propagation-path dedup invariant** — child workflow warnings flow through BOTH this validator path (`_add_child_provenance`) AND the runtime path (`WorkflowExecutor._propagate_child_parser_warnings`). Both MUST use `format_child_provenance()` for the message, `node_id=d.node_id or step_id` for differentiating siblings, and `setdefault` for context keys. Divergence on any of these breaks `Diagnostic.__hash__` equality and dedup silently duplicates warnings.
 
 ### data_flow.py
 
@@ -151,7 +157,7 @@ Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g
 
 ## Key Lessons
 
-**Race condition (Task 24)**: Initial tests were too shallow. Only proper concurrent tests discovered a critical race condition in `WorkflowManager.save()`. Fixed with atomic `os.link()`. Lesson: always test with real threads for file I/O. See `.taskmaster/tasks/task_24/task-review.md`.
+**Concurrent save safety**: `WorkflowManager.save()` uses atomic `os.link()` for the final rename so two parallel saves of the same name don't produce a half-written directory. When testing file-I/O code in this package, use real threads (not `ThreadPoolExecutor` mocks) — single-threaded tests don't exercise the race conditions that tempfile+rename code paths are designed to guard against.
 
 **Content preservation**: Save operations store original markdown with YAML frontmatter prepended. The markdown body is never modified by metadata updates.
 

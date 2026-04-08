@@ -33,7 +33,7 @@ def validate_template_paths(
     node_outputs: dict[str, Any],
     workflow_ir: dict[str, Any],
     registry: Registry,
-) -> tuple[list[str], list[Diagnostic]]:
+) -> list[Diagnostic]:
     """Validate each template path exists in available sources.
 
     Wraps the per-template loop: for every template, checks existence
@@ -47,22 +47,22 @@ def validate_template_paths(
         registry: Registry instance
 
     Returns:
-        Tuple of (errors, warnings)
+        Validation diagnostics for missing paths and runtime-dependent warnings
     """
-    errors: list[str] = []
-    warnings: list[Diagnostic] = []
+    diagnostics: list[Diagnostic] = []
 
     for template in sorted(all_templates):
         is_valid, warning = validate_template_path(template, available_params, node_outputs, workflow_ir, registry)
 
         if warning:
-            warnings.append(warning)
+            diagnostics.append(warning)
 
         if not is_valid:
-            error = create_template_error(template, available_params, workflow_ir, node_outputs, registry)
-            errors.append(error)
+            diagnostics.append(
+                create_template_diagnostic(template, available_params, workflow_ir, node_outputs, registry)
+            )
 
-    return (errors, warnings)
+    return diagnostics
 
 
 # ---------------------------------------------------------------------------
@@ -312,14 +312,14 @@ def check_type_allows_traversal(
 # ---------------------------------------------------------------------------
 
 
-def create_template_error(
+def create_template_diagnostic(
     template: str,
     available_params: dict[str, Any],
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
     registry: Registry,
-) -> str:
-    """Create appropriate error message for missing template variable.
+) -> Diagnostic:
+    """Create appropriate diagnostic for missing template variable.
 
     Args:
         template: Template variable name
@@ -329,7 +329,7 @@ def create_template_error(
         registry: Registry instance
 
     Returns:
-        Error message string
+        Validation diagnostic
     """
     # Use smart split to preserve dots inside nested templates like ${item.field}
     parts = split_template_path(template)
@@ -340,17 +340,19 @@ def create_template_error(
     if enable_namespacing and "." in template:
         node_ids = get_node_ids(workflow_ir)
         if base_var in node_ids:
-            error = _create_node_reference_error(base_var, parts, template, workflow_ir, node_outputs, registry)
-            return _append_source_file_hint(error, template, workflow_ir)
+            diagnostic = _create_node_reference_diagnostic(
+                base_var, parts, template, workflow_ir, node_outputs, registry
+            )
+            return _attach_source_file_hint(diagnostic, template, workflow_ir)
 
     # Handle path templates (with dots)
     if "." in template:
-        error = _create_path_template_error(template, base_var, available_params, workflow_ir)
-        return _append_source_file_hint(error, template, workflow_ir)
+        diagnostic = _create_path_template_diagnostic(template, base_var, available_params, workflow_ir)
+        return _attach_source_file_hint(diagnostic, template, workflow_ir)
 
     # Handle simple templates
-    error = _create_simple_template_error(template, workflow_ir)
-    return _append_source_file_hint(error, template, workflow_ir)
+    diagnostic = _create_simple_template_diagnostic(template, workflow_ir)
+    return _attach_source_file_hint(diagnostic, template, workflow_ir)
 
 
 # ---------------------------------------------------------------------------
@@ -411,12 +413,15 @@ def _search_batch_items_for_source(
     return None
 
 
-def _append_source_file_hint(error: str, template: str, workflow_ir: dict[str, Any]) -> str:
-    """Append source file hint to error message if the template came from an external file."""
+def _attach_source_file_hint(diagnostic: Diagnostic, template: str, workflow_ir: dict[str, Any]) -> Diagnostic:
+    """Attach source file provenance to diagnostic context when available."""
+    from dataclasses import replace
+
     source_file = _find_template_source_file(template, workflow_ir)
-    if source_file:
-        error += f"\n  Loaded from file: {source_file}"
-    return error
+    if not source_file:
+        return diagnostic
+    new_context = {**(diagnostic.context or {}), "source_file": source_file}
+    return replace(diagnostic, context=new_context)
 
 
 # ---------------------------------------------------------------------------
@@ -453,15 +458,15 @@ def _get_input_description(variable: str, workflow_ir: dict[str, Any]) -> str:
     return ""
 
 
-def _create_node_reference_error(
+def _create_node_reference_diagnostic(
     base_var: str,
     parts: list[str],
     template: str,
     workflow_ir: dict[str, Any],
     node_outputs: dict[str, Any],
     registry: Registry,
-) -> str:
-    """Create error for node output references.
+) -> Diagnostic:
+    """Create diagnostic for node output references.
 
     Args:
         base_var: The base variable (node ID)
@@ -472,11 +477,24 @@ def _create_node_reference_error(
         registry: Registry instance
 
     Returns:
-        Error message for node reference issues
+        Validation diagnostic for node reference issues
     """
     # Missing output key
     if len(parts) == 1:
-        return f"Invalid template ${{{template}}} - node ID '{base_var}' requires an output key (e.g., ${{{base_var}}}.output_key)"
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Template Error",
+            message=(
+                f"Invalid template ${{{template}}} — node ID '{base_var}' requires an output key "
+                f"(for example: ${{{base_var}.output_key}})."
+            ),
+            context={
+                "category": "template_error",
+                "template": f"${{{template}}}",
+            },
+            suggestions=[f"Reference a concrete output, for example ${{{base_var}.output_key}}."],
+        )
 
     output_key = parts[1]
 
@@ -485,13 +503,23 @@ def _create_node_reference_error(
     if node:
         return _get_node_outputs_description(node, output_key, node_outputs, registry)
 
-    return f"Node '{base_var}' does not output '{output_key}'"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=base_var,
+        message=f"Node '{base_var}' does not output '{output_key}'.",
+        context={
+            "category": "template_error",
+            "template": f"${{{template}}}",
+        },
+    )
 
 
-def _create_path_template_error(
+def _create_path_template_diagnostic(
     template: str, base_var: str, available_params: dict[str, Any], workflow_ir: dict[str, Any]
-) -> str:
-    """Create error for path templates (with dots) that aren't node references.
+) -> Diagnostic:
+    """Create diagnostic for path templates (with dots) that aren't node references.
 
     Args:
         template: Full template string
@@ -500,69 +528,139 @@ def _create_path_template_error(
         workflow_ir: Workflow IR
 
     Returns:
-        Error message for path template issues
+        Validation diagnostic for path template issues
     """
     if base_var in available_params:
-        return f"Template path ${{{template}}} cannot be validated - initial_params values are runtime-dependent"
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Template Error",
+            message=f"Template path ${{{template}}} cannot be validated because initial params are runtime-dependent.",
+            context={
+                "category": "template_error",
+                "template": f"${{{template}}}",
+            },
+        )
 
     # Check if base variable is a declared input
     input_desc = _get_input_description(base_var, workflow_ir)
     path_component = template[len(base_var) + 1 :]
 
     if input_desc:
-        return (
-            f"Required input '${{{base_var}}}' not provided{input_desc} - attempted to access path '{path_component}'"
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Template Error",
+            message=(
+                f"Required input '${{{base_var}}}' not provided{input_desc} — attempted to access path "
+                f"'{path_component}'."
+            ),
+            context={
+                "category": "template_error",
+                "template": f"${{{template}}}",
+                "path": "inputs",
+            },
         )
 
     enable_namespacing = workflow_ir.get("enable_namespacing", True)
     if enable_namespacing:
-        return (
-            f"Template variable ${{{template}}} has no valid source - "
-            f"'${{{base_var}}}' is neither a workflow input nor a node ID in this workflow"
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Template Error",
+            message=(
+                f"Template variable ${{{template}}} has no valid source — '${{{base_var}}}' is neither "
+                f"a workflow input nor a node ID in this workflow."
+            ),
+            context={
+                "category": "template_error",
+                "template": f"${{{template}}}",
+            },
         )
-    else:
-        return (
-            f"Template variable ${{{template}}} has no valid source - "
-            f"not provided in initial_params and path '{path_component}' "
-            f"not found in outputs from any node in the workflow"
-        )
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        message=(
+            f"Template variable ${{{template}}} has no valid source — not provided in initial_params and "
+            f"path '{path_component}' not found in outputs from any node in the workflow."
+        ),
+        context={
+            "category": "template_error",
+            "template": f"${{{template}}}",
+        },
+        suggestions=["Provide the input at runtime or fix the template path to match an existing node output."],
+    )
 
 
-def _create_simple_template_error(template: str, workflow_ir: dict[str, Any]) -> str:
-    """Create error for simple templates without dots.
+def _create_simple_template_diagnostic(template: str, workflow_ir: dict[str, Any]) -> Diagnostic:
+    """Create diagnostic for simple templates without dots.
 
     Args:
         template: Template variable name
         workflow_ir: Workflow IR
 
     Returns:
-        Error message for simple template issues
+        Validation diagnostic for simple template issues
     """
     input_desc = _get_input_description(template, workflow_ir)
 
     if input_desc:
-        return f"Required input '${{{template}}}' not provided{input_desc}"
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Template Error",
+            message=f"Required input '${{{template}}}' not provided{input_desc}.",
+            context={
+                "category": "template_error",
+                "template": f"${{{template}}}",
+                "path": "inputs",
+            },
+        )
 
     # Check if it might be a node ID used incorrectly
     enable_namespacing = workflow_ir.get("enable_namespacing", True)
     if enable_namespacing:
         node_ids = get_node_ids(workflow_ir)
         if template in node_ids:
-            return (
-                f"Invalid template ${{{template}}} - this is a node ID. "
-                f"To reference node outputs, use ${{{template}}}.output_key format"
+            return Diagnostic(
+                severity=Severity.ERROR,
+                source="validator",
+                title="Template Error",
+                node_id=template,
+                message=(
+                    f"Invalid template ${{{template}}} — this is a node ID. To reference node outputs, use "
+                    f"${{{template}.output_key}} format."
+                ),
+                context={
+                    "category": "template_error",
+                    "template": f"${{{template}}}",
+                },
+                suggestions=[f"Use ${{{template}.output_key}} with a concrete output field."],
             )
 
-    return (
-        f"Template variable ${{{template}}} has no valid source - "
-        f"not provided in initial_params and not written by any node"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        message=(
+            f"Template variable ${{{template}}} has no valid source — not provided in initial_params and not "
+            f"written by any node."
+        ),
+        context={
+            "category": "template_error",
+            "template": f"${{{template}}}",
+        },
+        suggestions=[
+            "Provide the input at runtime or change the template to reference a declared input or node output."
+        ],
     )
 
 
-def format_enhanced_node_error(
+def _build_enhanced_node_diagnostic(
     node_id: str, node_type: str, attempted_key: str, available_paths: list[tuple[str, str]], base_var: str
-) -> str:
-    """Create multi-section error with available outputs and suggestions.
+) -> Diagnostic:
+    """Create structured diagnostic with available outputs and suggestions.
 
     Args:
         node_id: Node ID where error occurred
@@ -572,7 +670,7 @@ def format_enhanced_node_error(
         base_var: Base variable (node ID) for template construction
 
     Returns:
-        Multi-line error message with sections for problem, available outputs, and suggestions
+        Template diagnostic with structured suggestions and available fields
     """
     # Sanitize all user-controlled values to prevent template injection
     safe_node_id = sanitize_for_display(node_id)
@@ -580,67 +678,55 @@ def format_enhanced_node_error(
     safe_attempted_key = sanitize_for_display(attempted_key)
     safe_base_var = sanitize_for_display(base_var)
 
-    # Section 1: Problem statement
-    lines = [f"Node '{safe_node_id}' (type: {safe_node_type}) does not output '{safe_attempted_key}'"]
+    available_fields_display: list[str] = []
+    for path, type_str in available_paths[:MAX_DISPLAYED_FIELDS]:
+        safe_path = sanitize_for_display(path)
+        safe_type = sanitize_for_display(type_str)
+        full_path = f"{safe_base_var}.{safe_path}" if safe_base_var not in safe_path else safe_path
+        available_fields_display.append(f"${{{full_path}}} ({safe_type})")
 
-    # Section 2: Available outputs (limit to 20 to avoid overwhelming)
-    if available_paths:
-        lines.append("")
-        lines.append(f"Available outputs from '{safe_node_id}':")
-
-        display_paths = available_paths[:MAX_DISPLAYED_FIELDS]  # Limit display
-        for path, type_str in display_paths:
-            # Sanitize path components for safety
-            safe_path = sanitize_for_display(path)
-            safe_type = sanitize_for_display(type_str)
-
-            # Format with checkmark and type
-            full_path = f"{safe_base_var}.{safe_path}" if safe_base_var not in safe_path else safe_path
-            lines.append(f"  \u2713 ${{{full_path}}} ({safe_type})")
-
-        # Show truncation message if needed
-        if len(available_paths) > 20:
-            remaining = len(available_paths) - 20
-            lines.append(f"  ... and {remaining} more outputs")
-
-    # Section 3: Suggestions (find similar paths)
-    suggestions = find_similar_paths(attempted_key, available_paths)
-    if suggestions:
-        lines.append("")
-        if len(suggestions) == 1:
-            sugg_path, _ = suggestions[0]
+    similar = find_similar_paths(attempted_key, available_paths)
+    suggestions: list[str] = []
+    if similar:
+        fix_path, _ = similar[0]
+        full_fix = f"{base_var}.{fix_path}" if base_var not in fix_path else fix_path
+        suggestions.append(f"Change ${{{base_var}.{attempted_key}}} to ${{{full_fix}}}")
+        for sugg_path, _ in similar[1:]:
             safe_sugg_path = sanitize_for_display(sugg_path)
             full_sugg = f"{safe_base_var}.{safe_sugg_path}" if safe_base_var not in safe_sugg_path else safe_sugg_path
-            lines.append(f"Did you mean: ${{{full_sugg}}}?")
-        else:
-            lines.append("Did you mean one of these?")
-            for sugg_path, _ in suggestions:
-                safe_sugg_path = sanitize_for_display(sugg_path)
-                full_sugg = (
-                    f"{safe_base_var}.{safe_sugg_path}" if safe_base_var not in safe_sugg_path else safe_sugg_path
-                )
-                lines.append(f"  - ${{{full_sugg}}}")
-
-    # Section 4: Common fix (use first suggestion if available, otherwise first available path)
-    if suggestions:
-        fix_path, _ = suggestions[0]
-        full_fix = f"{base_var}.{fix_path}" if base_var not in fix_path else fix_path
-        lines.append("")
-        lines.append(f"Common fix: Change ${{{base_var}.{attempted_key}}} to ${{{full_fix}}}")
+            suggestions.append(f"Or use ${{{full_sugg}}}")
     elif available_paths:
-        # No suggestions, but we have paths - suggest the first one as generic fix
         first_path, _ = available_paths[0]
         full_first = f"{base_var}.{first_path}" if base_var not in first_path else first_path
-        lines.append("")
-        lines.append(f"Tip: Try using ${{{full_first}}} instead")
+        suggestions.append(f"Try ${{{full_first}}}")
 
-    return "\n".join(lines)
+    context: dict[str, Any] = {
+        "category": "template_error",
+        "node_type": node_type,
+        "available_fields": available_fields_display,
+        "available_fields_total": len(available_paths),
+        "available_fields_label": "outputs",
+    }
+    if similar:
+        context["similar_names"] = [
+            f"${{{safe_base_var}.{path}}}" if safe_base_var not in path else f"${{{path}}}" for path, _ in similar
+        ]
+
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id,
+        message=f"Node '{safe_node_id}' (type: {safe_node_type}) does not output '{safe_attempted_key}'.",
+        suggestions=suggestions or None,
+        context=context,
+    )
 
 
 def _get_node_outputs_description(
     node: dict[str, Any], output_key: str, node_outputs: dict[str, Any], registry: Registry
-) -> str:
-    """Get error message for missing node output with enhanced suggestions.
+) -> Diagnostic:
+    """Get diagnostic for missing node output with enhanced suggestions.
 
     Uses the pre-computed node_outputs dict (same source of truth as validation)
     to build accurate error messages. For batch nodes, detects whether the
@@ -653,7 +739,7 @@ def _get_node_outputs_description(
         registry: Registry instance for metadata lookup (fallback only)
 
     Returns:
-        Error message describing what outputs are available with suggestions
+        Diagnostic describing available outputs with suggestions
     """
     node_type = node.get("type", "unknown")
     node_id = node.get("id")
@@ -677,7 +763,7 @@ def _get_node_outputs_description(
     all_paths = build_paths_from_entries(node_entries)
 
     if all_paths:
-        return format_enhanced_node_error(
+        return _build_enhanced_node_diagnostic(
             node_id=node_id_str,
             node_type=node_type,
             attempted_key=output_key,
@@ -685,26 +771,52 @@ def _get_node_outputs_description(
             base_var=node_id_str,
         )
 
-    return f"Node '{node_id_str}' (type: {node_type}) does not produce any outputs"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id_str,
+        message=f"Node '{node_id_str}' (type: {node_type}) does not produce any outputs.",
+        context={
+            "category": "template_error",
+            "node_type": node_type,
+        },
+    )
 
 
-def _get_node_outputs_from_registry(node: dict[str, Any], output_key: str, registry: Registry) -> str:
-    """Fallback when node_outputs has no entries for a node.
+def _get_node_outputs_from_registry(node: dict[str, Any], output_key: str, registry: Registry) -> Diagnostic:
+    """Fallback when ``node_outputs`` has no entries for a node.
 
-    This is a defensive fallback that should not be reached in practice —
-    _extract_node_outputs() runs before error generation and registers
-    outputs for all nodes. Intentionally simple to avoid re-introducing
-    the registry-vs-batch divergence bug.
+    Reachable in two cases:
+    1. ``extract_node_outputs`` skipped the node because its type is unknown
+       (see ``_register_node_outputs_from_registry``'s silent-skip behavior —
+       ``WorkflowValidator._validate_node_types`` produces the rich
+       ``Unknown node type`` diagnostic, and this fallback supplies a
+       companion template error for any downstream refs to the unknown node).
+    2. Defensive backstop for any other path that reaches error generation
+       without the node's outputs being registered (should be rare).
+
+    Intentionally simple — kept minimal to avoid re-introducing the
+    registry-vs-batch divergence bug. Logs at debug level because the
+    unknown-node-type case is legitimate, not an internal consistency bug.
     """
     node_id = node.get("id", "unknown")
-    logger.warning(
-        f"node_outputs fallback reached for node '{node_id}' — this is unexpected",
+    logger.debug(
+        "node_outputs fallback reached for node '%s' (likely unknown node type)",
+        node_id,
         extra={"node_id": node_id, "output_key": output_key},
     )
-    return f"Node '{node_id}' does not output '{output_key}'"
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id,
+        message=f"Node '{node_id}' does not output '{output_key}'.",
+        context={"category": "template_error"},
+    )
 
 
-def _create_batch_error(node_id: str, node_type: str, attempted_key: str, node_entries: dict[str, Any]) -> str:
+def _create_batch_error(node_id: str, node_type: str, attempted_key: str, node_entries: dict[str, Any]) -> Diagnostic:
     """Create error message for batch node output access.
 
     Two cases:
@@ -720,7 +832,7 @@ def _create_batch_error(node_id: str, node_type: str, attempted_key: str, node_e
         node_entries: Dict of output_key -> output_info for this batch node
 
     Returns:
-        Error message string
+        Template diagnostic
     """
     safe_node_id = sanitize_for_display(node_id)
     safe_key = sanitize_for_display(attempted_key)
@@ -734,11 +846,11 @@ def _create_batch_error(node_id: str, node_type: str, attempted_key: str, node_e
     inner_field_exists = attempted_key in inner_structure
 
     if inner_field_exists:
-        return _format_batch_inner_field_error(safe_node_id, safe_key, node_entries)
+        return _build_batch_inner_field_diagnostic(safe_node_id, safe_key, node_entries)
 
     # Field doesn't exist in inner interface either — show standard batch outputs
     all_paths = build_paths_from_entries(node_entries)
-    return format_enhanced_node_error(
+    return _build_enhanced_node_diagnostic(
         node_id=safe_node_id,
         node_type=f"{node_type}, batch",
         attempted_key=attempted_key,
@@ -747,8 +859,8 @@ def _create_batch_error(node_id: str, node_type: str, attempted_key: str, node_e
     )
 
 
-def _format_batch_inner_field_error(node_id: str, attempted_key: str, node_entries: dict[str, Any]) -> str:
-    """Format error for accessing an inner node field on a batch node.
+def _build_batch_inner_field_diagnostic(node_id: str, attempted_key: str, node_entries: dict[str, Any]) -> Diagnostic:
+    """Build diagnostic for accessing an inner node field on a batch node.
 
     This is the targeted message shown when an agent writes ${node.llm_usage}
     but the node has batch processing — the field exists, just nested inside results.
@@ -759,28 +871,35 @@ def _format_batch_inner_field_error(node_id: str, attempted_key: str, node_entri
         node_entries: Dict of output_key -> output_info for this batch node
 
     Returns:
-        Multi-line error message with corrected path
+        Template diagnostic with corrected-path guidance
     """
     results_path = f"${{{node_id}.results}}"
     item_path = f"${{{node_id}.results[0].{attempted_key}}}"
-    col_width = max(len(results_path), len(item_path)) + 2
 
-    lines = [
-        f"Node '{node_id}' uses batch processing.",
-        f"'{attempted_key}' is not available at the top level — batch wraps outputs in a 'results' array.",
-        "",
-        f"  {results_path:<{col_width}} \u2192 list of all results",
-        f"  {item_path:<{col_width}} \u2192 first item's {attempted_key}",
-        "",
-        f"To aggregate across items, pass {results_path} to a code node and iterate.",
-    ]
-
-    # Also show all actual batch outputs for reference
-    lines.append("")
-    lines.append(f"Available top-level outputs from '{node_id}':")
+    available_fields: list[str] = []
     for key, info in node_entries.items():
         safe_key = sanitize_for_display(key)
         safe_type = sanitize_for_display(info.get("type", "any"))
-        lines.append(f"  \u2713 ${{{node_id}.{safe_key}}} ({safe_type})")
+        available_fields.append(f"${{{node_id}.{safe_key}}} ({safe_type})")
 
-    return "\n".join(lines)
+    return Diagnostic(
+        severity=Severity.ERROR,
+        source="validator",
+        title="Template Error",
+        node_id=node_id,
+        message=(
+            f"Node '{node_id}' uses batch processing. '{attempted_key}' is not available at the top level — "
+            "batch wraps outputs in a 'results' array."
+        ),
+        suggestions=[
+            f"Use {item_path} for a single item.",
+            f"Use {results_path} for the full results array.",
+            f"To aggregate across items, pass {results_path} to a code node and iterate.",
+        ],
+        context={
+            "category": "template_error",
+            "available_fields": available_fields,
+            "available_fields_total": len(available_fields),
+            "available_fields_label": "outputs",
+        },
+    )

@@ -78,9 +78,7 @@ Contains the Click command definition (`workflow_command`) and everything that c
 - Stdin routing: detects piped input, routes to workflow inputs marked `stdin: true`
 - Named workflow handling: parameter preparation, workflow help display
 
-**Task 138 thinning**: `execute_json_workflow` was rewritten from ~130 to ~55 lines. 8 functions removed (~250 lines): `_prepare_execution_environment`, `_cleanup_workflow_resources`, `_setup_execution_context`, `_perform_validation`, `_display_validation_results`, `_handle_validate_only_mode`, `_resolve_file_refs`, `_validate_before_execution`. All absorbed by `WorkflowRunner`.
-
-**If you need to extract more from main.py**: Functions that call `_echo_trace` or `ctx.exit()` can't move to `workflow_output.py` or `workflow_errors.py` without creating circular imports. Those modules import from each other but never back to main.py.
+**If you need to extract more from main.py**: Functions that call `_echo_trace` or `ctx.exit()` can't move to `workflow_output.py` or `workflow_errors.py` without creating circular imports. Those modules import from each other but never back to main.py. Compilation/execution setup logic lives in `WorkflowRunner` (in `execution/runner.py`), not here — if you're tempted to add a helper that mutates shared store or calls `compile_workflow()`, it probably belongs in the Runner.
 
 ## Output Behavior
 
@@ -132,7 +130,7 @@ Text-mode error display for `ExecutionResult` failures. `_display_text_error_det
 
 ## error_output.py
 
-Unified error output for ALL error types (Task 137). Single entry point: `output_error()` handles both JSON and text modes for both exceptions and `ExecutionResult` failures.
+Unified error output for ALL error types. Single entry point: `output_error()` handles both JSON and text modes for both exceptions and `ExecutionResult` failures. No error path in the CLI should bypass this — adding a new exception type means adding a `to_diagnostics()` override on the exception class, not a new special case here.
 
 - `format_error_json()` — builds unified JSON shape: `{success, status, error, errors, diagnostics, workflow}`
 - `display_exception_text()` — text-mode display using `exception_to_diagnostics()` + `format_diagnostic()`. No special cases — all exceptions go through the diagnostic pipeline.

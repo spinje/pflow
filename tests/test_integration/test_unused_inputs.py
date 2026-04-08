@@ -12,9 +12,11 @@ from pflow.core.file_resolver import resolve_file_references
 from pflow.core.ir_schema import normalize_ir
 from pflow.core.markdown_parser import parse_markdown
 from pflow.core.validation_utils import generate_dummy_parameters
-from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
-from pflow.runtime.template_validation import validate_workflow_templates
+from tests.shared.diagnostic_helpers import (
+    split_template_diagnostics,
+    split_validator_diagnostics,
+)
 from tests.shared.markdown_utils import write_workflow_file
 
 
@@ -120,16 +122,16 @@ def test_unused_inputs_detected_before_execution(tmp_path):
         # Note: unused_option and another_unused are not provided but have defaults or are optional
     }
 
-    errors, _warnings = validate_workflow_templates(workflow_ir, initial_params, registry)
+    errors, _warnings = split_template_diagnostics(workflow_ir, initial_params, registry)
 
     # Should detect the unused inputs
     assert len(errors) == 1
-    assert "Declared input(s) never used as template variable" in errors[0]
-    assert "another_unused" in errors[0]
-    assert "unused_option" in errors[0]
+    assert "Declared input(s) never used as template variable" in errors[0].message
+    assert "another_unused" in errors[0].message
+    assert "unused_option" in errors[0].message
 
     # The error should list them in sorted order
-    assert "another_unused, unused_option" in errors[0]
+    assert "another_unused, unused_option" in errors[0].message
 
 
 def test_workflow_with_all_inputs_used(tmp_path):
@@ -185,7 +187,7 @@ def test_workflow_with_all_inputs_used(tmp_path):
         "backup_file": str(tmp_path / "backup.txt"),
     }
 
-    errors, _warnings = validate_workflow_templates(workflow_ir, initial_params, registry)
+    errors, _warnings = split_template_diagnostics(workflow_ir, initial_params, registry)
 
     # Should have no errors since all inputs are used
     assert len(errors) == 0
@@ -232,11 +234,11 @@ def test_unused_inputs_with_nested_workflows(tmp_path):
 
     initial_params = {"config_path": str(tmp_path / "config.json")}
 
-    errors, _warnings = validate_workflow_templates(parent_workflow, initial_params, registry)
+    errors, _warnings = split_template_diagnostics(parent_workflow, initial_params, registry)
 
     # Should detect the unused debug flag
-    assert any("unused_debug_flag" in error for error in errors)
-    assert any("never used as template variable" in error for error in errors)
+    assert any("unused_debug_flag" in error.message for error in errors)
+    assert any("never used as template variable" in error.message for error in errors)
 
 
 def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) -> None:
@@ -313,7 +315,7 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
     dummy_params = generate_dummy_parameters(inputs)
     dummy_params["_pflow_workflow_file"] = str(parent_path)
 
-    errors, _warnings = WorkflowValidator.validate(
+    errors, _warnings = split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
         skip_node_types=True,
@@ -321,7 +323,7 @@ def test_no_false_positive_for_input_used_in_batch_prompt_files(tmp_path: Path) 
     )
 
     # No error should mention 'content' being unused in the sub-workflow
-    unused_errors = [e for e in errors if "unused" in e.lower() or "never used" in e.lower()]
+    unused_errors = [d for d in errors if "unused" in d.message.lower() or "never used" in d.message.lower()]
     assert unused_errors == [], f"Expected no unused-input errors, but got: {unused_errors}"
 
 
@@ -394,20 +396,20 @@ def test_genuinely_unused_input_still_caught_alongside_prompt_file_inputs(tmp_pa
     dummy_params = generate_dummy_parameters(ir.get("inputs", {}))
     dummy_params["_pflow_workflow_file"] = str(parent_path)
 
-    errors, _warnings = WorkflowValidator.validate(
+    errors, _warnings = split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
         skip_node_types=True,
         workflow_file=parent_path,
     )
 
-    unused_errors = [e for e in errors if "never used" in e.lower()]
+    unused_errors = [d for d in errors if "never used" in d.message.lower()]
     # debug_mode IS genuinely unused — must be caught
-    assert any("debug_mode" in e for e in unused_errors), (
+    assert any("debug_mode" in d.message for d in unused_errors), (
         f"Expected 'debug_mode' to be flagged as unused, but got: {errors}"
     )
     # content is used in the prompt file — must NOT be flagged
-    assert not any("content" in e for e in unused_errors), (
+    assert not any("content" in d.message for d in unused_errors), (
         f"'content' should not be flagged as unused (it's in the prompt file), but got: {unused_errors}"
     )
 
@@ -477,7 +479,7 @@ def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: 
     dummy_params = generate_dummy_parameters(inputs)
     dummy_params["_pflow_workflow_file"] = str(parent_path)
 
-    errors, _warnings = WorkflowValidator.validate(
+    errors, _warnings = split_validator_diagnostics(
         ir,
         extracted_params=dummy_params,
         skip_node_types=True,
@@ -485,7 +487,7 @@ def test_missing_prompt_file_in_sub_workflow_reports_validation_error(tmp_path: 
     )
 
     # Should produce a "not found" error from the file resolver, not a crash
-    not_found_errors = [e for e in errors if "not found" in e.lower()]
+    not_found_errors = [d for d in errors if "not found" in d.message.lower()]
     assert len(not_found_errors) >= 1, (
         f"Expected at least one 'not found' error for the missing prompt file, but got errors: {errors}"
     )

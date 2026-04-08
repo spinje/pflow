@@ -324,6 +324,11 @@ class WorkflowExecutor(BaseNode):
         - Sibling children with identical parser warnings don't collapse during dedup
           (dedup identity includes node_id)
         - Display shows which step produced each warning
+        - Structured JSON consumers see ``context['sub_workflow_step']`` (always)
+          and ``context['sub_workflow_path']`` (when the child workflow was loaded
+          by file path or registered name) — matching the validator path's
+          ``_add_child_provenance`` policy so the two propagation paths produce
+          equivalent diagnostics that deduplicate naturally.
         """
         if not getattr(self, "_child_parser_warnings", None):
             return
@@ -331,13 +336,23 @@ class WorkflowExecutor(BaseNode):
 
         parser_diagnostics = shared.setdefault("__parser_diagnostics__", [])
         step_id = getattr(self, "node_id", None)
+        workflow_ref = self.params.get("workflow")
         for d in self._child_parser_warnings:
-            if step_id:
-                parser_diagnostics.append(
-                    replace(d, message=format_child_provenance(step_id, d.message), node_id=step_id)
-                )
-            else:
+            if not step_id:
                 parser_diagnostics.append(d)
+                continue
+            new_context = dict(d.context or {})
+            new_context.setdefault("sub_workflow_step", step_id)
+            if isinstance(workflow_ref, str) and workflow_ref:
+                new_context.setdefault("sub_workflow_path", workflow_ref)
+            parser_diagnostics.append(
+                replace(
+                    d,
+                    message=format_child_provenance(step_id, d.message),
+                    node_id=d.node_id or step_id,
+                    context=new_context,
+                )
+            )
 
     @staticmethod
     def _expose_child_outputs(

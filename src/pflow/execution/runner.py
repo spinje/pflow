@@ -286,40 +286,20 @@ class WorkflowRunner:
             from pflow.registry import Registry
 
             registry = Registry()
-            errors, warnings = WorkflowValidator.validate(
+            validator_diagnostics = WorkflowValidator.validate(
                 workflow_ir=ir,
                 extracted_params=dummy_params,
                 registry=registry,
                 skip_node_types=False,
                 workflow_file=Path(file_path) if file_path else None,
             )
-            diagnostics = [
-                *resolved.diagnostics,
-                *warnings,
-                *[
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=error,
-                        title="Validation Error",
-                        source="validation",
-                        context={"category": "validation"},
-                    )
-                    for error in errors
-                ],
-            ]
-            if errors:
-                from pflow.core.validation_utils import generate_validation_suggestions
-
-                for suggestion in generate_validation_suggestions([
-                    {"message": error, "type": "validation"} for error in errors
-                ]):
-                    diagnostics.append(
-                        Diagnostic(
-                            severity=Severity.INFO,
-                            message=suggestion,
-                            source="validation",
-                        )
-                    )
+            diagnostics = [*resolved.diagnostics, *validator_diagnostics]
+            # Compute ``valid`` from the combined list, not only ``validator_diagnostics``.
+            # ``resolved.diagnostics`` only carries parser WARNINGs today, but the type
+            # system permits ERROR severity there, so checking the combined list makes
+            # the invariant explicit and hardens against future parser changes that add
+            # error-severity diagnostics at resolution time.
+            errors = [diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.ERROR]
 
             return ValidationResult(
                 valid=len(errors) == 0,
@@ -386,19 +366,21 @@ class WorkflowRunner:
 
         wf_path = params.get("_pflow_workflow_file")
         registry = Registry()
-        errors, warnings = WorkflowValidator.validate(
+        validator_diagnostics = WorkflowValidator.validate(
             workflow_ir=ir,
             extracted_params=params,
             registry=registry,
             skip_node_types=False,
             workflow_file=Path(wf_path) if wf_path else None,
         )
+        errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
+        warnings = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.WARNING]
 
         if errors:
-            # errors is list[str]; WorkflowValidationError accepts list[str | tuple]
-            error = WorkflowValidationError(validation_errors=errors)  # type: ignore[arg-type]
-            error._pflow_validation_warnings = list(warnings)  # type: ignore[attr-defined]
-            raise error
+            raise WorkflowValidationError(
+                validation_errors=errors,
+                validation_warnings=list(warnings),
+            )
 
         return warnings
 
@@ -558,9 +540,14 @@ class WorkflowRunner:
             for diagnostic in getattr(exception, "_pflow_parser_diagnostics", [])
             if isinstance(diagnostic, Diagnostic)
         ]
+        # validation_warnings is a first-class attribute on WorkflowValidationError
+        # (promoted from the previous ``_pflow_validation_warnings`` dynamic attr
+        # pattern). Kept as getattr here because ``exception`` is loosely typed
+        # at this layer — any exception can propagate through run(), and only
+        # WorkflowValidationError carries this attribute.
         exception_validation_warnings = [
             diagnostic
-            for diagnostic in getattr(exception, "_pflow_validation_warnings", [])
+            for diagnostic in getattr(exception, "validation_warnings", [])
             if isinstance(diagnostic, Diagnostic)
         ]
         diagnostics = deduplicate_diagnostics([

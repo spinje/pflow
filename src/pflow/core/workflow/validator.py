@@ -16,21 +16,44 @@ from pflow.runtime.template_resolver import TemplateResolver
 logger = logging.getLogger(__name__)
 
 
-def _add_child_provenance(warnings: list[Diagnostic] | tuple[Diagnostic, ...], step_id: str) -> list[Diagnostic]:
+def _add_child_provenance(
+    child_diagnostics: list[Diagnostic] | tuple[Diagnostic, ...],
+    step_id: str,
+    ref_label: str | None = None,
+) -> list[Diagnostic]:
     """Add sub-workflow provenance to child diagnostics.
 
     Prefixes the message with the parent step ID so that:
-    - Siblings with identical warnings don't collapse during dedup (different node_id)
-    - Display shows which step produced the warning
+    - Siblings with identical diagnostics don't collapse during dedup (different node_id)
+    - Display shows which step produced the diagnostic
 
     Uses ``format_child_provenance`` so the validation and runtime propagation
     paths produce identical diagnostics that dedup naturally.
+
+    For nested sub-workflows (parent → child → grandchild), ``sub_workflow_step``
+    and ``sub_workflow_path`` are first-write-wins: the innermost wrapping (closest
+    to the error) is preserved as recursion unwinds. This keeps the structured
+    provenance fields aligned with ``node_id`` and ``context['path']``, which both
+    point at the deepest level.
     """
     from dataclasses import replace
 
-    return [
-        replace(w, message=format_child_provenance(step_id, w.message), node_id=w.node_id or step_id) for w in warnings
-    ]
+    result: list[Diagnostic] = []
+    for diagnostic in child_diagnostics:
+        existing_context = diagnostic.context or {}
+        new_context = dict(existing_context)
+        new_context.setdefault("sub_workflow_step", step_id)
+        if ref_label:
+            new_context.setdefault("sub_workflow_path", ref_label)
+        result.append(
+            replace(
+                diagnostic,
+                message=format_child_provenance(step_id, diagnostic.message),
+                node_id=diagnostic.node_id or step_id,
+                context=new_context,
+            )
+        )
+    return result
 
 
 class WorkflowValidator:
@@ -50,7 +73,7 @@ class WorkflowValidator:
         workflow_file: Optional[Path] = None,
         _seen: Optional[set[str]] = None,
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
-    ) -> tuple[list[str], list[Diagnostic]]:
+    ) -> list[Diagnostic]:
         """Run complete workflow validation.
 
         Performs multiple validation checks:
@@ -75,63 +98,51 @@ class WorkflowValidator:
                 is produced (relative paths are also unresolvable at runtime).
 
         Returns:
-            Tuple of (errors, warnings):
-            - errors: List of validation errors that prevent execution
-            - warnings: List of Diagnostic objects for runtime-validated templates
+            Validation diagnostics. Severity distinguishes errors from warnings.
         """
-        errors: list[str] = []
-        warnings: list[Diagnostic] = []
+        diagnostics: list[Diagnostic] = []
 
         # 1. Structural validation (ALWAYS run)
-        struct_errors = WorkflowValidator._validate_structure(workflow_ir)
-        errors.extend(struct_errors)
+        diagnostics.extend(WorkflowValidator._validate_structure(workflow_ir))
 
         # 2. Stdin input validation (ALWAYS run - only one stdin: true allowed)
-        stdin_errors = WorkflowValidator._validate_stdin_inputs(workflow_ir)
-        errors.extend(stdin_errors)
+        diagnostics.extend(WorkflowValidator._validate_stdin_inputs(workflow_ir))
 
         # 3. Data flow validation (ALWAYS run)
-        flow_errors = WorkflowValidator._validate_data_flow(workflow_ir)
-        errors.extend(flow_errors)
+        diagnostics.extend(WorkflowValidator._validate_data_flow(workflow_ir))
 
         # 4. Template validation (if params provided)
         if extracted_params is not None:
             if registry is None:
                 registry = Registry()
-            template_errors, template_warnings = WorkflowValidator._validate_templates(
-                workflow_ir, extracted_params, registry
-            )
-            errors.extend(template_errors)
-            warnings.extend(template_warnings)
+            diagnostics.extend(WorkflowValidator._validate_templates(workflow_ir, extracted_params, registry))
 
         # 5. Node type validation (if not skipped)
         if not skip_node_types:
             if registry is None:
                 registry = Registry()
-            type_errors = WorkflowValidator._validate_node_types(workflow_ir, registry)
-            errors.extend(type_errors)
+            diagnostics.extend(WorkflowValidator._validate_node_types(workflow_ir, registry))
 
         # 6. Output source validation (ALWAYS run - validate output references)
-        output_errors, output_warnings = WorkflowValidator._validate_output_sources(workflow_ir, registry)
-        errors.extend(output_errors)
-        warnings.extend(output_warnings)
+        diagnostics.extend(WorkflowValidator._validate_output_sources(workflow_ir, registry))
 
         # 7. Unknown param errors
         # Only run if registry available (need interface metadata for param keys)
         if registry is not None:
-            unknown_param_errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
-            errors.extend(unknown_param_errors)
+            diagnostics.extend(WorkflowValidator._validate_unknown_params(workflow_ir, registry))
 
         # 8. Sub-workflow validation (recursive)
-        sub_errors, sub_parser_warnings = WorkflowValidator._validate_sub_workflows(
-            workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
+        diagnostics.extend(
+            WorkflowValidator._validate_sub_workflows(
+                workflow_ir, extracted_params, registry, _seen, _ir_cache, skip_node_types, workflow_file
+            )
         )
-        errors.extend(sub_errors)
-        warnings.extend(sub_parser_warnings)
 
         # 9. Cache lint — warn about input-less shell nodes
-        cache_warnings = WorkflowValidator._warn_inputless_shell_nodes(workflow_ir)
-        warnings.extend(cache_warnings)
+        diagnostics.extend(WorkflowValidator._warn_inputless_shell_nodes(workflow_ir))
+
+        errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+        warnings = [d for d in diagnostics if d.severity == Severity.WARNING]
 
         if errors:
             logger.debug(f"Validation found {len(errors)} errors")
@@ -140,17 +151,17 @@ class WorkflowValidator:
         else:
             logger.debug("Validation passed")
 
-        return (errors, warnings)
+        return diagnostics
 
     @staticmethod
-    def _validate_structure(workflow_ir: dict[str, Any]) -> list[str]:
+    def _validate_structure(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         """Validate IR structure and schema compliance.
 
         Args:
             workflow_ir: Workflow to validate
 
         Returns:
-            List of structural validation errors
+            Structural validation diagnostics
         """
         from pflow.core.ir_schema import validate_ir
 
@@ -158,21 +169,27 @@ class WorkflowValidator:
             validate_ir(workflow_ir)
             return []
         except SchemaValidationError as e:
-            # Use str(e) to get full error including suggestions
-            # ValidationError.__str__() includes path, message, and suggestions
-            return [f"Structure: {e}"]
+            return list(e.to_diagnostics())
         except Exception as e:
-            return [f"Structure: Unexpected error during validation: {e}"]
+            return [
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    message=f"Unexpected error during structural validation: {e}",
+                    context={"category": "validation"},
+                )
+            ]
 
     @staticmethod
-    def _validate_stdin_inputs(workflow_ir: dict[str, Any]) -> list[str]:
+    def _validate_stdin_inputs(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         """Validate that at most one input has stdin: true.
 
         Args:
             workflow_ir: Workflow to validate
 
         Returns:
-            List of stdin validation errors
+            Stdin validation diagnostics
         """
         inputs = workflow_ir.get("inputs", {})
         if not inputs:
@@ -182,33 +199,50 @@ class WorkflowValidator:
 
         if len(stdin_inputs) > 1:
             return [
-                f'Multiple inputs marked with "stdin": true: {", ".join(stdin_inputs)}. '
-                "Only one input can receive piped stdin."
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    message=(
+                        f'Multiple inputs marked with "stdin": true: {", ".join(stdin_inputs)}. '
+                        "Only one input can receive piped stdin."
+                    ),
+                    suggestions=["Mark only one workflow input with stdin: true."],
+                    context={"category": "validation", "path": "inputs"},
+                )
             ]
 
         return []
 
     @staticmethod
-    def _validate_data_flow(workflow_ir: dict[str, Any]) -> list[str]:
+    def _validate_data_flow(workflow_ir: dict[str, Any]) -> list[Diagnostic]:
         """Validate execution order and data dependencies.
 
         Args:
             workflow_ir: Workflow to validate
 
         Returns:
-            List of data flow validation errors
+            Data flow validation diagnostics
         """
         from pflow.core.workflow.data_flow import validate_data_flow
 
         try:
             return validate_data_flow(workflow_ir)
         except Exception as e:
-            return [f"Data flow validation error: {e!s}"]
+            return [
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    message=f"Data flow validation error: {e!s}",
+                    context={"category": "validation"},
+                )
+            ]
 
     @staticmethod
     def _validate_templates(
         workflow_ir: dict[str, Any], extracted_params: dict[str, Any], registry: Registry
-    ) -> tuple[list[str], list[Diagnostic]]:
+    ) -> list[Diagnostic]:
         """Validate template variables and parameters.
 
         Args:
@@ -217,20 +251,25 @@ class WorkflowValidator:
             registry: Node registry
 
         Returns:
-            Tuple of (errors, warnings):
-            - errors: List of template validation errors
-            - warnings: List of Diagnostic objects
+            Template validation diagnostics
         """
         from pflow.runtime.template_validation import validate_workflow_templates
 
         try:
-            errors, warnings = validate_workflow_templates(workflow_ir, extracted_params, registry)
-            return (errors, warnings)
+            return validate_workflow_templates(workflow_ir, extracted_params, registry)
         except Exception as e:
-            return ([f"Template validation error: {e!s}"], [])
+            return [
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Template Error",
+                    message=f"Template validation error: {e!s}",
+                    context={"category": "template_error"},
+                )
+            ]
 
     @staticmethod
-    def _validate_node_types(workflow_ir: dict[str, Any], registry: Registry) -> list[str]:
+    def _validate_node_types(workflow_ir: dict[str, Any], registry: Registry) -> list[Diagnostic]:
         """Validate all node types exist in registry.
 
         Args:
@@ -238,9 +277,11 @@ class WorkflowValidator:
             registry: Node registry
 
         Returns:
-            List of unknown node type errors
+            Node type validation diagnostics
         """
-        errors = []
+        from pflow.core.suggestion_utils import find_similar_items
+
+        diagnostics: list[Diagnostic] = []
 
         # Types handled specially by the compiler, not registered in the node registry
         compiler_special_types = {"workflow", "pflow.runtime.workflow_executor"}
@@ -256,19 +297,48 @@ class WorkflowValidator:
                 # Get metadata for these specific node types
                 metadata = registry.get_nodes_metadata(registry_types)
 
-                # Check if any are unknown
-                for node_type in registry_types:
-                    if node_type not in metadata:
-                        errors.append(f"Unknown node type: '{node_type}'")
-        except Exception as e:
-            errors.append(f"Registry validation error: {e!s}")
+                unknown_types = registry_types - set(metadata.keys())
+                known_types = sorted(metadata.keys())
 
-        return errors
+                for index, node in enumerate(workflow_ir.get("nodes", [])):
+                    node_type = node.get("type")
+                    if node_type in unknown_types:
+                        similar = (
+                            find_similar_items(node_type, known_types, max_results=3, method="fuzzy")
+                            if known_types
+                            else []
+                        )
+                        diagnostics.append(
+                            Diagnostic(
+                                severity=Severity.ERROR,
+                                source="validator",
+                                title="Validation Error",
+                                node_id=node.get("id", "unknown"),
+                                message=f"Unknown node type: '{node_type}'",
+                                suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+                                context={
+                                    "category": "validation",
+                                    "path": f"nodes[{index}].type",
+                                    "node_type": node_type,
+                                    "similar_names": similar or None,
+                                },
+                            )
+                        )
+        except Exception as e:
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Validation Error",
+                    message=f"Registry validation error: {e!s}",
+                    context={"category": "validation"},
+                )
+            )
+
+        return diagnostics
 
     @staticmethod
-    def _validate_output_sources(
-        workflow_ir: dict[str, Any], registry: Optional[Registry] = None
-    ) -> tuple[list[str], list[Diagnostic]]:
+    def _validate_output_sources(workflow_ir: dict[str, Any], registry: Optional[Registry] = None) -> list[Diagnostic]:
         """Validate that workflow outputs reference valid nodes and output keys.
 
         This validation ensures that output source fields (when specified) point to
@@ -283,17 +353,14 @@ class WorkflowValidator:
             registry: Optional registry for enhanced validation (not used in v1)
 
         Returns:
-            Tuple of (errors, warnings):
-            - errors: List of validation errors (non-existent node references)
-            - warnings: List of warnings (template variables, etc.)
+            Output source validation diagnostics
         """
-        errors: list[str] = []
-        warnings: list[Diagnostic] = []
+        diagnostics: list[Diagnostic] = []
 
         # Early return if no outputs defined
         outputs = workflow_ir.get("outputs", {})
         if not outputs:
-            return (errors, warnings)
+            return diagnostics
 
         # Build nodes map for O(1) lookup
         nodes_map = {node["id"]: node for node in workflow_ir.get("nodes", [])}
@@ -312,15 +379,23 @@ class WorkflowValidator:
 
             # Validate source is non-empty string
             if not isinstance(source, str) or not source.strip():
-                errors.append(
-                    f"Output '{output_name}' has empty source field. Use 'node_id' or 'node_id.output_key' format."
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        message=(
+                            f"Output '{output_name}' has empty source field. Use 'node_id' or "
+                            "'node_id.output_key' format."
+                        ),
+                        context={"category": "validation", "path": f"outputs.{output_name}.source"},
+                    )
                 )
                 continue
 
             # Validate templates instead of skipping
             if "${" in source:
-                template_errors = WorkflowValidator._validate_template_in_source(output_name, source, nodes_map)
-                errors.extend(template_errors)
+                diagnostics.extend(WorkflowValidator._validate_template_in_source(output_name, source, nodes_map))
                 continue
 
             # Parse source format: "node_id.output_key" or "node_id"
@@ -333,18 +408,17 @@ class WorkflowValidator:
 
             # Validate node exists
             if node_id not in nodes_map:
-                error_msg = WorkflowValidator._format_node_not_found_error(output_name, node_id, nodes_map)
-                errors.append(error_msg)
+                diagnostics.append(WorkflowValidator._build_node_not_found_diagnostic(output_name, node_id, nodes_map))
                 continue
 
             # Note: Output key validation skipped in v1
             # We don't have reliable node output metadata at validation time
             # This could be added in future versions when registry has full interface specs
 
-        return (errors, warnings)
+        return diagnostics
 
     @staticmethod
-    def _validate_template_in_source(output_name: str, source: str, nodes_map: dict[str, Any]) -> list[str]:
+    def _validate_template_in_source(output_name: str, source: str, nodes_map: dict[str, Any]) -> list[Diagnostic]:
         """Validate template variable references in output source.
 
         Validates that ${node.key} templates reference existing nodes.
@@ -356,20 +430,30 @@ class WorkflowValidator:
             nodes_map: Map of node IDs to definitions
 
         Returns:
-            List of error messages (empty if valid)
+            Validation diagnostics (empty if valid)
         """
-        errors = []
+        diagnostics: list[Diagnostic] = []
 
         # Extract template variables: ${...}
         matches = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.findall(source)
 
         if not matches:
             # Has ${ but malformed
-            errors.append(
-                f"Output '{output_name}' has malformed template: '{source}'\n"
-                f"Use format: ${{variable}} or ${{node.output_key}}"
+            diagnostics.append(
+                Diagnostic(
+                    severity=Severity.ERROR,
+                    source="validator",
+                    title="Template Error",
+                    message=f"Output '{output_name}' has malformed template: '{source}'.",
+                    suggestions=["Use format: ${variable} or ${node.output_key}."],
+                    context={
+                        "category": "template_error",
+                        "path": f"outputs.{output_name}.source",
+                        "template": source,
+                    },
+                )
             )
-            return errors
+            return diagnostics
 
         # Validate each template
         for template_var in matches:
@@ -386,93 +470,81 @@ class WorkflowValidator:
 
                 # Validate node exists
                 if node_id not in nodes_map:
-                    error_msg = WorkflowValidator._format_template_node_error(
-                        output_name, source, node_id, output_key, nodes_map
+                    diagnostics.append(
+                        WorkflowValidator._build_template_node_diagnostic(
+                            output_name, source, node_id, output_key, nodes_map
+                        )
                     )
-                    errors.append(error_msg)
 
-        return errors
-
-    @staticmethod
-    def _format_node_not_found_error(output_name: str, node_id: str, nodes_map: dict[str, Any]) -> str:
-        """Format error for plain reference to non-existent node."""
-        available = sorted(nodes_map.keys())
-
-        lines = [f"Output '{output_name}' references non-existent node '{node_id}'."]
-
-        if available:
-            lines.append(f"\nAvailable nodes: {', '.join(available)}")
-
-            # Fuzzy match suggestions
-            from pflow.core.suggestion_utils import find_similar_items
-
-            similar = find_similar_items(node_id, available, max_results=3, method="fuzzy")
-
-            if similar:
-                lines.append("\nDid you mean?")
-                for suggestion in similar:
-                    lines.append(f"  - {suggestion}")
-        else:
-            lines.append("\nWorkflow has no nodes.")
-
-        return "\n".join(lines)
+        return diagnostics
 
     @staticmethod
-    def _format_template_node_error(
+    def _build_node_not_found_diagnostic(
         output_name: str,
-        source: str,
-        node_id: str,
-        output_key: str | None,
+        missing_node_id: str,
         nodes_map: dict[str, Any],
-    ) -> str:
-        """Format enhanced error for template reference (follows template_validator pattern).
-
-        This provides the "gold standard" error format:
-        - Problem statement
-        - Available options
-        - Suggestions with fuzzy matching
-        - Concrete fix
-        """
-        available = sorted(nodes_map.keys())
-
-        # Section 1: Problem
-        lines = [
-            f"Output '{output_name}' source references non-existent node '{node_id}'",
-            f"Template: {source}",
-        ]
-
-        # Section 2: Available nodes
-        if available:
-            lines.append("\nAvailable nodes in workflow:")
-            for node in available[:10]:
-                lines.append(f"  ✓ {node}")
-            if len(available) > 10:
-                lines.append(f"  ... and {len(available) - 10} more")
-        else:
-            lines.append("\nWorkflow has no nodes.")
-            return "\n".join(lines)
-
-        # Section 3: Suggestions (fuzzy match)
+    ) -> Diagnostic:
+        """Build diagnostic for plain reference to non-existent node."""
         from pflow.core.suggestion_utils import find_similar_items
 
-        similar = find_similar_items(node_id, available, max_results=3, method="fuzzy")
+        available = sorted(nodes_map.keys())
+        similar = find_similar_items(missing_node_id, available, max_results=3, method="fuzzy") if available else []
 
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Validation Error",
+            message=f"Output '{output_name}' references non-existent node '{missing_node_id}'.",
+            suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+            context={
+                "category": "validation",
+                "path": f"outputs.{output_name}.source",
+                "available_fields": available,
+                "available_fields_total": len(available),
+                "available_fields_label": "nodes",
+                "similar_names": similar or None,
+            },
+        )
+
+    @staticmethod
+    def _build_template_node_diagnostic(
+        output_name: str,
+        source: str,
+        missing_node_id: str,
+        output_key: str | None,
+        nodes_map: dict[str, Any],
+    ) -> Diagnostic:
+        """Build structured diagnostic for template reference to missing node."""
+        from pflow.core.suggestion_utils import find_similar_items
+
+        available = sorted(nodes_map.keys())
+        similar = find_similar_items(missing_node_id, available, max_results=3, method="fuzzy") if available else []
+
+        suggestions: list[str] = []
         if similar:
-            lines.append("\nDid you mean one of these?")
-            for suggestion in similar:
-                # Reconstruct template with correct node
-                corrected = f"${{{suggestion}.{output_key}}}" if output_key else f"${{{suggestion}}}"
-                lines.append(f"  - {corrected}")
-
-            # Section 4: Concrete fix
             best = similar[0]
             corrected = f"${{{best}.{output_key}}}" if output_key else f"${{{best}}}"
+            suggestions.append(f'Change "{source}" to "{corrected}"')
+            for suggestion in similar[1:]:
+                alternative = f"${{{suggestion}.{output_key}}}" if output_key else f"${{{suggestion}}}"
+                suggestions.append(f"Or use {alternative}")
 
-            lines.append("\nSuggested fix:")
-            lines.append(f'  Change: "{source}"')
-            lines.append(f'  To:     "{corrected}"')
-
-        return "\n".join(lines)
+        return Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            title="Template Error",
+            message=f"Output '{output_name}' source references non-existent node '{missing_node_id}'.",
+            suggestions=suggestions or None,
+            context={
+                "category": "template_error",
+                "path": f"outputs.{output_name}.source",
+                "template": source,
+                "available_fields": available,
+                "available_fields_total": len(available),
+                "available_fields_label": "nodes",
+                "similar_names": similar or None,
+            },
+        )
 
     # =========================================================================
     # Unknown Param Errors (Step 7)
@@ -494,7 +566,7 @@ class WorkflowValidator:
     def _validate_unknown_params(
         workflow_ir: dict[str, Any],
         registry: Registry,
-    ) -> list[str]:
+    ) -> list[Diagnostic]:
         """Validate that node parameters are recognized by the node's interface.
 
         Compares each node's params keys against the known params from registry
@@ -506,7 +578,7 @@ class WorkflowValidator:
             registry: Node registry for interface metadata
 
         Returns:
-            List of error strings for unknown parameters
+            Diagnostics for unknown parameters
         """
         from pflow.core.suggestion_utils import find_similar_items
 
@@ -514,14 +586,14 @@ class WorkflowValidator:
         # the node's declared interface (handled by the wrapper chain)
         framework_keys = frozenset({"inputs"})
 
-        error_list: list[str] = []
+        diagnostics: list[Diagnostic] = []
 
         try:
             node_types = {node.get("type") for node in workflow_ir.get("nodes", []) if node.get("type")}
             nodes_metadata = registry.get_nodes_metadata(node_types) if node_types else {}
         except Exception as e:
             logger.debug(f"Could not load registry metadata for unknown param validation: {e}")
-            return error_list
+            return diagnostics
 
         for node in workflow_ir.get("nodes", []):
             node_id = node.get("id", "unknown")
@@ -539,16 +611,29 @@ class WorkflowValidator:
 
             for param_key in params:
                 if param_key not in known_keys and param_key not in framework_keys:
-                    valid_params = ", ".join(sorted(known_keys))
-                    msg = f"Node '{node_id}' ({node_type}): unknown parameter '{param_key}'."
-                    similar = find_similar_items(param_key, sorted(known_keys), max_results=2, method="fuzzy")
-                    if similar:
-                        suggestions = ", ".join(f"'{s}'" for s in similar)
-                        msg += f" Did you mean {suggestions}?"
-                    msg += f" Valid parameters: {valid_params}"
-                    error_list.append(msg)
+                    sorted_known = sorted(known_keys)
+                    similar = find_similar_items(param_key, sorted_known, max_results=2, method="fuzzy")
+                    diagnostics.append(
+                        Diagnostic(
+                            severity=Severity.ERROR,
+                            source="validator",
+                            title="Validation Error",
+                            node_id=node_id,
+                            message=f"Unknown parameter '{param_key}' on node '{node_id}' (type: {node_type}).",
+                            suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
+                            context={
+                                "category": "validation",
+                                "path": f"nodes[id={node_id}].params.{param_key}",
+                                "node_type": node_type,
+                                "available_fields": sorted_known,
+                                "available_fields_total": len(sorted_known),
+                                "available_fields_label": "parameters",
+                                "similar_names": similar or None,
+                            },
+                        )
+                    )
 
-        return error_list
+        return diagnostics
 
     # =========================================================================
     # Sub-Workflow Validation (Step 8)
@@ -563,7 +648,7 @@ class WorkflowValidator:
         _ir_cache: Optional[dict[str, tuple[dict[str, Any], Optional[Path]]]] = None,
         skip_node_types: bool = False,
         workflow_file: Optional[Path] = None,
-    ) -> tuple[list[str], list[Diagnostic]]:
+    ) -> list[Diagnostic]:
         """Recursively validate sub-workflow references.
 
         For each workflow-type node, loads the child workflow and runs
@@ -574,8 +659,7 @@ class WorkflowValidator:
         from pflow.core.ir_schema import normalize_ir
         from pflow.core.validation_utils import generate_dummy_parameters
 
-        errors: list[str] = []
-        parser_warnings: list[Diagnostic] = []
+        diagnostics: list[Diagnostic] = []
         seen = _seen if _seen is not None else set()
         # Cache loaded child IRs so duplicate references can still run the input check.
         # Shared across recursion levels so a grandchild validated via one path
@@ -601,8 +685,8 @@ class WorkflowValidator:
                 already_seen,
                 child_parser_warnings,
             ) = WorkflowValidator._load_child_workflow(node_id, params, seen, ir_cache, workflow_file)
-            errors.extend(load_errors)
-            parser_warnings.extend(_add_child_provenance(child_parser_warnings, node_id))
+            diagnostics.extend(load_errors)
+            diagnostics.extend(_add_child_provenance(child_parser_warnings, node_id, ref_label))
 
             if child_ir is None or "nodes" not in child_ir:
                 continue
@@ -618,13 +702,26 @@ class WorkflowValidator:
                     try:
                         resolve_file_references(child_ir, child_path.parent)
                     except (FileNotFoundError, OSError, UnicodeDecodeError) as e:
-                        errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}")
+                        diagnostics.append(
+                            Diagnostic(
+                                severity=Severity.ERROR,
+                                source="validator",
+                                title="Validation Error",
+                                node_id=node_id,
+                                message=f"In sub-workflow '{ref_label}' (step '{node_id}'): {e}",
+                                context={
+                                    "category": "validation",
+                                    "sub_workflow_path": ref_label,
+                                    "sub_workflow_step": node_id,
+                                },
+                            )
+                        )
                         continue
 
             # Static required-input check — always runs, even for already-seen children,
             # because each parent node may provide different params.
             child_inputs = child_ir.get("inputs", {})
-            errors.extend(WorkflowValidator._check_required_inputs(node_id, ref_label, params, child_inputs))
+            diagnostics.extend(WorkflowValidator._check_required_inputs(node_id, ref_label, params, child_inputs))
 
             # Recursive validation — skip if this child was already validated
             if not already_seen:
@@ -632,7 +729,7 @@ class WorkflowValidator:
                 if child_path:
                     dummy_params["_pflow_workflow_file"] = str(child_path)
 
-                child_errors, child_warnings = WorkflowValidator.validate(
+                child_diagnostics = WorkflowValidator.validate(
                     child_ir,
                     extracted_params=dummy_params,
                     registry=registry,
@@ -641,11 +738,9 @@ class WorkflowValidator:
                     _seen=seen,
                     _ir_cache=ir_cache,
                 )
-                for err in child_errors:
-                    errors.append(f"In sub-workflow '{ref_label}' (step '{node_id}'): {err}")
-                parser_warnings.extend(_add_child_provenance(child_warnings, node_id))
+                diagnostics.extend(_add_child_provenance(child_diagnostics, node_id, ref_label))
 
-        return errors, parser_warnings
+        return diagnostics
 
     @staticmethod
     def _check_required_inputs(
@@ -653,23 +748,38 @@ class WorkflowValidator:
         ref_label: str,
         parent_params: dict[str, Any],
         child_inputs: dict[str, Any],
-    ) -> list[str]:
+    ) -> list[Diagnostic]:
         """Check that all required child inputs are provided by the parent node."""
         from pflow.runtime.workflow_executor import WorkflowExecutor
 
-        errors: list[str] = []
+        diagnostics: list[Diagnostic] = []
         parent_keys = {k for k in parent_params if k not in WorkflowExecutor.RESERVED_PARAMS and not k.startswith("__")}
         for input_name, input_spec in child_inputs.items():
             is_required = input_spec.get("required", True)
             has_default = "default" in input_spec
             if is_required and not has_default and input_name not in parent_keys:
-                available = ", ".join(sorted(child_inputs.keys()))
-                errors.append(
-                    f"Step '{node_id}': sub-workflow '{ref_label}' requires "
-                    f"input '{input_name}' but it is not provided. "
-                    f"Available inputs: {available}"
+                sorted_inputs = sorted(child_inputs.keys())
+                diagnostics.append(
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node_id,
+                        message=(
+                            f"Step '{node_id}': sub-workflow '{ref_label}' requires input '{input_name}' "
+                            "but it is not provided."
+                        ),
+                        context={
+                            "category": "validation",
+                            "sub_workflow_path": ref_label,
+                            "sub_workflow_step": node_id,
+                            "available_fields": sorted_inputs,
+                            "available_fields_total": len(sorted_inputs),
+                            "available_fields_label": "required inputs",
+                        },
+                    )
                 )
-        return errors
+        return diagnostics
 
     @staticmethod
     def _load_child_workflow(
@@ -678,7 +788,7 @@ class WorkflowValidator:
         seen: set[str],
         ir_cache: dict[str, tuple[dict[str, Any], Optional[Path]]],
         workflow_file: Optional[Path] = None,
-    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[str], bool, tuple[Diagnostic, ...]]:
+    ) -> tuple[Optional[dict[str, Any]], Optional[Path], str, list[Diagnostic], bool, tuple[Diagnostic, ...]]:
         """Load a child workflow from inline IR, file reference, or saved name.
 
         Returns:
@@ -708,7 +818,27 @@ class WorkflowValidator:
                 if ref_label
                 else f"Step '{node_id}': failed to load sub-workflow: {e}"
             )
-            return None, None, ref_label, [msg], False, ()
+            return (
+                None,
+                None,
+                ref_label,
+                [
+                    Diagnostic(
+                        severity=Severity.ERROR,
+                        source="validator",
+                        title="Validation Error",
+                        node_id=node_id,
+                        message=msg,
+                        context={
+                            "category": "validation",
+                            "sub_workflow_path": ref_label or None,
+                            "sub_workflow_step": node_id,
+                        },
+                    )
+                ],
+                False,
+                (),
+            )
 
         # None means template ref or missing — skip silently
         if result is None:

@@ -68,51 +68,32 @@ class WorkflowNotFoundError(PflowError):
 
 
 class WorkflowValidationError(PflowError):
-    """Raised when workflow validation fails."""
+    """Raised when workflow validation fails.
+
+    Carries both the blocking errors (``validation_errors``) and any
+    warnings produced during the same validation pass (``validation_warnings``).
+    The warnings are legitimate diagnostics that the user should still see
+    alongside the errors — they're captured at raise time so downstream
+    exception-to-result conversion can surface them without needing access
+    to the original shared store.
+    """
 
     def __init__(
         self,
         summary: str = "Workflow validation failed",
-        validation_errors: list[str | tuple[str, str, str]] | None = None,
+        validation_errors: list[Diagnostic] | None = None,
+        validation_warnings: list[Diagnostic] | None = None,
     ):
         self.summary = summary
         self.validation_errors = validation_errors or []
+        self.validation_warnings = validation_warnings or []
         super().__init__(summary)
 
     def to_diagnostics(self) -> list[Diagnostic]:
-        diagnostics: list[Diagnostic] = []
-        for error in self.validation_errors:
-            if isinstance(error, tuple):
-                message = error[0] if len(error) >= 1 else str(self)
-                path = error[1] if len(error) >= 2 else ""
-                suggestion_str = error[2] or None if len(error) >= 3 else None
-                ctx: dict[str, Any] = {"category": "validation"}
-                if path:
-                    ctx["path"] = path
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=message,
-                        title="Validation Error",
-                        suggestions=[suggestion_str] if suggestion_str else None,
-                        source="validation",
-                        context=ctx,
-                    )
-                )
-            else:
-                diagnostics.append(
-                    Diagnostic(
-                        severity=Severity.ERROR,
-                        message=str(error),
-                        title="Validation Error",
-                        source="validation",
-                        context={"category": "validation"},
-                    )
-                )
-        return diagnostics or [
+        return self.validation_errors or [
             Diagnostic(
                 severity=Severity.ERROR,
-                message=str(self),
+                message=self.summary,
                 title="Validation Error",
                 source="validation",
                 context={"category": "validation"},
@@ -226,6 +207,13 @@ class CompilationError(PflowError):
         node_type: Type of the node being compiled (if applicable)
         details: Additional context about the error
         suggestion: Helpful suggestion for fixing the error
+        wrapped_diagnostics: Structured diagnostics collected by a sub-validator
+            before this exception was raised. When present, ``to_diagnostics()``
+            returns them directly so the compile-time path preserves the same
+            rich structure (paths, suggestions, similar_names, available_fields)
+            that the pre-execution validator produces. Used by
+            ``compile_validation.py`` to carry the ``validate_data_flow()`` list
+            through the compiler boundary without flattening it to a string.
     """
 
     def __init__(
@@ -236,6 +224,7 @@ class CompilationError(PflowError):
         node_type: str | None = None,
         details: dict[str, Any] | None = None,
         suggestion: str | None = None,
+        wrapped_diagnostics: list[Diagnostic] | None = None,
     ):
         self.raw_message = message
         self.phase = phase
@@ -243,6 +232,7 @@ class CompilationError(PflowError):
         self.node_type = node_type
         self.details = details or {}
         self.suggestion = suggestion
+        self.wrapped_diagnostics = wrapped_diagnostics
 
         parts = [f"compiler: {message}"]
         if phase != "unknown":
@@ -257,6 +247,8 @@ class CompilationError(PflowError):
         super().__init__("\n".join(parts))
 
     def to_diagnostics(self) -> list[Diagnostic]:
+        if self.wrapped_diagnostics:
+            return list(self.wrapped_diagnostics)
         return [
             Diagnostic(
                 severity=Severity.ERROR,

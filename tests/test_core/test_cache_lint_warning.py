@@ -1,6 +1,6 @@
 """Tests for cache lint validation warning on input-less shell nodes."""
 
-from pflow.core.workflow.validator import WorkflowValidator
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class TestCacheLintWarning:
@@ -19,7 +19,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         assert len(errors) == 0
         assert len(warnings) == 1
         assert warnings[0].node_id == "get-branch"
@@ -46,7 +46,7 @@ class TestCacheLintWarning:
             ],
             "edges": [{"from": "upstream", "to": "process"}],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         # upstream should warn (no templates), process should NOT (has template)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
@@ -66,7 +66,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0
 
@@ -84,7 +84,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0
 
@@ -101,7 +101,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0
 
@@ -118,7 +118,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
         assert cache_warnings[0].node_id == "bash-node"
@@ -136,7 +136,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
 
@@ -153,7 +153,7 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 1
 
@@ -171,6 +171,6 @@ class TestCacheLintWarning:
                 }
             ],
         }
-        _errors, warnings = WorkflowValidator.validate(ir, skip_node_types=True)
+        _errors, warnings = split_validator_diagnostics(ir, skip_node_types=True)
         cache_warnings = [w for w in warnings if "cache: false" in w.message]
         assert len(cache_warnings) == 0

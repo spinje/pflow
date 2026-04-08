@@ -93,10 +93,39 @@ Passes use `is_batch_output` and `is_batch_item` to branch behavior. Workflow no
 
 - Malformed template detection runs first and **returns early** — passes 5-8 don't run if malformed syntax found
 - Each module owns both detection logic AND error formatting for its concern
-- Error messages include "Did you mean?" suggestions via substring matching
+- Every producer builds a `Diagnostic` directly at the call site and populates `context["path"]`, `available_fields`, `similar_names`, and `suggestions` from the data the check already has — no string intermediates
 - Shell validation has a single-quote escape hatch: `'${var}'` signals user accepts JSON coercion
 - `flatten_output_structure` shows array access patterns: `result.messages[0].text`
 - `Diagnostic(severity=WARNING, source="validator")` emitted when str-type output needs JSON auto-parsing at runtime
+- `_register_node_outputs_from_registry` (`validator.py`) **silently skips unknown node types** — the outer `WorkflowValidator._validate_node_types` step produces the rich "Unknown node type" diagnostic; raising here would double-report via the defensive `except Exception` wrapper
+
+## Producer context conventions
+
+The renderer in `core/diagnostic.py` reads specific context keys to produce structured output blocks. Producers MUST populate the right keys for their concern and MUST NOT populate keys that belong to other subsystems.
+
+**Keys every validator producer should populate when the data is available**:
+
+| Key | Type | Renders as |
+|---|---|---|
+| `category` | `"validation"` or `"template_error"` | drives title fallback |
+| `path` | `"nodes[id=X].params.field"` | `At:` location line |
+| `node_type` | str | `Node type: X` |
+| `similar_names` | `list[str]` (≤5, producer truncates) | `Did you mean one of these?` block |
+| `available_fields` | `list[str]` | `Available {label} (showing N of M):` block |
+| `available_fields_total` | int | block header count |
+| `available_fields_label` | `"outputs"` / `"nodes"` / `"parameters"` / `"inputs"` / `"batch item fields"` / etc. | block header noun. **Defaults to generic `"fields"` if omitted — always set it explicitly** |
+| `template` | str | carried to JSON for downstream consumers |
+
+**Keys validators MUST NEVER set** (each triggers a renderer block meant for a different subsystem and produces misleading output in validation context):
+
+- `phase` — compiler-only, renders `Phase: X`
+- `exception_type` — runtime-only, renders `Type: X` (makes validation errors look like Python crashes)
+- `raw_response` — HTTP runtime only
+- `mcp_error` — MCP runtime only
+- `shell_command` / `shell_stdout` / `shell_stderr` — shell runtime only (**presence check**, not truthy — setting `shell_command=None` still triggers the block)
+- `line` — parser-only
+
+**Warning-severity producers**: `_format_warning_or_info_diagnostic` in the renderer reads ONLY `message`, `node_id`, and `suggestions` — the entire `context` dict is ignored for warnings. If a warning needs rich output, embed it in `message` or `suggestions` directly.
 
 ## Design Decisions
 

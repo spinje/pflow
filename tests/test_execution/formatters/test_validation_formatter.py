@@ -15,7 +15,16 @@ from pflow.execution.formatters.validation_formatter import (
 
 def _errors(*messages: str) -> list[Diagnostic]:
     """Create minimal error Diagnostics from message strings for test brevity."""
-    return [Diagnostic(severity=Severity.ERROR, message=msg, source="validation") for msg in messages]
+    return [
+        Diagnostic(
+            severity=Severity.ERROR,
+            message=msg,
+            title="Validation Error",
+            source="validation",
+            context={"category": "validation"},
+        )
+        for msg in messages
+    ]
 
 
 class TestValidationSuccessFormatting:
@@ -84,9 +93,12 @@ class TestValidationFailureFormatting:
         errors = _errors("Error 1", "Error 2", "Error 3")
         result = format_validation_failure(errors)
 
-        assert "1. Error 1" in result
-        assert "2. Error 2" in result
-        assert "3. Error 3" in result
+        assert "Error 1: Validation Error" in result
+        assert "Error 2: Validation Error" in result
+        assert "Error 3: Validation Error" in result
+        assert "\n\nError 1\n" in result
+        assert "\n\nError 2\n" in result
+        assert "\n\nError 3" in result
         assert "more errors" not in result  # No truncation warning
 
     def test_failure_truncates_at_5_errors(self):
@@ -99,11 +111,13 @@ class TestValidationFailureFormatting:
         result = format_validation_failure(errors)
 
         # First 5 should be shown (numbered format)
-        assert "1. Error 0" in result
-        assert "5. Error 4" in result
+        assert "Error 1: Validation Error" in result
+        assert "Error 5: Validation Error" in result
+        assert "Error 0" in result
+        assert "Error 4" in result
 
         # 6th and beyond should not be shown
-        assert "6. Error 5" not in result
+        assert "Error 6: Validation Error" not in result
         assert "Error 7" not in result
 
         # Must indicate there are more errors
@@ -144,8 +158,8 @@ class TestValidationFailureFormatting:
         result = format_validation_failure(errors)
 
         # All 5 should be shown
-        assert "1. Error 0" in result
-        assert "5. Error 4" in result
+        assert "Error 1: Validation Error" in result
+        assert "Error 5: Validation Error" in result
 
         # Should NOT have truncation message
         assert "more errors" not in result
@@ -160,11 +174,11 @@ class TestValidationFailureFormatting:
         result = format_validation_failure(errors)
 
         # First 5 should be shown
-        assert "1. Error 0" in result
-        assert "5. Error 4" in result
+        assert "Error 1: Validation Error" in result
+        assert "Error 5: Validation Error" in result
 
         # 6th should not be shown
-        assert "6. Error 5" not in result
+        assert "Error 6: Validation Error" not in result
 
         # Should indicate 1 more error
         assert "... and 1 more error" in result
@@ -179,8 +193,10 @@ class TestValidationFailureFormatting:
         result = format_validation_failure(errors)
 
         # Each error should be indented with numbered format
-        assert "  1. Node 'fetch' not found" in result
-        assert "  2. Template ${invalid} undefined" in result
+        assert "Error 1: Validation Error" in result
+        assert "Node 'fetch' not found" in result
+        assert "Error 2: Validation Error" in result
+        assert "Template ${invalid} undefined" in result
 
     def test_failure_with_diagnostic_objects_shows_suggestions(self):
         """CORRECTNESS: Diagnostic objects render with per-error suggestions.
@@ -192,13 +208,16 @@ class TestValidationFailureFormatting:
             Diagnostic(
                 severity=Severity.ERROR,
                 message="Node type 'nonexistent' not found in registry",
+                title="Validation Error",
                 suggestions=["Use 'pflow registry list' to see available nodes"],
                 source="validator",
+                context={"category": "validation"},
             ),
         ]
         result = format_validation_failure(diagnostics)
 
-        assert "1. Node type 'nonexistent' not found in registry" in result
+        assert "Error 1: Validation Error" in result
+        assert "Node type 'nonexistent' not found in registry" in result
         assert "\u2192 Use 'pflow registry list' to see available nodes" in result
 
     def test_failure_with_diagnostic_shows_path_context(self):
@@ -211,8 +230,9 @@ class TestValidationFailureFormatting:
             Diagnostic(
                 severity=Severity.ERROR,
                 message="Invalid parameter",
+                title="Validation Error",
                 source="validator",
-                context={"path": "nodes[0].params.command"},
+                context={"category": "validation", "path": "nodes[0].params.command"},
             ),
         ]
         result = format_validation_failure(diagnostics)
@@ -229,8 +249,9 @@ class TestValidationFailureFormatting:
             Diagnostic(
                 severity=Severity.ERROR,
                 message="Missing required field",
+                title="Validation Error",
                 source="validator",
-                context={"path": "root"},
+                context={"category": "validation", "path": "root"},
             ),
         ]
         result = format_validation_failure(diagnostics)

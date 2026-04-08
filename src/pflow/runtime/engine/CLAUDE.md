@@ -228,7 +228,7 @@ Error message formatting for template resolution failures. Key functions:
 
 ### `namespaced_store.py` (191 lines)
 
-`NamespacedSharedStore` — dict proxy that routes writes to `parent[namespace][key]`. Special `__*__` keys bypass namespacing (read/write at root). Has `update()` method (added in Task 135 — without it, `storage_mode: shared` sub-workflows crash).
+`NamespacedSharedStore` — dict proxy that routes writes to `parent[namespace][key]`. Special `__*__` keys bypass namespacing (read/write at root). `update()` is a required override (not inherited from `dict`) — without it, `storage_mode: shared` sub-workflows crash when the child engine calls `shared_store.update(...)`. Any new proxy subclass must override `update()`, `__contains__`, `get()`, and the mutation methods explicitly.
 
 ### `error_context.py` (92 lines)
 

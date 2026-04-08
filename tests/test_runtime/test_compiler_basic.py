@@ -7,11 +7,13 @@ logic will be tested in future subtasks.
 
 import json
 import logging
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from pflow.core.diagnostic import Diagnostic, Severity
 from pflow.runtime import compile_workflow
+from pflow.runtime.compilation.compile_validation import _validate_data_flow_at_compile_time
 from pflow.runtime.compilation.compiler import CompilationError, _parse_ir_input
 from pflow.runtime.compilation.ir_preparation import validate_ir_structure
 from pflow.runtime.engine import WorkflowEngine
@@ -187,6 +189,27 @@ class TestValidateIrStructure:
         assert error.phase == "validation"
         assert "'edges' must be an array" in str(error)
         assert "got dict" in str(error)
+
+
+class TestCompileTimeDataFlowValidation:
+    """Regression tests for compile-time data-flow validation behavior."""
+
+    def test_warning_only_data_flow_does_not_raise(self):
+        """Compile-time validation must ignore warning-only data-flow diagnostics."""
+        warning_only = [
+            Diagnostic(
+                severity=Severity.WARNING,
+                message="This is a warning, not a blocker",
+                source="validator",
+            )
+        ]
+
+        with patch(
+            "pflow.runtime.compilation.compile_validation.validate_data_flow",
+            return_value=warning_only,
+            create=True,
+        ):
+            _validate_data_flow_at_compile_time({"nodes": [], "edges": []})
 
 
 class TestCompileWorkflow:

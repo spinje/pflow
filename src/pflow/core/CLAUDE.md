@@ -24,7 +24,7 @@ src/pflow/core/
 ├── shell_integration.py     # Unix pipe and stdin handling
 ├── suggestion_utils.py      # "Did you mean" fuzzy matching
 ├── user_errors.py           # User-friendly CLI error formatting
-├── validation_utils.py      # Parameter name validation, validation suggestion generation
+├── validation_utils.py      # Parameter name validation, dummy parameter generation
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
 ├── execution_cache.py       # Two-phase execution cache for registry run
@@ -74,7 +74,7 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 | IR schema validation (bad field types, missing required fields) | `SchemaValidationError` | `message`, `path="nodes[0].type"`, `suggestion="Use 'shell'"` |
 | Markdown parsing failures (malformed `.pflow.md`) | `MarkdownParseError` | `message`, `line=42`, `suggestion="Add ## Steps"` |
 | Compilation step failures (missing node types, bad config) | `CompilationError` | `message`, `phase="node_import"`, `node_id`, `node_type`, `suggestion` |
-| Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[(msg, path, suggestion), ...]` |
+| Pre-execution validation (aggregated errors from validator) | `WorkflowValidationError` | `summary`, `validation_errors=[Diagnostic(...), ...]` |
 | Workflow not found | `WorkflowNotFoundError` | `workflow_name`, `similar_names=["did-you-mean"]` |
 | User-facing errors with fix instructions (CLI/MCP) | `UserFriendlyError` | `title`, `explanation`, `suggestions=["step 1", "step 2"]` |
 | MCP tool availability errors | `MCPError` (subclass of `UserFriendlyError`) | same + defaults |
@@ -84,14 +84,11 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
-`format_for_cli()` methods were removed in Task 143. Task 144 added `to_diagnostics() -> list[Diagnostic]` methods — data conversion (coupled to `Diagnostic` type only, not CLI text). `PflowError` has a default implementation; 8 subclasses override it: `CompilationError`, `WorkflowValidationError`, `SchemaValidationError`, `MarkdownParseError`, `WorkflowNotFoundError`, `UserFriendlyError`, `MCPError`, `OutputResolutionError`. `MaxNodeVisitsError` also has `to_diagnostics()`. `exception_to_diagnostics()` is now a thin dispatcher (~30 lines) that calls `to_diagnostics()` on exceptions that have it, and falls back to `_builtin_exception_diagnostic()` for built-in types. No lazy imports.
+**Self-describing exceptions** — `PflowError` (and 8 subclasses) implement `to_diagnostics() -> list[Diagnostic]`. `exception_to_diagnostics()` is a thin dispatcher: call `to_diagnostics()` if present, else `_builtin_exception_diagnostic()` for stdlib types. When adding a new exception class, override `to_diagnostics()` rather than extending the dispatcher. `MarkdownParseError.raw_message` holds the message without the `Line N:` prefix/suggestion suffix — `to_diagnostics()` uses this for clean rendering.
 
-`MarkdownParseError` has a `raw_message` attribute (the message without line prefix or suggestion suffix), used by `to_diagnostics()` to produce a clean message for the unified rendering format.
+**Error handling philosophy — producers are self-describing**: validators, exceptions, and runtime events all construct `Diagnostic` objects at the detection site. Never flatten structured data (paths, fuzzy matches, available fields, suggestions) into string messages for downstream code to reverse-engineer. CLI, JSON, and MCP all flow through the same `format_diagnostic()` pipeline — the only place rendering happens.
 
-**Error handling philosophy**: The codebase uses a pragmatic three-layer pattern:
-- Validation phase returns error **strings** (never raises)
-- Runtime phase catches exceptions and converts to **Diagnostic** objects
-- CLI formats errors based on output mode (text/JSON)
+**`Diagnostic.__hash__` excludes `context`, `title`, and `suggestions`** — load-bearing. Child workflow diagnostics flow through two independent paths (validation-time and runtime) that produce semantically-identical errors with potentially-different enrichment. Dedup only collapses them if identity ignores the display-only fields. Adding `context` to the hash silently breaks sub-workflow warning dedup. Hash identity tuple: `(severity, source, node_id, message)` — keep it that way.
 
 ### ir_schema.py
 
@@ -221,7 +218,7 @@ Three-part error structure: WHAT went wrong (title) → WHY it failed (explanati
 
 **Forbidden in parameter names**: `$` (template conflict), `|><&;` (shell injection), spaces/tabs (CLI parsing). Allowed: hyphens, dots, numbers at start.
 
-**`generate_validation_suggestions()`**: Converts validation error messages into actionable fix suggestions. Input-aware: "no inputs declared" errors get an input declaration suggestion instead of the generic "check template syntax." Errors that already contain specific guidance ("undefined input" with declared inputs list, "did you mean" typo matches) are excluded from generic suggestion generation to avoid noise.
+Validation utilities here are now limited to parameter-name rules and dummy-parameter generation. Structured validation suggestions are produced directly by validator Diagnostics at the source rather than reverse-engineered from flattened error strings.
 
 **🚨 Security gaps identified**:
 - Template variables NOT validated for dangerous characters

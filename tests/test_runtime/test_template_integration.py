@@ -9,6 +9,7 @@ from pflow.core.node import Node
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class MockNode(Node):
@@ -126,18 +127,16 @@ class TestCompilerIntegration:
         WorkflowValidator. The compiler no longer raises for missing params.
         WorkflowValidator catches undefined template references as errors.
         """
-        from pflow.core.workflow.validator import WorkflowValidator
-
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}], "edges": []}
 
         # WorkflowValidator catches missing template variables as errors
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=mock_registry,
             skip_node_types=True,
         )
-        assert any("required_param" in e for e in errors)
+        assert any("required_param" in d.message for d in errors)
 
     def test_unresolved_templates_fail_at_runtime(self, mock_registry):
         """Unresolved templates raise ValueError at runtime even without pre-execution validation.

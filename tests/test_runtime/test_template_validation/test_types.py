@@ -2,8 +2,13 @@
 
 import pytest
 
+from pflow.core.diagnostic import Severity
 from pflow.registry.registry import Registry
 from pflow.runtime.template_validation import validate_workflow_templates
+from tests.shared.diagnostic_helpers import (
+    split_template_diagnostics,
+    split_validator_diagnostics,
+)
 
 
 @pytest.fixture
@@ -175,9 +180,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 0
 
     def test_dict_to_string_compatible(self, test_registry):
@@ -196,9 +201,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 0  # No error - dict serializes to JSON string
 
     def test_dict_to_int_mismatch(self, test_registry):
@@ -217,13 +222,24 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 1
-        assert "producer.response" in type_errors[0]
-        assert "'dict'" in type_errors[0]
-        assert "'int'" in type_errors[0]
+        assert "producer.response" in type_errors[0].message
+        assert "'dict'" in type_errors[0].message
+        assert "'int'" in type_errors[0].message
+
+        # Structural assertion (task 147): the type-validation producer must
+        # preserve the structural context fields — path, inferred_type,
+        # expected_type, node_id. Without this, the substring assertions above
+        # would pass even if the producer regressed to a bare message string.
+        diagnostics = validate_workflow_templates(workflow_ir, {}, test_registry)
+        type_diag = next(d for d in diagnostics if "Type mismatch" in d.message)
+        assert type_diag.node_id == "consumer"
+        assert type_diag.context["path"] == "nodes[id=consumer].params.count"
+        assert type_diag.context["inferred_type"] == "dict"
+        assert type_diag.context["expected_type"] == "int"
 
     def test_nested_field_access_passes(self, test_registry):
         """Accessing a nested field with correct type should pass."""
@@ -241,9 +257,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 0
 
     def test_str_to_int_mismatch(self, test_registry):
@@ -262,12 +278,12 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 1
-        assert "'str'" in type_errors[0]
-        assert "'int'" in type_errors[0]
+        assert "'str'" in type_errors[0].message
+        assert "'int'" in type_errors[0].message
 
     def test_int_to_string_compatible(self, test_registry):
         """Int can be passed to parameters expecting int."""
@@ -281,9 +297,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 0
 
     def test_union_type_compatibility(self, test_registry):
@@ -302,9 +318,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         # dict|str → str now passes because both dict and str can serialize to str
         assert len(type_errors) == 0
 
@@ -324,9 +340,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         # dict|str → int should fail because neither dict nor str can convert to int
         assert len(type_errors) == 1
 
@@ -360,9 +376,9 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 0
 
     def test_multiple_type_errors(self, test_registry):
@@ -390,9 +406,9 @@ class TestTypeValidationIntegration:
             ],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 2  # str→int and dict→int both fail
 
     def test_error_message_format(self, test_registry):
@@ -411,18 +427,18 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "consumer"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        type_errors = [e for e in errors if "Type mismatch" in e]
+        type_errors = [d for d in errors if "Type mismatch" in d.message]
         assert len(type_errors) == 1
 
         error = type_errors[0]
         # Check error includes all necessary information
-        assert "consumer" in error  # node ID
-        assert "count" in error  # parameter name
-        assert "producer.response" in error  # template
-        assert "dict" in error  # inferred type
-        assert "int" in error  # expected type
+        assert error.node_id == "consumer"
+        assert "count" in error.message
+        assert "producer.response" in error.message
+        assert "dict" in error.message
+        assert "int" in error.message
 
     def test_shell_command_blocks_dict_type(self, test_registry):
         """Shell command parameter should not accept dict types."""
@@ -441,14 +457,15 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should have error about dict in shell command
-        shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
+        shell_errors = [d for d in errors if "Shell node" in d.message or "stdin" in d.message.lower()]
         assert len(shell_errors) == 1
-        assert "producer.response" in shell_errors[0]
-        assert "dict" in shell_errors[0]
-        assert "stdin" in shell_errors[0].lower()  # Should suggest stdin
+        assert "producer.response" in shell_errors[0].message
+        assert "dict" in shell_errors[0].message
+        assert shell_errors[0].suggestions
+        assert any("stdin" in suggestion.lower() for suggestion in shell_errors[0].suggestions)
 
     def test_shell_command_blocks_list_type(self, test_registry):
         """Shell command parameter should not accept list types."""
@@ -467,13 +484,13 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should have error about list in shell command
-        shell_errors = [e for e in errors if "Shell node" in e or "stdin" in e.lower()]
+        shell_errors = [d for d in errors if "Shell node" in d.message or "stdin" in d.message.lower()]
         assert len(shell_errors) == 1
-        assert "producer.items" in shell_errors[0]
-        assert "list" in shell_errors[0]
+        assert "producer.items" in shell_errors[0].message
+        assert "list" in shell_errors[0].message
 
     def test_shell_stdin_allows_dict_type(self, test_registry):
         """Shell stdin parameter should accept dict types (safe path)."""
@@ -494,10 +511,10 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # No shell-specific errors for stdin
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_shell_command_allows_string_type(self, test_registry):
@@ -516,7 +533,7 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # No errors for string in command
         assert len(errors) == 0
@@ -542,13 +559,15 @@ class TestTypeValidationIntegration:
             "edges": [],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should block dict workflow input in shell command
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
-        assert "data" in shell_errors[0]
-        assert "stdin" in shell_errors[0].lower()
+        assert "data" in shell_errors[0].message
+        # "stdin" lives in the structured suggestions (TY2 producer emits 3 fix options)
+        suggestions = shell_errors[0].suggestions or []
+        assert any("stdin" in s.lower() for s in suggestions), f"Expected 'stdin' in suggestions: {shell_errors[0]}"
 
     def test_shell_command_allows_nested_string_field_from_dict(self, test_registry):
         """Accessing a string field from a dict should be allowed in shell command.
@@ -569,10 +588,10 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # No errors - accessing string field from dict is safe
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_shell_command_allows_union_with_str(self, test_registry):
@@ -598,10 +617,10 @@ class TestTypeValidationIntegration:
             "edges": [{"from": "llm-node", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should pass - dict|str contains str, which is a safe type
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
 
@@ -624,9 +643,9 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_shell_allows_dict_any_union(self, test_registry):
@@ -645,9 +664,9 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_shell_blocks_dict_list_union(self, test_registry):
@@ -666,11 +685,26 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
-        assert "dict" in shell_errors[0] or "list" in shell_errors[0]
+        assert "dict" in shell_errors[0].message or "list" in shell_errors[0].message
+
+        # Structural assertion (task 147): _build_shell_command_diagnostic is one of
+        # the most user-visible task 147 producer rewrites — 3 concrete fix options
+        # plus structured context. Without this, the producer could regress to a
+        # bare Diagnostic(message=...) with suggestions=None and the substring
+        # assertion above would still pass.
+        diagnostics = validate_workflow_templates(workflow_ir, {}, test_registry)
+        shell_diag = next(d for d in diagnostics if d.message.startswith("Shell node"))
+        assert shell_diag.node_id == "shell-node"
+        assert shell_diag.context["path"] == "nodes[id=shell-node].params.command"
+        assert shell_diag.context["template"] == "${producer.data}"
+        assert shell_diag.context["shell_command"] == "echo ${producer.data}"
+        assert shell_diag.suggestions is not None
+        assert len(shell_diag.suggestions) == 3
+        assert any("stdin" in s for s in shell_diag.suggestions)
 
     def test_shell_allows_any_type(self, test_registry):
         """Pure 'any' type is allowed (safe type)."""
@@ -688,9 +722,9 @@ class TestShellCommandUnionTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
 
@@ -717,12 +751,12 @@ class TestShellCommandGenericTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should block - base type "list" is blocked
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
-        assert "list" in shell_errors[0]
+        assert "list" in shell_errors[0].message
 
     def test_shell_allows_quoted_generic_type(self, test_registry):
         """'${data}' with list[dict] type is allowed (quote escape)."""
@@ -741,10 +775,10 @@ class TestShellCommandGenericTypes:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should pass - quoted template bypasses type check
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
 
@@ -771,9 +805,9 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_unquoted_dict_template_blocked(self, test_registry):
@@ -792,11 +826,11 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
-        assert "dict" in shell_errors[0]
+        assert "dict" in shell_errors[0].message
 
     def test_quoted_dict_list_union_allowed(self, test_registry):
         """'${data}' with dict|list type is allowed (escape hatch)."""
@@ -814,9 +848,9 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_quoted_nested_field_access_with_array_indices(self, test_registry):
@@ -841,10 +875,10 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
         # Should pass - quoted template with nested path is escaped
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_double_quoted_template_not_escaped(self, test_registry):
@@ -864,9 +898,9 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1  # Still blocked
 
     def test_quoted_with_prefix_not_escaped(self, test_registry):
@@ -886,9 +920,9 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1  # Still blocked
 
     def test_multiple_quoted_templates(self, test_registry):
@@ -912,9 +946,9 @@ class TestShellCommandQuoteEscape:
             ],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0  # Both escaped
 
     def test_mixed_quoted_and_unquoted(self, test_registry):
@@ -938,11 +972,11 @@ class TestShellCommandQuoteEscape:
             ],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1  # Only unquoted one blocked
-        assert "producer2" in shell_errors[0]
+        assert "producer2" in shell_errors[0].message
 
     def test_error_message_suggests_quote_escape(self, test_registry):
         """Error message should suggest the quote escape option."""
@@ -960,12 +994,16 @@ class TestShellCommandQuoteEscape:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
         # Check that error message suggests quote escape
-        assert "Quote the template" in shell_errors[0] or "single quotes" in shell_errors[0]
+        assert shell_errors[0].suggestions
+        assert any(
+            "quote" in suggestion.lower() or "single quotes" in suggestion.lower()
+            for suggestion in shell_errors[0].suggestions
+        )
 
 
 class TestShellCommandRegressions:
@@ -987,9 +1025,9 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
 
     def test_pure_list_still_blocked_unquoted(self, test_registry):
@@ -1008,9 +1046,9 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 1
 
     def test_str_type_still_allowed(self, test_registry):
@@ -1029,9 +1067,9 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
     def test_stdin_still_allows_dict(self, test_registry):
@@ -1051,9 +1089,9 @@ class TestShellCommandRegressions:
             "edges": [{"from": "producer", "to": "shell-node"}],
         }
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, test_registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, test_registry)
 
-        shell_errors = [e for e in errors if "Shell node" in e]
+        shell_errors = [d for d in errors if "Shell node" in d.message]
         assert len(shell_errors) == 0
 
 
@@ -1071,7 +1109,6 @@ class TestShellCommandValidationTiming:
         WorkflowValidator. The behavior (catching dict-in-shell-command
         before execution) is preserved, just at a different stage.
         """
-        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry.registry import Registry
 
         workflow_ir = {
@@ -1091,7 +1128,7 @@ class TestShellCommandValidationTiming:
         registry = Registry()
 
         # WorkflowValidator catches type-incompatible templates
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             extracted_params={"data": {"key": "value"}},
             registry=registry,
@@ -1099,7 +1136,7 @@ class TestShellCommandValidationTiming:
         )
 
         # Error should mention stdin as the solution for dict-in-shell
-        assert any("stdin" in e.lower() for e in errors)
+        assert any(d.suggestions and any("stdin" in suggestion.lower() for suggestion in d.suggestions) for d in errors)
 
     def test_list_in_shell_command_fails_at_compile_time(self):
         """List in shell command should fail during pre-execution validation.
@@ -1107,7 +1144,6 @@ class TestShellCommandValidationTiming:
         After Task 138, type validation moved from the compiler to
         WorkflowValidator. The behavior is preserved at the validation stage.
         """
-        from pflow.core.workflow.validator import WorkflowValidator
         from pflow.registry.registry import Registry
 
         workflow_ir = {
@@ -1126,14 +1162,14 @@ class TestShellCommandValidationTiming:
 
         registry = Registry()
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             extracted_params={"items": [1, 2, 3]},
             registry=registry,
             skip_node_types=False,
         )
 
-        assert any("stdin" in e.lower() for e in errors)
+        assert any(d.suggestions and any("stdin" in suggestion.lower() for suggestion in d.suggestions) for d in errors)
 
     def test_dict_in_shell_command_without_validation_fails_at_runtime(self):
         """Without validation, dict in command causes runtime shell error.
@@ -1185,3 +1221,42 @@ class TestShellCommandValidationTiming:
         # The error is a shell syntax error, not our helpful message
         stderr = shared["shell-node"]["stderr"].lower()
         assert "unexpected" in stderr or "syntax" in stderr or "eof" in stderr
+
+
+def test_shell_blocks_multiple_structured_templates_preserves_structure(test_registry) -> None:
+    """Multi-template shell diagnostics should preserve blocked template metadata."""
+    workflow_ir = {
+        "enable_namespacing": True,
+        "inputs": {},
+        "nodes": [
+            {"id": "a", "type": "dict-producer", "params": {}},
+            {"id": "b", "type": "list-producer", "params": {}},
+            {
+                "id": "shell-node",
+                "type": "shell",
+                "params": {"command": "echo ${a.response} ${b.items}"},
+            },
+        ],
+        "edges": [
+            {"from": "a", "to": "shell-node"},
+            {"from": "b", "to": "shell-node"},
+        ],
+    }
+
+    diagnostics = validate_workflow_templates(workflow_ir, {}, test_registry)
+    errors = [
+        d for d in diagnostics if d.severity == Severity.ERROR and "multiple structured data templates" in d.message
+    ]
+
+    assert len(errors) == 1
+    diagnostic = errors[0]
+    assert diagnostic.context is not None
+    assert diagnostic.context.get("path") == "nodes[id=shell-node].params.command"
+    assert "shell_command" in diagnostic.context
+    blocked_templates = diagnostic.context.get("blocked_templates")
+    assert isinstance(blocked_templates, list)
+    assert len(blocked_templates) == 2
+    assert diagnostic.suggestions is not None
+    assert len(diagnostic.suggestions) == 4
+    assert any("stdin" in suggestion for suggestion in diagnostic.suggestions)
+    assert any("temp files" in suggestion for suggestion in diagnostic.suggestions)

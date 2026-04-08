@@ -78,17 +78,18 @@ Service methods no longer import node classes directly. All execution routes thr
 Validation fails on templates without parameter values. Use `generate_dummy_parameters()` to create `__validation_placeholder__` values:
 
 ```python
+from pflow.core.diagnostic import Severity
+
 dummy = generate_dummy_parameters(workflow_ir.get("inputs", {}))
-errors, warnings = WorkflowValidator.validate(workflow_ir, extracted_params=dummy)
+diagnostics = WorkflowValidator.validate(workflow_ir, extracted_params=dummy)
+errors = [d for d in diagnostics if d.severity == Severity.ERROR]
 ```
 
-### ExecutionResult Field Sync (Hard-Won)
+### CLI/MCP parity — formatter call sites come in pairs
 
-When `format_execution_success()` adds new parameters, **both** CLI and MCP call sites must be updated:
-- CLI: `cli/main.py` (search for `format_execution_success`)
-- MCP: `execution_service.py` (search for `format_execution_success`)
+Every shared formatter has two call sites: CLI (`cli/main.py`) and MCP (`execution_service.py`). Adding a new parameter to a formatter WITHOUT updating both sides causes silent output divergence — the CLI gets the new field, MCP doesn't, and the error surfaces as "MCP output is missing X". Grep both files for the formatter name when modifying its signature.
 
-Example from Task 85: `status` and `warnings` fields were added. Missing either call site causes silent data loss.
+Same rule for rendering exceptions: the MCP `save_workflow` path catches `WorkflowValidationError` and renders it via `format_validation_failure(e.validation_errors)` — parity with the CLI validate path. `WorkflowValidationError.validation_warnings` is a constructor kwarg (not a dynamic attribute), so warnings survive the exception boundary without special plumbing.
 
 ## Testing
 

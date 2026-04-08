@@ -218,12 +218,8 @@ def _enrich_error_from_node_output(context: dict[str, Any], node_output: dict[st
 
         all_fields = list(node_output.keys()) if isinstance(node_output, dict) else []
         context["available_fields"] = [str(f) for f in all_fields[:MAX_DISPLAYED_FIELDS]]
+        context["available_fields_label"] = "fields in node"
 
         total_fields = len(all_fields)
         if total_fields > MAX_DISPLAYED_FIELDS:
             context["available_fields_total"] = total_fields
-            context["available_fields_truncated"] = True
-            context["trace_file_hint"] = (
-                f"Showing {MAX_DISPLAYED_FIELDS} of {total_fields} fields. "
-                "Full field list saved automatically to ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json"
-            )

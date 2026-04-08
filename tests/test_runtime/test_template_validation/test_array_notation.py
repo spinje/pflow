@@ -10,8 +10,8 @@ from unittest.mock import patch
 
 from pflow.registry import Registry
 from pflow.runtime.template_resolver import TemplateResolver
-from pflow.runtime.template_validation import validate_workflow_templates
 from pflow.runtime.template_validation.validator import _extract_all_templates
+from tests.shared.diagnostic_helpers import split_template_diagnostics
 
 
 class TestTemplateArrayNotation:
@@ -159,7 +159,7 @@ class TestTemplateArrayNotation:
             mock_metadata.side_effect = get_metadata
 
             # Should validate - array notation is in templates
-            errors, _warnings = validate_workflow_templates(
+            errors, _warnings = split_template_diagnostics(
                 workflow_ir,
                 {},  # No external params needed
                 registry,

@@ -39,6 +39,16 @@ class Diagnostic:
             )
 
     def __eq__(self, other: object) -> bool:
+        # Identity is (severity, source, node_id, message) — context, title, and
+        # suggestions are deliberately excluded. This is LOAD-BEARING for the
+        # dual-propagation-path dedup architecture (Task 143 decision): child
+        # workflow diagnostics flow through BOTH the validation path (_add_child_provenance
+        # in core/workflow/validator.py) AND the runtime path
+        # (_propagate_child_parser_warnings in runtime/workflow_executor.py).
+        # Both paths produce semantically-identical diagnostics with potentially-
+        # different context enrichment. Dedup must collapse them to one. Adding
+        # context/title/suggestions to identity would break that collapse and
+        # resurface duplicate warnings users already fixed.
         if not isinstance(other, Diagnostic):
             return NotImplemented
         return (
@@ -49,6 +59,8 @@ class Diagnostic:
         )
 
     def __hash__(self) -> int:
+        # Must match __eq__'s identity tuple exactly, for the same dedup reasons
+        # documented above. Do NOT add context/title/suggestions here.
         return hash((self.severity, self.source, self.node_id, self.message))
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +107,17 @@ def format_child_provenance(step_id: str, message: str) -> str:
 
     Used by both validation and runtime propagation paths. Both MUST use this
     function so dedup collapses identical child diagnostics from the two paths.
+
+    **Dedup invariant**: the validation path (``_add_child_provenance`` in
+    ``core/workflow/validator.py``) and the runtime path
+    (``_propagate_child_parser_warnings`` in ``runtime/workflow_executor.py``)
+    produce semantically-identical diagnostics for the same child-workflow
+    warning. ``Diagnostic.__hash__`` includes the message string, so those two
+    paths MUST produce byte-identical messages or dedup fails and users see
+    duplicates. ANY new path that wraps child diagnostics with parent context
+    MUST go through this helper, and MUST also use ``node_id=d.node_id or step_id``
+    and ``setdefault`` for ``sub_workflow_step`` / ``sub_workflow_path`` context
+    keys — see the Task 143 "Dual-Propagation-Path Problem" section for history.
     """
     return f"In step '{step_id}' sub-workflow: {message}"
 
@@ -204,8 +227,7 @@ def _format_all_context_blocks(diagnostic: Diagnostic, context: dict[str, Any]) 
     if (mcp_error := context.get("mcp_error")) and isinstance(mcp_error, dict):
         lines.extend(_format_mcp_error_lines(mcp_error))
 
-    if context.get("category") == "template_error":
-        lines.extend(_format_template_error_lines(context))
+    lines.extend(_format_available_fields_block(context))
 
     if "shell_command" in context:
         lines.extend(_format_shell_error_lines(context))
@@ -222,6 +244,8 @@ def _format_compilation_context_lines(context: dict[str, Any]) -> list[str]:
         lines.append(f"  Node type: {node_type}")
     if sub_path := context.get("sub_workflow_path"):
         lines.append(f"  Sub-workflow: {sub_path}")
+    if source_file := context.get("source_file"):
+        lines.append(f"  Loaded from file: {source_file}")
     return lines
 
 
@@ -243,25 +267,28 @@ def _format_exception_type_line(context: dict[str, Any]) -> list[str]:
     return []
 
 
-def _format_template_error_lines(context: dict[str, Any]) -> list[str]:
-    """Render template field suggestions for template errors."""
+def _format_available_fields_block(context: dict[str, Any]) -> list[str]:
+    """Render available field suggestions when provided in diagnostic context.
+
+    Producers populate ``available_fields_label`` to describe what the list
+    contains (e.g. "outputs", "nodes", "inputs", "parameters"). The fallback
+    ``"fields"`` is deliberately generic so it is never technically wrong —
+    producers that want accurate wording must set the label explicitly.
+    """
     available = context.get("available_fields")
     if not available:
         return []
 
+    label = context.get("available_fields_label", "fields")
     total = context.get("available_fields_total", len(available))
     lines = [
         "",
-        f"  Available fields in node (showing {min(len(available), 5)} of {total}):",
+        f"  Available {label} (showing {min(len(available), 5)} of {total}):",
     ]
     for field_name in available[:5]:
         lines.append(f"    - {field_name}")
     if len(available) > 5:
         lines.append(f"    ... and {len(available) - 5} more (in error details)")
-    if context.get("available_fields_truncated"):
-        lines.append("")
-        lines.append("  📁 Complete field list available in trace file")
-        lines.append("     ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json")
     return lines
 
 

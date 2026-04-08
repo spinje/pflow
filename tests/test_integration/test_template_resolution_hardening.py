@@ -28,6 +28,7 @@ FIX HISTORY:
 
 import pytest
 
+from pflow.core.diagnostic import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -462,13 +463,15 @@ class TestEnhancedErrorMessages:
 
         # Should fail with detailed error
         assert not result.success
-        error_message = result.errors[0].message
+        error = result.errors[0]
+        error_message = error.message
+        rendered = format_diagnostic(error)
 
         # Error should mention the wrong field
         assert "wrong_field" in error_message
 
         # Error should show available outputs from producer (stdout, stderr, etc.)
-        assert "available" in error_message.lower()
+        assert "available" in rendered.lower()
 
 
 # Performance/regression markers

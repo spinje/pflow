@@ -10,8 +10,10 @@ validation is no longer relevant since workflows are authored in markdown, not J
 
 import pytest
 
+from pflow.core.diagnostic import Severity, format_diagnostic
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class TestValidateUnknownParams:
@@ -39,11 +41,12 @@ class TestValidateUnknownParams:
             "edges": [],
         }
 
-        errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
+        diagnostics = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
 
-        assert len(errors) == 1
-        assert "nonexistent_param" in errors[0]
-        assert "test" in errors[0]
+        assert len(diagnostics) == 1
+        error_text = format_diagnostic(diagnostics[0])
+        assert "nonexistent_param" in error_text
+        assert "test" in error_text
 
     def test_no_error_for_known_params(self, registry: Registry) -> None:
         """Should not error when all params are recognized."""
@@ -81,13 +84,47 @@ class TestValidateUnknownParams:
             "edges": [],
         }
 
-        errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
+        diagnostics = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
 
-        assert len(errors) >= 1
+        assert len(diagnostics) >= 1
         # Should suggest 'prompt' as a correction
-        error_text = errors[0]
-        assert "promt" in error_text
-        assert "Did you mean" in error_text
+        diagnostic = diagnostics[0]
+        assert "promt" in format_diagnostic(diagnostic)
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("similar_names")
+
+    def test_unknown_param_diagnostic_preserves_structure(self, registry: Registry) -> None:
+        """Unknown parameter diagnostics should keep structured fix data."""
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "writer",
+                    "type": "write-file",
+                    "params": {
+                        "file_pat": "output.txt",
+                        "content": "hello",
+                    },
+                }
+            ],
+            "edges": [],
+        }
+
+        diagnostics = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
+
+        assert len(diagnostics) == 1
+        diagnostic = diagnostics[0]
+        context = diagnostic.context or {}
+
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.node_id == "writer"
+        assert diagnostic.title == "Validation Error"
+        assert "file_pat" in diagnostic.message
+        assert diagnostic.suggestions
+        assert any("file_path" in suggestion for suggestion in diagnostic.suggestions)
+        assert context.get("path") == "nodes[id=writer].params.file_pat"
+        assert "file_path" in (context.get("available_fields") or [])
+        assert "file_path" in (context.get("similar_names") or [])
 
     def test_skips_nodes_without_params(self, registry: Registry) -> None:
         """Should skip nodes that have no params."""
@@ -151,10 +188,10 @@ class TestValidateUnknownParams:
             "edges": [{"from": "node1", "to": "node2"}],
         }
 
-        errors = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
+        diagnostics = WorkflowValidator._validate_unknown_params(workflow_ir, registry)
 
-        assert len(errors) == 2
-        error_text = " ".join(errors)
+        assert len(diagnostics) == 2
+        error_text = " ".join(format_diagnostic(diagnostic) for diagnostic in diagnostics)
         assert "bad_param" in error_text
         assert "another_bad" in error_text
 
@@ -184,16 +221,16 @@ class TestUnknownParamErrorsIntegration:
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
         )
 
         # Unknown params should be errors, not warnings
-        unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
+        unknown_errors = [d for d in errors if "unknown parameter" in d.message.lower()]
         assert len(unknown_errors) >= 1
-        assert "'Note'" in unknown_errors[0]
+        assert "'Note'" in unknown_errors[0].message
 
     def test_no_errors_for_valid_workflow(self, registry: Registry) -> None:
         """A valid workflow should produce no unknown param errors."""
@@ -211,13 +248,13 @@ class TestUnknownParamErrorsIntegration:
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
         )
 
-        unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
+        unknown_errors = [d for d in errors if "unknown parameter" in d.message.lower()]
         assert len(unknown_errors) == 0
 
     def test_no_unknown_param_errors_without_registry(self) -> None:
@@ -237,7 +274,7 @@ class TestUnknownParamErrorsIntegration:
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             extracted_params=None,
             registry=None,
@@ -245,7 +282,7 @@ class TestUnknownParamErrorsIntegration:
         )
 
         # No unknown param errors since registry is None
-        unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
+        unknown_errors = [d for d in errors if "unknown parameter" in d.message.lower()]
         assert len(unknown_errors) == 0
 
 
@@ -284,13 +321,14 @@ class TestUnknownParamBlocksExecution:
             "edges": [],
         }
 
-        errors, _warnings = WorkflowValidator.validate(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
         )
 
         # Error should identify the typo and suggest the fix
-        error_text = " ".join(errors)
-        assert "promt" in error_text
-        assert "Did you mean" in error_text
+        diagnostic = next(d for d in errors if "promt" in d.message)
+        assert "promt" in diagnostic.message
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("similar_names")

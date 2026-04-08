@@ -441,11 +441,11 @@ def validate_workflow_templates(
     workflow_ir: dict,
     available_params: dict,
     registry: Registry
-) -> tuple[list[str], list[ValidationWarning]]:
+) -> list[Diagnostic]:
     """Validates all template variables before execution.
 
     Returns:
-        (errors, warnings) - Errors prevent execution, warnings don't
+        Diagnostics - Errors prevent execution, warnings do not
     """
 ```
 
@@ -1595,9 +1595,12 @@ registry = Registry.load()
 workflow_ir = {...}
 available_params = {"user_id": "123"}
 
-errors, warnings = validate_workflow_templates(
+diagnostics = validate_workflow_templates(
     workflow_ir, available_params, registry
 )
+
+errors = [d for d in diagnostics if d.severity.value == "error"]
+warnings = [d for d in diagnostics if d.severity.value != "error"]
 
 print(f"Errors: {errors}")
 print(f"Warnings: {warnings}")

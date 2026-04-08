@@ -68,10 +68,12 @@ This is where bare nodes get created and configured. The step order is load-bear
 
 Pre-compilation validation. Called once from `compile_workflow()` via `_prepare_compilation()`.
 
-- `_prepare_compilation()` — orchestrates: structure validation → data flow → template mode → input prep → output validation. Returns `(initial_params, warnings, resolved_defaults, env_param_names)`. Warnings are always `[]` (template validation moved to WorkflowValidator in Task 138).
+- `_prepare_compilation()` — orchestrates: structure validation → data flow → template mode → input prep → output validation. Returns `(initial_params, warnings, resolved_defaults, env_param_names)`. Warnings are always `[]` (template validation is a pre-execution concern, owned by `WorkflowValidator`, not the compiler).
 - `_validate_outputs()` — validates output declarations trace to node outputs. Warnings only, not errors (nodes may write dynamic keys).
-- `_validate_data_flow_at_compile_time()` — passes `check_inputs=False` because the compiler has `initial_params` containing variables not declared in IR inputs.
+- `_validate_data_flow_at_compile_time()` — passes `check_inputs=False` because the compiler has `initial_params` containing variables not declared in IR inputs. Filters `validate_data_flow()` output to `Severity.ERROR` explicitly before raising (guards against future warning-severity producers in `data_flow.py`).
 - `_get_template_resolution_mode()` — reads from IR `template_resolution_mode` field, falls back to global settings.
+
+**Rich diagnostic pass-through across the compile boundary**: when `_validate_data_flow_at_compile_time()` finds errors, it raises `CompilationError(..., wrapped_diagnostics=errors)`. `CompilationError.to_diagnostics()` returns `wrapped_diagnostics` verbatim when set (instead of producing a single generic compilation diagnostic), so the structured path/similar_names/available_fields/suggestions from the data-flow producers reach the user unchanged. Any new compiler-time validation that produces a list of structured diagnostics should use this kwarg rather than flattening to a bullet-list message string.
 
 ## mcp_resolution.py
 
@@ -149,8 +151,8 @@ Tests in `tests/test_runtime/`:
 
 ## Gotchas
 
-- **`CompilationError` canonical location is `core/exceptions.py`** (moved in Task 135). `compiler.py` re-exports it. All four sibling modules now import directly from `core.exceptions` (module-level, Task 141).
+- **`CompilationError` lives in `core/exceptions.py`** — `compiler.py` and `runtime/__init__.py` re-export it. All four sibling modules in this package import it directly from `core.exceptions` at module level. `core/exceptions.py` is a leaf module with only stdlib imports, so module-level imports are always safe — do not lazy-import exception classes from it.
 - **`node.node_id` is a dynamic attribute** — `BaseNode.__init__` doesn't define it. The compiler sets it after instantiation (`node_instance.node_id = node_id`). If a node enters the graph without this attribute, the engine raises a clear error.
 - **`_parse_mcp_node_type` placement**: Conceptually belongs in `mcp/` but raises `CompilationError`, anchoring it in the compilation package.
-- **Batch config coercion is fail-fast**: `_coerce_bool/int/float` raise `CompilationError` on invalid values. The old `PflowBatchNode` silently used defaults — the new behavior is intentionally stricter.
+- **Batch config coercion is fail-fast**: `_coerce_bool/int/float` raise `CompilationError` on invalid values. Invalid `max_concurrent: "abc"` is a compile error, not a silent default.
 - **`prepare_inputs` and `validate_ir_structure` are re-exported** from `__init__.py` for test code that imports them directly. In production, only `compile_validation.py` calls them.

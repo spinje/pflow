@@ -7,7 +7,7 @@ like unclosed braces, empty templates, etc.
 from unittest.mock import Mock
 
 from pflow.registry import Registry
-from pflow.runtime.template_validation import validate_workflow_templates
+from tests.shared.diagnostic_helpers import split_template_diagnostics
 
 
 def create_mock_registry(nodes_metadata):
@@ -44,12 +44,12 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1, f"Expected 1 error but got {len(errors)}: {errors}"
-        assert "Malformed template syntax" in errors[0]
-        assert "test-node" in errors[0]
-        assert "Found 1 '${' but only 0 valid template(s)" in errors[0]
+        assert "Malformed template syntax" in errors[0].message
+        assert errors[0].node_id == "test-node"
+        assert "found 1 '${' but only 0 valid template(s)" in errors[0].message.lower()
 
     def test_empty_template(self):
         """Test that empty template ${} is detected."""
@@ -66,11 +66,11 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Malformed template syntax" in errors[0]
-        assert "Found 1 '${' but only 0 valid template(s)" in errors[0]
+        assert "Malformed template syntax" in errors[0].message
+        assert "found 1 '${' but only 0 valid template(s)" in errors[0].message.lower()
 
     def test_whitespace_only_template(self):
         """Test that whitespace-only template ${ } is detected."""
@@ -87,10 +87,10 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Malformed template syntax" in errors[0]
+        assert "Malformed template syntax" in errors[0].message
 
     def test_multiple_templates_one_malformed(self):
         """Test detection when there are multiple templates and one is malformed."""
@@ -114,11 +114,11 @@ class TestMalformedTemplateDetection:
             "shell": {"interface": {"inputs": [], "outputs": [{"key": "result", "type": "str"}], "params": []}}
         })
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should detect the malformed template
-        assert any("Malformed template syntax" in err for err in errors)
-        assert any("Found 2 '${' but only 1 valid template(s)" in err for err in errors)
+        assert any("Malformed template syntax" in err.message for err in errors)
+        assert any("found 2 '${' but only 1 valid template(s)" in err.message.lower() for err in errors)
 
     def test_valid_templates_no_false_positives(self):
         """Test that valid templates don't trigger false positives."""
@@ -142,10 +142,10 @@ class TestMalformedTemplateDetection:
             "shell": {"interface": {"inputs": [], "outputs": [{"key": "result", "type": "str"}], "params": []}}
         })
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should NOT have malformed template errors
-        assert not any("Malformed template syntax" in err for err in errors)
+        assert not any("Malformed template syntax" in err.message for err in errors)
 
     def test_nested_templates_valid(self):
         """Test that nested field access doesn't trigger false positives."""
@@ -170,10 +170,10 @@ class TestMalformedTemplateDetection:
             "shell": {"interface": {"inputs": [], "outputs": [], "params": []}},
         })
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should NOT have malformed template errors
-        assert not any("Malformed template syntax" in err for err in errors)
+        assert not any("Malformed template syntax" in err.message for err in errors)
 
     def test_malformed_in_nested_params(self):
         """Test detection of malformed templates in nested parameter structures."""
@@ -190,11 +190,15 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"http": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Malformed template syntax" in errors[0]
-        assert "headers" in errors[0]  # Should mention the nested parameter path
+        assert "Malformed template syntax" in errors[0].message
+        # Nested parameter path — path should mention the 'headers' dict key
+        assert errors[0].context is not None
+        assert "headers" in errors[0].context.get("path", ""), (
+            f"Expected 'headers' in context path: {errors[0].context}"
+        )
 
     def test_malformed_in_list_params(self):
         """Test detection of malformed templates in list parameters."""
@@ -211,12 +215,16 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should detect malformed template in the list
-        malformed_errors = [err for err in errors if "Malformed template syntax" in err]
+        malformed_errors = [err for err in errors if "Malformed template syntax" in err.message]
         assert len(malformed_errors) == 1
-        assert "commands[1]" in malformed_errors[0]
+        # The list-index path is in structured context, not in the message
+        assert malformed_errors[0].context is not None
+        assert "commands[1]" in malformed_errors[0].context.get("path", ""), (
+            f"Expected 'commands[1]' in context path: {malformed_errors[0].context}"
+        )
 
     def test_no_dollar_brace_no_error(self):
         """Test that strings without ${ don't trigger errors."""
@@ -233,7 +241,7 @@ class TestMalformedTemplateDetection:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should have no errors
         assert len(errors) == 0
@@ -257,10 +265,10 @@ class TestMalformedTemplateEdgeCases:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Double ${{ means 2 ${, but only 1 valid template
-        assert any("Malformed template syntax" in err for err in errors)
+        assert any("Malformed template syntax" in err.message for err in errors)
 
     def test_multiple_malformed_in_same_string(self):
         """Test detection of multiple malformed templates in same string."""
@@ -277,10 +285,10 @@ class TestMalformedTemplateEdgeCases:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Found 2 '${' but only 0 valid template(s)" in errors[0]
+        assert "found 2 '${' but only 0 valid template(s)" in errors[0].message.lower()
 
     def test_coalesce_with_nested_indices_not_malformed(self):
         """Coalesce with multiple nested bracket indices is not malformed.
@@ -302,7 +310,7 @@ class TestMalformedTemplateEdgeCases:
 
         registry = create_mock_registry({"shell": {"interface": {"inputs": [], "outputs": [], "params": []}}})
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should NOT flag as malformed — it's a valid coalesce with nested indices
-        assert not any("Malformed template syntax" in err for err in errors)
+        assert not any("Malformed template syntax" in err.message for err in errors)

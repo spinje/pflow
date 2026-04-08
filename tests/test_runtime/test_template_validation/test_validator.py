@@ -2,8 +2,10 @@
 
 from unittest.mock import Mock
 
+from pflow.core.diagnostic import Severity
 from pflow.runtime.template_validation import validate_workflow_templates
 from pflow.runtime.template_validation.validator import _extract_all_templates
+from tests.shared.diagnostic_helpers import split_template_diagnostics
 
 
 def create_mock_registry():
@@ -228,7 +230,7 @@ class TestWorkflowValidation:
         params = {"url": "https://youtube.com/watch?v=xyz"}
         registry = create_mock_registry()
 
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 0
 
     def test_missing_cli_parameter(self):
@@ -245,9 +247,9 @@ class TestWorkflowValidation:
         params = {}
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Template variable ${url} has no valid source" in errors[0]
+        assert "Template variable ${url} has no valid source" in errors[0].message
 
     def test_multiple_missing_parameters(self):
         """Test validation reports multiple missing params."""
@@ -263,11 +265,11 @@ class TestWorkflowValidation:
         params = {}
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 3
-        assert any("${param1}" in e for e in errors)
-        assert any("${param2}" in e for e in errors)
-        assert any("${param3}" in e for e in errors)
+        assert any("${param1}" in d.message for d in errors)
+        assert any("${param2}" in d.message for d in errors)
+        assert any("${param3}" in d.message for d in errors)
 
     def test_distinguishes_cli_from_shared_store(self):
         """Test validation correctly identifies CLI params vs shared store."""
@@ -289,7 +291,7 @@ class TestWorkflowValidation:
         params = {"url": "https://youtube.com/watch?v=xyz"}
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 0  # No errors - transcript_data is from shared store
 
     def test_invalid_syntax_in_shared_vars(self):
@@ -303,9 +305,9 @@ class TestWorkflowValidation:
 
         params = {}
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 1
-        assert "Template variable ${data..field} has no valid source" in errors[0]
+        assert "Template variable ${data..field} has no valid source" in errors[0].message
 
     def test_partial_parameter_match(self):
         """Test base variable matching for CLI params."""
@@ -327,7 +329,7 @@ class TestWorkflowValidation:
         params = {"config": {"setting": "value1", "other": "value2"}}
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 0  # config is provided
 
     def test_no_templates_in_workflow(self):
@@ -342,7 +344,7 @@ class TestWorkflowValidation:
 
         params = {}
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 0  # No templates, no errors
 
 
@@ -370,12 +372,12 @@ class TestRealWorldScenarios:
 
         # Test with missing URL
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
         assert len(errors) == 1
-        assert "Template variable ${url} has no valid source" in errors[0]
+        assert "Template variable ${url} has no valid source" in errors[0].message
 
         # Test with URL provided
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"url": "https://youtube.com"}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"url": "https://youtube.com"}, registry)
         assert len(errors) == 0  # transcript_data and summary are from shared store
 
     def test_github_issue_workflow(self):
@@ -398,19 +400,19 @@ class TestRealWorldScenarios:
 
         # Test with no params
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
         assert len(errors) == 2
-        assert any("${repo}" in e for e in errors)
-        assert any("${issue_number}" in e for e in errors)
+        assert any("${repo}" in d.message for d in errors)
+        assert any("${issue_number}" in d.message for d in errors)
 
         # Test with partial params
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"repo": "pflow"}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"repo": "pflow"}, registry)
         assert len(errors) == 1
-        assert "${issue_number}" in errors[0]
+        assert "${issue_number}" in errors[0].message
 
         # Test with all params
         params = {"repo": "pflow", "issue_number": "123"}
-        errors, _warnings = validate_workflow_templates(workflow_ir, params, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, params, registry)
         assert len(errors) == 0
 
 
@@ -433,7 +435,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b", "c"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b", "c"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_item_alias_custom_recognized(self):
@@ -452,7 +454,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"records": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"records": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_outputs_recognized(self):
@@ -476,7 +478,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_all_batch_outputs_available(self):
@@ -509,7 +511,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": []}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": []}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_items_template_validated(self):
@@ -530,7 +532,7 @@ class TestBatchTemplateValidation:
         registry = create_mock_registry()
 
         # With data provided - should pass (data is used in batch.items)
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"data": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"data": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_batch_items_invalid_template_fails(self):
@@ -548,9 +550,9 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
         assert len(errors) > 0
-        assert any("nonexistent_array" in e for e in errors)
+        assert any("nonexistent_array" in d.message for d in errors)
 
     def test_batch_does_not_expose_inner_outputs(self):
         """${node.response} should NOT be valid for batch node (it's wrapped in results)."""
@@ -574,20 +576,24 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a"]}, registry)
 
         # Should fail with batch-specific error message
         assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
-        error = errors[0]
+        error = errors[0].message
 
         # Error should mention batch processing
         assert "batch processing" in error.lower(), f"Error should mention batch processing: {error}"
 
-        # Error should suggest the corrected path
-        assert "process.results[0].response" in error, f"Error should suggest corrected path: {error}"
+        diagnostic = errors[0]
+        assert diagnostic.suggestions
+        assert any("process.results[0].response" in suggestion for suggestion in diagnostic.suggestions)
 
-        # Error should show actual batch outputs
-        assert "process.results" in error, f"Error should show batch outputs: {error}"
+        # Error should show actual batch outputs (now in structured context)
+        available = (diagnostic.context or {}).get("available_fields", [])
+        assert any("process.results" in field for field in available), (
+            f"Error should show batch outputs in available_fields: {diagnostic}"
+        )
 
         # Error should NOT show the invalid path with a checkmark (no contradiction)
         assert "✓ ${process.response}" not in error, f"Error should not show invalid path with checkmark: {error}"
@@ -613,20 +619,24 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
 
         # Should have exactly one error
         assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
-        error = errors[0]
+        error = errors[0].message
 
         # Error should mention batch processing
         assert "batch processing" in error.lower(), f"Error should mention batch processing: {error}"
 
-        # Error should suggest the corrected path
-        assert "generate.results[0].llm_usage" in error, f"Error should suggest corrected path: {error}"
+        diagnostic = errors[0]
+        assert diagnostic.suggestions
+        assert any("generate.results[0].llm_usage" in suggestion for suggestion in diagnostic.suggestions)
 
-        # Error should show the top-level batch reference
-        assert "generate.results" in error, f"Error should show top-level batch reference: {error}"
+        # Error should show the top-level batch reference (now in structured context)
+        available = (diagnostic.context or {}).get("available_fields", [])
+        assert any("generate.results" in field for field in available), (
+            f"Error should show top-level batch reference in available_fields: {diagnostic}"
+        )
 
         # Error should NOT show the invalid path with a checkmark (no contradiction)
         assert "✓ ${generate.llm_usage}" not in error, f"Error should not show invalid path with checkmark: {error}"
@@ -652,23 +662,29 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
 
         # Should have exactly one error
         assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
         error = errors[0]
 
         # Error should say field does not exist
-        assert "does not output 'foobar'" in error, f"Error should mention field not found: {error}"
+        assert "does not output 'foobar'" in error.message, f"Error should mention field not found: {error}"
 
         # Error should indicate this is a batch node
-        assert "batch" in error.lower(), f"Error should indicate batch node: {error}"
+        assert "batch" in error.message.lower(), f"Error should indicate batch node: {error}"
 
-        # Error should show actual batch outputs
-        assert "process.results" in error, f"Error should show actual batch outputs: {error}"
+        # Error should show actual batch outputs (now in structured context)
+        available = (error.context or {}).get("available_fields", [])
+        assert any("process.results" in field for field in available), (
+            f"Error should show actual batch outputs in available_fields: {error}"
+        )
 
         # Error should NOT suggest results[0].foobar (since foobar isn't a real inner output)
-        assert "results[0].foobar" not in error, f"Error should not suggest invalid nested path: {error}"
+        suggestions = error.suggestions or []
+        assert not any("results[0].foobar" in s for s in suggestions), (
+            f"Error should not suggest invalid nested path: {error}"
+        )
 
     def test_batch_error_for_nested_inner_path(self):
         """${batch-node.llm_usage.input_tokens} should still identify llm_usage as inner field."""
@@ -691,14 +707,16 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a"]}, registry)
 
         assert len(errors) == 1, f"Expected exactly 1 error, got {len(errors)}: {errors}"
-        error = errors[0]
+        error = errors[0].message
 
         # Should still detect batch and identify llm_usage as the inner field
         assert "batch processing" in error.lower(), f"Error should mention batch processing: {error}"
-        assert "${generate.results[0].llm_usage}" in error, f"Error should suggest corrected path: {error}"
+        diagnostic = errors[0]
+        assert diagnostic.suggestions
+        assert any("${generate.results[0].llm_usage}" in suggestion for suggestion in diagnostic.suggestions)
 
     def test_non_batch_error_message_uses_node_outputs(self):
         """Regression test: non-batch error messages should still work correctly."""
@@ -719,24 +737,30 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should have errors (missing input_text and invalid foobar)
         assert len(errors) >= 1, f"Expected at least 1 error, got {len(errors)}: {errors}"
 
         # Find the error about foobar
-        foobar_errors = [e for e in errors if "foobar" in e]
+        foobar_errors = [d for d in errors if "foobar" in d.message]
         assert len(foobar_errors) == 1, f"Expected exactly 1 foobar error, got {len(foobar_errors)}: {foobar_errors}"
         error = foobar_errors[0]
 
         # Error should say field does not exist
-        assert "does not output 'foobar'" in error, f"Error should mention field not found: {error}"
+        assert "does not output 'foobar'" in error.message, f"Error should mention field not found: {error}"
 
-        # Error should show actual LLM outputs with checkmarks
-        assert "✓ ${analyze.response}" in error, f"Error should show actual outputs with checkmarks: {error}"
+        # Error should show actual LLM outputs (now in structured context)
+        available = (error.context or {}).get("available_fields", [])
+        assert any("${analyze.response}" in field for field in available), (
+            f"Error should show actual outputs in available_fields: {error}"
+        )
+        assert error.context is not None
+        assert error.context.get("available_fields")
+        assert error.context.get("available_fields_label") == "outputs"
 
         # Error should NOT mention batch
-        assert "batch" not in error.lower(), f"Error should not mention batch for non-batch node: {error}"
+        assert "batch" not in error.message.lower(), f"Error should not mention batch for non-batch node: {error}"
 
     def test_non_batch_node_unchanged(self):
         """Non-batch nodes should work exactly as before."""
@@ -753,7 +777,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"url": "https://youtube.com"}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"url": "https://youtube.com"}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_mixed_batch_and_non_batch_nodes(self):
@@ -784,7 +808,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(
+        errors, _warnings = split_template_diagnostics(
             workflow_ir, {"url": "https://youtube.com", "items": ["a", "b"]}, registry
         )
         assert len(errors) == 0, f"Unexpected errors: {errors}"
@@ -813,7 +837,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should NOT produce an error - results[0].response is valid
         assert len(errors) == 0, f"Unexpected errors for nested batch access: {errors}"
 
@@ -841,7 +865,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should NOT produce an error - results[0].item is valid (original batch input)
         assert len(errors) == 0, f"Unexpected errors for batch item field access: {errors}"
 
@@ -869,7 +893,7 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should NOT produce an error - deeply nested path is valid
         assert len(errors) == 0, f"Unexpected errors for deeply nested batch access: {errors}"
 
@@ -897,10 +921,26 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         # Should produce an error - typo_field is not a valid output
         assert len(errors) == 1, f"Expected 1 error for invalid path, got: {errors}"
-        assert "typo_field" in errors[0] or "results[0]" in errors[0]
+        assert "typo_field" in errors[0].message or "results[0]" in errors[0].message
+
+        # Structural assertion (task 147): the highest-value producer rewrite
+        # (_build_enhanced_node_diagnostic) must preserve available_fields (the
+        # node's actual outputs with types). Without this, the producer could
+        # regress to bare-message form and the substring assertion above would
+        # still pass.
+        diagnostics = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        diag = next(d for d in diagnostics if d.severity.value == "error")
+        assert diag.context.get("available_fields_label") == "outputs"
+        available = diag.context["available_fields"]
+        assert available, "available_fields must list the node's outputs"
+        # Verify the known real outputs of the llm batch node are present as
+        # structured entries — these are what a future regression to bare-string
+        # form would drop.
+        assert any("response" in entry for entry in available)
+        assert any("llm_usage" in entry for entry in available)
 
     def test_nested_index_template_not_flagged_as_malformed(self):
         """${results[${__index__}]} should not be flagged as malformed syntax."""
@@ -928,9 +968,9 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b", "c"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b", "c"]}, registry)
         # Should NOT produce any "malformed template" errors
-        malformed_errors = [e for e in errors if "Malformed template" in e]
+        malformed_errors = [d for d in errors if "Malformed template" in d.message]
         assert len(malformed_errors) == 0, f"Unexpected malformed template errors: {malformed_errors}"
 
     def test_nested_item_field_in_array_index_validated(self):
@@ -979,10 +1019,10 @@ class TestBatchTemplateValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # CRITICAL: Should NOT fail with "does not output 'results[${item'"
-        bad_errors = [e for e in errors if "results[${item" in e]
+        bad_errors = [d for d in errors if "results[${item" in d.message]
         assert len(bad_errors) == 0, f"Regression: nested item.field incorrectly parsed: {bad_errors}"
 
 
@@ -1021,7 +1061,7 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a", "b"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a", "b"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_workflow_batch_all_outputs_available(self):
@@ -1055,7 +1095,7 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": []}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": []}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_workflow_batch_inner_outputs_in_results(self):
@@ -1082,7 +1122,7 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_workflow_batch_blocks_direct_child_outputs(self):
@@ -1107,10 +1147,10 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a"]}, registry)
         # Should fail because 'content' is inside results, not at top level
         assert len(errors) > 0, "Should reject direct child output access on batched workflow"
-        assert any("content" in e for e in errors), f"Error should mention 'content': {errors}"
+        assert any("content" in d.message for d in errors), f"Error should mention 'content': {errors}"
 
     def test_workflow_batch_item_alias_recognized(self):
         """${item} should be valid inside batched workflow node params."""
@@ -1129,7 +1169,7 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"items": ["a"]}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"items": ["a"]}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
 
     def test_workflow_batch_unresolvable_child_dynamic(self):
@@ -1156,7 +1196,7 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(
+        errors, _warnings = split_template_diagnostics(
             workflow_ir, {"items": ["a"], "wf_path": "./child.pflow.md"}, registry
         )
         # Should pass — batch outputs are known even if child outputs aren't
@@ -1186,7 +1226,7 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(
+        errors, _warnings = split_template_diagnostics(
             workflow_ir, {"items": ["a"], "wf_path": "./child.pflow.md"}, registry
         )
         # Should pass — unknown inner outputs should be permissive, not strict
@@ -1213,5 +1253,56 @@ class TestBatchWorkflowNodeValidation:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = validate_workflow_templates(workflow_ir, {"text": "hello"}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"text": "hello"}, registry)
         assert len(errors) == 0, f"Unexpected errors: {errors}"
+
+    def test_unused_inputs_diagnostic_preserves_list(self):
+        """Unused-input diagnostics should keep their sorted input list in context."""
+        workflow_ir = {
+            "inputs": {
+                "used_one": {"type": "str"},
+                "unused_one": {"type": "str"},
+                "unused_two": {"type": "str"},
+            },
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "llm",
+                    "params": {"prompt": "echo ${used_one}"},
+                }
+            ],
+            "edges": [],
+        }
+
+        diagnostics = validate_workflow_templates(workflow_ir, {"used_one": "x"}, create_mock_registry())
+        errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+
+        assert len(errors) == 1
+        diagnostic = errors[0]
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("path") == "inputs"
+        assert diagnostic.context.get("unused_inputs") == ["unused_one", "unused_two"]
+        assert diagnostic.suggestions
+
+    def test_malformed_template_diagnostic_preserves_template_text(self):
+        """Malformed-template diagnostics should keep the raw malformed string."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "n1",
+                    "type": "llm",
+                    "params": {"prompt": "echo ${unclosed"},
+                }
+            ],
+            "edges": [],
+        }
+
+        diagnostics = validate_workflow_templates(workflow_ir, {}, create_mock_registry())
+        errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+
+        assert len(errors) == 1
+        diagnostic = errors[0]
+        assert diagnostic.title == "Template Error"
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("template") == "echo ${unclosed"
+        assert diagnostic.context.get("path") == "nodes[id=n1].params.prompt"
