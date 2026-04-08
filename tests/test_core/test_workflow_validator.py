@@ -7,26 +7,10 @@ import pytest
 from pflow.core.diagnostic import Severity
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
-from pflow.runtime.template_validation import validate_workflow_templates
-
-
-def _split_validator_diagnostics(*args, **kwargs):
-    diagnostics = WorkflowValidator.validate(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
-
-
-def _split_template_diagnostics(*args, **kwargs):
-    diagnostics = validate_workflow_templates(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
-
+from tests.shared.diagnostic_helpers import (
+    split_template_diagnostics,
+    split_validator_diagnostics,
+)
 
 # Note: Removed autouse fixture that was modifying user's registry.
 # The global test isolation in tests/conftest.py now ensures tests use
@@ -61,7 +45,7 @@ class TestWorkflowValidator:
             "inputs": {"input_file": {"type": "string", "required": True}},
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow, extracted_params={"input_file": "test.txt"}, registry=registry_with_nodes, skip_node_types=True
         )
 
@@ -76,10 +60,10 @@ class TestWorkflowValidator:
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow)
+        errors, _warnings = split_validator_diagnostics(workflow)
 
         assert len(errors) > 0
-        assert any("ir_version" in e for e in errors)
+        assert any("ir_version" in d.message for d in errors)
 
     def test_data_flow_validation_errors(self):
         """Test that data flow errors are caught."""
@@ -95,10 +79,10 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
 
         assert len(errors) > 0
-        assert any("after" in e for e in errors)
+        assert any("after" in d.message for d in errors)
 
     def test_multiple_stdin_inputs_validation_error(self):
         """Test that multiple stdin: true inputs are caught.
@@ -117,12 +101,12 @@ class TestWorkflowValidator:
             },
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
 
         assert len(errors) > 0
-        assert any("stdin" in e.lower() for e in errors)
-        assert any("data1" in e for e in errors)
-        assert any("data2" in e for e in errors)
+        assert any("stdin" in d.message.lower() for d in errors)
+        assert any("data1" in d.message for d in errors)
+        assert any("data2" in d.message for d in errors)
 
     def test_single_stdin_input_valid(self):
         """Test that a single stdin: true input is valid."""
@@ -135,10 +119,10 @@ class TestWorkflowValidator:
             },
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
 
         # Should not have stdin-related errors
-        assert not any("stdin" in e.lower() for e in errors)
+        assert not any("stdin" in d.message.lower() for d in errors)
 
     def test_template_validation_errors(self, registry_with_nodes):
         """Test that template errors are caught when params provided."""
@@ -150,14 +134,14 @@ class TestWorkflowValidator:
         }
 
         # With extracted_params but missing the required param
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow,
             extracted_params={},  # Empty params
             registry=registry_with_nodes,
         )
 
         assert len(errors) > 0
-        assert any("missing_param" in e for e in errors)
+        assert any("missing_param" in d.message for d in errors)
 
     def test_skip_template_validation_without_params(self):
         """Test that template validation is skipped without extracted_params."""
@@ -169,10 +153,10 @@ class TestWorkflowValidator:
         }
 
         # Without extracted_params - should skip template validation
-        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
 
         # Should not have template errors
-        assert not any("missing_param" in e for e in errors)
+        assert not any("missing_param" in d.message for d in errors)
 
     def test_node_type_validation_errors(self, registry_with_nodes):
         """Test that unknown node types are caught."""
@@ -184,11 +168,11 @@ class TestWorkflowValidator:
         }
 
         # With node type validation enabled
-        errors, _warnings = _split_validator_diagnostics(workflow, registry=registry_with_nodes, skip_node_types=False)
+        errors, _warnings = split_validator_diagnostics(workflow, registry=registry_with_nodes, skip_node_types=False)
 
         assert len(errors) > 0
-        assert any("Unknown node type" in e for e in errors)
-        assert any("unknown-node-type" in e for e in errors)
+        assert any("Unknown node type" in d.message for d in errors)
+        assert any("unknown-node-type" in d.message for d in errors)
 
     def test_workflow_node_type_bypasses_registry(self, registry_with_nodes):
         """Test that 'workflow' type is accepted without registry lookup.
@@ -212,10 +196,10 @@ class TestWorkflowValidator:
             "inputs": {},
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow, registry=registry_with_nodes, skip_node_types=False)
+        errors, _warnings = split_validator_diagnostics(workflow, registry=registry_with_nodes, skip_node_types=False)
 
         # Should not have "Unknown node type" for workflow
-        assert not any("Unknown node type" in e for e in errors)
+        assert not any("Unknown node type" in d.message for d in errors)
 
     def test_workflow_auto_outputs_resolve_in_templates(self, tmp_path, registry_with_nodes):
         """Workflow nodes auto-expose child's declared outputs for template validation.
@@ -264,9 +248,9 @@ Do something.
         }
 
         # The template validator should resolve ${process.result} successfully
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry_with_nodes)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry_with_nodes)
 
-        template_errors = [e for e in errors if "process" in e and "result" in e]
+        template_errors = [d for d in errors if "process" in d.message and "result" in d.message]
         assert len(template_errors) == 0, f"Unexpected errors for workflow output: {template_errors}"
 
     def test_workflow_dynamic_outputs_no_false_errors(self, registry_with_nodes):
@@ -293,10 +277,10 @@ Do something.
             "edges": [{"from": "process", "to": "use_output"}],
         }
 
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry_with_nodes)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry_with_nodes)
 
         # Dynamic workflow should NOT produce errors for any output reference
-        template_errors = [e for e in errors if "process" in e and "anything" in e]
+        template_errors = [d for d in errors if "process" in d.message and "anything" in d.message]
         assert len(template_errors) == 0, f"False errors for dynamic workflow output: {template_errors}"
 
     def test_skip_node_types_for_mocks(self, registry_with_nodes):
@@ -309,16 +293,16 @@ Do something.
         }
 
         # With node type validation - should fail
-        errors_with_validation, _ = _split_validator_diagnostics(
+        errors_with_validation, _ = split_validator_diagnostics(
             workflow, registry=registry_with_nodes, skip_node_types=False
         )
-        assert any("Unknown node type" in e for e in errors_with_validation)
+        assert any("Unknown node type" in d.message for d in errors_with_validation)
 
         # Without node type validation - should pass
-        errors_without_validation, _ = _split_validator_diagnostics(
+        errors_without_validation, _ = split_validator_diagnostics(
             workflow, registry=registry_with_nodes, skip_node_types=True
         )
-        assert not any("Unknown node type" in e for e in errors_without_validation)
+        assert not any("Unknown node type" in d.message for d in errors_without_validation)
 
     def test_accumulates_all_error_types(self, registry_with_nodes):
         """Test that all error types are collected."""
@@ -332,17 +316,17 @@ Do something.
             "inputs": {},
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow, extracted_params={}, registry=registry_with_nodes)
+        errors, _warnings = split_validator_diagnostics(workflow, extracted_params={}, registry=registry_with_nodes)
 
         # Should have multiple error types
         assert len(errors) >= 3
         # Node type errors
-        assert any("Unknown node type" in e and "unknown-node" in e for e in errors)
-        assert any("Unknown node type" in e and "another-unknown" in e for e in errors)
+        assert any("Unknown node type" in d.message and "unknown-node" in d.message for d in errors)
+        assert any("Unknown node type" in d.message and "another-unknown" in d.message for d in errors)
         # Data flow error
-        assert any(("forward" in e.lower() or "after" in e.lower()) for e in errors)
+        assert any(("forward" in d.message.lower() or "after" in d.message.lower()) for d in errors)
         # Template error
-        assert any("missing_input" in e for e in errors)
+        assert any("missing_input" in d.message for d in errors)
 
     def test_circular_dependency_detection(self):
         """Test that circular dependencies are caught."""
@@ -359,10 +343,10 @@ Do something.
             "inputs": {},
         }
 
-        errors, _warnings = _split_validator_diagnostics(workflow, skip_node_types=True)
+        errors, _warnings = split_validator_diagnostics(workflow, skip_node_types=True)
 
         assert len(errors) > 0
-        assert any("Circular dependency" in e for e in errors)
+        assert any("Circular dependency" in d.message for d in errors)
 
     def test_valid_complex_workflow(self, registry_with_nodes):
         """Test that a complex valid workflow passes all checks."""
@@ -404,7 +388,7 @@ Do something.
             },
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow,
             extracted_params={
                 "api_url": "https://api.example.com/data",
@@ -485,3 +469,81 @@ class TestDefensiveWrapperDiagnostics:
         assert diagnostic.severity == Severity.ERROR
         assert diagnostic.message.startswith("Registry validation error:")
         assert "exception_type" not in (diagnostic.context or {})
+
+
+class TestValidatorProducerStructure:
+    """Lock in the structured contract for rich outer-validator producers."""
+
+    def test_unknown_node_type_diagnostic_preserves_structure(self, registry_with_nodes) -> None:
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "shel", "params": {"command": "echo hi"}}],
+            "edges": [],
+        }
+
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir,
+            registry=registry_with_nodes,
+            skip_node_types=False,
+        )
+
+        assert len(errors) == 1
+        diagnostic = errors[0]
+        assert diagnostic.severity == Severity.ERROR
+        assert diagnostic.node_id == "n1"
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("path") == "nodes[0].type"
+        assert diagnostic.context.get("node_type") == "shel"
+
+    def test_empty_output_source_diagnostic_preserves_path(self) -> None:
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "shell", "params": {"command": "echo hi"}}],
+            "outputs": {"result": {"source": ""}},
+            "edges": [],
+        }
+
+        errors = WorkflowValidator._validate_output_sources(workflow_ir)
+
+        assert len(errors) == 1
+        diagnostic = errors[0]
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("path") == "outputs.result.source"
+
+    def test_output_source_missing_node_preserves_structure(self) -> None:
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "producer", "type": "shell", "params": {"command": "echo hi"}}],
+            "outputs": {"result": {"source": "producre"}},
+            "edges": [],
+        }
+
+        errors = WorkflowValidator._validate_output_sources(workflow_ir)
+
+        assert len(errors) == 1
+        diagnostic = errors[0]
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("path") == "outputs.result.source"
+        assert "producer" in diagnostic.context.get("available_fields", [])
+        assert diagnostic.context.get("available_fields_label") == "nodes"
+        assert diagnostic.context.get("similar_names")
+        assert any("producer" in name for name in diagnostic.context["similar_names"])
+
+    def test_output_source_template_missing_node_preserves_structure(self) -> None:
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "producer", "type": "shell", "params": {"command": "echo hi"}}],
+            "outputs": {"result": {"source": "${producre.stdout}"}},
+            "edges": [],
+        }
+
+        errors = WorkflowValidator._validate_output_sources(workflow_ir)
+
+        assert len(errors) == 1
+        diagnostic = errors[0]
+        assert diagnostic.title == "Template Error"
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("template") == "${producre.stdout}"
+        assert "producer" in diagnostic.context.get("available_fields", [])
+        assert diagnostic.context.get("similar_names")
+        assert diagnostic.suggestions

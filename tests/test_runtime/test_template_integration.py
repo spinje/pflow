@@ -6,19 +6,10 @@ from unittest.mock import Mock
 import pytest
 
 from pflow.core.node import Node
-from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 from pflow.runtime import compile_workflow
 from pflow.runtime.engine import WorkflowEngine
-
-
-def _split_validator_diagnostics(*args, **kwargs):
-    diagnostics = WorkflowValidator.validate(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class MockNode(Node):
@@ -139,13 +130,13 @@ class TestCompilerIntegration:
         ir = {"nodes": [{"id": "node1", "type": "mock-node", "params": {"url": "${required_param}"}}], "edges": []}
 
         # WorkflowValidator catches missing template variables as errors
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=mock_registry,
             skip_node_types=True,
         )
-        assert any("required_param" in e for e in errors)
+        assert any("required_param" in d.message for d in errors)
 
     def test_unresolved_templates_fail_at_runtime(self, mock_registry):
         """Unresolved templates raise ValueError at runtime even without pre-execution validation.

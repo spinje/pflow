@@ -10,16 +10,7 @@ Related to Issue #66: Validator should allow nested template access for typed di
 from unittest.mock import Mock
 
 from pflow.registry import Registry
-from pflow.runtime.template_validation import validate_workflow_templates
-
-
-def _split_template_diagnostics(*args, **kwargs):
-    diagnostics = validate_workflow_templates(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_template_diagnostics
 
 
 def create_mock_registry(nodes_metadata):
@@ -82,7 +73,7 @@ class TestUnionTypeValidation:
         })
 
         # Validate - should pass without errors
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "dict|str union should not generate warnings"
@@ -122,7 +113,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # No errors - str allows nested access via JSON auto-parsing
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
@@ -161,7 +152,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "dict|object union should not generate warnings"
@@ -197,7 +188,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "dict|str|int union should not generate warnings"
@@ -233,7 +224,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         # any is trusted (explicit declaration) - no warning even with str in union
@@ -270,7 +261,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         # dict and any are both trusted - no warning
@@ -307,7 +298,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "Case-insensitive Dict|Str should work"
@@ -343,7 +334,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         assert len(warnings) == 0, "Whitespace handling should work"
@@ -379,7 +370,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Single dict type should allow nested access without warnings
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
@@ -416,7 +407,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
         # any is an explicit declaration - node author knows what they're doing
@@ -457,7 +448,7 @@ class TestUnionTypeValidation:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # No nested access, so no warnings even for union types
         # dict|str is compatible with str (auto-serialization)
@@ -499,7 +490,7 @@ class TestUnionTypeEdgeCases:
             },
         })
 
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should still work - empty string after strip is ignored
         assert len(errors) == 0, f"Expected no errors but got: {errors}"
@@ -539,7 +530,7 @@ class TestUnionTypeEdgeCases:
             },
         })
 
-        errors, warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # dict|str is compatible with str (auto-serialization)
         assert len(errors) == 0, f"Expected no errors but got: {errors}"

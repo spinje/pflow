@@ -5,21 +5,13 @@ from typing import Any
 
 import pytest
 
+from pflow.core.diagnostic import format_diagnostic
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.file_resolver import resolve_file_references
 from pflow.core.ir_schema import normalize_ir, validate_ir
 from pflow.core.markdown_parser import parse_markdown
-from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
-
-
-def _split_validator_diagnostics(*args, **kwargs):
-    diagnostics = WorkflowValidator.validate(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class TestFileResolverWithParser:
@@ -445,7 +437,7 @@ Uses external prompt.
 
         # Generate dummy params and validate
         registry = Registry()
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=registry,
@@ -454,7 +446,7 @@ Uses external prompt.
 
         # Should have an error about nonexistent_node
         assert len(errors) > 0
-        error_text = "\n".join(errors)
+        error_text = "\n".join(format_diagnostic(d) for d in errors)
         assert "Loaded from file: ./prompts/bad.md" in error_text
 
     def test_template_error_without_file_ref_has_no_hint(self, tmp_path: Path) -> None:
@@ -479,7 +471,7 @@ Hello ${nonexistent_node.output}
         normalize_ir(ir)
 
         registry = Registry()
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=ir,
             extracted_params={},
             registry=registry,
@@ -487,5 +479,5 @@ Hello ${nonexistent_node.output}
         )
 
         assert len(errors) > 0
-        error_text = "\n".join(errors)
+        error_text = "\n".join(format_diagnostic(d) for d in errors)
         assert "Loaded from file" not in error_text

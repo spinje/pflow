@@ -9,15 +9,7 @@ from pathlib import Path
 
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
-
-
-def _split_validator_diagnostics(*args, **kwargs):
-    diagnostics = WorkflowValidator.validate(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 def write_pflow_md(path: Path, content: str) -> None:
@@ -78,7 +70,7 @@ This child workflow has a broken step.
         )
 
         parent_ir = _parent_ir(str(broken_child))
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -87,11 +79,11 @@ This child workflow has a broken step.
         )
 
         # Parser should complain about the missing description
-        assert any("missing a description" in e.lower() for e in errors), (
+        assert any("missing a description" in d.message.lower() for d in errors), (
             f"Expected 'missing a description' error, got: {errors}"
         )
         # Error should mention it comes from a sub-workflow
-        assert any("sub-workflow" in e.lower() or "in sub-workflow" in e.lower() for e in errors), (
+        assert any("sub-workflow" in d.message.lower() or "in sub-workflow" in d.message.lower() for d in errors), (
             f"Expected sub-workflow attribution, got: {errors}"
         )
 
@@ -124,7 +116,7 @@ This step greets the user nicely.
         )
 
         parent_ir = _parent_ir(str(valid_child))
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -183,7 +175,7 @@ Delegate to the grandchild workflow.
         )
 
         parent_ir = _parent_ir(str(middle))
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -192,11 +184,11 @@ Delegate to the grandchild workflow.
         )
 
         # Should see the grandchild parse error
-        assert any("missing a description" in e.lower() for e in errors), (
+        assert any("missing a description" in d.message.lower() for d in errors), (
             f"Expected grandchild parse error, got: {errors}"
         )
         # Error attribution should show nesting: both middle and grandchild mentioned
-        nested_errors = [e for e in errors if "sub-workflow" in e.lower()]
+        nested_errors = [d for d in errors if "sub-workflow" in d.message.lower()]
         assert len(nested_errors) >= 1, f"Expected nested attribution, got: {errors}"
 
 
@@ -250,7 +242,7 @@ This step delegates to workflow A.
 
         parent_ir = _parent_ir(str(a_path))
         # Must terminate without hanging or raising
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -260,7 +252,11 @@ This step delegates to workflow A.
 
         # Cycles are gracefully skipped — no "infinite" error expected
         # There should be no error specifically about the cycle
-        cycle_errors = [e for e in errors if "cycle" in e.lower() or "circular" in e.lower() or "infinite" in e.lower()]
+        cycle_errors = [
+            d
+            for d in errors
+            if "cycle" in d.message.lower() or "circular" in d.message.lower() or "infinite" in d.message.lower()
+        ]
         assert cycle_errors == [], f"Unexpected cycle error: {cycle_errors}"
 
 
@@ -310,7 +306,7 @@ Perform the configured operation now.
 
         # Parent only provides 'text', not 'count'
         parent_ir = _parent_ir(str(child), provided_params={"text": "hello"})
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -318,9 +314,9 @@ Perform the configured operation now.
             skip_node_types=True,
         )
 
-        assert any("count" in e for e in errors), f"Expected missing 'count' error, got: {errors}"
+        assert any("count" in d.message for d in errors), f"Expected missing 'count' error, got: {errors}"
         # 'text' is provided, so it should NOT be flagged
-        missing_text_errors = [e for e in errors if "input 'text'" in e and "not provided" in e]
+        missing_text_errors = [d for d in errors if "input 'text'" in d.message and "not provided" in d.message]
         assert missing_text_errors == [], f"'text' should not be flagged as missing: {errors}"
 
 
@@ -334,7 +330,7 @@ class TestTemplateWorkflowRef:
         """When the workflow param is a template like ${dynamic_path}, the
         validator cannot resolve it statically and should skip it gracefully."""
         parent_ir = _parent_ir("${dynamic_path}")
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -343,7 +339,7 @@ class TestTemplateWorkflowRef:
         )
 
         # No sub-workflow errors from the template reference
-        sub_wf_errors = [e for e in errors if "sub-workflow" in e.lower()]
+        sub_wf_errors = [d for d in errors if "sub-workflow" in d.message.lower()]
         assert sub_wf_errors == [], f"Template ref should be skipped, got: {sub_wf_errors}"
 
 
@@ -382,7 +378,7 @@ class TestInlineWorkflowIR:
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             registry=None,
@@ -390,11 +386,13 @@ class TestInlineWorkflowIR:
         )
 
         # Should catch the circular dependency from the inline IR
-        assert any("circular" in e.lower() for e in errors), (
+        assert any("circular" in d.message.lower() for d in errors), (
             f"Expected circular dependency error from inline IR, got: {errors}"
         )
         # Error should be attributed to the sub-workflow
-        assert any("sub-workflow" in e.lower() for e in errors), f"Expected sub-workflow attribution, got: {errors}"
+        assert any("sub-workflow" in d.message.lower() for d in errors), (
+            f"Expected sub-workflow attribution, got: {errors}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +452,7 @@ Second step used by first step.
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             registry=None,
@@ -462,10 +460,12 @@ Second step used by first step.
         )
 
         # The saved child's forward-reference error should surface
-        assert any("after" in e.lower() or "forward" in e.lower() for e in errors), (
+        assert any("after" in d.message.lower() or "forward" in d.message.lower() for d in errors), (
             f"Expected forward-reference error from saved child, got: {errors}"
         )
-        assert any("sub-workflow" in e.lower() for e in errors), f"Expected sub-workflow attribution, got: {errors}"
+        assert any("sub-workflow" in d.message.lower() for d in errors), (
+            f"Expected sub-workflow attribution, got: {errors}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -501,7 +501,7 @@ This step uses a nonexistent node type.
         registry = Registry()
         registry.load()
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -509,8 +509,10 @@ This step uses a nonexistent node type.
             skip_node_types=False,
         )
 
-        assert any("unknown node type" in e.lower() for e in errors), f"Expected unknown node type error, got: {errors}"
-        assert any("totally-fake-node-type" in e for e in errors), (
+        assert any("unknown node type" in d.message.lower() for d in errors), (
+            f"Expected unknown node type error, got: {errors}"
+        )
+        assert any("totally-fake-node-type" in d.message for d in errors), (
             f"Expected 'totally-fake-node-type' in error, got: {errors}"
         )
 
@@ -545,7 +547,7 @@ First step that references a non-existent node.
         )
 
         parent_ir = _parent_ir(str(child))
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -553,7 +555,7 @@ First step that references a non-existent node.
             skip_node_types=True,
         )
 
-        assert any("non-existent" in e.lower() or "nonexistent" in e.lower() for e in errors), (
+        assert any("non-existent" in d.message.lower() or "nonexistent" in d.message.lower() for d in errors), (
             f"Expected non-existent node error from child, got: {errors}"
         )
 
@@ -597,7 +599,7 @@ Execute the main operation now.
 
         # Parent provides nothing for the optional input
         parent_ir = _parent_ir(str(child))
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -605,7 +607,7 @@ Execute the main operation now.
             skip_node_types=True,
         )
 
-        missing_input_errors = [e for e in errors if "maybe-param" in e and "not provided" in e]
+        missing_input_errors = [d for d in errors if "maybe-param" in d.message and "not provided" in d.message]
         assert missing_input_errors == [], f"Optional input should not be flagged as missing: {errors}"
 
 
@@ -621,7 +623,7 @@ class TestSubWorkflowFileNotFound:
         nonexistent = str(tmp_path / "does-not-exist.pflow.md")
         parent_ir = _parent_ir(nonexistent)
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -629,8 +631,8 @@ class TestSubWorkflowFileNotFound:
             skip_node_types=True,
         )
 
-        assert any("not found" in e.lower() for e in errors), f"Expected 'file not found' error, got: {errors}"
-        assert any("does-not-exist.pflow.md" in e for e in errors), (
+        assert any("not found" in d.message.lower() for d in errors), f"Expected 'file not found' error, got: {errors}"
+        assert any("does-not-exist.pflow.md" in d.message for d in errors), (
             f"Expected file name in error message, got: {errors}"
         )
 
@@ -670,7 +672,7 @@ class TestDuplicateSubWorkflowReference:
             "edges": [{"from": "step-a", "to": "step-b"}],
         }
 
-        errors, _ = _split_validator_diagnostics(
+        errors, _ = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
@@ -678,11 +680,11 @@ class TestDuplicateSubWorkflowReference:
         )
 
         # step-a should pass (provides both text and count)
-        assert not any("step-a" in e.lower() and "not provided" in e for e in errors), (
+        assert not any("step-a" in d.message.lower() and "not provided" in d.message for d in errors), (
             f"step-a should not have missing input errors: {errors}"
         )
         # step-b should fail (missing count)
-        assert any("step-b" in e and "count" in e and "not provided" in e for e in errors), (
+        assert any("step-b" in d.message and "count" in d.message and "not provided" in d.message for d in errors), (
             f"Expected missing 'count' error for step-b, got: {errors}"
         )
 
@@ -732,16 +734,16 @@ class TestDuplicateSubWorkflowReference:
             "edges": [{"from": "via-child", "to": "direct-grandchild"}],
         }
 
-        errors, _ = _split_validator_diagnostics(
+        errors, _ = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             workflow_file=tmp_path / "parent.pflow.md",
             skip_node_types=True,
         )
 
-        assert any("direct-grandchild" in e and "count" in e and "not provided" in e for e in errors), (
-            f"Expected missing 'count' error for direct-grandchild, got: {errors}"
-        )
+        assert any(
+            "direct-grandchild" in d.message and "count" in d.message and "not provided" in d.message for d in errors
+        ), f"Expected missing 'count' error for direct-grandchild, got: {errors}"
 
 
 # ---------------------------------------------------------------------------
@@ -755,18 +757,18 @@ class TestRelativePathWithoutWorkflowFile:
         the validator should skip with a clear warning instead of resolving
         against CWD."""
         parent_ir = _parent_ir("./child.pflow.md")
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             skip_node_types=True,
             workflow_file=None,
         )
 
-        assert any("cannot resolve relative" in e.lower() for e in errors), (
+        assert any("cannot resolve relative" in d.message.lower() for d in errors), (
             f"Expected 'cannot resolve relative' error, got: {errors}"
         )
-        assert any("./child.pflow.md" in e for e in errors)
-        assert any("use an absolute path" in e.lower() for e in errors)
+        assert any("./child.pflow.md" in d.message for d in errors)
+        assert any("use an absolute path" in d.message.lower() for d in errors)
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +799,7 @@ Execute the main step now.
         )
 
         parent_ir = _parent_ir(str(child))  # absolute path
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             skip_node_types=True,
@@ -805,7 +807,7 @@ Execute the main step now.
         )
 
         # No errors about unresolvable paths
-        assert not any("cannot resolve" in e.lower() for e in errors), f"Unexpected resolution error: {errors}"
+        assert not any("cannot resolve" in d.message.lower() for d in errors), f"Unexpected resolution error: {errors}"
 
 
 # ---------------------------------------------------------------------------
@@ -837,14 +839,14 @@ Execute the main step now.
         )
 
         parent_ir = _parent_ir("./child.pflow.md")  # relative path
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=parent_ir,
             extracted_params={},
             skip_node_types=True,
             workflow_file=tmp_path / "parent.pflow.md",
         )
 
-        assert not any("cannot resolve" in e.lower() for e in errors), f"Unexpected resolution error: {errors}"
+        assert not any("cannot resolve" in d.message.lower() for d in errors), f"Unexpected resolution error: {errors}"
         assert errors == [], f"Expected no errors, got: {errors}"
 
 
@@ -1000,8 +1002,8 @@ Invokes the middle workflow.
         )
 
         errors = [d for d in diagnostics if d.severity == Severity.ERROR]
-        unknown_param_errors = [e for e in errors if "file_pat" in e.message]
-        assert len(unknown_param_errors) >= 1, f"Expected unknown-param error, got: {[e.message for e in errors]}"
+        unknown_param_errors = [d for d in errors if "file_pat" in d.message]
+        assert len(unknown_param_errors) >= 1, f"Expected unknown-param error, got: {[d.message for d in errors]}"
 
         diagnostic = unknown_param_errors[0]
         context = diagnostic.context or {}

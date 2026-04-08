@@ -2,14 +2,9 @@
 
 from unittest.mock import Mock
 
+from pflow.core.diagnostic import Severity
 from pflow.runtime.template_validation import validate_workflow_templates
-
-
-def _split_template_diagnostics(*args, **kwargs):
-    diagnostics = validate_workflow_templates(*args, **kwargs)
-    errors = [d.message for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_template_diagnostics
 
 
 def create_mock_registry():
@@ -84,10 +79,13 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '${issue_number}' not provided - GitHub issue number to fix (required)."
+        assert (
+            errors[0].message
+            == "Required input '${issue_number}' not provided - GitHub issue number to fix (required)."
+        )
 
     def test_optional_input_with_default_error(self):
         """Test error message for optional input with default."""
@@ -110,11 +108,12 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
         assert (
-            errors[0] == "Required input '${model}' not provided - LLM model to use (optional, default: gpt-3.5-turbo)."
+            errors[0].message
+            == "Required input '${model}' not provided - LLM model to use (optional, default: gpt-3.5-turbo)."
         )
 
     def test_path_access_on_declared_input_error(self):
@@ -137,11 +136,11 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Required input '${config}' not provided - API configuration object (required)" in errors[0]
-        assert "attempted to access path 'endpoint'" in errors[0]
+        assert "Required input '${config}' not provided - API configuration object (required)" in errors[0].message
+        assert "attempted to access path 'endpoint'" in errors[0].message
 
         # Structural assertion (task 147): the path_validation producer for
         # the declared-input-with-path-access case must preserve the offending
@@ -176,16 +175,16 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         # Should have 2 errors: one for missing required input, one for undeclared variable
         assert len(errors) == 2
 
         # Find the error about the undeclared variable
-        undeclared_error = next((e for e in errors if "undeclared_var" in e), None)
+        undeclared_error = next((d for d in errors if "undeclared_var" in d.message), None)
         assert undeclared_error is not None
-        assert "Template variable ${undeclared_var} has no valid source" in undeclared_error
-        assert "not provided in initial_params and not written by any node" in undeclared_error
+        assert "Template variable ${undeclared_var} has no valid source" in undeclared_error.message
+        assert "not provided in initial_params and not written by any node" in undeclared_error.message
 
     def test_workflow_without_inputs_field(self):
         """Test that workflows without inputs field work correctly."""
@@ -201,10 +200,10 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert "Template variable ${some_var} has no valid source" in errors[0]
+        assert "Template variable ${some_var} has no valid source" in errors[0].message
 
     def test_multiple_missing_inputs_with_descriptions(self):
         """Test multiple missing inputs with descriptions."""
@@ -233,11 +232,11 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 2
         # Check both errors are present (order not guaranteed)
-        error_messages = set(errors)
+        error_messages = {d.message for d in errors}
         assert any(
             message == "Required input '${repo}' not provided - GitHub repository name (required)."
             for message in error_messages
@@ -267,10 +266,10 @@ class TestEnhancedTemplateErrors:
         }
 
         registry = create_mock_registry()
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
 
         assert len(errors) == 1
-        assert errors[0] == "Required input '${my_input}' not provided - (required)."
+        assert errors[0].message == "Required input '${my_input}' not provided - (required)."
 
     def test_provided_inputs_no_error(self):
         """Test that provided inputs don't generate errors."""
@@ -293,6 +292,31 @@ class TestEnhancedTemplateErrors:
 
         registry = create_mock_registry()
         # Provide the required input
-        errors, _warnings = _split_template_diagnostics(workflow_ir, {"issue_number": "123"}, registry)
+        errors, _warnings = split_template_diagnostics(workflow_ir, {"issue_number": "123"}, registry)
 
         assert len(errors) == 0
+
+
+def test_undeclared_variable_preserves_template_context() -> None:
+    """Simple template errors should keep template and suggestion structure."""
+    workflow_ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "node1",
+                "type": "llm",
+                "params": {"prompt": "Using ${undeclared_var}"},
+            }
+        ],
+    }
+
+    registry = create_mock_registry()
+    diagnostics = validate_workflow_templates(workflow_ir, {}, registry)
+    errors = [d for d in diagnostics if d.severity == Severity.ERROR]
+
+    assert len(errors) == 1
+    diagnostic = errors[0]
+    assert diagnostic.title == "Template Error"
+    assert diagnostic.context is not None
+    assert diagnostic.context.get("template") == "${undeclared_var}"
+    assert diagnostic.suggestions

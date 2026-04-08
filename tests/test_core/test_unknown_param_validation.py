@@ -13,15 +13,7 @@ import pytest
 from pflow.core.diagnostic import Severity, format_diagnostic
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
-
-
-def _split_validator_diagnostics(*args, **kwargs):
-    diagnostics = WorkflowValidator.validate(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class TestValidateUnknownParams:
@@ -96,9 +88,10 @@ class TestValidateUnknownParams:
 
         assert len(diagnostics) >= 1
         # Should suggest 'prompt' as a correction
-        error_text = format_diagnostic(diagnostics[0])
-        assert "promt" in error_text
-        assert "Did you mean" in error_text
+        diagnostic = diagnostics[0]
+        assert "promt" in format_diagnostic(diagnostic)
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("similar_names")
 
     def test_unknown_param_diagnostic_preserves_structure(self, registry: Registry) -> None:
         """Unknown parameter diagnostics should keep structured fix data."""
@@ -228,16 +221,16 @@ class TestUnknownParamErrorsIntegration:
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
         )
 
         # Unknown params should be errors, not warnings
-        unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
+        unknown_errors = [d for d in errors if "unknown parameter" in d.message.lower()]
         assert len(unknown_errors) >= 1
-        assert "'Note'" in unknown_errors[0]
+        assert "'Note'" in unknown_errors[0].message
 
     def test_no_errors_for_valid_workflow(self, registry: Registry) -> None:
         """A valid workflow should produce no unknown param errors."""
@@ -255,13 +248,13 @@ class TestUnknownParamErrorsIntegration:
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
         )
 
-        unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
+        unknown_errors = [d for d in errors if "unknown parameter" in d.message.lower()]
         assert len(unknown_errors) == 0
 
     def test_no_unknown_param_errors_without_registry(self) -> None:
@@ -281,7 +274,7 @@ class TestUnknownParamErrorsIntegration:
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             extracted_params=None,
             registry=None,
@@ -289,7 +282,7 @@ class TestUnknownParamErrorsIntegration:
         )
 
         # No unknown param errors since registry is None
-        unknown_errors = [e for e in errors if "unknown parameter" in e.lower()]
+        unknown_errors = [d for d in errors if "unknown parameter" in d.message.lower()]
         assert len(unknown_errors) == 0
 
 
@@ -328,13 +321,14 @@ class TestUnknownParamBlocksExecution:
             "edges": [],
         }
 
-        errors, _warnings = _split_validator_diagnostics(
+        errors, _warnings = split_validator_diagnostics(
             workflow_ir=workflow_ir,
             registry=registry,
             skip_node_types=False,
         )
 
         # Error should identify the typo and suggest the fix
-        error_text = " ".join(errors)
-        assert "promt" in error_text
-        assert "Did you mean" in error_text
+        diagnostic = next(d for d in errors if "promt" in d.message)
+        assert "promt" in diagnostic.message
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("similar_names")

@@ -8,17 +8,8 @@ These tests catch REAL bugs in template validation:
 5. False positives → valid templates rejected
 """
 
-from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
-
-
-def _split_validator_diagnostics(*args, **kwargs):
-    diagnostics = WorkflowValidator.validate(*args, **kwargs)
-    from pflow.core.diagnostic import format_diagnostic
-
-    errors = [format_diagnostic(d) for d in diagnostics if d.severity.value == "error"]
-    warnings = [d for d in diagnostics if d.severity.value == "warning"]
-    return errors, warnings
+from tests.shared.diagnostic_helpers import split_validator_diagnostics
 
 
 class TestOutputTemplateValidation:
@@ -41,15 +32,13 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
-        error_msg = "\n".join(errors)
-
-        # Should suggest correct name
-        assert "generate_story" in error_msg
-        assert "Did you mean" in error_msg
-        assert "${generate_story.response}" in error_msg
+        typo_error = next(d for d in errors if "generate-story" in d.message)
+        assert typo_error.context is not None
+        assert typo_error.context.get("similar_names")
+        assert any("generate_story" in name for name in typo_error.context["similar_names"])
 
     def test_valid_template_passes(self):
         """SANITY: Valid template passes without errors.
@@ -64,7 +53,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) == 0
 
@@ -82,10 +71,10 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
-        assert "malformed" in "\n".join(errors).lower()
+        assert "malformed" in "\n".join(d.message for d in errors).lower()
 
     def test_template_workflow_input_passes(self):
         """CRITICAL: Template without dot (workflow input variable) passes.
@@ -102,7 +91,7 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) == 0
 
@@ -121,10 +110,10 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
-        assert "non-existent node 'missing'" in "\n".join(errors)
+        assert "non-existent node 'missing'" in "\n".join(d.message for d in errors)
 
     def test_multiple_errors_reported(self):
         """CRITICAL: All errors collected, not just first one.
@@ -144,11 +133,11 @@ class TestOutputTemplateValidation:
         }
 
         registry = Registry()
-        errors, _ = _split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         # Should have 2 errors (missing1 and missing2)
         assert len(errors) == 2
 
-        error_msg = "\n".join(errors)
+        error_msg = "\n".join(d.message for d in errors)
         assert "missing1" in error_msg
         assert "missing2" in error_msg
