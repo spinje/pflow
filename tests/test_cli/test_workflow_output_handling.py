@@ -235,72 +235,18 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
-    def test_print_mode_suppresses_progress_header_and_summary(
-        self, mock_registry_instance, mock_compile, mock_validate_ir
-    ):
-        """`-p` keeps stdout clean and suppresses stderr noise from the callback gate."""
-        runner = click.testing.CliRunner()
-
-        workflow = {
-            "ir_version": "0.1.0",
-            "outputs": {"result": {"description": "Test result", "type": "string"}},
-            "nodes": [
-                {
-                    "id": "test",
-                    "type": "test-node",
-                    "params": {"output_key": "result", "output_value": "PRINT_MODE_CANARY"},
-                }
-            ],
-        }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
-            f.write(ir_to_markdown(workflow))
-            workflow_file = f.name
-
-        try:
-            result = runner.invoke(main, ["-p", workflow_file])
-
-            assert result.exit_code == 0
-            assert "PRINT_MODE_CANARY" in result.stdout
-            assert "Executing workflow" not in result.stderr
-            assert "Workflow output:" not in result.stderr
-            assert "Workflow completed" not in result.stderr
-            assert "test..." not in result.stderr
-        finally:
-            Path(workflow_file).unlink()
-
-    def test_json_mode_suppresses_progress_header_and_summary(
-        self, mock_registry_instance, mock_compile, mock_validate_ir
-    ):
-        """`--output-format json` must keep stderr machine-clean."""
-        runner = click.testing.CliRunner()
-
-        workflow = {
-            "ir_version": "0.1.0",
-            "outputs": {"result": {"description": "Test result", "type": "string"}},
-            "nodes": [
-                {
-                    "id": "test",
-                    "type": "test-node",
-                    "params": {"output_key": "result", "output_value": "JSON_MODE_CANARY"},
-                }
-            ],
-        }
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
-            f.write(ir_to_markdown(workflow))
-            workflow_file = f.name
-
-        try:
-            result = runner.invoke(main, ["--output-format", "json", workflow_file])
-
-            assert result.exit_code == 0
-            parsed = json.loads(result.stdout)
-            assert parsed["success"] is True
-            assert parsed["result"]["result"] == "JSON_MODE_CANARY"
-            assert result.stderr.strip() == ""
-        finally:
-            Path(workflow_file).unlink()
+    # NOTE: `test_print_mode_suppresses_progress_header_and_summary` and
+    # `test_json_mode_suppresses_progress_header_and_summary` were deleted
+    # as test theater — both used the `mock_compile` fixture which returns
+    # `ExecutionResult(metrics=None)`, and `_emit_summary_or_only_indicator`
+    # short-circuits on `if not metrics_collector: return`. The stderr
+    # suppression assertions were therefore vacuous — they passed regardless
+    # of whether `-p`/JSON mode suppression actually worked.
+    #
+    # Real coverage lives in `tests/test_cli/test_progress_streaming_subprocess.py`:
+    #   - `test_print_mode_without_only_stays_silent` (real subprocess, `-p`)
+    #   - `test_print_mode_with_only_emits_indicator` (real subprocess, `-p` + `--only`)
+    #   - `test_json_mode_keeps_stderr_silent` (real subprocess, JSON mode)
 
     def test_output_key_override(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key flag overrides both declared outputs and hardcoded keys."""

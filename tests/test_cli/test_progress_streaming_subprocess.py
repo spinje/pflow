@@ -42,12 +42,34 @@ def _skip_if_uv_sandbox_panics(result: subprocess.CompletedProcess) -> None:
 
 @pytest.fixture(scope="module")
 def subprocess_env(tmp_path_factory, uv_exe):
-    """Isolated HOME for subprocess pflow runs (module-scoped to amortize startup)."""
+    """Isolated HOME for subprocess pflow runs (module-scoped to amortize startup).
+
+    **Critical**: strips ``PYTEST_CURRENT_TEST`` from the inherited env. Without
+    this, the subprocess inherits the marker from pytest, ``cli/logging_config.py``
+    sees it and short-circuits ``configure_logging`` as a no-op, and the child's
+    root logger ends up with no ``StreamHandler`` at all. That means:
+
+    1. Python's ``lastResort`` handler writes log records directly to ``sys.stderr``
+       without going through any filter pipeline.
+    2. ``OutputController._install_log_partial_line_guard`` iterates
+       ``logging.getLogger().handlers`` and finds nothing — the filter is
+       attached to zero handlers.
+    3. Any subprocess test that exercises a ``logger.warning``/``logger.error``/
+       ``logger.exception`` site during a progress partial line gets corruption
+       that would NOT happen in production (where ``PYTEST_CURRENT_TEST`` is
+       unset and ``configure_logging`` installs a proper handler).
+
+    The fix is to scrub the marker so subprocess tests run against production-
+    like logging configuration. Subprocess tests that need LLM features must
+    mock or avoid the LLM detection path separately (current subprocess tests
+    are all shell-only so this isn't an issue).
+    """
     home = tmp_path_factory.mktemp("home_progress_streaming")
     (home / ".pflow").mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env.pop("PYTEST_CURRENT_TEST", None)
 
     # Prime the registry so the first real test isn't paying init cost
     subprocess.run(  # noqa: S603
@@ -851,3 +873,126 @@ class TestRealSubprocessProgressRendering:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+
+    def test_json_mode_keeps_stderr_silent(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow --output-format json foo.pflow.md`` must emit valid JSON on
+        stdout and zero bytes on stderr.
+
+        JSON mode is the machine-clean invariant: agents consuming structured
+        output need stderr to be empty so any stderr content they observe is a
+        real error signal. The CLI enforces this by installing no progress
+        callback when ``output_format == "json"`` AND by routing the success
+        summary through ``_handle_json_output`` which never calls
+        ``_emit_summary_or_only_indicator``.
+
+        This subprocess test replaces a mocked predecessor in
+        ``test_workflow_output_handling.py`` that was test theater: the old
+        test used the ``mock_compile`` fixture whose ``ExecutionResult`` had
+        ``metrics=None``, so the summary code path could never fire regardless
+        of mode. The subprocess path exercises the real runner + real
+        MetricsCollector and would catch a regression where JSON mode starts
+        leaking stderr (e.g. someone removing the ``output_format != "json"``
+        clause from the ``progress_enabled`` gate in ``cli/main.py``).
+        """
+        import json
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "echo_canary",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo JSON_MODE_CANARY"},
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "json_mode.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", "--output-format", "json", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, (
+            f"workflow failed unexpectedly\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+        # stdout must be valid JSON (the machine-clean contract)
+        try:
+            parsed = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise AssertionError(f"JSON mode stdout is not valid JSON: {exc}\nstdout:\n{result.stdout}") from exc
+
+        assert parsed.get("success") is True, f"Expected success=True in JSON output, got: {parsed}"
+
+        # stderr must be empty — this is the invariant agents rely on
+        assert result.stderr.strip() == "", (
+            "JSON mode must keep stderr silent. Any stderr content contaminates "
+            "the machine-clean contract that agents rely on.\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+    def test_shell_timeout_warning_does_not_corrupt_progress_line(self, tmp_path, uv_exe, subprocess_env):
+        """A shell node that times out emits ``logger.warning("Command timed out")``
+        from ``post()`` (``shell.py:648``), which writes directly to stderr via
+        Python's logging machinery. The ``_ProgressPartialLineFilter`` installed
+        in ``create_progress_callback`` must close the partial ``timeout_node...``
+        line before the warning lands, otherwise agents see the historical
+        corruption shape ``timeout_node...WARNING: Command timed out ✗ Failed``.
+
+        Task 149's original plan only removed one ``logger.warning`` site
+        (``shell.py:713``, the non-zero-exit warning); the timeout site at line
+        648 was relied on to be protected by the logging filter architecturally
+        but had no regression test. This test exercises that specific code path
+        end-to-end so any future refactor of the filter install path OR any
+        switch from ``logger.warning`` to a direct stderr write (``print``,
+        ``sys.stderr.write``, ``click.echo(..., err=True)``) is caught.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "timeout_node",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "sleep 10", "timeout": 0.1},
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "timeout.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = _run_pflow(uv_exe, subprocess_env, workflow_path)
+        _skip_if_uv_sandbox_panics(result)
+
+        # Workflow should fail (timeout)
+        assert result.returncode != 0, (
+            f"expected non-zero exit (timeout), got {result.returncode}\nstderr: {result.stderr!r}"
+        )
+
+        # Positive: the clean failure terminator must be present as a contiguous substring.
+        # This proves the partial line was closed before the warning landed AND
+        # the completion event re-emitted the canonical line with its terminator.
+        assert "timeout_node... ✗ Failed" in result.stderr, (
+            "Progress line is corrupted by the shell timeout `logger.warning` "
+            "interleaving between node_start and node_complete. Either the "
+            "_ProgressPartialLineFilter is not installed on the right handler, "
+            "or shell.py switched from logger.warning to a direct stderr write.\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+        # Negative: the historical corruption shapes
+        assert "timeout_node...WARNING:" not in result.stderr, (
+            f"`logger.warning` text concatenated onto the partial timeout_node... line.\nstderr: {result.stderr!r}"
+        )
+        assert "timeout_node...Command timed" not in result.stderr, (
+            f"Raw timeout warning text concatenated onto the partial timeout_node... line.\nstderr: {result.stderr!r}"
+        )
