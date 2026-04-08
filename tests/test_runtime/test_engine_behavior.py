@@ -20,6 +20,32 @@ class _ActionNode(BaseNode):
         return self.params.get("action", "default")
 
 
+class _FlakyLoopNode(BaseNode):
+    """Fails on first visit, succeeds on second, writing namespaced output."""
+
+    def post(self, shared, prep_res, exec_res):
+        visits = shared["__execution__"]["node_visit_counts"].get(self.node_id, 0)
+        if visits == 1:
+            shared["command"] = "flaky command"
+            shared["exit_code"] = 1
+            shared["error"] = "first attempt failed"
+            return "error"
+
+        shared["stdout"] = "recovered"
+        return "default"
+
+
+class _CaptureNode(BaseNode):
+    """Captures an upstream value into its own namespace for assertions."""
+
+    def prep(self, shared):
+        return shared["flaky"]["stdout"]
+
+    def post(self, shared, prep_res, exec_res):
+        shared["seen"] = prep_res
+        return "default"
+
+
 class TestUnmatchedActionWarning:
     """When a node returns an action that doesn't match any successor edge,
     the engine should write a warning to __warnings__ and stop traversal.
@@ -72,6 +98,51 @@ class TestUnmatchedActionWarning:
 
         # Target should NOT have executed
         assert "target" not in shared.get("__execution__", {}).get("node_actions", {})
+
+    def test_unmatched_action_archives_routing_failure(self):
+        """Routing failures must roll back completion bookkeeping and archive to __failures__."""
+        from pflow.runtime.node_state import get_node_failure
+
+        node_a = _ActionNode()
+        node_a.node_id = "router"
+        node_a.set_params({"action": "success"})
+
+        node_b = _ActionNode()
+        node_b.node_id = "target"
+
+        node_a >> node_b
+
+        configs = {
+            "router": NodeConfig(
+                node_id="router",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+            "target": NodeConfig(
+                node_id="target",
+                node_type_name="ActionNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=False,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=node_a, node_configs=configs)
+        shared: dict = {}
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
+
+        assert result == "error"
+        assert "router" not in shared["__execution__"]["completed_nodes"]
+        assert "router" not in shared["__execution__"]["node_actions"]
+        failure = get_node_failure(shared, "router")
+        assert failure is not None
+        assert failure["category"] == "routing_error"
+        assert "router" in shared["__warnings__"]
 
     def test_matching_action_follows_edge(self):
         """Node returns 'default' with a 'default' edge → no warning, target runs."""
@@ -214,6 +285,7 @@ class TestCustomErrorAction:
             f"Expected failed_node='failing', got: {execution.get('failed_node')}"
         )
         assert "failing" not in execution["completed_nodes"], "Custom error action should NOT record node as completed"
+        assert "failing" in shared.get("__failures__", {})
 
     def test_exact_error_also_works(self):
         """Sanity check: the standard 'error' action still works correctly."""
@@ -240,6 +312,52 @@ class TestCustomErrorAction:
         assert result == "error"
         assert shared["__execution__"]["failed_node"] == "failing"
         assert "failing" not in shared["__execution__"]["completed_nodes"]
+        assert "failing" in shared.get("__failures__", {})
+
+
+class TestLoopReentryFailureRecovery:
+    """A node that fails then succeeds on loop re-entry must end in succeeded state."""
+
+    def test_failed_then_succeeded_reentry_clears_failure_record(self):
+        from pflow.runtime.node_state import get_node_failure
+
+        flaky = _FlakyLoopNode()
+        flaky.node_id = "flaky"
+        sink = _CaptureNode()
+        sink.node_id = "sink"
+
+        flaky >> sink
+        flaky - "error" >> flaky
+
+        configs = {
+            "flaky": NodeConfig(
+                node_id="flaky",
+                node_type_name="FlakyLoopNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+            "sink": NodeConfig(
+                node_id="sink",
+                node_type_name="CaptureNode",
+                template_config=None,
+                batch_config=None,
+                namespaced=True,
+                interface_metadata=None,
+            ),
+        }
+
+        workflow = CompiledWorkflow(start_node=flaky, node_configs=configs)
+        shared: dict = {}
+        engine = WorkflowEngine()
+        result = engine.run(workflow, shared)
+
+        assert result == "default"
+        assert get_node_failure(shared, "flaky") is None
+        assert shared["flaky"]["stdout"] == "recovered"
+        assert shared["sink"]["seen"] == "recovered"
+        assert "flaky" in shared["__execution__"]["completed_nodes"]
 
 
 class TestBatchTemplateErrorPropagation:

@@ -17,8 +17,8 @@ from pflow.core.param_coercion import coerce_to_declared_type
 from pflow.runtime.template_resolver import TemplateResolver
 
 from .template_errors import (
-    build_enhanced_template_error,
     build_json_parse_error_message,
+    build_template_error_diagnostic,
     build_type_error_message,
 )
 from .types import TemplateConfig
@@ -224,14 +224,19 @@ def _check_string_unresolved(resolved_value: str, original_template: str) -> boo
 
 
 def all_variables_from_absent_nodes(template_str: str, context: dict[str, Any]) -> bool:
-    """Check if ALL template variables reference nodes absent from context.
+    """Check if ALL template variables reference nodes that are absent or failed.
 
-    Uses all() not any() — critical for coalesce correctness.
+    Uses all() not any() — critical for coalesce correctness. After the
+    failed-node invariant fix, "absent from context" naturally covers
+    both "did not execute" and "executed and failed" because failed
+    nodes are moved out of the main namespace.
     """
+    from pflow.runtime.template_resolver import TemplateResolver
+
     variables = TemplateResolver.extract_variables(template_str)
     if not variables:
         return False
-    return all(var.split(".")[0].split("[")[0] not in context for var in variables)
+    return all(TemplateResolver.extract_root_node_id(var) not in context for var in variables)
 
 
 def inject_none_for_optional_inputs(
@@ -376,27 +381,33 @@ def resolve_templates(  # noqa: C901
         is_unresolved = contains_unresolved_template(resolved_value, template)
 
         if is_unresolved:
-            error_msg = build_enhanced_template_error(key, template, context)
+            diagnostic = build_template_error_diagnostic(
+                key,
+                template,
+                context,
+                node_id=node_id,
+                source_file=_extract_source_file(shared),
+                source_line=_extract_source_line(template_config, key),
+            )
 
             if template_config.resolution_mode == "strict":
-                from .error_context import get_upstream_stderr
+                from pflow.core.diagnostic import format_diagnostic
 
-                upstream_context = get_upstream_stderr(str(template), context)
-                if upstream_context:
-                    error_msg += upstream_context
                 # Store partial resolutions on exception for trace capture
                 partial = {
                     k: {"template": template_config.template_params[k], "resolved": resolved_params[k]}
                     for k in resolved_params
                 }
-                exc = ValueError(error_msg)
+                exc = ValueError(format_diagnostic(diagnostic))
                 exc._partial_resolutions = partial  # type: ignore[attr-defined]
+                exc._pflow_template_diagnostic = diagnostic  # type: ignore[attr-defined]
                 raise exc
             else:
                 template_errors.append({
-                    "message": error_msg,
+                    "message": diagnostic.message,
                     "unresolved": [key],
                     "template": template,
+                    "diagnostic": diagnostic,
                 })
 
         # After resolving 'inputs', enrich context for subsequent params
@@ -411,3 +422,19 @@ def resolve_templates(  # noqa: C901
 
     merged_params = {**template_config.static_params, **resolved_params}
     return merged_params, last_resolutions, template_errors
+
+
+def _extract_source_file(shared: dict[str, Any]) -> Optional[str]:
+    """Extract the workflow source file path for error messages."""
+    return shared.get("_pflow_workflow_file")
+
+
+def _extract_source_line(template_config: TemplateConfig, key: str) -> Optional[int]:
+    """Extract the source line for a template parameter, if tracked.
+
+    The compiler stores _<key>_source_line in static_params for parameters
+    written via code blocks. For inline params, this is None.
+    """
+    line_key = f"_{key}_source_line"
+    line = template_config.static_params.get(line_key)
+    return int(line) if isinstance(line, int) else None

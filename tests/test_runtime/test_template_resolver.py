@@ -278,3 +278,34 @@ class TestRealWorldScenarios:
         template = "Summary of '${transcript_data.title}' by ${transcript_data.metadata.author}"
         result = TemplateResolver.resolve_template(template, context)
         assert result == "Summary of 'How to Learn Programming' by TechChannel"
+
+
+class TestExtractFirstFieldSegment:
+    """Test TemplateResolver.extract_first_field_segment.
+
+    Used by template error helpers to locate the first field segment of
+    a path so peer-node lookup and typo correction can target it.
+    """
+
+    def test_simple_field(self):
+        assert TemplateResolver.extract_first_field_segment("node.field") == "field"
+
+    def test_nested_field_returns_first_segment(self):
+        assert TemplateResolver.extract_first_field_segment("node.field.nested") == "field"
+
+    def test_indexed_field_strips_bracket(self):
+        assert TemplateResolver.extract_first_field_segment("node.field[0]") == "field"
+
+    def test_indexed_nested_field_strips_bracket(self):
+        assert TemplateResolver.extract_first_field_segment("node.field[0].nested") == "field"
+
+    def test_bare_root_returns_none(self):
+        assert TemplateResolver.extract_first_field_segment("node") is None
+
+    def test_root_with_index_only_returns_none(self):
+        assert TemplateResolver.extract_first_field_segment("data[0]") is None
+
+    def test_indexed_root_with_field(self):
+        # Root carries the `[0]` — `.split(".", 1)` gives `["node[0]", "field"]`
+        # and we return the first segment after the dot.
+        assert TemplateResolver.extract_first_field_segment("node[0].field") == "field"

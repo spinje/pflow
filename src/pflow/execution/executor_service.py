@@ -15,6 +15,27 @@ from pflow.core.diagnostic import _CATEGORY_TITLES, Diagnostic, Severity
 logger = logging.getLogger(__name__)
 
 
+def _map_failure_category_to_diagnostic(failure_category: str) -> str:
+    """Map node_state.FAILURE_CATEGORY_* values to Diagnostic context categories.
+
+    The node_state categories are precise ("shell_failure", "api_warning", etc.).
+    The Diagnostic categories are coarser ("execution_failure", "template_error", etc.)
+    and drive _CATEGORY_TITLES lookup. Some node_state categories collapse to the
+    same Diagnostic category.
+    """
+    return _FAILURE_CATEGORY_MAP.get(failure_category, "execution_failure")
+
+
+_FAILURE_CATEGORY_MAP: dict[str, str] = {
+    "shell_failure": "execution_failure",
+    "node_action_error": "execution_failure",
+    "api_warning": "api_validation",
+    "routing_error": "execution_failure",
+    "exception": "execution_failure",
+    "template_error": "template_error",
+}
+
+
 def build_error_list(success: bool, action_result: Optional[str], shared_store: dict[str, Any]) -> list[Diagnostic]:
     """Build error list from a failed workflow execution.
 
@@ -40,9 +61,20 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
     # Extract rich error data from namespaced node output
     failed_node = error_info.get("failed_node")
     if failed_node:
-        node_output = shared_store.get(failed_node, {})
+        from pflow.runtime.node_state import get_node_failure, get_node_output
+
+        node_output = get_node_output(shared_store, failed_node) or {}
         if isinstance(node_output, dict):
             _enrich_error_from_node_output(context, node_output, category)
+
+        # Use the explicitly-recorded category from the failure record
+        # when available (set at the failure site by mark_node_failed),
+        # falling back to the legacy regex-based detection.
+        failure = get_node_failure(shared_store, failed_node)
+        if failure and failure.get("category"):
+            context["category"] = _map_failure_category_to_diagnostic(str(failure["category"]))
+
+    category = str(context["category"])
 
     return [
         Diagnostic(
@@ -138,19 +170,24 @@ def _extract_root_level_error(shared_store: dict[str, Any]) -> Optional[dict[str
 
 
 def _extract_node_level_error(failed_node: Optional[str], shared_store: dict[str, Any]) -> Optional[str]:
-    """Extract error from failed node's output."""
-    if not failed_node or failed_node not in shared_store:
+    """Extract error from failed node's output (succeeded namespace OR __failures__)."""
+    if not failed_node:
         return None
 
-    node_output = shared_store.get(failed_node, {})
+    from pflow.runtime.node_state import get_node_failure, get_node_output
+
+    # Prefer the failure record's explicit error field if present
+    failure = get_node_failure(shared_store, failed_node)
+    if failure and failure.get("error"):
+        return str(failure["error"])
+
+    node_output = get_node_output(shared_store, failed_node)
     if not isinstance(node_output, dict):
         return None
 
-    # Direct error field (skip None/falsy — MCP responses have "error": null)
     if node_output.get("error"):
         return str(node_output["error"])
 
-    # MCP result format
     if "result" in node_output:
         return _extract_error_from_mcp_result(node_output["result"])
 

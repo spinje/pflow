@@ -264,10 +264,11 @@ class TestCalculatorNode(Node):
             shared: dict[str, Any] = {"x": 10, "y": 5, "operation": "invalid"}
             _compile_and_run(workflow_ir, registry, shared)
 
-            # Verify error was captured (with namespacing)
-            assert "calc1" in shared
-            assert "error" in shared["calc1"]
-            assert "Unknown operation: invalid" in shared["calc1"]["error"]
+            from pflow.runtime.node_state import get_node_failure
+
+            failure = get_node_failure(shared, "calc1")
+            assert failure is not None
+            assert "Unknown operation: invalid" in str(failure.get("error"))
 
     def test_user_node_with_workflow_outputs(self, user_node_dir):
         """Test user node outputs can be extracted via workflow outputs."""

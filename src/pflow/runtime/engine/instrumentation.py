@@ -52,7 +52,10 @@ def initialize_execution_state(shared: dict) -> None:
 def enforce_loop_guard(node_id: str, shared: dict) -> dict[str, int]:
     """Increment visit count, raise MaxNodeVisitsError if exceeded.
 
-    Invalidates in-process cache for revisited nodes.
+    Invalidates in-process cache AND clears any stale __failures__ record
+    for revisited nodes. Without the failures clear, a node that failed on
+    visit 1 and succeeds on visit 2 would still show as FAILED in
+    get_node_status() because failures are checked first.
 
     Returns:
         The visit_counts dict for use by memoization checks.
@@ -62,13 +65,18 @@ def enforce_loop_guard(node_id: str, shared: dict) -> dict[str, int]:
     if visit_counts[node_id] > MAX_NODE_VISITS:
         raise MaxNodeVisitsError(node_id, visit_counts[node_id], MAX_NODE_VISITS)
 
-    # Invalidate cache for revisited nodes — cache is for workflow resume, not loops
+    # Invalidate cache + failure record for revisited nodes — both are
+    # snapshots of a previous attempt; the new attempt starts fresh.
     if visit_counts[node_id] > 1:
         completed = shared["__execution__"]["completed_nodes"]
         if node_id in completed:
             completed.remove(node_id)
             shared["__execution__"]["node_actions"].pop(node_id, None)
             shared["__execution__"]["node_hashes"].pop(node_id, None)
+
+        from pflow.runtime.node_state import clear_node_failure
+
+        clear_node_failure(shared, node_id)
 
     return visit_counts
 
@@ -96,14 +104,16 @@ def check_cache_validity(node_id: str, config_hash: str, shared: dict) -> tuple[
 
 
 def cache_result(node_id: str, config_hash: str, action: str, shared: dict) -> None:
-    """Record node as completed with its config hash."""
+    """Record node as completed with its config hash.
+
+    For error actions this is a no-op — step 17.5 in ``engine._execute_node``
+    runs ``mark_node_failed`` which is the single write site for ``failed_node``.
+    """
     action_str = str(action) if action else "default"
     if not action_str.startswith("error"):
         shared["__execution__"]["completed_nodes"].append(node_id)
         shared["__execution__"]["node_actions"][node_id] = action_str
         shared["__execution__"]["node_hashes"][node_id] = config_hash
-    else:
-        shared["__execution__"]["failed_node"] = node_id
 
 
 def invalidate_cache(node_id: str, shared: dict) -> None:
@@ -265,10 +275,18 @@ def record_trace(
     node_params: dict,
     trace_collector: Any,
     cached: bool = False,
-    error: Optional[Exception] = None,
+    error: Optional[Exception | str] = None,
     success: Optional[bool] = None,
 ) -> None:
-    """Record trace event. Receives data directly, no chain traversal."""
+    """Record trace event. Receives data directly, no chain traversal.
+
+    The ``error`` parameter accepts either an ``Exception`` (from raised-exception
+    failure paths) or a ``str`` (from action="error" happy-path failures where no
+    exception was raised — e.g., shell exit 1 with ``- on-error:`` routing). Both
+    are coerced to a string for the trace event's ``error`` field so downstream
+    consumers (``--report``, ``runtime/workflow_trace.save_to_file``) can surface
+    the actual failure message instead of falling back to "Unknown error".
+    """
     if not trace_collector:
         return
 
@@ -426,7 +444,19 @@ def handle_cached_execution(
     node_params: dict,
     trace_collector: Any,
 ) -> Any:
-    """Handle cached node execution: record trace, call callbacks."""
+    """Handle cached node execution: record trace, call callbacks.
+
+    Defensively clears any stale ``__failures__`` entry for the node before
+    recording the cache hit. In normal execution this is a no-op (loop guard
+    already cleared failures and memo cache is skipped on revisits), but a
+    future checkpoint-resume or externally-seeded shared store could produce
+    the coexistence state. The clear keeps the invariant "succeeded xor failed"
+    true at zero cost.
+    """
+    from pflow.runtime.node_state import clear_node_failure
+
+    clear_node_failure(shared, node_id)
+
     if "__cache_hits__" not in shared:
         shared["__cache_hits__"] = []
     shared["__cache_hits__"].append(node_id)
@@ -471,13 +501,12 @@ def handle_api_warning(
     node_type_name: str,
     node_params: dict,
 ) -> str:
-    """Handle API warning: record failure, return 'error'."""
-    if "__warnings__" not in shared:
-        shared["__warnings__"] = {}
-    shared["__warnings__"][node_id] = warning
+    """Handle API warning: record trace/metrics, archive via ``mark_node_failed``.
 
-    shared["__execution__"]["failed_node"] = node_id
-
+    Writes to ``__warnings__`` and ``__execution__['failed_node']`` happen inside
+    ``mark_node_failed`` at the end of this function (the canonical single write
+    site). Don't duplicate those writes here.
+    """
     duration_ms = (time.perf_counter() - start_time) * 1000
 
     if metrics:
@@ -496,7 +525,8 @@ def handle_api_warning(
         with contextlib.suppress(Exception):
             callback(node_id, "node_warning", depth=depth, error_message=warning)
 
-    # Record trace
+    # Record trace BEFORE the data move so the trace event has the full
+    # node output (stdout/stderr/exit_code/etc.).
     record_trace(
         node_id,
         node_type_name,
@@ -509,6 +539,20 @@ def handle_api_warning(
         node_params,
         trace_collector,
         error=Exception(warning),
+    )
+
+    # LAST STEP: archive the node's data to __failures__. Read the node's
+    # own error before moving so it's preserved on the failure record.
+    from pflow.runtime.node_state import FAILURE_CATEGORY_API_WARNING, mark_node_failed
+
+    node_data = shared.get(node_id, {})
+    node_error = node_data.get("error") if isinstance(node_data, dict) else warning
+    mark_node_failed(
+        shared,
+        node_id,
+        category=FAILURE_CATEGORY_API_WARNING,
+        error=node_error or warning,
+        warning=warning,
     )
 
     return "error"

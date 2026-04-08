@@ -278,10 +278,18 @@ def test_extract_child_error_includes_node_id() -> None:
     Previously the message only said 'Sub-workflow failed at <path>'. Now it
     includes the specific child node that failed, helping agents locate the issue.
     """
+    from pflow.runtime.node_state import FAILURE_CATEGORY_EXCEPTION, mark_node_failed
+
     child_storage: dict[str, Any] = {
         "__execution__": {"failed_node": "my-shell-node"},
         "my-shell-node": {"error": "Command failed with exit code 127"},
     }
+    mark_node_failed(
+        child_storage,
+        "my-shell-node",
+        category=FAILURE_CATEGORY_EXCEPTION,
+        error="Command failed with exit code 127",
+    )
 
     message = WorkflowExecutor._extract_child_error(child_storage, "./child.pflow.md")
 
@@ -304,10 +312,13 @@ def test_extract_child_error_fallback_without_failed_node() -> None:
 
 def test_extract_child_error_fallback_no_error_in_node_data() -> None:
     """If the failed node's data has no 'error' key, use the generic fallback."""
+    from pflow.runtime.node_state import FAILURE_CATEGORY_EXCEPTION, mark_node_failed
+
     child_storage: dict[str, Any] = {
         "__execution__": {"failed_node": "some-node"},
         "some-node": {"stdout": "some output but no error key"},
     }
+    mark_node_failed(child_storage, "some-node", category=FAILURE_CATEGORY_EXCEPTION)
 
     message = WorkflowExecutor._extract_child_error(child_storage, "./workflow.pflow.md")
 

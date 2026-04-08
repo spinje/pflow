@@ -1216,10 +1216,14 @@ class TestShellCommandValidationTiming:
         result = engine.run(workflow, shared)
 
         # Shell fails due to quote escaping issues
+        from pflow.runtime.node_state import get_node_output
+
         assert result == "error"
-        assert shared["shell-node"]["exit_code"] != 0
+        node_output = get_node_output(shared, "shell-node")
+        assert node_output is not None
+        assert node_output["exit_code"] != 0
         # The error is a shell syntax error, not our helpful message
-        stderr = shared["shell-node"]["stderr"].lower()
+        stderr = node_output["stderr"].lower()
         assert "unexpected" in stderr or "syntax" in stderr or "eof" in stderr
 
 

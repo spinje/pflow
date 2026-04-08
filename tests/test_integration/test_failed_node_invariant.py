@@ -1,0 +1,1044 @@
+"""End-to-end tests for the failed-node invariant fix (GH #208)."""
+
+from pathlib import Path
+
+from pflow.core.diagnostic import Severity, format_diagnostic
+from pflow.core.workflow.status import WorkflowStatus
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
+
+EXAMPLES_ERROR_HANDLING = Path(__file__).parent.parent.parent / "examples" / "error-handling"
+
+
+def _coalesce_repro_ir() -> dict:
+    """Build the GH #208 reproduction IR."""
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "primary",
+                "type": "shell",
+                "purpose": "Primary node that fails by design.",
+                "params": {"command": "exit 1"},
+            },
+            {
+                "id": "fallback",
+                "type": "shell",
+                "purpose": "Fallback node providing alternative output.",
+                "params": {"command": 'echo "fallback-content"'},
+            },
+        ],
+        "edges": [
+            {"from": "primary", "to": "fallback", "action": "error"},
+        ],
+        "start_node": "primary",
+        "outputs": {
+            "content": {
+                "description": "Whichever path produced output.",
+                "source": "${primary.stdout ?? fallback.stdout}",
+            },
+        },
+    }
+
+
+def test_coalesce_falls_through_to_fallback_on_primary_failure():
+    runner = WorkflowRunner()
+    result = runner.run(_coalesce_repro_ir(), {}, config=RunnerConfig())
+
+    assert result.success, f"Workflow should succeed via on-error fallback: {result.diagnostics}"
+    assert result.shared_after.get("content") == "fallback-content"
+
+
+def test_failed_primary_data_is_archived_to_failures():
+    runner = WorkflowRunner()
+    result = runner.run(_coalesce_repro_ir(), {}, config=RunnerConfig())
+
+    shared = result.shared_after
+    assert "primary" not in shared
+    assert "__failures__" in shared
+    assert "primary" in shared["__failures__"]
+    record = shared["__failures__"]["primary"]
+    assert record["category"] in ("shell_failure", "node_action_error")
+    assert record["data"]["exit_code"] == 1
+
+
+def test_direct_reference_to_failed_node_produces_structured_error():
+    ir = _coalesce_repro_ir()
+    ir["outputs"]["content"]["source"] = "${primary.stdout}"
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig())
+
+    error_diags = [diag for diag in result.diagnostics if diag.severity.value == "error"]
+    assert error_diags, f"Should have at least one error diagnostic. Got: {result.diagnostics}"
+
+    combined_text = " ".join(f"{diag.message} {diag.context or ''}" for diag in error_diags).lower()
+    assert "primary" in combined_text
+    assert any(diag.context and diag.context.get("category") == "template_error" for diag in error_diags)
+
+
+def test_trace_captures_failed_node_data():
+    runner = WorkflowRunner()
+    result = runner.run(_coalesce_repro_ir(), {}, config=RunnerConfig())
+
+    assert result.trace is not None
+    events = result.trace.events
+    primary_event = next((event for event in events if event.get("node_id") == "primary"), None)
+    assert primary_event is not None
+    assert primary_event.get("success") is False
+    output = primary_event.get("node_output") or {}
+    assert output.get("exit_code") == 1
+    assert output.get("command") == "exit 1"
+
+
+def _all_failed_coalesce_ir() -> dict:
+    """IR where an output coalesce references TWO failed nodes.
+
+    primary fails → routes via on-error to fallback. fallback also fails →
+    routes via on-error to soak so the workflow completes and output
+    resolution runs. The output declaration ``${primary.stdout ?? fallback.stdout}``
+    has both operands in ``__failures__`` when populate_declared_outputs runs.
+    Pre-fix, the gate in output_resolver.py:168-172 silently skipped this case
+    (workflow "succeeded" with no output); post-fix it raises a structured
+    OutputResolutionError.
+    """
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "primary",
+                "type": "shell",
+                "purpose": "Primary fails with exit 7.",
+                "params": {"command": "exit 7"},
+            },
+            {
+                "id": "fallback",
+                "type": "shell",
+                "purpose": "Fallback also fails with exit 5.",
+                "params": {"command": "exit 5"},
+            },
+            {
+                "id": "soak",
+                "type": "shell",
+                "purpose": "Soak absorbs the second failure so outputs run.",
+                "params": {"command": 'echo "soaked"'},
+            },
+        ],
+        "edges": [
+            {"from": "primary", "to": "fallback", "action": "error"},
+            {"from": "fallback", "to": "soak", "action": "error"},
+        ],
+        "start_node": "primary",
+        "outputs": {
+            "content": {
+                "description": "Coalesced output — should error when both fail.",
+                "source": "${primary.stdout ?? fallback.stdout}",
+            },
+        },
+    }
+
+
+def test_all_failed_coalesce_in_output_raises_structured_error():
+    """Regression for BUG #1: output_resolver.py silently skipped all-failed coalesce.
+
+    Spec requirement (task-148.md): "${primary.stdout ?? fallback.stdout} where
+    both failed produces a structured error". Pre-fix the gate skipped any
+    unresolved coalesce, conflating "all absent (branch not taken)" with "all
+    failed (recovery failed)".
+    """
+    runner = WorkflowRunner()
+    result = runner.run(_all_failed_coalesce_ir(), {}, config=RunnerConfig())
+
+    # Must NOT silently succeed
+    assert not result.success, "All-failed coalesce in output must error, not silently drop the output"
+    assert "content" not in result.shared_after, "Output must not be populated when all coalesce operands failed"
+
+    # Must have a structured template_error diagnostic
+    error_diags = [d for d in result.diagnostics if d.severity.value == "error"]
+    assert error_diags, f"Expected template error diagnostic, got: {result.diagnostics}"
+
+    template_errors = [d for d in error_diags if d.context and d.context.get("category") == "template_error"]
+    assert template_errors, (
+        f"Expected category='template_error', got categories: "
+        f"{[d.context.get('category') if d.context else None for d in error_diags]}"
+    )
+
+    # Structured refs must classify BOTH operands as failed, preserving
+    # category/exit_code/command so agents can diagnose without parsing strings.
+    diag = template_errors[0]
+    refs = diag.context.get("unresolved_references") or []
+    assert len(refs) == 2, f"Expected 2 unresolved refs (both operands), got {len(refs)}"
+    statuses = {ref.get("var"): ref.get("status") for ref in refs}
+    assert statuses.get("primary.stdout") == "failed"
+    assert statuses.get("fallback.stdout") == "failed"
+
+    # Per-operand failure details must be present for agent consumption
+    for ref in refs:
+        failure = ref.get("failure") or {}
+        assert failure.get("category") == "shell_failure"
+        assert failure.get("exit_code") in (5, 7)
+
+
+def test_mixed_absent_and_failed_coalesce_in_output_raises_error():
+    """Regression: mixed absent+failed coalesce must not be silently skipped.
+
+    ``${absent.x ?? failed.y}`` — one operand is ABSENT (branch not taken),
+    the other is FAILED. Pre-fix, the gate skipped ALL unresolved coalesce
+    and treated this the same as all-absent. Post-fix, any FAILED operand
+    forces an error.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "chooser",
+                "type": "shell",
+                "purpose": "Branches to fails, not to never_run.",
+                "params": {"command": 'echo "go"'},
+            },
+            {
+                "id": "never_run",
+                "type": "shell",
+                "purpose": "Never executes — branch not taken.",
+                "params": {"command": 'echo "never"'},
+            },
+            {
+                "id": "fails",
+                "type": "shell",
+                "purpose": "Fails with exit 9.",
+                "params": {"command": "exit 9"},
+            },
+            {
+                "id": "soak",
+                "type": "shell",
+                "purpose": "Absorbs the failure so outputs run.",
+                "params": {"command": 'echo "soaked"'},
+            },
+        ],
+        "edges": [
+            {"from": "chooser", "to": "fails"},
+            {"from": "fails", "to": "soak", "action": "error"},
+        ],
+        "start_node": "chooser",
+        "outputs": {
+            "content": {
+                "description": "Coalesce across an absent and a failed node.",
+                "source": "${never_run.stdout ?? fails.stdout}",
+            },
+        },
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig())
+
+    assert not result.success, (
+        "Mixed absent+failed coalesce must error; one failed operand is not "
+        "a legitimate Task 128 branch-convergence fallthrough"
+    )
+    error_diags = [d for d in result.diagnostics if d.severity.value == "error"]
+    template_errors = [d for d in error_diags if d.context and d.context.get("category") == "template_error"]
+    assert template_errors, "Expected a template_error diagnostic"
+
+    refs = template_errors[0].context.get("unresolved_references") or []
+    statuses = {ref.get("var"): ref.get("status") for ref in refs}
+    assert statuses.get("never_run.stdout") == "absent"
+    assert statuses.get("fails.stdout") == "failed"
+
+
+def test_all_absent_coalesce_in_output_is_silently_skipped():
+    """Positive regression: Task 128 all-absent coalesce must still silently skip.
+
+    This is the branch-convergence use-case the gate was originally intended to
+    serve. The BUG #1 fix preserves it — only all-ABSENT skips silently, while
+    any FAILED or PATH_ERROR forces an error.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "chooser",
+                "type": "shell",
+                "purpose": "Routes to branch_a only.",
+                "params": {"command": 'echo "choose"'},
+            },
+            {
+                "id": "branch_a",
+                "type": "shell",
+                "purpose": "Taken branch.",
+                "params": {"command": 'echo "a-result"'},
+            },
+            {
+                "id": "branch_b",
+                "type": "shell",
+                "purpose": "Untaken branch — legitimately absent.",
+                "params": {"command": 'echo "b-result"'},
+            },
+        ],
+        "edges": [
+            {"from": "chooser", "to": "branch_a"},
+        ],
+        "start_node": "chooser",
+        "outputs": {
+            "only_b": {
+                "description": "References only the untaken branch via coalesce.",
+                "source": "${branch_b.stdout ?? branch_b.other}",
+            },
+        },
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig())
+
+    # All-absent coalesce → silent skip → workflow succeeds, output missing
+    assert result.success, f"All-absent coalesce should silently skip, not error. Diagnostics: {result.diagnostics}"
+    assert "only_b" not in result.shared_after
+
+
+def test_shell_error_without_on_error_preserves_shell_data_in_failure_record():
+    """Regression for post-review Fix #2: routing double-archive was losing shell data.
+
+    A shell node that returns "error" action with no matching error successor
+    edge is handled by ``_handle_no_successor``. Pre-fix, that path called
+    ``mark_node_failed`` a second time, which popped an already-empty
+    ``shared[node_id]`` and overwrote the full shell failure record
+    (exit_code, stderr, command, category=shell_failure) with an empty-data
+    ``routing_error`` record. Post-fix, the existing record is preserved and
+    only the routing warning is added to ``__warnings__``.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "broken",
+                "type": "shell",
+                "purpose": "Shell that fails with exit 1 and no on-error handler.",
+                "params": {"command": 'echo "from stderr" >&2; exit 1'},
+            },
+            {
+                "id": "next_step",
+                "type": "shell",
+                "purpose": "Downstream step that should not run.",
+                "params": {"command": 'echo "should-not-run"'},
+            },
+        ],
+        "edges": [{"from": "broken", "to": "next_step"}],
+        "start_node": "broken",
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig())
+
+    assert not result.success, "Workflow should fail when shell exits 1 without on-error"
+    shared = result.shared_after
+    failure = shared["__failures__"]["broken"]
+
+    # Rich shell data must survive the _handle_no_successor second pass
+    assert failure["category"] == "shell_failure", (
+        f"Expected shell_failure, got {failure['category']!r} — routing path overwrote category"
+    )
+    data = failure["data"]
+    assert data.get("exit_code") == 1, f"Expected exit_code=1 in preserved data, got: {data}"
+    assert data.get("command") == 'echo "from stderr" >&2; exit 1'
+    assert "from stderr" in data.get("stderr", "")
+
+    # Routing warning is still surfaced via __warnings__
+    warnings = shared.get("__warnings__", {})
+    assert "broken" in warnings
+    assert "no successor edge matches" in warnings["broken"]
+
+
+def test_output_resolution_error_does_not_inherit_stale_failed_node():
+    """Regression for post-review Fix #3: OutputResolutionError used to inherit the
+    stale ``__execution__["failed_node"]`` pointer from an already-handled failure,
+    causing the diagnostic ``At:`` line to point at the wrong node.
+
+    Setup: a router branches to branch-a, leaving branch-b absent at runtime.
+    The output references branch-b via a non-coalesce source — populates_declared_outputs
+    raises OutputResolutionError at the end of the engine. Pre-fix, the runner's
+    exception handler would attach ``__execution__['failed_node']`` (which is None
+    here, but in a more complex scenario could be stale from a prior on-error
+    recovery). Post-fix, OutputResolutionError is explicitly excluded from the
+    stale-pointer annotation.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "router",
+                "type": "code",
+                "purpose": "Route to branch-a so branch-b stays absent at runtime.",
+                "params": {"code": 'next: str = "branch-a"'},
+            },
+            {
+                "id": "branch-a",
+                "type": "shell",
+                "purpose": "The taken branch.",
+                "params": {"command": 'echo "a-ran"'},
+            },
+            {
+                "id": "branch-b",
+                "type": "shell",
+                "purpose": "The untaken branch — absent at runtime.",
+                "params": {"command": 'echo "b-ran"'},
+            },
+        ],
+        "edges": [
+            {"from": "router", "to": "branch-a", "action": "branch-a"},
+            {"from": "router", "to": "branch-b", "action": "branch-b"},
+        ],
+        "start_node": "router",
+        # Non-coalesce reference to branch-b (absent at runtime) triggers
+        # OutputResolutionError in populate_declared_outputs. Validation lets
+        # this through because branch-b is a declared node.
+        "outputs": {"content": {"source": "${branch-b.stdout}"}},
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig())
+
+    assert not result.success
+    error_diags = [d for d in result.diagnostics if d.severity.value == "error"]
+    assert error_diags, f"Expected at least one error diagnostic, got: {result.diagnostics}"
+
+    output_err = next(
+        (d for d in error_diags if d.context and d.context.get("is_output_resolution")),
+        None,
+    )
+    assert output_err is not None, (
+        f"Expected an output-resolution error diagnostic, got: {[(d.source, d.title) for d in error_diags]}"
+    )
+    # Must not inherit stale failed_node (this is the regression being guarded)
+    assert output_err.node_id is None, (
+        f"Output error must not inherit stale failed_node, got node_id={output_err.node_id!r}"
+    )
+    # The real culprit (branch-b) appears in structured refs
+    refs = output_err.context.get("unresolved_references") or []
+    assert any(r.get("root") == "branch-b" for r in refs)
+
+
+def test_output_resolution_error_does_not_triple_render():
+    """Regression for post-review Fix #1: OutputResolutionError rendered the same
+    error 3x (legacy prose + structured block + canned suggestions). Post-fix,
+    the rendered text has one structured block, no canned trailing suggestion,
+    and a one-line summary message (no multi-line legacy prose).
+    """
+    from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
+    from pflow.core.user_errors import OutputResolutionError
+
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "primary",
+                "type": "shell",
+                "purpose": "Primary fails so the output-source reference fails to resolve.",
+                "params": {"command": 'echo "err" >&2; exit 7'},
+            },
+            {
+                "id": "fallback",
+                "type": "shell",
+                "purpose": "Peer node for paste-able fix suggestion.",
+                "params": {"command": 'echo "ok"'},
+            },
+        ],
+        "edges": [{"from": "primary", "to": "fallback", "action": "error"}],
+        "start_node": "primary",
+        "outputs": {"content": {"source": "${primary.stdout}"}},
+    }
+
+    runner = WorkflowRunner()
+    result = runner.run(ir, {}, config=RunnerConfig())
+
+    # The runner converts the exception to a diagnostic; pull it back out.
+    output_err = next(
+        (d for d in result.diagnostics if d.context and d.context.get("is_output_resolution")),
+        None,
+    )
+    assert output_err is not None
+
+    # Message is a one-line summary, not multi-line legacy prose
+    assert "\n" not in output_err.message
+    assert output_err.message.startswith("Unresolved variables in output")
+
+    # No canned suggestions — the structured renderer provides per-ref fixes
+    assert output_err.suggestions is None
+
+    rendered = format_diagnostic(output_err)
+    # Legacy prose line must NOT appear
+    assert "Output 'content' (source: " not in rendered
+    # Legacy canned suggestion must NOT appear
+    assert "Check that source expressions reference nodes" not in rendered
+    # Structured block IS present
+    assert "In output 'content':" in rendered
+    assert "${primary.stdout}" in rendered
+    # Paste-able peer suggestion uses a real node name
+    assert "${primary.stdout ?? fallback.stdout}" in rendered
+
+    # Also verify the direct construction path (unit-level)
+    failures = [
+        {
+            "output_name": "content",
+            "source_expr": "${primary.stdout}",
+            "template": "${primary.stdout}",
+            "unresolved_references": [
+                {
+                    "var": "primary.stdout",
+                    "root": "primary",
+                    "status": "absent",
+                    "in_coalesce": False,
+                    "coalesce_expr": None,
+                    "peer_suggestions": [],
+                }
+            ],
+            "available_context_keys": [],
+        }
+    ]
+    err = OutputResolutionError(failures=failures)
+    diags = exception_to_diagnostics(err)
+    assert len(diags) == 1
+    assert diags[0].node_id is None
+    assert diags[0].suggestions is None
+
+
+def test_all_failed_batch_preserves_batch_metadata_in_failures():
+    """Regression for Fix A2: ``_aggregate_batch_results`` used to raise BEFORE
+    writing ``shared[node_id]``, so step 17.5 archived an empty-data failure
+    record and ``build_execution_steps`` couldn't surface ``batch_error_details``
+    for the failing batch node. Post-fix, the shared store write happens first
+    so step 17.5 captures the full ``batch_metadata`` + ``errors`` list.
+
+    Also exercises the shared_store threading fix: ``_exception_to_result`` now
+    surfaces ``__failures__`` via ``ExecutionResult.shared_after`` so this test
+    can inspect the failure record through the public ``WorkflowRunner`` API.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "all_fail",
+                "type": "shell",
+                "purpose": "Batch node where every item exits non-zero.",
+                "params": {"command": "exit 1"},
+                "batch": {
+                    "items": [1, 2, 3],
+                    "error_handling": "continue",
+                },
+            },
+        ],
+        "edges": [],
+        "start_node": "all_fail",
+    }
+
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert not result.success
+    # Shared store is now threaded through the exception path
+    failure = result.shared_after.get("__failures__", {}).get("all_fail")
+    assert failure is not None, (
+        "Expected failed batch node to have a __failures__ record in shared_after "
+        "(regression: runner's exception path used to drop shared_store)"
+    )
+
+    data = failure.get("data") or {}
+    # Pre-fix this was {}. Post-fix it has the full batch output shape.
+    assert "batch_metadata" in data, (
+        f"Expected batch_metadata to survive the failure archive, got data keys: {list(data.keys())}"
+    )
+    assert data.get("count") == 3
+    assert data.get("error_count") == 3
+    assert data.get("success_count") == 0
+    assert data.get("errors") is not None, "errors list must be preserved for display"
+    assert len(data["errors"]) == 3
+
+
+def test_fail_fast_batch_preserves_batch_metadata_in_failures():
+    """Regression for Fix A2 fail_fast path: ``_execute_sequential`` and
+    ``_execute_parallel`` used to raise on first failure BEFORE aggregation.
+    Post-fix, the loops break-not-raise and ``execute_batch`` owns the
+    fail_fast raise AFTER ``_aggregate_batch_results`` writes the shared store.
+    The partial batch metadata (items 0..first_failure + the failure itself)
+    must survive into ``__failures__`` so the CLI summary can show it.
+    """
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fail_fast_batch",
+                "type": "shell",
+                "purpose": "Batch where item 1 fails; fail_fast stops at first failure.",
+                # Use item value in the command so each item executes differently.
+                # Items 0 and 2 succeed; item 1 fails with exit 9.
+                "params": {"command": 'test "${item}" != "boom" || exit 9'},
+                "batch": {
+                    "items": ["ok0", "boom", "ok2"],
+                    "error_handling": "fail_fast",
+                },
+            },
+        ],
+        "edges": [],
+        "start_node": "fail_fast_batch",
+    }
+
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert not result.success
+    failure = result.shared_after.get("__failures__", {}).get("fail_fast_batch")
+    assert failure is not None, "fail_fast batch must archive a failure record"
+
+    data = failure.get("data") or {}
+    assert "batch_metadata" in data, (
+        f"fail_fast must preserve batch_metadata in the failure record, got: {list(data.keys())}"
+    )
+    # Sequential fail_fast stops at the failing item, so we expect 2 items
+    # processed: ok0 (success) + boom (error). Subsequent items are skipped.
+    assert data.get("count") == 2
+    assert data.get("error_count") == 1
+    assert data.get("errors") is not None
+    assert len(data["errors"]) == 1
+    # The failing item's error details are preserved
+    failing_error = data["errors"][0]
+    assert failing_error.get("index") == 1
+    assert "boom" in str(failing_error.get("item", ""))
+
+
+def test_failed_batch_surfaces_error_details_in_execution_steps():
+    """End-to-end spec acceptance test — guards the 4-layer pipeline that
+    produces ``batch_error_details`` in the CLI/MCP execution summary for a
+    failing batch. Each of these layers has broken at some point in this work:
+
+    1. ``_aggregate_batch_results`` writes ``shared[node_id]`` BEFORE raising (A2)
+    2. Step 17.5 archives to ``__failures__[id].data`` via ``mark_node_failed``
+    3. ``_exception_to_result`` threads ``shared_store`` into ``ExecutionResult.shared_after`` (#5)
+    4. ``build_execution_steps`` reads via ``get_node_output`` and emits ``batch_error_details``
+       (BUG #2 post-completion — had used stale singular ``failed_node`` pointer)
+
+    A regression in ANY link silently breaks the task-148 acceptance criterion
+    *"Failed batch nodes show batch_error_details in execution summary"*.
+    Tests the entire chain through the public ``WorkflowRunner`` API, which is
+    what CLI and MCP consumers actually use.
+    """
+    from pflow.execution.execution_state import build_execution_steps
+
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "failing_batch",
+                "type": "shell",
+                "purpose": "Batch where every item exits non-zero.",
+                "params": {"command": "exit 1"},
+                "batch": {
+                    "items": ["alpha", "beta", "gamma"],
+                    "error_handling": "continue",
+                },
+            },
+        ],
+        "edges": [],
+        "start_node": "failing_batch",
+    }
+
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+    assert not result.success
+
+    # Run the CLI/MCP formatter entry point against the actual ExecutionResult
+    metrics_summary = result.metrics.get_summary() if result.metrics else None
+    steps = build_execution_steps(ir, result.shared_after, metrics_summary)
+
+    assert len(steps) == 1, "Expected one step row for the batch node"
+    step = steps[0]
+
+    # Status comes from get_node_status which reads __failures__
+    assert step["node_id"] == "failing_batch"
+    assert step["status"] == "failed", f"Expected status='failed' from get_node_status, got: {step['status']}"
+
+    # Batch metadata must survive the exception path → shared_after → get_node_output chain
+    assert step.get("is_batch") is True, (
+        f"Expected is_batch=True — failure archive dropped batch_metadata. Step: {step}"
+    )
+    assert step.get("batch_total") == 3
+    assert step.get("batch_success") == 0
+    assert step.get("batch_errors") == 3
+
+    # Error details list is the agent-facing payload — must be populated
+    error_details = step.get("batch_error_details")
+    assert error_details, (
+        f"Expected batch_error_details to be populated — this is the spec acceptance criterion. "
+        f"Step keys: {list(step.keys())}"
+    )
+    assert len(error_details) == 3
+    # Each error has index + item identifying which batch item failed
+    assert {e.get("index") for e in error_details} == {0, 1, 2}
+
+
+def test_template_error_shows_both_succeeded_and_failed_peers_in_context():
+    """Regression for Fix B3: the "Available nodes in context:" block must
+    render BOTH succeeded and failed peers (with ``(failed)`` marker) so an
+    agent reading the error can distinguish "node doesn't exist" from "node
+    failed and was archived to __failures__".
+    """
+    from pflow.core.diagnostic import format_diagnostic
+    from pflow.runtime.engine.template_errors import build_template_error_diagnostic
+    from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
+
+    shared = {
+        "alpha": {"stdout": "ok"},  # succeeded peer
+        "beta": {"stdout": ""},  # another succeeded peer
+        "gamma_failed": {"stdout": "", "exit_code": 2, "command": "exit 2"},
+        "__execution__": {
+            "completed_nodes": ["alpha", "beta"],
+            "node_actions": {"alpha": "default", "beta": "default"},
+            "node_hashes": {},
+            "failed_node": None,
+            "node_visit_counts": {},
+        },
+    }
+    # Archive gamma_failed via the canonical helper
+    mark_node_failed(
+        shared,
+        "gamma_failed",
+        category=FAILURE_CATEGORY_SHELL,
+        error="Command failed with exit code 2",
+    )
+
+    # Build a diagnostic referencing a completely missing node
+    diag = build_template_error_diagnostic(
+        "command",
+        "${missing_ref.stdout}",
+        shared,
+    )
+
+    # Structured context exposes both lists
+    assert "alpha" in diag.context["available_context_keys"]
+    assert "beta" in diag.context["available_context_keys"]
+    assert "gamma_failed" in diag.context["failed_context_keys"]
+    assert "gamma_failed" not in diag.context["available_context_keys"]
+
+    rendered = format_diagnostic(diag)
+    # Succeeded peers render cleanly
+    assert "- alpha" in rendered
+    assert "- beta" in rendered
+    # Failed peer renders with the (failed) marker so agents know to check __failures__
+    assert "- gamma_failed (failed" in rendered
+
+
+def test_multi_output_resolution_error_renders_per_output_blocks():
+    """Regression: multi-output OutputResolutionError must render one structured
+    block per failing output (not join templates with '; ').
+
+    Pre-fix, OutputResolutionError joined failing templates with ``"; "`` (invalid
+    pflow syntax) and only propagated source_line/source_file from the first
+    failure. Post-fix, each output renders its own ``In output 'X':`` block.
+    """
+    from pflow.core.diagnostic import format_diagnostic
+    from pflow.core.user_errors import OutputResolutionError
+
+    workflow_file = "workspace/ws.pflow.md"
+
+    # Hand-built failures mimicking what populate_declared_outputs produces
+    # for a two-output workflow where both sources reference absent branches.
+    failures = [
+        {
+            "output_name": "first",
+            "source_expr": "${never_a.x}",
+            "template": "${never_a.x}",
+            "source_file": workflow_file,
+            "source_line": 10,
+            "unresolved_references": [
+                {
+                    "var": "never_a.x",
+                    "root": "never_a",
+                    "status": "absent",
+                    "in_coalesce": False,
+                    "coalesce_expr": None,
+                    "peer_suggestions": [],
+                }
+            ],
+            "available_context_keys": ["taken"],
+        },
+        {
+            "output_name": "second",
+            "source_expr": "${never_b.y}",
+            "template": "${never_b.y}",
+            "source_file": workflow_file,
+            "source_line": 20,
+            "unresolved_references": [
+                {
+                    "var": "never_b.y",
+                    "root": "never_b",
+                    "status": "absent",
+                    "in_coalesce": False,
+                    "coalesce_expr": None,
+                    "peer_suggestions": [],
+                }
+            ],
+            "available_context_keys": ["taken"],
+        },
+    ]
+    err = OutputResolutionError(failures=failures)
+    diags = err.to_diagnostics()
+    assert len(diags) == 1
+    diagnostic = diags[0]
+
+    # Context has one per-output block for each failure
+    output_blocks = diagnostic.context.get("output_failures") or []
+    assert len(output_blocks) == 2
+    assert output_blocks[0]["output_name"] == "first"
+    assert output_blocks[0]["source_line"] == 10
+    assert output_blocks[1]["output_name"] == "second"
+    assert output_blocks[1]["source_line"] == 20
+
+    # Neither source_expr should be joined with "; " in the message
+    assert "; " not in diagnostic.message
+
+    rendered = format_diagnostic(diagnostic)
+    # Both per-output headers appear
+    assert "In output 'first':" in rendered
+    assert "In output 'second':" in rendered
+    # Both templates rendered separately, not joined
+    assert "${never_a.x}" in rendered
+    assert "${never_b.y}" in rendered
+    # Both source lines visible via the per-output source hint
+    assert f"{workflow_file}:10" in rendered
+    assert f"{workflow_file}:20" in rendered
+
+
+def test_loop_reentry_clears_stale_failure_record():
+    from pflow.runtime.engine.instrumentation import enforce_loop_guard
+    from pflow.runtime.node_state import (
+        FAILURE_CATEGORY_SHELL,
+        NodeStatus,
+        get_node_status,
+        mark_node_failed,
+    )
+
+    shared = {
+        "loopy": {"stdout": "first attempt"},
+        "__execution__": {
+            "completed_nodes": [],
+            "node_actions": {},
+            "node_hashes": {},
+            "failed_node": None,
+            "node_visit_counts": {"loopy": 1},
+        },
+    }
+    mark_node_failed(shared, "loopy", category=FAILURE_CATEGORY_SHELL, error="boom")
+    assert get_node_status(shared, "loopy") == NodeStatus.FAILED
+
+    enforce_loop_guard("loopy", shared)
+    assert "loopy" not in shared.get("__failures__", {})
+    assert get_node_status(shared, "loopy") == NodeStatus.ABSENT
+
+
+def test_output_resolution_error_with_empty_refs_still_renders_output_block():
+    """Regression guard for the silent-render gap uncovered during task-148
+    simplification review.
+
+    When ``OutputResolutionError`` is constructed with a failure whose
+    ``unresolved_references`` list is empty (classifier returned nothing
+    but resolution still failed — e.g. a literal self-reference like
+    ``shared["foo"] = "${foo}"``), the renderer must still emit the
+    structured block with the output name and template — not silently
+    collapse to just the one-line Diagnostic.message.
+
+    Caught by the verification pass before deleting
+    ``_format_legacy_template_error_lines``.
+    """
+    from pflow.core.diagnostic import format_diagnostic
+    from pflow.core.user_errors import OutputResolutionError
+
+    err = OutputResolutionError(
+        failures=[
+            {
+                "output_name": "content",
+                "source_expr": "${something}",
+                "template": "${something}",
+                "unresolved_references": [],
+                "available_context_keys": ["foo", "bar"],
+                "source_line": 42,
+                "source_file": "workflow.pflow.md",
+            }
+        ]
+    )
+    rendered = format_diagnostic(err.to_diagnostics()[0])
+
+    # The structured block must appear — the output name and the
+    # template the agent tried to resolve.
+    assert "In output 'content':" in rendered, f"missing structured block in:\n{rendered}"
+    assert "${something}" in rendered, f"missing template preview in:\n{rendered}"
+    # Source location must render for agent navigation.
+    assert "workflow.pflow.md:42" in rendered, f"missing source location in:\n{rendered}"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end fixtures under examples/error-handling/
+# ---------------------------------------------------------------------------
+#
+# These tests load real ``.pflow.md`` files via the public ``WorkflowRunner``
+# API and assert on the rendered diagnostic text an AI agent would see. They
+# close three coverage gaps that inline-IR tests cannot hit:
+#
+# 1. **Markdown parser → source_line → rendered file:line** — the parser's
+#    ``yaml_item_lines`` / ``yaml_item_keys`` tracking only runs when a file
+#    is parsed. Inline IR dicts with ``_source_line`` keys mock this out.
+# 2. **Rendered stderr text, not just structured data** — agents read rendered
+#    output; the inline-IR tests verify ``context['unresolved_references']``
+#    shape but never the final text surface.
+# 3. **Full pipeline including ``parse_markdown`` and IR normalization** —
+#    the file-based tests exercise the validator + normalizer + runner chain
+#    that inline-IR tests skip.
+#
+# The fixtures are also validated at the IR schema level by
+# ``tests/test_docs/test_example_validation.py``, which ``rglob``s everything
+# under ``examples/``. Keep the fixtures schema-valid.
+# ---------------------------------------------------------------------------
+
+
+def _run_fixture(filename: str):
+    """Load and execute a fixture under ``examples/error-handling/``."""
+    path = EXAMPLES_ERROR_HANDLING / filename
+    return WorkflowRunner().run(str(path), {}, config=RunnerConfig(cache_enabled=False))
+
+
+def _only_template_error(result) -> str:
+    """Return the rendered text of the single template_error diagnostic.
+
+    The workflows emit cache-lint warnings alongside the template error
+    (the shell nodes have no template inputs). Filter to the error we care
+    about before rendering.
+    """
+    errors = [
+        d
+        for d in result.diagnostics
+        if d.severity == Severity.ERROR and (d.context or {}).get("category") == "template_error"
+    ]
+    assert len(errors) == 1, f"expected exactly one template_error, got {len(errors)}: {result.diagnostics}"
+    return format_diagnostic(errors[0])
+
+
+def test_example_failed_node_direct_reference_renders_pasteable_fix():
+    """Direct reference to a failed node must render:
+    - the real failure details (exit_code, command)
+    - the source line from the markdown parser
+    - a paste-able coalesce fix using a real peer node name
+    """
+    result = _run_fixture("failed-node-direct-reference.pflow.md")
+    assert result.status == WorkflowStatus.FAILED
+
+    rendered = _only_template_error(result)
+    # Source line 40 from the fixture — comes from the markdown parser, not inline.
+    assert "failed-node-direct-reference.pflow.md:40" in rendered, rendered
+    # Real failure details must surface, not "Unknown error" or "did not execute".
+    assert "Exit code: 42" in rendered, rendered
+    assert "executed but FAILED" in rendered, rendered
+    # Paste-able fix must use the real peer node name, not a placeholder.
+    assert "${primary.stdout ?? fallback.stdout}" in rendered, rendered
+
+
+def test_example_typo_on_failed_node_surfaces_failure_and_corrected_fix():
+    """When a reference has BOTH a typo AND the node failed, the error must:
+    - surface the failure as the PRIMARY signal (not "did not execute")
+    - surface the typo as a SECONDARY hint ("Did you mean: stdout?")
+    - render the paste-able fix with the CORRECTED field + real peer name
+      (``${primary.stdout ?? fallback.stdout}`` — not ``${primary.stddout ??...}``)
+
+    This is Fix #5's regression guard — the ``corrected_var`` field must
+    flow from ``_classify_one_reference`` into ``_format_failed_reference_fixes``.
+    """
+    result = _run_fixture("typo-on-failed-node.pflow.md")
+    assert result.status == WorkflowStatus.FAILED
+
+    rendered = _only_template_error(result)
+    assert "typo-on-failed-node.pflow.md:40" in rendered, rendered
+    # Primary signal: the failure, not the typo.
+    assert "executed but FAILED" in rendered, rendered
+    assert "Exit code: 7" in rendered, rendered
+    # Secondary hint: the typo correction.
+    assert "Did you mean: ${primary.stdout}" in rendered, rendered
+    # Paste-able fix MUST use corrected field (stdout, not stddout) + real peer.
+    assert "${primary.stdout ?? fallback.stdout}" in rendered, rendered
+    # The uncorrected form must NOT appear in the fix suggestion.
+    assert "${primary.stddout ??" not in rendered, rendered
+
+
+def test_example_loop_recovery_final_state_is_succeeded():
+    """A node fails on visit 1, then succeeds on visit 2. After the loop:
+    - the workflow's status is SUCCESS
+    - the node lives in ``shared_after[node_id]`` (top level = succeeded)
+    - the node is NOT in ``__failures__`` (stale record cleared by loop guard)
+    - the final output is the visit-2 data
+
+    Guards the ``clear_node_failure`` wiring in ``enforce_loop_guard``. If the
+    stale failure record survived across loop re-entry, ``get_node_status``
+    would report FAILED and downstream template resolution would break.
+
+    Uses /tmp/pflow-loop-recovery-marker as a cross-visit signal — the fixture's
+    ``setup`` step removes any stale marker so repeated runs are idempotent.
+    """
+    result = _run_fixture("loop-recovery.pflow.md")
+    assert result.status == WorkflowStatus.SUCCESS
+    assert "maybe-fail" in result.shared_after
+    assert "maybe-fail" not in result.shared_after.get("__failures__", {})
+    assert result.shared_after["maybe-fail"].get("stdout") == "succeeded-on-retry"
+
+
+def test_example_source_line_multi_output_tracks_first_output_line():
+    """When multiple outputs are declared at different lines and the first one
+    fails, the diagnostic's ``At:`` line must point at the failing output's
+    exact source line — not the last output, not the top of the file.
+
+    Proves the markdown parser's parallel ``yaml_item_lines`` tracking
+    correctly indexes into the YAML items list by key position.
+    """
+    result = _run_fixture("source-line-multi-output.pflow.md")
+    assert result.status == WorkflowStatus.FAILED
+
+    rendered = _only_template_error(result)
+    # Only the first output should be reported as failed.
+    assert "In output 'first_output':" in rendered, rendered
+    assert "In output 'second_output':" not in rendered, rendered
+    # Line 39 is the failing output's ``- source:`` line in the fixture.
+    assert "source-line-multi-output.pflow.md:39" in rendered, rendered
+
+
+def test_example_source_line_heavy_offsets_tracks_correct_line():
+    """A fixture with heavy blank-line padding and prose before the output
+    section stresses the parser's line offset tracking. The rendered ``At:``
+    line must point at the correct absolute line (50 in this fixture), not
+    the relative position within the Outputs section.
+
+    Guards the parser's ``yaml_current_item_start_line`` assignment against
+    off-by-N errors that only surface with real file offsets.
+    """
+    result = _run_fixture("source-line-heavy-offsets.pflow.md")
+    assert result.status == WorkflowStatus.FAILED
+
+    rendered = _only_template_error(result)
+    assert "source-line-heavy-offsets.pflow.md:50" in rendered, rendered
+
+
+def test_example_coalesce_mixed_absent_failed_emits_summary_fix():
+    """A coalesce with one absent operand and one failed operand must:
+    - error loudly (not silently skip, which was the Task 128 bug class)
+    - classify the absent one as ABSENT and the failed one as FAILED
+    - emit the "All coalesce operands are unavailable" summary block
+    - suggest adding another fallback using a REAL peer node name
+
+    Fix #4 regression guard — the gate in
+    ``_format_all_unavailable_coalesce_summary`` must widen to
+    ``status in ('failed', 'absent')``, not only ``'failed'``.
+    """
+    result = _run_fixture("coalesce-mixed-absent-failed.pflow.md")
+    assert result.status == WorkflowStatus.FAILED
+
+    rendered = _only_template_error(result)
+    assert "coalesce-mixed-absent-failed.pflow.md:59" in rendered, rendered
+    # Both classifications must render.
+    assert "Node 'never_run' did not execute" in rendered, rendered
+    assert "Node 'fails' executed but FAILED" in rendered, rendered
+    # Summary block must appear with paste-able extended fallback using a real peer.
+    assert "All coalesce operands are unavailable" in rendered, rendered
+    # The extended-fallback suggestion must substitute a real peer (selector or soak),
+    # not a placeholder like ``<peer>``.
+    assert "<peer>" not in rendered, rendered
+    # The summary suggestion should reference one of the surviving peer nodes.
+    assert ("selector.stdout" in rendered) or ("soak.stdout" in rendered), rendered

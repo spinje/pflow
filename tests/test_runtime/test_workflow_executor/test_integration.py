@@ -279,10 +279,11 @@ class TestWorkflowExecutorIntegration:
 
             # WorkflowExecutor returns error_action value
             assert result == "error"
-            # With namespacing, error is at shared[node_id]["error"]
-            assert "sub" in shared
-            assert "error" in shared["sub"]
-            assert "Child failed" in shared["sub"]["error"]
+            from pflow.runtime.node_state import get_node_failure
+
+            failure = get_node_failure(shared, "sub")
+            assert failure is not None
+            assert "Child failed" in str(failure.get("error"))
 
     def test_storage_mapped_isolation(self, simple_workflow_ir, mock_registry):
         """When storage_mode is 'mapped' (default), child does not see parent data.

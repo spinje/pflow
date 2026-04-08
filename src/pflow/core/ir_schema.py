@@ -292,6 +292,10 @@ FLOW_IR_SCHEMA: dict[str, Any] = {
                         "type": "string",
                         "description": "Template expression specifying where to get the output value from (e.g., '${node_id.output_key}')",
                     },
+                    "_source_line": {
+                        "type": "integer",
+                        "description": "Markdown source line for the output source declaration (internal parser metadata)",
+                    },
                 },
                 "additionalProperties": False,
             },

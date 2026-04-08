@@ -18,11 +18,14 @@ class TestBuildExecutionSteps:
                 {"id": "node2"},
             ]
         }
+        # Task 148 invariant: shared[node_id] ↔ node ran successfully
         shared_storage = {
+            "node1": {"result": "ok"},
+            "node2": {"result": "ok"},
             "__execution__": {
                 "completed_nodes": ["node1", "node2"],
                 "failed_node": None,
-            }
+            },
         }
         metrics_summary = None
 
@@ -42,11 +45,20 @@ class TestBuildExecutionSteps:
                 {"id": "node2"},
             ]
         }
+        # Task 148 invariant: failed nodes live in __failures__, not at top level
         shared_storage = {
+            "node1": {"result": "ok"},
+            "__failures__": {
+                "node2": {
+                    "data": {"error": "boom"},
+                    "category": "node_action_error",
+                    "error": "boom",
+                },
+            },
             "__execution__": {
                 "completed_nodes": ["node1"],
                 "failed_node": "node2",
-            }
+            },
         }
 
         steps = build_execution_steps(workflow_ir, shared_storage, None)
@@ -55,7 +67,7 @@ class TestBuildExecutionSteps:
         assert steps[1]["status"] == "failed"
 
     def test_not_executed_status(self):
-        """Should mark nodes not in completed or failed as not_executed."""
+        """Should mark nodes absent from both completed and __failures__ as not_executed."""
         workflow_ir = {
             "nodes": [
                 {"id": "node1"},
@@ -64,15 +76,73 @@ class TestBuildExecutionSteps:
             ]
         }
         shared_storage = {
+            "node1": {"result": "ok"},
+            "__failures__": {
+                "node2": {
+                    "data": {"error": "boom"},
+                    "category": "node_action_error",
+                    "error": "boom",
+                },
+            },
             "__execution__": {
                 "completed_nodes": ["node1"],
                 "failed_node": "node2",
-            }
+            },
         }
 
         steps = build_execution_steps(workflow_ir, shared_storage, None)
 
+        assert steps[0]["status"] == "completed"
+        assert steps[1]["status"] == "failed"
         assert steps[2]["status"] == "not_executed"
+
+    def test_multi_failure_all_show_failed_status(self):
+        """Regression: in a multi-failure workflow, ALL failed nodes show status 'failed'.
+
+        Pre-fix, build_execution_steps checked `node_id == failed_node` (singular),
+        so only the LAST failed node in __failures__ was labeled 'failed'; earlier
+        failures showed as 'not_executed' because they weren't in completed_nodes
+        either. Under the Task 148 invariant, status must come from the union of
+        __failures__ and completed_nodes, not the singular pointer.
+        """
+        workflow_ir = {
+            "nodes": [
+                {"id": "primary"},
+                {"id": "fallback"},
+                {"id": "soak"},
+            ]
+        }
+        shared_storage = {
+            "soak": {"stdout": "soaked"},
+            "__failures__": {
+                "primary": {
+                    "data": {"exit_code": 7, "command": "exit 7"},
+                    "category": "shell_failure",
+                    "error": "Command failed with exit code 7",
+                },
+                "fallback": {
+                    "data": {"exit_code": 5, "command": "exit 5"},
+                    "category": "shell_failure",
+                    "error": "Command failed with exit code 5",
+                },
+            },
+            "__execution__": {
+                "completed_nodes": ["soak"],
+                # failed_node is singular — only the LAST one — proves the fix
+                # can't be tricked into mislabeling earlier failures.
+                "failed_node": "fallback",
+            },
+        }
+
+        steps = build_execution_steps(workflow_ir, shared_storage, None)
+
+        # Both failed nodes must show as 'failed', not 'not_executed'
+        assert steps[0]["node_id"] == "primary"
+        assert steps[0]["status"] == "failed"
+        assert steps[1]["node_id"] == "fallback"
+        assert steps[1]["status"] == "failed"
+        assert steps[2]["node_id"] == "soak"
+        assert steps[2]["status"] == "completed"
 
 
 class TestBuildExecutionStepsStderr:
@@ -130,12 +200,19 @@ class TestBuildExecutionStepsStderr:
     def test_no_stderr_flag_when_exit_code_nonzero(self):
         """Should not set has_stderr when exit_code is non-zero."""
         workflow_ir = {"nodes": [{"id": "shell-node"}]}
+        # Task 148 invariant: failed node data lives in __failures__[node_id].data
         shared_storage = {
             "__execution__": {"completed_nodes": [], "failed_node": "shell-node"},
-            "shell-node": {
-                "stdout": "",
-                "stderr": "Error message",
-                "exit_code": 1,
+            "__failures__": {
+                "shell-node": {
+                    "data": {
+                        "stdout": "",
+                        "stderr": "Error message",
+                        "exit_code": 1,
+                    },
+                    "category": "shell_failure",
+                    "error": "Command failed with exit code 1",
+                },
             },
         }
 

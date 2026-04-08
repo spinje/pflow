@@ -11,6 +11,7 @@ src/pflow/core/
 ├── __init__.py              # Public API exports
 ├── node.py                  # Node lifecycle primitives (BaseNode, Node, wiring operators)
 ├── exceptions.py            # Exception hierarchy (incl. CompilationError, MaxNodeVisitsError)
+├── diagnostic.py            # Unified Diagnostic type + format_diagnostic renderer
 ├── ir_schema.py             # IR schema definition and validation
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
@@ -23,7 +24,7 @@ src/pflow/core/
 ├── settings.py              # Settings with node filtering and env management
 ├── shell_integration.py     # Unix pipe and stdin handling
 ├── suggestion_utils.py      # "Did you mean" fuzzy matching
-├── user_errors.py           # User-friendly CLI error formatting
+├── user_errors.py           # User-friendly CLI errors (UserFriendlyError, MCPError, OutputResolutionError)
 ├── validation_utils.py      # Parameter name validation, dummy parameter generation
 ├── llm_utils.py             # Shared LLM response parsing (parse_structured_response)
 ├── prompt_utils.py          # Prompt loading and formatting (load_prompt, format_prompt)
@@ -84,11 +85,25 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 **Don't**: raise vanilla `Exception`, `ValueError`, or `RuntimeError` when a specific `PflowError` subclass fits. Vanilla exceptions get generic error handling — structured exceptions get rich error output with paths, suggestions, and correct categorization.
 
-**Self-describing exceptions** — `PflowError` (and 8 subclasses) implement `to_diagnostics() -> list[Diagnostic]`. `exception_to_diagnostics()` is a thin dispatcher: call `to_diagnostics()` if present, else `_builtin_exception_diagnostic()` for stdlib types. When adding a new exception class, override `to_diagnostics()` rather than extending the dispatcher. `MarkdownParseError.raw_message` holds the message without the `Line N:` prefix/suggestion suffix — `to_diagnostics()` uses this for clean rendering.
+**Self-describing exceptions** — `PflowError` (and 8 subclasses) implement `to_diagnostics() -> list[Diagnostic]`. `MaxNodeVisitsError` also implements it despite intentionally not inheriting from `PflowError` (it's a `RuntimeError` because of the loop-guard use case). `exception_to_diagnostics()` is a thin dispatcher: call `to_diagnostics()` if present, else `_builtin_exception_diagnostic()` for stdlib types. When adding a new exception class, override `to_diagnostics()` rather than extending the dispatcher. `MarkdownParseError.raw_message` holds the message without the `Line N:` prefix/suggestion suffix — `to_diagnostics()` uses this for clean rendering.
 
 **Error handling philosophy — producers are self-describing**: validators, exceptions, and runtime events all construct `Diagnostic` objects at the detection site. Never flatten structured data (paths, fuzzy matches, available fields, suggestions) into string messages for downstream code to reverse-engineer. CLI, JSON, and MCP all flow through the same `format_diagnostic()` pipeline — the only place rendering happens.
 
 **`Diagnostic.__hash__` excludes `context`, `title`, and `suggestions`** — load-bearing. Child workflow diagnostics flow through two independent paths (validation-time and runtime) that produce semantically-identical errors with potentially-different enrichment. Dedup only collapses them if identity ignores the display-only fields. Adding `context` to the hash silently breaks sub-workflow warning dedup. Hash identity tuple: `(severity, source, node_id, message)` — keep it that way.
+
+### diagnostic.py
+
+`Diagnostic` dataclass + `format_diagnostic()` renderer. Identity (eq/hash) is `severity + source + node_id + message` only — context, title, suggestions are display data. Use `deduplicate_diagnostics()` for collections.
+
+**Template error rendering** is structured, not prose: `Diagnostic.context["unresolved_references"]` is a list of per-reference dicts with `status` (`absent` / `failed` / `path_error`), `failure` (with category-aware data), `peer_suggestions`, `secondary_hint`, `did_you_mean`, `corrected_var`. The renderer (`_format_template_error_lines` → `_format_one_reference` → `_render_failure_data_block`) consumes this structure; agents reading JSON (`Diagnostic.to_dict()`) get the same data.
+
+**WARNING-severity dispatch**: `_format_warning_or_info_diagnostic` is one-line by default, BUT `category="template_error"` warnings with `unresolved_references` dispatch to `_format_warning_template_error` which calls the same structured renderer as ERROR severity. Permissive-mode template errors carry the full structure; rendering must surface it.
+
+**Multi-output errors** (from `OutputResolutionError`) carry `context["output_failures"]` — a list of per-output blocks with their own `template`, `source_file`, `source_line`. `_format_template_error_lines` iterates each block.
+
+**`At:` location format** is `node 'X', file:line` (universal editor-click format), not `node 'X', file, line N`.
+
+**Block fallbacks**: every `_render_*_failure_block` returns at least one line (`(no <type> details captured)`) so empty `data={}` doesn't produce a blank rendered block.
 
 ### ir_schema.py
 
@@ -109,11 +124,17 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 Validates beyond schema structure: catches duplicate IDs, node reference integrity, and provides fix suggestions.
 
+**Internal metadata fields** allowed by the schema (parser-injected, not user-facing):
+- `nodes[i]._source_lines` — code block source line offsets (read by `python_code.py` for error attribution)
+- `outputs[name]._source_line` — source line of the output `source:` declaration (read by `output_resolver` for `At:` rendering)
+
 ### markdown_parser.py
 
-Line-by-line state machine: extracts H1 title/description, `## Inputs`/`## Steps`/`## Outputs` sections, `### entity` headings with `- key: value` params and fenced code blocks. Produces same IR dict shape as the old JSON format.
+Line-by-line state machine: extracts H1 title/description, `## Inputs`/`## Steps`/`## Outputs` sections, `### entity` headings with `- key: value` params and fenced code blocks.
 
 Returns `MarkdownParseResult(ir, title, description, metadata, source)`.
+
+**Source line tracking** (load-bearing for template error `At:` rendering): `_Entity` carries three parallel lists — `yaml_items` (raw YAML strings), `yaml_item_lines` (1-based source line of each item's first `- `), and `yaml_item_keys` (parsed top-level key). `_build_output_dict` reads them to record `_source_line` on output dicts. The parallel lists are populated only by `_parse_yaml_items` and `_flush_yaml_item`; modifying one without the others corrupts the index. Code-block params get `_source_line = block.start_line + 1`.
 
 **Parameter parsing** (`_parse_yaml_items`): Two parsing paths based on syntax. Single-line items use `_coerce_yaml_scalar` (raw string + YAML-like scalar coercion for bools, ints, floats, null, quoted strings, flow-style `{}`/`[]`). Multi-line items (indented continuations) use `yaml.safe_load()`. This eliminates YAML structural bugs (`: ` splitting, `#` comment stripping) while preserving type coercion. Intentionally diverges from PyYAML for edge cases (octal, hex, dates, scientific notation). Unterminated quotes error; inline `#` comments are NOT stripped.
 
@@ -212,7 +233,9 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### user_errors.py
 
-Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). `UserFriendlyError` has `to_diagnostics()` with a `_diagnostic_category` class variable (`"cli"` by default). `MCPError` overrides to `_diagnostic_category = "mcp"` and inherits the base `to_diagnostics()`. `OutputResolutionError` overrides `to_diagnostics()` entirely (unique `failures` data in context).
+Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). `UserFriendlyError` has `to_diagnostics()` with a `_diagnostic_category` class variable (`"cli"` by default). `MCPError` overrides to `_diagnostic_category = "mcp"` and inherits the base `to_diagnostics()`.
+
+`OutputResolutionError` overrides `to_diagnostics()` entirely. It produces a Diagnostic with `category="template_error"`, `node_id=None` (output errors are about the output declaration, not a node), and `context["output_failures"]` — a per-output list of structured blocks each with their own `template`, `source_file`, `source_line`, and `unresolved_references`. The renderer in `diagnostic.py` consumes this structure. **No canned suggestions** — the structured renderer emits per-reference fix hints. The base `__init__` builds a one-line summary explanation (matching `build_template_error_diagnostic` in `runtime/engine/template_errors.py`); legacy multi-line prose was removed because the renderer would otherwise duplicate it.
 
 ### validation_utils.py
 

@@ -303,10 +303,18 @@ class TestExecErrorActionDetection:
 
     def test_extract_child_error_with_failed_node(self):
         """When __execution__['failed_node'] exists and has an error, include it in the message."""
+        from pflow.runtime.node_state import FAILURE_CATEGORY_EXCEPTION, mark_node_failed
+
         child_storage = {
             "__execution__": {"failed_node": "api_call"},
             "api_call": {"error": "HTTP 503 Service Unavailable"},
         }
+        mark_node_failed(
+            child_storage,
+            "api_call",
+            category=FAILURE_CATEGORY_EXCEPTION,
+            error="HTTP 503 Service Unavailable",
+        )
         msg = WorkflowExecutor._extract_child_error(child_storage, "deploy.pflow.md")
 
         assert "HTTP 503 Service Unavailable" in msg
@@ -322,10 +330,13 @@ class TestExecErrorActionDetection:
 
     def test_extract_child_error_with_failed_node_no_error_key(self):
         """When failed_node exists but its data has no 'error' key, return fallback message."""
+        from pflow.runtime.node_state import FAILURE_CATEGORY_EXCEPTION, mark_node_failed
+
         child_storage = {
             "__execution__": {"failed_node": "step1"},
             "step1": {"stdout": "some output", "exit_code": 1},
         }
+        mark_node_failed(child_storage, "step1", category=FAILURE_CATEGORY_EXCEPTION)
         msg = WorkflowExecutor._extract_child_error(child_storage, "build.pflow.md")
 
         assert "returned error action" in msg
@@ -333,11 +344,19 @@ class TestExecErrorActionDetection:
 
     def test_extract_child_error_from_warnings(self):
         """When failed_node has no 'error' key but __warnings__ has an entry, use it."""
+        from pflow.runtime.node_state import FAILURE_CATEGORY_ROUTING, mark_node_failed
+
         child_storage = {
             "__execution__": {"failed_node": "router"},
             "router": {"result": "some_value"},
             "__warnings__": {"router": "Node 'router' returned action 'banana' but no successor edge matches."},
         }
+        mark_node_failed(
+            child_storage,
+            "router",
+            category=FAILURE_CATEGORY_ROUTING,
+            warning="Node 'router' returned action 'banana' but no successor edge matches.",
+        )
         msg = WorkflowExecutor._extract_child_error(child_storage, "child.pflow.md")
 
         assert "banana" in msg

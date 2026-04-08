@@ -1,14 +1,23 @@
-"""Template error message formatting for node wrapper.
+"""Template error message formatting.
 
 Builds detailed, actionable error messages for template resolution failures:
 - Type mismatches (dict/list where str expected, malformed JSON)
-- Unresolved template variables with context, suggestions, and JSON hints
-- Coalesce expression diagnostics (per-operand resolution status)
+- Unresolved template variables, producing a structured Diagnostic with
+  per-reference status (absent / failed / path_error)
+- Coalesce expression diagnostics
+
+The unresolved-template path produces a Diagnostic whose context contains
+structured ``unresolved_references`` data. The Diagnostic context blocks
+in ``core/diagnostic.py`` render this into the agent-actionable format.
 """
+
+from __future__ import annotations
 
 from typing import Any
 
-from ..template_resolver import TemplateResolver
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.runtime.node_state import NodeStatus, get_node_failure, get_node_status
+from pflow.runtime.template_resolver import TemplateResolver
 
 
 def build_type_error_message(
@@ -20,58 +29,38 @@ def build_type_error_message(
 ) -> str:
     """Build detailed, actionable error message for type mismatch.
 
-    Args:
-        param_key: Parameter name
-        resolved_value: The resolved value (wrong type)
-        template_str: Original template string
-        expected_type: Expected type from metadata
-        actual_type: Actual type of resolved value
-
-    Returns:
-        Formatted multi-section error message with fix suggestions
+    Returns a plain string used in a ValueError. Type mismatch errors are
+    a different class from unresolved-template errors and don't need the
+    structured Diagnostic treatment.
     """
-    # Extract variable name from template for suggestions
     var_match = TemplateResolver.TEMPLATE_EXTRACT_PATTERN.search(template_str)
     var_name = var_match.group(1) if var_match else "variable"
 
-    # Build base error
     error_msg = (
         f"Parameter '{param_key}' expects {expected_type} but received {actual_type}\n\n"
         f"Template used: {template_str}\n"
         f"Resolved to: {actual_type} object\n"
     )
-
-    # Add fix suggestions
     error_msg += "\n\U0001f4a1 Common fixes:\n"
-
-    # Fix 1: Serialize to JSON (works for dict/list)
     error_msg += "  1. Serialize to JSON (recommended):\n"
     error_msg += f'     {param_key}: "{template_str}"\n\n'
-
-    # Fix 2: Access specific field (for dicts) or item (for lists)
     if isinstance(resolved_value, dict):
         error_msg += "  2. Access a specific field:\n"
         error_msg += f"     {param_key}: ${{{var_name}.field_name}}\n\n"
     elif isinstance(resolved_value, list):
         error_msg += "  2. Access a specific item:\n"
         error_msg += f"     {param_key}: ${{{var_name}[0]}}\n\n"
-
-    # Fix 3: Combine with text
     error_msg += "  3. Combine with text:\n"
     error_msg += f'     {param_key}: "Summary: {template_str}"\n'
 
-    # Show available fields/items for dicts
     if isinstance(resolved_value, dict) and resolved_value:
-        keys = list(resolved_value.keys())[:10]  # Limit to 10 keys
+        keys = list(resolved_value.keys())[:10]
         error_msg += f"\n\nAvailable fields in {var_name}:\n"
         for key in keys:
             error_msg += f"  - {key}\n"
-
         if len(resolved_value) > 10:
             remaining = len(resolved_value) - 10
             error_msg += f"  ... and {remaining} more\n"
-
-    # Show item count for lists
     elif isinstance(resolved_value, list):
         error_msg += f"\n\n{var_name} contains {len(resolved_value)} items\n"
         if len(resolved_value) > 0:
@@ -89,22 +78,13 @@ def build_json_parse_error_message(
 ) -> str:
     """Build detailed error message for failed JSON parsing.
 
-    Args:
-        param_key: Parameter name
-        resolved_value: The malformed JSON string
-        template_str: Original template string
-        expected_type: Expected type (dict/list/object/array)
-        trimmed: Trimmed version of resolved_value
-
-    Returns:
-        Formatted error message with suggestions
+    Same plain-string approach as build_type_error_message. JSON parse
+    errors are a different class from unresolved-template errors.
     """
-    # Preview of malformed JSON (limit to 200 chars)
     preview = trimmed[:200]
     if len(trimmed) > 200:
         preview += "..."
 
-    # Detect common JSON issues
     issues = []
     if "'" in trimmed:
         issues.append("Single quotes detected (use double quotes: \"key\" not 'key')")
@@ -123,13 +103,11 @@ def build_json_parse_error_message(
         "",
         f"The string starts with '{trimmed[0]}' suggesting JSON, but failed to parse.",
     ]
-
     if issues:
         error_lines.append("")
         error_lines.append("Detected issues:")
         for issue in issues:
             error_lines.append(f"  - {issue}")
-
     error_lines.extend([
         "",
         "Common JSON formatting issues:",
@@ -142,247 +120,249 @@ def build_json_parse_error_message(
         "Fix: Ensure the source outputs valid JSON.",
         f"Test with: echo '{template_str}' | jq '.'",
     ])
-
     return "\n".join(error_lines)
 
 
-def format_available_keys(available_display: list[str], context: dict[str, Any]) -> list[str]:
-    """Format available keys section with type information.
+def classify_unresolved_references(
+    template_str: str,
+    context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Classify every variable reference in a template by execution status.
 
-    Args:
-        available_display: List of keys to display (may include "... and N more")
-        context: Resolution context
-
-    Returns:
-        List of formatted key lines
+    Variables that resolve successfully are not included.
     """
-    lines = ["Available context keys:"]
-
-    for key in available_display:
-        if key.startswith("... and"):
-            lines.append(f"  {key}")
-        else:
-            value = context.get(key)
-            value_type = type(value).__name__
-            # Show preview for simple types
-            if isinstance(value, (str, int, float, bool)) and not isinstance(value, bool):
-                preview = str(value)[:50]
-                if len(str(value)) > 50:
-                    preview += "..."
-                lines.append(f"  \u2022 {key} ({value_type}): {preview}")
-            else:
-                lines.append(f"  \u2022 {key} ({value_type})")
-
-    return lines
-
-
-def generate_suggestions(variables: set[str], available_keys: list[str]) -> list[str]:
-    """Generate suggestions for close matches.
-
-    Args:
-        variables: Set of unresolved variable names
-        available_keys: Available context keys
-
-    Returns:
-        List of suggestion strings
-    """
-    suggestions = []
-    for var in variables:
-        # For nested paths like "mynode.stdout", check if the first part
-        # (node ID) is similar to any available key
-        parts = var.split(".")
-        node_id = parts[0]
-        rest_of_path = ".".join(parts[1:]) if len(parts) > 1 else ""
-
-        node_id_lower = node_id.lower()
-        node_id_normalized = node_id.replace("_", "-").replace("-", "")
-
-        for key in available_keys[:20]:
-            if not isinstance(key, str):
-                continue
-
-            key_lower = key.lower()
-            key_normalized = key.replace("_", "-").replace("-", "")
-
-            # Check for similar node IDs (handles typos like mynode vs my-node)
-            is_similar = (
-                node_id_lower == key_lower
-                or node_id_normalized == key_normalized
-                or node_id_lower in key_lower
-                or key_lower in node_id_lower
-            )
-
-            if is_similar and node_id != key:
-                # Build the corrected variable path
-                corrected = f"{key}.{rest_of_path}" if rest_of_path else key
-                suggestions.append(f"Did you mean '${{{corrected}}}'? (instead of '${{{var}}}')")
-                break
-
-    return suggestions[:3]  # Limit to 3 suggestions
-
-
-def detect_json_parse_hints(variables: set[str], context: dict[str, Any]) -> list[str]:
-    """Detect if unresolved variables failed due to JSON parsing issues.
-
-    When a variable like ${node.stdout.field} fails to resolve, check if
-    node.stdout exists and is a string (not valid JSON). This helps users
-    understand why nested access failed.
-
-    Args:
-        variables: Set of unresolved variable names
-        context: Resolution context
-
-    Returns:
-        List of hint strings explaining JSON parse failures
-    """
-    hints = []
-
-    for var in variables:
-        parts = var.split(".")
-        if len(parts) < 3:
-            # Not a nested path like node.output.field
-            continue
-
-        # Check if parent path exists and is a string
-        # e.g., for "node.stdout.field", check if "node.stdout" is a string
-        node_id = parts[0]
-        output_key = parts[1]
-
-        if node_id in context and isinstance(context[node_id], dict):
-            node_data = context[node_id]
-            if output_key in node_data:
-                value = node_data[output_key]
-                if isinstance(value, str):
-                    # Found it - the parent is a string, not parsed JSON
-                    preview = value[:60] + "..." if len(value) > 60 else value
-                    # Clean up preview for display (escape newlines)
-                    preview = preview.replace("\n", "\\n")
-                    hints.append(
-                        f"${{{node_id}.{output_key}}} is a string, not JSON. "
-                        f"Nested access (.{'.'.join(parts[2:])}) requires valid JSON."
-                    )
-                    hints.append(f'  Actual value: "{preview}"')
-                    break  # One hint is enough
-
-    return hints
-
-
-def diagnose_coalesce(template_str: str, context: dict[str, Any]) -> tuple[list[str], set[str]]:
-    """Diagnose coalesce expressions in a template and return error lines.
-
-    For each coalesce expression, determines per-operand status:
-    - Root absent: branch/node didn't execute
-    - Root present but path failed: likely typo
-    - Resolved: operand worked (shouldn't appear in unresolved templates)
-
-    Args:
-        template_str: Original template string (may contain multiple ${...})
-        context: Resolution context
-
-    Returns:
-        Tuple of (diagnostic_lines, coalesce_variables) where
-        coalesce_variables is the set of variable names already diagnosed
-        (so they can be excluded from the generic unresolved list).
-    """
-    lines: list[str] = []
-    diagnosed_vars: set[str] = set()
+    references: list[dict[str, Any]] = []
+    seen_vars: set[str] = set()
 
     for match in TemplateResolver.TEMPLATE_PATTERN.finditer(template_str):
         expr = match.group(1)
-        if not TemplateResolver.is_coalesce_expression(expr):
-            continue
-
         operands = TemplateResolver.split_coalesce_operands(expr)
-        diagnosed_vars.update(operands)
+        is_coalesce = len(operands) > 1
 
-        # Diagnose each operand
-        operand_lines: list[str] = []
         for operand in operands:
-            root = TemplateResolver._ROOT_SPLIT_PATTERN.split(operand)[0]
-            if root not in context:
-                operand_lines.append(f"  - ${{{operand}}}: node '{root}' did not execute")
-            elif TemplateResolver.variable_exists(operand, context):
-                operand_lines.append(f"  - ${{{operand}}}: resolved (OK)")
-            else:
-                # Root present but path failed — typo
-                operand_lines.append(f"  - ${{{operand}}}: node '{root}' executed but path '{operand}' not found")
+            if operand in seen_vars:
+                continue
+            seen_vars.add(operand)
 
-        lines.append(f"Coalesce expression ${{{expr}}} failed \u2014 no operand resolved:")
-        lines.extend(operand_lines)
+            ref = _classify_one_reference(
+                operand,
+                context,
+                in_coalesce=is_coalesce,
+                coalesce_expr=expr if is_coalesce else None,
+            )
+            if ref is not None:
+                references.append(ref)
 
-    return lines, diagnosed_vars
+    return references
 
 
-def build_enhanced_template_error(param_key: str, template: str, context: dict[str, Any]) -> str:
-    """Build detailed error message for unresolved template.
+def _classify_one_reference(
+    var: str,
+    context: dict[str, Any],
+    *,
+    in_coalesce: bool,
+    coalesce_expr: str | None,
+) -> dict[str, Any] | None:
+    """Classify a single variable reference. Returns None if it resolves."""
+    root = TemplateResolver.extract_root_node_id(var)
+    status = get_node_status(context, root)
 
-    Args:
-        param_key: Parameter name
-        template: Original template string
-        context: Resolution context (shared store + initial params)
+    if status == NodeStatus.SUCCEEDED:
+        if TemplateResolver.variable_exists(var, context):
+            return None
+        return {
+            "var": var,
+            "root": root,
+            "status": "path_error",
+            "in_coalesce": in_coalesce,
+            "coalesce_expr": coalesce_expr,
+            "available_fields": _get_available_fields(root, context),
+            "did_you_mean": _suggest_field_correction(var, root, context),
+            "peer_suggestions": _find_peer_nodes_with_field(root, var, context),
+        }
 
-    Returns:
-        Formatted error message with context and suggestions
-    """
+    if status == NodeStatus.FAILED:
+        failure = get_node_failure(context, root) or {}
+        data = failure.get("data") or {}
+        display_data = _extract_failure_display_data(failure.get("category"), data)
+        secondary_hint = _suggest_field_correction(var, root, {root: data}) if isinstance(data, dict) else None
+        # When the user also has a typo (e.g. ${primary.stddout} where primary
+        # failed and has `stdout`), prefer the corrected path for peer search
+        # and the paste-able fix template. The original typo'd var stays on
+        # ``var`` so the renderer shows what the user actually wrote.
+        search_var = secondary_hint if secondary_hint else var
+        failure_context = {
+            "category": failure.get("category"),
+            "error": failure.get("error"),
+            "data": display_data,
+            **display_data,
+        }
+        return {
+            "var": var,
+            "root": root,
+            "status": "failed",
+            "in_coalesce": in_coalesce,
+            "coalesce_expr": coalesce_expr,
+            "failure": failure_context,
+            "peer_suggestions": _find_peer_nodes_with_field(root, search_var, context),
+            "secondary_hint": secondary_hint,
+            "corrected_var": secondary_hint,
+        }
+
+    return {
+        "var": var,
+        "root": root,
+        "status": "absent",
+        "in_coalesce": in_coalesce,
+        "coalesce_expr": coalesce_expr,
+        "peer_suggestions": _find_peer_nodes_with_field(root, var, context),
+    }
+
+
+def _get_available_fields(node_id: str, context: dict[str, Any]) -> list[str]:
+    """Return the dict keys of a node's output, sorted."""
+    output = context.get(node_id)
+    if isinstance(output, dict):
+        return sorted(str(key) for key in output if not str(key).startswith("_"))
+    return []
+
+
+def _is_visible_context_key(key: Any) -> bool:
+    """Return True for user-relevant context keys shown in diagnostics."""
+    return not str(key).startswith("_")
+
+
+def _find_peer_nodes_with_field(root: str, var: str, context: dict[str, Any], max_results: int = 3) -> list[str]:
+    """Find sibling nodes whose output dict contains the same field path."""
+    field_name = TemplateResolver.extract_first_field_segment(var)
+
+    candidates: list[str] = []
+    for key, value in context.items():
+        if key == root:
+            continue
+        key_str = str(key)
+        if not _is_visible_context_key(key_str):
+            continue
+        if field_name is None:
+            if isinstance(value, dict):
+                candidates.append(key_str)
+        elif isinstance(value, dict) and field_name in value:
+            candidates.append(key_str)
+        if len(candidates) >= max_results:
+            break
+    return candidates
+
+
+def _extract_failure_display_data(category: str | None, data: Any) -> dict[str, Any]:
+    """Extract a display-relevant subset of failure data based on category."""
+    if not isinstance(data, dict):
+        return {}
+
+    if category == "shell_failure":
+        return {key: data[key] for key in ("exit_code", "command", "stdout", "stderr") if data.get(key) is not None}
+
+    if "status_code" in data or "response" in data:
+        return {
+            key: data[key]
+            for key in (
+                "status_code",
+                "url",
+                "method",
+                "response",
+                "response_body",
+                "response_headers",
+            )
+            if data.get(key) is not None
+        }
+
+    if "error_details" in data or ("server" in data and "tool" in data):
+        return {key: data[key] for key in ("server", "tool", "error_details", "result") if data.get(key) is not None}
+
+    return {
+        key: value
+        for key, value in data.items()
+        if not str(key).startswith("_") and isinstance(value, (str, int, float, bool)) and len(str(value)) < 500
+    }
+
+
+def _suggest_field_correction(var: str, root: str, context: dict[str, Any]) -> str | None:
+    """Suggest a field name correction using close-string matching."""
+    output = context.get(root)
+    if not isinstance(output, dict):
+        return None
+    field_name = TemplateResolver.extract_first_field_segment(var)
+    if field_name is None:
+        return None
+    available = list(output.keys())
+    if field_name in available:
+        return None
+
+    import difflib
+
+    matches = difflib.get_close_matches(field_name, [str(key) for key in available], n=1, cutoff=0.6)
+    if not matches:
+        return None
+    # Rebuild the full path replacing only the first field segment.
+    field_path = var.split(".", 1)[1]
+    corrected_path = field_path.replace(field_name, matches[0], 1)
+    return f"{root}.{corrected_path}"
+
+
+def build_template_error_diagnostic(
+    param_key: str,
+    template: Any,
+    context: dict[str, Any],
+    *,
+    node_id: str | None = None,
+    source_file: str | None = None,
+    source_line: int | None = None,
+) -> Diagnostic:
+    """Build a fully-structured Diagnostic for an unresolved template."""
     template_str = str(template)
+    references = classify_unresolved_references(template_str, context)
 
-    # Diagnose coalesce expressions first (with per-operand status)
-    coalesce_lines, coalesce_vars = diagnose_coalesce(template_str, context)
+    available_keys = sorted(key for key in context if _is_visible_context_key(key))
+    failures = context.get("__failures__")
+    failed_keys: list[str] = sorted(str(k) for k in failures) if isinstance(failures, dict) else []
 
-    # Extract all variable names, filter to unresolved, exclude already-diagnosed coalesce vars
-    all_variables = TemplateResolver.extract_variables(template_str)
-    variables = {v for v in all_variables if not TemplateResolver.variable_exists(v, context)} - coalesce_vars
-
-    # Build error header
-    error_parts: list[str] = []
-    if coalesce_lines:
-        error_parts.append(f"Unresolved template in parameter '{param_key}':")
-        error_parts.append("")
-        error_parts.extend(coalesce_lines)
-        if variables:
-            error_parts.append("")
-            error_parts.append(f"Also unresolved: {', '.join(f'${{{v}}}' for v in variables)}")
-    elif variables:
-        error_parts.append(
-            f"Unresolved variables in parameter '{param_key}': {', '.join(f'${{{v}}}' for v in variables)}"
-        )
+    if references:
+        ref_summary = ", ".join(f"${{{ref['var']}}}" for ref in references[:3])
+        if len(references) > 3:
+            ref_summary += f" (+{len(references) - 3} more)"
+        message = f"Unresolved variables in parameter '{param_key}': {ref_summary}"
     else:
-        # Edge case: all variables individually exist but template still unresolved
-        error_parts.append(f"Unresolved template in parameter '{param_key}'")
+        message = f"Unresolved template in parameter '{param_key}'"
 
-    # Append context keys, JSON hints, and suggestions
-    all_unresolved = variables | {v for v in coalesce_vars if not TemplateResolver.variable_exists(v, context)}
-    _append_error_context(error_parts, all_unresolved, context)
+    # Node-param errors render through a single synthesized output_failures
+    # entry with kind="param" — same iteration path as single/multi-output
+    # resolution errors. source_file/source_line stay at top-level so
+    # _format_location can render the universal `At:` line above the block.
+    context_dict: dict[str, Any] = {
+        "category": "template_error",
+        "param_key": param_key,
+        "template": template_str,
+        "unresolved_references": references,
+        "available_context_keys": available_keys,
+        "failed_context_keys": failed_keys,
+        "output_failures": [
+            {
+                "kind": "param",
+                "output_name": param_key,
+                "template": template_str,
+                "unresolved_references": references,
+            }
+        ],
+    }
+    if source_file is not None:
+        context_dict["source_file"] = source_file
+    if source_line is not None:
+        context_dict["source_line"] = source_line
 
-    return "\n".join(error_parts)
-
-
-def _append_error_context(error_parts: list[str], unresolved: set[str], context: dict[str, Any]) -> None:
-    """Append available keys, JSON hints, and suggestions to error message."""
-    available_keys = [k for k in context if not k.startswith("__")]
-    available_keys.sort()
-
-    if len(available_keys) > 20:
-        available_display = available_keys[:20]
-        available_display.append(f"... and {len(available_keys) - 20} more")
-    else:
-        available_display = available_keys
-
-    if available_keys:
-        error_parts.append("")
-        error_parts.extend(format_available_keys(available_display, context))
-
-    json_hints = detect_json_parse_hints(unresolved, context)
-    if json_hints:
-        error_parts.append("")
-        error_parts.append("\u26a0\ufe0f JSON parsing issue:")
-        for hint in json_hints:
-            error_parts.append(f"  {hint}")
-        error_parts.append("  Fix: Ensure upstream node outputs valid JSON.")
-    else:
-        suggestions = generate_suggestions(unresolved, available_keys)
-        if suggestions:
-            error_parts.append("")
-            error_parts.append("\U0001f4a1 Suggestions:")
-            for s in suggestions:
-                error_parts.append(f"  {s}")
+    return Diagnostic(
+        severity=Severity.ERROR,
+        message=message,
+        title="Template Resolution Failed",
+        node_id=node_id,
+        source="runtime",
+        context=context_dict,
+    )

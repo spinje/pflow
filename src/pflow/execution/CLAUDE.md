@@ -36,12 +36,19 @@ class WorkflowRunner:
 3. `_fill_declared_defaults()` — fills declared inputs with defaults or placeholders so validation doesn't flag them as missing. Stripped before compilation.
 4. `_validate()` — `WorkflowValidator.validate()`, once per execution
 5. Create per-execution resources (MetricsCollector, TraceCollector, MCPConnectionPool, MemoizationCache)
-6. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`
-7. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
+6. `_compile_and_execute()` — `compile_workflow()` + `WorkflowEngine.run()`. On exception: annotates `e._pflow_node_id` (skipped for `OutputResolutionError`) and `e._pflow_shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after` with the full failure state.
+7. `_build_errors()` + `_extract_runtime_warnings()` — converts shared store + action result into `Diagnostic` list. Permissive-mode template warnings pass through the structured `Diagnostic` already built by `runtime/engine/template_errors.py` (preserves `unresolved_references`); api warnings still build a basic Diagnostic from `__warnings__[id]`.
+8. `_cleanup()` — MCP pool shutdown, LLM interception cleanup, metrics end (in `finally`)
 
 **Exception boundary**: `run()` catches ALL exceptions, wraps into `ExecutionResult`. Only `KeyboardInterrupt`/`SystemExit` propagate.
 
+**Exception-path observability** (load-bearing): `_compile_and_execute` attaches `e._pflow_shared_store = shared_store` before re-raising. `_exception_to_result` reads it via `getattr(e, "_pflow_shared_store", None)` to populate `ExecutionResult.shared_after`. Without this, exception-path crashes (shell timeout, batch all-failed raise, code node exception) lose ALL per-node detail in the CLI/MCP summary — `__failures__` is invisible to formatters even though step 17.5 archived it correctly.
+
+**`OutputResolutionError` is excluded** from `_pflow_node_id` annotation: it's raised from `populate_declared_outputs` AFTER node execution, so the stale `__execution__["failed_node"]` (from a previously-recovered failure) would lie about the error location.
+
 **Resource lifecycle**: Resources created in `run()` scope (not inside helpers) so `finally` always has them for cleanup. This prevents MCP server subprocess leaks.
+
+**Status determination gap**: `_determine_status` checks `__warnings__` and `__template_errors__` but NOT `__failures__`. A workflow that fails a node and recovers via `on-error` reports `SUCCESS` with no diagnostic surface. Tracked as a known design question — see project issues for the DEGRADED-vs-SUCCESS semantic decision.
 
 ## Result Types (result.py)
 
@@ -114,6 +121,13 @@ Diagnostic(
 )
 ```
 
+`executor_service.build_error_list()` reads the failed node from `__execution__["failed_node"]`, then prefers `__failures__[id].category` (set authoritatively by `mark_node_failed`) over the legacy regex-on-message detection. The category is mapped through `_FAILURE_CATEGORY_MAP` to a Diagnostic category. Rich error context (shell command/exit_code/stderr, HTTP status_code/url/response, MCP error_details) comes from `get_node_output(shared_store, failed_node)` which reads either `shared[id]` (succeeded — unlikely on the failure path but defensive) or `__failures__[id].data`.
+
+## execution_state.py
+
+`build_execution_steps(workflow_ir, shared_storage, metrics_summary)` produces the per-node row list consumed by `success_formatter` and `error_formatter` for CLI/MCP execution summaries. **Status comes from `node_state.get_node_status`** (mapped through `_STATUS_MAP` to `completed`/`failed`/`not_executed`) — NOT from the singular `__execution__["failed_node"]` pointer, which loses earlier failures in multi-failure workflows. Batch metadata is read via `get_node_output` so failed batch nodes still surface `batch_metadata` / `batch_error_details` in the summary.
+
+
 ## Integration
 
 **CLI**: `cli/main.py:execute_json_workflow()` calls `WorkflowRunner().run()`, passing `progress_callback=output_controller.create_progress_callback()` when progress is enabled. Handles: stdin routing, logging suppression, trace saving, display.
@@ -135,6 +149,9 @@ Diagnostic(
 
 - **Display-agnostic**: Never import Click or add CLI concerns here. Progress events flow through the optional `progress_callback` stored under `shared_store["__progress_callback__"]`.
 - **Don't cache errors**: Never cache nodes that return "error" action.
+- **`ExecutionResult.shared_after` is populated on exception paths** via the `_pflow_shared_store` annotation. Consumers can inspect `result.shared_after["__failures__"]` for failure detail even when the engine raised. Without the annotation chain, this would be empty.
+- **`OutputResolutionError` carries `node_id=None`** in its Diagnostic — it's about an output declaration, not a node. Don't add per-node display logic that assumes every error has a node_id.
+- **`_extract_runtime_warnings` template_error path passes through structured Diagnostic** — do NOT replace it with canned suggestion strings. The structured `unresolved_references` carry per-ref classification that the renderer consumes. Canned suggestions would silently lose all per-ref data.
 - **Dict passthrough skips file ref guard**: When Runner receives dict input, `_check_inline_file_references()` is bypassed. CLI/MCP callers who pre-resolve to dict must handle this.
 - **MCPNode error detection**: `MCPNode.post()` returns "default" action even on errors (workaround for missing error edges). Formatters also check for `"error"` key in outputs/shared_store.
-- **`executor_service.py` is an internal utility**: Contains standalone error extraction functions (`build_error_list`, `determine_error_category`, etc.). The Runner delegates to these via `_build_errors()`. Not part of public API.
+- **`executor_service.py` is an internal utility**: Contains standalone error extraction functions (`build_error_list`, `determine_error_category`, etc.). The Runner delegates to these via `_build_errors()`. Not part of public API. Reads category from `__failures__` first; legacy regex is fallback only.

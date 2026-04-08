@@ -210,12 +210,23 @@ class WorkflowRunner:
         except Exception as e:
             # Annotate with failed_node from shared store before propagating —
             # _exception_to_result doesn't have shared_store access.
+            # SKIP for OutputResolutionError: it runs in populate_declared_outputs
+            # AFTER node execution finished, so the stale failed_node pointer
+            # (from an already-recovered failure) would lie about the location.
+            from pflow.core.user_errors import OutputResolutionError
+
             failed_node = shared_store.get("__execution__", {}).get("failed_node")
-            if failed_node and not hasattr(e, "_pflow_node_id"):
+            if failed_node and not hasattr(e, "_pflow_node_id") and not isinstance(e, OutputResolutionError):
                 e._pflow_node_id = failed_node  # type: ignore[attr-defined]
             parser_diagnostics = shared_store.get("__parser_diagnostics__", [])
             if parser_diagnostics and not hasattr(e, "_pflow_parser_diagnostics"):
                 e._pflow_parser_diagnostics = list(parser_diagnostics)  # type: ignore[attr-defined]
+            # Attach shared_store so _exception_to_result can populate
+            # ExecutionResult.shared_after — without this, the rich __failures__
+            # record and partial execution state are invisible to consumers
+            # (CLI formatters, MCP consumers, build_execution_steps).
+            if not hasattr(e, "_pflow_shared_store"):
+                e._pflow_shared_store = shared_store  # type: ignore[attr-defined]
             raise
 
         success, status = self._determine_status(action_result, shared_store)
@@ -465,7 +476,8 @@ class WorkflowRunner:
                     severity=Severity.WARNING,
                     message=message,
                     suggestions=[
-                        "Inspect this node's output and upstream inputs to determine whether the warning is expected."
+                        f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
+                        "If unintended, fix the upstream data or add error handling to this node.",
                     ],
                     node_id=node_id,
                     source="runtime",
@@ -473,14 +485,33 @@ class WorkflowRunner:
                 )
             )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():
-            unresolved = error_data.get("unresolved", [])
+            # Prefer the structured Diagnostic already built by
+            # runtime/engine/template_errors.py over a canned hint. The
+            # structured version carries per-reference status, failure
+            # category/data, peer suggestions, and typo hints — none of
+            # which a one-line canned hint can express.
+            attached = error_data.get("diagnostic") if isinstance(error_data, dict) else None
+            if isinstance(attached, Diagnostic):
+                from dataclasses import replace
+
+                warning = replace(attached, severity=Severity.WARNING)
+                if not warning.node_id:
+                    warning = replace(warning, node_id=node_id)
+                warnings.append(warning)
+                continue
+
+            # Fallback for legacy entries that pre-date the structured path.
+            unresolved = error_data.get("unresolved", []) if isinstance(error_data, dict) else []
+            message = (
+                error_data.get("message", "Template resolution failed")
+                if isinstance(error_data, dict)
+                else "Template resolution failed"
+            )
             warnings.append(
                 Diagnostic(
                     severity=Severity.WARNING,
-                    message=error_data.get("message", "Template resolution failed"),
-                    suggestions=[
-                        "Fix unresolved template references, or use ?? fallback for branch-dependent outputs."
-                    ],
+                    message=message,
+                    suggestions=None,
                     node_id=node_id,
                     source="runtime",
                     context={
@@ -534,7 +565,15 @@ class WorkflowRunner:
         trace_collector: Any,
         validation_warnings: list[Diagnostic] | None = None,
     ) -> ExecutionResult:
-        """Convert any exception to ExecutionResult."""
+        """Convert any exception to ExecutionResult.
+
+        If the exception was annotated with ``_pflow_shared_store`` (by the
+        engine's exception handler in ``_compile_and_execute``), the rich
+        shared store — including ``__failures__``, per-node outputs, and
+        batch metadata — is surfaced via ``ExecutionResult.shared_after``.
+        Without this, CLI/MCP formatters lose all failure detail on
+        exception-path crashes.
+        """
         parser_diagnostics = [
             diagnostic
             for diagnostic in getattr(exception, "_pflow_parser_diagnostics", [])
@@ -562,9 +601,14 @@ class WorkflowRunner:
                 diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.WARNING
             ])
 
+        shared_after = getattr(exception, "_pflow_shared_store", None)
+        if not isinstance(shared_after, dict):
+            shared_after = {}
+
         return ExecutionResult(
             success=False,
             status=WorkflowStatus.FAILED,
+            shared_after=shared_after,
             trace=trace_collector,
             diagnostics=diagnostics,
         )

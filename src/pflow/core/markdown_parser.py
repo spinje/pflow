@@ -184,6 +184,8 @@ class _Entity:
     heading_line: int
     prose_parts: list[str] = field(default_factory=list)
     yaml_items: list[str] = field(default_factory=list)  # Raw YAML item strings
+    yaml_item_lines: list[int] = field(default_factory=list)  # Parallel: source line of each item's first '- '
+    yaml_item_keys: list[str] = field(default_factory=list)  # Parallel to yaml_items: parsed top-level key
     code_blocks: list[_CodeBlock] = field(default_factory=list)
     section_type: _SectionType = _SectionType.NONE
 
@@ -243,15 +245,18 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
     # YAML continuation tracking
     in_yaml_continuation = False
     yaml_current_item_lines: list[str] = []
+    yaml_current_item_start_line = 0
     yaml_indent_level = 0  # The column where content after '- ' starts
     steps_section_found = False
 
     def _flush_yaml_item() -> None:
         """Flush the current YAML item to the current entity."""
-        nonlocal in_yaml_continuation, yaml_current_item_lines
+        nonlocal in_yaml_continuation, yaml_current_item_lines, yaml_current_item_start_line
         if yaml_current_item_lines and current_entity is not None:
             current_entity.yaml_items.append("\n".join(yaml_current_item_lines))
+            current_entity.yaml_item_lines.append(yaml_current_item_start_line)
         yaml_current_item_lines = []
+        yaml_current_item_start_line = 0
         in_yaml_continuation = False
 
     for line_idx in range(body_start, total_lines):
@@ -372,6 +377,7 @@ def parse_markdown(content: str) -> MarkdownParseResult:  # noqa: C901
                 _flush_yaml_item()
                 leading_spaces = len(yaml_match.group(1))
                 yaml_current_item_lines = [line.rstrip()]
+                yaml_current_item_start_line = line_num
                 # The continuation indent level is the column after "- "
                 yaml_indent_level = leading_spaces + 2
                 in_yaml_continuation = True
@@ -784,7 +790,7 @@ def _coerce_yaml_scalar(value: str) -> Any:
     return value
 
 
-def _parse_multiline_yaml_item(item: str, entity: _Entity, merged: dict[str, Any]) -> None:
+def _parse_multiline_yaml_item(item: str, entity: _Entity, merged: dict[str, Any]) -> str | None:
     """Parse a multi-line YAML item and merge results into ``merged``."""
     try:
         parsed = yaml.safe_load(item)
@@ -792,8 +798,9 @@ def _parse_multiline_yaml_item(item: str, entity: _Entity, merged: dict[str, Any
         raise _enhance_yaml_error(exc, entity) from exc
 
     if parsed is None:
-        return
+        return None
     if isinstance(parsed, list):
+        first_key: str | None = None
         for entry in parsed:
             if not isinstance(entry, dict):
                 raise MarkdownParseError(
@@ -808,8 +815,12 @@ def _parse_multiline_yaml_item(item: str, entity: _Entity, merged: dict[str, Any
                     ),
                 )
             merged.update(entry)
+            if first_key is None and entry:
+                first_key = str(next(iter(entry.keys())))
+        return first_key
     elif isinstance(parsed, dict):
         merged.update(parsed)
+        return str(next(iter(parsed.keys()))) if parsed else None
     else:
         raise MarkdownParseError(
             f"'{parsed}' is not a valid parameter. Use * for documentation bullets.",
@@ -835,16 +846,20 @@ def _parse_yaml_items(entity: _Entity) -> dict[str, Any]:
         return {}
 
     merged: dict[str, Any] = {}
+    entity.yaml_item_keys = []
 
     for item in entity.yaml_items:
         if "\n" in item:
-            _parse_multiline_yaml_item(item, entity, merged)
+            key = _parse_multiline_yaml_item(item, entity, merged)
+            entity.yaml_item_keys.append(key or "")
         else:
             # Single-line item: raw string extraction with scalar coercion
             m = _YAML_ITEM_RE.match(item)
             if m:
                 try:
-                    merged[m.group(1)] = _coerce_yaml_scalar(m.group(2))
+                    key = m.group(1)
+                    merged[key] = _coerce_yaml_scalar(m.group(2))
+                    entity.yaml_item_keys.append(key)
                 except yaml.YAMLError as exc:
                     raise _enhance_yaml_error(exc, entity) from exc
                 except ValueError as exc:
@@ -1350,10 +1365,18 @@ def _build_output_dict(entity: _Entity) -> dict[str, Any]:
     params = _parse_yaml_items(entity)
     result.update(params)
 
+    # Track source line for `source:` (used by template errors)
+    if "source" in params:
+        for idx, key in enumerate(entity.yaml_item_keys):
+            if key == "source" and idx < len(entity.yaml_item_lines):
+                result["_source_line"] = entity.yaml_item_lines[idx]
+                break
+
     # Code blocks — source goes directly to output
     for block in entity.code_blocks:
         if block.param_name == "source":
             result["source"] = block.content
+            result["_source_line"] = block.start_line + 1
         elif block.param_name:
             result[block.param_name] = block.content
 

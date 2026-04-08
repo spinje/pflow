@@ -7,15 +7,15 @@ Orchestration engine that handles graph traversal and all runtime concerns: temp
 ```
 src/pflow/runtime/engine/
 ├── __init__.py              # Exports: CompiledWorkflow, WorkflowEngine, type classes
-├── engine.py                # WorkflowEngine — graph walker + per-node orchestration (328 lines)
-├── types.py                 # CompiledWorkflow, NodeConfig, TemplateConfig, BatchConfig (59 lines)
-├── template_resolution.py   # Standalone template resolution functions (413 lines)
-├── batch_executor.py        # Standalone batch execution functions (630 lines)
-├── instrumentation.py       # Cache, trace, metrics, progress, loop guards (502 lines)
-├── namespaced_store.py      # NamespacedSharedStore proxy for per-node store isolation (191 lines)
-├── api_warning_detector.py  # API error classification — 73 validation + 20 resource patterns (449 lines)
-├── template_errors.py       # Template error formatting with coalesce diagnosis, "did you mean" (388 lines)
-└── error_context.py         # Upstream stderr extraction for error enrichment (92 lines)
+├── engine.py                # WorkflowEngine — graph walker + per-node orchestration
+├── types.py                 # CompiledWorkflow, NodeConfig, TemplateConfig, BatchConfig
+├── template_resolution.py   # Standalone template resolution functions
+├── batch_executor.py        # Standalone batch execution functions
+├── instrumentation.py       # Cache, trace, metrics, progress, loop guards
+├── namespaced_store.py      # NamespacedSharedStore proxy for per-node store isolation
+├── api_warning_detector.py  # API error classification (73 validation + 20 resource patterns)
+├── template_errors.py       # Structured Diagnostic builder for unresolved templates
+└── error_context.py         # Upstream stderr extraction for error enrichment
 ```
 
 ## Architecture
@@ -27,26 +27,30 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         ┌─ OUTSIDE try (always runs):
         │  1. setup_llm_interception
         │  2. initialize_execution_state
-        │  3. enforce_loop_guard
-        │  4. compute_config_hash (doesn't need resolved params)
+        │  3. enforce_loop_guard       (clears stale __failures__ on revisit)
+        │  4. compute_config_hash       (doesn't need resolved params)
         │
         ├─ INSIDE try (template errors get trace recording):
-        │  5. resolve_templates (SKIP for batch nodes — per-item in callback)
+        │  5. resolve_templates         (SKIP for batch nodes — per-item in callback)
         │  6. check_memo_cache → early return (SKIP when cache_enabled=False)
         │  7. check_cache_validity → early return via handle_cached_execution
         │  8. call_start_callback
         │  9. execute: batch → execute_batch() | single → node._run(namespaced_store)
-        │  10. detect_api_warning → handle_api_warning if found
-        │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False),
+        │  10. detect_api_warning → handle_api_warning if found (returns "error")
+        │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False)
         │  13-17. duration, metrics, enrich_llm_cost, record_trace, call_completion_callback
+        │  17.5. if action starts with "error": mark_node_failed (archive to __failures__)
         │
-        └─ EXCEPT (error path — ~30% of _execute_node):
+        └─ EXCEPT (error path):
            metrics, enrich_llm_cost, record_trace(error=e),
-           call_completion_callback(action="error"),
-           set failed_node, annotate e._pflow_node_id, re-raise
+           call_completion_callback(action="error", error=e),
+           mark_node_failed (archive to __failures__),
+           annotate e._pflow_node_id, re-raise
 ```
 
-**Note**: Steps 1-4 run outside the try block (always execute). Steps 5-17 are inside try so template errors get trace recording. Config hash (step 4) is computed before template resolution (step 5) because it doesn't depend on resolved params.
+**Step 17.5 is the LAST thing on the happy path for failed nodes.** It runs AFTER `record_trace`, `call_completion_callback`, and `enrich_llm_cost` — those consumers still read `shared[node_id]` directly with the data in its original location. After step 17.5, the data lives in `shared["__failures__"][node_id].data` and any subsequent reader must use `node_state.get_node_output`.
+
+**Steps 1-4 outside try, 5-17.5 inside try** so strict-mode template `ValueError` raised during step 5 still gets trace recording on the error path.
 
 ## Key Design Decisions
 
@@ -71,20 +75,21 @@ Stateless executor. No per-node instance state.
 1. Validates `--only` target exists (raises `CompilationError` if not)
 2. Resets `node_visit_counts`
 3. Walks graph: `_execute_node` per node, follows `curr.successors.get(action or "default")`
-4. On unmatched action: writes to `__warnings__` (visible in JSON output, unlike `warnings.warn`)
+4. On unmatched action: `_handle_no_successor` checks if step 17.5 already archived the node; if so, preserves the existing failure record and only writes a routing hint to `__warnings__`. Otherwise rolls back success bookkeeping and archives as `routing_error`.
 5. On `--only`: stops after target node, sets `__execution__["only_node"]`
 6. On success: calls `populate_declared_outputs` (skipped on error or `--only`)
 
 ### `_execute_node(node, config, shared) → str`
 
-The 17-step orchestration. Two paths:
-- **Happy path**: steps 1-17, returns action string
-- **Error path**: catches exception, records metrics/trace/callback with error info, annotates exception with `_pflow_node_id`, re-raises
+Happy path: steps 1-17.5, returns action string. Error path: catches exception, records metrics/trace/callback, archives via `mark_node_failed`, annotates exception, re-raises.
 
-**Error path details** (unintuitive — an agent modifying this must preserve all of these):
-- `getattr(e, "_partial_resolutions", None)` extracts template resolutions that happened before the error (attached by `resolve_templates`)
-- `call_completion_callback(..., action="error", error=e)` — without this, the progress spinner shows the failed node as still "running"
-- `e._pflow_node_id = config.node_id` — the Runner's `_exception_to_result` reads this to include `node_id` in the error dict
+**Error path details** (load-bearing — preserve these on any modification):
+- `getattr(e, "_partial_resolutions", None)` extracts template resolutions before the error (attached by `resolve_templates`)
+- `getattr(e, "_pflow_template_diagnostic", None)` extracts a structured Diagnostic for strict-mode template errors so `_builtin_exception_diagnostic` can return it directly without losing the per-reference structure
+- `call_completion_callback(..., action="error", error=e)` — without this the progress spinner shows the failed node as still running
+- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution `ValueError` (via `_partial_resolutions` presence) as `template_error`, otherwise `exception`
+- `e._pflow_node_id = config.node_id` — the Runner's `_exception_to_result` reads this to annotate diagnostics
+- The Runner additionally attaches `e._pflow_shared_store = shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after`. Without this, exception-path failures have empty `shared_after` and CLI/MCP formatters lose all per-node detail.
 
 ### `_execute_single_node(node, config, shared) → (action, last_resolutions, template_errors)`
 
@@ -136,10 +141,11 @@ The `execute_single_fn` callback signature: `(node, config, item_shared) → (ac
 
 1. `_resolve_and_validate_items` — resolve items template, validate result is a list
 2. Initialize `shared["_batch_trace"][node_id] = []` — accumulator for per-item trace events
-3. Dispatch to `_execute_sequential` or `_execute_parallel`
-4. `_aggregate_batch_results` — write `shared[node_id]` with standard output shape
+3. Dispatch to `_execute_sequential` or `_execute_parallel` (both return partial state on fail_fast — they break out of the loop, never raise)
+4. `_aggregate_batch_results` — write `shared[node_id]` with standard output shape **BEFORE** any abort-raise. This is load-bearing: step 17.5's `mark_node_failed` archives `data = shared[node_id]`, so anything written here survives into `__failures__[id].data`.
 5. `_collect_batch_trace` — transfer trace items from shared store, clean up
 6. `_push_batch_warnings` — write to `__warnings__` for DEGRADED status
+7. **Then** `execute_batch` raises if fail_fast had errors, or `_aggregate_batch_results` raised at step 4 for all-failed continue mode. The raise always happens AFTER `shared[node_id]` is populated.
 
 ### `_execute_batch_item` — unified sequential/parallel
 
@@ -180,7 +186,10 @@ Peak memory is `O(events_per_item x max_concurrent)`. No hard cap today.
 ### Execution state
 
 - `initialize_execution_state(shared)` — ensure `__execution__` + `__cache_hits__` exist
-- `enforce_loop_guard(node_id, shared)` → `visit_counts` dict. Raises `MaxNodeVisitsError` at 100 visits (configurable via `PFLOW_MAX_NODE_VISITS` env var). Invalidates in-process cache for revisited nodes (loops).
+- `enforce_loop_guard(node_id, shared)` → `visit_counts` dict. Raises `MaxNodeVisitsError` at 100 visits (configurable via `PFLOW_MAX_NODE_VISITS` env var). Invalidates in-process cache for revisited nodes (loops) and calls `clear_node_failure` on loop re-entry so the new attempt starts with a clean state.
+- `cache_result(node_id, hash, action, shared)` — for non-error actions only adds to `completed_nodes`. For error actions it's a **no-op** (the canonical failure write happens at engine step 17.5 via `mark_node_failed`). Direct writes to `failed_node` from anywhere except `mark_node_failed` are contract violations.
+- `handle_api_warning(...)` — records trace + metrics + completion callback, then archives via `mark_node_failed` at the END (so all bookkeeping reads `shared[id]` first). Uses `mark_node_failed` for the warning + failed_node writes, no direct writes.
+- `handle_cached_execution(...)` — defensively calls `clear_node_failure` before restoring the cached output. Currently unreachable (memo cache is skipped on revisits, loop guard already cleared) but defends the invariant against future seeding paths.
 
 ### Two-level caching
 
@@ -219,16 +228,21 @@ All emitters wrap the callback in `contextlib.suppress(Exception)` so rendering 
 
 Classifies node output as API warning based on 93+ patterns. See `runtime/CLAUDE.md` "Error Categorization" for the pattern categories and ambiguity rule. Key function: `detect_api_warning(node_id, shared) → Optional[str]`.
 
-### `template_errors.py` (388 lines)
+### `template_errors.py`
 
-Error message formatting for template resolution failures. Key functions:
-- `build_enhanced_template_error(key, template, context)` — the gold-standard error message: available context keys with type previews, coalesce diagnosis ("node X did not execute" vs "executed but path Y not found"), JSON parse hints, "did you mean" suggestions
-- `build_type_error_message(...)` — dict/list received where string expected
-- `build_json_parse_error_message(...)` — string that looks like JSON but failed to parse
+Builds structured `Diagnostic` objects for unresolved template variables. Key functions:
+- `build_template_error_diagnostic(param_key, template, context, *, node_id, source_file, source_line)` → `Diagnostic` with `category="template_error"` and `unresolved_references` in context. Used by both strict mode (raised `ValueError` carries the diagnostic via `_pflow_template_diagnostic`) and permissive mode (stored in `__template_errors__[node_id]["diagnostic"]`).
+- `classify_unresolved_references(template, context)` — returns a list of per-reference dicts with `status` (`absent`/`failed`/`path_error`), category-aware failure detail, peer suggestions, typo hints (`did_you_mean`), and `corrected_var` (used for paste-able fixes when both a typo AND a failure exist on the same node).
+- `build_type_error_message(...)` — dict/list received where string expected (returns plain string, not a Diagnostic)
+- `build_json_parse_error_message(...)` — string that looks like JSON but failed to parse (returns plain string)
 
-### `namespaced_store.py` (191 lines)
+The structured `Diagnostic` carries all rich data in `context.unresolved_references`. Text rendering is a pure function of the context — see `_format_template_error_lines` in `core/diagnostic.py`. JSON/MCP consumers read the structure directly via `Diagnostic.to_dict()`.
 
-`NamespacedSharedStore` — dict proxy that routes writes to `parent[namespace][key]`. Special `__*__` keys bypass namespacing (read/write at root). `update()` is a required override (not inherited from `dict`) — without it, `storage_mode: shared` sub-workflows crash when the child engine calls `shared_store.update(...)`. Any new proxy subclass must override `update()`, `__contains__`, `get()`, and the mutation methods explicitly.
+### `namespaced_store.py`
+
+`NamespacedSharedStore` — dict proxy that routes writes to `parent[namespace][key]`. Special `__*__` keys bypass namespacing (read/write at root). `__init__` eagerly creates `parent[namespace] = {}` even before any write — meaning a node that fails before writing anything still has an empty dict at root. Step 17.5's `mark_node_failed` archives this empty dict to `__failures__[id].data = {}`, which is correct (the failure record exists, just with no captured data).
+
+`update()` is a required override (not inherited from `dict`) — without it, `storage_mode: shared` sub-workflows crash when the child engine calls `shared_store.update(...)`. Any new proxy subclass must override `update()`, `__contains__`, `get()`, and the mutation methods explicitly.
 
 ### `error_context.py` (92 lines)
 
@@ -245,11 +259,14 @@ Error message formatting for template resolution failures. Key functions:
 
 ## Gotchas
 
-- **Steps 1-4 are outside try, 5-17 inside try** in `_execute_node`. Config hash (step 4) runs before template resolution (step 5) because it doesn't need resolved params.
+- **Step 17.5 is the only place that archives action="error" failures.** Don't add direct writes to `__failures__` elsewhere — they'll drift from the canonical record shape and break the "single write site" guarantee.
+- **`_handle_no_successor` must check `get_node_failure` first** before re-archiving. Step 17.5 may have already archived with the real category and data; a second `mark_node_failed` call would `pop` an already-empty `shared[id]` and overwrite the rich record with `{data: {}, category: routing_error}`.
+- **Exception annotation pattern** (load-bearing — survives across the engine→runner→formatter boundary): `e._pflow_node_id`, `e._pflow_shared_store`, `e._pflow_template_diagnostic`, `e._pflow_parser_diagnostics`, `e._partial_resolutions`. `raise X from e` LOSES these unless explicitly copied. Readers use `getattr(e, "_pflow_*", None)`.
+- **Batch fail_fast raises in `execute_batch`, NOT in `_execute_sequential`/`_execute_parallel`.** The inner functions break out of their loops on first failure and return partial state. The raise happens AFTER `_aggregate_batch_results` writes `shared[node_id]` so step 17.5 can archive the metadata.
+- **Steps 1-4 are outside try, 5-17.5 inside try** in `_execute_node`. Config hash (step 4) runs before template resolution (step 5) because it doesn't need resolved params.
 - **Batch nodes skip top-level template resolution** — per-item resolution in callback instead.
 - **`_source_line` keys NOT filtered in `split_params()`** — `python_code.py` reads them. Filtered only in `compute_node_config()` for cache hashing.
-- **`._partial_resolutions` on exceptions** — non-standard Python pattern. `resolve_templates` attaches this to `ValueError` so the engine can include partial template data in error traces.
 - **Engine doesn't restore `node.params`** — intentional. Each execution sets params fresh.
-- **`handle_cached_execution` serves both cache levels** — memo (SQLite) and in-process (resume).
+- **`handle_cached_execution` serves both cache levels** — memo (SQLite) and in-process (resume). Defensively clears `__failures__[id]` before restoring.
 - **Parallel batch deep-copies bare node** — cheap, but `_batch_trace` list append relies on GIL (CPython only).
 - **`CompiledWorkflow` is NOT concurrent-safe** — `node.params` mutation means one `engine.run()` at a time per workflow instance.

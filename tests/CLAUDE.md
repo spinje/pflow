@@ -46,6 +46,54 @@ md_content = ir_to_markdown(ir_dict, title="Test Workflow", description="...")
 - **`purpose` is read from top-level node dict**, not from `params`. If you put `purpose` inside `params`, you get a duplicate.
 - Leading whitespace in param values (e.g., `" <<<"`) can be lost during markdown round-trip parsing.
 
+## Choosing a Workflow Test Pattern
+
+The repo has four distinct patterns for getting a workflow into a test. Each tests a different stack slice. Pick by which layer is part of the system under test — don't mix patterns for the same scenario.
+
+| Pattern | Layer(s) exercised | Per-test cost | When to use |
+|---|---|---|---|
+| **1. Inline IR dict** → `WorkflowRunner().run(ir_dict, ...)` | Compiler + engine + runner | ~5-10ms | **Default.** Testing IR shapes, internal invariants, compiler behavior, parameterized edge cases, anything where the parser isn't part of the system under test |
+| **2. `tmp_path` fixture** (via `tests/shared/markdown_utils.py`) → `runner.run(str(path), ...)` | Parser + full in-process pipeline | ~20-30ms | When the scenario needs a real file but the content is test-specific and not reusable |
+| **3. Committed fixture** under `examples/error-handling/` (or similar) → `runner.run(str(fixture_path), ...)` | Parser + full in-process pipeline + renderer text surface | ~10-20ms | **See decision rule below** |
+| **4. Real subprocess** → `subprocess.run([pflow, ...])` | Real CLI surface: stderr routing, `logger.*`, exit codes, progress streaming | 300-500ms | CLI-surface behavior that CliRunner can't reach. See `test_progress_streaming_subprocess.py` |
+
+### Decision rule for committed fixtures (Pattern 3)
+
+**Use a committed fixture in `examples/<subdir>/` + a file-based test when ALL of these hold:**
+
+1. The scenario demonstrates **user-facing behavior** (could plausibly help a user debug their own workflow)
+2. **The parser layer is part of what's being tested** (source line tracking, YAML parsing, code-fence handling) **OR** rendered output text is part of the assertion (not just structured context data)
+3. You'd **re-run the fixture manually during debugging** — e.g., `pflow examples/error-handling/loop-recovery.pflow.md`
+4. The fixture has a **natural descriptive name** (`typo-on-failed-node.pflow.md`, not `edge_case_42.pflow.md`)
+
+**Use inline IR (Pattern 1) otherwise.** Specifically, inline IR is the right default for:
+- Tests about specific IR shapes the parser wouldn't produce
+- Parameterized tests with `@pytest.mark.parametrize`
+- Internal-invariant tests (e.g., "after `mark_node_failed`, `__failures__[id]` has these keys")
+- Tests asserting on exception types or compiler rejections
+- Anything where the scenario doesn't have pedagogical value
+
+**Never dual-write**: if a scenario exists as both an inline-IR test and a fixture test, delete one. The fixture wins if the parser matters or rendered text is asserted; the inline IR wins otherwise.
+
+### Committed fixture directories
+
+| Directory | Purpose | Test file |
+|---|---|---|
+| `examples/invalid/` | Parse/schema errors (workflows that should fail at parse time) | `tests/test_docs/test_example_validation.py` |
+| `examples/error-handling/` | Runtime error scenarios (failed nodes, coalesce, typo hints, source lines) | `tests/test_integration/test_failed_node_invariant.py` |
+
+**Never rename, move, or delete files in these directories without running their bound tests first.** Committed fixtures double as regression guards and user-facing examples; a typo-fix edit can silently break both contracts.
+
+**`test_docs/test_example_validation.py` auto-discovers via `rglob("*.pflow.md")`** — any new `.pflow.md` file you add under `examples/` automatically gets IR-schema-validated for free. This is load-bearing for Pattern 3: you get schema-level regression coverage without writing any test code.
+
+### Fixture drift risk
+
+Pattern 3's cost is fixture drift: someone edits a fixture "to fix a typo" and silently breaks test assertions that match on specific rendered text. Mitigations:
+
+1. **The fixture's purpose is documented in `examples/<subdir>/README.md`** — edits should match the documented contract
+2. **Tests assert on specific substring markers** (`"file:N"`, `"${primary.stdout ?? fallback.stdout}"`) that encode the scenario's load-bearing features — if an edit changes these, the test fails loudly rather than passing on a drifted scenario
+3. **Mutation-test your assertions**: temporarily break the production code path you expect the test to catch, confirm the test fails. If the test still passes under mutation, the assertion is too loose
+
 ## Autouse Fixtures (tests/conftest.py)
 
 These run automatically for every test — you do NOT need to set them up:
@@ -254,3 +302,11 @@ def test_warns(caplog):
 
 ### 17. `claude_agent_sdk` Mocked via `sys.modules` (Session-Wide)
 `test_nodes/test_claude/test_claude_code.py` injects mock `claude_agent_sdk` into `sys.modules` **at module level** (not in a fixture). This happens at import time, persists for the entire pytest session, and has no cleanup. If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.
+
+### 18. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
+Unit tests that mock the boundary you're testing will pass while the real pipeline breaks. When a feature crosses ≥2 layers (e.g. shared store → engine → runner → formatter), write at least one test that runs through `WorkflowRunner().run()` and inspects `result.shared_after` / `result.diagnostics` end-to-end. Failure modes that this catches:
+- Engine archives data correctly but the runner drops `shared_store` on the exception path
+- Diagnostic context is populated correctly but the renderer never consumes it
+- Single layer's tests pass; the integration breaks because each layer is "right by itself"
+
+Pattern: build the IR dict, run through `WorkflowRunner`, assert on `result.shared_after["__failures__"]` and the structured `result.diagnostics[i].context` rather than mocking `_extract_runtime_warnings` or `build_execution_steps` in isolation.
