@@ -209,6 +209,64 @@ class TestValidateDataFlow:
         assert diag.context["similar_names"] == ["${reponame}"]
         assert diag.suggestions == ["Did you mean '${reponame}'?"]
 
+    def test_nested_dict_param_path_reaches_deep_key(self):
+        """Nested dict params: diagnostic path must point at the deepest offending key.
+
+        Regression guard for review feedback on PR #244 — ``_check_param_value``
+        used to recurse into dict/list values without extending ``param_name``,
+        so a typo in ``headers.Authorization`` reported its path as
+        ``nodes[id=X].params.headers`` instead of ``...params.headers.Authorization``.
+        """
+        workflow = {
+            "nodes": [
+                {
+                    "id": "fetch",
+                    "type": "http",
+                    "params": {
+                        "url": "https://example.com",
+                        "headers": {
+                            "Authorization": "Bearer ${secret}",
+                        },
+                    },
+                },
+            ],
+            "edges": [],
+            "inputs": {},  # secret is undeclared → triggers data-flow error
+        }
+        diagnostics = validate_data_flow(workflow)
+        assert len(diagnostics) == 1
+        diag = diagnostics[0]
+        assert diag.context["path"] == "nodes[id=fetch].params.headers.Authorization"
+
+    def test_nested_list_param_path_reaches_deep_index(self):
+        """Nested list params: diagnostic path must include the list index.
+
+        Regression guard for review feedback on PR #244 — same bug class as
+        nested dicts but for list recursion. A typo in ``commands[1]`` used to
+        be reported as ``nodes[id=X].params.commands`` instead of
+        ``...params.commands[1]``.
+        """
+        workflow = {
+            "nodes": [
+                {
+                    "id": "shell",
+                    "type": "shell",
+                    "params": {
+                        "commands": [
+                            "echo ok",
+                            "echo ${missing}",
+                        ],
+                    },
+                },
+            ],
+            "edges": [],
+            "inputs": {},
+        }
+        diagnostics = validate_data_flow(workflow)
+        assert len(diagnostics) == 1
+        diag = diagnostics[0]
+        assert diag.context["path"] == "nodes[id=shell].params.commands[1]"
+
     def test_circular_dependency_detection(self):
         """Test that circular dependencies are caught."""
         workflow = {

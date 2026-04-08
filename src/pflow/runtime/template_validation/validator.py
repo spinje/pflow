@@ -190,6 +190,13 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
         unused_inputs = declared_inputs - used_inputs
         if unused_inputs:
             sorted_unused = sorted(unused_inputs)
+            # Severity.ERROR is intentional: declared inputs are a contract with
+            # callers. An unused declaration means either the declaration is wrong
+            # (spurious input) or a usage is missing (bug in the workflow), and
+            # both are fixes the author should make before the workflow runs.
+            # The existing test suite (test_unused_input_*, test_mixed_used_and_unused_inputs)
+            # asserts this as blocking-severity; demoting to WARNING would require
+            # updating ~6 tests and changing the declared-input contract.
             diagnostics.append(
                 Diagnostic(
                     severity=Severity.ERROR,
@@ -654,11 +661,21 @@ def _register_node_outputs_from_registry(
     enable_namespacing: bool,
     registry: Registry,
 ) -> None:
-    """Register outputs from registry interface metadata for non-batch nodes."""
+    """Register outputs from registry interface metadata for non-batch nodes.
+
+    Silently skips unknown node types — the pre-execution
+    ``WorkflowValidator._validate_node_types`` step (step 5) produces a rich
+    ``Unknown node type`` diagnostic with ``similar_names`` and structured
+    path, which is strictly more useful than anything this function could
+    emit. Raising here would be caught by the defensive ``except Exception``
+    wrapper around ``validate_workflow_templates`` (step 4, runs before
+    step 5) and produce a duplicate generic ``"Template validation error:
+    Unknown node type: ..."`` diagnostic on top of the rich one.
+    """
     # Get node metadata from registry
     nodes_metadata = registry.get_nodes_metadata([node_type])
     if node_type not in nodes_metadata:
-        raise ValueError(f"Unknown node type: {node_type}")
+        return
 
     interface = nodes_metadata[node_type]["interface"]
 

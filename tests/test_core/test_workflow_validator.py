@@ -495,6 +495,52 @@ class TestValidatorProducerStructure:
         assert diagnostic.context.get("path") == "nodes[0].type"
         assert diagnostic.context.get("node_type") == "shel"
 
+    def test_unknown_node_type_does_not_double_report_with_templates_enabled(self, registry_with_nodes) -> None:
+        """When templates run before node-type validation, an unknown node type
+        must produce exactly ONE rich diagnostic (from V6), not a duplicate
+        generic "Template validation error: Unknown node type: X" from the
+        defensive wrapper.
+
+        Regression guard for PR #244 review feedback. Before the fix,
+        ``_register_node_outputs_from_registry`` raised a bare ``ValueError``
+        for unknown node types, which bubbled up through ``extract_node_outputs``
+        → ``validate_workflow_templates`` → the defensive ``except Exception``
+        wrapper in ``_validate_templates`` (step 4), producing a generic
+        template-error diagnostic BEFORE ``_validate_node_types`` (step 5)
+        produced the rich one. Users saw both.
+        """
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "n1", "type": "shel", "params": {"command": "echo hi"}},
+            ],
+            "edges": [],
+        }
+
+        # Pass extracted_params={} to force step 4 (template validation) to run
+        # BEFORE step 5 (node type validation) — this is the call path the fix
+        # addresses. Before the fix, this produced 2 errors (1 generic template
+        # wrapper + 1 rich unknown-node-type); after the fix, only the rich one.
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir,
+            extracted_params={},
+            registry=registry_with_nodes,
+            skip_node_types=False,
+        )
+
+        # Exactly one error — the rich one from _validate_node_types, no duplicate
+        # generic "Template validation error" from the wrapper catching a ValueError.
+        assert len(errors) == 1, (
+            f"Expected exactly 1 error (the rich V6 diagnostic), got {len(errors)}: {[e.message for e in errors]}"
+        )
+        diagnostic = errors[0]
+        assert diagnostic.node_id == "n1"
+        assert "Unknown node type" in diagnostic.message
+        # Must be the structured V6 diagnostic, not the generic template wrapper
+        assert diagnostic.context is not None
+        assert diagnostic.context.get("path") == "nodes[0].type"
+        assert "Template validation error" not in diagnostic.message
+
     def test_empty_output_source_diagnostic_preserves_path(self) -> None:
         workflow_ir = {
             "ir_version": "0.1.0",

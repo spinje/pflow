@@ -39,6 +39,16 @@ class Diagnostic:
             )
 
     def __eq__(self, other: object) -> bool:
+        # Identity is (severity, source, node_id, message) — context, title, and
+        # suggestions are deliberately excluded. This is LOAD-BEARING for the
+        # dual-propagation-path dedup architecture (Task 143 decision): child
+        # workflow diagnostics flow through BOTH the validation path (_add_child_provenance
+        # in core/workflow/validator.py) AND the runtime path
+        # (_propagate_child_parser_warnings in runtime/workflow_executor.py).
+        # Both paths produce semantically-identical diagnostics with potentially-
+        # different context enrichment. Dedup must collapse them to one. Adding
+        # context/title/suggestions to identity would break that collapse and
+        # resurface duplicate warnings users already fixed.
         if not isinstance(other, Diagnostic):
             return NotImplemented
         return (
@@ -49,6 +59,8 @@ class Diagnostic:
         )
 
     def __hash__(self) -> int:
+        # Must match __eq__'s identity tuple exactly, for the same dedup reasons
+        # documented above. Do NOT add context/title/suggestions here.
         return hash((self.severity, self.source, self.node_id, self.message))
 
     def to_dict(self) -> dict[str, Any]:
@@ -95,6 +107,17 @@ def format_child_provenance(step_id: str, message: str) -> str:
 
     Used by both validation and runtime propagation paths. Both MUST use this
     function so dedup collapses identical child diagnostics from the two paths.
+
+    **Dedup invariant**: the validation path (``_add_child_provenance`` in
+    ``core/workflow/validator.py``) and the runtime path
+    (``_propagate_child_parser_warnings`` in ``runtime/workflow_executor.py``)
+    produce semantically-identical diagnostics for the same child-workflow
+    warning. ``Diagnostic.__hash__`` includes the message string, so those two
+    paths MUST produce byte-identical messages or dedup fails and users see
+    duplicates. ANY new path that wraps child diagnostics with parent context
+    MUST go through this helper, and MUST also use ``node_id=d.node_id or step_id``
+    and ``setdefault`` for ``sub_workflow_step`` / ``sub_workflow_path`` context
+    keys — see the Task 143 "Dual-Propagation-Path Problem" section for history.
     """
     return f"In step '{step_id}' sub-workflow: {message}"
 

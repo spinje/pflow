@@ -294,7 +294,12 @@ class WorkflowRunner:
                 workflow_file=Path(file_path) if file_path else None,
             )
             diagnostics = [*resolved.diagnostics, *validator_diagnostics]
-            errors = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.ERROR]
+            # Compute ``valid`` from the combined list, not only ``validator_diagnostics``.
+            # ``resolved.diagnostics`` only carries parser WARNINGs today, but the type
+            # system permits ERROR severity there, so checking the combined list makes
+            # the invariant explicit and hardens against future parser changes that add
+            # error-severity diagnostics at resolution time.
+            errors = [diagnostic for diagnostic in diagnostics if diagnostic.severity == Severity.ERROR]
 
             return ValidationResult(
                 valid=len(errors) == 0,

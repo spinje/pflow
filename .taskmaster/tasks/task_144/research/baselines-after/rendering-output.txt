@@ -212,16 +212,12 @@ Total outputs: 59
 
   No saved workflows found. Use 'pflow save' to save a workflow first.
 
-    → Use 'pflow workflow list' to see all available workflows.
-
 
 --- format_diagnostic(error_number=1) ---
 
   Error 1: Workflow Not Found
 
   No saved workflows found. Use 'pflow save' to save a workflow first.
-
-    → Use 'pflow workflow list' to see all available workflows.
 
 
 ==============================================================================
@@ -585,15 +581,12 @@ Total outputs: 59
   Undefined variable '${api_key}' in node 'fetch'
     At: node 'fetch'
 
-    Available fields in node (showing 5 of 12):
+    Available fields (showing 5 of 12):
       - stdout
       - stderr
       - exit_code
       - result
       - response
-
-    📁 Complete field list available in trace file
-       ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 
 
 --- format_diagnostic(error_number=1) ---
@@ -603,15 +596,12 @@ Total outputs: 59
   Undefined variable '${api_key}' in node 'fetch'
     At: node 'fetch'
 
-    Available fields in node (showing 5 of 12):
+    Available fields (showing 5 of 12):
       - stdout
       - stderr
       - exit_code
       - result
       - response
-
-    📁 Complete field list available in trace file
-       ~/.pflow/debug/workflow-trace-YYYYMMDD-HHMMSS.json
 
 
 ==============================================================================
@@ -642,13 +632,17 @@ Total outputs: 59
 
   ✗ Validation failed (3 errors):
 
-    1. Unknown node type 'httpp'
-    2. Missing required field 'type'
-    3. Undefined template variable '${api_key}'
+  Error 1: Validation Error
 
-  Suggestions:
-    • Use 'registry list' to see available nodes
-    • Check template syntax: ${node.output}
+  Unknown node type 'httpp'
+
+  Error 2: Validation Error
+
+  Missing required field 'type'
+
+  Error 3: Validation Error
+
+  Undefined template variable '${api_key}'
 
 
 ==============================================================================
@@ -659,11 +653,25 @@ Total outputs: 59
 
   ✗ Validation failed (15 errors):
 
-    1. Validation error 0
-    2. Validation error 1
-    3. Validation error 2
-    4. Validation error 3
-    5. Validation error 4
+  Error 1: Validation Error
+
+  Validation error 0
+
+  Error 2: Validation Error
+
+  Validation error 1
+
+  Error 3: Validation Error
+
+  Validation error 2
+
+  Error 4: Validation Error
+
+  Validation error 3
+
+  Error 5: Validation Error
+
+  Validation error 4
 
     ... and 10 more errors
 
@@ -673,8 +681,6 @@ Total outputs: 59
 ==============================================================================
 
 --- _build_error_text(1 error + 1 warning) ---
-
-  ❌ Execution Failed (1 warning)
 
   Error: Execution Failed
 

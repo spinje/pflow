@@ -1273,3 +1273,197 @@ All verified end-to-end behaviors confirm the Task 147 architectural contract ho
 4. **Auto-staging by the harness creates state confusion.** The partial #238 implementation appeared as staged changes that I didn't create. Without careful `git diff --cached` inspection, I could have misattributed the state. **Always check `git status` and `git diff --cached` before doing any work that touches `src/` or `tests/`, even if you think you haven't touched them.**
 
 ---
+
+## 2026-04-07 — Session 2 (continued): post-PR reviewer checkpoints
+
+**Trigger**: after PR #244 was opened, the user forwarded a reviewer recommendation asking for two concrete verification steps before merge:
+
+1. Run `uv run python .taskmaster/tasks/task_144/research/capture_baselines.py compare` and report any drift. Rationale: the baseline tool compares full rendered output for ~21 fixtures — Task 144's review documented that it caught 3 real rendering regressions that `make test` missed because tests check substrings while baselines compare full output quality. Same insight as #238.
+2. Mutation-test at least one structural assertion — break a producer, confirm the test fails, restore, document which producer and which assertion. The only way to know structural contracts are genuinely enforced vs. theater.
+
+A previous agent had been blocked by a sandbox `uv` permission issue and reported it honestly rather than faking the verification. My environment works, so I executed both checkpoints.
+
+### Checkpoint 1 — `capture_baselines.py compare` finding
+
+**What I ran**:
+- Backed up the committed `baselines-before/` and `baselines-after/` to `/tmp/` so the `.taskmaster` tracked files could be restored after the investigation (PR scope discipline).
+- Ran `uv run python .taskmaster/tasks/task_144/research/capture_baselines.py after` against current HEAD to regenerate a fresh snapshot. The script writes to `baselines-after/` relative to its own `__file__` — no way to redirect output — so the run overwrote the committed snapshot in place.
+- Ran `diff -r /tmp/baselines-after-orig .taskmaster/tasks/task_144/research/baselines-after/` to compare the pre-session committed state against the fresh capture.
+
+**Raw result**: 79 lines of drift in `rendering-output.txt`. `context-coverage.txt` is byte-identical (zero diff).
+
+**Attribution** (load-bearing — this is the difference between "regression" and "already-known state"):
+
+| Drift category | Line count | Commit responsible |
+|---|---|---|
+| `"Available fields in node"` → `"Available fields"` (generic fallback after label-system introduction + gate broadening) | 4 | Round 5 code review fixes (`0370b951` / `4fe37762`) |
+| Trace-hint block `"📁 Complete field list available in trace file"` removed | 4 | Round 6 stale-review evaluation (trace hint removed entirely) |
+| `WorkflowNotFoundError` suggestion `"Use 'pflow workflow list'..."` suppressed when `hint` is set | 2 | Task 147 `WorkflowNotFoundError.to_diagnostics()` hint-conditional |
+| Multi-error list format (`"1. X\n2. Y\n3. Z"`) → titled-per-error format (`"Error 1: Validation Error\n\nX"`) | ~65 | Task 147 `format_validation_failure()` rewrite to delegate to `format_diagnostic()` |
+| `"❌ Execution Failed (1 warning)"` line removed | 2 | Task 147 unified format |
+
+**Every drift line is a Task 147 improvement that the `baselines-after/` snapshot never captured.** `git log -1 -- .taskmaster/tasks/task_144/research/baselines-after/rendering-output.txt` → commit `80a709e8` — the Task 144 merge commit (closes #220). The file has not been touched since Task 144 landed, despite Task 147 making substantial rendering changes across multiple rounds.
+
+**#238 attribution check**:
+```bash
+$ git diff HEAD~1 HEAD -- src/ | wc -l
+0
+$ git log --oneline origin/main..HEAD -- src/
+4fe37762 verification and code review fixes
+0370b951 verification and improvements and fixes
+d8e7252c full implementation
+```
+My commit (`c88b72a5`) touches zero `src/` files. The test-only sweep in this PR (new `tests/shared/diagnostic_helpers.py` + 19 test files) **cannot** cause rendering drift because rendering is determined entirely by `src/pflow/core/diagnostic.py` and the producer sites in `src/pflow/core/workflow/` + `src/pflow/runtime/template_validation/` — none of which are touched by this PR.
+
+**Conclusion**: **zero drift attributable to #238**. 100% of the 79 lines are pre-existing Task 147 improvements in stale baseline data.
+
+**Restoration**: the committed `baselines-after/` was restored from the `/tmp` backup so the PR diff stays scope-clean (test-only). Posted the "should we refresh the baseline here or file a follow-up?" decision as an open question on the PR.
+
+### Checkpoint 2 — mutation test on a structural assertion
+
+**Target selection**: `test_unknown_param_diagnostic_preserves_structure` in `tests/test_core/test_unknown_param_validation.py` — one of the 8 baseline structural guards for Task 147's architectural contract. It exercises the V12 producer (`_validate_unknown_params`), which produces the richest Diagnostic in the codebase: `node_id` + `title` + `path` + `node_type` + `available_fields` + `available_fields_label` + `similar_names` + `suggestions`. Picking V12 gives the mutation test the widest coverage for the least work.
+
+**Mutation applied**: in `src/pflow/core/workflow/validator.py:624-632`, temporarily removed the `"available_fields": sorted_known,` line from the producer's Diagnostic context dict (leaving `available_fields_total`, `available_fields_label`, and everything else intact — a narrow, realistic regression). Added a `# MUTATION-TEST:` comment so the change was clearly marked as non-permanent.
+
+**Test result after mutation**:
+```
+FAILED tests/test_core/test_unknown_param_validation.py::TestValidateUnknownParams::test_unknown_param_diagnostic_preserves_structure
+E       AssertionError: assert 'file_path' in ((None or []))
+E        +  where None = <built-in method get of dict object at 0x1082d7140>('available_fields')
+```
+
+The test failed **exactly** at line 126 — `assert "file_path" in (context.get("available_fields") or [])` — which is the structural assertion I mutated. The `context.get("available_fields")` returns `None` because the producer no longer populates it, and the assertion catches it.
+
+**Restoration**: producer reverted via Edit. Verified byte-identical to committed state (`git diff src/pflow/core/workflow/validator.py` returns empty). Re-ran the test:
+```
+tests/test_core/test_unknown_param_validation.py::TestValidateUnknownParams::test_unknown_param_diagnostic_preserves_structure PASSED
+```
+
+Also re-ran 216 validator-related tests (`test_unknown_param_validation.py` + full `test_template_validation/`) to confirm no stray state: all pass.
+
+**What this proves**: the structural contract for V12's `available_fields` is **genuinely enforced** by the test suite — not theater. A future regression that silently removes `available_fields` population from the unknown-param producer would be caught by `make test` at this specific test. This is the strongest available evidence that "tests pass" translates to "tests would catch a regression."
+
+### Evidence posted to PR #244
+
+Combined both findings into a single review-checkpoint comment on the PR (https://github.com/spinje/pflow/pull/244#issuecomment-4207788228):
+- Full drift attribution table
+- Line-count breakdown per Task 147 change category
+- Proof of zero #238 `src/` contribution
+- Mutation test details (target, mutation, exact failure line, restoration proof)
+- Open question to the user: refresh stale `baselines-after/` as a follow-up commit here, or file as a separate issue
+
+### Unexpected finding (worth tracking): stale baseline is pre-existing task 147 debt
+
+The baseline investigation surfaced a genuinely interesting finding: **Task 147's own rendering improvements were never captured into `baselines-after/`**. The progress log's earlier claim that "Task 147 updated the baseline fixture" referred to script updates (not snapshot refreshes). The snapshot file itself has been stale since `80a709e8` (Task 144 merge). Any future reviewer running `capture_baselines.py compare` on an unrelated PR will see the same 79 lines of noise and waste time investigating. This is pre-existing debt that Task 147's closing round should have addressed.
+
+**Decision pending**: refresh-inline-to-this-PR vs. separate-follow-up. The refresh itself is ~79 lines of rendered-text changes in one file — purely data. No production code or test changes needed.
+
+### Meta-lessons from this round
+
+1. **"Run the baseline tool" is not the same as "get a clean result".** The tool ran, produced output, and reported drift — but the drift was entirely explainable by pre-existing changes the snapshot never captured. **Always do attribution before declaring a verification tool's output a "regression"**: identify each diff line, map it to a commit, and check whether the current PR's changes could plausibly have caused it. "The diff is non-zero" is not sufficient evidence of a regression.
+
+2. **Mutation testing is cheap and high-value.** The full mutation-test cycle (Edit producer → run one test → observe failure → Edit back → run test → observe pass) took ~3 minutes. The evidence it produces is strictly stronger than "`make test` passed" — it proves the specific structural assertion I cared about would catch a regression in its specific target. For any PR that adds or depends on structural test assertions, a single mutation test is the minimum bar for "I'm confident in the contract."
+
+3. **Verification tools surface unrelated rot as a side effect.** I set out to verify #238 had zero drift. The tool showed 79 lines of drift that had nothing to do with #238 — it was Task 147's own uncaptured state. **That's a finding worth filing regardless of the original verification goal.** Don't dismiss unrelated findings from verification runs; they're often free discoveries.
+
+4. **Scope discipline cuts both ways.** The stale baseline is genuinely related to this PR (the reviewer's checkpoint was what surfaced it), but it's structurally part of Task 147's closing debt, not #238's sweep. Restoring the backup was the right call for PR scope clarity — the refresh can be a small follow-up commit or a separate PR. Inline-committing it without asking would have muddied the PR's semantic footprint.
+
+---
+
+## 2026-04-08 — Round 8: PR #244 bot code-review evaluation and fixes
+
+**Trigger**: `gemini-code-assist[bot]` left one inline PR review (`#pullrequestreview-4076531198`) and `claude[bot]` left a detailed PR comment (`#issuecomment-4207799921`). User asked to evaluate both via the `/evaluate-review` skill and apply the confirmed fixes under `[skip review]`.
+
+### Finding inventory (10 items)
+
+**From gemini-code-assist**: 1 finding — `runner.py:294` `ValidationResult.valid` computed from `validator_diagnostics` only, not the combined list.
+
+**From claude[bot]**:
+- 4 warnings: bare `ValueError` in `extract_node_outputs`, #238 tracking as ticket, `_pflow_validation_warnings` dynamic attr, `_validate_unused_inputs` ERROR severity.
+- 5 suggestions: `_check_param_value` nested path threading, generic runtime-warning text, `__hash__` comment, PR size meta, `format_child_provenance` docstring note.
+
+### Verdict matrix (after evidence-gathering)
+
+| # | Finding | Verdict | Action |
+|---|---|---|---|
+| 1 | gemini: `valid` from combined list | Confirmed, defensive-only | Apply (3-line hardening) |
+| 2 | claude W1: bare `ValueError` in `_register_node_outputs_from_registry` | **Confirmed — real double-report** | Apply (silent-skip + regression test) |
+| 3 | claude W2: #238 ticket | Already done | No action |
+| 4 | claude W3: dynamic `_pflow_validation_warnings` attr | Confirmed, but explicitly deferred by Task 147 braindump | **Defer** to follow-up (user decision) |
+| 5 | claude W4: unused-inputs severity | **Disputed** — existing test suite locks in ERROR intentionally | Add comment explaining rationale |
+| 6 | claude S1: `_check_param_value` nested path | Confirmed | Apply (4-line recursion fix + 2 regression tests) |
+| 7 | claude S2: generic runtime-warning text | Confirmed, future work | Defer (needs categorization infrastructure) |
+| 8 | claude S3: `__hash__` docstring | Confirmed, trivial | Apply (comment + cross-reference to Task 143) |
+| 9 | claude S4: PR size meta | Not actionable | No action |
+| 10 | claude S5: `format_child_provenance` docstring | Confirmed, trivial | Apply (dedup-invariant note) |
+
+### Evidence gathering — the high-signal checks
+
+**On Finding 1** (gemini `valid` computation): deployed `pflow-codebase-searcher` subagent to answer one specific question — can `ResolvedWorkflow.diagnostics` ever contain `Severity.ERROR`? The subagent traced all 4 call sites that populate `ResolvedWorkflow.diagnostics` back to `MarkdownParseResult.warnings`, which has exactly 2 producers in `markdown_parser.py` (lines 431, 580) — both hard-coded `Severity.WARNING`. Parse failures raise `MarkdownParseError` instead, caught at a different `except` layer. **Conclusion**: cannot trigger in current code, but the fix is cheap defensive hardening against future parser changes. The type system permits ERROR there.
+
+**On Finding 2** (bare `ValueError`): confirmed via direct grep. `_register_node_outputs_from_registry` has exactly one caller (`extract_node_outputs` in the same file); call order in `WorkflowValidator.validate()` is explicit at `validator.py:118,124` — templates (step 4) runs before node_types (step 5). The defensive `except Exception` wrapper at `validator.py:260-269` catches the raised ValueError and produces a generic `"Template validation error: Unknown node type: X"` — then step 5 produces the rich one. Users see BOTH.
+
+**On Finding 4** (dynamic attr deferred): grepped `src/` for `except WorkflowValidationError`. Found 6 catch sites, all either bare-re-raise (`save_service.py:148,311,347`) or convert to a different exception type (`execution_service.py:360,430`, `cli/commands/workflow.py:318`). No catch site re-raises a fresh `WorkflowValidationError` instance that would lose the `_pflow_validation_warnings` attribute. The reviewer's hypothetical concern doesn't have a current trigger. Cross-referenced with Task 147's braindump which explicitly deferred this cleanup. **Decision**: defer to user.
+
+**On Finding 5** (unused-inputs severity): grepped test files for assertions on the unused-inputs diagnostic. Found 6+ tests in `test_runtime/test_template_validation/test_unused_inputs.py` (`test_unused_input_single_unused`, `test_multiple_unused_inputs`, `test_mixed_used_and_unused_inputs`, etc.) that assert `len(errors) == 1` + `"Declared input(s) never used" in errors[0].message`. Plus the integration test `test_unused_inputs_detected_before_execution` is literally named "detected before execution" — implying blocking severity is the intentional contract. Demoting to WARNING would break all these tests AND change the codebase's declared-input contract. **Verdict**: disputed. The compromise is adding a comment explaining the rationale (which is what the reviewer's fallback also suggested).
+
+### Fixes applied
+
+1. **`src/pflow/runtime/template_validation/validator.py:650-661`** — `_register_node_outputs_from_registry` now silently returns on unknown node types instead of raising `ValueError`. Added a docstring block explaining why (don't double-report: V6 in step 5 produces the rich diagnostic).
+
+2. **`src/pflow/core/workflow/data_flow.py:408-435`** — `_check_param_value` recursion threads dict keys and list indices into `param_name`: `f"{param_name}.{key}"` for dicts, `f"{param_name}[{index}]"` for lists. Diagnostics for `headers.Authorization: "Bearer ${missing}"` now report path `nodes[id=X].params.headers.Authorization` instead of `nodes[id=X].params.headers`.
+
+3. **`src/pflow/execution/runner.py:290-300`** — `ValidationResult.valid` is now computed from the combined `[*resolved.diagnostics, *validator_diagnostics]` list instead of only `validator_diagnostics`. Added an inline comment explaining this is defensive hardening against future parser changes that might add ERROR-severity diagnostics to `resolved.diagnostics`.
+
+4. **`src/pflow/runtime/template_validation/validator.py:195` (`_validate_unused_inputs`)** — added a comment explaining why `Severity.ERROR` is intentional, citing the tests that lock it in and the "declared inputs are a contract" rationale.
+
+5. **`src/pflow/core/diagnostic.py` `Diagnostic.__eq__` + `__hash__`** — added comment block explaining why `context`, `title`, and `suggestions` are deliberately excluded from identity, with cross-reference to Task 143's Dual-Propagation-Path decision. A future agent "improving" equality by adding context to the hash would silently break Task 147's `workflow_executor.py:337` symmetry fix.
+
+6. **`src/pflow/core/diagnostic.py::format_child_provenance`** — extended docstring with the dedup-invariant explanation: validation path (`_add_child_provenance`) and runtime path (`_propagate_child_parser_warnings`) produce semantically-identical diagnostics for the same warning; they MUST produce byte-identical messages and use the same `node_id` and `setdefault` context policy, or dedup fails and users see duplicates. Any NEW propagation path must go through this helper.
+
+7. **`.taskmaster/tasks/task_144/research/baselines-after/rendering-output.txt`** — refreshed to reflect current-HEAD rendering. The pre-refresh file was last touched in `80a709e8` (Task 144 merge) and missed Task 147's rendering improvements (label system, trace-hint removal, multi-error titled format, WorkflowNotFoundError hint-conditional suggestion). The refresh is pure data; no production code change. This resolves the "Decision B" open question from the previous verification round.
+
+### Regression tests added (3)
+
+1. **`tests/test_core/test_workflow_data_flow.py::TestValidateDataFlow::test_nested_dict_param_path_reaches_deep_key`** — regression guard for Fix 2's dict-recursion case. Builds an HTTP node with an undeclared `${secret}` inside `headers.Authorization`, asserts the diagnostic's `context["path"]` is `nodes[id=fetch].params.headers.Authorization` (not the old `...params.headers`).
+
+2. **`tests/test_core/test_workflow_data_flow.py::TestValidateDataFlow::test_nested_list_param_path_reaches_deep_index`** — regression guard for Fix 2's list-recursion case. Builds a shell node with `commands: ["echo ok", "echo ${missing}"]`, asserts the diagnostic's `context["path"]` is `nodes[id=shell].params.commands[1]` (not the old `...params.commands`).
+
+3. **`tests/test_core/test_workflow_validator.py::TestValidatorProducerStructure::test_unknown_node_type_does_not_double_report_with_templates_enabled`** — regression guard for Fix 1. Passes `extracted_params={}` explicitly to force template validation (step 4) to run BEFORE node-type validation (step 5), asserts exactly ONE rich V6 diagnostic instead of the old TWO (1 generic template wrapper + 1 rich V6). This is the most important test in the round — it locks in the contract that unknown node types produce exactly one diagnostic regardless of pipeline execution order.
+
+### Deferred follow-ups (user decisions taken in this round)
+
+**Decision A (apply now or defer): dynamic `_pflow_validation_warnings` attribute**.
+- Recommendation: defer.
+- Rationale: Task 147 braindump explicitly marked this cleanup out-of-scope. No actual trigger path today. Applying it would expand the PR's production-code footprint for a hypothetical concern. User agreed to defer.
+- Follow-up: this should be filed as a small cleanup issue referencing Task 143's "Instance Variable + Propagated Shared-Store Key" pattern if we want it tracked.
+
+**Decision B (inline or follow-up): stale `baselines-after/` refresh**.
+- Recommendation: refresh inline.
+- Rationale: it's strictly data, directly tied to the review checkpoint evidence, and makes the baseline tool usable for the next reviewer. Including it here costs one file in the diff and prevents the same "79 lines of pre-existing drift" investigation from repeating on future PRs.
+- User agreed. Applied as part of this commit.
+
+### Verification after all fixes
+
+| Check | Result |
+|---|---|
+| 3 new regression tests (individual run) | 3/3 pass |
+| `make test` (full suite) | 4677 passed (was 4674 — the +3 new regression tests) |
+| `make check` | clean (ruff, ruff-format, mypy 171 files, deptry) |
+| Manual repro Fix 1 (unknown node type) | ✓ Exactly one rich error, no duplicate generic wrapper |
+| Manual repro Fix 2 (nested dict path) | ✓ JSON `context.path = "nodes[id=fetch].params.headers.Authorization"` |
+| Baseline refresh | `rendering-output.txt` updated to current-HEAD state; diff matches earlier attribution exactly (Task 147 improvements, zero #238 contribution) |
+
+### Meta-lessons from this round
+
+1. **Reviewer "must fix before merge" requires its own verification.** The claude[bot] review marked Warning #1 (bare ValueError) as the only "must fix". Verifying the claim required tracing (a) the raise site, (b) the call graph to `extract_node_outputs`, (c) the step ordering in `WorkflowValidator.validate()`, and (d) the defensive wrapper that catches it. Every link in that chain had to be confirmed — a reviewer claim is a hypothesis, not a verdict. Half the value of the /evaluate-review skill is the verification step, not the finding intake.
+
+2. **"Deferred cleanup" from a prior task's planning doc is load-bearing context for evaluating follow-up reviewers.** Task 147's braindump explicitly marked the `_pflow_validation_warnings` cleanup as out-of-scope for that task. Without that context, the review finding would look like an obvious TODO. With it, the finding is "legitimate but deliberately deferred; user decision on whether to pick it up now or file a follow-up." **Planning artifacts outlive the task they belong to** — they should be consulted whenever a review touches adjacent code.
+
+3. **Test suite enforcement trumps reviewer opinion.** The unused-inputs severity finding was a reasonable design opinion. Six tests assert ERROR severity. The tests are the codebase's contract — not the reviewer's opinion, not mine. The right response to "this should be WARNING" is "show me tests that assert WARNING" — if none exist, the contract is already written in ERROR and the change requires updating the contract (tests) first. Adding a comment explaining the rationale satisfies the reviewer's fallback ask without breaking the contract.
+
+4. **Evidence-gathering cost is proportional to finding specificity.** Concrete file-line findings (Fix 1, Fix 2, Fix 3, Fix 5, Fix 6) were verified with 5-10 seconds of direct Read + Grep each. The broader claims (Fix 1's call-order argument, Finding 1's "can ERROR ever appear") required subagents or multi-file tracing. **Match the verification effort to the finding specificity** — don't deploy a subagent for a 3-line Edit, don't trust a 1-line grep for a multi-file claim.
+
+5. **`[skip review]` is the right commit tag here.** The fixes are the reviewer's own recommendations applied; running the bots again on the fix commit is pure noise. The tag prevents a second review round from the same bots on the same suggestions.
+
+---

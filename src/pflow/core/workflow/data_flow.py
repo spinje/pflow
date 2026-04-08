@@ -406,9 +406,12 @@ def _check_param_value(
                 if error:
                     errors.append(error)
     elif isinstance(value, dict):
-        for val in value.values():
+        # Thread the dict key into param_name so diagnostics for nested values
+        # report the deepest path (e.g. ``headers.Authorization`` instead of
+        # just ``headers``).
+        for key, val in value.items():
             _check_param_value(
-                param_name,
+                f"{param_name}.{key}",
                 val,
                 node_id,
                 node_position,
@@ -420,9 +423,12 @@ def _check_param_value(
                 errors,
             )
     elif isinstance(value, list):
-        for item in value:
+        # Thread the list index into param_name so diagnostics for list items
+        # report the deepest path (e.g. ``commands[1]`` instead of just
+        # ``commands``).
+        for index, item in enumerate(value):
             _check_param_value(
-                param_name,
+                f"{param_name}[{index}]",
                 item,
                 node_id,
                 node_position,
