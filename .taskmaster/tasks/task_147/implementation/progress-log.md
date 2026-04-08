@@ -1564,6 +1564,79 @@ Round 9 fixes only the specific case that has a clean destination. The general p
 
 4. **Structural regression guards need to cover observable UX, not just logic.** My Round 8 test for Fix [1] asserted "exactly 1 rich error" — correct logic. The cascade failure was in stderr output, which the test didn't capture. Round 9's `test_unknown_node_type_downstream_ref_no_stderr_warning` uses `caplog` to lock in log-level observability. **Tests should cover the full observable surface: stdout, stderr, log levels, return values.**
 
-5. **The "refresh baseline, diff shows zero" signal is genuinely informative.** After Round 9 fixes, the baseline diff was empty. That's not "no coverage" — it's confirmation that my fixes don't affect the rendered-text surface (they affect construction, runtime logger config, and exception plumbing, none of which flow through the 21 baseline fixtures). This was a strong null result that told me "your changes are rendering-neutral, go."
+5. **The "refresh baseline, diff shows zero" signal is genuinely informative.** After Round 9 fixes, the baseline diff was empty. That's not "no coverage" — it's confirmation that my fixes don't affect the rendered-text surface (they affect construction, runtime logger config, and exception plumbing, none of which flow through the 21 baseline fixtures). This was a strong null result that told me "your changes are rendering-neutral, go.
+
+---
+
+## 2026-04-08 — Round 10: residual-issues audit + #238 closure + #245 test-dependency note
+
+**Trigger**: after Round 9, the user asked "is issue 238 finished now? or what is remaining? what gh issues should we consider filing?" — prompting a full audit of what remained from both the plan and the investigation-surfaced findings across rounds.
+
+### Audit findings — #238 is actually ~complete
+
+I had been assuming Phase 3 (additive structural promotions in 5 high-value files) was still pending based on the Session 2 finding of "10 failing tests" that I interpreted as an incomplete sweep. That interpretation was wrong. **Those 10 failures were Phase 2 Step 5 rendered-content traps**, not missing Phase 3 work. Phase 3 had actually been implemented during the previous staged partial #238 work that I inherited at the start of Session 2.
+
+Verified by direct grep + inventory of structural tests per Phase 3 target:
+
+| Producer | Structural test | Status |
+|---|---|---|
+| V6 unknown node type | `test_unknown_node_type_diagnostic_preserves_structure` | ✓ partial (similar_names blocked by #245) |
+| V8 empty output source | `test_empty_output_source_diagnostic_preserves_path` | ✓ |
+| V9 `_build_node_not_found_diagnostic` | `test_output_source_missing_node_preserves_structure` | ✓ |
+| V11 `_build_template_node_diagnostic` | `test_output_source_template_missing_node_preserves_structure` | ✓ |
+| PV3 batch case | `test_batch_results_invalid_nested_path_rejected` (S2) | ✓ |
+| PV3 non-batch case | `test_non_batch_error_message_uses_node_outputs` (my Round 8 fix added the structural assertion) | ✓ |
+| TY1 type mismatch | `test_dict_to_int_mismatch` (S1) | ✓ |
+| TY2 shell single-template | `test_shell_blocks_dict_list_union` (S5) | ✓ |
+| TY3 shell multi-template | `test_shell_blocks_multiple_structured_templates_preserves_structure` | ✓ |
+| BV1 batch item field | `test_batch_item_field_miss_preserves_batch_context` | ✓ |
+| BV2 batch item nested | `test_batch_item_nested_miss_preserves_parent_path` | ✓ |
+| TV1 unused inputs | `test_unused_inputs_diagnostic_preserves_list` | ✓ |
+| TV2 malformed templates | `test_malformed_template_diagnostic_preserves_template_text` | ✓ |
+
+**All 13 Phase 3 producer targets covered.** The one partial (V6's `similar_names` assertion) is explicitly blocked by #245 — documented in the test comment and now cross-referenced from the issue.
+
+### Audit findings — new issues to file
+
+Systematically walked through every candidate surfaced across the 9 prior rounds:
+
+| Candidate | File as issue? | Reason |
+|---|---|---|
+| claude[bot] Suggestion #2 (generic runtime warning text) | **No** | Needs runtime warning categorization infrastructure that doesn't exist; already documented in the task review's Extension Points section. Speculative work without a user-reported pain point. |
+| Audit of other "should not be reached" logger warnings | **No** | Grepped `src/` for `"should not be reached"`, `"this is unexpected"`, `"should never"` — only 2 hits total, both unrelated (one CLI doc markdown, one comment in `registry/context_builder.py`). The `path_validation.py` site I fixed in Round 9 was genuinely the only logger.warning with this pattern. |
+| `_pflow_parser_diagnostics` dynamic attribute cleanup | **No** | Explicitly retained in Round 9 as a cross-cutting exception annotation pattern. Task 147 braindump's "attr-defined is intentional" directly applies to this site. Correct as-is. |
+| `to_display_dict()` orphan debt | **No** | Already documented in task review Extension Points with Task 143 historical context. Has been sitting since Task 143 with zero user impact. Moving it to an issue tracker doesn't improve anything. |
+| `capture_baselines.py` DX improvements (named snapshots, arbitrary-path diff) | **No** | Minor quality-of-life improvement for the tool. Current 3-mode workflow works; I manually worked around its limitations in Rounds 8 and 9. Not urgent enough to file. |
+| Fix #3 (gemini's hardening) lacks a synthetic fixture test | **No** | Pure defensive hardening with zero current trigger. Adding a test for defensive-only code that requires injecting ERROR into `resolved.diagnostics` would misrepresent the fix's intent. |
+
+**Zero new issues filed.** Every residual candidate has a specific reason not to track.
+
+### Comments posted
+
+1. **spinje/pflow#238** (`issuecomment-4208008056`) — full completion summary with Option A + Phase 3 tables, mutation-test evidence reference, one cross-reference to #245 for the V6 test gap. **Issue closed as `completed`.**
+
+2. **spinje/pflow#245** (`issuecomment-4208009187`) — test-dependency note explaining that `test_unknown_node_type_diagnostic_preserves_structure` has two `similar_names` assertions removed specifically because of this issue, with the exact restoration code for whoever picks up #245.
+
+### Final net state after Round 10
+
+| Metric | State |
+|---|---|
+| PR #244 | 7 commits, ready for re-review |
+| Tests | 4680 passing, `make check` clean |
+| Closed issues | #214 (via `_format_path` fix), #238 (via sweep + Phase 3) |
+| Open follow-ups | #236 (CLI save bypass), #237 (batch unresolved template crash), #239 (batch + `inputs: ${item}`), #245 (V6 fuzzy-match full registry) |
+| New issues filed | 0 |
+| Bot review findings applied | All confirmed (6) + 1 disputed-with-comment + 1 deferred-with-rationale |
+| Structural guard tests total | 16+ (8 baseline + 5 S-series + 3 PR #244 regression guards + multiple Phase 3 promotions already landed) |
+
+### Meta-lessons from Round 10
+
+1. **"Assumed pending" ≠ "actually pending".** I had assumed Phase 3 was outstanding work based on a Session 2 failure pattern (10 failing tests). Those failures were Phase 2 Step 5 traps, not missing Phase 3. The correct verification is to ENUMERATE AGAINST THE PLAN — grep for each specific test name or producer target and confirm presence. I spent significant energy through Rounds 8 and 9 thinking Phase 3 was a follow-up, when it was already done. **Lesson**: when evaluating "what's remaining" for a multi-phase plan, don't rely on your memory of prior state — re-verify against the plan's concrete targets. The audit I did in Round 10 should have happened at the start of Session 2, before Rounds 3-9 even began.
+
+2. **The right answer to "what should we file?" is often "nothing".** I walked through 6 candidate issues and rejected all of them with specific reasons: already documented, no trigger path, speculative future work, orphan debt with zero impact, or structurally out-of-scope. **Issue tracker discipline matters**: filing an issue is a commitment to eventually handle it. Filing speculative or "might someday matter" issues creates backlog noise that devalues the tracker. The bar should be "will this actively cause user pain?" — and if the answer is unclear, the answer is no.
+
+3. **Cross-linking issues is high-value work.** The #245 comment I posted wasn't "filing a new issue" — it was adding a concrete hook that whoever picks up #245 will find and use. This kind of issue-to-issue forward reference has much higher ROI than filing a speculative new issue, because it directs EXISTING future work toward adjacent fixes that should land together. The test-dependency note is the cheapest possible mechanism to ensure the `similar_names` assertions are restored when #245 lands.
+
+4. **"Close with a comment" beats "close silently".** Closing #238 without a comment would have been technically correct but would have lost the mapping of plan-to-commit. The completion comment gives a future reader (human or agent) a direct trail from "what was the goal?" to "what actually shipped?" to "where in PR #244 did it happen?" That's a permanent part of the issue tracker's value as institutional memory.
 
 ---
