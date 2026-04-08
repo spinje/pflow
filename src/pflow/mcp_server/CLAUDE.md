@@ -149,7 +149,6 @@ Shared formatters from `execution/formatters/` ensure identical output between C
 ## Agent-Optimized Defaults
 
 MCP execution differs from CLI:
-- `output=NullOutput()` — Silent execution (no progress output)
 - Traces always saved to `~/.pflow/debug/workflow-trace-{timestamp}.json`
 - Text output format (LLMs parse text better than nested JSON)
 - Auto-normalization of workflow IR (`ir_version`, `edges`)

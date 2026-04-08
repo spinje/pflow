@@ -171,14 +171,15 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### output_controller.py
 
-**5 rules for interactive mode** (ALL must pass):
-1. No `-p/--print` flag
-2. Output format is not `json`
-3. stdin is TTY
-4. stdout is TTY
-5. Only if all pass → interactive
+**`is_interactive()`** (ALL must pass): no `-p/--print`, output format not `json`, stdin+stdout are TTY. Only `cli/mcp_sync.py` reads it (MCP discovery gating). **Progress during workflow execution is NOT TTY-gated** — `create_progress_callback()` always returns a callable; only `_handle_batch_progress`'s `\r` inline counter gates on `sys.stderr.isatty()` because `\r` renders as garbage in non-TTY capture.
 
-**Progress indicators**: ✓ success (green), ❌ error (red), ⚠️ warning (yellow), ↻ cached (blue/dimmed), [repaired] modified (cyan).
+**Progress indicators**: ✓ success, ✗ Failed (non-batch fatal), ⚠️ warning, ↻ cached, `[no matches]`/`[not found]` smart-handled shell tags.
+
+**Partial-line state machine** — `_handle_node_start` writes `node_id...` with `nl=False` and sets `_partial_line_open=True`. Every completion handler (`_handle_node_complete`, `_handle_node_cached`, `_handle_node_warning`) calls `_ensure_node_line_open` first; if an interleaved write closed the partial, the lead-in re-emits in canonical `node_id...` shape so the completion text isn't orphaned. `_close_partial_line()` is idempotent.
+
+**Invariant**: only `_handle_node_start` and `_ensure_node_line_open` may set `_partial_line_open=True`. Any new stderr writer that emits `nl=False` partial lines MUST route through these or the state machine desyncs silently. Direct `click.echo(..., nl=False, err=True)` or `sys.stderr.write` from inside a node lifecycle is a design smell — emit a progress event instead.
+
+**Logger coordination** — `create_progress_callback` installs `_ProgressPartialLineFilter` on every root-logger `StreamHandler` whose `stream is sys.stderr`. The filter closes any open partial line as a side effect of `logger.*` emits (via weakref to the controller, never blocks records). Covers all `logger.warning`/`logger.error` sites in node code so `logger.warning("...")` during a live progress line doesn't produce `node_id...WARNING:...` corruption. The install is a silent no-op when no handler matches (e.g. `configure_logging` short-circuited under `PYTEST_CURRENT_TEST`) — subprocess tests must scrub that env var to get production-like logging behavior.
 
 ### settings.py
 

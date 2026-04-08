@@ -56,14 +56,16 @@ class TestExecuteWorkflowSuccess:
 
     def test_file_workflow_returns_success_string(self, tmp_path):
         """When given a valid .pflow.md file path, execute_workflow returns
-        a string containing the success indicator."""
+        a success string with completion text and workflow output."""
         workflow_path = tmp_path / "echo.pflow.md"
         write_workflow_file(SIMPLE_ECHO_IR, workflow_path)
 
         result = ExecutionService.execute_workflow(str(workflow_path))
 
         assert isinstance(result, str), f"Expected str, got {type(result).__name__}"
-        assert "✓" in result, "Success output should contain checkmark indicator"
+        assert "Workflow completed" in result, "Success output should contain completion text"
+        assert "Workflow output:" in result, "Success output should include the workflow output header"
+        assert "hello" in result, "Success output should include the workflow output value"
 
     def test_library_workflow_returns_success_string(self, isolate_pflow_config):
         """When given a saved workflow name, execute_workflow resolves it
@@ -78,7 +80,9 @@ class TestExecuteWorkflowSuccess:
         result = ExecutionService.execute_workflow("test-echo-lib")
 
         assert isinstance(result, str), f"Expected str, got {type(result).__name__}"
-        assert "✓" in result, "Success output should contain checkmark indicator"
+        assert "Workflow completed" in result, "Success output should contain completion text"
+        assert "Workflow output:" in result, "Success output should include the workflow output header"
+        assert "hello" in result, "Success output should include the workflow output value"
 
 
 class TestExecuteWorkflowErrors:

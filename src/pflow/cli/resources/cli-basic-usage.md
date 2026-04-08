@@ -48,16 +48,17 @@ pflow workflow list "<filter-keywords>" # Example: `pflow workflow list "github 
 # Run a saved workflow
 pflow workflow-name param1=value1 param2=value2
 
-# Example output:
+# Example output (stderr):
 workflow-name was executed
-  ✓ Workflow completed in 2s
-  Nodes executed (2):
-    ✓ get-data (1s)
-    ✓ save-data(1s)
-💰 Cost: $0.0001 # LLM Cost is not always present
+  get-data... ✓ 1.0s
+  save-data... ✓ 1.0s
+✓ Workflow completed in 2.0s
+💰 Cost: $0.0001 # LLM cost is shown only when > 0
 
-Workflow output: # Not all workflows have an output, so this is not always present.
-Data saved successfully # Only first workflow output is presented to the user (this is the only relevant information)
+Workflow output: # stderr header (not every workflow declares an output)
+
+# Example output (stdout):
+Data saved successfully # The declared workflow output goes here — this is what agents should capture
 
 # If workflow was executed successfully, your work is done. Present the information to the user in a VERY CONCISE format. Don't overdo it with to detailed information like individual node execution times.
 ```

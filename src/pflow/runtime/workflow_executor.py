@@ -77,7 +77,7 @@ class WorkflowExecutor(BaseNode):
     #               |                                    | shared store copy is for grandchild
     #               |                                    | propagation only.
     # __progress__  | runner._initialize_shared_store()  | No progress display (silent).
-    #   _callback__ |                                    | MCP server always None (NullOutput).
+    #   _callback__ |                                    | MCP server always None.
     # __mcp_pool__  | runner._initialize_shared_store()  | No connection reuse — each MCP call
     #               |                                    | creates a fresh connection.
     # __warnings__  | runner._initialize_shared_store()  | Self-healing: consumers create {} if

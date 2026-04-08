@@ -197,8 +197,9 @@ class ShellNode(Node):
 
         IMPORTANT: When adding new patterns here, the reason string MUST contain
         either "no matches" or "not found" for proper tag display in CLI output.
-        See src/pflow/cli/main.py _format_node_status_line() for the tag mapping.
-        If neither phrase fits your pattern, update the tag mapping in main.py.
+        See src/pflow/core/output_controller.py _handle_node_complete() for the
+        tag mapping. If neither phrase fits your pattern, the raw reason is
+        shown as-is as a yellow tag so agents can still diagnose the case.
         """
         # Check if stderr has content - this usually indicates a real error
         # from a command in the pipeline, not a "no results" case
@@ -709,10 +710,12 @@ class ShellNode(Node):
         # Build descriptive error message for non-zero exit codes
         shared["error"] = self._build_shell_error_message(exit_code, shared.get("stderr", ""))
 
-        logger.warning(
-            f"Command failed with exit code {exit_code}",
-            extra={"phase": "post", "exit_code": exit_code},
-        )
+        # Intentionally no logger.warning here — pflow's diagnostic pipeline
+        # already surfaces this exact message via call_completion_callback
+        # (which builds "Command failed with exit code N" from
+        # shared["exit_code"]) and via the post-execution diagnostic block.
+        # Logging it here would write directly to stderr and corrupt the
+        # live progress callback's partial `node_id...` line.
         return "error"
 
     def exec_fallback(self, prep_res: dict[str, Any], exc: Exception) -> dict[str, Any]:

@@ -323,17 +323,25 @@ class TestLoggingBehavior:
         assert "Auto-handling non-error" in call_args
         assert "ls with glob pattern" in call_args
 
-    @patch("pflow.nodes.shell.shell.logger")
-    def test_real_error_logs_warning(self, mock_logger):
-        """Test that real errors still log warnings."""
+    def test_real_error_surfaces_error_via_action_and_shared_store(self):
+        """Test that real errors surface to the user via action + shared store.
+
+        Note: shell.py intentionally does NOT logger.warning on command failure
+        — that text would write directly to stderr and corrupt the live progress
+        callback's partial `node_id...` line. The diagnostic pipeline already
+        surfaces the failure via:
+          - the returned action ("error"), which the engine maps to ✗ Failed
+          - shared["error"] / shared["exit_code"], read by the diagnostic block
+        """
         shared = {}
 
-        run_shell_node(shared, command="definitely_not_a_command")
+        action = run_shell_node(shared, command="definitely_not_a_command")
 
-        # Should log warning about failure
-        mock_logger.warning.assert_called()
-        call_args = str(mock_logger.warning.call_args)
-        assert "failed with exit code" in call_args
+        # Failure surfaces via the action and shared store, not via logging.
+        assert action == "error"
+        assert shared["exit_code"] != 0
+        assert "error" in shared
+        assert "exit code" in shared["error"]
 
 
 class TestEdgeCases:

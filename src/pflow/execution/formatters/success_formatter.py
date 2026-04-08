@@ -4,6 +4,7 @@ This module provides a shared formatter for successful workflow execution result
 ensuring CLI and MCP return identical output structures.
 """
 
+import json
 from typing import Any, Optional
 
 from pflow.core.diagnostic import Diagnostic, format_diagnostic
@@ -200,6 +201,8 @@ def format_success_as_text(  # noqa: C901
     execution_data = success_dict.get("execution", {})
     cache_hits = execution_data.get("cache_hits", 0)
     completed_count = execution_data.get("nodes_executed", 0)
+    steps = execution_data.get("steps", [])
+    has_stderr_warnings = any(step.get("has_stderr") for step in steps)
     cache_suffix = ""
     if cache_hits > 0:
         executed_fresh = completed_count - cache_hits
@@ -214,11 +217,19 @@ def format_success_as_text(  # noqa: C901
             lines.append(f"❌ Workflow failed after {duration_sec:.3f}s{cache_suffix}")
     elif warning_count:
         lines.append(f"⚠️ Workflow completed with {warning_count} warnings in {duration_sec:.3f}s{cache_suffix}")
+    elif has_stderr_warnings:
+        # Shell node(s) exited 0 but wrote to stderr — upgrade glyph to ⚠️
+        # so MCP consumers see the same signal CLI users do. The per-node
+        # stderr block is rendered below via format_stderr_warnings().
+        lines.append(f"⚠️ Workflow completed in {duration_sec:.3f}s{cache_suffix}")
     else:
         lines.append(f"✓ Workflow completed in {duration_sec:.3f}s{cache_suffix}")
 
     # Show node execution details (matches CLI lines 646-655)
     _append_execution_steps(lines, execution_data)
+
+    # Shell-stderr warnings (CLI/MCP parity — mirrors CLI _display_stderr_warnings)
+    lines.extend(format_stderr_warnings(steps))
 
     # Show cost (matches CLI _display_cost_summary)
     metrics = success_dict.get("metrics", {})
@@ -266,54 +277,122 @@ def _append_outputs(lines: list[str], result: dict[str, Any]) -> None:
     """Append formatted outputs to lines list (matches CLI behavior).
 
     CLI outputs the FIRST output's value directly (not key: value format).
+    Mirrors ``cli/workflow_output.py::safe_output``: strings pass through
+    verbatim, structured values are JSON-encoded so MCP consumers can parse
+    them with ``jq`` or ``json.loads``.
+
+    On serialization failure (e.g., NaN/Infinity inside an otherwise-valid
+    structure, or a custom class whose ``__str__`` raises inside ``default=str``),
+    falls back to ``repr(first_value)`` — **not** ``str(first_value)`` — to match
+    CLI ``safe_output``'s fallback. The CLI also emits a stderr diagnostic in
+    this case; MCP returns strings so it cannot do that, and the divergence on
+    warning emission is accepted as a documented gap (see the Task 149 review).
     """
     if not result:
         return
 
-    # Get the first output value (matches CLI behavior)
     first_value = next(iter(result.values()))
 
-    # Output the value directly as string (matches CLI safe_output())
     if isinstance(first_value, str):
         lines.append(first_value)
-    else:
-        lines.append(str(first_value))
+        return
+
+    try:
+        lines.append(json.dumps(first_value, ensure_ascii=False, allow_nan=False, default=str))
+    except (TypeError, ValueError):
+        # CLI safe_output falls back to repr(); match it for parity.
+        lines.append(repr(first_value))
+
+
+def format_only_indicator(only_node: str, nodes_skipped: int) -> str:
+    """Format the ``--only`` mode confirmation line.
+
+    Single source of truth for the ``--only`` indicator text. Used by:
+    - CLI text summary (``cli/workflow_output.py::_display_execution_summary``)
+    - CLI ``-p`` mode emission (``cli/workflow_output.py::_emit_only_indicator``)
+    - MCP text summary (``_append_execution_steps`` below)
+
+    Architecturally, ``--only`` is a **mode signal**, not a summary detail.
+    Mode flags (which change what the workflow does) are always announced
+    regardless of verbosity flags (which hide details). This matches the
+    convention of ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
+    ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+
+    Two forms:
+    - Some downstream nodes were skipped: ``Stopped after 'X' (--only), N remaining nodes skipped``
+    - No nodes were skipped (``--only`` targeted the last node): ``Stopped after 'X' (--only)``
+    The shorter form is the fix for the case where the rendered output
+    was previously indistinguishable from a full run (sub-issue 8a in
+    Task 149's code review).
+    """
+    if nodes_skipped > 0:
+        noun = "node" if nodes_skipped == 1 else "nodes"
+        return f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped"
+    return f"  ⤷ Stopped after '{only_node}' (--only)"
+
+
+def format_stderr_warnings(steps: list[dict[str, Any]]) -> list[str]:
+    """Format shell-stderr warning block for nodes that exited 0 with non-empty stderr.
+
+    Single source of truth used by both:
+    - CLI ``cli/workflow_output.py::_display_stderr_warnings`` (emits via ``click.echo`` in a loop)
+    - MCP ``format_success_as_text`` below (extends the lines list)
+
+    Mirrors the CLI/MCP parity pattern established by ``format_only_indicator`` and
+    ``_append_outputs``. Without this helper, MCP text output would silently omit
+    shell-stderr warnings for workflows where a shell node wrote to stderr but
+    exited 0 — agents calling the MCP ``workflow_execute`` tool would get a
+    misleading ``✓ Workflow completed`` summary with no visibility into the
+    hidden shell pipeline failures.
+
+    Args:
+        steps: List of execution step dicts (may contain ``has_stderr`` and ``stderr`` fields)
+
+    Returns:
+        Lines to append to output. Empty list when no step has stderr warnings.
+        First line is a blank (to separate from preceding content); second is the
+        ``⚠️  Shell stderr (exit code 0):`` header; remaining lines are per-node
+        bullets with stderr previews truncated to 300 chars and multiline stderr
+        indented for readability.
+    """
+    stderr_warnings = [
+        (step.get("node_id", "unknown"), step.get("stderr", ""))
+        for step in steps
+        if step.get("has_stderr") and step.get("stderr")
+    ]
+
+    if not stderr_warnings:
+        return []
+
+    lines = ["", "⚠️  Shell stderr (exit code 0):"]
+    for node_id, stderr in stderr_warnings:
+        # Truncate long stderr to 300 chars
+        stderr_preview = stderr[:300]
+        if len(stderr) > 300:
+            stderr_preview += "..."
+        # Indent multiline stderr for readability
+        indented = stderr_preview.replace("\n", "\n     ")
+        lines.append(f"  • {node_id}: {indented}")
+
+    return lines
 
 
 def _append_execution_steps(lines: list[str], execution: dict[str, Any]) -> None:
-    """Append execution step details to lines list.
-
-    For batch nodes with errors, also appends a batch errors section
-    showing failed item indices and error messages.
-    When --only is active, filters out not_executed steps and shows a summary line.
-    """
+    """Append supplementary execution details: --only summary line + batch errors."""
     if not execution or "steps" not in execution:
         return
 
     steps = execution["steps"]
     only_node_val = execution.get("only_node")
     nodes_skipped = execution.get("nodes_skipped", 0)
-    nodes_total = execution.get("nodes_total", len(steps))
 
-    # When --only is active, show only executed steps
+    # Emit the --only mode confirmation whenever --only is active, even
+    # when no downstream nodes were skipped (e.g., --only targeted the
+    # last node). Without this, the rendered output is byte-identical to
+    # a full run and agents doing iterative debugging cannot disambiguate.
     if only_node_val:
-        display_steps = [s for s in steps if s["status"] != "not_executed"]
-        lines.append(f"Nodes executed ({len(display_steps)}/{nodes_total}):")
-    else:
-        display_steps = steps
-        nodes_executed = execution.get("nodes_executed", 0)
-        lines.append(f"Nodes executed ({nodes_executed}):")
+        lines.append(format_only_indicator(only_node_val, nodes_skipped))
 
-    for step in display_steps:
-        formatted_step = _format_execution_step(step)
-        lines.append(formatted_step)
-
-    # --only summary line
-    if only_node_val and nodes_skipped > 0:
-        noun = "node" if nodes_skipped == 1 else "nodes"
-        lines.append(f"  ⤷ Stopped after '{only_node_val}' (--only), {nodes_skipped} remaining {noun} skipped")
-
-    # Add batch errors section if any batch nodes had failures
     batch_error_lines = _format_batch_errors_section(steps)
     if batch_error_lines:
         lines.extend(batch_error_lines)
@@ -332,42 +411,6 @@ def _truncate_error_message(message: str, max_length: int = 200) -> str:
     if len(message) <= max_length:
         return message
     return message[: max_length - 3] + "..."
-
-
-def _format_batch_node_line(step: dict[str, Any]) -> str:
-    """Format a batch node's status line with summary.
-
-    Examples:
-        "  ✓ process (31ms) - 10/10 items succeeded"
-        "  ⚠ process (31ms) - 8/10 items succeeded, 2 failed"
-
-    Args:
-        step: Execution step dict with batch metadata
-
-    Returns:
-        Formatted status line string
-    """
-    node_id = step.get("node_id", "unknown")
-    duration = step.get("duration_ms") or 0
-    total = step.get("batch_total", 0)
-    success = step.get("batch_success", 0)
-    errors = step.get("batch_errors", 0)
-    cached = step.get("cached", False)
-    # Build timing string
-    timing = f"({int(duration)}ms)"
-
-    # Build additional tags
-    tags = []
-    if cached:
-        tags.append("cached")
-    tag_str = f" [{', '.join(tags)}]" if tags else ""
-
-    if errors > 0:
-        # Partial success - warning indicator
-        return f"  ⚠ {node_id} {timing} - {success}/{total} items succeeded, {errors} failed{tag_str}"
-    else:
-        # Full success - checkmark
-        return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
 
 
 def _format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
@@ -405,32 +448,3 @@ def _format_batch_errors_section(steps: list[dict[str, Any]]) -> list[str]:
             lines.append(f"  ...and {truncated} more errors")
 
     return lines
-
-
-def _format_execution_step(step: dict[str, Any]) -> str:
-    """Format a single execution step.
-
-    For batch nodes, delegates to _format_batch_node_line() for enhanced display.
-    For regular nodes, shows standard status line.
-    """
-    # Check if this is a batch node
-    if step.get("is_batch"):
-        return _format_batch_node_line(step)
-
-    # Regular node formatting
-    node_id = step.get("node_id", "unknown")
-    status = step.get("status", "unknown")
-    duration = step.get("duration_ms") or 0  # Handle explicit None
-    cached = step.get("cached", False)
-    # Build status indicator
-    indicator_map = {"completed": "✓", "failed": "❌"}
-    indicator = indicator_map.get(status, "⚠️")
-
-    # Build additional tags
-    tags = []
-    if cached:
-        tags.append("cached")
-
-    tag_str = f" [{', '.join(tags)}]" if tags else ""
-    # Round duration to integer for readability (matches CLI format)
-    return f"  {indicator} {node_id} ({int(duration)}ms){tag_str}"

@@ -14,22 +14,44 @@ from pflow.core.diagnostic import Diagnostic, format_diagnostic
 def safe_output(value: Any) -> bool:
     """Safely output a value to stdout, handling broken pipes.
 
+    Strings pass through verbatim. Structured values (dict, list, tuple,
+    bool, int, float, None) are emitted as **strict JSON** so consumers
+    can parse them with ``jq`` or ``json.loads`` — the GH #194 routing
+    fix means agents now actually receive these on stdout, so the format
+    must be parseable.
+
+    - ``allow_nan=False``: rejects NaN/Infinity (jq and most strict
+      parsers reject these literals).
+    - ``default=str``: non-natively-serializable values (datetime, Path,
+      set, dataclass, etc.) are coerced to their ``str()`` form INSIDE
+      the JSON document, so the value lands as a JSON string and the
+      pipeline keeps working.
+    - Last-resort fallback: if even ``default=str`` cannot serialize the
+      value (e.g. NaN inside an otherwise valid dict), we emit a stderr
+      warning so agents can diagnose, then write ``repr(value)`` to
+      stdout so something is visible.
+
     Returns True if output was successful, False otherwise.
     """
     try:
         if isinstance(value, bytes):
-            # Skip binary output with warning
             click.echo("cli: Skipping binary output (use --output-key with text values)", err=True)
             return False
-        elif isinstance(value, str):
+        if isinstance(value, str):
             click.echo(value)
             return True
-        else:
-            # Convert other types to string
-            click.echo(str(value))
-            return True
+        try:
+            click.echo(json.dumps(value, ensure_ascii=False, allow_nan=False, default=str))
+        except (TypeError, ValueError) as exc:
+            click.echo(
+                f"cli: Output value of type {type(value).__name__} is not JSON-serializable "
+                f"({exc}); emitting repr() so the value is still visible. "
+                "Convert it in your workflow before output for parseable results.",
+                err=True,
+            )
+            click.echo(repr(value))
+        return True
     except BrokenPipeError:
-        # Exit cleanly when pipe is closed
         os._exit(0)
     except OSError as e:
         if hasattr(e, "errno") and e.errno == 32:  # EPIPE
@@ -37,53 +59,21 @@ def safe_output(value: Any) -> bool:
         raise
 
 
-def _output_with_header(value: Any, print_flag: bool, output_controller: Any, description: str | None = None) -> None:
-    """Output value with appropriate header and stream routing based on execution mode.
+def _output_with_header(value: Any, print_flag: bool, description: str | None = None) -> None:
+    """Output value with Unix-convention routing.
 
-    Three execution modes with different output strategies:
+    - `--print` mode: data to stdout, no header.
+    - Default mode: header to stderr, data to stdout.
 
-    1. --print mode (print_flag=True):
-       - Use case: Piping output to other commands
-       - Behavior: ONLY raw output to stdout, no header, no summary
-       - Example: pflow --print my-workflow | jq
-
-    2. Interactive terminal (is_interactive()=True):
-       - Use case: Normal terminal usage with TTY
-       - Behavior: Unix convention - header/summary to stderr, data to stdout
-       - Rationale: Separates progress info from pipeable data
-       - Example: pflow my-workflow (in terminal)
-
-    3. Non-interactive (is_interactive()=False, print_flag=False):
-       - Use case: Claude Code, CI/CD, non-TTY environments
-       - Behavior: Everything to stderr for correct ordering
-       - Rationale: Tools that capture streams separately may show stdout before stderr,
-                    causing output to appear before summary. Keeping everything on stderr
-                    preserves the intended order: summary → header → output
-       - Example: pflow my-workflow (in Claude Code)
-
-    Args:
-        value: The output value to display
-        print_flag: Whether --print flag is set
-        output_controller: OutputController for interactive detection
-        description: Optional description from workflow output declaration
+    This is intentionally identical for TTY and non-TTY consumers.
     """
-    # Build header with optional description
-    header = f"\nWorkflow output ({description}):\n" if description else "\nWorkflow output:\n"
-
     if print_flag:
-        # Mode 1: --print - raw output only (no header)
         safe_output(value)
-    elif output_controller and output_controller.is_interactive():
-        # Mode 2: Interactive - Unix convention
-        click.echo(header, err=True)
-        safe_output(value)
-    else:
-        # Mode 3: Non-interactive - everything on stderr
-        click.echo(header, err=True)
-        if isinstance(value, str):
-            click.echo(value, err=True)
-        else:
-            click.echo(str(value), err=True)
+        return
+
+    header = f"\nWorkflow output ({description}):\n" if description else "\nWorkflow output:\n"
+    click.echo(header, err=True)
+    safe_output(value)
 
 
 def _handle_text_output(
@@ -94,7 +84,6 @@ def _handle_text_output(
     print_flag: bool = False,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
-    output_controller: Any = None,
     status: Any = None,
     warnings: list[Any] | None = None,
 ) -> bool:
@@ -116,25 +105,18 @@ def _handle_text_output(
     Returns:
         True if output was produced, False otherwise.
     """
-    # Display execution summary FIRST (if metrics collector provided)
-    # Skip summary entirely in --print mode (user wants ONLY raw output)
-    if metrics_collector and not print_flag:
-        from pflow.execution.formatters.success_formatter import format_execution_success
-
-        formatted = format_execution_success(
-            shared_storage=shared_storage,
-            workflow_ir=workflow_ir or {},
-            metrics_collector=metrics_collector,
-            workflow_metadata=workflow_metadata,
-            output_key=output_key,
-            trace_path=None,  # Text mode doesn't include trace_path
-            status=status,
-            warnings=warnings,
-        )
-
-        # Pass warning Diagnostics directly — don't round-trip through dict
-        warning_diags = [w for w in (warnings or []) if isinstance(w, Diagnostic)]
-        _display_execution_summary(formatted, verbose, warning_diagnostics=warning_diags or None)
+    # Display execution summary or --only mode indicator (dispatch in helper)
+    _emit_summary_or_only_indicator(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir,
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        status=status,
+        warnings=warnings,
+        verbose=verbose,
+        print_flag=print_flag,
+    )
 
     # Now show the actual output
     output_found = False
@@ -142,7 +124,7 @@ def _handle_text_output(
     # User-specified key takes priority
     if output_key:
         if output_key in shared_storage:
-            _output_with_header(shared_storage[output_key], print_flag, output_controller)
+            _output_with_header(shared_storage[output_key], print_flag)
             output_found = True
         else:
             # Suppress warnings in -p mode
@@ -157,9 +139,7 @@ def _handle_text_output(
         and workflow_ir["outputs"]
         and not shared_storage.get("__execution__", {}).get("only_node")
     ):
-        if _try_declared_outputs(
-            shared_storage, workflow_ir, verbose and not print_flag, print_flag, output_controller
-        ):
+        if _try_declared_outputs(shared_storage, workflow_ir, verbose and not print_flag, print_flag):
             output_found = True
 
     # Fall back to auto-detect from common keys (using unified function)
@@ -179,7 +159,7 @@ def _handle_text_output(
                         " Declare outputs for reliable results."
                     )
                 click.echo(msg, err=True)
-            _output_with_header(value, print_flag, output_controller)
+            _output_with_header(value, print_flag)
             output_found = True
 
     return output_found
@@ -188,9 +168,7 @@ def _handle_text_output(
 def _emit_declared_output(
     shared_storage: dict[str, Any],
     declared_outputs: dict[str, Any],
-    verbose: bool,
     print_flag: bool,
-    output_controller: Any = None,
 ) -> bool:
     """Emit the first available declared output and return True.
 
@@ -206,7 +184,7 @@ def _emit_declared_output(
             if isinstance(output_config, dict):
                 description = output_config.get("description")
 
-            _output_with_header(value, print_flag, output_controller, description)
+            _output_with_header(value, print_flag, description)
             return True
     return False
 
@@ -216,7 +194,6 @@ def _try_declared_outputs(
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
     print_flag: bool,
-    output_controller: Any = None,
 ) -> bool:
     """Try to output from workflow-declared outputs.
 
@@ -225,8 +202,6 @@ def _try_declared_outputs(
         workflow_ir: The workflow IR specification
         verbose: Whether to show verbose output
         print_flag: Whether in non-interactive/print mode
-        output_controller: OutputController for interactive detection
-
     Returns:
         True if a declared output was found and printed, False otherwise
     """
@@ -236,14 +211,14 @@ def _try_declared_outputs(
     declared_outputs = workflow_ir["outputs"]
 
     # First attempt: use already-populated outputs (preferred path via compiler wrapper)
-    if _emit_declared_output(shared_storage, declared_outputs, verbose, print_flag, output_controller):
+    if _emit_declared_output(shared_storage, declared_outputs, print_flag):
         return True
 
     # Populate on-demand if not present
     _populate_declared_outputs_best_effort(shared_storage, workflow_ir)
 
     # Second attempt after population
-    if _emit_declared_output(shared_storage, declared_outputs, verbose, print_flag, output_controller):
+    if _emit_declared_output(shared_storage, declared_outputs, print_flag):
         return True
 
     _warn_missing_declared_outputs(declared_outputs, verbose)
@@ -275,96 +250,6 @@ def _warn_missing_declared_outputs(declared_outputs: dict[str, Any], verbose: bo
         f"cli: Warning - workflow declares outputs [{expected}] but none could be resolved",
         err=True,
     )
-
-
-def _get_status_indicator(status: str) -> str:
-    """Get display indicator for node execution status.
-
-    Args:
-        status: Node execution status
-
-    Returns:
-        Single character indicator symbol
-    """
-    indicators = {
-        "completed": "✓",
-        "failed": "✗",
-        "not_executed": "○",
-    }
-    return indicators.get(status, "?")
-
-
-def _format_node_timing(duration_ms: int | float) -> str:
-    """Format node execution timing for display.
-
-    Args:
-        duration_ms: Duration in milliseconds
-
-    Returns:
-        Formatted timing string
-    """
-    return f"({int(duration_ms)}ms)" if duration_ms and duration_ms > 0 else "(<1ms)"
-
-
-def _format_node_status_line(step: dict[str, Any]) -> str:
-    """Format complete node status line for display.
-
-    For batch nodes, shows item success/failure counts.
-    For regular nodes, shows standard status line.
-
-    Args:
-        step: Execution step dict with node_id, status, duration_ms, cached,
-              and optional batch fields (is_batch, batch_total, batch_success, batch_errors)
-
-    Returns:
-        Formatted status line
-    """
-    node_id = step.get("node_id", "unknown")
-    status = step.get("status", "unknown")
-    duration_ms = step.get("duration_ms", 0)
-    cached = step.get("cached", False)
-
-    timing = _format_node_timing(duration_ms)
-
-    # Build additional tags
-    tags = []
-    if cached:
-        tags.append("cached")
-    # Add smart handling tag for visibility (grep no-match, which not-found, etc.)
-    # Tag mapping for smart handling patterns defined in shell.py _is_safe_non_error().
-    # When adding new patterns there, ensure reason contains "no matches" or "not found",
-    # OR add a new elif branch here. Fallback shows raw reason to avoid silent mystery.
-    if step.get("smart_handled"):
-        reason = step.get("smart_handled_reason", "")
-        if "no matches" in reason:
-            tags.append("no matches")
-        elif "not found" in reason:
-            tags.append("not found")
-        elif reason:
-            # Unknown pattern - show actual reason so agent knows what happened
-            tags.append(reason)
-    tag_str = f" [{', '.join(tags)}]" if tags else ""
-
-    # Check if this is a batch node
-    if step.get("is_batch"):
-        total = step.get("batch_total", 0)
-        success = step.get("batch_success", 0)
-        errors = step.get("batch_errors", 0)
-
-        if errors > 0:
-            # Partial success - warning indicator
-            return f"  ⚠ {node_id} {timing} - {success}/{total} items succeeded, {errors} failed{tag_str}"
-        else:
-            # Full success - checkmark
-            return f"  ✓ {node_id} {timing} - {total}/{total} items succeeded{tag_str}"
-
-    # Regular node
-    # Use warning indicator if node produced stderr (has_stderr already implies completed)
-    if step.get("has_stderr"):
-        return f"  ⚠ {node_id} {timing}{tag_str}"
-
-    indicator = _get_status_indicator(status)
-    return f"  {indicator} {node_id} {timing}{tag_str}"
 
 
 def _truncate_error_message(message: str, max_length: int = 200) -> str:
@@ -404,27 +289,19 @@ def _display_stderr_warnings(steps: list[dict[str, Any]]) -> None:
     This helps surface hidden errors from shell pipeline failures where
     intermediate commands fail but the overall exit code is 0.
 
+    Delegates to ``format_stderr_warnings`` in ``success_formatter.py`` so CLI
+    and MCP text output stay in lockstep (same bullet shape, same truncation,
+    same ⚠️ header). MCP consumers of this block are in
+    ``success_formatter.format_success_as_text``; any change to the block
+    shape must be made in the shared helper, not here.
+
     Args:
         steps: List of execution step dicts (may contain has_stderr and stderr fields)
     """
-    stderr_warnings = [
-        (step.get("node_id", "unknown"), step.get("stderr", ""))
-        for step in steps
-        if step.get("has_stderr") and step.get("stderr")
-    ]
+    from pflow.execution.formatters.success_formatter import format_stderr_warnings
 
-    if not stderr_warnings:
-        return
-
-    click.echo("\n⚠️  Shell stderr (exit code 0):", err=True)
-    for node_id, stderr in stderr_warnings:
-        # Truncate long stderr to 300 chars
-        stderr_preview = stderr[:300]
-        if len(stderr) > 300:
-            stderr_preview += "..."
-        # Indent multiline stderr for readability
-        indented = stderr_preview.replace("\n", "\n     ")
-        click.echo(f"  • {node_id}: {indented}", err=True)
+    for line in format_stderr_warnings(steps):
+        click.echo(line, err=True)
 
 
 def _display_workflow_action(workflow_name: str, workflow_action: str) -> None:
@@ -517,43 +394,104 @@ def _display_workflow_completion_status(
         click.echo(f"✓ Workflow completed in {duration_s:.3f}s{cache_suffix}", err=True)
 
 
+def _emit_summary_or_only_indicator(
+    *,
+    shared_storage: dict[str, Any],
+    workflow_ir: dict[str, Any] | None,
+    metrics_collector: Any | None,
+    workflow_metadata: dict[str, Any] | None,
+    output_key: str | None,
+    status: Any,
+    warnings: list[Any] | None,
+    verbose: bool,
+    print_flag: bool,
+) -> None:
+    """Dispatch between full summary, --only-only emission, or nothing.
+
+    The full summary (workflow action + completion tag + batch errors +
+    cost + warnings + --only line) is suppressed in ``-p`` mode because
+    the user explicitly asked for minimal stderr. The ``--only`` mode
+    confirmation is a mode signal (not a suppressible detail) and is
+    emitted even in ``-p`` mode when ``--only`` is active. Verbosity
+    flags hide details; mode flags survive verbosity. Matches the
+    convention of ``make -k``, ``pytest --maxfail``, ``rsync --dry-run``,
+    ``apt-get --simulate``, ``kubectl --dry-run``, etc.
+
+    No-op when there's no metrics collector OR when neither path applies.
+    """
+    if not metrics_collector:
+        return
+
+    only_node = shared_storage.get("__execution__", {}).get("only_node") if shared_storage else None
+    if print_flag and not only_node:
+        return  # -p mode without --only: nothing to emit
+
+    from pflow.execution.formatters.success_formatter import format_execution_success
+
+    formatted = format_execution_success(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir or {},
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        trace_path=None,
+        status=status,
+        warnings=warnings,
+    )
+
+    if print_flag:
+        # -p + --only: emit just the mode confirmation, nothing else
+        _emit_only_indicator(formatted)
+        return
+
+    # Default mode: full summary (which already includes the --only line
+    # internally via the shared format_only_indicator helper)
+    warning_diags = [w for w in (warnings or []) if isinstance(w, Diagnostic)]
+    _display_execution_summary(formatted, verbose, warning_diagnostics=warning_diags or None)
+
+
+def _emit_only_indicator(formatted_result: dict[str, Any]) -> None:
+    """Emit the ``--only`` mode confirmation line to stderr.
+
+    Used by ``_handle_text_output`` in ``-p`` mode (where the full summary
+    is suppressed). The full default-mode summary path
+    (``_display_execution_summary``) emits the same line via the same
+    shared formatter — see ``format_only_indicator`` in
+    ``success_formatter.py``.
+
+    Why this exists: ``--only`` is a mode signal, not a summary detail.
+    Without this emission, ``pflow -p foo --only target`` produces zero
+    bytes on stderr, leaving agents unable to disambiguate constrained
+    runs from full runs. Verbosity flags hide details; mode flags
+    survive verbosity (matches ``make -k``, ``pytest --maxfail``,
+    ``rsync --dry-run``, ``apt-get --simulate``, ``kubectl --dry-run``,
+    etc.).
+    """
+    from pflow.execution.formatters.success_formatter import format_only_indicator
+
+    execution = formatted_result.get("execution", {})
+    only_node = execution.get("only_node")
+    if not only_node:
+        return
+    nodes_skipped = execution.get("nodes_skipped", 0)
+    click.echo(format_only_indicator(only_node, nodes_skipped), err=True)
+
+
 def _display_execution_summary(
     formatted_result: dict[str, Any],
     verbose: bool,
     warning_diagnostics: list[Diagnostic] | None = None,
 ) -> None:
-    """Display execution summary with metrics in text mode.
-
-    Always shows:
-    - Workflow name and action
-    - Total execution time
-    - Per-node execution details (timing, cache status)
-    - LLM cost and token usage (if > 0)
-
-    Args:
-        formatted_result: Formatted result from format_execution_success()
-        verbose: Currently unused, kept for compatibility
-        warning_diagnostics: Warning Diagnostics to render (passed directly, not from dict)
-    """
+    """Display one-line execution summary with supplementary info."""
     duration_ms = formatted_result.get("duration_ms")
     total_cost = formatted_result.get("total_cost_usd")
-
-    # Extract execution details
     execution = formatted_result.get("execution", {})
     steps = execution.get("steps", []) if execution else []
-
-    # Extract workflow metadata
     workflow_metadata = formatted_result.get("workflow", {})
     workflow_name = workflow_metadata.get("name", "workflow")
     workflow_action = workflow_metadata.get("action", "executed")
-
-    # Count nodes
-    total_nodes = len(steps)
-
-    # Show workflow name and action (but not for unsaved workflows)
     _display_workflow_action(workflow_name, workflow_action)
 
-    # Show total execution time with status-aware message
     if duration_ms is not None:
         duration_s = duration_ms / 1000.0
         status = formatted_result.get("status", "success")
@@ -570,38 +508,19 @@ def _display_execution_summary(
             warning_count=warning_count,
         )
 
-    # Show per-node execution details
+    # --only mode confirmation: always emit when --only is active, even
+    # when no downstream nodes were skipped (e.g., --only targeted the
+    # last node). Delegated to _emit_only_indicator so there's ONE call
+    # site for the indicator — the -p path (_emit_summary_or_only_indicator)
+    # and the default path (here) share this function, preventing drift.
+    _emit_only_indicator(formatted_result)
+
     if steps:
-        only_node = execution.get("only_node")
-        nodes_skipped = execution.get("nodes_skipped", 0)
-
-        # When --only is active, show only executed steps with N/M format
-        if only_node:
-            display_steps = [s for s in steps if s["status"] != "not_executed"]
-            click.echo(f"Nodes executed ({len(display_steps)}/{total_nodes}):", err=True)
-        else:
-            display_steps = steps
-            click.echo(f"Nodes executed ({total_nodes}):", err=True)
-
-        for step in display_steps:
-            status_line = _format_node_status_line(step)
-            click.echo(status_line, err=True)
-
-        # --only summary line
-        if only_node and nodes_skipped > 0:
-            noun = "node" if nodes_skipped == 1 else "nodes"
-            click.echo(f"  ⤷ Stopped after '{only_node}' (--only), {nodes_skipped} remaining {noun} skipped", err=True)
-
-        # Show batch errors section if any batch nodes had failures
         _display_batch_errors(steps)
-
-        # Show stderr warnings for shell nodes that succeeded but produced stderr
         _display_stderr_warnings(steps)
 
-    # Show cost if > 0
     _display_cost_summary(total_cost, formatted_result)
 
-    # Show warnings if present
     if warning_diagnostics:
         click.echo("", err=True)
         click.echo("⚠️ Warnings:", err=True)
@@ -706,7 +625,6 @@ def _handle_workflow_output(
     print_flag: bool = False,
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
-    output_controller: Any = None,
     status: Any = None,
     warnings: list[Any] | None = None,
 ) -> bool:
@@ -747,7 +665,6 @@ def _handle_workflow_output(
             print_flag,
             metrics_collector,
             workflow_metadata,
-            output_controller=output_controller,
             status=status,
             warnings=warnings,
         )

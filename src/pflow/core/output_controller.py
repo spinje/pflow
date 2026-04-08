@@ -1,9 +1,46 @@
 """Central output control for interactive vs non-interactive execution modes."""
 
+import logging
 import sys
+import weakref
 from typing import Callable, Optional
 
 import click
+
+
+class _ProgressPartialLineFilter(logging.Filter):
+    """Closes any open progress partial line before each log record is emitted.
+
+    Without this filter, ``logger.warning``/``logger.error`` calls from a node's
+    ``prep``/``exec``/``post`` write directly to ``sys.stderr`` while
+    ``OutputController`` has a ``node_id...`` partial line open, producing
+    ``node_id...WARNING: ...`` corruption in the live progress stream.
+
+    Architecturally, this is the single coordination point that makes
+    ``OutputController._partial_line_open`` an honest abstraction: install
+    once, all current and future ``logger.*`` sites in node code are
+    automatically protected. Without it, every node that adds a
+    ``logger.warning`` re-introduces the same partial-line corruption bug.
+
+    Always returns True (does not filter records). The side effect IS the
+    point — Python's ``logging`` machinery runs filters before each handler's
+    ``emit``, so this is the canonical place to perform "before each log
+    record is written" coordination.
+
+    Holds a ``weakref`` to the controller so installed filters do not pin a
+    destroyed ``OutputController`` instance alive (matters in test runs that
+    create and discard many controllers).
+    """
+
+    def __init__(self, controller: "OutputController") -> None:
+        super().__init__()
+        self._controller_ref: weakref.ref[OutputController] = weakref.ref(controller)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        controller = self._controller_ref()
+        if controller is not None:
+            controller._close_partial_line()
+        return True
 
 
 class OutputController:
@@ -53,6 +90,33 @@ class OutputController:
         else:
             self.stdout_tty = sys.stdout.isatty()
 
+        # Tracks whether _handle_node_start left a partial line open (nl=False).
+        # Required so that anything else writing to stderr — nested-workflow
+        # progress callbacks, logger.warning from a node's prep/exec/post —
+        # can terminate the partial line first instead of concatenating onto
+        # it. Without this, captured stderr in non-TTY mode shows
+        # `node_id...WARNING: ...` style corruption.
+        #
+        # **Invariant**: only ``_handle_node_start`` and ``_ensure_node_line_open``
+        # may set this flag to ``True``. Any new subsystem that writes a
+        # ``node_id...`` style partial line to stderr MUST route through one
+        # of those methods (or call ``_close_partial_line()`` before writing)
+        # or the state machine desyncs silently — subsequent ``_close_partial_line()``
+        # calls will be no-ops while real partial lines remain open. Bypass paths
+        # include direct ``click.echo(..., nl=False, err=True)`` calls or
+        # ``sys.stderr.write`` calls from inside a node lifecycle method; the
+        # ``_ProgressPartialLineFilter`` catches the ``logger.*`` case but not
+        # these direct-write cases. Adding such a writer is a design smell —
+        # prefer emitting a new progress event instead.
+        self._partial_line_open = False
+
+        # Tracks whether the partial-line-aware logging filter has been
+        # installed on the root logger's stderr handlers. Set by
+        # _install_log_partial_line_guard() the first time
+        # create_progress_callback() is invoked. Idempotent — repeated
+        # installs are no-ops.
+        self._log_filter_installed = False
+
     def is_interactive(self) -> bool:
         """Determine if running in interactive mode.
 
@@ -70,6 +134,17 @@ class OutputController:
         # Rules 3 & 4: Both stdin AND stdout must be TTY for interactive
         return self.stdin_tty and self.stdout_tty
 
+    def _close_partial_line(self) -> None:
+        """Terminate any open partial line so the next write starts fresh.
+
+        Called by every event handler that emits a fresh line so nested
+        progress events (sub-workflow children, batch completions) don't
+        concatenate onto a parent's `node_id...` partial line.
+        """
+        if self._partial_line_open:
+            click.echo("", err=True)  # bare newline
+            self._partial_line_open = False
+
     def _handle_node_start(self, node_id: str, indent: str) -> None:
         """Handle node_start event display.
 
@@ -77,7 +152,9 @@ class OutputController:
             node_id: The node identifier
             indent: Indentation string based on depth
         """
+        self._close_partial_line()
         click.echo(f"{indent}  {node_id}...", err=True, nl=False)
+        self._partial_line_open = True
 
     def _handle_batch_progress(
         self,
@@ -87,24 +164,87 @@ class OutputController:
         batch_total: int,
         batch_success: bool,
     ) -> None:
-        """Handle batch_progress event - update line in place.
+        """Handle batch_progress event - update line in place (TTY only)."""
+        if not sys.stderr.isatty():
+            return
 
-        Uses carriage return to overwrite the current line with updated progress.
-        Shows per-item success/failure status.
-
-        Args:
-            node_id: The node identifier
-            indent: Indentation string based on depth
-            batch_current: Number of items completed so far
-            batch_total: Total number of items to process
-            batch_success: Whether the just-completed item succeeded
-        """
         status = click.style("✓", fg="green") if batch_success else click.style("✗", fg="red")
-        # Use \r to return to line start and overwrite
         click.echo(f"\r{indent}  {node_id}... {batch_current}/{batch_total} {status}", err=True, nl=False)
+
+    def _build_smart_handled_tag(self, smart_handled: bool, smart_handled_reason: Optional[str]) -> str:
+        """Build display suffix for smart-handled shell outcomes.
+
+        Reason-string matching is pinned by the ``shell.py:200`` contract:
+        reason strings MUST contain either ``"no matches"`` or ``"not found"``
+        so one of the two named branches always fires. The final ``if reason:``
+        branch is therefore **unreachable today** — it's a safety net for
+        future reason-string additions that might forget to update this tag
+        mapping. If that happens, the user sees a graceful ``[raw reason]``
+        yellow tag instead of silently dropping the signal, which makes the
+        contract violation immediately visible in the live progress stream.
+        Cheap to keep; removing it would trade graceful degradation for
+        silent signal loss on future breakage.
+        """
+        if not smart_handled:
+            return ""
+
+        reason = smart_handled_reason or ""
+        if "no matches" in reason:
+            return click.style(" [no matches]", fg="yellow")
+        if "not found" in reason:
+            return click.style(" [not found]", fg="yellow")
+        if reason:
+            # Safety-net fallback — unreachable today (see docstring); kept
+            # so a future shell.py reason string that forgets this tag
+            # mapping renders a visible tag instead of silently dropping.
+            return click.style(f" [{reason}]", fg="yellow")
+        return ""
+
+    def _ensure_node_line_open(self, node_id: str, indent: str) -> None:
+        """Ensure there is a partial `node_id...` line to append a completion to.
+
+        If a previous handler call (or external write) closed the line, re-emit
+        a fresh `  node_id...` lead-in so the appended completion text isn't
+        orphaned on its own line. Used by every non-batch completion path.
+        Re-emits with the same trailing ``...`` shape as ``_handle_node_start``
+        so structured stderr parsers see one canonical format for completed
+        node lines, regardless of whether interleaving forced a re-emit.
+        """
+        if not self._partial_line_open:
+            click.echo(f"{indent}  {node_id}...", err=True, nl=False)
+            self._partial_line_open = True
+
+    def _emit_non_batch_completion(
+        self,
+        duration_ms: Optional[float],
+        error_message: Optional[str],
+        ignore_errors: bool,
+        tag_suffix: str,
+    ) -> None:
+        """Emit completion text for non-batch success/warning cases.
+
+        Always closes the line with a newline; the caller is responsible
+        for clearing `_partial_line_open`.
+        """
+        if error_message and ignore_errors:
+            warning_text = click.style(f" ⚠️  {error_message} but continuing", fg="yellow")
+            if duration_ms is not None:
+                success_text = click.style(f" | ✓ {duration_ms / 1000:.1f}s", fg="green")
+                click.echo(f"{warning_text}{success_text}{tag_suffix}", err=True)
+                return
+            click.echo(f"{warning_text}{tag_suffix}", err=True)
+            return
+
+        if duration_ms is not None:
+            click.echo(click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green") + tag_suffix, err=True)
+            return
+
+        click.echo(click.style(" ✓", fg="green") + tag_suffix, err=True)
 
     def _handle_node_complete(
         self,
+        node_id: str,
+        indent: str,
         duration_ms: Optional[float],
         error_message: Optional[str],
         ignore_errors: bool,
@@ -112,79 +252,119 @@ class OutputController:
         is_batch: bool = False,
         batch_total: Optional[int] = None,
         batch_success_count: Optional[int] = None,
+        smart_handled: bool = False,
+        smart_handled_reason: Optional[str] = None,
     ) -> None:
         """Handle node_complete event display.
 
-        Args:
-            duration_ms: Execution duration in milliseconds
-            error_message: Error message for failed nodes
-            ignore_errors: Whether errors are being ignored
-            is_error: Whether this is a fatal error
-            is_batch: Whether this is a batch node completion
-            batch_total: Total items in batch (for batch nodes)
-            batch_success_count: Number of successful items (for batch nodes)
+        Re-emits the lead-in `  node_id` if the partial line from
+        `_handle_node_start` was closed by an interleaved write — for example,
+        a sub-workflow's nested progress events or a `logger.warning` from a
+        node's `prep`/`exec`/`post` method. Without this re-emission, the
+        completion text would float on its own line orphaned from the node id.
         """
+        self._ensure_node_line_open(node_id, indent)
+
         if is_error:
             if is_batch:
-                # For batch errors, complete the line with error indicator
                 click.echo(click.style(" FAILED", fg="red"), err=True)
-            # For non-batch errors, shell node already logged - return to avoid double output
+            else:
+                click.echo(click.style(" ✗ Failed", fg="red"), err=True)
+            self._partial_line_open = False
             return
 
         if is_batch:
-            # Batch node: progress already showed count/status, just add timing
+            # Render success/failure counts on the live line so partial-failure
+            # batches don't look like full successes during the live stream.
+            # The supplementary "Batch 'X' errors:" block still carries the
+            # per-item details after execution finishes.
+            count_tag = ""
+            if batch_total is not None and batch_success_count is not None:
+                if batch_success_count < batch_total:
+                    count_tag = click.style(f" {batch_success_count}/{batch_total} ⚠️", fg="yellow")
+                else:
+                    count_tag = click.style(f" {batch_total}/{batch_total}", fg="green")
             if duration_ms is not None:
                 timing_text = click.style(f" {duration_ms / 1000:.1f}s", fg="green")
-                click.echo(timing_text, err=True)
+                click.echo(f"{count_tag}{timing_text}", err=True)
             else:
-                click.echo("", err=True)  # Just newline to complete the line
+                click.echo(count_tag, err=True)
+            self._partial_line_open = False
             return
 
-        if error_message and ignore_errors:
-            # Warning - command failed but continuing
-            warning_text = click.style(f" ⚠️  {error_message} but continuing", fg="yellow")
-            if duration_ms is not None:
-                success_text = click.style(f" | ✓ {duration_ms / 1000:.1f}s", fg="green")
-                click.echo(f"{warning_text}{success_text}", err=True)
-            else:
-                click.echo(warning_text, err=True)
-        elif duration_ms is not None:
-            # Normal success
-            click.echo(click.style(f" ✓ {duration_ms / 1000:.1f}s", fg="green"), err=True)
-        else:
-            click.echo(click.style(" ✓", fg="green"), err=True)
+        tag_suffix = self._build_smart_handled_tag(smart_handled, smart_handled_reason)
+        self._emit_non_batch_completion(duration_ms, error_message, ignore_errors, tag_suffix)
+        self._partial_line_open = False
 
-    def _handle_node_cached(self) -> None:
+    def _handle_node_cached(self, node_id: str, indent: str) -> None:
         """Handle node_cached event display."""
+        self._ensure_node_line_open(node_id, indent)
         click.echo(click.style(" ↻ cached", fg="blue", dim=True), err=True)
+        self._partial_line_open = False
 
-    def _handle_node_warning(self, duration_ms: Optional[float]) -> None:
+    def _handle_node_warning(self, node_id: str, indent: str, warning_message: Optional[str]) -> None:
         """Handle node_warning event display.
 
-        Args:
-            duration_ms: Contains warning message when event is node_warning
-        """
-        warning_msg = duration_ms if isinstance(duration_ms, str) else "API warning"
-        warning_text = click.style(f" ⚠️  {warning_msg}", fg="yellow")
-        click.echo(warning_text, err=True)
-
-    def _handle_workflow_start(self, node_id: str, indent: str) -> None:
-        """Handle workflow_start event display.
+        Renders a yellow ⚠️ marker on the live progress line and closes
+        the partial. The warning message comes from
+        ``handle_api_warning`` in ``runtime/engine/instrumentation.py`` —
+        typically an API response classification (HTTP 401, Slack
+        ``ok=False``, GraphQL ``errors``) or an LLM response error.
 
         Args:
-            node_id: Contains node count for workflow_start
+            node_id: The node identifier
             indent: Indentation string based on depth
+            warning_message: The warning text to display (None falls back
+                to a generic "API warning" label)
         """
-        click.echo(f"{indent}Executing workflow ({node_id} nodes):", err=True)
+        self._ensure_node_line_open(node_id, indent)
+        warning_text = click.style(f" ⚠️  {warning_message or 'API warning'}", fg="yellow")
+        click.echo(warning_text, err=True)
+        self._partial_line_open = False
 
-    def create_progress_callback(self) -> Optional[Callable]:
+    def _install_log_partial_line_guard(self) -> None:
+        """Install a logging filter that closes any open progress partial line
+        before each log record is emitted.
+
+        Idempotent. Attaches a ``_ProgressPartialLineFilter`` to every
+        ``StreamHandler`` on the root logger whose stream is ``sys.stderr``,
+        which (after ``cli/logging_config.py::configure_logging`` runs at
+        startup) is the single handler pflow installs.
+
+        This is the architectural answer to the partial-line corruption bug
+        whose first symptom was Finding #3 (``shell.py:713``). Without this,
+        every ``logger.warning``/``logger.error`` call in a node's
+        ``prep``/``exec``/``post`` writes directly to stderr while a
+        ``node_id...`` partial progress line is open and produces
+        ``node_id...WARNING: ...`` corruption. With this filter installed,
+        all 28 current ``logger.*`` sites in node files — and any future
+        sites added by any future node — are automatically protected by
+        Python's logging machinery running the filter before each emit.
+
+        Only called from ``create_progress_callback`` so non-progress modes
+        (``-p``, ``--output-format json``, MCP server) never install the
+        filter and never pay its (negligible) cost.
+        """
+        if self._log_filter_installed:
+            return
+        filt = _ProgressPartialLineFilter(self)
+        for handler in logging.getLogger().handlers:
+            if isinstance(handler, logging.StreamHandler) and getattr(handler, "stream", None) is sys.stderr:
+                handler.addFilter(filt)
+        self._log_filter_installed = True
+
+    def create_progress_callback(self) -> Callable:
         """Create progress callback for workflow execution.
 
+        Side effect: installs a logging filter on root-logger stderr handlers
+        so ``logger.warning``/``logger.error`` calls from a node's
+        ``prep``/``exec``/``post`` cannot corrupt open progress partial
+        lines. See ``_install_log_partial_line_guard`` for the rationale.
+
         Returns:
-            Callback function if interactive, None if non-interactive
+            Callback function for streaming progress to stderr
         """
-        if not self.is_interactive():
-            return None
+        self._install_log_partial_line_guard()
 
         def progress_callback(
             node_id: str,
@@ -200,12 +380,14 @@ class OutputController:
             batch_success: Optional[bool] = None,
             is_batch: bool = False,
             batch_success_count: Optional[int] = None,
+            smart_handled: bool = False,
+            smart_handled_reason: Optional[str] = None,
         ) -> None:
             """Display progress for node execution.
 
             Args:
-                node_id: The node identifier or count for workflow_start
-                event: Event type (node_start, node_complete, node_cached, workflow_start, batch_progress)
+                node_id: The node identifier
+                event: Event type (node_start, node_complete, node_cached, batch_progress)
                 duration_ms: Execution duration in milliseconds (for complete events)
                 depth: Nesting depth for indentation
                 error_message: Error message for failed nodes
@@ -216,14 +398,17 @@ class OutputController:
                 batch_success: Whether just-completed item succeeded (for batch_progress)
                 is_batch: Whether this is a batch node (for node_complete)
                 batch_success_count: Number of successful items (for node_complete)
+                smart_handled: Whether shell node was treated as a safe non-error
+                smart_handled_reason: Display tag reason for smart-handled shell nodes
             """
             indent = "  " * depth
 
-            # Dispatch to appropriate handler based on event type
             if event == "node_start":
                 self._handle_node_start(node_id, indent)
             elif event == "node_complete":
                 self._handle_node_complete(
+                    node_id,
+                    indent,
                     duration_ms,
                     error_message,
                     ignore_errors,
@@ -231,42 +416,18 @@ class OutputController:
                     is_batch=is_batch,
                     batch_total=batch_total,
                     batch_success_count=batch_success_count,
+                    smart_handled=smart_handled,
+                    smart_handled_reason=smart_handled_reason,
                 )
             elif event == "batch_progress":
                 if batch_current is not None and batch_total is not None and batch_success is not None:
                     self._handle_batch_progress(node_id, indent, batch_current, batch_total, batch_success)
             elif event == "node_cached":
-                self._handle_node_cached()
+                self._handle_node_cached(node_id, indent)
             elif event == "node_warning":
-                self._handle_node_warning(duration_ms)
-            elif event == "workflow_start":
-                self._handle_workflow_start(node_id, indent)
+                # Warning text comes via the properly-named `error_message`
+                # kwarg from instrumentation.py::handle_api_warning. The
+                # earlier convention abused `duration_ms` as a string slot.
+                self._handle_node_warning(node_id, indent, error_message)
 
         return progress_callback
-
-    def echo_progress(self, message: str) -> None:
-        """Output progress message if interactive.
-
-        Args:
-            message: Progress message to display
-        """
-        if self.is_interactive():
-            click.echo(message, err=True)
-
-    def echo_result(self, data: str) -> None:
-        """Output result data to stdout.
-
-        Always outputs to stdout regardless of mode.
-
-        Args:
-            data: Result data to output
-        """
-        click.echo(data)
-
-    def should_show_prompts(self) -> bool:
-        """Check if interactive prompts should be shown.
-
-        Returns:
-            True if prompts should be displayed, False otherwise
-        """
-        return self.is_interactive()

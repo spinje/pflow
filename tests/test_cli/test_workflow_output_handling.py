@@ -198,6 +198,56 @@ class TestWorkflowOutputHandling:
         finally:
             Path(workflow_file).unlink()
 
+    def test_workflow_data_goes_to_stdout_not_stderr_gh194(
+        self, mock_registry_instance, mock_compile, mock_validate_ir
+    ):
+        """Regression for GH #194: workflow data must go to stdout, not stderr."""
+        runner = click.testing.CliRunner()
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {"result": {"description": "Test result", "type": "string"}},
+            "nodes": [
+                {
+                    "id": "test",
+                    "type": "test-node",
+                    "params": {
+                        "output_key": "result",
+                        "output_value": "HELLO_STDOUT_CANARY_GH194",
+                    },
+                }
+            ],
+        }
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".pflow.md", delete=False) as f:
+            f.write(ir_to_markdown(workflow))
+            workflow_file = f.name
+
+        try:
+            result = runner.invoke(main, [workflow_file])
+
+            assert result.exit_code == 0, (
+                f"Workflow invocation failed.\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+            )
+            assert "HELLO_STDOUT_CANARY_GH194" in result.stdout
+            assert "HELLO_STDOUT_CANARY_GH194" not in result.stderr
+            assert "Workflow output" in result.stderr
+        finally:
+            Path(workflow_file).unlink()
+
+    # NOTE: `test_print_mode_suppresses_progress_header_and_summary` and
+    # `test_json_mode_suppresses_progress_header_and_summary` were deleted
+    # as test theater — both used the `mock_compile` fixture which returns
+    # `ExecutionResult(metrics=None)`, and `_emit_summary_or_only_indicator`
+    # short-circuits on `if not metrics_collector: return`. The stderr
+    # suppression assertions were therefore vacuous — they passed regardless
+    # of whether `-p`/JSON mode suppression actually worked.
+    #
+    # Real coverage lives in `tests/test_cli/test_progress_streaming_subprocess.py`:
+    #   - `test_print_mode_without_only_stays_silent` (real subprocess, `-p`)
+    #   - `test_print_mode_with_only_emits_indicator` (real subprocess, `-p` + `--only`)
+    #   - `test_json_mode_keeps_stderr_silent` (real subprocess, JSON mode)
+
     def test_output_key_override(self, mock_registry_instance, mock_compile, mock_validate_ir):
         """Test that --output-key flag overrides both declared outputs and hardcoded keys."""
         runner = click.testing.CliRunner()
@@ -502,19 +552,31 @@ class TestWorkflowOutputHandling:
             Path(workflow_file).unlink()
 
     def test_complex_output_types(self, mock_registry_instance, mock_compile, mock_validate_ir):
-        """Test that various output types are handled correctly."""
+        """Test that various output types are emitted as valid JSON on stdout.
+
+        After the GH #194 fix, `safe_output` JSON-encodes non-string values
+        so that `pflow foo | jq` works for dict/list/bool/number/null outputs.
+        Strings still pass through verbatim.
+
+        Round-trips each emitted value through ``json.loads`` to verify
+        the stdout is *parseable JSON*, not just substring-matchable. This
+        catches subtle regressions like trailing whitespace, prefix/suffix
+        corruption, or any other byte the substring check would miss.
+        """
         runner = click.testing.CliRunner()
 
-        # Test different data types
-        test_cases = [
-            {"dict_output": {"key": "value", "nested": {"data": 123}}},
-            {"list_output": ["item1", "item2", "item3"]},
-            {"number_output": 42.5},
-            {"bool_output": True},
-            {"null_output": None},
+        # Each entry: (declared output dict, the Python value we expect
+        # to round-trip back from json.loads(stdout)). Strings are tested
+        # separately because they pass through verbatim and aren't JSON.
+        test_cases: list[tuple[dict, object]] = [
+            ({"dict_output": {"key": "value", "nested": {"data": 123}}}, {"key": "value", "nested": {"data": 123}}),
+            ({"list_output": ["item1", "item2", "item3"]}, ["item1", "item2", "item3"]),
+            ({"number_output": 42.5}, 42.5),
+            ({"bool_output": True}, True),
+            ({"null_output": None}, None),
         ]
 
-        for output_data in test_cases:
+        for output_data, expected_value in test_cases:
             output_key = next(iter(output_data.keys()))
             workflow = {
                 "ir_version": "0.1.0",
@@ -529,15 +591,23 @@ class TestWorkflowOutputHandling:
             try:
                 result = runner.invoke(main, [workflow_file])
 
-                assert result.exit_code == 0
-                # Output should be in the result (formatted as string/JSON)
-                output_value = output_data[output_key]
-                if output_value is not None:
-                    if isinstance(output_value, (dict, list)):
-                        # JSON output should be present
-                        assert json.dumps(output_value) in result.output or str(output_value) in result.output
-                    else:
-                        assert str(output_value) in result.output
+                assert result.exit_code == 0, f"exit={result.exit_code} for {output_key}\nstderr: {result.stderr!r}"
+
+                # Round-trip-parse the stdout to prove it's valid JSON.
+                # Strip whitespace because click.echo adds a trailing newline.
+                stdout_stripped = result.stdout.strip()
+                try:
+                    parsed = json.loads(stdout_stripped)
+                except json.JSONDecodeError as e:
+                    raise AssertionError(
+                        f"stdout for {output_key} (value={output_data[output_key]!r}) "
+                        f"is not parseable JSON: {e}\nstdout: {result.stdout!r}"
+                    ) from e
+
+                assert parsed == expected_value, (
+                    f"Round-trip mismatch for {output_key}: "
+                    f"expected {expected_value!r}, got {parsed!r}\nstdout: {result.stdout!r}"
+                )
             finally:
                 Path(workflow_file).unlink()
 

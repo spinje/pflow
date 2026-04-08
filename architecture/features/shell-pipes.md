@@ -78,7 +78,7 @@ cat data.json | pflow -p transform.pflow.md | pflow analyze.pflow.md > report.md
 pflow -p fetch-prs.pflow.md | jq '.[] | select(.urgent)' | pflow notify.pflow.md
 ```
 
-The `-p` flag outputs to stdout for pipeline composition.
+The `-p` flag suppresses header and summary on stderr so only the data (still on stdout, like default mode) appears in the terminal.
 
 ### Internal Implementation
 

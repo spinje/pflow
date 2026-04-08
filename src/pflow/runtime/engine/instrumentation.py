@@ -394,6 +394,12 @@ def call_completion_callback(
         batch_total = node_output.get("count", 0)
         batch_success_count = node_output.get("success_count", 0)
 
+    smart_handled = False
+    smart_handled_reason = None
+    if isinstance(node_output, dict):
+        smart_handled = bool(node_output.get("smart_handled", False))
+        smart_handled_reason = node_output.get("smart_handled_reason")
+
     with contextlib.suppress(Exception):
         callback(
             node_id,
@@ -406,6 +412,8 @@ def call_completion_callback(
             is_batch=is_batch,
             batch_total=batch_total,
             batch_success_count=batch_success_count,
+            smart_handled=smart_handled,
+            smart_handled_reason=smart_handled_reason,
         )
 
 
@@ -475,12 +483,18 @@ def handle_api_warning(
     if metrics:
         metrics.record_node_execution(node_id, duration_ms)
 
-    # Call progress callback with warning
+    # Call progress callback with warning. Pass `warning` via the
+    # `error_message` kwarg so the OutputController callback closure
+    # receives the warning text in a properly-named parameter (the
+    # earlier positional convention abused the `duration_ms` slot to
+    # smuggle a string through, which forced an ``isinstance`` type
+    # check on the receiving end and made the parameter name lie about
+    # what it held).
     callback = shared.get("__progress_callback__")
     if callable(callback):
         depth = shared.get("_pflow_depth", 0)
         with contextlib.suppress(Exception):
-            callback(node_id, "node_warning", warning, depth)
+            callback(node_id, "node_warning", depth=depth, error_message=warning)
 
     # Record trace
     record_trace(

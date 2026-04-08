@@ -9,95 +9,12 @@ from pflow.execution.formatters.output_utils import find_auto_output
 from pflow.execution.formatters.success_formatter import (
     _append_execution_steps,
     _format_batch_errors_section,
-    _format_batch_node_line,
-    _format_execution_step,
     _truncate_error_message,
     format_execution_success,
+    format_only_indicator,
+    format_stderr_warnings,
     format_success_as_text,
 )
-
-
-class TestBatchNodeLineFormatting:
-    """Tests for batch node status line formatting."""
-
-    def test_batch_full_success_shows_checkmark(self):
-        """CORRECTNESS: Batch with all items successful shows checkmark.
-
-        Real bug this catches: Without visual distinction, users can't quickly
-        identify batch node success status.
-        """
-        step = {
-            "node_id": "process",
-            "status": "completed",
-            "duration_ms": 31,
-            "is_batch": True,
-            "batch_total": 10,
-            "batch_success": 10,
-            "batch_errors": 0,
-        }
-        result = _format_batch_node_line(step)
-
-        assert "✓ process" in result
-        assert "10/10 items succeeded" in result
-        assert "failed" not in result
-
-    def test_batch_partial_success_shows_warning(self):
-        """CORRECTNESS: Batch with some failures shows warning indicator.
-
-        Real bug this catches: Showing green checkmark for partial failures
-        would give false confidence about execution success.
-        """
-        step = {
-            "node_id": "process",
-            "status": "completed",
-            "duration_ms": 31,
-            "is_batch": True,
-            "batch_total": 10,
-            "batch_success": 8,
-            "batch_errors": 2,
-        }
-        result = _format_batch_node_line(step)
-
-        assert "⚠ process" in result
-        assert "8/10 items succeeded" in result
-        assert "2 failed" in result
-
-    def test_batch_line_includes_timing(self):
-        """FORMAT: Batch node line must include execution time.
-
-        Real bug this catches: Missing timing info makes performance debugging
-        impossible.
-        """
-        step = {
-            "node_id": "process",
-            "duration_ms": 150,
-            "is_batch": True,
-            "batch_total": 5,
-            "batch_success": 5,
-            "batch_errors": 0,
-        }
-        result = _format_batch_node_line(step)
-
-        assert "(150ms)" in result
-
-    def test_batch_line_includes_cached_tag(self):
-        """FORMAT: Cached batch nodes must show cached tag.
-
-        Real bug this catches: Without cached indicator, users can't identify
-        which batch nodes used cached results.
-        """
-        step = {
-            "node_id": "process",
-            "duration_ms": 0,
-            "is_batch": True,
-            "batch_total": 5,
-            "batch_success": 5,
-            "batch_errors": 0,
-            "cached": True,
-        }
-        result = _format_batch_node_line(step)
-
-        assert "[cached]" in result
 
 
 class TestBatchErrorsSectionFormatting:
@@ -261,55 +178,11 @@ class TestErrorMessageTruncation:
         assert result.startswith("Important error:")
 
 
-class TestExecutionStepFormatting:
-    """Tests for execution step formatting dispatch."""
-
-    def test_batch_node_uses_batch_formatting(self):
-        """CORRECTNESS: Batch nodes use enhanced formatting with summary.
-
-        Real bug this catches: Batch nodes showing generic format would miss
-        the item success/failure counts.
-        """
-        step = {
-            "node_id": "process",
-            "status": "completed",
-            "duration_ms": 100,
-            "is_batch": True,
-            "batch_total": 5,
-            "batch_success": 5,
-            "batch_errors": 0,
-        }
-        result = _format_execution_step(step)
-
-        assert "5/5 items succeeded" in result
-
-    def test_regular_node_uses_standard_formatting(self):
-        """CORRECTNESS: Regular nodes use standard status line format.
-
-        Real bug this catches: Regular nodes showing batch format would be
-        confusing and incorrect.
-        """
-        step = {
-            "node_id": "fetch",
-            "status": "completed",
-            "duration_ms": 100,
-        }
-        result = _format_execution_step(step)
-
-        assert "✓ fetch" in result
-        assert "(100ms)" in result
-        assert "items succeeded" not in result  # No batch summary
-
-
 class TestFormatSuccessAsText:
     """Tests for full text output formatting."""
 
     def test_batch_node_in_full_output(self):
-        """INTEGRATION: Batch node formatting appears in full text output.
-
-        Real bug this catches: Batch formatting might work in isolation but not
-        be integrated correctly into format_success_as_text().
-        """
+        """INTEGRATION: Batch errors remain visible after step-list collapse."""
         result_dict = {
             "success": True,
             "status": "success",
@@ -336,24 +209,16 @@ class TestFormatSuccessAsText:
         }
         text = format_success_as_text(result_dict)
 
-        # Header present
         assert "Workflow completed" in text
-        # Regular node present
-        assert "✓ source" in text
-        # Batch node with partial success
-        assert "⚠ process" in text
-        assert "8/10 items succeeded" in text
-        # Error section present
+        assert "Nodes executed" not in text
+        assert "✓ source" not in text
+        assert "⚠ process" not in text
         assert "Batch 'process' errors:" in text
         assert "[1] Error 1" in text
         assert "[4] Error 2" in text
 
     def test_batch_full_success_in_full_output(self):
-        """INTEGRATION: Fully successful batch shows checkmark.
-
-        Real bug this catches: Batch with 0 errors might incorrectly show
-        warning indicator.
-        """
+        """INTEGRATION: Successful batch nodes no longer add a static step listing."""
         result_dict = {
             "success": True,
             "status": "success",
@@ -376,9 +241,10 @@ class TestFormatSuccessAsText:
         }
         text = format_success_as_text(result_dict)
 
-        assert "✓ process" in text
-        assert "5/5 items succeeded" in text
-        assert "Batch 'process' errors:" not in text  # No error section
+        assert "Workflow completed" in text
+        assert "Nodes executed" not in text
+        assert "process" not in text
+        assert "Batch 'process' errors:" not in text
 
     def test_multiple_batch_nodes_with_errors(self):
         """INTEGRATION: Multiple batch nodes with errors show all error sections.
@@ -420,10 +286,7 @@ class TestFormatSuccessAsText:
         }
         text = format_success_as_text(result_dict)
 
-        # Both batch nodes shown
-        assert "⚠ batch1" in text
-        assert "⚠ batch2" in text
-        # Both error sections present
+        assert "Nodes executed" not in text
         assert "Batch 'batch1' errors:" in text
         assert "Batch 'batch2' errors:" in text
         assert "Batch1 error" in text
@@ -535,54 +398,6 @@ class TestFormatSuccessAsText:
         ]
 
 
-class TestNonBatchNodesUnchanged:
-    """Tests ensuring non-batch node formatting is unchanged."""
-
-    def test_regular_completed_node_unchanged(self):
-        """REGRESSION: Regular completed nodes use standard format.
-
-        Real bug this catches: Adding batch support could accidentally break
-        regular node formatting.
-        """
-        step = {
-            "node_id": "fetch",
-            "status": "completed",
-            "duration_ms": 100,
-        }
-        result = _format_execution_step(step)
-
-        assert result == "  ✓ fetch (100ms)"
-
-    def test_regular_failed_node_unchanged(self):
-        """REGRESSION: Regular failed nodes use standard format.
-
-        Real bug this catches: Failed node formatting could be broken.
-        """
-        step = {
-            "node_id": "send",
-            "status": "failed",
-            "duration_ms": 50,
-        }
-        result = _format_execution_step(step)
-
-        assert result == "  ❌ send (50ms)"
-
-    def test_cached_node_unchanged(self):
-        """REGRESSION: Cached nodes show cached tag.
-
-        Real bug this catches: Cached tag formatting could be broken.
-        """
-        step = {
-            "node_id": "fetch",
-            "status": "completed",
-            "duration_ms": 0,
-            "cached": True,
-        }
-        result = _format_execution_step(step)
-
-        assert result == "  ✓ fetch (0ms) [cached]"
-
-
 class TestPricingUnavailableWarning:
     """Tests for cost display when model pricing is unavailable."""
 
@@ -670,11 +485,7 @@ class TestOnlyNodeDisplay:
         }
 
     def test_only_node_filters_not_executed_in_text(self):
-        """CORRECTNESS: --only filters out not_executed steps and shows summary.
-
-        Real bug this catches: Showing not_executed nodes clutters the output and
-        confuses agents about what actually ran.
-        """
+        """CORRECTNESS: --only preserves summary context without step listings."""
         steps = [
             {"node_id": "fetch", "status": "completed", "duration_ms": 50},
             {"node_id": "process", "status": "completed", "duration_ms": 100},
@@ -684,23 +495,15 @@ class TestOnlyNodeDisplay:
         result_dict = self._make_result_dict(steps, only_node="process", nodes_skipped=2)
         text = format_success_as_text(result_dict)
 
-        # Completed steps shown
-        assert "✓ fetch" in text
-        assert "✓ process" in text
-        # Not_executed steps NOT shown
+        assert "Nodes executed" not in text
+        assert "fetch" not in text
+        assert "process" in text
         assert "save" not in text
         assert "notify" not in text
-        # Summary line present
         assert "⤷ Stopped after 'process' (--only), 2 remaining nodes skipped" in text
-        # Header shows executed/total format
-        assert "Nodes executed (2/4):" in text
 
     def test_only_node_not_set_shows_all_steps(self):
-        """CORRECTNESS: Without --only, all steps including not_executed are shown.
-
-        Real bug this catches: Accidentally filtering steps when --only is not set
-        would hide execution details from users.
-        """
+        """CORRECTNESS: Without --only, no summary line is emitted."""
         steps = [
             {"node_id": "fetch", "status": "completed", "duration_ms": 50},
             {"node_id": "broken", "status": "not_executed", "duration_ms": 0},
@@ -708,10 +511,9 @@ class TestOnlyNodeDisplay:
         result_dict = self._make_result_dict(steps)
         text = format_success_as_text(result_dict)
 
-        # All steps shown
-        assert "fetch" in text
-        assert "broken" in text
-        # No summary line
+        assert "Nodes executed" not in text
+        assert "fetch" not in text
+        assert "broken" not in text
         assert "⤷" not in text
 
     def test_only_node_single_skipped_uses_singular(self):
@@ -730,11 +532,24 @@ class TestOnlyNodeDisplay:
         assert "1 remaining node skipped" in text
         assert "1 remaining nodes skipped" not in text
 
-    def test_only_node_zero_skipped_no_summary_line(self):
-        """CORRECTNESS: No summary line when --only is set but all nodes executed.
+    def test_only_node_zero_skipped_emits_short_form(self):
+        """CORRECTNESS: --only mode confirmation is emitted even when no
+        downstream nodes were skipped (e.g., --only targeted the last node).
 
-        Real bug this catches: Showing "0 remaining nodes skipped" is confusing
-        and adds noise when the target was the last node.
+        Real bug this catches (Task 149 review sub-issue 8a): without this
+        line, the rendered output of ``pflow foo --only target_c`` (where
+        target_c is the last node) is byte-identical to a full ``pflow foo``
+        run. Agents doing iterative debugging cannot disambiguate
+        constrained runs from full runs from the rendered output alone.
+
+        ``--only`` is a mode signal, not a summary detail. Mode flags are
+        always announced regardless of verbosity (matches ``make -k``,
+        ``pytest --maxfail``, ``rsync --dry-run``, etc.).
+
+        The original concern this test guarded against — "showing '0
+        remaining nodes skipped' is confusing" — is preserved by emitting
+        a short form (``Stopped after 'X' (--only)``) without any
+        "N remaining" suffix when no nodes were skipped.
         """
         steps = [
             {"node_id": "fetch", "status": "completed", "duration_ms": 50},
@@ -743,7 +558,12 @@ class TestOnlyNodeDisplay:
         result_dict = self._make_result_dict(steps, only_node="process", nodes_skipped=0)
         text = format_success_as_text(result_dict)
 
-        assert "⤷" not in text
+        # The mode confirmation must be emitted (sub-issue 8a fix)
+        assert "⤷ Stopped after 'process' (--only)" in text
+        # But not the "0 remaining" noise (original test's valid concern)
+        assert "0 remaining" not in text
+        assert "remaining node skipped" not in text
+        assert "remaining nodes skipped" not in text
 
 
 class TestCacheStatsDisplay:
@@ -818,14 +638,10 @@ class TestCacheStatsDisplay:
 
 
 class TestAppendExecutionStepsOnlyNode:
-    """Tests for _append_execution_steps with --only filtering."""
+    """Tests for _append_execution_steps after per-node block removal."""
 
-    def test_filters_not_executed_steps(self):
-        """CORRECTNESS: _append_execution_steps omits not_executed steps when only_node set.
-
-        Real bug this catches: Display layer showing not_executed nodes alongside
-        executed ones makes it unclear which nodes actually ran.
-        """
+    def test_only_node_keeps_summary_without_step_lines(self):
+        """CORRECTNESS: _append_execution_steps keeps only the --only summary line."""
         execution = {
             "only_node": "process",
             "nodes_skipped": 1,
@@ -841,9 +657,9 @@ class TestAppendExecutionStepsOnlyNode:
         _append_execution_steps(lines, execution)
 
         joined = "\n".join(lines)
-        assert "fetch" in joined
         assert "process" in joined
         assert "save" not in joined
+        assert "fetch" not in joined
 
     def test_shows_summary_line(self):
         """CORRECTNESS: Summary line with stop reason appears when nodes are skipped.
@@ -869,12 +685,8 @@ class TestAppendExecutionStepsOnlyNode:
         assert any("⤷" in line for line in lines)
         assert any("2 remaining nodes skipped" in line for line in lines)
 
-    def test_no_filtering_without_only(self):
-        """REGRESSION: Without only_node, not_executed steps are still shown.
-
-        Real bug this catches: Filtering logic accidentally activating without
-        --only would hide legitimately skipped nodes (e.g., branch not taken).
-        """
+    def test_without_only_emits_no_step_lines(self):
+        """REGRESSION: Without only_node, no supplementary step lines are emitted."""
         execution = {
             "nodes_executed": 1,
             "steps": [
@@ -885,9 +697,338 @@ class TestAppendExecutionStepsOnlyNode:
         lines: list[str] = []
         _append_execution_steps(lines, execution)
 
+        assert lines == []
+
+    def test_only_with_zero_skipped_emits_short_form(self):
+        """SUB-ISSUE 8a: --only with 0 nodes skipped (target was the last node)
+        must still emit the mode confirmation, in short form.
+
+        Without this, the rendered output is byte-identical to a full run
+        and agents cannot disambiguate constrained runs from full runs.
+        """
+        execution = {
+            "only_node": "target_c",
+            "nodes_skipped": 0,
+            "nodes_executed": 3,
+            "steps": [
+                {"node_id": "target_a", "status": "completed", "duration_ms": 10},
+                {"node_id": "target_b", "status": "completed", "duration_ms": 10},
+                {"node_id": "target_c", "status": "completed", "duration_ms": 10},
+            ],
+        }
+        lines: list[str] = []
+        _append_execution_steps(lines, execution)
+
         joined = "\n".join(lines)
-        assert "fetch" in joined
-        assert "skipped" in joined
+        assert "⤷ Stopped after 'target_c' (--only)" in joined
+        # Short form: no "N remaining" suffix when nothing was skipped
+        assert "remaining" not in joined
+        assert "0 " not in joined  # no "0 remaining" anywhere
+
+
+class TestFormatOnlyIndicator:
+    """Tests for the shared --only indicator formatter (single source of truth).
+
+    PARITY GUARDRAIL — three call sites depend on this formatter producing
+    consistent text:
+    - CLI default-mode summary (workflow_output.py::_display_execution_summary)
+    - CLI -p mode emission (workflow_output.py::_emit_only_indicator)
+    - MCP text summary (success_formatter.py::_append_execution_steps)
+    """
+
+    def test_long_form_when_nodes_skipped(self):
+        """With skipped nodes, the long form shows the count and grammar."""
+        line = format_only_indicator("target_b", nodes_skipped=2)
+
+        assert "⤷ Stopped after 'target_b' (--only)" in line
+        assert "2 remaining nodes skipped" in line
+
+    def test_short_form_when_no_nodes_skipped(self):
+        """SUB-ISSUE 8a: with 0 skipped nodes (target was last), the short
+        form omits the 'N remaining' suffix to avoid '0 remaining nodes
+        skipped' noise while still announcing the --only mode."""
+        line = format_only_indicator("target_c", nodes_skipped=0)
+
+        assert "⤷ Stopped after 'target_c' (--only)" in line
+        assert "remaining" not in line
+        assert "0 " not in line
+
+    def test_singular_grammar_for_one_skipped_node(self):
+        """One skipped node uses singular 'node', not plural 'nodes'."""
+        line = format_only_indicator("target_a", nodes_skipped=1)
+
+        assert "1 remaining node skipped" in line
+        assert "1 remaining nodes skipped" not in line
+
+    def test_node_id_with_special_characters_quoted_correctly(self):
+        """Node IDs are quoted with single quotes — no escaping shenanigans."""
+        line = format_only_indicator("my-node.with.dots", nodes_skipped=3)
+
+        assert "'my-node.with.dots'" in line
+
+
+class TestAppendOutputsCliMcpParity:
+    """Tests for `_append_outputs` MCP-side rendering matching CLI ``safe_output``.
+
+    PARITY GUARDRAIL — the CLI ``safe_output`` and the MCP success formatter
+    must agree on how structured workflow outputs are rendered. The plan's
+    Decision 1 caught the per-node block twin; the post-merge Fix #1 (commit
+    7f2d61b3) updated CLI ``safe_output`` to JSON-encode dict/list/bool/None
+    outputs, but the MCP twin in ``_append_outputs`` was missed and kept
+    using ``str(value)`` (Python repr). These tests prevent that drift from
+    coming back.
+    """
+
+    def _make_result_dict_with_output(self, output_value: object) -> dict:
+        return {
+            "success": True,
+            "status": "success",
+            "duration_ms": 100,
+            "execution": {"nodes_executed": 1, "steps": []},
+            "result": {"value": output_value},
+        }
+
+    def test_string_output_passes_through_verbatim(self):
+        """CORRECTNESS: String outputs are not JSON-quoted (matches CLI safe_output)."""
+        result_dict = self._make_result_dict_with_output("hello world")
+        text = format_success_as_text(result_dict)
+
+        assert "hello world" in text
+        # Must NOT be JSON-quoted ("hello world" with quotes)
+        assert '"hello world"' not in text
+
+    def test_dict_output_emits_valid_json(self):
+        """REGRESSION: Dict outputs must serialize as JSON, not Python repr.
+
+        Real bug this catches: ``str({"key": "value"})`` produces single-quoted
+        ``{'key': 'value'}`` which jq and json.loads cannot parse. Agents using
+        the MCP ``workflow_execute`` tool with structured outputs get
+        unparseable text and have to fall back to text munging.
+        """
+        import json as _json
+
+        result_dict = self._make_result_dict_with_output({"key": "value", "n": 42})
+        text = format_success_as_text(result_dict)
+
+        # Find the JSON line and round-trip through json.loads
+        lines = text.split("\n")
+        json_lines = [line for line in lines if line.startswith("{")]
+        assert json_lines, f"No JSON output line in:\n{text}"
+        parsed = _json.loads(json_lines[0])
+        assert parsed == {"key": "value", "n": 42}
+
+    def test_list_output_emits_valid_json(self):
+        """REGRESSION: List outputs must serialize as JSON arrays."""
+        import json as _json
+
+        result_dict = self._make_result_dict_with_output(["a", "b", "c"])
+        text = format_success_as_text(result_dict)
+
+        json_lines = [line for line in text.split("\n") if line.startswith("[")]
+        assert json_lines, f"No JSON array line in:\n{text}"
+        assert _json.loads(json_lines[0]) == ["a", "b", "c"]
+
+    def test_bool_output_emits_lowercase_json_token(self):
+        """REGRESSION: Bool outputs must be JSON ``true``/``false``, not Python ``True``/``False``."""
+        result_dict = self._make_result_dict_with_output(True)
+        text = format_success_as_text(result_dict)
+
+        assert "\ntrue" in text or text.endswith("true")
+        assert "True" not in text
+
+    def test_none_output_emits_json_null(self):
+        """REGRESSION: None outputs must be JSON ``null``, not Python ``None``."""
+        result_dict = self._make_result_dict_with_output(None)
+        text = format_success_as_text(result_dict)
+
+        assert "\nnull" in text or text.endswith("null")
+        assert "None" not in text
+
+    def test_unserializable_output_falls_back_without_raising(self):
+        """SAFETY: Non-serializable values fall back to ``str()`` instead of raising.
+
+        ``default=str`` inside json.dumps catches datetime, Path, set, etc.,
+        so the value lands in a JSON string. The except clause only fires for
+        truly catastrophic failures (e.g. NaN inside a dict with default=str).
+        """
+        from datetime import datetime
+
+        result_dict = self._make_result_dict_with_output(datetime(2026, 4, 7, 12, 0, 0))
+        text = format_success_as_text(result_dict)
+
+        # Must not raise, must contain something parseable as the date
+        assert "2026-04-07" in text
+
+    def test_nan_output_falls_back_to_repr_without_raising(self):
+        """PARITY: Values that defeat ``default=str`` (e.g., NaN with
+        ``allow_nan=False``) must fall through to the ``repr()`` fallback —
+        **not** ``str()`` — to match CLI ``safe_output``.
+
+        ``allow_nan=False`` makes ``json.dumps`` raise ``ValueError`` on NaN
+        before ``default=str`` gets a chance, so a dict containing a NaN value
+        triggers the except clause. Before Task 149's review fix, MCP used
+        ``str(first_value)`` here while CLI used ``repr(first_value)`` — this
+        test locks them to the same fallback shape.
+        """
+        nan_value = {"x": float("nan")}
+        result_dict = self._make_result_dict_with_output(nan_value)
+        text = format_success_as_text(result_dict)
+
+        # Must not raise, must contain some non-empty representation
+        assert text
+        # The repr fallback is exercised (either "nan" or "NaN" visible somewhere)
+        assert "nan" in text.lower()
+
+
+class TestStderrWarningsCliMcpParity:
+    """Tests for ``format_stderr_warnings`` shared helper + MCP rendering parity.
+
+    PARITY GUARDRAIL — shell nodes that exit 0 but wrote to stderr are an
+    important agent signal (hidden pipeline failures). CLI ``_display_stderr_warnings``
+    has emitted a ``⚠️  Shell stderr (exit code 0):`` block and upgraded the
+    completion glyph from ``✓`` to ``⚠️`` since GH #194 shipped. The MCP side
+    (``format_success_as_text``) was silently missing both behaviors, so an
+    agent calling the MCP ``workflow_execute`` tool on a workflow with a
+    failing grep pipeline would see ``✓ Workflow completed`` with no visibility.
+
+    These tests lock CLI and MCP into the same rendering so that drift
+    between them is caught at test time rather than by a confused agent.
+    """
+
+    def _make_result_dict_with_stderr_step(
+        self,
+        *,
+        stderr_text: str = "warning: something wrong",
+        node_id: str = "run_pipeline",
+    ) -> dict:
+        """Build a minimal success dict with one shell step that wrote to stderr."""
+        return {
+            "success": True,
+            "status": "success",  # exit 0 — DEGRADED is not involved
+            "duration_ms": 100,
+            "execution": {
+                "nodes_executed": 1,
+                "nodes_total": 1,
+                "steps": [
+                    {
+                        "node_id": node_id,
+                        "status": "completed",
+                        "has_stderr": True,
+                        "stderr": stderr_text,
+                    }
+                ],
+            },
+            "result": {"output": "ok"},
+        }
+
+    def test_format_stderr_warnings_returns_empty_when_no_warnings(self):
+        """No steps with has_stderr → empty list (helper is a no-op signal)."""
+        lines = format_stderr_warnings([
+            {"node_id": "clean", "has_stderr": False, "stderr": ""},
+            {"node_id": "also_clean", "status": "completed"},
+        ])
+        assert lines == []
+
+    def test_format_stderr_warnings_skips_empty_stderr(self):
+        """has_stderr=True but empty stderr string → skipped.
+
+        Defensive: if the step dict has a stale has_stderr flag but no actual
+        stderr content, don't render an empty bullet.
+        """
+        lines = format_stderr_warnings([
+            {"node_id": "flagged_but_empty", "has_stderr": True, "stderr": ""},
+        ])
+        assert lines == []
+
+    def test_format_stderr_warnings_returns_header_and_bullet(self):
+        """Single stderr warning → blank line + header + one bullet."""
+        lines = format_stderr_warnings([
+            {"node_id": "grep_pipe", "has_stderr": True, "stderr": "grep: foo: No such file"},
+        ])
+        assert lines[0] == ""  # blank line separates from preceding content
+        assert "⚠️  Shell stderr (exit code 0):" in lines[1]
+        assert any("grep_pipe" in line and "No such file" in line for line in lines[2:])
+
+    def test_format_stderr_warnings_truncates_long_stderr(self):
+        """Stderr over 300 chars → truncated with ellipsis."""
+        long_stderr = "x" * 500
+        lines = format_stderr_warnings([
+            {"node_id": "noisy", "has_stderr": True, "stderr": long_stderr},
+        ])
+        bullet = next(line for line in lines if "noisy" in line)
+        assert "..." in bullet
+        # Bullet contains "x" * 300 + "..." (plus the "  • noisy: " prefix)
+        assert bullet.count("x") == 300
+
+    def test_format_stderr_warnings_indents_multiline_stderr(self):
+        """Multi-line stderr → each continuation line indented 5 spaces for readability."""
+        lines = format_stderr_warnings([
+            {"node_id": "multi", "has_stderr": True, "stderr": "first line\nsecond line"},
+        ])
+        bullet = next(line for line in lines if "multi" in line)
+        assert "first line" in bullet
+        assert "\n     second line" in bullet  # 5-space continuation indent
+
+    def test_mcp_text_upgrades_glyph_when_shell_node_wrote_stderr(self):
+        """REGRESSION: MCP ``format_success_as_text`` must render ``⚠️ Workflow completed``
+        (not ``✓``) when any step has ``has_stderr``, matching CLI behavior.
+
+        Before this fix, MCP callers got ``✓ Workflow completed in Xs`` for
+        workflows where a shell pipeline silently failed (e.g., a failed grep
+        inside a chain that produced a non-empty `final_result`). Agents relying
+        on the glyph to detect "something needs attention" saw a clean success.
+        """
+        result_dict = self._make_result_dict_with_stderr_step(stderr_text="ERR: upstream failed")
+        text = format_success_as_text(result_dict)
+
+        assert "⚠️ Workflow completed" in text
+        # Must NOT render the clean-success glyph
+        # (starts-with check avoids matching ``✓`` inside the stderr preview)
+        completion_lines = [line for line in text.split("\n") if "Workflow completed" in line]
+        assert completion_lines, f"No completion line in:\n{text}"
+        for line in completion_lines:
+            assert "✓" not in line, f"Completion line contains ✓ but shell stderr was present: {line!r}"
+
+    def test_mcp_text_renders_stderr_warning_block(self):
+        """REGRESSION: MCP ``format_success_as_text`` must include the
+        ``⚠️  Shell stderr (exit code 0):`` block + per-node bullet.
+        """
+        result_dict = self._make_result_dict_with_stderr_step(
+            stderr_text="grep: /tmp/missing: No such file or directory",
+            node_id="search_logs",
+        )
+        text = format_success_as_text(result_dict)
+
+        assert "⚠️  Shell stderr (exit code 0):" in text
+        assert "search_logs" in text
+        assert "No such file" in text
+
+    def test_mcp_text_clean_success_stays_clean(self):
+        """REGRESSION GUARD: workflows without shell stderr still get ``✓`` glyph
+        and no stderr block. Protects against over-correction where every
+        workflow starts showing ⚠️.
+        """
+        result_dict = {
+            "success": True,
+            "status": "success",
+            "duration_ms": 50,
+            "execution": {
+                "nodes_executed": 1,
+                "nodes_total": 1,
+                "steps": [
+                    {"node_id": "clean", "status": "completed", "has_stderr": False},
+                ],
+            },
+            "result": {"output": "ok"},
+        }
+        text = format_success_as_text(result_dict)
+
+        assert "✓ Workflow completed" in text
+        assert "Shell stderr" not in text
+        # Must not upgrade glyph
+        completion_lines = [line for line in text.split("\n") if "Workflow completed" in line]
+        for line in completion_lines:
+            assert "⚠️" not in line
 
 
 class TestFindAutoOutputNamespaceAware:
