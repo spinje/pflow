@@ -35,7 +35,7 @@ Fixed GH #194 (non-interactive output routed to stderr) by collapsing a three-mo
 
 **Additions discovered during adversarial verification (NOT in plan)**:
 
-1. **`_partial_line_open` state machine** on `OutputController`: `_close_partial_line_if_open()` + `_ensure_node_line_open()` + `_partial_line_open: bool`. Required because nested sub-workflow child callbacks and `logger.warning` writes both landed in the middle of parent `node_id...` partial lines.
+1. **`_partial_line_open` state machine** on `OutputController`: `_close_partial_line()` + `_ensure_node_line_open()` + `_partial_line_open: bool`. Required because nested sub-workflow child callbacks and `logger.warning` writes both landed in the middle of parent `node_id...` partial lines.
 2. **`logger.warning("Command failed with exit code N")` deleted** from `shell.py:713` — it was bypassing `OutputController` and corrupting partial lines on failure.
 3. **JSON encoding in `safe_output`** — `dict`/`list`/`bool`/`number`/`None` outputs were Python-`repr`'d on stdout, unparseable by jq. The #194 fix made this visible for the first time because the data actually landed on stdout. Uses `json.dumps(value, ensure_ascii=False, allow_nan=False, default=str)` with stderr diagnostic on true serialization failure.
 4. **Real subprocess regression tests** — 9 tests in `tests/test_cli/test_progress_streaming_subprocess.py` (853 LOC new file). CliRunner intercepts `sys.stderr` via Click's capture machinery, but Python's `logging` module holds a reference to the ORIGINAL stderr from startup. Three of the bugs above are **invisible to CliRunner**. Two CliRunner tests were deleted as test theater.
@@ -71,7 +71,7 @@ Followed the **7-step research→plan→review→implement→code-review→fix�
 | File | What changed |
 |---|---|
 | `src/pflow/cli/workflow_output.py` | `_output_with_header` collapsed; `safe_output` strict JSON + `default=str` + diagnostic fallback; `_display_execution_summary` dropped per-node loop + always emits `--only`; new `_emit_summary_or_only_indicator` dispatcher + `_emit_only_indicator` helper; `_format_node_status_line` / `_get_status_indicator` / `_format_node_timing` deleted |
-| `src/pflow/core/output_controller.py` | `_ProgressPartialLineFilter` class; `_partial_line_open` state + `_close_partial_line_if_open` + `_ensure_node_line_open` helpers; `_install_log_partial_line_guard` idempotent install (weakref); TTY gate removed from `create_progress_callback`; `_handle_batch_progress` internal isatty guard; `_handle_node_complete` split into `_build_smart_handled_tag` + `_emit_non_batch_completion` (ruff C901); `_handle_node_warning` parameter renamed; dead methods deleted (`echo_progress`, `echo_result`, `should_show_prompts`, `_handle_workflow_start`) |
+| `src/pflow/core/output_controller.py` | `_ProgressPartialLineFilter` class; `_partial_line_open` state + `_close_partial_line` + `_ensure_node_line_open` helpers; `_install_log_partial_line_guard` idempotent install (weakref); TTY gate removed from `create_progress_callback`; `_handle_batch_progress` internal isatty guard; `_handle_node_complete` split into `_build_smart_handled_tag` + `_emit_non_batch_completion` (ruff C901); `_handle_node_warning` parameter renamed; dead methods deleted (`echo_progress`, `echo_result`, `should_show_prompts`, `_handle_workflow_start`) |
 | `src/pflow/execution/runner.py` | Signature: `output: OutputInterface` → `progress_callback: Callable`; simplified `_initialize_shared_store` |
 | `src/pflow/execution/formatters/success_formatter.py` | `_append_execution_steps` collapsed; new `format_only_indicator` shared formatter (single source of truth); `_append_outputs` JSON-encodes for MCP/CLI parity |
 | `src/pflow/runtime/engine/batch_executor.py` | Per-worker buffering wrapper in `process_item`; new `_drain_worker_buffer` helper; `_collect_parallel_results` drains before `_report_batch_progress` |
@@ -133,7 +133,7 @@ Followed the **7-step research→plan→review→implement→code-review→fix�
 
 **Context**: 29 `logger.warning`/`logger.error` sites across node files corrupt partial progress lines. Options: delete the high-frequency sites individually, install a handler, install a filter, defer.
 
-**Chosen**: `logging.Filter` that calls `_close_partial_line_if_open()` as a side effect before returning `True`.
+**Chosen**: `logging.Filter` that calls `_close_partial_line()` as a side effect before returning `True`.
 
 **Why filter not handler**:
 - Filters run as side effects before each handler emits — don't replace existing handlers, can't accidentally swallow records, can't accidentally duplicate output
@@ -292,7 +292,7 @@ The remaining tests below are regression guards for specific fixes, not core cov
 
 **Rule**: Any code that writes to stderr during progress rendering must coordinate with `OutputController._partial_line_open` or flow through the `_ProgressPartialLineFilter` (installed automatically for `logger.*` writes).
 
-**How**: call `self._close_partial_line_if_open()` before starting a new line. Use `self._ensure_node_line_open(node_id, indent)` when emitting a completion that expects a preceding `node_id...` lead-in.
+**How**: call `self._close_partial_line()` before starting a new line. Use `self._ensure_node_line_open(node_id, indent)` when emitting a completion that expects a preceding `node_id...` lead-in.
 
 **Reusable insight**: a `logging.Filter` with a weakref back to a coordination object is a clean way to get "run before every emit" semantics without replacing handlers. The side effect IS the point; `filter()` always returns True.
 
@@ -304,7 +304,7 @@ class _ProgressPartialLineFilter(logging.Filter):
     def filter(self, record):
         ctrl = self._controller_ref()
         if ctrl is not None:
-            ctrl._close_partial_line_if_open()
+            ctrl._close_partial_line()
         return True  # Never filter; side effect is the point
 ```
 
@@ -431,7 +431,7 @@ class _ProgressPartialLineFilter(logging.Filter):
 **If you're touching `OutputController`**:
 1. Understand the `_partial_line_open` state machine first. Every non-batch completion handler must call `_ensure_node_line_open` before appending.
 2. Any new `click.echo(..., nl=False)` → set `self._partial_line_open = True`.
-3. Any new writer that is NOT a completion (e.g., a mid-execution notice) → call `_close_partial_line_if_open()` first.
+3. Any new writer that is NOT a completion (e.g., a mid-execution notice) → call `_close_partial_line()` first.
 4. If it writes via `logger.*`, the filter handles it. If it writes via `click.echo` directly, coordinate manually.
 
 **If you're changing the runner signature or shared store keys**:

@@ -996,3 +996,100 @@ class TestRealSubprocessProgressRendering:
         assert "timeout_node...Command timed" not in result.stderr, (
             f"Raw timeout warning text concatenated onto the partial timeout_node... line.\nstderr: {result.stderr!r}"
         )
+
+    def test_gh194_routing_invariant_exact_byte_separation(self, tmp_path, uv_exe, subprocess_env):
+        """REGRESSION: the GH #194 routing contract — workflow data goes to
+        stdout ONLY, diagnostics go to stderr ONLY — must be fd-level clean.
+
+        This is the subprocess counterpart to ``test_workflow_data_goes_to_stdout_not_stderr_gh194``
+        in ``test_workflow_output_handling.py``. The CliRunner version catches
+        simple routing regressions fast; this subprocess version catches
+        fd-level cross-contamination that CliRunner cannot detect because its
+        stderr-capture machinery swaps out ``sys.stderr`` at the Python level
+        (so any code that writes directly to the original fd lands somewhere
+        the CliRunner assertions never see).
+
+        Asserts four things the PR #243 review called out as the "single,
+        agent-friendly regression guard for #194 specifically":
+
+        1. ``stdout`` contains the declared output value with trailing newline
+           (exact-match assertion — catches whitespace/prefix/suffix regressions
+           that substring-based checks miss)
+        2. ``stderr`` contains the header line AND the completion summary
+           (verifies both diagnostic components reach stderr)
+        3. ``stdout`` contains NO stderr markers (``Executing workflow``,
+           ``Workflow completed``, ``📊``) — catches the Mode 3 regression
+           where diagnostics bleed onto stdout
+        4. ``stderr`` does NOT contain the declared canary value — catches
+           the original #194 bug where data landed on stderr
+
+        Any change that regresses the Task 149 routing fix fails here with
+        a clear per-assertion message.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "outputs": {
+                "result": {
+                    "description": "Routing invariant canary",
+                    "type": "string",
+                    "source": "${produce.stdout}",
+                },
+            },
+            "nodes": [
+                {
+                    "id": "produce",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo GH194_ROUTING_CANARY"},
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "gh194_routing.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = _run_pflow(uv_exe, subprocess_env, workflow_path)
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, (
+            f"workflow failed unexpectedly\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+        # 1. EXACT match on stdout — the declared output value + trailing newline.
+        #    Substring checks (`in result.stdout`) would silently accept prefix/
+        #    suffix contamination; exact match is the strict contract.
+        assert result.stdout == "GH194_ROUTING_CANARY\n", (
+            f"stdout is not an exact match for the declared output.\n"
+            f"Expected: 'GH194_ROUTING_CANARY\\n'\n"
+            f"Actual  : {result.stdout!r}\n"
+            f"This means either (a) stdout has extra content (diagnostic leak onto "
+            f"the data stream) or (b) the declared output resolver produced a "
+            f"different value than expected."
+        )
+
+        # 2. Both diagnostic components must reach stderr
+        assert "Executing workflow" in result.stderr, (
+            f"Execution header missing from stderr — progress routing regressed.\nstderr: {result.stderr!r}"
+        )
+        assert "✓ Workflow completed" in result.stderr, (
+            f"Completion summary missing from stderr — summary routing regressed.\nstderr: {result.stderr!r}"
+        )
+
+        # 3. Stderr markers must NOT appear on stdout (the #194 Mode 3 regression
+        #    would route them to stdout alongside data, breaking `pflow foo | jq`)
+        for marker in ("Executing workflow", "Workflow completed", "📊"):
+            assert marker not in result.stdout, (
+                f"Diagnostic marker {marker!r} leaked onto stdout — this is the "
+                f"#194 Mode 3 regression where diagnostics contaminate the data "
+                f"stream. Agents piping `pflow foo | jq` would receive garbage.\n"
+                f"stdout: {result.stdout!r}"
+            )
+
+        # 4. The canary value must NOT appear on stderr (the original #194 bug
+        #    where non-interactive mode routed workflow data to stderr)
+        assert "GH194_ROUTING_CANARY" not in result.stderr, (
+            f"The canary value leaked onto stderr — this is the literal GH #194 "
+            f"bug where non-interactive output was routed to the wrong stream. "
+            f"Agents capturing stdout would receive zero bytes.\n"
+            f"stderr: {result.stderr!r}"
+        )

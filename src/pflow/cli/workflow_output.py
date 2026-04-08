@@ -510,14 +510,10 @@ def _display_execution_summary(
 
     # --only mode confirmation: always emit when --only is active, even
     # when no downstream nodes were skipped (e.g., --only targeted the
-    # last node). Uses the shared formatter so this line stays in lockstep
-    # with the MCP path and the -p mode emission below.
-    only_node = execution.get("only_node")
-    if only_node:
-        from pflow.execution.formatters.success_formatter import format_only_indicator
-
-        nodes_skipped = execution.get("nodes_skipped", 0)
-        click.echo(format_only_indicator(only_node, nodes_skipped), err=True)
+    # last node). Delegated to _emit_only_indicator so there's ONE call
+    # site for the indicator — the -p path (_emit_summary_or_only_indicator)
+    # and the default path (here) share this function, preventing drift.
+    _emit_only_indicator(formatted_result)
 
     if steps:
         _display_batch_errors(steps)

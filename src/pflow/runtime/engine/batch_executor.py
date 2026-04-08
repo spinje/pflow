@@ -416,6 +416,18 @@ def _drain_worker_buffer(callback: Any, buffered_events: list[tuple[tuple, dict]
     Suppression matches the patterns in ``instrumentation.py``
     (``call_start_callback`` etc.) so a rendering exception cannot crash
     workflow execution.
+
+    **Memory scaling**: per-worker buffer size is O(events_per_item). Total
+    peak buffer usage is O(events_per_item x max_concurrent) across all
+    active workers. For typical batches (4-16 items x 5-20 child nodes
+    per sub-workflow, ~4 events per node) this is a few thousand tuples,
+    negligible. Pathological workloads with thousands of child nodes per
+    item would see proportional growth. If this becomes a real concern
+    in practice, introduce ``_MAX_BUFFERED_EVENTS_PER_ITEM`` with a
+    drop-and-warn fallback that records the drop in ``shared["__warnings__"]``
+    so agents can still see that output was truncated. Not implemented
+    today — no known workload hits the limit, and a silent drop would be
+    worse than the current unbounded-but-small behavior.
     """
     if not buffered_events or not callable(callback):
         return

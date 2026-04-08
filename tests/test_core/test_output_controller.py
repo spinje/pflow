@@ -292,6 +292,64 @@ class TestOutputController:
         finally:
             root.removeHandler(handler)
 
+    def test_install_log_partial_line_guard_attaches_to_stderr_handler(self):
+        """STRUCTURAL INVARIANT: when a stderr ``StreamHandler`` exists on the
+        root logger before ``create_progress_callback`` runs, the
+        ``_ProgressPartialLineFilter`` must be attached to THAT specific handler.
+
+        This locks the install path directly. The existing
+        ``test_log_filter_closes_partial_line_on_emit`` tests the filter
+        class in isolation (it constructs a filter directly, bypassing the
+        install path); the existing ``test_install_log_partial_line_guard_is_idempotent``
+        tests no-stacking behavior. Neither catches the regression where
+        ``_install_log_partial_line_guard`` is refactored to iterate a
+        different logger or check a different stream attribute — both
+        existing tests would still pass (the first because it bypasses the
+        install, the second because "1 filter" == "1 filter" even if it's
+        on the wrong handler). A real ``logger.*`` write would then bypass
+        the coordinator entirely and corrupt live progress output.
+
+        Also exercises the negative case: a handler whose stream is NOT
+        ``sys.stderr`` must NOT receive the filter, otherwise file-based
+        log handlers would pay unnecessary side-effect cost on every emit.
+        """
+        import io
+        import logging as _logging
+
+        from pflow.core.output_controller import _ProgressPartialLineFilter
+
+        # Two handlers: one attached to sys.stderr, one to an unrelated stream
+        stderr_handler = _logging.StreamHandler(sys.stderr)
+        other_stream = io.StringIO()
+        other_handler = _logging.StreamHandler(other_stream)
+
+        root = _logging.getLogger()
+        root.addHandler(stderr_handler)
+        root.addHandler(other_handler)
+        try:
+            controller = OutputController(stdin_tty=True, stdout_tty=True)
+            controller.create_progress_callback()
+
+            # POSITIVE: filter IS on the stderr handler
+            stderr_filters = [f for f in stderr_handler.filters if isinstance(f, _ProgressPartialLineFilter)]
+            assert len(stderr_filters) == 1, (
+                f"Filter not attached to stderr StreamHandler. "
+                f"Found filters: {stderr_handler.filters}. "
+                f"logger.* calls would bypass the partial-line coordinator — "
+                f"any node's logger.warning during live progress would corrupt the stream."
+            )
+
+            # NEGATIVE: filter is NOT on the non-stderr handler
+            other_filters = [f for f in other_handler.filters if isinstance(f, _ProgressPartialLineFilter)]
+            assert len(other_filters) == 0, (
+                f"Filter incorrectly attached to a non-stderr handler "
+                f"(stream={other_handler.stream!r}). The install path must only attach "
+                f"to handlers whose stream IS sys.stderr."
+            )
+        finally:
+            root.removeHandler(stderr_handler)
+            root.removeHandler(other_handler)
+
     @patch("click.style", side_effect=mock_click_style)
     @patch("click.echo")
     def test_node_warning_emits_via_error_message_kwarg(self, mock_echo, mock_style):

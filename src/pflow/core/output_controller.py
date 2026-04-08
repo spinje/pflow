@@ -39,7 +39,7 @@ class _ProgressPartialLineFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         controller = self._controller_ref()
         if controller is not None:
-            controller._close_partial_line_if_open()
+            controller._close_partial_line()
         return True
 
 
@@ -96,6 +96,18 @@ class OutputController:
         # can terminate the partial line first instead of concatenating onto
         # it. Without this, captured stderr in non-TTY mode shows
         # `node_id...WARNING: ...` style corruption.
+        #
+        # **Invariant**: only ``_handle_node_start`` and ``_ensure_node_line_open``
+        # may set this flag to ``True``. Any new subsystem that writes a
+        # ``node_id...`` style partial line to stderr MUST route through one
+        # of those methods (or call ``_close_partial_line()`` before writing)
+        # or the state machine desyncs silently — subsequent ``_close_partial_line()``
+        # calls will be no-ops while real partial lines remain open. Bypass paths
+        # include direct ``click.echo(..., nl=False, err=True)`` calls or
+        # ``sys.stderr.write`` calls from inside a node lifecycle method; the
+        # ``_ProgressPartialLineFilter`` catches the ``logger.*`` case but not
+        # these direct-write cases. Adding such a writer is a design smell —
+        # prefer emitting a new progress event instead.
         self._partial_line_open = False
 
         # Tracks whether the partial-line-aware logging filter has been
@@ -122,7 +134,7 @@ class OutputController:
         # Rules 3 & 4: Both stdin AND stdout must be TTY for interactive
         return self.stdin_tty and self.stdout_tty
 
-    def _close_partial_line_if_open(self) -> None:
+    def _close_partial_line(self) -> None:
         """Terminate any open partial line so the next write starts fresh.
 
         Called by every event handler that emits a fresh line so nested
@@ -140,7 +152,7 @@ class OutputController:
             node_id: The node identifier
             indent: Indentation string based on depth
         """
-        self._close_partial_line_if_open()
+        self._close_partial_line()
         click.echo(f"{indent}  {node_id}...", err=True, nl=False)
         self._partial_line_open = True
 
@@ -160,7 +172,19 @@ class OutputController:
         click.echo(f"\r{indent}  {node_id}... {batch_current}/{batch_total} {status}", err=True, nl=False)
 
     def _build_smart_handled_tag(self, smart_handled: bool, smart_handled_reason: Optional[str]) -> str:
-        """Build display suffix for smart-handled shell outcomes."""
+        """Build display suffix for smart-handled shell outcomes.
+
+        Reason-string matching is pinned by the ``shell.py:200`` contract:
+        reason strings MUST contain either ``"no matches"`` or ``"not found"``
+        so one of the two named branches always fires. The final ``if reason:``
+        branch is therefore **unreachable today** — it's a safety net for
+        future reason-string additions that might forget to update this tag
+        mapping. If that happens, the user sees a graceful ``[raw reason]``
+        yellow tag instead of silently dropping the signal, which makes the
+        contract violation immediately visible in the live progress stream.
+        Cheap to keep; removing it would trade graceful degradation for
+        silent signal loss on future breakage.
+        """
         if not smart_handled:
             return ""
 
@@ -170,6 +194,9 @@ class OutputController:
         if "not found" in reason:
             return click.style(" [not found]", fg="yellow")
         if reason:
+            # Safety-net fallback — unreachable today (see docstring); kept
+            # so a future shell.py reason string that forgets this tag
+            # mapping renders a visible tag instead of silently dropping.
             return click.style(f" [{reason}]", fg="yellow")
         return ""
 
