@@ -1467,3 +1467,103 @@ The baseline investigation surfaced a genuinely interesting finding: **Task 147'
 5. **`[skip review]` is the right commit tag here.** The fixes are the reviewer's own recommendations applied; running the bots again on the fix commit is pure noise. The tag prevents a second review round from the same bots on the same suggestions.
 
 ---
+
+## 2026-04-08 — Round 9: re-visit of deferred findings + cascade side effect
+
+**Trigger**: after Round 8 shipped, the user asked "any other issues / warnings / suggestions we should consider fixing now?" Re-reading the code surfaced two things:
+
+1. **Warning #3 (deferred in Round 8) is actually worth applying.** Re-reading `runner.py:212` and `runner.py:375` showed that the two dynamic-attribute sites are **different concerns wearing the same hat**: `_pflow_parser_diagnostics` is a cross-cutting annotation set on any exception type (can't be promoted to a specific class), while `_pflow_validation_warnings` is specific to `WorkflowValidationError` and semantically belongs on that exception class. Promoting the second is clean and doesn't create asymmetry. Reversed my Round 8 "defer" recommendation.
+
+2. **Fix [1] has a cascade side effect I didn't verify in Round 8.** The user's question prompted a "what else could go wrong" pass, and the obvious follow-up was "does the silent-skip in `_register_node_outputs_from_registry` produce extra noise when a workflow has downstream template refs to the unknown node?" Verification revealed a real issue.
+
+### Cascade verification (Fix [1] side effect)
+
+**Setup**: created `/tmp/task147-verify/unknown-type-with-downstream.pflow.md` with:
+- Node `unknown-source` of type `shel` (unknown)
+- Node `downstream-consumer` with `command: echo ${unknown-source.stdout}`
+
+**Before Round 9 fix**:
+```
+WARNING: node_outputs fallback reached for node 'unknown-source' — this is unexpected
+WARNING: Template validation found 1 errors
+✗ Validation failed (2 errors):
+  Error 1: Template Error — Node 'unknown-source' does not output 'stdout'.
+  Error 2: Validation Error — Unknown node type: 'shel' (Did you mean 'shell'?)
+```
+
+The second stderr line is harmless logger output. The FIRST stderr line is the issue: `_get_node_outputs_from_registry` at `path_validation.py:796` had a `logger.warning(...)` call that said "this is unexpected" — but my Round 8 Fix [1] **made it expected as a legitimate code path**. Any workflow with an unknown node type + downstream refs would trip this warning and the user would see "this is unexpected" noise in stderr.
+
+**Root cause**: the fallback was written assuming `_register_node_outputs_from_registry` would always register outputs for every node in the workflow (or raise). Round 8 Fix [1] broke that assumption — by design, but without updating the fallback's "should not be reached in practice" comment or its logging level.
+
+### Fixes applied in this round
+
+1. **`src/pflow/runtime/template_validation/path_validation.py:787-817`** — updated `_get_node_outputs_from_registry` docstring and logger behavior. The docstring now describes the two legitimate-reach cases (unknown node type + defensive backstop), and the logger call is demoted from `WARNING` to `DEBUG`. The unknown-node-type case is legitimate, not an internal consistency bug — observability is preserved via debug-level logging, but users don't see stderr noise for a case that's already being reported via the proper V6 diagnostic.
+
+2. **`src/pflow/core/exceptions.py:70-101`** — `WorkflowValidationError.__init__` gained a `validation_warnings: list[Diagnostic] | None = None` constructor kwarg. Stored as `self.validation_warnings`. Docstring updated to document the two-field contract (errors + warnings from the same validation pass) and why the warnings live on the exception (captured at raise time so downstream conversion can surface them without shared-store access).
+
+3. **`src/pflow/execution/runner.py:373-377`** — `_validate()` now passes warnings via the constructor kwarg instead of the dynamic attribute:
+   ```python
+   raise WorkflowValidationError(
+       validation_errors=errors,
+       validation_warnings=list(warnings),
+   )
+   ```
+   The `# type: ignore[attr-defined]` comment is gone.
+
+4. **`src/pflow/execution/runner.py:538-549`** — `_exception_to_result` reads `exception.validation_warnings` via `getattr` (still using getattr because the exception type isn't narrowed at this layer — any exception can propagate through `run()`, and only `WorkflowValidationError` carries this attribute). Added a comment explaining this is intentional.
+
+### Architectural note — two dynamic-attr patterns, only one promoted
+
+After Round 9 the codebase still has ONE `_pflow_*` dynamic attribute pattern at `runner.py:211-212`:
+```python
+if parser_diagnostics and not hasattr(e, "_pflow_parser_diagnostics"):
+    e._pflow_parser_diagnostics = list(parser_diagnostics)  # type: ignore[attr-defined]
+```
+
+This **stays** because it's a different concern: parser diagnostics are set on **any exception type** that happens to propagate during node execution — they're a cross-cutting annotation, not a property of a specific exception class. Promoting them to a constructor kwarg would require either adding the kwarg to every exception class (impossible for built-in exceptions) or creating an envelope pattern. The task 147 braindump's "attr-defined pattern is intentional" warning applies to THIS pattern, not to `_pflow_validation_warnings` (which is specific to one class and has a clean destination).
+
+Round 9 fixes only the specific case that has a clean destination. The general pattern remains, correctly.
+
+### Regression tests added (3)
+
+1. **`tests/test_core/test_exception_hierarchy.py::TestExceptionHierarchy::test_workflow_validation_error_carries_warnings_as_first_class_attr`** — locks in the `validation_warnings` kwarg contract: round-trips errors + warnings through the constructor, defaults to empty list when omitted, and the pre-existing summary-only constructor path still works (backward compat).
+
+2. **`tests/test_execution/test_runner.py::TestExceptionToResultCategorization::test_workflow_validation_error_warnings_survive_via_kwarg`** — locks in the end-to-end flow: a `WorkflowValidationError` raised with `validation_warnings=[...]` survives through `_exception_to_result` into the final `ExecutionResult.diagnostics` list. Before the promotion, this was verified implicitly; after the promotion, it's explicit.
+
+3. **`tests/test_runtime/test_template_validation/test_enhanced_errors.py::TestEnhancedTemplateErrors::test_unknown_node_type_downstream_ref_no_stderr_warning`** — three-part structural guard for the fallback log demotion:
+   - (a) the template error diagnostic is still produced (behavior preserved)
+   - (b) no `WARNING`-level log record from the fallback path (the UX fix)
+   - (c) the `DEBUG`-level record still fires (observability preserved)
+
+   Uses `caplog` with explicit level + logger name per the `tests/CLAUDE.md` guidance: `caplog.set_level("DEBUG", logger="pflow.runtime.template_validation.path_validation")`.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| 3 new regression tests (individual) | 3/3 pass |
+| `make test` (full suite) | 4680 passed (was 4677 + 3 new regressions) |
+| `make check` | clean (ruff + ruff-format + mypy 171 files + deptry) |
+| Baseline refresh | zero drift — Round 9 changes don't affect the 21 rendered fixtures |
+| Manual cascade repro | 2 clean errors, zero stderr noise |
+| Grep: `_pflow_validation_warnings` | zero matches in `src/` (cleanup complete) |
+| Grep: `# type: ignore\[attr-defined\]` in `runner.py` | 1 remaining (`_pflow_parser_diagnostics` — intentionally retained) |
+
+### Deferred (now truly done)
+
+- **claude[bot] Suggestion #2** (generic "Inspect this node's output..." text): remains deferred. Requires runtime warning categorization infrastructure that doesn't exist. No user-reported pain point. Would be speculative work.
+- **`_pflow_parser_diagnostics` cleanup**: explicitly NOT touched — different concern, correctly uses the dynamic-attr pattern for cross-cutting exception annotation.
+
+### Meta-lessons from Round 9
+
+1. **"Defer" recommendations deserve a second read.** My Round 8 recommendation to defer Warning #3 was based on a single pass through `runner.py`. The second read (triggered by the user's "anything else?") showed I'd conflated two different dynamic-attribute patterns. Task 147 braindump's "attr-defined pattern is intentional" applies to `_pflow_parser_diagnostics`, not to `_pflow_validation_warnings`. **Lesson**: when a review finding touches a pattern shared across multiple sites, verify at every site, not just the one the reviewer flagged. A defer-then-revisit cycle is fine, but the initial "defer" should be tentative.
+
+2. **"Anything else?" is a load-bearing prompt.** The user's open-ended question prompted the cascade verification that found the `logger.warning` stderr leak. I had already marked Fix [1] as "verified end-to-end" in Round 8 based on a single-node test. The test didn't exercise the downstream-ref case — a user asking one extra question surfaced a real UX regression I'd shipped. **Lesson**: "verified end-to-end" is a stronger claim than "my test passed." Don't conflate them.
+
+3. **Log levels are UX.** The `logger.warning("this is unexpected")` line was valid defensive code when written — in Round 8 it became noise. The fix wasn't to remove the log (observability matters) but to demote it to DEBUG. **Log level is a contract with the user about what they should pay attention to**, and when the "unexpected" becomes expected, the level should demote.
+
+4. **Structural regression guards need to cover observable UX, not just logic.** My Round 8 test for Fix [1] asserted "exactly 1 rich error" — correct logic. The cascade failure was in stderr output, which the test didn't capture. Round 9's `test_unknown_node_type_downstream_ref_no_stderr_warning` uses `caplog` to lock in log-level observability. **Tests should cover the full observable surface: stdout, stderr, log levels, return values.**
+
+5. **The "refresh baseline, diff shows zero" signal is genuinely informative.** After Round 9 fixes, the baseline diff was empty. That's not "no coverage" — it's confirmation that my fixes don't affect the rendered-text surface (they affect construction, runtime logger config, and exception plumbing, none of which flow through the 21 baseline fixtures). This was a strong null result that told me "your changes are rendering-neutral, go."
+
+---

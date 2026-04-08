@@ -68,15 +68,25 @@ class WorkflowNotFoundError(PflowError):
 
 
 class WorkflowValidationError(PflowError):
-    """Raised when workflow validation fails."""
+    """Raised when workflow validation fails.
+
+    Carries both the blocking errors (``validation_errors``) and any
+    warnings produced during the same validation pass (``validation_warnings``).
+    The warnings are legitimate diagnostics that the user should still see
+    alongside the errors — they're captured at raise time so downstream
+    exception-to-result conversion can surface them without needing access
+    to the original shared store.
+    """
 
     def __init__(
         self,
         summary: str = "Workflow validation failed",
         validation_errors: list[Diagnostic] | None = None,
+        validation_warnings: list[Diagnostic] | None = None,
     ):
         self.summary = summary
         self.validation_errors = validation_errors or []
+        self.validation_warnings = validation_warnings or []
         super().__init__(summary)
 
     def to_diagnostics(self) -> list[Diagnostic]:

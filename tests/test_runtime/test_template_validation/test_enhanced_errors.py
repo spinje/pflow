@@ -296,6 +296,49 @@ class TestEnhancedTemplateErrors:
 
         assert len(errors) == 0
 
+    def test_unknown_node_type_downstream_ref_no_stderr_warning(self, caplog):
+        """PR #244 Round 9 regression guard.
+
+        When a workflow has an unknown node type AND a downstream template
+        reference to that node's output, the defensive fallback in
+        ``_get_node_outputs_from_registry`` is reached (because Fix [1] silently
+        skips unknown types in ``_register_node_outputs_from_registry``). The
+        old fallback logged ``WARNING: node_outputs fallback reached for node
+        'X' — this is unexpected``, which leaked to user-visible stderr. This
+        test locks in that:
+          (a) the fallback still produces a Template Error diagnostic (behavior),
+          (b) it no longer emits a WARNING-level log record (UX),
+          (c) it emits a DEBUG-level record instead (observability preserved).
+        """
+        caplog.set_level("DEBUG", logger="pflow.runtime.template_validation.path_validation")
+
+        workflow_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {"id": "unknown-source", "type": "shel", "params": {"command": "echo hi"}},
+                {
+                    "id": "downstream",
+                    "type": "llm",
+                    "params": {"prompt": "saw: ${unknown-source.stdout}"},
+                },
+            ],
+        }
+
+        registry = create_mock_registry()
+        errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+
+        # (a) template error still produced for the downstream ref
+        fallback_errors = [d for d in errors if "unknown-source" in d.message and "does not output" in d.message]
+        assert len(fallback_errors) == 1
+
+        # (b) no WARNING-level log record from the fallback path
+        warning_records = [r for r in caplog.records if r.levelname == "WARNING" and "fallback reached" in r.message]
+        assert not warning_records, f"Expected no WARNING from fallback, got: {warning_records}"
+
+        # (c) DEBUG-level log still fires for observability
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG" and "fallback reached" in r.message]
+        assert debug_records, "Expected DEBUG log from fallback for observability"
+
 
 def test_undeclared_variable_preserves_template_context() -> None:
     """Simple template errors should keep template and suggestion structure."""

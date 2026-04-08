@@ -785,16 +785,25 @@ def _get_node_outputs_description(
 
 
 def _get_node_outputs_from_registry(node: dict[str, Any], output_key: str, registry: Registry) -> Diagnostic:
-    """Fallback when node_outputs has no entries for a node.
+    """Fallback when ``node_outputs`` has no entries for a node.
 
-    This is a defensive fallback that should not be reached in practice —
-    _extract_node_outputs() runs before error generation and registers
-    outputs for all nodes. Intentionally simple to avoid re-introducing
-    the registry-vs-batch divergence bug.
+    Reachable in two cases:
+    1. ``extract_node_outputs`` skipped the node because its type is unknown
+       (see ``_register_node_outputs_from_registry``'s silent-skip behavior —
+       ``WorkflowValidator._validate_node_types`` produces the rich
+       ``Unknown node type`` diagnostic, and this fallback supplies a
+       companion template error for any downstream refs to the unknown node).
+    2. Defensive backstop for any other path that reaches error generation
+       without the node's outputs being registered (should be rare).
+
+    Intentionally simple — kept minimal to avoid re-introducing the
+    registry-vs-batch divergence bug. Logs at debug level because the
+    unknown-node-type case is legitimate, not an internal consistency bug.
     """
     node_id = node.get("id", "unknown")
-    logger.warning(
-        f"node_outputs fallback reached for node '{node_id}' — this is unexpected",
+    logger.debug(
+        "node_outputs fallback reached for node '%s' (likely unknown node type)",
+        node_id,
         extra={"node_id": node_id, "output_key": output_key},
     )
     return Diagnostic(

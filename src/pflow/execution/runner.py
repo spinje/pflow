@@ -377,9 +377,10 @@ class WorkflowRunner:
         warnings = [diagnostic for diagnostic in validator_diagnostics if diagnostic.severity == Severity.WARNING]
 
         if errors:
-            error = WorkflowValidationError(validation_errors=errors)
-            error._pflow_validation_warnings = list(warnings)  # type: ignore[attr-defined]
-            raise error
+            raise WorkflowValidationError(
+                validation_errors=errors,
+                validation_warnings=list(warnings),
+            )
 
         return warnings
 
@@ -539,9 +540,14 @@ class WorkflowRunner:
             for diagnostic in getattr(exception, "_pflow_parser_diagnostics", [])
             if isinstance(diagnostic, Diagnostic)
         ]
+        # validation_warnings is a first-class attribute on WorkflowValidationError
+        # (promoted from the previous ``_pflow_validation_warnings`` dynamic attr
+        # pattern). Kept as getattr here because ``exception`` is loosely typed
+        # at this layer — any exception can propagate through run(), and only
+        # WorkflowValidationError carries this attribute.
         exception_validation_warnings = [
             diagnostic
-            for diagnostic in getattr(exception, "_pflow_validation_warnings", [])
+            for diagnostic in getattr(exception, "validation_warnings", [])
             if isinstance(diagnostic, Diagnostic)
         ]
         diagnostics = deduplicate_diagnostics([

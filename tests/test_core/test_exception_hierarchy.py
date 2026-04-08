@@ -64,3 +64,45 @@ class TestExceptionHierarchy:
         exc = MaxNodeVisitsError("node-1", visit_count=100, max_visits=100)
         assert isinstance(exc, RuntimeError)
         assert not isinstance(exc, PflowError)
+
+    def test_workflow_validation_error_carries_warnings_as_first_class_attr(self):
+        """WorkflowValidationError.validation_warnings is a real constructor kwarg.
+
+        Regression guard for PR #244 review feedback — before the promotion,
+        warnings were smuggled via a dynamic attribute (``error._pflow_validation_warnings``)
+        with a ``# type: ignore[attr-defined]``. Promoting to a real kwarg
+        removes the type ignore and makes the contract explicit. This test
+        locks in that the kwarg round-trips correctly and defaults to an empty
+        list when omitted.
+        """
+        from pflow.core.diagnostic import Diagnostic, Severity
+
+        warn = Diagnostic(
+            severity=Severity.WARNING,
+            message="cache lint warning",
+            source="validator",
+            node_id="fetch",
+        )
+        err = Diagnostic(
+            severity=Severity.ERROR,
+            message="structural error",
+            source="validator",
+            title="Validation Error",
+        )
+
+        # Construct with both errors and warnings
+        exc = WorkflowValidationError(
+            validation_errors=[err],
+            validation_warnings=[warn],
+        )
+        assert exc.validation_errors == [err]
+        assert exc.validation_warnings == [warn]
+
+        # Default to empty list when warnings omitted
+        exc_no_warnings = WorkflowValidationError(validation_errors=[err])
+        assert exc_no_warnings.validation_warnings == []
+
+        # Pre-existing summary-only constructor still works (backward compat)
+        exc_summary = WorkflowValidationError("failed")
+        assert exc_summary.validation_errors == []
+        assert exc_summary.validation_warnings == []
