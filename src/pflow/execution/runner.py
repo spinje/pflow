@@ -485,41 +485,31 @@ class WorkflowRunner:
                 )
             )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():
-            # Prefer the structured Diagnostic already built by
-            # runtime/engine/template_errors.py over a canned hint. The
-            # structured version carries per-reference status, failure
-            # category/data, peer suggestions, and typo hints — none of
-            # which a one-line canned hint can express.
+            # Every entry in __template_errors__ carries a structured
+            # Diagnostic built at the source site (see
+            # runtime/engine/template_resolution.py — both the unresolved
+            # template path and the type_validation path attach one).
+            # The Diagnostic carries per-reference status, failure category,
+            # peer suggestions, and typo hints — none of which a canned
+            # one-line hint could express.
             attached = error_data.get("diagnostic") if isinstance(error_data, dict) else None
-            if isinstance(attached, Diagnostic):
-                from dataclasses import replace
-
-                warning = replace(attached, severity=Severity.WARNING)
-                if not warning.node_id:
-                    warning = replace(warning, node_id=node_id)
-                warnings.append(warning)
+            if not isinstance(attached, Diagnostic):
+                # Contract violation: a producer wrote to __template_errors__
+                # without attaching a Diagnostic. Log and skip rather than
+                # silently rendering a lossy one-liner.
+                logger.warning(
+                    "Skipping __template_errors__ entry for node %r: missing 'diagnostic' key. "
+                    "All producers must attach a structured Diagnostic.",
+                    node_id,
+                )
                 continue
 
-            # Fallback for legacy entries that pre-date the structured path.
-            unresolved = error_data.get("unresolved", []) if isinstance(error_data, dict) else []
-            message = (
-                error_data.get("message", "Template resolution failed")
-                if isinstance(error_data, dict)
-                else "Template resolution failed"
-            )
-            warnings.append(
-                Diagnostic(
-                    severity=Severity.WARNING,
-                    message=message,
-                    suggestions=None,
-                    node_id=node_id,
-                    source="runtime",
-                    context={
-                        "type": "template_resolution",
-                        "unresolved_templates": unresolved,
-                    },
-                )
-            )
+            from dataclasses import replace
+
+            warning = replace(attached, severity=Severity.WARNING)
+            if not warning.node_id:
+                warning = replace(warning, node_id=node_id)
+            warnings.append(warning)
         for diagnostic in shared_store.get("__parser_diagnostics__", []):
             if isinstance(diagnostic, Diagnostic):
                 warnings.append(diagnostic)

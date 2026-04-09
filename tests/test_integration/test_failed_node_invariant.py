@@ -346,6 +346,22 @@ def test_shell_error_without_on_error_preserves_shell_data_in_failure_record():
     assert "broken" in warnings
     assert "no successor edge matches" in warnings["broken"]
 
+    # The user-visible top-line error message must be the authoritative shell
+    # failure, NOT the routing hint. Pre-fix, _extract_error_info gave the
+    # __warnings__ mirror priority and returned "no successor edge matches..."
+    # as the primary error message — hiding the actual "Command failed with
+    # exit code 1". The rich shell data survived in context either way, but
+    # the headline was misleading.
+    errors = [d for d in result.diagnostics if d.severity == Severity.ERROR]
+    assert errors, "Expected at least one ERROR diagnostic for the failed workflow"
+    primary_error = errors[0]
+    assert "exit code 1" in primary_error.message.lower() or "command failed" in primary_error.message.lower(), (
+        f"Primary error message should surface the shell failure, got: {primary_error.message!r}"
+    )
+    assert "no successor edge matches" not in primary_error.message, (
+        f"Primary error message should not be the routing hint, got: {primary_error.message!r}"
+    )
+
 
 def test_output_resolution_error_does_not_inherit_stale_failed_node():
     """Regression for post-review Fix #3: OutputResolutionError used to inherit the
@@ -717,8 +733,11 @@ def test_template_error_shows_both_succeeded_and_failed_peers_in_context():
     # Succeeded peers render cleanly
     assert "- alpha" in rendered
     assert "- beta" in rendered
-    # Failed peer renders with the (failed) marker so agents know to check __failures__
+    # Failed peer renders with the (failed) marker so agents know to look at
+    # the failure detail block above the context-keys list.
     assert "- gamma_failed (failed" in rendered
+    # The user-facing text must NOT leak the internal __failures__ key name.
+    assert "__failures__" not in rendered
 
 
 def test_multi_output_resolution_error_renders_per_output_blocks():
@@ -802,6 +821,95 @@ def test_multi_output_resolution_error_renders_per_output_blocks():
     assert f"{workflow_file}:20" in rendered
 
 
+def test_step_17_5_maps_http_node_type_to_http_failure_category():
+    """Engine step 17.5 maps ``config.node_type_name`` to a failure category
+    via a compile-time dict — no data-shape heuristic. Verify the mapping
+    exists and the category flows through display extraction and rendering.
+    """
+    from pflow.core.diagnostic import _render_failure_data_block
+    from pflow.execution.executor_service import _map_failure_category_to_diagnostic
+    from pflow.runtime.engine.engine import _NODE_TYPE_FAILURE_CATEGORY
+    from pflow.runtime.engine.template_errors import _extract_failure_display_data
+    from pflow.runtime.node_state import FAILURE_CATEGORY_HTTP
+
+    assert _NODE_TYPE_FAILURE_CATEGORY["HttpNode"] == FAILURE_CATEGORY_HTTP
+
+    http_data = {
+        "status_code": 503,
+        "url": "https://example.test/api",
+        "method": "GET",
+        "response": "Service Unavailable",
+        "error": "HTTP 503",
+    }
+
+    display = _extract_failure_display_data(FAILURE_CATEGORY_HTTP, http_data)
+    assert display["status_code"] == 503
+    assert display["url"] == "https://example.test/api"
+    assert display["method"] == "GET"
+
+    rendered = "\n".join(_render_failure_data_block(FAILURE_CATEGORY_HTTP, http_data))
+    assert "Status: 503" in rendered
+    assert "URL: https://example.test/api" in rendered
+    assert "Response: Service Unavailable" in rendered
+
+    assert _map_failure_category_to_diagnostic(FAILURE_CATEGORY_HTTP) == "execution_failure"
+
+
+def test_step_17_5_maps_mcp_node_type_to_mcp_failure_category():
+    """MCP tool errors get ``mcp_failure`` category via the node-type mapping
+    so the renderer shows server/tool/details without sniffing data keys."""
+    from pflow.core.diagnostic import _render_failure_data_block
+    from pflow.execution.executor_service import _map_failure_category_to_diagnostic
+    from pflow.runtime.engine.engine import _NODE_TYPE_FAILURE_CATEGORY
+    from pflow.runtime.engine.template_errors import _extract_failure_display_data
+    from pflow.runtime.node_state import FAILURE_CATEGORY_MCP
+
+    assert _NODE_TYPE_FAILURE_CATEGORY["MCPNode"] == FAILURE_CATEGORY_MCP
+
+    mcp_data = {
+        "error": "Tool execution failed",
+        "error_details": {
+            "server": "github",
+            "tool": "search_code",
+            "is_tool_error": True,
+        },
+        "server": "github",
+        "tool": "search_code",
+    }
+
+    display = _extract_failure_display_data(FAILURE_CATEGORY_MCP, mcp_data)
+    assert display["server"] == "github"
+    assert display["tool"] == "search_code"
+    assert display["error_details"]["is_tool_error"] is True
+
+    rendered = "\n".join(_render_failure_data_block(FAILURE_CATEGORY_MCP, mcp_data))
+    assert "Server: github" in rendered
+    assert "Tool: search_code" in rendered
+
+    assert _map_failure_category_to_diagnostic(FAILURE_CATEGORY_MCP) == "execution_failure"
+
+
+def test_render_failure_data_block_ignores_data_shape_when_category_is_generic():
+    """Regression guard: a success output that happens to contain
+    ``status_code`` MUST NOT render as an HTTP failure. Dispatch is purely
+    by category now — not by data-key sniffing. This is the behavior
+    correctness fix that motivated C3.
+    """
+    from pflow.core.diagnostic import _render_failure_data_block
+
+    # Some random node wrote status_code for its own reasons. Category is
+    # generic node_action_error (code node that returned "error" action).
+    data = {"status_code": 200, "something": "value", "error": "Custom failure"}
+    rendered = "\n".join(_render_failure_data_block("node_action_error", data))
+
+    # Renders via the generic path, NOT the HTTP-specific path.
+    assert "Status: 200" not in rendered
+    assert "URL:" not in rendered
+    # The generic renderer surfaces the status_code as a plain key:value pair.
+    assert "status_code: 200" in rendered
+    assert "something: value" in rendered
+
+
 def test_loop_reentry_clears_stale_failure_record():
     from pflow.runtime.engine.instrumentation import enforce_loop_guard
     from pflow.runtime.node_state import (
@@ -827,6 +935,55 @@ def test_loop_reentry_clears_stale_failure_record():
     enforce_loop_guard("loopy", shared)
     assert "loopy" not in shared.get("__failures__", {})
     assert get_node_status(shared, "loopy") == NodeStatus.ABSENT
+
+
+def test_loop_reentry_after_api_warning_reports_success_not_degraded():
+    """Regression for code-review finding: loop recovery left stale ``__warnings__``.
+
+    Pre-fix, ``enforce_loop_guard`` cleared ``__failures__`` but not
+    ``__warnings__``. A node that failed via an api_warning on visit 1 and
+    succeeded on visit 2 would leave its warning mirror behind, and
+    ``_determine_status`` would report ``DEGRADED`` even though the workflow
+    recovered cleanly. Post-fix, ``clear_node_failure`` clears both dicts.
+    """
+    from pflow.runtime.engine.instrumentation import enforce_loop_guard
+    from pflow.runtime.node_state import FAILURE_CATEGORY_API_WARNING, mark_node_failed
+
+    shared: dict = {
+        "api_node": {"error": "Rate limited", "status_code": 429},
+        "__execution__": {
+            "completed_nodes": [],
+            "node_actions": {},
+            "node_hashes": {},
+            "failed_node": None,
+            "node_visit_counts": {"api_node": 1},
+        },
+    }
+    mark_node_failed(
+        shared,
+        "api_node",
+        category=FAILURE_CATEGORY_API_WARNING,
+        error="Rate limited",
+        warning="API error (429): Rate limited",
+    )
+    assert "api_node" in shared["__warnings__"]
+
+    # Loop re-entry (visit 2) clears stale state...
+    enforce_loop_guard("api_node", shared)
+    assert "api_node" not in shared.get("__failures__", {})
+    assert "api_node" not in shared.get("__warnings__", {}), (
+        "Loop re-entry must clear the stale warning mirror — otherwise the "
+        "workflow reports DEGRADED after a clean recovery."
+    )
+
+    # ...then visit 2 succeeds.
+    shared["api_node"] = {"stdout": "recovered"}
+
+    # _determine_status must now report SUCCESS.
+    runner = WorkflowRunner()
+    success, status = runner._determine_status("default", shared)
+    assert success
+    assert status == WorkflowStatus.SUCCESS
 
 
 def test_output_resolution_error_with_empty_refs_still_renders_output_block():
@@ -971,7 +1128,7 @@ def test_example_loop_recovery_final_state_is_succeeded():
     stale failure record survived across loop re-entry, ``get_node_status``
     would report FAILED and downstream template resolution would break.
 
-    Uses /tmp/pflow-loop-recovery-marker as a cross-visit signal — the fixture's
+    Uses ``/tmp/pflow-task148-marker`` as a cross-visit signal — the fixture's
     ``setup`` step removes any stale marker so repeated runs are idempotent.
     """
     result = _run_fixture("loop-recovery.pflow.md")

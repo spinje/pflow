@@ -16,6 +16,17 @@ import time
 from typing import Any, Optional
 
 from pflow.core.exceptions import CompilationError
+from pflow.runtime.node_state import (
+    FAILURE_CATEGORY_EXCEPTION,
+    FAILURE_CATEGORY_HTTP,
+    FAILURE_CATEGORY_MCP,
+    FAILURE_CATEGORY_NODE_ERROR,
+    FAILURE_CATEGORY_ROUTING,
+    FAILURE_CATEGORY_SHELL,
+    FAILURE_CATEGORY_TEMPLATE,
+    get_node_failure,
+    mark_node_failed,
+)
 
 from .api_warning_detector import detect_api_warning
 from .batch_executor import execute_batch
@@ -40,6 +51,15 @@ from .instrumentation import (
 from .namespaced_store import NamespacedSharedStore
 from .template_resolution import resolve_templates
 from .types import CompiledWorkflow, NodeConfig
+
+# Map node class names to failure categories for step 17.5 (error-action
+# path). The node type is known at compile time — no data-shape heuristic
+# needed. Unlisted types fall back to FAILURE_CATEGORY_NODE_ERROR.
+_NODE_TYPE_FAILURE_CATEGORY: dict[str, str] = {
+    "ShellNode": FAILURE_CATEGORY_SHELL,
+    "HttpNode": FAILURE_CATEGORY_HTTP,
+    "MCPNode": FAILURE_CATEGORY_MCP,
+}
 
 
 class WorkflowEngine:
@@ -135,8 +155,6 @@ class WorkflowEngine:
             f"but no successor edge matches. Available: {list(curr.successors)}. "
             f"{suggestion}"
         )
-
-        from pflow.runtime.node_state import FAILURE_CATEGORY_ROUTING, get_node_failure, mark_node_failed
 
         # If step 17.5 already archived this node (action started with "error"),
         # the failure record holds the real failure data and category (e.g.
@@ -336,22 +354,16 @@ class WorkflowEngine:
             # Runs AFTER trace, metrics, and completion callback so they
             # all see the data in shared[node_id]. After this, the node
             # is in __failures__ and consumers must use get_node_output.
+            #
+            # Category is resolved from the compile-time node type name
+            # via _NODE_TYPE_FAILURE_CATEGORY — no data-shape heuristic.
             if str(action).startswith("error"):
-                from pflow.runtime.node_state import (
-                    FAILURE_CATEGORY_NODE_ERROR,
-                    FAILURE_CATEGORY_SHELL,
-                    mark_node_failed,
-                )
-
                 node_data = shared.get(config.node_id, {})
                 node_error = node_data.get("error") if isinstance(node_data, dict) else None
-                category = FAILURE_CATEGORY_NODE_ERROR
-                if isinstance(node_data, dict) and "exit_code" in node_data and "command" in node_data:
-                    category = FAILURE_CATEGORY_SHELL
                 mark_node_failed(
                     shared,
                     config.node_id,
-                    category=category,
+                    category=_NODE_TYPE_FAILURE_CATEGORY.get(config.node_type_name, FAILURE_CATEGORY_NODE_ERROR),
                     error=node_error,
                 )
 
@@ -386,11 +398,6 @@ class WorkflowEngine:
 
             # LAST STEP: archive the failed node's data to __failures__.
             # All trace/metrics/callback have already read shared[node_id].
-            from pflow.runtime.node_state import (
-                FAILURE_CATEGORY_EXCEPTION,
-                FAILURE_CATEGORY_TEMPLATE,
-                mark_node_failed,
-            )
 
             # Categorize template-resolution ValueErrors specifically so the
             # formatter can render them as template errors, not generic exceptions.

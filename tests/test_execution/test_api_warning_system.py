@@ -221,23 +221,38 @@ class TestErrorFormattingSurfacesWarnings:
         assert "channel_not_found" in errors[0].message
         assert "None" not in errors[0].message
 
-    def test_api_warning_takes_priority_over_node_error(self):
-        """When both __warnings__ and node-level error exist, warning wins.
+    def test_api_warning_surfaces_detector_message_not_raw_node_error(self):
+        """For api_warning failures, the top-line error message must be the
+        post-detector warning text, not the raw node.error field.
 
-        The warning message from InstrumentedNodeWrapper is the most actionable
-        (e.g., "API error: Repository not found"). The node-level error may be
-        a less useful raw message. Priority ordering in _extract_error_info matters.
+        Rationale: the api_warning_detector extracts a canonical, actionable
+        message from the raw node output (``"API error (429): Rate limit
+        exceeded"``). The raw node ``error`` field is often a less-useful
+        pre-detection artifact (``"HTTP request failed"``). ``handle_api_warning``
+        stores the detector-extracted text as ``failure.error`` via
+        ``mark_node_failed(error=warning, warning=warning)``; the raw node
+        data is preserved in ``failure.data`` for anyone who needs it.
         """
 
         shared = {
             "__execution__": {
-                "completed_nodes": ["api-call"],
+                "completed_nodes": [],
                 "node_actions": {"api-call": "error"},
                 "node_hashes": {},
                 "failed_node": "api-call",
             },
             "__warnings__": {"api-call": "API error: Rate limit exceeded"},
-            "api-call": {"error": "HTTP request failed"},  # Less actionable
+            # Post-Task-148 realistic shape: handle_api_warning archived the
+            # node's raw data into failure.data and set failure.error to the
+            # post-detector warning text (the authoritative top-line message).
+            "__failures__": {
+                "api-call": {
+                    "data": {"error": "HTTP request failed"},  # raw, preserved
+                    "category": "api_warning",
+                    "error": "API error: Rate limit exceeded",  # post-detector
+                    "warning": "API error: Rate limit exceeded",
+                },
+            },
         }
 
         errors = build_error_list(False, "error", shared)

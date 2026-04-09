@@ -28,6 +28,8 @@ def _map_failure_category_to_diagnostic(failure_category: str) -> str:
 
 _FAILURE_CATEGORY_MAP: dict[str, str] = {
     "shell_failure": "execution_failure",
+    "http_failure": "execution_failure",
+    "mcp_failure": "execution_failure",
     "node_action_error": "execution_failure",
     "api_warning": "api_validation",
     "routing_error": "execution_failure",
@@ -89,13 +91,20 @@ def build_error_list(success: bool, action_result: Optional[str], shared_store: 
 
 
 def determine_error_category(error_message: str) -> str:
-    """Determine error category based on message content.
+    """Determine error category from message content (regex-on-message fallback).
 
-    Args:
-        error_message: The error message
+    Only used when no failure record carries an explicit category — e.g. a
+    root-level error with no ``failed_node``. Task 148's ``mark_node_failed``
+    is the authoritative category source for every node-level failure, and
+    ``build_error_list`` overwrites the result of this function with
+    ``__failures__[id].category`` whenever a failure record is present.
 
-    Returns:
-        Error category string: "api_validation", "template_error", or "execution_failure"
+    The previous implementation also regex-matched ``"${"`` or the literal
+    word ``"template"`` to return ``"template_error"``. That was a fragile
+    heuristic from before Task 148 — shell commands that legitimately echo
+    ``${PATH}`` or ``"template"`` would get misclassified. It has been
+    removed. Template errors now flow through ``mark_node_failed`` with
+    ``category=FAILURE_CATEGORY_TEMPLATE`` set at the failure site.
     """
     error_lower = error_message.lower()
 
@@ -111,9 +120,6 @@ def determine_error_category(error_message: str) -> str:
     if any(pattern in error_lower for pattern in api_patterns):
         return "api_validation"
 
-    if "${" in error_message or "template" in error_lower:
-        return "template_error"
-
     return "execution_failure"
 
 
@@ -121,28 +127,47 @@ def determine_error_category(error_message: str) -> str:
 
 
 def _extract_error_info(action_result: Optional[str], shared_store: dict[str, Any]) -> dict[str, Optional[str]]:
-    """Extract error message and failed node from shared store."""
-    error_message = f"Workflow failed with action: {action_result}"
+    """Extract error message and failed node from shared store.
+
+    Priority order (most authoritative first):
+
+    1. **Node-level error** from the failure record. ``mark_node_failed`` is
+       the single write site for node failures and always records the precise
+       error (shell exit code, API error, exception text). This includes
+       api-warning nodes — ``handle_api_warning`` mirrors the warning text
+       into ``failure.error`` so downstream readers don't need a side channel.
+    2. **Root-level error** for errors not scoped to a node (e.g. MCP protocol
+       errors that return ``"default"`` and write ``shared["error"]`` directly).
+    3. **``__warnings__`` mirror** as a last-resort fallback for legacy paths
+       that never populated ``failure.error``.
+
+    The previous order put ``__warnings__`` first, which meant
+    ``_handle_no_successor``'s routing hint (written via ``__warnings__`` to
+    preserve the rich shell failure record — see Task 148 Fix #2) masked the
+    real ``"Command failed with exit code N"`` message.
+    """
     failed_node = _get_failed_node(shared_store)
 
-    # Priority 1: API warnings from InstrumentedNodeWrapper
+    if failed_node:
+        node_error = _extract_node_level_error(failed_node, shared_store)
+        if node_error:
+            return {"message": node_error, "failed_node": failed_node}
+
+    root_error = _extract_root_level_error(shared_store)
+    if root_error:
+        return {
+            "message": root_error["message"],
+            "failed_node": failed_node or root_error.get("node"),
+        }
+
     api_warnings = shared_store.get("__warnings__", {})
     if failed_node and failed_node in api_warnings:
         return {"message": api_warnings[failed_node], "failed_node": failed_node}
 
-    # Priority 2: Root-level error field
-    root_error = _extract_root_level_error(shared_store)
-    if root_error:
-        error_message = root_error["message"]
-        if not failed_node:
-            failed_node = root_error.get("node")
-    else:
-        # Priority 3: Node-level error from shared store
-        node_error = _extract_node_level_error(failed_node, shared_store)
-        if node_error:
-            error_message = node_error
-
-    return {"message": error_message, "failed_node": failed_node}
+    return {
+        "message": f"Workflow failed with action: {action_result}",
+        "failed_node": failed_node,
+    }
 
 
 def _get_failed_node(shared_store: dict[str, Any]) -> Optional[str]:

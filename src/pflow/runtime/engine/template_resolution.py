@@ -363,10 +363,31 @@ def resolve_templates(  # noqa: C901
                     exc._partial_resolutions = partial  # type: ignore[attr-defined]
                     raise exc
                 else:
+                    # Build a structured Diagnostic at the source so
+                    # _extract_runtime_warnings in the runner doesn't need a
+                    # legacy canned-hint fallback. Type errors don't have the
+                    # unresolved_references structure of full template errors,
+                    # so the rendering still falls through to the one-liner
+                    # warning path — but we keep the CLAUDE.md invariant that
+                    # every __template_errors__ entry carries a Diagnostic.
+                    from pflow.core.diagnostic import Diagnostic, Severity
+
+                    type_diagnostic = Diagnostic(
+                        severity=Severity.ERROR,  # runner downgrades to WARNING
+                        message=type_error,
+                        node_id=node_id,
+                        source="runtime",
+                        context={
+                            "category": "template_error",
+                            "type": "type_validation",
+                            "param": key,
+                        },
+                    )
                     template_errors.append({
                         "message": type_error,
                         "type": "type_validation",
                         "param": key,
+                        "diagnostic": type_diagnostic,
                     })
 
         # Inject None for optional inputs from non-executed branches

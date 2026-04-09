@@ -330,13 +330,19 @@ def test_extract_child_error_fallback_no_error_in_node_data() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_determine_error_category_template_error() -> None:
-    """Message containing '${' should be categorized as template_error."""
-    assert determine_error_category("Failed to resolve template ${node.output} in params") == "template_error"
+def test_determine_error_category_template_error_falls_through_to_execution_failure() -> None:
+    """Regex-on-message heuristic was removed: since Task 148, template errors
+    carry ``category=FAILURE_CATEGORY_TEMPLATE`` in the failure record and the
+    category flows through ``_map_failure_category_to_diagnostic`` — never
+    through this regex path. Messages containing ``${`` used to be guessed as
+    ``template_error`` here, which mis-categorized shell commands that
+    legitimately echoed ``${PATH}``. Now they fall through cleanly.
+    """
+    assert determine_error_category("Failed to resolve template ${node.output} in params") == "execution_failure"
 
 
 def test_determine_error_category_generic_error() -> None:
-    """A generic message without template references should be execution_failure."""
+    """A generic message without API validation patterns is execution_failure."""
     assert determine_error_category("Something went wrong during processing") == "execution_failure"
 
 

@@ -1,5 +1,7 @@
 """Unit tests for runtime/node_state.py failure bookkeeping helpers."""
 
+import pytest
+
 from pflow.runtime.node_state import (
     FAILURE_CATEGORY_API_WARNING,
     FAILURE_CATEGORY_EXCEPTION,
@@ -28,6 +30,10 @@ class TestGetNodeStatus:
         assert get_node_status(shared, "node") == NodeStatus.FAILED
 
     def test_failed_takes_priority_over_succeeded(self):
+        # Intentional transient state: a node present in BOTH shared and
+        # __failures__. This can't persist in production (mark_node_failed
+        # pops shared[node_id] before writing __failures__), but exercises
+        # the priority rule so get_node_status is robust if it ever does.
         shared = {
             "node": {"stdout": "stale"},
             "__failures__": {"node": {"data": {}, "category": "exception"}},
@@ -147,6 +153,20 @@ class TestMarkNodeFailed:
         mark_node_failed(shared, "missing", category=FAILURE_CATEGORY_EXCEPTION, error="boom")
         assert shared["__failures__"]["missing"]["data"] == {}
 
+    def test_rejects_reserved_internal_keys(self):
+        """Structural integrity guard: marking ``__execution__`` "failed" would
+        write ``__failures__["__execution__"]`` AND ``__execution__["failed_node"]
+        = "__execution__"`` — corrupting both dicts. Previously the guard
+        silently swallowed the attempt. Now it raises so the bug surfaces
+        at the caller site.
+        """
+        shared: dict = {"__execution__": {"failed_node": None}}
+        with pytest.raises(ValueError, match="reserved internal key"):
+            mark_node_failed(shared, "__execution__", category=FAILURE_CATEGORY_EXCEPTION, error="boom")
+        # State is unchanged by the failed call
+        assert "__failures__" not in shared
+        assert shared["__execution__"]["failed_node"] is None
+
 
 class TestClearNodeFailure:
     def test_removes_record(self):
@@ -158,3 +178,26 @@ class TestClearNodeFailure:
         shared = {}
         clear_node_failure(shared, "node")
         assert shared == {}
+
+    def test_clears_warning_mirror(self):
+        """Regression guard: a warning written by mark_node_failed(..., warning=...)
+        is mirrored into __warnings__. clear_node_failure must pop BOTH dicts or
+        a successful loop recovery would leave a stale warning and _determine_status
+        would incorrectly report DEGRADED after a clean retry.
+        """
+        shared: dict = {"__execution__": {}}
+        shared["flaky"] = {"error": "Rate limited", "status_code": 429}
+        mark_node_failed(
+            shared,
+            "flaky",
+            category=FAILURE_CATEGORY_API_WARNING,
+            error="Rate limited",
+            warning="API error (429): Rate limited",
+        )
+        assert "flaky" in shared["__failures__"]
+        assert "flaky" in shared["__warnings__"]
+
+        clear_node_failure(shared, "flaky")
+
+        assert "flaky" not in shared["__failures__"]
+        assert "flaky" not in shared["__warnings__"]

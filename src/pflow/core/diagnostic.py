@@ -390,7 +390,7 @@ def _format_context_keys_block(context: dict[str, Any]) -> list[str]:
     for key in succeeded[:20]:
         lines.append(f"    - {key}")
     for key in failed[:20]:
-        lines.append(f"    - {key} (failed — see error detail above or check __failures__)")
+        lines.append(f"    - {key} (failed — see failure detail above)")
     extra = max(0, len(succeeded) - 20) + max(0, len(failed) - 20)
     if extra:
         lines.append(f"    ... and {extra} more")
@@ -446,7 +446,7 @@ def _format_all_unavailable_coalesce_summary(refs: list[dict[str, Any]]) -> list
             if peer not in peer_pool:
                 peer_pool.append(peer)
 
-    sample_field = _extract_field_name(refs[0].get("var", "field"))
+    sample_field = _extract_field_path(refs[0].get("var", "field"))
     peer_example = peer_pool[0] if peer_pool else "<another-node>"
 
     any_failed = any(ref.get("status") == "failed" for ref in refs)
@@ -496,7 +496,7 @@ def _format_absent_reference(header: str, ref: dict[str, Any], root: str, var: s
     ]
     peers = ref.get("peer_suggestions") or []
     if not ref.get("in_coalesce", False) and peers:
-        field = _extract_field_name(var)
+        field = _extract_field_path(var)
         lines.append("")
         lines.append("        To fix:")
         lines.append(f"          • Use coalesce: ${{{var} ?? {peers[0]}.{field}}}")
@@ -519,7 +519,7 @@ def _format_failed_reference(header: str, ref: dict[str, Any], root: str, var: s
     secondary_hint = ref.get("secondary_hint")
     if secondary_hint:
         lines.append("")
-        lines.append(f"      ⚠ Additional issue: field '{_extract_field_name(var)}' may also be a typo")
+        lines.append(f"      ⚠ Additional issue: field '{_extract_field_path(var)}' may also be a typo")
         lines.append(f"        Did you mean: ${{{secondary_hint}}}?")
         lines.append("        (this won't resolve even if the failure is fixed)")
 
@@ -533,7 +533,7 @@ def _format_failed_reference_fixes(ref: dict[str, Any], root: str, var: str) -> 
     # Prefer the corrected var (if the user had both a typo AND a failure)
     # so the paste-able fix uses the real field name, not the typo.
     fix_var = ref.get("corrected_var") or var
-    field = _extract_field_name(fix_var)
+    field = _extract_field_path(fix_var)
     peers = ref.get("peer_suggestions") or []
     lines = ["", "        To fix:"]
     if peers:
@@ -555,7 +555,7 @@ def _format_path_error_reference(header: str, ref: dict[str, Any], root: str, va
     suggestion = ref.get("did_you_mean")
     lines = [
         header,
-        f"      → Node '{root}' executed but does not produce field '{_extract_field_name(var)}'",
+        f"      → Node '{root}' executed but does not produce field '{_extract_field_path(var)}'",
     ]
     if available:
         display = available[:8]
@@ -571,7 +571,13 @@ def _format_path_error_reference(header: str, ref: dict[str, Any], root: str, va
 
 
 def _render_failure_data_block(category: str, data: dict[str, Any]) -> list[str]:
-    """Render the failure detail block, dispatched by category.
+    """Render the failure detail block, dispatched purely by category.
+
+    Category is set authoritatively at the failure site by
+    ``mark_node_failed`` (engine step 17.5 maps the compile-time node
+    type name to a category). Readers dispatch on the string — not on
+    data-key presence — so a success output that happens to contain
+    ``status_code`` can't be misclassified.
 
     Each renderer returns either populated detail lines or a single
     ``(no ... details captured)`` fallback so callers can't end up with a
@@ -581,9 +587,9 @@ def _render_failure_data_block(category: str, data: dict[str, Any]) -> list[str]
         return ["        (no details captured)"]
     if category == "shell_failure":
         return _render_shell_failure_block(data)
-    if "status_code" in data or "response" in data:
+    if category == "http_failure":
         return _render_http_failure_block(data)
-    if "server" in data and "tool" in data:
+    if category == "mcp_failure":
         return _render_mcp_failure_block(data)
     return _render_generic_failure_block(data)
 
@@ -689,6 +695,8 @@ def _describe_failure_category(category: str) -> str:
     """Map node_state failure categories to human-readable descriptions."""
     return {
         "shell_failure": "shell command failed",
+        "http_failure": "HTTP request failed",
+        "mcp_failure": "MCP tool failed",
         "node_action_error": "node returned error action",
         "api_warning": "API warning",
         "routing_error": "no matching successor",
@@ -697,8 +705,11 @@ def _describe_failure_category(category: str) -> str:
     }.get(category, category or "unknown")
 
 
-def _extract_field_name(var: str) -> str:
-    """Extract the leaf field name from a variable path."""
+def _extract_field_path(var: str) -> str:
+    """Extract the post-root field path from a variable reference.
+
+    ``primary.stdout`` → ``stdout``, ``primary.data.inner`` → ``data.inner``.
+    """
     if "." not in var:
         return var
     return var.split(".", 1)[1]

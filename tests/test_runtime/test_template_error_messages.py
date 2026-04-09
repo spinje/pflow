@@ -53,13 +53,15 @@ class TestCase1NonCoalesceFailedRef:
         rendered = format_diagnostic(diag)
         assert "FAILED" in rendered
         assert "primary" in rendered
-        assert "Exit code: 1" in rendered or "exit code 1" in rendered.lower()
+        assert "Exit code: 1" in rendered
 
-    def test_rendered_suggests_coalesce_fix(self):
-        shared = _shared_with_failed_primary()
-        diag = build_template_error_diagnostic("content", "${primary.stdout}", shared)
-        rendered = format_diagnostic(diag)
-        assert "??" in rendered
+    # NOTE: ``test_rendered_suggests_coalesce_fix`` used to live here with a
+    # ``"??" in rendered`` assertion. Deleted as redundant —
+    # ``TestWarning7PeerSuggestions::test_rendered_substitutes_actual_peer_in_fix``
+    # is a strict superset: it uses the same fixture, the same template, and
+    # the same render path, and asserts the exact paste-able coalesce string
+    # ``${primary.stdout ?? fallback.stdout}``. Any mutation that breaks the
+    # weak ``"??" in rendered`` assertion would also break the strong test.
 
 
 class TestCase2AllCoalesceOperandsFailed:

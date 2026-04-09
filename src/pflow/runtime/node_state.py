@@ -31,8 +31,12 @@ class NodeStatus(Enum):
 
 
 # Categories used by mark_node_failed. Set at the failure site so the
-# formatter doesn't have to regex the error message to guess the type.
+# formatter doesn't have to regex the error message or sniff data-key
+# shapes to guess the type. Every reader (display renderer, category
+# mapper, failure data extractor) dispatches purely on this string.
 FAILURE_CATEGORY_SHELL = "shell_failure"
+FAILURE_CATEGORY_HTTP = "http_failure"
+FAILURE_CATEGORY_MCP = "mcp_failure"
 FAILURE_CATEGORY_NODE_ERROR = "node_action_error"
 FAILURE_CATEGORY_API_WARNING = "api_warning"
 FAILURE_CATEGORY_ROUTING = "routing_error"
@@ -128,6 +132,19 @@ def mark_node_failed(
     ``shared[node_id]`` (an empty dict if nothing was written before
     failure). The category and error fields are set from arguments.
     """
+    # Internal ``__*__`` keys are reserved for per-workflow bookkeeping
+    # (``__execution__``, ``__warnings__``, ``__failures__``, ...). Marking
+    # one of them "failed" would corrupt the structure — it would write
+    # ``__failures__["__execution__"]`` AND ``__execution__["failed_node"]
+    # = "__execution__"``. Fail loudly at the call site instead of silently
+    # accepting an invalid node_id. Every caller today passes
+    # ``config.node_id`` (an IR-validated user node), so this raise is
+    # defense-in-depth — it catches future misuse.
+    if node_id.startswith("__") and node_id.endswith("__"):
+        raise ValueError(
+            f"mark_node_failed called with reserved internal key: {node_id!r}. Only user node ids can be marked failed."
+        )
+
     if "__execution__" not in shared:
         shared["__execution__"] = {
             "completed_nodes": [],
@@ -137,12 +154,8 @@ def mark_node_failed(
             "node_visit_counts": {},
         }
 
-    # Capture data before popping. Don't pop __* keys.
-    if node_id.startswith("__") and node_id.endswith("__"):
-        data: dict[str, Any] = {}
-    else:
-        popped = shared.pop(node_id, None)
-        data = popped if isinstance(popped, dict) else ({} if popped is None else {"value": popped})
+    popped = shared.pop(node_id, None)
+    data: dict[str, Any] = popped if isinstance(popped, dict) else ({} if popped is None else {"value": popped})
 
     record: dict[str, Any] = {
         "data": data,
@@ -169,12 +182,21 @@ def mark_node_failed(
 
 
 def clear_node_failure(shared: dict[str, Any], node_id: str) -> None:
-    """Remove a node from __failures__ if present.
+    """Clear all per-failure bookkeeping for a node.
 
     Used when a previously-failed node is being re-executed (loop case).
+    Clears BOTH ``__failures__[node_id]`` AND ``__warnings__[node_id]`` —
+    without the latter, a recovered node would still appear in
+    ``__warnings__`` and ``_determine_status`` would incorrectly report
+    ``DEGRADED`` after a successful retry (e.g. an api_warning failure on
+    visit 1 followed by a clean success on visit 2).
+
     The new execution will populate ``shared[node_id]`` if it succeeds,
     or call ``mark_node_failed`` again if it fails.
     """
     failures = shared.get("__failures__")
     if isinstance(failures, dict):
         failures.pop(node_id, None)
+    warnings = shared.get("__warnings__")
+    if isinstance(warnings, dict):
+        warnings.pop(node_id, None)

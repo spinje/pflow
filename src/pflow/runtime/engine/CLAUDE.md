@@ -129,7 +129,7 @@ The `inputs` key is ALWAYS processed first. Resolved input values are merged int
 
 **Strict mode**: raises `ValueError` with `._partial_resolutions` attribute (dict of params resolved before the error). The engine's except handler extracts these for trace recording.
 
-**Permissive mode**: returns errors in `template_errors` list. Each error is a dict with `message`, `type`/`unresolved`, `param`/`template`. The engine writes them to `shared["__template_errors__"][node_id]`.
+**Permissive mode**: returns errors in `template_errors` list. Each error is a dict with `message`, `type`/`unresolved`, `param`/`template`, **and a structured `diagnostic`** (`Diagnostic` object). The engine writes them to `shared["__template_errors__"][node_id]`. Both the unresolved-template path and the type_validation path attach a Diagnostic at the source site so `runner._extract_runtime_warnings` has a single code path — any entry without a `diagnostic` key is a contract violation and gets skipped with a logger warning.
 
 ## Batch Executor (`batch_executor.py`)
 
@@ -189,7 +189,7 @@ Peak memory is `O(events_per_item x max_concurrent)`. No hard cap today.
 - `enforce_loop_guard(node_id, shared)` → `visit_counts` dict. Raises `MaxNodeVisitsError` at 100 visits (configurable via `PFLOW_MAX_NODE_VISITS` env var). Invalidates in-process cache for revisited nodes (loops) and calls `clear_node_failure` on loop re-entry so the new attempt starts with a clean state.
 - `cache_result(node_id, hash, action, shared)` — for non-error actions only adds to `completed_nodes`. For error actions it's a **no-op** (the canonical failure write happens at engine step 17.5 via `mark_node_failed`). Direct writes to `failed_node` from anywhere except `mark_node_failed` are contract violations.
 - `handle_api_warning(...)` — records trace + metrics + completion callback, then archives via `mark_node_failed` at the END (so all bookkeeping reads `shared[id]` first). Uses `mark_node_failed` for the warning + failed_node writes, no direct writes.
-- `handle_cached_execution(...)` — defensively calls `clear_node_failure` before restoring the cached output. Currently unreachable (memo cache is skipped on revisits, loop guard already cleared) but defends the invariant against future seeding paths.
+- `handle_cached_execution(...)` — no longer defensively clears `__failures__`. Both cache paths (memo + in-process) are unreachable for nodes with a stale failure record: memo cache is skipped on revisits; the in-process path runs after `enforce_loop_guard` has already cleared failures; error results are never cached. If future work makes this reachable (e.g. checkpoint-resume seeding shared state), add the clear back with a test that exercises the reaching path.
 
 ### Two-level caching
 

@@ -461,3 +461,72 @@ def test_extract_runtime_warnings_preserves_structured_diagnostic():
     # Legacy canned suggestion must NOT appear
     if warning.suggestions:
         assert not any("Fix unresolved template references" in s for s in warning.suggestions)
+
+
+def test_extract_runtime_warnings_handles_type_validation_diagnostic():
+    """Every ``__template_errors__`` entry must carry a structured Diagnostic,
+    including the type_validation path. Pre-fix, template_resolution.py wrote
+    type errors with only ``{"message", "type", "param"}`` — no ``diagnostic``
+    key — and ``_extract_runtime_warnings`` had a legacy canned-hint fallback
+    branch for that shape. Post-fix, template_resolution.py attaches a
+    structured Diagnostic at the source site and the runner's legacy fallback
+    is gone.
+    """
+    from pflow.core.diagnostic import Diagnostic, Severity
+
+    type_diagnostic = Diagnostic(
+        severity=Severity.ERROR,
+        message="Parameter 'command' expected str but got dict",
+        node_id="shell_node",
+        source="runtime",
+        context={
+            "category": "template_error",
+            "type": "type_validation",
+            "param": "command",
+        },
+    )
+    permissive_shared_store = {
+        "__template_errors__": {
+            "shell_node": {
+                "message": type_diagnostic.message,
+                "type": "type_validation",
+                "param": "command",
+                "diagnostic": type_diagnostic,
+            }
+        },
+    }
+
+    runner = WorkflowRunner()
+    warnings = runner._extract_runtime_warnings(permissive_shared_store)
+
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert warning.severity == Severity.WARNING
+    assert warning.node_id == "shell_node"
+    assert "expected str but got dict" in warning.message
+    # The warning carries the category so consumers can filter by type.
+    assert warning.context.get("category") == "template_error"
+    assert warning.context.get("type") == "type_validation"
+
+
+def test_extract_runtime_warnings_skips_entries_without_diagnostic():
+    """Defensive guard: if a producer writes to ``__template_errors__`` without
+    attaching a structured Diagnostic (contract violation), the runner skips
+    the entry and logs a warning rather than silently rendering a lossy
+    one-line fallback. This protects against a regression where a new producer
+    forgets the Diagnostic and the user gets a degraded warning with no
+    structured info.
+    """
+    permissive_shared_store = {
+        "__template_errors__": {
+            "consumer": {
+                "message": "legacy entry without structured diagnostic",
+                "unresolved": ["command"],
+            }
+        },
+    }
+
+    runner = WorkflowRunner()
+    warnings = runner._extract_runtime_warnings(permissive_shared_store)
+
+    assert warnings == [], "Entries without a structured Diagnostic must be skipped"

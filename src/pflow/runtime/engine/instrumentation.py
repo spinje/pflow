@@ -446,17 +446,16 @@ def handle_cached_execution(
 ) -> Any:
     """Handle cached node execution: record trace, call callbacks.
 
-    Defensively clears any stale ``__failures__`` entry for the node before
-    recording the cache hit. In normal execution this is a no-op (loop guard
-    already cleared failures and memo cache is skipped on revisits), but a
-    future checkpoint-resume or externally-seeded shared store could produce
-    the coexistence state. The clear keeps the invariant "succeeded xor failed"
-    true at zero cost.
+    The two cache paths that reach this function (memo cache + in-process
+    cache) are both unreachable for nodes that have a stale ``__failures__``
+    record: memo cache is skipped on revisits (``visit_count > 1``) and the
+    loop guard's ``clear_node_failure`` runs before any cache check on the
+    second visit. Error results are never cached either. Any defensive
+    ``clear_node_failure`` call here is dead code — if future work makes it
+    load-bearing (e.g. checkpoint-resume seeding a shared store with both
+    ``shared[id]`` and ``__failures__[id]``), add it back with a test that
+    exercises the reaching path, not as speculative defense.
     """
-    from pflow.runtime.node_state import clear_node_failure
-
-    clear_node_failure(shared, node_id)
-
     if "__cache_hits__" not in shared:
         shared["__cache_hits__"] = []
     shared["__cache_hits__"].append(node_id)
@@ -541,17 +540,25 @@ def handle_api_warning(
         error=Exception(warning),
     )
 
-    # LAST STEP: archive the node's data to __failures__. Read the node's
-    # own error before moving so it's preserved on the failure record.
+    # LAST STEP: archive the node's data to __failures__.
+    #
+    # The post-detector warning text (``warning``) is the authoritative
+    # top-line error for api_warning failures. It is the message the
+    # detector extracted out of the raw node output via error-code
+    # classification (``API error (404): Repository not found``). The raw
+    # node ``error`` field is often a less-actionable pre-detection artifact
+    # (``HTTP request failed``) and is preserved inside ``failure.data``
+    # (the archived node namespace) for anyone who needs the raw form.
+    #
+    # This keeps ``failure.error`` the single authoritative source regardless
+    # of category — ``_extract_error_info`` in the runner just reads it.
     from pflow.runtime.node_state import FAILURE_CATEGORY_API_WARNING, mark_node_failed
 
-    node_data = shared.get(node_id, {})
-    node_error = node_data.get("error") if isinstance(node_data, dict) else warning
     mark_node_failed(
         shared,
         node_id,
         category=FAILURE_CATEGORY_API_WARNING,
-        error=node_error or warning,
+        error=warning,
         warning=warning,
     )
 

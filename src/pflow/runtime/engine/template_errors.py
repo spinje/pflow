@@ -253,31 +253,40 @@ def _find_peer_nodes_with_field(root: str, var: str, context: dict[str, Any], ma
     return candidates
 
 
+_SHELL_DISPLAY_FIELDS = ("exit_code", "command", "stdout", "stderr")
+_HTTP_DISPLAY_FIELDS = (
+    "status_code",
+    "url",
+    "method",
+    "response",
+    "response_body",
+    "response_headers",
+)
+_MCP_DISPLAY_FIELDS = ("server", "tool", "error_details", "result")
+
+
 def _extract_failure_display_data(category: str | None, data: Any) -> dict[str, Any]:
-    """Extract a display-relevant subset of failure data based on category."""
+    """Extract a display-relevant subset of failure data by category.
+
+    Dispatches purely on the category string (set authoritatively at the
+    failure site by ``mark_node_failed``) rather than sniffing data-key
+    presence. A success output that happens to contain ``status_code``
+    can no longer be misclassified as an HTTP failure.
+    """
     if not isinstance(data, dict):
         return {}
 
     if category == "shell_failure":
-        return {key: data[key] for key in ("exit_code", "command", "stdout", "stderr") if data.get(key) is not None}
+        return {key: data[key] for key in _SHELL_DISPLAY_FIELDS if data.get(key) is not None}
 
-    if "status_code" in data or "response" in data:
-        return {
-            key: data[key]
-            for key in (
-                "status_code",
-                "url",
-                "method",
-                "response",
-                "response_body",
-                "response_headers",
-            )
-            if data.get(key) is not None
-        }
+    if category == "http_failure":
+        return {key: data[key] for key in _HTTP_DISPLAY_FIELDS if data.get(key) is not None}
 
-    if "error_details" in data or ("server" in data and "tool" in data):
-        return {key: data[key] for key in ("server", "tool", "error_details", "result") if data.get(key) is not None}
+    if category == "mcp_failure":
+        return {key: data[key] for key in _MCP_DISPLAY_FIELDS if data.get(key) is not None}
 
+    # Generic fallback: surface scalar fields only. The 500-char cap keeps
+    # runaway stderr or binary blobs out of the structured failure payload.
     return {
         key: value
         for key, value in data.items()

@@ -930,14 +930,160 @@ Single squashed commit on `fix/resolve-coalesce-empty-string` rebased on top of 
 
 **Backup branch `backup/task-148-pre-rebase`** preserved at the pre-rebase HEAD for rollback if any post-push issue surfaces. Delete after PR merges.
 
-## Final Status (all seven passes)
+## Eighth Pass — Code Review Response (2026-04-09)
 
-- **21 bugs fixed** in original implementation + **1 latent bug** fixed in sixth pass (silent-render gap) + **1 silent auto-merge drop** caught during rebase (`_format_all_context_blocks` dispatch)
-- **25 new regression tests** (18 from passes 1-5 + 1 from pass 6 + 6 from pass 7 committed fixtures)
+Three independent code reviews arrived against PR #251: the bot review on the PR itself (`#issuecomment-4209874016`), `scratchpads/code-review-task148-20260408-160500.md` (a 3-warning focused review), and `scratchpads/code-review-task148-20260408-235050.md` (a detailed merge-readiness review with 5 warnings + 7 polish suggestions). After consolidating and verifying every finding against the actual code (4 parallel verification agents + direct file reads), 22 findings were confirmed, 1 was disputed (the double-flatten `display_data` spread — already investigated in the sixth pass and kept intentionally), and 3 critical findings were identified as pre-existing architectural gaps worth filing as follow-ups.
+
+### Phase A — Critical correctness bugs (3 items)
+
+**A1 — Priority inversion in `_extract_error_info` masked shell failures.** Pre-fix, when a shell node failed with `exit 1` and had no matching `on-error:` edge, the routing hint from `_handle_no_successor` (written to `__warnings__` as Task 148 Fix #2) was surfaced as the primary error message: `"Node 'broken' returned action 'error' but no successor edge matches..."`. The real `"Command failed with exit code 1"` was buried in context. Post-fix, `_extract_error_info` reorders its priority: the authoritative `get_node_failure(...).error` wins, the warning mirror is the last-resort fallback.
+
+- **Sub-finding during verification**: reordering exposed a legitimate pre-existing contract for api_warnings. The detector extracts a canonical actionable message (`"API error (429): Rate limited"`) that was historically preferred over the node's raw `error` field (`"HTTP request failed"`). `handle_api_warning` was storing the raw node error as `failure.error` and the post-detector text only as `failure.warning`, so the A1 reorder would have surfaced the less-actionable raw error. **Fixed at the source**: `handle_api_warning` now passes `error=warning` (post-detector text is authoritative — it's what the detector extracted specifically to be user-facing). The raw node data is still preserved in `failure.data` for anyone who needs it.
+- **Files**: `src/pflow/execution/executor_service.py` (`_extract_error_info`), `src/pflow/runtime/engine/instrumentation.py` (`handle_api_warning`)
+- **Tests**: new end-to-end assertion in `test_shell_error_without_on_error_preserves_shell_data_in_failure_record` verifying the top-line error message contains "exit code 1" / "command failed" and NOT "no successor edge matches"; `test_api_warning_surfaces_detector_message_not_raw_node_error` updated to the post-Task-148 realistic fixture shape
+- **Disputed-finding context**: 160500 W1 was correct about the inversion but didn't consider the api_warning case. The fix had to handle both paths.
+
+**A2 — Stale `__warnings__` after loop recovery reported DEGRADED.** `mark_node_failed(..., warning=...)` writes `__warnings__[node_id]`, but `enforce_loop_guard` only called `clear_node_failure` which only popped `__failures__`. A node that failed via api_warning on visit 1 and succeeded on visit 2 left its warning mirror stale, and `_determine_status` reported DEGRADED even for a clean recovery. Fix: extended `clear_node_failure` to pop both dicts — keeps it the single place that handles "clean slate for a node".
+
+- **Files**: `src/pflow/runtime/node_state.py` (`clear_node_failure`)
+- **Tests**: `TestClearNodeFailure::test_clears_warning_mirror` (unit) + `test_loop_reentry_after_api_warning_reports_success_not_degraded` (E2E through `_determine_status`)
+
+**A3 — Validator `var.split(".")[0]` misclassified indexed inputs as unused.** `_validate_unused_inputs` at `template_validation/validator.py:184` still used `var.split(".")[0]`. For `${items[0].name}` the split yielded `"items[0]"` (with bracket) which never matched the declared `items` → blocking false-positive `"Declared input(s) never used"`. B4 migration miss from the sixth pass. Fix: one-line migration to `TemplateResolver.extract_root_node_id`.
+
+- **Files**: `src/pflow/runtime/template_validation/validator.py`
+- **Tests**: new `test_input_used_with_indexed_access` — declare input `items`, template `${items[0].name}`, assert zero diagnostics
+- **Bonus verification**: agent sweep confirmed no other sites still use the ad-hoc split for node-id extraction. The last B4 miss is now closed.
+
+### Phase B — Test fidelity + doc drift (3 items)
+
+**B1 — Loop-recovery test docstring mismatch.** Docstring at `test_example_loop_recovery_final_state_is_succeeded` said `/tmp/pflow-loop-recovery-marker`; fixture uses `/tmp/pflow-task148-marker`. Pure doc fix — the assertions never touched the marker path, but the drift proves the docstring wasn't re-verified after the fixture rename. Fix applied; hermeticity deferred because the engine-level `test_failed_then_succeeded_reentry_clears_failure_record` already provides a hermetic alternative and the fixture test's value is parser+runner coverage.
+
+**B2 — Weak test redundancy.** `test_rendered_suggests_coalesce_fix` asserted only `"??" in rendered`. `test_rendered_substitutes_actual_peer_in_fix` (same fixture, same template, same render) asserts the exact paste-able string `${primary.stdout ?? fallback.stdout}` — strict superset. Deleted the weak test; inline comment documents why.
+
+**B3 — Internal `__failures__` key leaked into user-facing text.** `diagnostic.py:393` rendered `"- {key} (failed — see error detail above or check __failures__)"`. The task spec explicitly treats `__failures__` as internal. Reworded to `(failed — see failure detail above)`. Added a regression assertion `"__failures__" not in rendered` to `test_template_error_shows_both_succeeded_and_failed_peers_in_context`.
+
+### Phase C — Code quality polish (5 items)
+
+**C1 — Deleted `determine_error_category` template_error regex fallback.** The `"${" in error_message or "template" in error_lower` branch was a pre-Task-148 heuristic that could misfire on shell commands echoing `${PATH}`. Since `mark_node_failed(category=FAILURE_CATEGORY_TEMPLATE)` is the authoritative source and `build_error_list` overwrites the regex result with `__failures__[id].category`, the regex path was only reachable for root-level errors with no failed_node — a scenario that in practice doesn't carry template errors. Deleted the branch; updated `test_determine_error_category_template_error` to assert `execution_failure` fallthrough.
+
+**C2 — Type-validation permissive entries now carry a structured Diagnostic.** `template_resolution.py:366-370` appended type_validation entries as `{"message", "type", "param"}` — no `diagnostic` key. `runner._extract_runtime_warnings` had a legacy canned-hint fallback branch that fired for these entries, contradicting the `engine/CLAUDE.md` claim that every permissive entry carries a structured Diagnostic. Fix: build a minimal Diagnostic at the source site, attach it via `diagnostic` key. **Deleted the legacy fallback branch entirely** from `runner._extract_runtime_warnings` — entries without a Diagnostic are now contract violations, logged and skipped. Single code path in the runner, no dead branches.
+
+- **Files**: `src/pflow/runtime/engine/template_resolution.py`, `src/pflow/execution/runner.py` (legacy branch deleted), `src/pflow/runtime/engine/CLAUDE.md` (doc updated to state all entries carry Diagnostic)
+- **Tests**: new `test_extract_runtime_warnings_handles_type_validation_diagnostic` + `test_extract_runtime_warnings_skips_entries_without_diagnostic`
+
+**C3 — Category-based dispatch for failure rendering (biggest C item).** `_extract_failure_display_data` and `_render_failure_data_block` both branched on data-key presence for HTTP (`"status_code" in data`) and MCP (`"server" in data and "tool" in data`), only dispatching on category for the shell path. A success output that happened to contain `status_code` could be misclassified as an HTTP failure. The underlying missing piece was `FAILURE_CATEGORY_HTTP` / `FAILURE_CATEGORY_MCP` constants — Task 148's original set only included shell/node_error/api_warning/routing/exception/template.
+
+Fix (structural):
+1. Added `FAILURE_CATEGORY_HTTP` and `FAILURE_CATEGORY_MCP` constants in `node_state.py`.
+2. Added `infer_failure_category_from_data(data)` in `node_state.py` — a single explicit detection function that branches on `exit_code`+`command` → SHELL, `status_code` → HTTP, `error_details` with `server`+`tool` → MCP, else NODE_ERROR. This is the only site that sniffs data shape; every reader dispatches on the category string.
+3. Refactored engine step 17.5 in `engine.py` to call `infer_failure_category_from_data()` instead of an inline if-else. Single line.
+4. `_extract_failure_display_data` in `template_errors.py` now branches purely on category. Extracted the per-category field tuples as module constants (`_SHELL_DISPLAY_FIELDS`, `_HTTP_DISPLAY_FIELDS`, `_MCP_DISPLAY_FIELDS`).
+5. `_render_failure_data_block` in `diagnostic.py` now branches purely on category.
+6. `_FAILURE_CATEGORY_MAP` in `executor_service.py` maps `http_failure` and `mcp_failure` to `execution_failure` (same top-level title category).
+7. `_describe_failure_category` in `diagnostic.py` includes HTTP/MCP descriptions.
+
+- **Files**: `src/pflow/runtime/node_state.py`, `src/pflow/runtime/engine/engine.py`, `src/pflow/runtime/engine/template_errors.py`, `src/pflow/core/diagnostic.py`, `src/pflow/execution/executor_service.py`
+- **Tests**: new `TestInferFailureCategoryFromData` class with 10 focused tests (including parameterized shapes) + 3 end-to-end integration tests (`test_step_17_5_assigns_http_category_from_data_shape`, `test_step_17_5_assigns_mcp_category_from_data_shape`, `test_render_failure_data_block_ignores_data_shape_when_category_is_generic`)
+
+**C4 — Deleted unreachable defensive `clear_node_failure` in `handle_cached_execution`.** The call was documented as "currently unreachable" in `runtime/engine/CLAUDE.md` (memo cache skipped on revisits, loop guard already cleared, error results never cached). Deleted the 3 lines and updated CLAUDE.md. If future checkpoint-resume work makes it reachable, it should come back with a test exercising the reaching path — not as speculative defense.
+
+**C5 — `mark_node_failed` raises on reserved internal keys.** Pre-fix, calling `mark_node_failed("__execution__", ...)` would silently skip the `shared.pop` but still write `__failures__["__execution__"]` AND `__execution__["failed_node"] = "__execution__"` — corrupting both dicts. Replaced the silent guard with an explicit `ValueError("reserved internal key")`. All current callers pass `config.node_id` (IR-validated), so this is pure defense-in-depth. New unit test `test_rejects_reserved_internal_keys`.
+
+### Disputed finding
+
+**Double-flatten of `display_data` (235050 W2)** — verified NOT dead per the sixth-pass adversarial verification. Tests read `failure["exit_code"]` directly (not `failure["data"]["exit_code"]`) at multiple sites, and the `**display_data` spread is load-bearing for that contract. Progress log already documents the decision. No action.
+
+### Follow-up issues filed (4 new)
+
+Pre-existing architectural gaps worth tracking but out of scope for this PR:
+
+- **spinje/pflow#252** — Batch × sub-workflow × failed child loses structured `__failures__` records (related to but distinct from #233 sub-workflow Diagnostic propagation — this is the batch combination specifically)
+- **spinje/pflow#253** — MCP protocol errors bypass step 17.5 via the `return "default"` workaround. Task 148 C3 adds MCP category handling for tool errors (which correctly return `"error"`), but protocol errors remain unarchived. Design options included in issue body.
+- **spinje/pflow#254** — `storage_mode: shared` sub-workflows leak child `__failures__` into parent. Pre-existing aliasing bug exposed by Task 148's single-write-site discipline. Recommendation: deprecate `storage_mode: shared` (already causes #231 + now this).
+- **spinje/pflow#255** — Pre-engine exception annotation gap + `registry_run.py` engine bypass (bundled — both low-priority brittleness observations).
+
+### Verification
+
+- `pre-commit run -a` → clean (ruff, ruff-format, all hooks pass)
+- `mypy src/` → `Success: no issues found in 168 source files`
+- `deptry src` → `Success! No dependency issues found.`
+- `pytest -n 4 --doctest-modules --ignore=tests/test_nodes/test_llm/test_llm_integration.py` → **4802 passed** (was 4783 at end of pass 7; net +19 new regression tests across A/B/C)
+- GH #208 reproducer → still produces `fallback-content`
+
+### Files changed (eighth pass)
+
+Production (7 files):
+- `src/pflow/execution/executor_service.py` — A1 `_extract_error_info` reorder + `_FAILURE_CATEGORY_MAP` entries for HTTP/MCP + C1 regex deletion
+- `src/pflow/runtime/engine/instrumentation.py` — A1 `handle_api_warning` uses post-detector warning as authoritative error + C4 deleted defensive `clear_node_failure`
+- `src/pflow/runtime/node_state.py` — A2 `clear_node_failure` extended to `__warnings__` + C3 new constants + `infer_failure_category_from_data()` + C5 raise on reserved keys
+- `src/pflow/runtime/template_validation/validator.py` — A3 migrate to `extract_root_node_id`
+- `src/pflow/runtime/engine/engine.py` — C3 step 17.5 uses `infer_failure_category_from_data()`
+- `src/pflow/runtime/engine/template_resolution.py` — C2 build structured Diagnostic for type_validation entries
+- `src/pflow/runtime/engine/template_errors.py` — C3 `_extract_failure_display_data` category dispatch + module constants
+- `src/pflow/core/diagnostic.py` — B3 reword + C3 `_render_failure_data_block` category dispatch + C3 `_describe_failure_category` entries
+- `src/pflow/execution/runner.py` — C2 delete legacy fallback branch in `_extract_runtime_warnings`
+
+Docs (1 file):
+- `src/pflow/runtime/engine/CLAUDE.md` — C2 doc update for type_validation path + C4 doc update for `handle_cached_execution`
+
+Tests (6 files):
+- `tests/test_integration/test_failed_node_invariant.py` — A1 assertion + A2 E2E + B3 no-leak + C3 three integration tests + B1 docstring fix
+- `tests/test_runtime/test_node_state.py` — A2 unit + C3 `TestInferFailureCategoryFromData` + C5 rejection test
+- `tests/test_runtime/test_template_validation/test_unused_inputs.py` — A3 indexed-input regression
+- `tests/test_runtime/test_template_error_messages.py` — B2 delete weak test + tighten "Exit code: 1" assertion
+- `tests/test_execution/test_runner.py` — C2 two new tests (type_validation diagnostic + skip without diagnostic)
+- `tests/test_execution/test_api_warning_system.py` — A1 update fixture to post-Task-148 realistic shape + rename test
+
+## Ninth Pass — Final Polish (2026-04-09)
+
+Post-eighth-pass review of the staged diff identified one clear improvement missed by the code-review response and two borderline items worth fixing. An independent agent review was also evaluated — its finding about `infer_failure_category_from_data` led to a structural simplification.
+
+### Structural simplification: node-type mapping replaces data-shape inference
+
+**Deleted `infer_failure_category_from_data`** (28-line function in `node_state.py`). The function inferred failure category by sniffing data-key shapes (`exit_code`+`command` → shell, `status_code` → HTTP, `error_details` with `server`+`tool` → MCP). This was a heuristic — and `config.node_type_name` was already in scope at step 17.5, providing the authoritative node type from compile time.
+
+**Replaced with**: a 3-entry dict `_NODE_TYPE_FAILURE_CATEGORY` in `engine.py` mapping class names (`ShellNode`/`HttpNode`/`MCPNode`) to category constants. One dict lookup at step 17.5, no data-shape heuristic.
+
+This is more aligned with C3's stated goal — C3 moved data-key sniffing out of renderers, but `infer_failure_category_from_data` reintroduced it at the write site. The mapping eliminates the last data-shape sniffer in the codebase.
+
+- **Files**: `src/pflow/runtime/node_state.py` (function deleted), `src/pflow/runtime/engine/engine.py` (mapping dict + call site), `src/pflow/runtime/engine/template_errors.py` (docstring updated), `src/pflow/core/diagnostic.py` (docstring updated)
+- **Tests**: deleted `TestInferFailureCategoryFromData` (11 tests); updated 2 integration tests to verify the mapping dict + downstream render chain instead of the deleted helper
+
+### Three polish fixes
+
+**P1 — Inline imports → top-level in `engine.py`.** Three inline `from pflow.runtime.node_state import ...` blocks (at `_handle_no_successor`, step 17.5, and exception path) moved to the top-level import block. `node_state.py` imports only from `enum` and `typing` — zero circular import risk (verified). Follows codebase convention, eliminates per-call lookup overhead.
+
+**P2 — `_extract_field_name` → `_extract_field_path` in `diagnostic.py`.** The function returns the post-root path (`primary.data.inner` → `data.inner`), not the leaf field name as the docstring claimed. Renamed with corrected docstring: `"primary.stdout" → "stdout"`, `"primary.data.inner" → "data.inner"`.
+
+**P3 — Intentional transient state comment in `test_node_state.py`.** `test_failed_takes_priority_over_succeeded` deliberately sets up a node in BOTH `shared` and `__failures__` (the XOR violation). Added a comment explaining this is intentional and can't persist in production, to prevent a future reader from "fixing" it.
+
+### Verification
+
+- `ruff check src/` → All checks passed
+- `mypy src/` → Success: no issues found in 168 source files
+- `pytest -n 4 --doctest-modules` → **4791 passed** (was 4802; net −11 from deleted `TestInferFailureCategoryFromData`)
+- GH #208 reproducer → still produces `fallback-content`
+
+### Files changed (ninth pass)
+
+Production (4 files):
+- `src/pflow/runtime/engine/engine.py` — P1 top-level imports + `_NODE_TYPE_FAILURE_CATEGORY` mapping dict + step 17.5 uses dict lookup
+- `src/pflow/runtime/node_state.py` — deleted `infer_failure_category_from_data`
+- `src/pflow/core/diagnostic.py` — P2 rename + docstring update for mapping approach
+- `src/pflow/runtime/engine/template_errors.py` — docstring update for mapping approach
+
+Tests (2 files):
+- `tests/test_runtime/test_node_state.py` — deleted `TestInferFailureCategoryFromData` (11 tests) + P3 comment
+- `tests/test_integration/test_failed_node_invariant.py` — updated 2 integration tests to verify mapping dict
+
+## Final Status (all nine passes)
+
+- **22 bugs fixed in original implementation** + **1 latent bug** (silent-render gap, sixth pass) + **1 silent auto-merge drop** (`_format_all_context_blocks`, seventh pass rebase) + **3 correctness bugs + 5 polish fixes** (eighth pass code-review response) + **1 structural simplification + 3 polish fixes** (ninth pass) = **36 fixes total**
+- **33 new regression tests** (18 from passes 1-5 + 1 from pass 6 + 6 from pass 7 committed fixtures + 19 from pass 8 − 11 deleted in pass 9)
 - **+7 unit tests** for the `extract_first_field_segment` helper (pass 6)
-- **5 new GH issues filed**, **1 updated** (passes 1-5)
+- **9 new GH issues filed**, **1 updated** (5 from passes 1-5 + 4 from pass 8)
 - **6 committed fixture files** + 1 README in `examples/error-handling/` (pass 7)
 - **1 new test-pattern decision rule** in `tests/CLAUDE.md` (pass 7)
-- **4783 tests passing**, **0 warnings**, **0 type errors**, **0 dependency issues**, **0 pre-commit failures**
+- **4791 tests passing**, **0 warnings**, **0 type errors**, **0 dependency issues**, **0 pre-commit failures**
 - Branch rebased onto current main (Task 147 + Task 149 integrated cleanly)
-- **Single squashed commit** on `fix/resolve-coalesce-empty-string` — ready for force-push to PR #251
+- **Local commits on `fix/resolve-coalesce-empty-string`** — ready for review and commit to PR #251
