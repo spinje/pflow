@@ -8,6 +8,11 @@ You are guiding a structural refactor. Your job is to find what's wrong, discuss
 
 This is a discussion-first command. The user may point you at a specific module or file, or they may ask you to find the most high value refactor point in the codebase, expecting you to find what needs work. Either way: assess first, discuss findings, scrope and outcome, then plan.
 
+The core principles are this:
+
+- The goal is to have a codebase that is in the top 10% of codebases similar to this one   
+- Prioritize simplicity of the final code, not how easy it is to get there. 
+
 ## Phase 0: Assess
 
 ### If the user pointed at a specific target
@@ -56,6 +61,14 @@ File size is just one symptom. Look deeper:
 - **CLAUDE.md health**: Does each directory have one? Is it the right size? A 400-line CLAUDE.md covering 19 files signals the directory needs splitting. No CLAUDE.md at all means agents fly blind.
 - **Self-describing structure**: Does `ls` on a directory communicate the architecture? File names should cluster by concern (shared prefixes like `template_*validation*.py`).
 - **Isolation of concerns**: Can an agent modify one concern without understanding others? If adding a new validation pass requires understanding the wrapper chain, the module boundaries are wrong. Each concern should be a "context island" an agent can load independently.
+
+When considering alternatives have this in mind:
+- Do I fully understand the current implementation's intentions?
+- Have I identified all dependencies?
+- Is my considered "improvement" actually better, or just different?
+
+Sometimes the solution can be hidden and you need to take a BIG step back to see it. Always ask yourself: Whats the right solution that the top 10% of codebases similar to this one    
+would implement and have we considered it yet?
 
 ### Scenario analysis — measure context loading cost
 
