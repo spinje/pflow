@@ -401,7 +401,7 @@ class TestOutputResolutionErrors:
     """Tests for error behavior when output sources cannot be resolved."""
 
     def test_error_diagnosis_absent_root(self):
-        """Error includes 'did not execute' when root node is absent from store."""
+        """Failure record classifies absent-node references with structured status."""
         shared = {"other_node": {"stdout": "data"}}
 
         workflow_ir = {
@@ -415,11 +415,13 @@ class TestOutputResolutionErrors:
 
         error = exc_info.value
         assert len(error.failures) == 1
-        assert "did not execute" in error.failures[0]["diagnostics"][0]
-        assert error.failures[0]["raw_diagnostics"][0]["root_absent"] is True
+        refs = error.failures[0]["unresolved_references"]
+        assert len(refs) == 1
+        assert refs[0]["status"] == "absent"
+        assert refs[0]["root"] == "missing_node"
 
     def test_error_diagnosis_path_not_found(self):
-        """Error includes 'path not found' when root is present but path is wrong."""
+        """Failure record classifies typo references as path_error."""
         shared = {"node1": {"stdout": "data"}}
 
         workflow_ir = {
@@ -432,9 +434,11 @@ class TestOutputResolutionErrors:
             populate_declared_outputs(shared, workflow_ir)
 
         error = exc_info.value
-        assert "path" in error.failures[0]["diagnostics"][0]
-        assert "not found" in error.failures[0]["diagnostics"][0]
-        assert error.failures[0]["raw_diagnostics"][0]["root_absent"] is False
+        refs = error.failures[0]["unresolved_references"]
+        assert refs[0]["status"] == "path_error"
+        assert refs[0]["root"] == "node1"
+        # Typo correction hint exposed for the renderer
+        assert refs[0].get("did_you_mean") == "node1.stdout"
 
     def test_error_collects_all_failures(self):
         """Multiple failed outputs are collected into a single error."""
@@ -486,39 +490,9 @@ class TestOutputResolutionErrors:
         populate_declared_outputs(shared, workflow_ir)
         assert "content" not in shared
 
-    def test_error_suggests_coalesce_when_root_absent(self):
-        """Error suggestions include ?? hint when root node is absent."""
-        shared = {}
-
-        workflow_ir = {
-            "outputs": {
-                "result": {"source": "${branch_a.stdout}"},
-            }
-        }
-
-        with pytest.raises(OutputResolutionError) as exc_info:
-            populate_declared_outputs(shared, workflow_ir)
-
-        assert any("??" in s for s in exc_info.value.suggestions)
-
-    def test_no_coalesce_suggestion_when_path_error(self):
-        """Error does NOT suggest ?? when root is present (it's a typo, not branching)."""
-        shared = {"node1": {"stdout": "data"}}
-
-        workflow_ir = {
-            "outputs": {
-                "result": {"source": "${node1.stddout}"},  # typo
-            }
-        }
-
-        with pytest.raises(OutputResolutionError) as exc_info:
-            populate_declared_outputs(shared, workflow_ir)
-
-        assert not any("??" in s for s in exc_info.value.suggestions)
-
-    def test_error_formats_via_diagnostic(self):
-        """OutputResolutionError renders readable output through Diagnostic formatting."""
-        shared = {}
+    def test_rendered_output_shows_absent_branch_and_coalesce_fix(self):
+        """Rendered Diagnostic surfaces the absent branch and a paste-able coalesce fix."""
+        shared = {"other_node": {"stdout": "fallback-value"}}
 
         workflow_ir = {
             "outputs": {
@@ -531,7 +505,31 @@ class TestOutputResolutionErrors:
 
         diagnostic = exception_to_diagnostics(exc_info.value)[0]
         formatted = format_diagnostic(diagnostic)
+
+        # Canonical title + error message shape match the node-param path
         assert "Error:" in formatted
+        assert "Template Resolution Failed" in formatted
         assert "branch_a" in formatted
+        # Structured renderer emits the "did not execute" status line
         assert "did not execute" in formatted
-        assert "??" in formatted
+        # Paste-able coalesce fix uses a real peer node name (not <peer>)
+        assert "${branch_a.stdout ?? other_node.stdout}" in formatted
+
+    def test_rendered_output_for_path_error_shows_did_you_mean(self):
+        """Rendered Diagnostic shows paste-able corrected path for typos on succeeded nodes."""
+        shared = {"node1": {"stdout": "data"}}
+
+        workflow_ir = {
+            "outputs": {
+                "result": {"source": "${node1.stddout}"},  # typo
+            }
+        }
+
+        with pytest.raises(OutputResolutionError) as exc_info:
+            populate_declared_outputs(shared, workflow_ir)
+
+        diagnostic = exception_to_diagnostics(exc_info.value)[0]
+        formatted = format_diagnostic(diagnostic)
+
+        assert "Template Resolution Failed" in formatted
+        assert "${node1.stdout}" in formatted  # paste-able corrected path

@@ -63,9 +63,9 @@ class TestUpstreamStderr:
         error_message = str(exc_info.value)
         # Should mention unresolved template
         assert "nonexistent" in error_message or "${" in error_message
-        # Should include upstream stderr
+        # Structured path-error rendering should include the node and available fields.
         assert "shell-node" in error_message
-        assert "command failed silently" in error_message
+        assert "Available fields" in error_message
 
     def test_no_stderr_context_when_upstream_has_no_stderr(self):
         """No upstream context should appear when shell has no stderr."""

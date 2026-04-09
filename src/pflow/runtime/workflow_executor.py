@@ -389,15 +389,18 @@ class WorkflowExecutor(BaseNode):
         When a sub-workflow's Flow returns "error" action (not an exception), the actual
         error message is namespaced under the failed node's ID in child_storage.
         """
+        from pflow.runtime.node_state import get_node_failure, get_node_output
+
         failed_node = child_storage.get("__execution__", {}).get("failed_node")
         if failed_node:
-            # Check namespaced node error (e.g., node's own post() set shared["error"])
-            node_data = child_storage.get(failed_node)
+            failure = get_node_failure(child_storage, failed_node)
+            if failure and failure.get("error"):
+                return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {failure['error']}"
+            node_data = get_node_output(child_storage, failed_node)
             if isinstance(node_data, dict):
                 error = node_data.get("error")
                 if error:
                     return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {error}"
-            # Check warnings (e.g., routing failures, API warnings)
             warning = child_storage.get("__warnings__", {}).get(failed_node)
             if warning:
                 return f"Sub-workflow failed at {workflow_path} (node '{failed_node}'): {warning}"

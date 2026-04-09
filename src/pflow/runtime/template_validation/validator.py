@@ -177,11 +177,15 @@ def _validate_unused_inputs(workflow_ir: dict[str, Any], all_templates: set[str]
         enable_namespacing = workflow_ir.get("enable_namespacing", True)
         node_ids = get_node_ids(workflow_ir) if enable_namespacing else set()
 
-        # Extract base variable names from templates (before any dots)
-        # But exclude node IDs when namespacing is enabled
+        # Extract root identifier from each template using the canonical
+        # helper. A bare ``.split(".")[0]`` misses bracket syntax — e.g.
+        # ``${items[0].name}`` would reduce to ``"items[0]"`` and then
+        # never match a declared input named ``items``, producing a false
+        # "unused input" error. ``extract_root_node_id`` handles all
+        # variants (bare, dotted, indexed, mixed).
         used_inputs = set()
         for var in all_templates:
-            base_var = var.split(".")[0]
+            base_var = TemplateResolver.extract_root_node_id(var) or var
             # Only count as used input if it's actually a declared input
             # and not a node ID (when namespacing is enabled)
             if base_var in declared_inputs and (not enable_namespacing or base_var not in node_ids):

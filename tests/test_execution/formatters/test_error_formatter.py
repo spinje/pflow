@@ -182,7 +182,17 @@ class TestExecutionStateGuardrails:
         information about which nodes succeeded/failed.
         """
         ir_data = {"nodes": [{"id": "fetch"}, {"id": "process"}, {"id": "send"}]}
+        # Task 148 invariant: succeeded nodes at top level, failed in __failures__
         shared_storage = {
+            "fetch": {"result": "ok"},
+            "process": {"result": "ok"},
+            "__failures__": {
+                "send": {
+                    "data": {"error": "Send failed"},
+                    "category": "node_action_error",
+                    "error": "Send failed",
+                },
+            },
             "__execution__": {"completed_nodes": ["fetch", "process"], "failed_node": "send"},
             "__cache_hits__": [],
         }

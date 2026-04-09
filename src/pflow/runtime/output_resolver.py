@@ -9,13 +9,9 @@ resolved (e.g., references a node that didn't execute). Coalesce expressions
 explicitly opted into fallthrough behavior.
 """
 
-import re
 from typing import Any, Optional
 
 from pflow.runtime.template_resolver import TemplateResolver
-
-# Split "node.path[0]" → "node" to extract root node ID
-_ROOT_SPLIT = re.compile(r"[.\[]")
 
 
 def resolve_output_source(source_expr: str, shared_storage: dict[str, Any]) -> Optional[Any]:
@@ -64,32 +60,63 @@ def _diagnose_unresolved_output(
 ) -> dict[str, Any]:
     """Diagnose why an output source expression could not be resolved.
 
-    Returns a dict with:
-        - source_expr: the original source expression
-        - diagnostics: list of human-readable diagnosis strings
-        - raw_diagnostics: list of dicts with structured info per variable
+    Returns the structured ``unresolved_references`` list consumed by the
+    template-error rendering pipeline in ``core/diagnostic.py``. All
+    per-reference detail (status, failure category/data, peer suggestions,
+    typo hints) lives on the structured refs — no parallel prose format.
     """
-    variables = TemplateResolver.extract_variables(normalized)
-    diagnostics: list[str] = []
-    raw_diagnostics: list[dict[str, Any]] = []
+    from pflow.runtime.engine.template_errors import classify_unresolved_references
 
-    for var in sorted(variables):
-        root = _ROOT_SPLIT.split(var, maxsplit=1)[0]
-
-        if root not in shared_storage:
-            msg = f"Variable '{var}': node '{root}' did not execute"
-            diagnostics.append(msg)
-            raw_diagnostics.append({"variable": var, "root": root, "root_absent": True})
-        else:
-            msg = f"Variable '{var}': node '{root}' executed but path '{var}' not found in its output"
-            diagnostics.append(msg)
-            raw_diagnostics.append({"variable": var, "root": root, "root_absent": False})
+    structured_refs = classify_unresolved_references(normalized, shared_storage)
+    available_keys = sorted(k for k in shared_storage if not str(k).startswith("_"))
 
     return {
         "source_expr": source_expr,
-        "diagnostics": diagnostics,
-        "raw_diagnostics": raw_diagnostics,
+        "unresolved_references": structured_refs,
+        "template": normalized,
+        "available_context_keys": available_keys,
     }
+
+
+def _is_all_absent_coalesce(normalized: str, shared_storage: dict[str, Any]) -> bool:
+    """True if every operand of a coalesce expression is ABSENT.
+
+    All-absent coalesce is the legitimate Task 128 branch-convergence fallthrough —
+    the user explicitly opted into "skip this output if none of the operands ran"
+    semantics via ``??``. This must be silently skipped.
+
+    Any FAILED or PATH_ERROR operand (node executed and failed, or succeeded with a
+    typo) is NOT a legitimate fallthrough — those are real errors the user needs
+    to see. Returns False so the caller records a failure.
+
+    Non-coalesce templates always return False (caller records a failure).
+    """
+    inner = TemplateResolver.extract_simple_template_var(normalized)
+    if not (inner and TemplateResolver.is_coalesce_expression(inner)):
+        return False
+
+    from pflow.runtime.engine.template_errors import classify_unresolved_references
+
+    refs = classify_unresolved_references(normalized, shared_storage)
+    return bool(refs) and all(ref.get("status") == "absent" for ref in refs)
+
+
+def _record_output_failure(
+    output_name: str,
+    output_config: dict[str, Any],
+    source_expr: str,
+    normalized: str,
+    shared_storage: dict[str, Any],
+) -> dict[str, Any]:
+    """Build an OutputResolutionError failure entry with source-file context."""
+    failure = _diagnose_unresolved_output(source_expr, normalized, shared_storage)
+    failure["output_name"] = output_name
+    if "_source_line" in output_config:
+        failure["source_line"] = output_config["_source_line"]
+    source_file = shared_storage.get("_pflow_workflow_file")
+    if source_file:
+        failure["source_file"] = source_file
+    return failure
 
 
 def populate_declared_outputs(
@@ -136,16 +163,13 @@ def populate_declared_outputs(
                 shared_storage[output_name] = result
             continue
 
-        # Unresolved — check if this is a coalesce expression (user opted into fallthrough)
-        inner = TemplateResolver.extract_simple_template_var(normalized)
-        if inner and TemplateResolver.is_coalesce_expression(inner):
-            # All-absent coalesce — silently skip (user explicitly used ??)
+        # Unresolved — silently skip only if this is a legitimate all-absent
+        # coalesce (Task 128 branch-convergence). Any FAILED / PATH_ERROR operand
+        # falls through to error recording so the agent sees the actual failure.
+        if _is_all_absent_coalesce(normalized, shared_storage):
             continue
 
-        # Non-coalesce source that can't resolve — record failure with diagnosis
-        failure = _diagnose_unresolved_output(source_expr, normalized, shared_storage)
-        failure["output_name"] = output_name
-        failures.append(failure)
+        failures.append(_record_output_failure(output_name, output_config, source_expr, normalized, shared_storage))
 
     if failures:
         from pflow.core.user_errors import OutputResolutionError

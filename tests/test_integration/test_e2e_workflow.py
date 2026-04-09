@@ -209,7 +209,8 @@ def test_node_execution_failure(tmp_path):
         assert result.exit_code == 1
         # New enhanced error format shows detailed error information
         assert "Error:" in result.output or "failed" in result.output.lower()
-        assert "Error at node 'read':" in result.output or "failed" in result.output.lower()
+        assert "read" in result.output
+        assert "nonexistent.txt" in result.output
         # The node error details are shown with category and message
 
 

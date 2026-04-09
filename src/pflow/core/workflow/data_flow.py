@@ -176,8 +176,7 @@ def _validate_template_reference(
         return None
 
     # Extract root identifier (before first . or [)
-    # Uses TemplateResolver._ROOT_SPLIT_PATTERN — private attribute, see note on _PFLOW_VAR_RE.
-    root = TemplateResolver._ROOT_SPLIT_PATTERN.split(ref)[0]
+    root = TemplateResolver.extract_root_node_id(ref)
     has_path = root != ref
 
     if has_path:  # Node output reference like ${node1.output} or ${data[0].field}

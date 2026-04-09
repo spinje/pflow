@@ -231,13 +231,24 @@ def test_exception_to_diagnostics_runtime_and_user_friendly_errors() -> None:
                     {
                         "output_name": "result",
                         "source_expr": "${branch_a.stdout}",
-                        "diagnostics": ["Node 'branch_a' did not execute"],
+                        "template": "${branch_a.stdout}",
+                        "unresolved_references": [
+                            {
+                                "var": "branch_a.stdout",
+                                "root": "branch_a",
+                                "status": "absent",
+                                "in_coalesce": False,
+                                "coalesce_expr": None,
+                                "peer_suggestions": [],
+                            }
+                        ],
+                        "available_context_keys": [],
                     }
                 ]
             ),
             "runtime",
-            "runtime",
-            ["Check that source expressions reference nodes that always execute on this path"],
+            "template_error",
+            None,  # No canned suggestions — structured renderer emits per-ref fixes
         ),
         (
             FileNotFoundError("missing"),

@@ -88,16 +88,31 @@ class TestCheckpointTracking:
         assert cached is False, "Should be cache miss when config changes"
 
     def test_failed_node_tracking(self):
-        """Test that failed nodes are properly recorded for repair."""
+        """Failed nodes are recorded via mark_node_failed (single write site).
+
+        Post-Task 148 (review round 2): ``cache_result`` no longer sets
+        ``failed_node`` for error actions — that's now the exclusive job of
+        ``mark_node_failed`` at step 17.5 of ``engine._execute_node``.
+        ``cache_result`` with an error action is a no-op.
+        """
         shared: dict[str, Any] = {}
         initialize_execution_state(shared)
 
-        # Record an error result
+        # cache_result is now a no-op for error actions
         cache_result("payment_processor", "hash123", "error", shared)
 
         checkpoint = shared["__execution__"]
-        assert checkpoint["failed_node"] == "payment_processor"
+        assert checkpoint["failed_node"] is None
         assert "payment_processor" not in checkpoint["completed_nodes"]
+
+        from pflow.runtime.node_state import FAILURE_CATEGORY_NODE_ERROR, mark_node_failed
+
+        # mark_node_failed is the single write site for failed_node
+        shared["payment_processor"] = {"error": "declined"}
+        mark_node_failed(shared, "payment_processor", category=FAILURE_CATEGORY_NODE_ERROR, error="declined")
+        assert shared["__execution__"]["failed_node"] == "payment_processor"
+        assert "payment_processor" in shared["__failures__"]
+        assert shared["__failures__"]["payment_processor"]["error"] == "declined"
 
     def test_resume_workflow_simulation(self):
         """Integration test: Simulate workflow resume after repair.

@@ -545,12 +545,13 @@ def test_real_workflow_execution_with_errors(tmp_path):
     engine = WorkflowEngine()
     engine.run(workflow, shared)
 
-    # Verify the error was set in shared store
-    # With namespacing enabled, error is stored under node ID
-    assert "read_missing" in shared
-    assert "error" in shared["read_missing"]
-    assert "nonexistent.txt" in shared["read_missing"]["error"]
-    assert "does not exist" in shared["read_missing"]["error"]
+    from pflow.runtime.node_state import get_node_failure
+
+    failure = get_node_failure(shared, "read_missing")
+    assert failure is not None
+    error = str(failure.get("error", ""))
+    assert "nonexistent.txt" in error
+    assert "does not exist" in error
 
 
 def test_concurrent_workflow_operations(tmp_path):

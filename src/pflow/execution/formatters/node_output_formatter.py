@@ -54,7 +54,7 @@ def _resolve_template_value(path: str, outputs: dict[str, Any], shared_store: di
         return value
     # Both returned None - but is None the actual value or path not found?
     # Check if path exists in either dict by looking for the root key
-    root_key = path.split(".")[0].split("[")[0]
+    root_key = TemplateResolver.extract_root_node_id(path)
     if root_key in outputs or root_key in shared_store:
         # Path root exists, so None is the actual value
         return None

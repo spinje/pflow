@@ -8,7 +8,6 @@ Note: While primarily designed for shell nodes, these utilities work for any
 node type that writes stderr to the shared store.
 """
 
-import re
 from typing import Any
 
 from ..template_resolver import TemplateResolver
@@ -32,14 +31,7 @@ def extract_node_ids_from_template(template: str) -> set[str]:
         {'data'}
     """
     variables = TemplateResolver.extract_variables(template)
-    node_ids = set()
-    for var in variables:
-        # Split on '.' or '[' to get base node ID
-        # e.g., "extract-urls.stdout" -> "extract-urls"
-        # e.g., "data[0].name" -> "data"
-        base_id = re.split(r"[\.\[]", var)[0]
-        node_ids.add(base_id)
-    return node_ids
+    return {TemplateResolver.extract_root_node_id(var) for var in variables}
 
 
 def get_upstream_stderr(
@@ -65,11 +57,13 @@ def get_upstream_stderr(
     Example output:
         "\\n\\n  ⚠️  Upstream node 'extract-urls' stderr:\\n     grep: invalid option -- P\\n     usage: grep ..."
     """
+    from pflow.runtime.node_state import get_node_output
+
     node_ids = extract_node_ids_from_template(template)
 
     stderr_contexts = []
     for node_id in sorted(node_ids):  # Sort for deterministic output
-        node_output = shared.get(node_id, {})
+        node_output = get_node_output(shared, node_id) or {}
         if not isinstance(node_output, dict):
             continue
 

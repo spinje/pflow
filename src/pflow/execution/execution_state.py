@@ -106,10 +106,8 @@ def build_execution_steps(
     if not workflow_ir or "nodes" not in workflow_ir:
         return []
 
-    # Get execution state from shared storage
-    exec_state = shared_storage.get("__execution__", {})
-    completed = exec_state.get("completed_nodes", [])
-    failed = exec_state.get("failed_node")
+    # Cache lookup data — status is sourced from node_state.get_node_status()
+    # which reads __failures__ and shared[node_id] per the Task 148 invariant.
     cache_hits = shared_storage.get("__cache_hits__", [])
     # Extract node timings from metrics
     node_timings = {}
@@ -117,18 +115,22 @@ def build_execution_steps(
         workflow_metrics = metrics_summary.get("metrics", {}).get("workflow", {})
         node_timings = workflow_metrics.get("node_timings", {})
 
+    _STATUS_MAP = {
+        "succeeded": "completed",
+        "failed": "failed",
+        "absent": "not_executed",
+    }
+
     # Build steps array from workflow IR
     steps = []
     for node in workflow_ir["nodes"]:
+        from pflow.runtime.node_state import get_node_output, get_node_status
+
         node_id = node["id"]
 
-        # Determine execution status
-        if node_id in completed:
-            status = "completed"
-        elif node_id == failed:
-            status = "failed"
-        else:
-            status = "not_executed"
+        # Determine execution status from the Task 148 invariant: a node is in
+        # completed_nodes xor in __failures__ xor absent.
+        status = _STATUS_MAP[get_node_status(shared_storage, node_id).value]
 
         # Build step dictionary
         step = {
@@ -140,7 +142,7 @@ def build_execution_steps(
 
         # Add batch metadata if this is a batch node
         # Batch nodes write to shared[node_id] with batch_metadata key
-        node_output = shared_storage.get(node_id, {})
+        node_output = get_node_output(shared_storage, node_id) or {}
         if isinstance(node_output, dict) and "batch_metadata" in node_output:
             step["is_batch"] = True
             step["batch_total"] = node_output.get("count", 0)

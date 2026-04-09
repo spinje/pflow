@@ -466,3 +466,59 @@ class TestResolveNestedCoalesce:
         params = {"outer": {"inner": "${node.data ?? other.data}"}}
         resolved = TemplateResolver.resolve_nested(params, context)
         assert resolved["outer"]["inner"] == {"key": "deep-value"}
+
+
+class TestCoalesceWithFailedNodes:
+    """Regression tests for GH #208 — coalesce must skip failed nodes."""
+
+    def test_coalesce_skips_failed_root(self):
+        from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
+
+        shared = {
+            "primary": {"stdout": "", "exit_code": 1, "command": "exit 1"},
+            "fallback": {"stdout": "fallback-content"},
+            "__execution__": {
+                "completed_nodes": ["fallback"],
+                "node_actions": {"fallback": "default"},
+                "node_hashes": {},
+                "failed_node": None,
+                "node_visit_counts": {},
+            },
+        }
+        mark_node_failed(shared, "primary", category=FAILURE_CATEGORY_SHELL, error="exit 1")
+        assert "primary" not in shared
+        value, status = TemplateResolver.resolve_coalesce("primary.stdout ?? fallback.stdout", shared)
+        assert status == "resolved"
+        assert value == "fallback-content"
+
+    def test_coalesce_skips_failed_when_using_resolve_template(self):
+        from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
+
+        shared = {
+            "primary": {"stdout": ""},
+            "fallback": {"stdout": "fallback-content"},
+            "__execution__": {
+                "completed_nodes": ["fallback"],
+                "node_actions": {"fallback": "default"},
+                "node_hashes": {},
+                "failed_node": None,
+                "node_visit_counts": {},
+            },
+        }
+        mark_node_failed(shared, "primary", category=FAILURE_CATEGORY_SHELL)
+        assert TemplateResolver.resolve_template("${primary.stdout ?? fallback.stdout}", shared) == "fallback-content"
+
+    def test_succeeded_node_with_empty_output_still_resolves(self):
+        shared = {
+            "primary": {"stdout": ""},
+            "fallback": {"stdout": "fallback-content"},
+            "__execution__": {
+                "completed_nodes": ["primary", "fallback"],
+                "node_actions": {"primary": "default", "fallback": "default"},
+                "node_hashes": {},
+                "failed_node": None,
+                "node_visit_counts": {},
+            },
+        }
+        result = TemplateResolver.resolve_template("${primary.stdout ?? fallback.stdout}", shared)
+        assert result == ""

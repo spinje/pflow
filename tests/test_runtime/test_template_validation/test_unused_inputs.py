@@ -215,6 +215,42 @@ def test_input_used_in_nested_path(mock_registry, tmp_path):
     assert len(errors) == 0
 
 
+def test_input_used_with_indexed_access(mock_registry, tmp_path):
+    """Regression guard: indexed input references (``${items[0].name}``) must
+    be recognized as uses of the declared ``items`` input.
+
+    Pre-fix, ``_validate_unused_inputs`` used ``var.split(".")[0]`` to extract
+    the root identifier, which for ``items[0].name`` yielded ``"items[0]"``
+    (with the bracket) — and that never matched the declared name ``items``,
+    producing a blocking ``"Declared input(s) never used"`` error for a
+    legitimately-used input. Post-fix, the site calls
+    ``TemplateResolver.extract_root_node_id`` which strips both bracket and
+    dot syntax.
+    """
+    output_path = str(tmp_path / "output.txt")
+    workflow_ir = {
+        "inputs": {
+            "items": {"type": "list", "description": "List of items to process"},
+        },
+        "nodes": [
+            {
+                "id": "writer",
+                "type": "write-file",
+                "params": {"file_path": output_path, "content": "${items[0].name}"},
+            }
+        ],
+    }
+
+    initial_params = {"items": [{"name": "alpha"}, {"name": "beta"}]}
+
+    errors, _warnings = split_template_diagnostics(workflow_ir, initial_params, mock_registry)
+
+    unused_errors = [d for d in errors if "never used as template variable" in d.message]
+    assert unused_errors == [], (
+        f"${{items[0].name}} must count as a use of declared input 'items'; got {[d.message for d in unused_errors]!r}"
+    )
+
+
 def test_multiple_unused_inputs(mock_registry, tmp_path):
     """Test that multiple unused inputs are all reported."""
     workflow_ir = {

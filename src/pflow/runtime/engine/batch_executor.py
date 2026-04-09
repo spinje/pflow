@@ -215,6 +215,17 @@ def execute_batch(
     batch_trace_items = _collect_batch_trace(shared, config.node_id)
     _push_batch_warnings(shared, exec_res, errors, config.node_id, batch_config)
 
+    # fail_fast: raise AFTER aggregation so shared[node_id] has the partial
+    # batch_metadata/errors list that step 17.5 will archive into __failures__.
+    if batch_config.error_handling == "fail_fast" and errors:
+        first_error = errors[0]
+        if first_error.get("exception") is not None:
+            raise first_error["exception"]
+        raise RuntimeError(
+            f"Batch '{config.node_id}' failed at item [{first_error['index']}] "
+            f"(value: {first_error['item']!r}): {first_error['error']}"
+        )
+
     return action, batch_trace_items
 
 
@@ -367,13 +378,12 @@ def _execute_sequential(
 
         if error:
             errors.append(error)
+            # fail_fast: stop iterating but DO NOT raise here — let
+            # execute_batch() call _aggregate_batch_results first so the
+            # partial state reaches shared[node_id] and survives into
+            # __failures__.
             if batch_config.error_handling == "fail_fast":
-                if error.get("exception") is not None:
-                    raise error["exception"]
-                else:
-                    raise RuntimeError(
-                        f"Batch '{config.node_id}' failed at item [{idx}] (value: {error['item']!r}): {error['error']}"
-                    )
+                break
 
     return results, errors, timings
 
@@ -578,17 +588,9 @@ def _execute_parallel(
     finally:
         pool.shutdown(wait=False, cancel_futures=True)
 
-    # Raise first error if fail_fast
-    if batch_config.error_handling == "fail_fast" and pending_errors:
-        first_error = pending_errors[0]
-        if first_error.get("exception") is not None:
-            raise first_error["exception"]
-        else:
-            raise RuntimeError(
-                f"Batch '{config.node_id}' failed at item [{first_error['index']}] "
-                f"(value: {first_error['item']!r}): {first_error['error']}"
-            )
-
+    # fail_fast: DO NOT raise here — let execute_batch() call
+    # _aggregate_batch_results first so the partial state reaches
+    # shared[node_id] and survives into __failures__.
     return results, pending_errors, timings
 
 
@@ -672,21 +674,18 @@ def _aggregate_batch_results(
     node_id: str,
     shared: dict[str, Any],
 ) -> str:
-    """Aggregate batch results into shared store. Returns action string."""
+    """Aggregate batch results into shared store. Returns action string.
+
+    On all-failed abort: writes the aggregated state to ``shared[node_id]``
+    BEFORE raising so step 17.5 in ``engine._execute_node`` captures the full
+    ``batch_metadata`` / ``errors`` list into ``__failures__[node_id].data``.
+    Without this, ``build_execution_steps`` could not surface batch error
+    details for the failing batch node (spec acceptance criterion).
+    """
     # Count successes
     success_count = sum(1 for r in exec_res if r is not None and not _extract_error(r))
 
-    # All items failed -> abort
-    if batch_config.error_handling == "continue" and success_count == 0 and errors:
-        error_summary = "; ".join(f"[{e['index']}] {e['error']}" for e in errors[:3])
-        if len(errors) > 3:
-            error_summary += f" (+{len(errors) - 3} more)"
-        raise RuntimeError(
-            f"Batch '{node_id}': all {len(errors)} items failed, "
-            f"no successful results to continue with. Errors: {error_summary}"
-        )
-
-    # Timing stats
+    # Timing stats — computed once, used by both the normal and error path
     timing_stats: dict[str, float] | None = None
     if item_timings:
         timing_stats = {
@@ -696,7 +695,8 @@ def _aggregate_batch_results(
             "max_item_ms": round(max(item_timings), 2),
         }
 
-    # Write to shared store — MUST match PflowBatchNode.post() output shape
+    # Write to shared store — MUST match PflowBatchNode.post() output shape.
+    # Happens BEFORE any abort-raise so the failure archive captures the data.
     shared[node_id] = {
         "results": exec_res,
         "count": len(exec_res),
@@ -712,6 +712,17 @@ def _aggregate_batch_results(
             "timing": timing_stats,
         },
     }
+
+    # All items failed -> abort. Raised AFTER the shared store write so
+    # step 17.5's mark_node_failed captures the rich batch metadata.
+    if batch_config.error_handling == "continue" and success_count == 0 and errors:
+        error_summary = "; ".join(f"[{e['index']}] {e['error']}" for e in errors[:3])
+        if len(errors) > 3:
+            error_summary += f" (+{len(errors) - 3} more)"
+        raise RuntimeError(
+            f"Batch '{node_id}': all {len(errors)} items failed, "
+            f"no successful results to continue with. Errors: {error_summary}"
+        )
 
     return "default"
 

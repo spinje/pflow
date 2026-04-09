@@ -9,6 +9,7 @@ src/pflow/runtime/
 ├── __init__.py              # Exports: compile_workflow(), WorkflowEngine, CompiledWorkflow, etc.
 ├── compilation/             # IR→CompiledWorkflow compiler (see compilation/CLAUDE.md)
 ├── engine/                  # Orchestration engine (see engine/CLAUDE.md)
+├── node_state.py            # Canonical node state queries + failure bookkeeping
 ├── cache.py                 # Persistent memoization cache (SQLite, cross-run)
 ├── template_resolver.py     # Template variable detection and resolution
 ├── template_validation/     # Template validation package (see template_validation/CLAUDE.md)
@@ -30,6 +31,27 @@ See `compilation/CLAUDE.md` for details. Quick summary:
 See `engine/CLAUDE.md` for full architecture. Quick summary:
 
 `WorkflowEngine(metrics, trace, only_node).run(workflow, shared)` → walks graph, handles template resolution, namespacing, batch, caching, tracing, progress per node.
+
+### Node Execution State Invariant
+
+```python
+shared[node_id]            # node executed successfully
+shared["__failures__"][id] # node executed and failed
+# neither key present       # node did not execute
+```
+
+Never both. To query state, use `pflow.runtime.node_state`:
+
+- `get_node_status(shared, node_id) -> NodeStatus` (`ABSENT`/`SUCCEEDED`/`FAILED`)
+- `get_node_output(shared, node_id) -> Optional[dict]` — succeeded OR failed data
+- `get_node_failure(shared, node_id) -> Optional[dict]` — failure record only
+- `node_succeeded(shared, node_id) -> bool`
+- `mark_node_failed(shared, node_id, *, category, error=None, warning=None)` — **single write site**
+- `clear_node_failure(shared, node_id)` — wired into loop re-entry only
+
+All 5 engine failure paths funnel through `mark_node_failed`: `cache_result` (action="error" → handled in engine.py step 17.5), `handle_api_warning`, `_handle_no_successor`, exception path, defensive paths. Direct writes to `__failures__`/`failed_node`/`__warnings__[id]` are contract violations — they drift from the canonical record shape.
+
+`__failures__` entries persist for the workflow lifetime; cleared only on loop re-entry and memo cache hits. Long-running loops with heavy retry accumulate entries until the loop commits.
 
 ## Template System
 
@@ -72,7 +94,7 @@ Runtime node for nested workflow execution. Same syntax as any other node — no
 - **Compile-once cache**: `_cached_workflow` + `_cached_workflow_ir_id` — compiles once per batch, reuses for sequential items
 - **Circular detection** via `_pflow_stack`, **max depth** via `_pflow_depth` (default 10)
 - **Relative paths** resolve from parent workflow directory via `_pflow_workflow_file`
-- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`. Execution-scoped keys (`__execution__`, `__cache_hits__`, `__template_errors__`) NOT propagated.
+- **Cross-cutting key propagation**: `_PROPAGATED_KEYS` — `__registry__`, `__progress_callback__`, `__mcp_pool__`, `__warnings__`, `_trace_collector`. Per-workflow keys (`__execution__`, `__cache_hits__`, `__template_errors__`, `__failures__`) NOT propagated — child gets its own. Adding `__failures__` here would leak child node IDs into parent state.
 
 ### MemoizationCache (`cache.py`)
 
@@ -93,7 +115,9 @@ Persistent cross-run caching. SQLite at `~/.pflow/cache/cache.db`, WAL journal, 
 
 ### Output Resolver (`output_resolver.py`)
 
-`populate_declared_outputs()` — maps namespaced outputs to root level. Raises `OutputResolutionError` for non-coalesce sources that can't be resolved. Coalesce (`??`) with all absent operands silently skipped.
+`populate_declared_outputs()` maps namespaced outputs to root level. Raises `OutputResolutionError` when a source can't be resolved.
+
+**Coalesce semantics — easy to regress**: `_is_all_absent_coalesce` distinguishes legitimate branch-convergence fallthrough from real errors. A coalesce silently skips ONLY when every operand has `status == "absent"`. Any FAILED or PATH_ERROR operand forces an error — that's the "primary failed via on-error → recovery handler" case the system has to surface, not swallow.
 
 ## Reserved Shared Store Keys (Canonical Reference)
 
@@ -106,6 +130,16 @@ shared["__execution__"] = {
     "failed_node": None,       # Node that caused workflow failure
     "node_visit_counts": {},   # Per-node visit counter (loop guard)
     "only_node": None,         # --only target node ID (set by engine)
+}
+
+# Failure archive (managed by runtime/node_state.py::mark_node_failed)
+shared["__failures__"] = {
+    "node_id": {
+        "data": {...},        # what was at shared[node_id] before the move (may be {})
+        "category": "shell_failure" | "node_action_error" | "api_warning" | "routing_error" | "exception" | "template_error",
+        "error": "...",       # human-readable error (optional)
+        "warning": "...",     # for api_warning category only (optional)
+    }
 }
 
 # System keys

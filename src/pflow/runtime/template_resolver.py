@@ -196,6 +196,52 @@ class TemplateResolver:
         return "??" in expr
 
     @staticmethod
+    def extract_root_node_id(template_path: str) -> str:
+        """Extract root node ID from a template path.
+
+        Examples:
+            >>> TemplateResolver.extract_root_node_id("node")
+            'node'
+            >>> TemplateResolver.extract_root_node_id("node.field")
+            'node'
+            >>> TemplateResolver.extract_root_node_id("node.field[0].sub")
+            'node'
+            >>> TemplateResolver.extract_root_node_id("data[0]")
+            'data'
+        """
+        return TemplateResolver._ROOT_SPLIT_PATTERN.split(template_path, maxsplit=1)[0]
+
+    @staticmethod
+    def extract_first_field_segment(var: str) -> str | None:
+        """Return the first field segment after the root, bracketless.
+
+        Used by template error helpers to find/suggest field names when a
+        variable like ``node.field.sub`` or ``node.field[0]`` fails to
+        resolve. Returns ``None`` when the path has no field segment
+        (bare root like ``node`` or ``data[0]``).
+
+        Examples:
+            >>> TemplateResolver.extract_first_field_segment("node.field")
+            'field'
+            >>> TemplateResolver.extract_first_field_segment("node.field.sub")
+            'field'
+            >>> TemplateResolver.extract_first_field_segment("node.field[0]")
+            'field'
+            >>> TemplateResolver.extract_first_field_segment("node.field[0].nested")
+            'field'
+            >>> TemplateResolver.extract_first_field_segment("node")
+
+            >>> TemplateResolver.extract_first_field_segment("data[0]")
+
+            >>> TemplateResolver.extract_first_field_segment("node[0].field")
+            'field'
+        """
+        parts = var.split(".", 1)
+        if len(parts) != 2:
+            return None
+        return parts[1].split(".", 1)[0].split("[", 1)[0]
+
+    @staticmethod
     def resolve_coalesce(expr: str, context: dict[str, Any]) -> tuple[Any, str]:
         """Resolve a coalesce expression, trying operands left to right.
 

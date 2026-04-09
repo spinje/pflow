@@ -460,13 +460,16 @@ class WorkflowValidator:
             # Split coalesce operands and validate each one
             operands = TemplateResolver.split_coalesce_operands(template_var)
             for operand in operands:
-                # Skip if not a node reference (no dot)
-                if "." not in operand:
+                # Skip if not a node reference (no dot or bracket)
+                if "." not in operand and "[" not in operand:
                     continue  # Could be workflow input
 
-                # Parse node.key
-                node_id = operand.split(".", 1)[0]
-                output_key = operand.split(".", 1)[1]
+                # Parse node.key via the canonical extractor so operands like
+                # `${data[0].x}` yield node_id="data" (not "data[0]").
+                # Strip a leading dot only so bracket forms like `[0].x` are
+                # preserved in the rendered output_key for error messages.
+                node_id = TemplateResolver.extract_root_node_id(operand)
+                output_key = operand[len(node_id) :].lstrip(".")
 
                 # Validate node exists
                 if node_id not in nodes_map:

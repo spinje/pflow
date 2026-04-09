@@ -187,7 +187,11 @@ class TestErrorRouting:
         assert _node_ran(shared, "handler")
         assert shared["handler"]["stdout"] == "handled"
         # The failer node should have an error recorded
-        assert "error" in shared["failer"]
+        from pflow.runtime.node_state import get_node_failure
+
+        failure = get_node_failure(shared, "failer")
+        assert failure is not None
+        assert failure.get("error")
 
     def test_on_error_not_triggered_on_success(self) -> None:
         """When a code node succeeds, the error edge is NOT taken."""
@@ -550,7 +554,11 @@ class TestFullPipeline:
 
         assert _node_ran(shared, "handler")
         assert shared["handler"]["stdout"] == "error-handled"
-        assert "error" in shared["risky"]
+        from pflow.runtime.node_state import get_node_failure
+
+        failure = get_node_failure(shared, "risky")
+        assert failure is not None
+        assert failure.get("error")
 
     def test_pipeline_next_end(self) -> None:
         """A node with '- next: end' terminates the flow early."""

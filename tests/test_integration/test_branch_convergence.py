@@ -154,7 +154,7 @@ class TestBranchConvergenceIR:
         merge_code = 'high: str\nlow: str | None\nresult: str = high or low or "nothing"'
         ir = _make_convergence_ir(merge_code, route_to_low=True)
 
-        with pytest.raises(ValueError, match="Unresolved variables"):
+        with pytest.raises(ValueError, match=r"Unresolved variables.*branch-high\.stdout"):
             compile_and_run_ir(ir)
 
     def test_typo_in_field_still_errors_despite_optional(self) -> None:
@@ -643,8 +643,11 @@ class TestOutputResolutionErrors:
             "content": {"source": "${branch-high.stdout}"},
         }
 
-        with pytest.raises(OutputResolutionError, match="branch-high.*did not execute"):
+        with pytest.raises(OutputResolutionError, match="branch-high") as exc_info:
             compile_and_run_ir(ir)
+        # Structured ref classifies the unexecuted branch as absent
+        refs = exc_info.value.failures[0]["unresolved_references"]
+        assert any(r["root"] == "branch-high" and r["status"] == "absent" for r in refs)
 
     def test_coalesce_output_resolves_on_unexecuted_branch(self) -> None:
         """Output source WITH ?? resolves when one branch didn't execute."""
@@ -736,8 +739,94 @@ class TestOutputResolutionErrors:
 
         shared = compile_and_run_ir(parent_ir)
 
-        # Child failed — error written to parent's shared store under child namespace
-        assert "child" in shared
-        error = shared["child"].get("error", "")
+        from pflow.runtime.node_state import get_node_failure
+
+        failure = get_node_failure(shared, "child")
+        assert failure is not None
+        error = str(failure.get("error", ""))
         assert "branch-a" in error, f"Expected 'branch-a' in error, got: {error}"
-        assert "did not execute" in error, f"Expected 'did not execute' in error, got: {error}"
+        # Sub-workflow error flattens to a string at the parent boundary (GH #233).
+        # Structured classification is still reachable via the trace, but the
+        # parent's failure.error now carries the one-line summary.
+        assert "Unresolved" in error or "branch-a.stdout" in error, (
+            f"Expected unresolved-template summary, got: {error}"
+        )
+
+    def test_child_failures_do_not_leak_into_parent_failures_dict(self, tmp_path: Any) -> None:
+        """Invariant guard: ``__failures__`` is per-workflow and must NOT be
+        propagated across workflow boundaries.
+
+        The contract is enforced by ``WorkflowExecutor._PROPAGATED_KEYS`` —
+        ``__failures__`` is deliberately excluded (per-workflow scoping). A
+        careless refactor that adds ``__failures__`` to ``_PROPAGATED_KEYS``,
+        or that copies the dict reference across boundaries, would silently
+        leak the child's inner failed-node IDs into the parent's ``__failures__``.
+        Downstream consumers (``get_node_status``, ``_extract_node_level_error``,
+        error enrichment) would then report wrong state for identically-named
+        nodes in parent and child, and the parent would see "node failed" for
+        nodes that don't even exist in its graph.
+
+        This test exercises a parent→child where the child's inner node fails.
+        The child's WorkflowExecutor node appears in the parent's ``__failures__``
+        (that's the boundary-level failure), but the child's inner failing
+        node ID must NOT appear in the parent's ``__failures__``.
+        """
+        # Child workflow: inner node fails with exit 1, no on-error handler.
+        # The child's engine archives `inner_failing` into CHILD's __failures__.
+        # The child workflow flow returns "error", which propagates to the
+        # parent as action="error" on the WorkflowExecutor node.
+        child_md = _md("""\
+            # Child That Fails Internally
+
+            Child workflow where the inner node fails. Used to verify the
+            child's __failures__ dict doesn't leak into the parent's.
+
+            ## Steps
+
+            ### inner_failing
+
+            Inner node that exits non-zero.
+
+            - type: shell
+            - next: end
+
+            ```shell command
+            echo "inner-stderr" >&2
+            exit 1
+            ```
+        """)
+        child_path = tmp_path / "isolation_child.pflow.md"
+        child_path.write_text(child_md)
+
+        parent_ir = {
+            "nodes": [
+                {
+                    "id": "run_child",
+                    "type": "workflow",
+                    "params": {"workflow": str(child_path)},
+                },
+            ],
+            "edges": [],
+        }
+
+        shared = compile_and_run_ir(parent_ir)
+
+        # Parent's __failures__ must contain the boundary-level failure (run_child)
+        # but NOT the child's internal failing node id.
+        parent_failures = shared.get("__failures__", {})
+        assert "run_child" in parent_failures, (
+            "Parent's __failures__ should have the WorkflowExecutor node that encapsulates the child error"
+        )
+        assert "inner_failing" not in parent_failures, (
+            f"Child's internal failed node 'inner_failing' leaked into parent __failures__! "
+            f"This means __failures__ was propagated across the workflow boundary. "
+            f"Parent failures: {list(parent_failures.keys())}"
+        )
+
+        # The parent should also not have a stray ``inner_failing`` in its
+        # top-level shared store — that would indicate the child's success
+        # namespace leaked instead of the failure namespace.
+        assert "inner_failing" not in shared, (
+            f"Child's inner node 'inner_failing' leaked into parent's top-level shared store: "
+            f"{[k for k in shared if not k.startswith('_')]}"
+        )

@@ -116,7 +116,7 @@ Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Ever
 3. Data flow (execution order, dependencies) — always runs
 4. Templates (variable resolution) — if params provided
 5. Node types (registry verification) — unless `skip_node_types=True`
-6. Output sources — validates `${node.key}` refs in outputs, with fuzzy "did you mean?" suggestions
+6. Output sources — validates `${node.key}` refs in outputs via `_validate_template_in_source`. Uses `TemplateResolver.extract_root_node_id()` to support bracket syntax like `${data[0].x}`. Provides fuzzy "did you mean?" suggestions.
 7. Unknown param errors — hard errors for params not in node interface metadata, with fuzzy-matched valid keys
 8. Sub-workflow validation — recursive validation of referenced child workflows (file, saved name, inline IR)
 9. Cache lint — warns when shell nodes have no template inputs and no `cache: false` (stale cache risk)
@@ -126,6 +126,8 @@ Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Ever
 **`_add_child_provenance` first-write-wins semantics** — sub-workflow diagnostics flow recursively up through nested parents. `sub_workflow_step` and `sub_workflow_path` use `dict.setdefault()` so the innermost wrapping (closest to the error) wins as recursion unwinds. This keeps structured provenance aligned with `node_id` and `context["path"]` (both of which already point at the deepest level). Regressing to overwrite semantics silently breaks 3-level nested workflows.
 
 **Dual-propagation-path dedup invariant** — child workflow warnings flow through BOTH this validator path (`_add_child_provenance`) AND the runtime path (`WorkflowExecutor._propagate_child_parser_warnings`). Both MUST use `format_child_provenance()` for the message, `node_id=d.node_id or step_id` for differentiating siblings, and `setdefault` for context keys. Divergence on any of these breaks `Diagnostic.__hash__` equality and dedup silently duplicates warnings.
+
+**Known false positive in step 6**: `_validate_template_in_source` only treats bare `${name}` references as potential workflow inputs (the "skip if no dot or bracket" check). Any `${input_name.field}` or `${input_name[0]}` form falls through to the "node not in nodes_map" check and errors, even when `input_name` is declared in the workflow's `inputs:` section. Blocks `pflow workflow save` for workflows that access fields on declared inputs in output sources. Tracked as spinje/pflow#247.
 
 ### data_flow.py
 
@@ -153,7 +155,8 @@ Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g
 
 ## Known Issues
 
-**⚠️ Bug**: Claude Code requires `description` in frontmatter for skill discovery (workaround in `skill_service.py`).
+- **Validator rejects `${input.field}` in output sources** — see `validator.py` section. Workflows using workflow input field access in outputs cannot be saved.
+- **Claude Code requires `description` in frontmatter** for skill discovery (workaround in `skill_service.py`).
 
 ## Key Lessons
 
@@ -161,4 +164,4 @@ Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g
 
 **Content preservation**: Save operations store original markdown with YAML frontmatter prepended. The markdown body is never modified by metadata updates.
 
-**Data flow validation gap**: Tests had execution order validation that production lacked — workflows passed validation but failed at runtime. Now unified in `WorkflowValidator`.
+**Data flow validation parity**: Compiler validation and `WorkflowValidator` must stay in sync — workflows used to pass save-time validation and fail at compile time. The data_flow validator is now shared between both via lazy import.

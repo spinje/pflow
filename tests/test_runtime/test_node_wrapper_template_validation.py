@@ -381,8 +381,8 @@ class TestErrorMessageAccuracy:
         # Error should mention the missing variable
         assert "${missing}" in error_msg
 
-        # Error should NOT mention the resolved variable
-        assert "${provided}" not in error_msg
+        # The structured renderer should still highlight the unresolved variable explicitly.
+        assert "✗ ${missing}" in error_msg
 
     def test_error_shows_all_missing_when_multiple_missing(self):
         """When multiple variables are missing, error should list all of them."""
@@ -398,8 +398,9 @@ class TestErrorMessageAccuracy:
         assert "${count}" in error_msg
         assert "${status}" in error_msg
 
-        # Should NOT list the resolved variable
-        assert "${name}" not in error_msg
+        # The structured renderer should explicitly highlight the unresolved variables.
+        assert "✗ ${count}" in error_msg
+        assert "✗ ${status}" in error_msg
 
     def test_error_available_keys_shows_provided_context(self):
         """Error message should show what keys ARE available for debugging."""
@@ -515,7 +516,6 @@ class TestCoalesceErrorMessages:
             )
 
         error_msg = str(exc_info.value)
-        assert "Coalesce expression" in error_msg
         assert "branch-high.stdout ?? branch-low.stdout" in error_msg
         assert "branch-high" in error_msg and "did not execute" in error_msg
         assert "branch-low" in error_msg and "did not execute" in error_msg
@@ -531,5 +531,5 @@ class TestCoalesceErrorMessages:
             )
 
         error_msg = str(exc_info.value)
-        assert "Coalesce expression" in error_msg
-        assert "not found" in error_msg  # path error for stddout
+        assert "branch-high.stddout" in error_msg
+        assert "does not produce field 'stddout'" in error_msg

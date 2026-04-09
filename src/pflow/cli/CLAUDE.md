@@ -78,6 +78,8 @@ Contains the Click command definition (`workflow_command`) and everything that c
 - Stdin routing: detects piped input, routes to workflow inputs marked `stdin: true`
 - Named workflow handling: parameter preparation, workflow help display
 
+`execute_json_workflow` is intentionally thin (~55 lines) — pre-execution setup, validation, resource lifecycle, and error boundary all live in `WorkflowRunner`. Don't pull them back into the CLI.
+
 **If you need to extract more from main.py**: Functions that call `_echo_trace` or `ctx.exit()` can't move to `workflow_output.py` or `workflow_errors.py` without creating circular imports. Those modules import from each other but never back to main.py. Compilation/execution setup logic lives in `WorkflowRunner` (in `execution/runner.py`), not here — if you're tempted to add a helper that mutates shared store or calls `compile_workflow()`, it probably belongs in the Runner.
 
 ## Output Behavior
