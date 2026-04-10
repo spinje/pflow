@@ -1110,6 +1110,14 @@ class TestRealSubprocessProgressRendering:
             f"Raw timeout warning text concatenated onto the partial timeout_node... line.\nstderr: {result.stderr!r}"
         )
 
+        # GH #242: logger.exception dumped a full Python traceback for a handled
+        # timeout — pure noise for agents. After the fix (logger.warning), no
+        # traceback should appear.
+        assert "Traceback (most recent call last):" not in result.stderr, (
+            "Shell timeout produced a Python traceback — expected a clean warning, "
+            f"not exc_info output.\nstderr: {result.stderr!r}"
+        )
+
     def test_gh194_routing_invariant_exact_byte_separation(self, tmp_path, uv_exe, subprocess_env):
         """REGRESSION: the GH #194 routing contract — workflow data goes to
         stdout ONLY, diagnostics go to stderr ONLY — must be fd-level clean.

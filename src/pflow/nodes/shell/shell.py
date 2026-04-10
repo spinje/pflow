@@ -580,7 +580,7 @@ class ShellNode(Node):
             }
 
         except subprocess.TimeoutExpired as e:
-            logger.exception(f"Command timed out after {timeout} seconds", extra={"phase": "exec", "timeout": timeout})
+            logger.warning(f"Command timed out after {timeout} seconds", extra={"phase": "exec", "timeout": timeout})
 
             # Try to capture any partial output (with lossy decode for readability)
             stdout = e.stdout.decode("utf-8", errors="replace") if e.stdout else ""
@@ -645,7 +645,6 @@ class ShellNode(Node):
         timeout = exec_res.get("timeout", False)
 
         if timeout:
-            logger.warning("Command timed out", extra={"phase": "post"})
             return "error"
 
         if exit_code == 0:
