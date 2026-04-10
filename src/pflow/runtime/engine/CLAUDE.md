@@ -39,7 +39,8 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
         │  10. detect_api_warning → handle_api_warning if found (returns "error")
         │  11. cache_result, 12. write_memo_cache (SKIP when cache_enabled=False)
         │  13-17. duration, metrics, enrich_llm_cost, record_trace, call_completion_callback
-        │  17.5. if action starts with "error": mark_node_failed (archive to __failures__)
+        │  17.5. if action starts with "error": mark_node_failed (archive to __failures__,
+        │        + warning= when error successor exists → triggers DEGRADED, GH #246)
         │
         └─ EXCEPT (error path):
            metrics, enrich_llm_cost, record_trace(error=e),
@@ -48,7 +49,7 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
            annotate e._pflow_node_id, re-raise
 ```
 
-**Step 17.5 is the LAST thing on the happy path for failed nodes.** It runs AFTER `record_trace`, `call_completion_callback`, and `enrich_llm_cost` — those consumers still read `shared[node_id]` directly with the data in its original location. After step 17.5, the data lives in `shared["__failures__"][node_id].data` and any subsequent reader must use `node_state.get_node_output`.
+**Step 17.5 is the LAST thing on the happy path for failed nodes.** It runs AFTER `record_trace`, `call_completion_callback`, and `enrich_llm_cost` — those consumers still read `shared[node_id]` directly with the data in its original location. After step 17.5, the data lives in `shared["__failures__"][node_id].data` and any subsequent reader must use `node_state.get_node_output`. When the failed node has an error successor (`node.successors.get("error")`), step 17.5 passes `warning=` to `mark_node_failed` so the recovery is visible in `__warnings__` → DEGRADED status + WARNING diagnostic (GH #246). When there is no error successor, `warning=None` and behavior is unchanged.
 
 **Steps 1-4 outside try, 5-17.5 inside try** so strict-mode template `ValueError` raised during step 5 still gets trace recording on the error path.
 

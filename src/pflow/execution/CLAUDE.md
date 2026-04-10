@@ -48,7 +48,7 @@ class WorkflowRunner:
 
 **Resource lifecycle**: Resources created in `run()` scope (not inside helpers) so `finally` always has them for cleanup. This prevents MCP server subprocess leaks.
 
-**Status determination gap**: `_determine_status` checks `__warnings__` and `__template_errors__` but NOT `__failures__`. A workflow that fails a node and recovers via `on-error` reports `SUCCESS` with no diagnostic surface. Tracked as a known design question — see project issues for the DEGRADED-vs-SUCCESS semantic decision.
+**On-error recovery status** (GH #246 fix): When a node fails and has an `on-error` handler, engine step 17.5 passes `warning=` to `mark_node_failed`, which populates `__warnings__`. This naturally triggers DEGRADED status via the existing `_determine_status` check on `__warnings__`. The `_extract_runtime_warnings` method distinguishes recovery warnings from api_warnings by checking the `__failures__` record's `warning` field and `category`.
 
 ## Result Types (result.py)
 

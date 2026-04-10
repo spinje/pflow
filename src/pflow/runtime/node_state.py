@@ -91,7 +91,7 @@ def get_node_failure(shared: dict[str, Any], node_id: str) -> dict[str, Any] | N
             "data": {...},        # what was at shared[node_id] before the move
             "category": "...",    # one of the FAILURE_CATEGORY_* constants
             "error": "...",       # human-readable error message (optional)
-            "warning": "...",     # for api_warning category only (optional)
+            "warning": "...",     # set for api_warning and on-error recovery (optional)
         }
 
     Trusts the single-writer invariant — see ``get_node_output``.

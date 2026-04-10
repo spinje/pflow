@@ -357,14 +357,22 @@ class WorkflowEngine:
             #
             # Category is resolved from the compile-time node type name
             # via _NODE_TYPE_FAILURE_CATEGORY — no data-shape heuristic.
+            #
+            # When an error successor exists (on-error handler), pass
+            # warning= so __warnings__ is populated and _determine_status
+            # returns DEGRADED instead of SUCCESS. Without this, recovered
+            # workflows silently report SUCCESS (GH #246).
             if str(action).startswith("error"):
                 node_data = shared.get(config.node_id, {})
                 node_error = node_data.get("error") if isinstance(node_data, dict) else None
+                error_handler = node.successors.get("error")
+                handler_id = getattr(error_handler, "node_id", None) if error_handler else None
                 mark_node_failed(
                     shared,
                     config.node_id,
                     category=_NODE_TYPE_FAILURE_CATEGORY.get(config.node_type_name, FAILURE_CATEGORY_NODE_ERROR),
                     error=node_error,
+                    warning=f"Node '{config.node_id}' failed — on-error → '{handler_id}'" if handler_id else None,
                 )
 
             return action
