@@ -6,6 +6,7 @@ This module tests that:
 - Workflows with array templates work end-to-end
 """
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from pflow.registry import Registry
@@ -217,3 +218,209 @@ class TestTemplateArrayNotation:
         assert "node.data[0].users[1].profile.name" in templates
         assert "username" in templates
         assert len(templates) == 4
+
+
+class TestBatchResultsIndexAccessGate:
+    """Validation gate: block index access on results with error_handling: continue."""
+
+    @contextmanager
+    def _make_registry(self):
+        registry = Registry()
+        with patch.object(registry, "get_nodes_metadata") as mock:
+
+            def get_metadata(node_types):
+                result = {}
+                for nt in node_types:
+                    if nt == "shell":
+                        result[nt] = {
+                            "interface": {
+                                "outputs": [{"key": "stdout", "type": "string"}],
+                            }
+                        }
+                    elif nt == "llm":
+                        result[nt] = {
+                            "interface": {
+                                "outputs": [{"key": "response", "type": "string"}],
+                            }
+                        }
+                return result
+
+            mock.side_effect = get_metadata
+            yield registry
+
+    def test_index_access_blocked_with_continue(self):
+        """${batch.results[0].stdout} emits ERROR when batch uses error_handling: continue."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"], "error_handling": "continue"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "First: ${batch.results[0].stdout}"},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            gate_errors = [e for e in errors if "Index-based access" in e.message]
+            assert len(gate_errors) == 1
+            assert "error_handling: continue" in gate_errors[0].message
+
+    def test_index_access_allowed_with_fail_fast(self):
+        """${batch.results[0].stdout} passes when batch uses fail_fast (default)."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"]},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "First: ${batch.results[0].stdout}"},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            gate_errors = [e for e in errors if "Index-based access" in e.message]
+            assert len(gate_errors) == 0
+
+    def test_whole_array_access_allowed_with_continue(self):
+        """${batch.results} (no index) passes even with error_handling: continue."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"], "error_handling": "continue"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "All: ${batch.results}"},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            gate_errors = [e for e in errors if "Index-based access" in e.message]
+            assert len(gate_errors) == 0
+
+    def test_nested_index_template_blocked_with_continue(self):
+        """${batch.results[${__index__}].stdout} blocked with continue mode."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"], "error_handling": "continue"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "shell",
+                    "params": {"command": "echo ${batch.results[${__index__}].stdout}"},
+                    "batch": {"items": ["x", "y"]},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            gate_errors = [e for e in errors if "Index-based access" in e.message]
+            assert len(gate_errors) == 1
+
+    def test_errors_array_index_access_allowed_with_continue(self):
+        """${batch.errors[0]} is fine with continue — errors array is unfiltered."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"], "error_handling": "continue"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Error: ${batch.errors[0]}"},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            gate_errors = [e for e in errors if "Index-based access" in e.message]
+            assert len(gate_errors) == 0
+
+    def test_batch_field_suggestion_omits_index_for_continue(self):
+        """${batch.stdout} on continue-mode batch should NOT suggest results[0]."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"], "error_handling": "continue"},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Got: ${batch.stdout}"},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            batch_errors = [e for e in errors if "batch processing" in e.message]
+            assert len(batch_errors) == 1
+            # Should NOT suggest results[0] for continue mode
+            for suggestion in batch_errors[0].suggestions:
+                assert "results[0]" not in suggestion, f"Contradictory suggestion for continue mode: {suggestion}"
+            # Should still suggest the full results array
+            assert any("results}" in s for s in batch_errors[0].suggestions)
+
+    def test_batch_field_suggestion_includes_index_for_fail_fast(self):
+        """${batch.stdout} on fail_fast batch SHOULD suggest results[0]."""
+        workflow_ir = {
+            "nodes": [
+                {
+                    "id": "batch",
+                    "type": "shell",
+                    "params": {"command": "echo ${item}"},
+                    "batch": {"items": ["a", "b"]},
+                },
+                {
+                    "id": "consumer",
+                    "type": "llm",
+                    "params": {"prompt": "Got: ${batch.stdout}"},
+                },
+            ],
+            "edges": [{"from": "batch", "to": "consumer"}],
+        }
+
+        with self._make_registry() as registry:
+            errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
+            batch_errors = [e for e in errors if "batch processing" in e.message]
+            assert len(batch_errors) == 1
+            # Should suggest results[0] for fail_fast
+            assert any("results[0]" in s for s in batch_errors[0].suggestions)

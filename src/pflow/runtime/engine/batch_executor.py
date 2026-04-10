@@ -26,7 +26,7 @@ from .types import BatchConfig, NodeConfig
 logger = logging.getLogger(__name__)
 
 # Keys injected by the batch framework, not by the inner node.
-_BATCH_META_KEYS = frozenset({"item", "error", "exception"})
+_BATCH_META_KEYS = frozenset({"item", "original_index", "error", "exception"})
 
 
 def resolve_batch_items(items_template: Any, shared: dict[str, Any]) -> Any:
@@ -286,6 +286,7 @@ def _execute_batch_item(
                     extra={"node_id": config.node_id, "existing_item": result["item"]},
                 )
             result["item"] = item
+            result["original_index"] = idx
 
             # Check for error in result dict
             error_msg = _extract_error(result)
@@ -682,8 +683,12 @@ def _aggregate_batch_results(
     Without this, ``build_execution_steps`` could not surface batch error
     details for the failing batch node (spec acceptance criterion).
     """
-    # Count successes
-    success_count = sum(1 for r in exec_res if r is not None and not _extract_error(r))
+    # Filter results to successes only — errors list is the authoritative failure record.
+    # Using error_indices (not _extract_error) fixes the error-via-action edge case where
+    # the result dict has no "error" key but IS in the errors list.
+    error_indices = {e["index"] for e in errors}
+    successful_results = [r for idx, r in enumerate(exec_res) if idx not in error_indices]
+    success_count = len(successful_results)
 
     # Timing stats — computed once, used by both the normal and error path
     timing_stats: dict[str, float] | None = None
@@ -695,10 +700,11 @@ def _aggregate_batch_results(
             "max_item_ms": round(max(item_timings), 2),
         }
 
-    # Write to shared store — MUST match PflowBatchNode.post() output shape.
+    # Write to shared store — results contains only successful items.
+    # errors list is the authoritative record of failures (with index, item, error).
     # Happens BEFORE any abort-raise so the failure archive captures the data.
     shared[node_id] = {
-        "results": exec_res,
+        "results": successful_results,
         "count": len(exec_res),
         "success_count": success_count,
         "error_count": len(errors),

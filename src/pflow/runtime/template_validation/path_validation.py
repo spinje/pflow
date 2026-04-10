@@ -126,6 +126,83 @@ def validate_template_path(
     return (False, None)
 
 
+def _batch_results_index_error(
+    output_info: dict[str, Any], base_var: str, template: str
+) -> tuple[bool, Optional[Diagnostic]]:
+    """Build ERROR diagnostic for index access on continue-mode batch results."""
+    node_id = output_info.get("node_id", base_var)
+    return (
+        True,
+        Diagnostic(
+            severity=Severity.ERROR,
+            source="validator",
+            node_id=node_id,
+            message=(
+                f"Index-based access on batch results is not supported with "
+                f"error_handling: continue — results contains only successful "
+                f"items, so positional indices do not correspond to original "
+                f"input positions. Use iteration "
+                f"(items: ${{{base_var}.results}}) or switch to "
+                f"error_handling: fail_fast."
+            ),
+            context={
+                "template": template if template.startswith("${") else f"${{{template}}}",
+                "category": "validation",
+            },
+        ),
+    )
+
+
+def _validate_array_access(
+    parts: list[str],
+    base_var: str,
+    base_output: str,
+    output_info: dict[str, Any],
+    template: str,
+) -> tuple[bool, Optional[Diagnostic]]:
+    """Validate array index access on a node output (e.g., results[0].field)."""
+    # Block index access on results when upstream uses error_handling: continue.
+    # Results only contains successful items — positional indices don't correspond
+    # to original input positions, so index-based access would silently return
+    # wrong data.
+    if (
+        base_output == "results"
+        and output_info.get("is_batch_output")
+        and output_info.get("error_handling") == "continue"
+    ):
+        return _batch_results_index_error(output_info, base_var, template)
+
+    items_info = output_info.get("items", {})
+    if items_info:
+        # Use items structure for nested validation
+        if len(parts) == 2:
+            return (True, None)
+        return validate_nested_path(parts[2:], items_info, full_template=template, output_key=base_output)
+
+    # No items info but array access requested
+    output_type = output_info.get("type", "any")
+    # Allow if type is array (native array access)
+    if output_type == "array":
+        return (True, None)
+    # Also allow str types - they may contain JSON that gets auto-parsed at runtime
+    # This matches the behavior of check_type_allows_traversal for field access
+    if output_type in ["str", "string"]:
+        # Generate warning about JSON auto-parsing requirement
+        warning = Diagnostic(
+            severity=Severity.WARNING,
+            source="validator",
+            node_id=output_info.get("node_id", "unknown"),
+            message=(
+                f"Array access on '{output_type}' requires valid JSON array at runtime. "
+                f"Non-JSON strings cause 'Unresolved variables' error."
+            ),
+            suggestions=["Ensure the value is a valid JSON array at runtime."],
+            context={"template": template if template.startswith("${") else f"${{{template}}}"},
+        )
+        return (True, warning)
+    return (False, None)
+
+
 def validate_namespaced_output(
     parts: list[str],
     base_var: str,
@@ -161,36 +238,9 @@ def validate_namespaced_output(
 
     output_info = node_outputs[node_output_key]
 
-    # If array access, check if output has items structure
+    # If array access, validate array-specific rules
     if array_index is not None:
-        items_info = output_info.get("items", {})
-        if items_info:
-            # Use items structure for nested validation
-            if len(parts) == 2:
-                return (True, None)
-            return validate_nested_path(parts[2:], items_info, full_template=template, output_key=base_output)
-        # No items info but array access requested
-        output_type = output_info.get("type", "any")
-        # Allow if type is array (native array access)
-        if output_type == "array":
-            return (True, None)
-        # Also allow str types - they may contain JSON that gets auto-parsed at runtime
-        # This matches the behavior of check_type_allows_traversal for field access
-        if output_type in ["str", "string"]:
-            # Generate warning about JSON auto-parsing requirement
-            warning = Diagnostic(
-                severity=Severity.WARNING,
-                source="validator",
-                node_id=output_info.get("node_id", "unknown"),
-                message=(
-                    f"Array access on '{output_type}' requires valid JSON array at runtime. "
-                    f"Non-JSON strings cause 'Unresolved variables' error."
-                ),
-                suggestions=["Ensure the value is a valid JSON array at runtime."],
-                context={"template": template if template.startswith("${") else f"${{{template}}}"},
-            )
-            return (True, warning)
-        return (False, None)
+        return _validate_array_access(parts, base_var, base_output, output_info, template)
 
     if len(parts) == 2:
         return (True, None)
@@ -874,13 +924,24 @@ def _build_batch_inner_field_diagnostic(node_id: str, attempted_key: str, node_e
         Template diagnostic with corrected-path guidance
     """
     results_path = f"${{{node_id}.results}}"
-    item_path = f"${{{node_id}.results[0].{attempted_key}}}"
 
     available_fields: list[str] = []
     for key, info in node_entries.items():
         safe_key = sanitize_for_display(key)
         safe_type = sanitize_for_display(info.get("type", "any"))
         available_fields.append(f"${{{node_id}.{safe_key}}} ({safe_type})")
+
+    # With error_handling: continue, results only contains successes — index access
+    # is blocked by the validation gate, so don't suggest it.
+    results_entry = node_entries.get("results")
+    is_continue = results_entry is not None and results_entry.get("error_handling") == "continue"
+
+    suggestions = []
+    if not is_continue:
+        item_path = f"${{{node_id}.results[0].{attempted_key}}}"
+        suggestions.append(f"Use {item_path} for a single item.")
+    suggestions.append(f"Use {results_path} for the full results array.")
+    suggestions.append(f"To aggregate across items, pass {results_path} to a code node and iterate.")
 
     return Diagnostic(
         severity=Severity.ERROR,
@@ -891,11 +952,7 @@ def _build_batch_inner_field_diagnostic(node_id: str, attempted_key: str, node_e
             f"Node '{node_id}' uses batch processing. '{attempted_key}' is not available at the top level — "
             "batch wraps outputs in a 'results' array."
         ),
-        suggestions=[
-            f"Use {item_path} for a single item.",
-            f"Use {results_path} for the full results array.",
-            f"To aggregate across items, pass {results_path} to a code node and iterate.",
-        ],
+        suggestions=suggestions,
         context={
             "category": "template_error",
             "available_fields": available_fields,
