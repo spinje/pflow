@@ -412,7 +412,7 @@ def resolve_templates(  # noqa: C901
             )
 
             if template_config.resolution_mode == "strict":
-                from pflow.core.diagnostic import format_diagnostic
+                from pflow.core.diagnostic_render import format_diagnostic
 
                 # Store partial resolutions on exception for trace capture
                 partial = {

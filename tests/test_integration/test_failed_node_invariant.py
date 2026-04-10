@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from pflow.core.diagnostic import Severity, format_diagnostic
+from pflow.core.diagnostic import Severity
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner
@@ -438,7 +439,8 @@ def test_output_resolution_error_does_not_triple_render():
     the rendered text has one structured block, no canned trailing suggestion,
     and a one-line summary message (no multi-line legacy prose).
     """
-    from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
+    from pflow.core.diagnostic import exception_to_diagnostics
+    from pflow.core.diagnostic_render import format_diagnostic
     from pflow.core.user_errors import OutputResolutionError
 
     ir = {
@@ -692,7 +694,7 @@ def test_template_error_shows_both_succeeded_and_failed_peers_in_context():
     agent reading the error can distinguish "node doesn't exist" from "node
     failed and was archived to __failures__".
     """
-    from pflow.core.diagnostic import format_diagnostic
+    from pflow.core.diagnostic_render import format_diagnostic
     from pflow.runtime.engine.template_errors import build_template_error_diagnostic
     from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
 
@@ -748,7 +750,7 @@ def test_multi_output_resolution_error_renders_per_output_blocks():
     pflow syntax) and only propagated source_line/source_file from the first
     failure. Post-fix, each output renders its own ``In output 'X':`` block.
     """
-    from pflow.core.diagnostic import format_diagnostic
+    from pflow.core.diagnostic_render import format_diagnostic
     from pflow.core.user_errors import OutputResolutionError
 
     workflow_file = "workspace/ws.pflow.md"
@@ -826,7 +828,7 @@ def test_step_17_5_maps_http_node_type_to_http_failure_category():
     via a compile-time dict — no data-shape heuristic. Verify the mapping
     exists and the category flows through display extraction and rendering.
     """
-    from pflow.core.diagnostic import _render_failure_data_block
+    from pflow.core.diagnostic_render import _render_failure_data_block
     from pflow.execution.executor_service import _map_failure_category_to_diagnostic
     from pflow.runtime.engine.engine import _NODE_TYPE_FAILURE_CATEGORY
     from pflow.runtime.engine.template_errors import _extract_failure_display_data
@@ -858,7 +860,7 @@ def test_step_17_5_maps_http_node_type_to_http_failure_category():
 def test_step_17_5_maps_mcp_node_type_to_mcp_failure_category():
     """MCP tool errors get ``mcp_failure`` category via the node-type mapping
     so the renderer shows server/tool/details without sniffing data keys."""
-    from pflow.core.diagnostic import _render_failure_data_block
+    from pflow.core.diagnostic_render import _render_failure_data_block
     from pflow.execution.executor_service import _map_failure_category_to_diagnostic
     from pflow.runtime.engine.engine import _NODE_TYPE_FAILURE_CATEGORY
     from pflow.runtime.engine.template_errors import _extract_failure_display_data
@@ -895,7 +897,7 @@ def test_render_failure_data_block_ignores_data_shape_when_category_is_generic()
     by category now — not by data-key sniffing. This is the behavior
     correctness fix that motivated C3.
     """
-    from pflow.core.diagnostic import _render_failure_data_block
+    from pflow.core.diagnostic_render import _render_failure_data_block
 
     # Some random node wrote status_code for its own reasons. Category is
     # generic node_action_error (code node that returned "error" action).
@@ -1000,7 +1002,7 @@ def test_output_resolution_error_with_empty_refs_still_renders_output_block():
     Caught by the verification pass before deleting
     ``_format_legacy_template_error_lines``.
     """
-    from pflow.core.diagnostic import format_diagnostic
+    from pflow.core.diagnostic_render import format_diagnostic
     from pflow.core.user_errors import OutputResolutionError
 
     err = OutputResolutionError(

@@ -237,7 +237,7 @@ Builds structured `Diagnostic` objects for unresolved template variables. Key fu
 - `build_type_error_message(...)` — dict/list received where string expected (returns plain string, not a Diagnostic)
 - `build_json_parse_error_message(...)` — string that looks like JSON but failed to parse (returns plain string)
 
-The structured `Diagnostic` carries all rich data in `context.unresolved_references`. Text rendering is a pure function of the context — see `_format_template_error_lines` in `core/diagnostic.py`. JSON/MCP consumers read the structure directly via `Diagnostic.to_dict()`.
+The structured `Diagnostic` carries all rich data in `context.unresolved_references`. Text rendering is a pure function of the context — see `_format_template_error_lines` in `core/diagnostic_render.py`. JSON/MCP consumers read the structure directly via `Diagnostic.to_dict()`.
 
 ### `namespaced_store.py`
 

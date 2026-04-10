@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from pflow.core.diagnostic import format_diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import MarkdownParseError
 from pflow.core.file_resolver import resolve_file_references
 from pflow.core.ir_schema import normalize_ir, validate_ir

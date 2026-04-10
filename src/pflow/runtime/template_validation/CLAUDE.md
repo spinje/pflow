@@ -109,7 +109,7 @@ Passes use `is_batch_output` to branch behavior (path_validation uses it to dete
 
 ## Producer context conventions
 
-The renderer in `core/diagnostic.py` reads specific context keys to produce structured output blocks. Producers MUST populate the right keys for their concern and MUST NOT populate keys that belong to other subsystems.
+The renderer in `core/diagnostic_render.py` reads specific context keys to produce structured output blocks. Producers MUST populate the right keys for their concern and MUST NOT populate keys that belong to other subsystems.
 
 **Keys every validator producer should populate when the data is available**:
 

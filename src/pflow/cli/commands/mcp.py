@@ -452,7 +452,7 @@ def _sync_single_server(name: str, manager: MCPServerManager, registrar: MCPRegi
     if "error" in result:
         diagnostic = result.get("diagnostic")
         if diagnostic:
-            from pflow.core.diagnostic import format_diagnostic
+            from pflow.core.diagnostic_render import format_diagnostic
 
             click.echo(format_diagnostic(diagnostic, verbose=verbose), err=True)
         else:

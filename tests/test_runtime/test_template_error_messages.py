@@ -1,6 +1,6 @@
 """Snapshot-style tests for the rewritten template error messages."""
 
-from pflow.core.diagnostic import format_diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.runtime.engine.template_errors import build_template_error_diagnostic
 from pflow.runtime.node_state import FAILURE_CATEGORY_SHELL, mark_node_failed
 

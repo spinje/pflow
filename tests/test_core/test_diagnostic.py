@@ -9,8 +9,8 @@ from pflow.core.diagnostic import (
     Severity,
     deduplicate_diagnostics,
     exception_to_diagnostics,
-    format_diagnostic,
 )
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import (
     CompilationError,
     MarkdownParseError,

@@ -22,7 +22,8 @@ from pflow.cli.workflow_output import (
 )
 from pflow.cli.workflow_resolution import is_likely_workflow_name
 from pflow.core import StdinData
-from pflow.core.diagnostic import Diagnostic, Severity, format_diagnostic
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.output_controller import OutputController
 from pflow.core.shell_integration import (

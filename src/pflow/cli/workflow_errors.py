@@ -10,10 +10,8 @@ from typing import Any
 
 import click
 
-from pflow.core.diagnostic import (
-    Diagnostic,
-    format_diagnostic,
-)
+from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 
 
 def _display_single_error(

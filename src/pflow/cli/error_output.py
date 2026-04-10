@@ -11,7 +11,8 @@ from typing import Any
 
 import click
 
-from pflow.core.diagnostic import Diagnostic, exception_to_diagnostics, format_diagnostic
+from pflow.core.diagnostic import Diagnostic, exception_to_diagnostics
+from pflow.core.diagnostic_render import format_diagnostic
 
 logger = logging.getLogger(__name__)
 
