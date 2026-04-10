@@ -316,11 +316,8 @@ def execute_json_workflow(  # noqa: C901
         click.echo("\n✗ Workflow execution interrupted", err=True)
         ctx.exit(130)
     except Exception as e:
-        # Emit failure tag to stderr (mirrors _display_execution_result error path)
         metrics = result.metrics if result else None
-        if not print_flag and metrics:
-            duration_s = time.perf_counter() - metrics.start_time
-            click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
+        _emit_failure_tag(ctx, metrics)
 
         output_error(
             ctx,
@@ -338,6 +335,18 @@ def execute_json_workflow(  # noqa: C901
         if trace and config.trace_enabled:
             _save_trace_and_report(ctx, trace)
         _cleanup_temp_files(stdin_data, effective_verbose)
+
+
+def _emit_failure_tag(ctx: click.Context, metrics: Any | None) -> None:
+    """Emit one-line failure tag to stderr for agent observability.
+
+    Mirrors the success path's ``✓ Workflow completed in Xs`` completion tag.
+    Suppressed by ``-p`` (same as all stderr diagnostics).
+    """
+    print_flag = ctx.obj.get("print_flag", False) if ctx.obj else False
+    if not print_flag and metrics:
+        duration_s = time.perf_counter() - metrics.start_time
+        click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
 
 
 def _display_execution_result(
@@ -367,12 +376,7 @@ def _display_execution_result(
         if result.status == WorkflowStatus.DEGRADED:
             ctx.exit(2)
     else:
-        # Emit one-line failure tag to stderr so agents see status without
-        # parsing stdout (mirrors the success path's completion tag).
-        print_flag = ctx.obj.get("print_flag", False) if ctx.obj else False
-        if not print_flag and result.metrics:
-            duration_s = time.perf_counter() - result.metrics.start_time
-            click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
+        _emit_failure_tag(ctx, result.metrics)
 
         output_error(
             ctx,
