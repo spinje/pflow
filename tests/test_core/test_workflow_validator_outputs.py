@@ -77,21 +77,20 @@ class TestOutputTemplateValidation:
         assert "malformed" in "\n".join(d.message for d in errors).lower()
 
     def test_template_workflow_input_passes(self):
-        """CRITICAL: Template without dot (workflow input variable) passes.
+        """CRITICAL: Template referencing declared workflow input passes.
 
-        Bug prevented: Line 300-302 check removed (if "." not in template_var).
+        Bug prevented: Validator rejects valid input references in outputs.
         Without this test: Can't use ${api_key}, ${user_name} in outputs.
-
-        This is a DIFFERENT CODE PATH than node references.
         """
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "n1", "type": "llm", "params": {}}],
-            "outputs": {"result": {"source": "${user_input}"}},  # No dot - workflow input
+            "inputs": {"user_input": {"type": "string", "description": "User input"}},
+            "outputs": {"result": {"source": "${user_input}"}},
         }
 
         registry = Registry()
-        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+        errors, _ = split_validator_diagnostics(workflow, None, registry, skip_node_types=True)
 
         assert len(errors) == 0
 
@@ -113,7 +112,7 @@ class TestOutputTemplateValidation:
         errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
 
         assert len(errors) > 0
-        assert "non-existent node 'missing'" in "\n".join(d.message for d in errors)
+        assert "non-existent source 'missing'" in "\n".join(d.message for d in errors)
 
     def test_multiple_errors_reported(self):
         """CRITICAL: All errors collected, not just first one.
@@ -141,3 +140,101 @@ class TestOutputTemplateValidation:
         error_msg = "\n".join(d.message for d in errors)
         assert "missing1" in error_msg
         assert "missing2" in error_msg
+
+    def test_template_input_field_access_passes(self):
+        """CRITICAL: Template with dot-access on declared input passes.
+
+        Bug prevented: GH #247 — ${input.field} rejected as non-existent node.
+        Without this test: Can't use ${data.field} in output sources when
+        data is a declared workflow input.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "echo_it", "type": "shell", "params": {}}],
+            "inputs": {"data": {"type": "dict", "description": "A dict with a field"}},
+            "outputs": {"x": {"source": "${data.field}"}},
+        }
+
+        registry = Registry()
+        errors, _ = split_validator_diagnostics(workflow, None, registry, skip_node_types=True)
+
+        assert len(errors) == 0
+
+    def test_template_input_bracket_access_passes(self):
+        """CRITICAL: Template with bracket-access on declared input passes.
+
+        Bug prevented: Same root cause as GH #247 for bracket syntax.
+        Without this test: Can't use ${items[0]} in output sources.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "shell", "params": {}}],
+            "inputs": {"items": {"type": "list", "description": "A list"}},
+            "outputs": {"first": {"source": "${items[0]}"}},
+        }
+
+        registry = Registry()
+        errors, _ = split_validator_diagnostics(workflow, None, registry, skip_node_types=True)
+
+        assert len(errors) == 0
+
+    def test_template_nonexistent_shows_inputs_in_available(self):
+        """CRITICAL: Error for missing source includes both nodes and inputs.
+
+        Bug prevented: Available list only shows nodes, hiding valid inputs.
+        Without this test: Users with a typo don't see declared inputs as
+        alternatives in the fuzzy suggestions.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "fetch", "type": "shell", "params": {}}],
+            "inputs": {"api_key": {"type": "string", "description": "API key"}},
+            "outputs": {"result": {"source": "${typo.field}"}},
+        }
+
+        registry = Registry()
+        errors, _ = split_validator_diagnostics(workflow, None, registry, skip_node_types=True)
+
+        assert len(errors) == 1
+        available = errors[0].context.get("available_fields", [])
+        assert "fetch" in available
+        assert "api_key" in available
+
+    def test_bare_template_nonexistent_caught(self):
+        """CRITICAL: Bare template referencing undeclared name is caught.
+
+        Bug prevented: ${typo} (no dot) silently passes validation.
+        Without this test: Typos in bare output source templates only
+        fail at runtime with a cryptic error.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "n1", "type": "shell", "params": {}}],
+            "outputs": {"result": {"source": "${typo}"}},
+        }
+
+        registry = Registry()
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+
+        assert len(errors) == 1
+        assert "typo" in errors[0].message
+
+    def test_bracket_typo_suggestion_format(self):
+        """CRITICAL: Bracket-access typo suggestion doesn't insert spurious dot.
+
+        Bug prevented: ${itmes[0]} suggests ${items.[0]} instead of ${items[0]}.
+        Without this test: Bracket-access suggestions have malformed syntax.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "items", "type": "shell", "params": {}}],
+            "outputs": {"first": {"source": "${itmes[0]}"}},
+        }
+
+        registry = Registry()
+        errors, _ = split_validator_diagnostics(workflow, {}, registry, skip_node_types=True)
+
+        assert len(errors) == 1
+        assert errors[0].suggestions
+        assert "${items[0]}" in errors[0].suggestions[0]
+        assert ".[0]" not in errors[0].suggestions[0]

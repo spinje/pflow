@@ -571,7 +571,7 @@ class TestValidatorProducerStructure:
         assert diagnostic.context is not None
         assert diagnostic.context.get("path") == "outputs.result.source"
         assert "producer" in diagnostic.context.get("available_fields", [])
-        assert diagnostic.context.get("available_fields_label") == "nodes"
+        assert diagnostic.context.get("available_fields_label") == "sources"
         assert diagnostic.context.get("similar_names")
         assert any("producer" in name for name in diagnostic.context["similar_names"])
 
