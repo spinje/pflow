@@ -6,6 +6,7 @@ This module tests that:
 - Workflows with array templates work end-to-end
 """
 
+from contextlib import contextmanager
 from unittest.mock import patch
 
 from pflow.registry import Registry
@@ -222,6 +223,7 @@ class TestTemplateArrayNotation:
 class TestBatchResultsIndexAccessGate:
     """Validation gate: block index access on results with error_handling: continue."""
 
+    @contextmanager
     def _make_registry(self):
         registry = Registry()
         with patch.object(registry, "get_nodes_metadata") as mock:
@@ -265,7 +267,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, warnings = split_template_diagnostics(workflow_ir, {}, registry)
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 1
@@ -290,7 +292,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 0
@@ -314,7 +316,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 0
@@ -339,7 +341,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 1
@@ -363,7 +365,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             gate_errors = [e for e in errors if "Index-based access" in e.message]
             assert len(gate_errors) == 0
@@ -387,7 +389,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             batch_errors = [e for e in errors if "batch processing" in e.message]
             assert len(batch_errors) == 1
@@ -416,7 +418,7 @@ class TestBatchResultsIndexAccessGate:
             "edges": [{"from": "batch", "to": "consumer"}],
         }
 
-        for registry in self._make_registry():
+        with self._make_registry() as registry:
             errors, _warnings = split_template_diagnostics(workflow_ir, {}, registry)
             batch_errors = [e for e in errors if "batch processing" in e.message]
             assert len(batch_errors) == 1

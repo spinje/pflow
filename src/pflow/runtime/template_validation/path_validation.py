@@ -126,7 +126,9 @@ def validate_template_path(
     return (False, None)
 
 
-def _batch_results_index_error(output_info: dict[str, Any], base_var: str, template: str) -> tuple[bool, Diagnostic]:
+def _batch_results_index_error(
+    output_info: dict[str, Any], base_var: str, template: str
+) -> tuple[bool, Optional[Diagnostic]]:
     """Build ERROR diagnostic for index access on continue-mode batch results."""
     node_id = output_info.get("node_id", base_var)
     return (
@@ -931,8 +933,8 @@ def _build_batch_inner_field_diagnostic(node_id: str, attempted_key: str, node_e
 
     # With error_handling: continue, results only contains successes — index access
     # is blocked by the validation gate, so don't suggest it.
-    results_entry = node_entries.get("results", {})
-    is_continue = results_entry.get("error_handling") == "continue"
+    results_entry = node_entries.get("results")
+    is_continue = results_entry is not None and results_entry.get("error_handling") == "continue"
 
     suggestions = []
     if not is_continue:
