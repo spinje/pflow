@@ -405,7 +405,6 @@ def _emit_summary_or_only_indicator(
     warnings: list[Any] | None,
     verbose: bool,
     print_flag: bool,
-    precomputed_result: dict[str, Any] | None = None,
 ) -> None:
     """Dispatch between full summary, --only-only emission, or nothing.
 
@@ -427,21 +426,18 @@ def _emit_summary_or_only_indicator(
     if print_flag and not only_node:
         return  # -p mode without --only: nothing to emit
 
-    if precomputed_result is not None:
-        formatted = precomputed_result
-    else:
-        from pflow.execution.formatters.success_formatter import format_execution_success
+    from pflow.execution.formatters.success_formatter import format_execution_success
 
-        formatted = format_execution_success(
-            shared_storage=shared_storage,
-            workflow_ir=workflow_ir or {},
-            metrics_collector=metrics_collector,
-            workflow_metadata=workflow_metadata,
-            output_key=output_key,
-            trace_path=None,
-            status=status,
-            warnings=warnings,
-        )
+    formatted = format_execution_success(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir or {},
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        trace_path=None,
+        status=status,
+        warnings=warnings,
+    )
 
     if print_flag:
         # -p + --only: emit just the mode confirmation, nothing else
@@ -579,7 +575,6 @@ def _handle_json_output(
         warnings=warnings,
         verbose=verbose,
         print_flag=print_flag,
-        precomputed_result=result,
     )
 
     return _serialize_json_result(result, verbose)
