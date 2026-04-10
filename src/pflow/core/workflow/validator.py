@@ -900,9 +900,8 @@ class WorkflowValidator:
                 continue  # No params at all (unusual for shell, but nothing to warn about)
 
             # Check if any param value contains real pflow template variables.
-            # Uses extract_variables() (strict regex) instead of has_templates()
-            # (naive "${" substring) to avoid false positives on bash syntax
-            # like ${var:-default}, ${array[@]}, and $${escaped}.
+            # Uses extract_variables() to get the actual variable set — we need
+            # to distinguish "has pflow templates" from "has bash syntax".
             has_pflow_templates = False
             for value in params.values():
                 if isinstance(value, str) and TemplateResolver.extract_variables(value):

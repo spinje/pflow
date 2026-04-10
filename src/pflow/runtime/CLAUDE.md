@@ -61,7 +61,7 @@ All 5 engine failure paths funnel through `mark_node_failed`: `cache_result` (ac
 
 **Path support**: `${data.user.name}`, `${items[0].title}`, `${data[5].users[2]}`
 
-**Escape syntax**: `$${var}` prevents resolution via regex negative lookbehind. Half-implemented: prevents resolution but does NOT strip the extra `$`. `has_templates("$${var}")` returns `True` (naive `${` check) but `extract_variables("$${var}")` returns empty set.
+**Escape syntax**: `$${var}` prevents resolution via regex negative lookbehind. Partially implemented: prevents resolution but does NOT strip the extra `$` (output contains literal `$${var}`).
 
 **Nested index templates**: `${results[${item.index}].response}` — inner resolved first. One level of nesting supported.
 

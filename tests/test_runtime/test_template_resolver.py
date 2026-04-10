@@ -33,6 +33,8 @@ class TestTemplateDetection:
         assert not TemplateResolver.has_templates("")
         assert not TemplateResolver.has_templates("price: 100")
         assert not TemplateResolver.has_templates("$oldstyle")  # Old $var syntax not detected
+        assert not TemplateResolver.has_templates("$${escaped}")  # Escaped templates are not templates
+        assert not TemplateResolver.has_templates("prefix $${var} suffix")
 
 
 class TestVariableExtraction:

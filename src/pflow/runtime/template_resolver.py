@@ -64,7 +64,7 @@ class TemplateResolver:
             True if value contains template variables anywhere in its structure
         """
         if isinstance(value, str):
-            return "${" in value
+            return bool(TemplateResolver.TEMPLATE_PATTERN.search(value))
         elif isinstance(value, dict):
             return any(TemplateResolver.has_templates(v) for v in value.values())
         elif isinstance(value, list):
