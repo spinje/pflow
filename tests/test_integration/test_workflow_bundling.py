@@ -600,6 +600,9 @@ class TestRawContentSaveGuard:
         }
         markdown = ir_to_markdown(ir, title="Sub-Workflow Only")
 
+        # Validation now runs before _reject_unbundleable_file_refs, so the
+        # validator's sub-workflow step (step 8) catches the unresolvable
+        # reference first — more specific error than the generic "file references" guard.
         with pytest.raises(WorkflowValidationError, match="Cannot resolve relative sub-workflow"):
             save_workflow_with_options(
                 name="sub-only-test",
