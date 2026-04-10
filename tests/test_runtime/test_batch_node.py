@@ -266,23 +266,24 @@ class TestItemInResult:
     """Tests for the `item` field being included in each batch result."""
 
     def test_item_included_when_result_has_error_key(self):
-        """Original item is included even when result contains error key."""
+        """Error items are filtered from results; error details in errors list."""
         inner = MockInnerNode("test_node", behavior="error_in_result")
         inner.error_index = 1
 
         shared: dict = {"data": ["success", "will_fail", "success"]}
         _run_batch(inner, shared, error_handling="continue")
 
+        # results contains only successful items
         results = shared["test_node"]["results"]
+        assert len(results) == 2
         assert results[0]["response"] == "success"
         assert results[0]["item"] == "success"
+        assert results[1]["response"] == "success"
+        assert results[1]["item"] == "success"
 
-        # Error result still has item field for debugging
-        assert "error" in results[1]
-        assert results[1]["item"] == "will_fail"
-
-        assert results[2]["response"] == "success"
-        assert results[2]["item"] == "success"
+        # Error details are in the errors list with original item
+        assert shared["test_node"]["error_count"] == 1
+        assert shared["test_node"]["errors"][0]["item"] == "will_fail"
 
     def test_item_overwrite_warning_logged(self, caplog):
         """Warning is logged when node output already has 'item' key."""
@@ -477,12 +478,13 @@ class TestErrorHandling:
         assert shared["test_node"]["success_count"] == 2
         assert shared["test_node"]["error_count"] == 1
 
+        # results contains only successful items (failed items filtered out)
         results = shared["test_node"]["results"]
+        assert len(results) == 2
         assert results[0]["response"] == "a"
         assert results[0]["item"] == "a"
-        assert results[1] is None
-        assert results[2]["response"] == "c"
-        assert results[2]["item"] == "c"
+        assert results[1]["response"] == "c"
+        assert results[1]["item"] == "c"
 
         assert len(shared["test_node"]["errors"]) == 1
         assert shared["test_node"]["errors"][0]["index"] == 1
@@ -507,13 +509,16 @@ class TestErrorHandling:
         shared: dict = {"data": ["a", "b", "c"]}
         _run_batch(inner, shared, error_handling="continue")
 
+        # results contains only successful items — error item filtered out
         results = shared["test_node"]["results"]
-        assert results[1]["error"] == "Error: Processing failed for item b"
-        assert results[1]["item"] == "b"
+        assert len(results) == 2
+        assert results[0]["response"] == "a"
+        assert results[1]["response"] == "c"
 
         assert shared["test_node"]["success_count"] == 2
         assert shared["test_node"]["error_count"] == 1
         assert shared["test_node"]["errors"][0]["index"] == 1
+        assert shared["test_node"]["errors"][0]["error"] == "Error: Processing failed for item b"
 
 
 class TestResultStructure:
@@ -556,6 +561,88 @@ class TestResultStructure:
         assert results[1]["item"] == "b"
         assert shared["test_node"]["success_count"] == 2
         assert shared["test_node"]["error_count"] == 0
+
+
+class TestFilteredResultsContract:
+    """Tests for the filtered results contract: results = successes only."""
+
+    def test_results_only_contains_successes(self):
+        """With continue mode and partial failure, results excludes failed items."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
+
+        shared: dict = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared, error_handling="continue")
+
+        output = shared["test_node"]
+        assert len(output["results"]) == output["success_count"]
+        assert output["success_count"] + output["error_count"] == output["count"]
+        assert all(r is not None for r in output["results"])
+        assert all(r.get("error") is None for r in output["results"])
+
+        # Each result carries its original batch index for provenance
+        assert output["results"][0]["original_index"] == 0
+        assert output["results"][1]["original_index"] == 2
+
+    def test_results_unaffected_when_all_succeed(self):
+        """When no errors, results equals all items (filtering is a no-op)."""
+        inner = MockInnerNode("test_node")
+        shared: dict = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared)
+
+        output = shared["test_node"]
+        assert len(output["results"]) == 3
+        assert output["count"] == 3
+        assert output["success_count"] == 3
+        assert output["error_count"] == 0
+
+    def test_parallel_filtered_results_contract(self):
+        """Parallel mode also filters results to successes only."""
+
+        class FailOnB:
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def __getstate__(self):
+                return self.__dict__.copy()
+
+            def __setstate__(self, state):
+                self.__dict__.update(state)
+
+            def _run(self, shared: dict) -> str:
+                item = shared.get("item")
+                if item == "b":
+                    raise ValueError("Error on b")
+                shared[self.node_id] = {"response": item}
+                return "default"
+
+        inner = FailOnB("test_node")
+        shared: dict = {"data": ["a", "b", "c"]}
+        _run_batch(inner, shared, parallel=True, error_handling="continue")
+
+        output = shared["test_node"]
+        assert len(output["results"]) == 2
+        assert output["success_count"] == 2
+        assert output["error_count"] == 1
+        assert output["count"] == 3
+        assert output["results"][0]["response"] == "a"
+        assert output["results"][1]["response"] == "c"
+
+    def test_original_index_disambiguates_duplicate_items(self):
+        """original_index distinguishes results when input items are duplicates."""
+        inner = MockInnerNode("test_node", behavior="error_on_index")
+        inner.error_index = 1
+
+        shared: dict = {"data": ["x", "x", "x"]}
+        _run_batch(inner, shared, error_handling="continue")
+
+        output = shared["test_node"]
+        assert len(output["results"]) == 2
+        # Both results have item="x" — only original_index tells them apart
+        assert output["results"][0]["item"] == "x"
+        assert output["results"][1]["item"] == "x"
+        assert output["results"][0]["original_index"] == 0
+        assert output["results"][1]["original_index"] == 2
 
 
 class TestItemsResolution:
@@ -907,7 +994,7 @@ class TestInputOutputFormats:
         assert results[1]["item"] == "y"
 
     def test_empty_dict_output(self):
-        """When node writes empty dict to namespace, it's returned as-is."""
+        """When node writes empty dict to namespace, result has item + original_index."""
 
         class EmptyDictNode:
             def __init__(self, node_id: str):
@@ -923,12 +1010,12 @@ class TestInputOutputFormats:
         _run_batch(inner, shared)
 
         results = shared["test_node"]["results"]
-        assert results[0] == {"item": "a"}
-        assert results[1] == {"item": "b"}
+        assert results[0] == {"item": "a", "original_index": 0}
+        assert results[1] == {"item": "b", "original_index": 1}
         assert shared["test_node"]["success_count"] == 2
 
     def test_node_writes_nothing(self):
-        """When node doesn't write to namespace, result is empty dict."""
+        """When node doesn't write to namespace, result is empty dict + metadata."""
 
         class SilentNode:
             def __init__(self, node_id: str):
@@ -943,8 +1030,8 @@ class TestInputOutputFormats:
         _run_batch(inner, shared)
 
         results = shared["test_node"]["results"]
-        assert results[0] == {"item": "a"}
-        assert results[1] == {"item": "b"}
+        assert results[0] == {"item": "a", "original_index": 0}
+        assert results[1] == {"item": "b", "original_index": 1}
         assert shared["test_node"]["success_count"] == 2
 
 
@@ -1363,12 +1450,13 @@ class TestParallelErrorHandling:
 
         _run_batch(inner, shared, parallel=True, error_handling="continue")
 
+        # results contains only successful items (failed items filtered out)
         results = shared["test_node"]["results"]
+        assert len(results) == 2
         assert results[0]["response"] == "a"
         assert results[0]["item"] == "a"
-        assert results[1] is None
-        assert results[2]["response"] == "c"
-        assert results[2]["item"] == "c"
+        assert results[1]["response"] == "c"
+        assert results[1]["item"] == "c"
 
 
 class TestParallelRetry:
@@ -2173,22 +2261,18 @@ class TestBatchActionFallbackErrorDetection:
             self.__dict__.update(state)
 
     def test_exec_single_detects_error_via_action_string(self):
-        """When _run() returns 'error' but result dict has no error key, error is recorded."""
+        """When _run() returns 'error' but result dict has no error key, all-fail abort fires."""
         inner = self.ErrorActionNode("test_node")
         shared: dict = {"data": ["a", "b"]}
 
-        _run_batch(inner, shared, error_handling="continue")
+        # All items return error action → success_count = 0 → all-fail abort
+        with pytest.raises(RuntimeError, match="all 2 items failed"):
+            _run_batch(inner, shared, error_handling="continue")
 
+        # Batch output is written to shared store BEFORE the abort raise
         assert shared["test_node"]["error_count"] == 2
-        assert len(shared["test_node"]["errors"]) == 2
-
-        for error_info in shared["test_node"]["errors"]:
-            assert error_info["error"] == "Node returned error action"
-
-        results = shared["test_node"]["results"]
-        for result in results:
-            assert result is not None
-            assert result["response"] == "partial output"
+        assert shared["test_node"]["success_count"] == 0
+        assert shared["test_node"]["results"] == []
 
     def test_exec_single_prefers_extract_error_over_action(self):
         """When both _extract_error finds an error AND action is 'error', _extract_error message wins."""
@@ -2242,22 +2326,48 @@ class TestBatchActionFallbackErrorDetection:
         assert shared["test_node"]["errors"] is None
 
     def test_exec_single_with_node_detects_error_via_action(self):
-        """Parallel path: detects error via action string fallback."""
+        """Parallel path: all error-action items → all-fail abort."""
         inner = self.ErrorActionNode("test_node")
         shared: dict = {"data": ["a", "b", "c"]}
 
-        _run_batch(inner, shared, parallel=True, error_handling="continue")
+        # All items return error action → success_count = 0 → all-fail abort
+        with pytest.raises(RuntimeError, match="all 3 items failed"):
+            _run_batch(inner, shared, parallel=True, error_handling="continue")
 
+        # Batch output is written to shared store BEFORE the abort raise
         assert shared["test_node"]["error_count"] == 3
-        assert len(shared["test_node"]["errors"]) == 3
+        assert shared["test_node"]["success_count"] == 0
+        assert shared["test_node"]["results"] == []
 
-        for error_info in shared["test_node"]["errors"]:
-            assert error_info["error"] == "Node returned error action"
+    def test_mixed_error_via_action_filters_correctly(self):
+        """Some items succeed, some fail via action — success_count and results are correct."""
 
-        results = shared["test_node"]["results"]
-        for result in results:
-            assert result is not None
-            assert result["response"] == "partial output"
+        class MixedActionNode:
+            """Succeeds on even indices, returns error action on odd indices."""
+
+            def __init__(self, node_id: str):
+                self.node_id = node_id
+
+            def _run(self, shared: dict) -> str:
+                idx = shared.get("__index__", 0)
+                shared[self.node_id] = {"response": f"output-{idx}"}
+                return "error" if idx % 2 == 1 else "default"
+
+        inner = MixedActionNode("test_node")
+        shared: dict = {"data": ["a", "b", "c", "d"]}
+
+        _run_batch(inner, shared, error_handling="continue")
+
+        output = shared["test_node"]
+        # Items at indices 1 and 3 fail via action — filtered from results
+        assert output["count"] == 4
+        assert output["success_count"] == 2
+        assert output["error_count"] == 2
+        assert len(output["results"]) == 2
+        assert output["results"][0]["response"] == "output-0"
+        assert output["results"][1]["response"] == "output-2"
+        # Invariant holds
+        assert output["success_count"] + output["error_count"] == output["count"]
 
     def test_exec_single_fail_fast_raises_on_action_error(self):
         """fail_fast mode raises RuntimeError when action-string fallback detects error."""
@@ -2380,20 +2490,15 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         assert batch_output["errors"][0]["index"] == 1
         assert batch_output["errors"][0]["item"] == "fail-b"
 
+        # results contains only successful items — failed sub-workflow filtered out
         results = batch_output["results"]
-        assert len(results) == 3
+        assert len(results) == 2
 
-        assert results[0] is not None
         assert results[0]["item"] == "good-a"
         assert results[0].get("error") is None
 
-        assert results[2] is not None
-        assert results[2]["item"] == "good-c"
-        assert results[2].get("error") is None
-
-        assert results[1] is not None
-        assert results[1]["item"] == "fail-b"
-        assert results[1].get("error") is not None
+        assert results[1]["item"] == "good-c"
+        assert results[1].get("error") is None
 
     def test_batch_workflow_partial_failure_parallel(self):
         """Parallel variant of partial-fail: exercises the parallel code path."""
@@ -2452,16 +2557,15 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         assert len(batch_output["errors"]) == 1
         assert batch_output["errors"][0]["item"] == "fail-b"
 
+        # results contains only successful items — failed sub-workflow filtered out
         results = batch_output["results"]
-        assert len(results) == 3
+        assert len(results) == 2
 
-        for i, expected_item in enumerate(["good-a", "fail-b", "good-c"]):
-            assert results[i] is not None
-            assert results[i]["item"] == expected_item
-
+        assert results[0]["item"] == "good-a"
         assert results[0].get("error") is None
-        assert results[2].get("error") is None
-        assert results[1].get("error") is not None
+
+        assert results[1]["item"] == "good-c"
+        assert results[1].get("error") is None
 
     def test_batch_workflow_all_fail_with_continue(self):
         """All items fail with error_handling: continue -- aborts with RuntimeError."""
@@ -2507,6 +2611,70 @@ class TestBatchSubWorkflowErrorPropagationIntegration:
         with pytest.raises(RuntimeError, match="all 3 items failed"):
             engine = WorkflowEngine()
             engine.run(workflow, shared)
+
+    def test_downstream_batch_iterates_only_successes(self):
+        """Full pipeline: partial-failure batch → downstream batch iterates filtered results.
+
+        This is the core use case from GH #159. Tests the full integration:
+        _aggregate_batch_results filtering → shared store write → template resolution
+        of ${step1.results} → downstream batch receiving only successes.
+        """
+        from pflow.registry.registry import Registry
+        from pflow.runtime import compile_workflow
+        from pflow.runtime.engine import WorkflowEngine
+
+        registry = Registry()
+
+        ir = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "step1",
+                    "type": "shell",
+                    "params": {
+                        "command": 'if [ "${item}" = "bad" ]; then exit 1; fi; echo "s1-${item}"',
+                    },
+                    "batch": {
+                        "items": ["ok-a", "bad", "ok-c"],
+                        "error_handling": "continue",
+                    },
+                    "purpose": "Batch with partial failure to produce filtered results",
+                },
+                {
+                    "id": "step2",
+                    "type": "shell",
+                    "params": {
+                        "command": 'echo "s2-${item.stdout}"',
+                    },
+                    "batch": {
+                        "items": "${step1.results}",
+                    },
+                    "purpose": "Downstream batch iterating only successful results from step1",
+                },
+            ],
+            "edges": [{"from": "step1", "to": "step2"}],
+        }
+
+        workflow = compile_workflow(ir, registry=registry)
+        shared: dict = dict(workflow.resolved_defaults)
+        engine = WorkflowEngine()
+        engine.run(workflow, shared)
+
+        # Step 1: 3 attempted, 2 succeeded, 1 failed
+        s1 = shared["step1"]
+        assert s1["count"] == 3
+        assert s1["success_count"] == 2
+        assert s1["error_count"] == 1
+
+        # Step 2: received only 2 items (the successes from step1)
+        s2 = shared["step2"]
+        assert s2["count"] == 2
+        assert s2["success_count"] == 2
+        assert s2["error_count"] == 0
+
+        # Verify the data flowed correctly through the chain
+        outputs = sorted([r["stdout"] for r in s2["results"]])
+        assert outputs == ["s2-s1-ok-a", "s2-s1-ok-c"]
 
 
 class TestDetectEmptyOutputItems:

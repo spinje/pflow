@@ -180,7 +180,7 @@ Peak memory is `O(events_per_item x max_concurrent)`. No hard cap today.
 
 ### Output shape
 
-`{results, count, success_count, error_count, errors, batch_metadata}` — identical to old `PflowBatchNode.post()`. Verified by `BATCH_OUTPUTS` contract in `template_validation/validator.py`.
+`{results, count, success_count, error_count, errors, batch_metadata}`. `results` contains only successful items (failed items filtered out via `error_indices`). `errors` is the authoritative failure record with index, item, and error message per failure. `count` = total items attempted. `success_count` = `len(results)`. `error_count` = `len(errors)`. Verified by `BATCH_OUTPUTS` contract in `template_validation/validator.py`.
 
 ## Instrumentation (`instrumentation.py`)
 

@@ -44,7 +44,7 @@ _PERMISSIVE_PATTERN = re.compile(rf"\$\{{({_PERM_VAR}(?:\s*\?\?\s*{_PERM_VAR})*)
 
 # Batch output definitions matching PflowBatchNode.post() structure
 BATCH_OUTPUTS: list[dict[str, str]] = [
-    {"key": "results", "type": "array", "description": "Array of results in input order"},
+    {"key": "results", "type": "array", "description": "Array of successful results (failed items filtered out)"},
     {"key": "count", "type": "number", "description": "Total items processed"},
     {"key": "success_count", "type": "number", "description": "Items that succeeded"},
     {"key": "error_count", "type": "number", "description": "Items that failed"},
@@ -403,7 +403,14 @@ def extract_node_outputs(
 
         if batch_config:
             # Batch node: register batch outputs instead of normal outputs
-            _register_batch_outputs(node_outputs, node_id, node_type, enable_namespacing, registry)
+            _register_batch_outputs(
+                node_outputs,
+                node_id,
+                node_type,
+                enable_namespacing,
+                registry,
+                error_handling=batch_config.get("error_handling", "fail_fast"),
+            )
             _register_batch_item_variables(node_outputs, node_id, node_type, batch_config)
         else:
             # Non-batch node: extract outputs from registry interface
@@ -444,6 +451,7 @@ def _register_workflow_node_outputs(
                 enable_namespacing,
                 registry,
                 inner_outputs_override=inner_outputs,
+                error_handling=batch_config.get("error_handling", "fail_fast"),
             )
         else:
             # Child unresolvable: register batch outputs without inner structure.
@@ -456,6 +464,7 @@ def _register_workflow_node_outputs(
                 enable_namespacing,
                 registry,
                 skip_results_structure=True,
+                error_handling=batch_config.get("error_handling", "fail_fast"),
             )
         _register_batch_item_variables(node_outputs, node_id, node_type, batch_config)
     elif child_outputs is not None:
@@ -623,12 +632,13 @@ def _register_batch_outputs(
     registry: Registry,
     inner_outputs_override: Optional[dict[str, Any]] = None,
     skip_results_structure: bool = False,
+    error_handling: str = "fail_fast",
 ) -> None:
     """Register batch-specific outputs for a node with batch configuration.
 
     Batch nodes wrap their inner node's outputs in a structured result with:
-    - results: Array of per-item results (with inner node's output structure)
-    - count: Total items processed
+    - results: Array of successful results (failed items filtered out at runtime)
+    - count: Total items attempted
     - success_count/error_count: Success/failure counts
     - errors: Error details if any
     - batch_metadata: Execution statistics
@@ -639,6 +649,9 @@ def _register_batch_outputs(
         skip_results_structure: When True, don't attach items structure to results.
             Used when inner outputs are unknown (e.g., dynamic workflow child ref)
             so the validator accepts any results[N].* path at validation time.
+        error_handling: The batch error handling mode ("fail_fast" or "continue").
+            Stored on the results entry so path validation can block index access
+            when continue mode filters out failed items.
     """
     if skip_results_structure:
         inner_outputs_structure: dict[str, Any] = {}
@@ -656,6 +669,11 @@ def _register_batch_outputs(
             "node_type": node_type,
             "is_batch_output": True,
         }
+
+        # Store error_handling on results entry so path validation can block
+        # index access when continue mode filters out failed items.
+        if key == "results":
+            output_info["error_handling"] = error_handling
 
         # For 'results' array, add inner node's output structure plus 'item'.
         # When skip_results_structure is True, omit items so the validator

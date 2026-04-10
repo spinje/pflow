@@ -72,9 +72,11 @@ node_outputs["fetch.stdout"] = {
 }
 
 # Batch node output (has is_batch_output flag + items with inner structure)
+# error_handling is stored on the results entry so path_validation can block
+# index access when continue mode filters out failed items from results.
 node_outputs["process.results"] = {
     "type": "array", "node_id": "process", "node_type": "llm",
-    "is_batch_output": True,
+    "is_batch_output": True, "error_handling": "fail_fast",
     "items": {"type": "dict", "structure": {"response": {"type": "any"}, "item": {"type": "any"}}},
 }
 
@@ -91,7 +93,7 @@ node_outputs["concept_brief"] = {
 }
 ```
 
-Passes use `is_batch_output` to branch behavior (path_validation uses it to detect batch nodes). `is_batch_item` and `is_inputs_context` are metadata flags for provenance — not read by any pass currently. Workflow nodes get special handling — `validator.py` tries to resolve child workflow outputs at validation time via `_resolve_child_workflow_outputs()`.
+Passes use `is_batch_output` to branch behavior (path_validation uses it to detect batch nodes and to block index access on results when `error_handling` is `"continue"` — results contains only successful items, so positional indices would be wrong). `is_batch_item` and `is_inputs_context` are metadata flags for provenance — not read by any pass currently. Workflow nodes get special handling — `validator.py` tries to resolve child workflow outputs at validation time via `_resolve_child_workflow_outputs()`.
 
 **Note:** `validator.py` has dual responsibility — it orchestrates validation passes AND builds the `node_outputs` dict (`extract_node_outputs`, also used by `compilation/compile_validation.py`). Agents looking for output-related code need to look here, not just in the passes.
 

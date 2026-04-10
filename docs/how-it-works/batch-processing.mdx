@@ -220,14 +220,14 @@ Batch nodes write a special output structure to the shared store:
       {"item": "input1", "response": "..."},
       {"item": "input2", "response": "..."}
     ],
+    "count": 3,
+    "success_count": 2,
+    "error_count": 1,
     "batch_metadata": {
       "parallel": true,
-      "total_items": 8,
-      "successful_items": 7,
-      "failed_items": 1,
       "timing": {
-        "total_duration_ms": 24900,
-        "avg_item_duration_ms": 3112
+        "total_items_ms": 24900,
+        "avg_item_ms": 3112
       }
     },
     "errors": [
@@ -237,9 +237,9 @@ Batch nodes write a special output structure to the shared store:
 }
 ```
 
-Each result pairs `item` (the original input) with the inner node's outputs — so downstream nodes always know which output came from which input. When passing `${node.results}` to an LLM, it sees both inputs and outputs together.
+`results` contains only **successful** items — each pairs `item` (the original input) with the inner node's outputs. With `error_handling: continue`, failed items are excluded from `results` and appear only in `errors`. `count` is the total items attempted, `success_count` equals `len(results)`, and `error_count` equals `len(errors)`.
 
-Inside a batch node, `${__index__}` gives the 0-based position of the current item. This is useful for position-aware processing like numbering outputs or selecting behavior based on position.
+Inside a batch node, `${__index__}` gives the 0-based position of the current item. Index-based access to results (like `${node.results[0].field}`) requires `fail_fast` mode (the default). With `error_handling: continue`, use iteration (`items: ${node.results}`) instead — the validator blocks index access because filtered results don't preserve original positions.
 
 Subsequent nodes can access results:
 

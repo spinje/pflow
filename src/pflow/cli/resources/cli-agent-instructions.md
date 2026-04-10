@@ -1692,9 +1692,9 @@ your-command | jq -R -s 'split("\n") | map(select(. != ""))'
 ```
 
 **All outputs**: `${node.results}`, `.count`, `.success_count`, `.error_count`, `.errors`
-Results are always in input order. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs).
+Results contains only **successful** items. Each result contains `item` (original input) + inner node outputs, making results self-contained for downstream processing (e.g., `${node.results}` passed to LLM includes both inputs and outputs). With `error_handling: continue`, failed items are excluded from `results` — error details are in `errors`. `count` = total items attempted, `success_count` = `len(results)`, `error_count` = `len(errors)`.
 
-**⚠️ Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`.
+**⚠️ Batch replaces the normal output structure.** `${node.response}`, `${node.llm_usage}`, `${node.stdout}`, etc. do NOT exist at the top level. Access them inside results: `${node.results[0].response}`, `${node.results[0].llm_usage}`. Note: index-based access (`results[N]`) requires `fail_fast` mode (the default). With `error_handling: continue`, use iteration (`items: ${node.results}`) instead.
 
 **Inline array pattern** (parallel independent operations):
 Batch is the way to run operations concurrently (conditional branching picks ONE path, not multiple).
@@ -1764,10 +1764,10 @@ parallel: true
 ````
 Any `${item.field}` template works in any param — not just prompt/command.
 
-**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate:
+**Dynamic indexing**: `${__index__}` gives current position (0-based). Use nested templates to correlate (requires `fail_fast` — not supported with `error_handling: continue`):
 ```
-${previous.results[${__index__}]}     # Access by position
-${previous.results[${item.idx}]}      # Access by item field
+${previous.results[${__index__}]}     # Access by position (fail_fast only)
+${previous.results[${item.idx}]}      # Access by item field (fail_fast only)
 ```
 
 **Using results**:
@@ -1775,7 +1775,7 @@ ${previous.results[${item.idx}]}      # Access by item field
 ### report
 
 - type: llm
-- prompt: "Summary of ${process-each.count} items:\n${process-each.results}"
+- prompt: "Summary of ${process-each.success_count} items:\n${process-each.results}"
 ```
 
 ### Pattern: Conditional Branching
