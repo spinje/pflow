@@ -8,7 +8,7 @@ Fix the shared store invariant so failed nodes don't leak data into downstream t
 
 ## Status
 
-not started
+done
 
 ## Priority
 

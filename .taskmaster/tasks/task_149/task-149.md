@@ -6,7 +6,7 @@ Fix GH issue #194 (workflow data routed to stderr in non-interactive mode) and c
 
 ## Status
 
-not started
+done
 
 ## Priority
 

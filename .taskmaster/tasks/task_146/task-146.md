@@ -6,7 +6,7 @@ Improve the Mermaid workflow visualization (from Task 145) to surface batch/fan-
 
 ## Status
 
-in progress
+done
 
 ## What Was Actually Built
 

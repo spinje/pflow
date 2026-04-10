@@ -6,7 +6,7 @@ Generate mermaid flowchart diagrams from workflow IR, including recursive sub-wo
 
 ## Status
 
-not started
+done
 
 ## Priority
 

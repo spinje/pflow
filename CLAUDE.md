@@ -208,8 +208,10 @@ MVP feature-complete. Published to PyPI (v0.8.0). See `.taskmaster/versions.md` 
 - ✅ Task 141: Consolidate Exception Hierarchy
 - ✅ Task 143: Unified Diagnostic System
 - ✅ Task 144: Display Consolidation — Diagnostic Rendering Redesign
-- ✅ Task 145: Mermaid Workflow Visualization
-- ✅ Task 147: Validator Produces Diagnostics Natively (completes 141→143→144 arc)
+- ✅ Task 145 + 146: Mermaid Workflow Visualization
+- ✅ Task 147: Validator Produces Diagnostics Natively
+- ✅ Task 148: Template Error UX Consolidation
+- ✅ Task 149: Fix Non-Interactive Output Routing + Output Pipeline Consolidation
 
 ### Planned Features (in order of priority)
 

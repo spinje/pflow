@@ -8,7 +8,7 @@ Replace the parallel CLI/MCP orchestration layers with a single execution pipeli
 
 ## Status
 
-in progress
+done
 
 ## Priority
 

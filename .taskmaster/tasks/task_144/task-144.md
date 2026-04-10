@@ -12,7 +12,7 @@ This task redesigns the diagnostic pipeline end-to-end: one rendering format for
 
 ## Status
 
-Phase 1 (research) complete. Implementation not started.
+done
 
 ## Priority
 
