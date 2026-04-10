@@ -322,9 +322,7 @@ class ExecutionService(BaseService):
             ValueError: If workflow name is invalid, content is invalid, or validation fails
             FileExistsError: If workflow exists and force=False
         """
-        from pflow.core.markdown_parser import parse_markdown
         from pflow.core.workflow.save_service import (
-            load_and_validate_workflow,
             validate_workflow_name,
         )
 
@@ -334,6 +332,7 @@ class ExecutionService(BaseService):
             raise ValueError(f"Invalid workflow name: {error}")
 
         # Determine markdown content from input
+        source_path: Optional[Path] = None
         if "\n" in workflow:
             # Raw markdown content
             markdown_content = workflow
@@ -343,20 +342,14 @@ class ExecutionService(BaseService):
             if not file_path.exists():
                 raise ValueError(f"Workflow file not found: {workflow}")
             markdown_content = file_path.read_text(encoding="utf-8")
+            source_path = file_path
         else:
             raise ValueError(f"Cannot save '{workflow}'. Pass raw .pflow.md content or a file path.")
 
-        # Parse and validate — parse once, use IR for display, content for save
         try:
-            result = parse_markdown(markdown_content)
-        except MarkdownParseError as e:
-            raise ValueError(f"Invalid workflow: {e}") from e
-
-        # Validate the parsed IR. WorkflowValidationError carries structured
-        # diagnostics (post task 147) — render them through format_validation_failure
-        # so the agent receives the same rich text the validate_workflow path produces.
-        try:
-            load_and_validate_workflow(result.ir, auto_normalize=True)
+            return cls._save_and_format_result(name, markdown_content, force, source_path)
+        except FileExistsError:
+            raise
         except WorkflowValidationError as e:
             from pflow.execution.formatters.validation_formatter import format_validation_failure
 
@@ -364,25 +357,14 @@ class ExecutionService(BaseService):
                 format_validation_failure(e.validation_errors) if e.validation_errors else f"Invalid workflow: {e}"
             )
             raise ValueError(rendered) from e
-        except ValueError as e:
+        except MarkdownParseError as e:
             raise ValueError(f"Invalid workflow: {e}") from e
-
-        # Determine source path for dependency discovery (file-based saves only)
-        source_path: Optional[Path] = None
-        if "\n" not in workflow:
-            candidate = Path(workflow).expanduser()
-            if candidate.exists():
-                source_path = candidate
-
-        # Save and format result
-        return cls._save_and_format_result(name, markdown_content, result.ir, force, source_path)
 
     @classmethod
     def _save_and_format_result(
         cls,
         name: str,
         markdown_content: str,
-        workflow_ir: dict[str, Any],
         force: bool,
         source_path: Optional[Path] = None,
     ) -> str:
@@ -391,7 +373,6 @@ class ExecutionService(BaseService):
         Args:
             name: Workflow name
             markdown_content: Original markdown content (preserved for save)
-            workflow_ir: Parsed workflow IR (used for display formatting)
             force: Whether to overwrite existing workflow
             source_path: Optional source file path for dependency discovery
 
@@ -406,7 +387,7 @@ class ExecutionService(BaseService):
         from pflow.execution.formatters.workflow_save_formatter import format_save_success
 
         try:
-            saved_path, bundled_files = save_workflow_with_options(
+            saved_path, bundled_files, workflow_ir = save_workflow_with_options(
                 name=name,
                 markdown_content=markdown_content,
                 force=force,
@@ -427,9 +408,8 @@ class ExecutionService(BaseService):
             raise FileExistsError(
                 f"Workflow '{name}' already exists. Use force=true to overwrite or choose a different name."
             ) from e
-        except WorkflowValidationError as e:
-            logger.error(f"Failed to save workflow: {e}", exc_info=True)
-            raise ValueError(f"Failed to save workflow: {e}") from e
+        except (WorkflowValidationError, MarkdownParseError):
+            raise
         except Exception as e:
             logger.error(f"Failed to save workflow: {e}", exc_info=True)
             raise ValueError(f"Failed to save workflow: {e}") from e

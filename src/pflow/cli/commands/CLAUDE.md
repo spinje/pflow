@@ -76,6 +76,8 @@ Subcommands: `list` (with optional filter), `describe`, `history`, `discover` (L
 **Workflow save**:
 - Name validation: lowercase, numbers, hyphens only, max 30 chars (shell/URL/git-safe)
 - Description extracted from markdown H1 prose (`--description` flag removed)
+- The CLI save command reads raw markdown and delegates parse + full validation + save to `save_workflow_with_options()`
+- Validation failures with structured diagnostics are rendered through `format_validation_failure()` for parity with `--validate-only`
 - `--delete-draft` safety check: only works in `.pflow/workflows/`, resolves symlinks, refuses to delete symlinked files
 
 **Workflow history** (`pflow workflow history <name>`): Shows execution history and last used inputs — useful for finding previously used parameter values.
@@ -137,7 +139,7 @@ LLM model resolution chain (genuinely hard to discover):
 | `registry_run.py` | `test_registry_run.py` | `pflow.cli.commands.registry_run.Registry`, `.import_node_class`, `.inject_special_parameters` |
 | `registry.py` (normalization) | `test_registry_normalization.py` | None (direct function import) |
 | `read_fields.py` | `test_read_fields.py` | None |
-| `workflow.py` | `test_workflow_resolution.py` (partial) | None |
+| `workflow.py` | `test_workflow_save_cli.py`, `test_workflow_resolution.py` (partial) | None |
 | `skills.py` | `test_skills.py` | `pflow.cli.commands.skills.WorkflowManager`, `.create_skill_symlink`, `.enrich_workflow`, `.find_skill_for_workflow`, `.find_pflow_skills`, `.remove_skill_service` |
 | `visualize.py` | `test_visualize.py` | None |
 | `settings.py` | (tested via integration) | None |

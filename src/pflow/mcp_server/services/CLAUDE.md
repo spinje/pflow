@@ -89,7 +89,7 @@ errors = [d for d in diagnostics if d.severity == Severity.ERROR]
 
 Every shared formatter has two call sites: CLI (`cli/main.py`) and MCP (`execution_service.py`). Adding a new parameter to a formatter WITHOUT updating both sides causes silent output divergence — the CLI gets the new field, MCP doesn't, and the error surfaces as "MCP output is missing X". Grep both files for the formatter name when modifying its signature.
 
-Same rule for rendering exceptions: the MCP `save_workflow` path catches `WorkflowValidationError` and renders it via `format_validation_failure(e.validation_errors)` — parity with the CLI validate path. `WorkflowValidationError.validation_warnings` is a constructor kwarg (not a dynamic attribute), so warnings survive the exception boundary without special plumbing.
+Same rule for rendering exceptions: the MCP `save_workflow` path relies on `save_workflow_with_options()` for parse + validation + save, then catches `WorkflowValidationError` and renders it via `format_validation_failure(e.validation_errors)` — parity with the CLI save/validate paths. `WorkflowValidationError.validation_warnings` is a constructor kwarg (not a dynamic attribute), so warnings survive the exception boundary without special plumbing.
 
 ## Testing
 

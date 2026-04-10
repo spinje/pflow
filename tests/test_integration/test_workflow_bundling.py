@@ -344,7 +344,7 @@ class TestSaveWorkflowWithOptionsBundles:
         # Act: use the service-layer function with an explicit WorkflowManager path
         # save_workflow_with_options uses WorkflowManager() with default path,
         # which is patched by isolate_pflow_config to use a temp dir.
-        saved_path, bundled_files = save_workflow_with_options(
+        saved_path, bundled_files, validated_ir = save_workflow_with_options(
             name="bundle-svc",
             markdown_content=markdown,
             source_path=workflow_path,
@@ -356,6 +356,7 @@ class TestSaveWorkflowWithOptionsBundles:
         # Assert: bundled_files list includes the discovered dependency
         assert len(bundled_files) >= 1
         assert any("prompts/agent.md" in f for f in bundled_files)
+        assert validated_ir["nodes"][0]["id"] == "ask"
 
         # Assert: the actual bundled file exists on disk alongside the entry point
         bundle_dir = saved_path.parent
@@ -379,13 +380,14 @@ class TestSaveWorkflowWithOptionsBundles:
         }
         markdown = ir_to_markdown(ir, title="No Source Workflow")
 
-        saved_path, bundled_files = save_workflow_with_options(
+        saved_path, bundled_files, validated_ir = save_workflow_with_options(
             name="no-source",
             markdown_content=markdown,
         )
 
         assert saved_path.exists()
         assert bundled_files == []
+        assert validated_ir["nodes"][0]["id"] == "greet"
 
 
 class TestFileReferencesResolveFromBundle:
@@ -559,7 +561,7 @@ class TestFileReferencesResolveFromBundle:
         workflow_path.write_text(markdown)
 
         # Act: save via service layer (uses isolate_pflow_config temp dir)
-        _saved_path, _bundled_files = save_workflow_with_options(
+        _saved_path, _bundled_files, _workflow_ir = save_workflow_with_options(
             name="script-resolve",
             markdown_content=markdown,
             source_path=workflow_path,
@@ -598,7 +600,10 @@ class TestRawContentSaveGuard:
         }
         markdown = ir_to_markdown(ir, title="Sub-Workflow Only")
 
-        with pytest.raises(WorkflowValidationError, match="file references"):
+        # Validation now runs before _reject_unbundleable_file_refs, so the
+        # validator's sub-workflow step (step 8) catches the unresolvable
+        # reference first — more specific error than the generic "file references" guard.
+        with pytest.raises(WorkflowValidationError, match="Cannot resolve relative sub-workflow"):
             save_workflow_with_options(
                 name="sub-only-test",
                 markdown_content=markdown,
@@ -641,12 +646,13 @@ class TestRawContentSaveGuard:
         }
         markdown = ir_to_markdown(ir, title="No Refs")
 
-        saved_path, bundled = save_workflow_with_options(
+        saved_path, bundled, workflow_ir = save_workflow_with_options(
             name="no-refs-test",
             markdown_content=markdown,
         )
         assert saved_path.exists()
         assert bundled == []
+        assert workflow_ir["nodes"][0]["id"] == "greet"
 
 
 class TestSubWorkflowParseErrorPropagation:
