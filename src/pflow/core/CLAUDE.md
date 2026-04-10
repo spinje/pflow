@@ -281,7 +281,7 @@ Detects file path references in node params and batch items, reads the files, an
 
 ### param_coercion.py
 
-**Two functions for different contexts** — easy to confuse:
+**Two functions for different pipeline stages** — easy to confuse:
 - `coerce_param_for_node(value, expected_type)`: For node execution. Intentionally narrow — only converts dict/list → JSON string when declared type is `"str"`. All other values pass through unchanged.
 - `coerce_workflow_input(value, declared_type)`: For CLI/env inputs entering a workflow. Full bidirectional coercion via dispatch table (str↔int, str↔bool, str↔JSON). **Lenient**: warns on failure instead of erroring — lets downstream validation catch it with full context.
 
