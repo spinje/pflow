@@ -7,7 +7,8 @@ ensuring CLI and MCP return identical output structures.
 import json
 from typing import Any, Optional
 
-from pflow.core.diagnostic import Diagnostic, format_diagnostic
+from pflow.core.diagnostic import Diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 
 

@@ -7,7 +7,8 @@ at the root level of shared storage for workflows with namespacing.
 
 import pytest
 
-from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
+from pflow.core.diagnostic import exception_to_diagnostics
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.user_errors import OutputResolutionError
 from pflow.runtime.output_resolver import populate_declared_outputs, resolve_output_source
 

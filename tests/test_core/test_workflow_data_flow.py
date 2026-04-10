@@ -2,7 +2,7 @@
 
 import pytest
 
-from pflow.core.diagnostic import format_diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.data_flow import CycleError, build_execution_order, validate_data_flow
 
 

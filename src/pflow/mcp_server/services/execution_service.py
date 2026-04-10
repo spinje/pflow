@@ -8,11 +8,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from pflow.core.diagnostic import (
-    Diagnostic,
-    Severity,
-    format_diagnostic,
-)
+from pflow.core.diagnostic import Diagnostic, Severity
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.exceptions import MarkdownParseError, WorkflowNotFoundError, WorkflowValidationError
 from pflow.core.workflow.manager import WorkflowManager
 from pflow.execution.workflow_resolver import resolve_workflow as _unified_resolve

@@ -47,7 +47,8 @@ def visualize(
     """
     from pathlib import Path
 
-    from pflow.core.diagnostic import Severity, exception_to_diagnostics, format_diagnostic
+    from pflow.core.diagnostic import Severity, exception_to_diagnostics
+    from pflow.core.diagnostic_render import format_diagnostic
     from pflow.core.workflow.mermaid import generate_mermaid
     from pflow.core.workflow.sub_workflow_resolver import resolve_sub_workflow
     from pflow.execution.runner import WorkflowRunner

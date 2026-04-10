@@ -128,7 +128,7 @@ Three responsibilities:
 
 ## workflow_errors.py
 
-Text-mode error display for `ExecutionResult` failures. `_display_text_error_details` → `_display_single_error`: accepts `Diagnostic` objects directly (no dict coercion), renders via `format_diagnostic()`. Context blocks (API responses, MCP errors, template fields, shell command/stdout/stderr) are rendered universally by `_format_all_context_blocks()` in `diagnostic.py`. Compilation errors also flow through this path.
+Text-mode error display for `ExecutionResult` failures. `_display_text_error_details` → `_display_single_error`: accepts `Diagnostic` objects directly (no dict coercion), renders via `format_diagnostic()`. Context blocks (API responses, MCP errors, template fields, shell command/stdout/stderr) are rendered universally by `_format_all_context_blocks()` in `diagnostic_render.py`. Compilation errors also flow through this path.
 
 ## error_output.py
 

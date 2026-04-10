@@ -28,7 +28,7 @@ FIX HISTORY:
 
 import pytest
 
-from pflow.core.diagnostic import format_diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.status import WorkflowStatus
 from pflow.execution.result import RunnerConfig
 from pflow.execution.runner import WorkflowRunner

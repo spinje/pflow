@@ -11,7 +11,8 @@ src/pflow/core/
 ├── __init__.py              # Public API exports
 ├── node.py                  # Node lifecycle primitives (BaseNode, Node, wiring operators)
 ├── exceptions.py            # Exception hierarchy (incl. CompilationError, MaxNodeVisitsError)
-├── diagnostic.py            # Unified Diagnostic type + format_diagnostic renderer
+├── diagnostic.py            # Diagnostic type, exception conversion, dedup
+├── diagnostic_render.py     # format_diagnostic text renderer
 ├── ir_schema.py             # IR schema definition and validation
 ├── json_utils.py            # Shared JSON parsing (try_parse_json, parse_json_or_original)
 ├── llm_config.py            # LLM model resolution, env injection, provider detection
@@ -93,7 +94,15 @@ MaxNodeVisitsError(RuntimeError)         <- intentionally NOT PflowError (loop g
 
 ### diagnostic.py
 
-`Diagnostic` dataclass + `format_diagnostic()` renderer. Identity (eq/hash) is `severity + source + node_id + message` only — context, title, suggestions are display data. Use `deduplicate_diagnostics()` for collections.
+`Diagnostic` dataclass, `Severity` enum, dedup, exception conversion. Identity (eq/hash) is `severity + source + node_id + message` only — context, title, suggestions are display data. Use `deduplicate_diagnostics()` for collections.
+
+**`CATEGORY_TITLES`** maps diagnostic categories to human-readable titles. Used by both `executor_service.py` (error categorization) and `diagnostic_render.py` (error title rendering). Lives here because it's a data constant, not rendering logic.
+
+**`exception_to_diagnostics()`** is a factory/dispatcher: calls `to_diagnostics()` on exceptions that implement it, falls back to `_builtin_exception_diagnostic()` for stdlib types. Creates `Diagnostic` instances — it does not render them. Used by both display-layer code (CLI, formatters) and execution pipeline code (`runner.py`).
+
+### diagnostic_render.py
+
+Text rendering for `Diagnostic` objects. Single public function: `format_diagnostic()`. Imports `Diagnostic`, `Severity`, `CATEGORY_TITLES` from `diagnostic.py` — dependency flows one way (render → model), never the reverse.
 
 **Template error rendering** is structured, not prose: `Diagnostic.context["unresolved_references"]` is a list of per-reference dicts with `status` (`absent` / `failed` / `path_error`), `failure` (with category-aware data), `peer_suggestions`, `secondary_hint`, `did_you_mean`, `corrected_var`. The renderer (`_format_template_error_lines` → `_format_one_reference` → `_render_failure_data_block`) consumes this structure; agents reading JSON (`Diagnostic.to_dict()`) get the same data.
 
@@ -235,7 +244,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 Three-part error structure: WHAT went wrong (title) → WHY it failed (explanation) → HOW to fix it (suggestions). `UserFriendlyError` has `to_diagnostics()` with a `_diagnostic_category` class variable (`"cli"` by default). `MCPError` overrides to `_diagnostic_category = "mcp"` and inherits the base `to_diagnostics()`.
 
-`OutputResolutionError` overrides `to_diagnostics()` entirely. It produces a Diagnostic with `category="template_error"`, `node_id=None` (output errors are about the output declaration, not a node), and `context["output_failures"]` — a per-output list of structured blocks each with their own `template`, `source_file`, `source_line`, and `unresolved_references`. The renderer in `diagnostic.py` consumes this structure. **No canned suggestions** — the structured renderer emits per-reference fix hints. The base `__init__` builds a one-line summary explanation (matching `build_template_error_diagnostic` in `runtime/engine/template_errors.py`); legacy multi-line prose was removed because the renderer would otherwise duplicate it.
+`OutputResolutionError` overrides `to_diagnostics()` entirely. It produces a Diagnostic with `category="template_error"`, `node_id=None` (output errors are about the output declaration, not a node), and `context["output_failures"]` — a per-output list of structured blocks each with their own `template`, `source_file`, `source_line`, and `unresolved_references`. The renderer in `diagnostic_render.py` consumes this structure. **No canned suggestions** — the structured renderer emits per-reference fix hints. The base `__init__` builds a one-line summary explanation (matching `build_template_error_diagnostic` in `runtime/engine/template_errors.py`); legacy multi-line prose was removed because the renderer would otherwise duplicate it.
 
 ### validation_utils.py
 

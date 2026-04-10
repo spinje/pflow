@@ -8,7 +8,8 @@ from typing import Any
 import click
 
 from pflow.cli.param_parsing import parse_workflow_params
-from pflow.core.diagnostic import exception_to_diagnostics, format_diagnostic
+from pflow.core.diagnostic import exception_to_diagnostics
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.execution_cache import ExecutionCache
 from pflow.core.param_coercion import coerce_param_for_node
 from pflow.core.user_errors import MCPError
@@ -400,7 +401,8 @@ def _display_results(
 
 def _handle_ambiguous_node(node_type: str, matches: list[str]) -> None:
     """Handle ambiguous node name with helpful error message."""
-    from pflow.core.diagnostic import Diagnostic, Severity, format_diagnostic
+    from pflow.core.diagnostic import Diagnostic, Severity
+    from pflow.core.diagnostic_render import format_diagnostic
 
     d = Diagnostic(
         severity=Severity.ERROR,

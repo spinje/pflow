@@ -10,7 +10,8 @@ validation is no longer relevant since workflows are authored in markdown, not J
 
 import pytest
 
-from pflow.core.diagnostic import Severity, format_diagnostic
+from pflow.core.diagnostic import Severity
+from pflow.core.diagnostic_render import format_diagnostic
 from pflow.core.workflow.validator import WorkflowValidator
 from pflow.registry import Registry
 from tests.shared.diagnostic_helpers import split_validator_diagnostics

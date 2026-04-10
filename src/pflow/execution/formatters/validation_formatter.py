@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from pflow.core.diagnostic import format_diagnostic
+from pflow.core.diagnostic_render import format_diagnostic
 
 if TYPE_CHECKING:
     from pflow.core.diagnostic import Diagnostic
