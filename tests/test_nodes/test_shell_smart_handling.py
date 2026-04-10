@@ -330,7 +330,7 @@ class TestSmartHandlingJsonOutput:
 
         assert result.exit_code == 0
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         steps = output["execution"]["steps"]
         assert len(steps) == 1
         assert steps[0]["smart_handled"] is True
@@ -358,7 +358,7 @@ class TestSmartHandlingJsonOutput:
 
         assert result.exit_code == 0
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         steps = output["execution"]["steps"]
         assert len(steps) == 1
         assert "smart_handled" not in steps[0]

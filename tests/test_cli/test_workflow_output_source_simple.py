@@ -42,7 +42,7 @@ class TestWorkflowOutputSource:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             actual_result = output.get("result", output)
 
             # Check that outputs were populated correctly
@@ -100,7 +100,7 @@ class TestWorkflowOutputSource:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             actual_result = output.get("result", output)
 
             assert actual_result["first"] == "from A"
@@ -127,7 +127,7 @@ class TestWorkflowOutputSource:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             actual_result = output.get("result", output)
             assert actual_result["result"] == "file test"
         finally:
@@ -157,7 +157,7 @@ class TestWorkflowOutputSource:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             actual_result = output.get("result", output)
 
             # Should find the echo output (either from root or from namespaced node)

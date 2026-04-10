@@ -22,11 +22,6 @@ class TestOutputController:
         controller = OutputController(print_flag=True, stdin_tty=True, stdout_tty=True)
         assert controller.is_interactive() is False
 
-    def test_json_format_forces_non_interactive(self):
-        """Test requirement 2: output_format="json", stdin_tty=True, stdout_tty=True → is_interactive=False."""
-        controller = OutputController(output_format="json", stdin_tty=True, stdout_tty=True)
-        assert controller.is_interactive() is False
-
     def test_stdin_not_tty_forces_non_interactive(self):
         """Test requirement 3: stdin_tty=False, stdout_tty=True → is_interactive=False."""
         controller = OutputController(stdin_tty=False, stdout_tty=True)
@@ -169,14 +164,13 @@ class TestOutputController:
         with patch("sys.stdin.isatty", return_value=True), patch("sys.stdout.isatty", return_value=True):
             controller = OutputController()
             assert controller.print_flag is False
-            assert controller.output_format == "text"
             assert controller.stdin_tty is True
             assert controller.stdout_tty is True
             assert controller.is_interactive() is True
 
     def test_all_conditions_true_for_interactive(self):
         """Test that all conditions must be true for interactive mode."""
-        controller = OutputController(print_flag=False, output_format="text", stdin_tty=True, stdout_tty=True)
+        controller = OutputController(print_flag=False, stdin_tty=True, stdout_tty=True)
         assert controller.is_interactive() is True
 
     @patch("sys.stdout", None)
@@ -530,7 +524,7 @@ class TestOutputController:
 
     def test_multiple_flags_forcing_non_interactive(self):
         """Test multiple flags all forcing non-interactive mode."""
-        controller = OutputController(print_flag=True, output_format="json", stdin_tty=False, stdout_tty=False)
+        controller = OutputController(print_flag=True, stdin_tty=False, stdout_tty=False)
         assert controller.is_interactive() is False
 
     @patch("click.style", side_effect=mock_click_style)

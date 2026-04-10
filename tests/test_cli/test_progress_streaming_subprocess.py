@@ -874,25 +874,19 @@ class TestRealSubprocessProgressRendering:
                 proc.kill()
                 proc.wait()
 
-    def test_json_mode_keeps_stderr_silent(self, tmp_path, uv_exe, subprocess_env):
+    def test_json_mode_emits_summary_on_stderr(self, tmp_path, uv_exe, subprocess_env):
         """``pflow --output-format json foo.pflow.md`` must emit valid JSON on
-        stdout and zero bytes on stderr.
+        stdout and progress/summary on stderr.
 
-        JSON mode is the machine-clean invariant: agents consuming structured
-        output need stderr to be empty so any stderr content they observe is a
-        real error signal. The CLI enforces this by installing no progress
-        callback when ``output_format == "json"`` AND by routing the success
-        summary through ``_handle_json_output`` which never calls
-        ``_emit_summary_or_only_indicator``.
+        ``--output-format`` controls stdout format only; ``-p`` controls stderr
+        verbosity. JSON mode gets the same stderr diagnostics as text mode:
+        progress lines, completion tag, cost, and trace path. This matches
+        Unix conventions (curl, git, ffmpeg emit diagnostics to stderr
+        regardless of output format).
 
-        This subprocess test replaces a mocked predecessor in
-        ``test_workflow_output_handling.py`` that was test theater: the old
-        test used the ``mock_compile`` fixture whose ``ExecutionResult`` had
-        ``metrics=None``, so the summary code path could never fire regardless
-        of mode. The subprocess path exercises the real runner + real
-        MetricsCollector and would catch a regression where JSON mode starts
-        leaking stderr (e.g. someone removing the ``output_format != "json"``
-        clause from the ``progress_enabled`` gate in ``cli/main.py``).
+        stdout stays machine-clean JSON. stderr is human-readable diagnostics.
+        Agents piping ``| jq > file.md`` see the summary in their Bash tool
+        output without parsing JSON.
         """
         import json
 
@@ -924,7 +918,7 @@ class TestRealSubprocessProgressRendering:
             f"workflow failed unexpectedly\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
         )
 
-        # stdout must be valid JSON (the machine-clean contract)
+        # stdout must be valid JSON
         try:
             parsed = json.loads(result.stdout)
         except json.JSONDecodeError as exc:
@@ -932,10 +926,129 @@ class TestRealSubprocessProgressRendering:
 
         assert parsed.get("success") is True, f"Expected success=True in JSON output, got: {parsed}"
 
-        # stderr must be empty — this is the invariant agents rely on
+        # stderr must contain the completion summary (same as text mode)
+        assert "Workflow completed" in result.stderr, (
+            "JSON mode must emit completion summary to stderr. "
+            "Agents need to see status without parsing JSON.\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+        # stderr must NOT contain JSON — it's for human-readable diagnostics only
+        stderr_stripped = result.stderr.strip()
+        assert not stderr_stripped.startswith("{"), (
+            f"stderr must not contain JSON output — JSON goes to stdout only.\nstderr: {result.stderr!r}"
+        )
+
+        # stdout must NOT contain progress text — progress goes to stderr only
+        assert "Executing workflow" not in result.stdout, (
+            f"Progress text must not appear on stdout — it goes to stderr.\nstdout: {result.stdout!r}"
+        )
+
+    def test_json_print_mode_keeps_stderr_silent(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow --output-format json -p foo.pflow.md`` must emit valid JSON
+        on stdout and zero bytes on stderr.
+
+        ``-p`` is the sole control for stderr verbosity. When active, all
+        stderr diagnostics are suppressed regardless of output format.
+        """
+        import json
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "echo_canary",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "echo JSON_PRINT_CANARY"},
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "json_print_mode.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", "--output-format", "json", "-p", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode == 0, (
+            f"workflow failed unexpectedly\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+        # stdout must be valid JSON
+        try:
+            parsed = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise AssertionError(f"JSON+print mode stdout is not valid JSON: {exc}\nstdout:\n{result.stdout}") from exc
+
+        assert parsed.get("success") is True, f"Expected success=True in JSON output, got: {parsed}"
+
+        # stderr must be empty — -p suppresses all diagnostics
         assert result.stderr.strip() == "", (
-            "JSON mode must keep stderr silent. Any stderr content contaminates "
-            "the machine-clean contract that agents rely on.\n"
+            "JSON mode with -p must keep stderr silent. "
+            "-p is the sole control for stderr verbosity.\n"
+            f"stderr: {result.stderr!r}"
+        )
+
+    def test_json_mode_failure_emits_stderr_tag(self, tmp_path, uv_exe, subprocess_env):
+        """``pflow --output-format json`` with a failing workflow must emit
+        ``❌ Workflow failed after Xs`` on stderr and a valid JSON error
+        object on stdout.
+
+        Covers both the ``_display_execution_result`` error path (Runner
+        catches the failure) and ensures the failure tag mirrors the success
+        path's ``✓ Workflow completed in Xs`` completion tag.
+        """
+        import json
+
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "will_fail",
+                    "type": "shell",
+                    "cache": False,
+                    "params": {"command": "exit 1"},
+                }
+            ],
+            "edges": [],
+        }
+        workflow_path = tmp_path / "json_fail.pflow.md"
+        workflow_path.write_text(ir_to_markdown(workflow))
+
+        result = subprocess.run(  # noqa: S603
+            [uv_exe, "run", "pflow", "--output-format", "json", str(workflow_path)],
+            capture_output=True,
+            text=True,
+            shell=False,
+            env=subprocess_env,
+        )
+        _skip_if_uv_sandbox_panics(result)
+
+        assert result.returncode != 0, (
+            f"workflow should have failed\nstdout: {result.stdout!r}\nstderr: {result.stderr!r}"
+        )
+
+        # stdout must be valid JSON error object
+        try:
+            parsed = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise AssertionError(
+                f"JSON mode failure stdout is not valid JSON: {exc}\nstdout:\n{result.stdout}"
+            ) from exc
+
+        assert parsed.get("success") is False, f"Expected success=False in JSON output, got: {parsed}"
+
+        # stderr must contain the failure completion tag
+        assert "Workflow failed after" in result.stderr, (
+            "JSON mode failure must emit '❌ Workflow failed after Xs' to stderr. "
+            "Agents need to see failure status without parsing JSON.\n"
             f"stderr: {result.stderr!r}"
         )
 

@@ -125,7 +125,7 @@ def test_list_json_output(runner, mock_registry):
     assert result.exit_code == 0
 
     # Parse and validate JSON
-    output = json.loads(result.output)
+    output = json.loads(result.stdout)
     assert "nodes" in output
     assert isinstance(output["nodes"], list)
 
@@ -276,7 +276,7 @@ def test_search_json_output(runner, mock_registry):
     assert result.exit_code == 0
 
     # Parse and validate JSON
-    output = json.loads(result.output)
+    output = json.loads(result.stdout)
     assert "query" in output
     assert output["query"] == "file"
     assert "results" in output
@@ -474,7 +474,7 @@ def test_scan_json_output(runner, mock_registry):
         assert result.exit_code == 0
 
         # Parse and validate JSON
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         assert "found" in output
         assert "added" in output
         assert "nodes" in output

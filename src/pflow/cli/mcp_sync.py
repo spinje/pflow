@@ -31,7 +31,6 @@ def _get_output_controller(ctx: click.Context) -> OutputController:
     # Fallback: create one if not in context (shouldn't happen normally)
     return OutputController(
         print_flag=ctx.obj.get("print_flag", False) if ctx.obj else False,
-        output_format=ctx.obj.get("output_format", "text") if ctx.obj else "text",
     )
 
 

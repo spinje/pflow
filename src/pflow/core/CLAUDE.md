@@ -189,7 +189,7 @@ See `workflow/CLAUDE.md` for per-file details (storage format, validation pipeli
 
 ### output_controller.py
 
-**`is_interactive()`** (ALL must pass): no `-p/--print`, output format not `json`, stdin+stdout are TTY. Only `cli/mcp_sync.py` reads it (MCP discovery gating). **Progress during workflow execution is NOT TTY-gated** — `create_progress_callback()` always returns a callable; only `_handle_batch_progress`'s `\r` inline counter gates on `sys.stderr.isatty()` because `\r` renders as garbage in non-TTY capture.
+**`is_interactive()`** (ALL must pass): no `-p/--print`, stdin+stdout are TTY. Only `cli/mcp_sync.py` reads it (MCP discovery gating). **Progress during workflow execution is NOT TTY-gated** — `create_progress_callback()` always returns a callable; only `_handle_batch_progress`'s `\r` inline counter gates on `sys.stderr.isatty()` because `\r` renders as garbage in non-TTY capture.
 
 **Progress indicators**: ✓ success, ✗ Failed (non-batch fatal), ⚠️ warning, ↻ cached, `[no matches]`/`[not found]` smart-handled shell tags.
 

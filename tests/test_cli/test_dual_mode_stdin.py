@@ -710,7 +710,7 @@ class TestJSONOutputFormat:
 
         assert result.exit_code == 1
         # Output should be valid JSON
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         assert output["success"] is False
         assert "error" in output
         assert "Piped input cannot be routed" in output["error"]
@@ -740,7 +740,7 @@ class TestJSONOutputFormat:
         assert "stdin" in result.output.lower()
         # Should NOT be valid JSON
         with pytest.raises(json.JSONDecodeError):
-            json.loads(result.output)
+            json.loads(result.stdout)
 
     @patch("pflow.core.shell_integration.stdin_has_data", return_value=True)
     def test_multiple_stdin_error_json_output(self, mock_stdin, tmp_path):
@@ -764,7 +764,7 @@ class TestJSONOutputFormat:
 
         assert result.exit_code == 1
         # Output should be valid JSON
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         assert output["success"] is False
         assert "error" in output
         assert "errors" in output
@@ -806,4 +806,4 @@ class TestJSONOutputFormat:
         assert "Multiple inputs" in result.output or "stdin" in result.output.lower()
         # Should NOT be valid JSON
         with pytest.raises(json.JSONDecodeError):
-            json.loads(result.output)
+            json.loads(result.stdout)

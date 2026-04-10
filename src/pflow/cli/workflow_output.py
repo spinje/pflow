@@ -405,6 +405,7 @@ def _emit_summary_or_only_indicator(
     warnings: list[Any] | None,
     verbose: bool,
     print_flag: bool,
+    precomputed_result: dict[str, Any] | None = None,
 ) -> None:
     """Dispatch between full summary, --only-only emission, or nothing.
 
@@ -426,18 +427,21 @@ def _emit_summary_or_only_indicator(
     if print_flag and not only_node:
         return  # -p mode without --only: nothing to emit
 
-    from pflow.execution.formatters.success_formatter import format_execution_success
+    if precomputed_result is not None:
+        formatted = precomputed_result
+    else:
+        from pflow.execution.formatters.success_formatter import format_execution_success
 
-    formatted = format_execution_success(
-        shared_storage=shared_storage,
-        workflow_ir=workflow_ir or {},
-        metrics_collector=metrics_collector,
-        workflow_metadata=workflow_metadata,
-        output_key=output_key,
-        trace_path=None,
-        status=status,
-        warnings=warnings,
-    )
+        formatted = format_execution_success(
+            shared_storage=shared_storage,
+            workflow_ir=workflow_ir or {},
+            metrics_collector=metrics_collector,
+            workflow_metadata=workflow_metadata,
+            output_key=output_key,
+            trace_path=None,
+            status=status,
+            warnings=warnings,
+        )
 
     if print_flag:
         # -p + --only: emit just the mode confirmation, nothing else
@@ -533,6 +537,7 @@ def _handle_json_output(
     output_key: str | None,
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
+    print_flag: bool = False,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
@@ -542,6 +547,8 @@ def _handle_json_output(
     """Handle JSON formatted output.
 
     Returns all declared outputs or specified key as JSON, optionally with metrics.
+    Emits execution summary to stderr (same as text mode) — ``--output-format``
+    controls stdout format, ``-p`` controls stderr verbosity.
     """
     # Use shared formatter for consistency with MCP
     from pflow.execution.formatters.success_formatter import format_execution_success
@@ -560,6 +567,20 @@ def _handle_json_output(
     # Save JSON output to trace if available
     if workflow_trace and hasattr(workflow_trace, "set_json_output"):
         workflow_trace.set_json_output(result)
+
+    # Emit execution summary to stderr (same as text mode)
+    _emit_summary_or_only_indicator(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir,
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        status=status,
+        warnings=warnings,
+        verbose=verbose,
+        print_flag=print_flag,
+        precomputed_result=result,
+    )
 
     return _serialize_json_result(result, verbose)
 
@@ -650,9 +671,10 @@ def _handle_workflow_output(
             output_key,
             workflow_ir,
             verbose,
-            metrics_collector,
-            workflow_metadata,
-            workflow_trace,
+            print_flag=print_flag,
+            metrics_collector=metrics_collector,
+            workflow_metadata=workflow_metadata,
+            workflow_trace=workflow_trace,
             status=status,
             warnings=warnings,
         )

@@ -75,7 +75,7 @@ class TestShellStderrDisplay:
         assert result.exit_code != 0
 
         # Parse JSON output
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         # Verify shell_stderr is in the error structure
         assert "errors" in output
