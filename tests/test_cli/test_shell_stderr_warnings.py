@@ -285,7 +285,7 @@ class TestStderrInJsonOutput:
 
         assert result.exit_code == 0
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         # Verify the primary output is extracted (auto-detected stdout from namespace)
         assert "stdout" in output["result"]

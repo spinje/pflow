@@ -533,6 +533,7 @@ def _handle_json_output(
     output_key: str | None,
     workflow_ir: dict[str, Any] | None,
     verbose: bool,
+    print_flag: bool = False,
     metrics_collector: Any | None = None,
     workflow_metadata: dict[str, Any] | None = None,
     workflow_trace: Any | None = None,
@@ -542,6 +543,8 @@ def _handle_json_output(
     """Handle JSON formatted output.
 
     Returns all declared outputs or specified key as JSON, optionally with metrics.
+    Emits execution summary to stderr (same as text mode) — ``--output-format``
+    controls stdout format, ``-p`` controls stderr verbosity.
     """
     # Use shared formatter for consistency with MCP
     from pflow.execution.formatters.success_formatter import format_execution_success
@@ -560,6 +563,19 @@ def _handle_json_output(
     # Save JSON output to trace if available
     if workflow_trace and hasattr(workflow_trace, "set_json_output"):
         workflow_trace.set_json_output(result)
+
+    # Emit execution summary to stderr (same as text mode)
+    _emit_summary_or_only_indicator(
+        shared_storage=shared_storage,
+        workflow_ir=workflow_ir,
+        metrics_collector=metrics_collector,
+        workflow_metadata=workflow_metadata,
+        output_key=output_key,
+        status=status,
+        warnings=warnings,
+        verbose=verbose,
+        print_flag=print_flag,
+    )
 
     return _serialize_json_result(result, verbose)
 
@@ -650,9 +666,10 @@ def _handle_workflow_output(
             output_key,
             workflow_ir,
             verbose,
-            metrics_collector,
-            workflow_metadata,
-            workflow_trace,
+            print_flag=print_flag,
+            metrics_collector=metrics_collector,
+            workflow_metadata=workflow_metadata,
+            workflow_trace=workflow_trace,
             status=status,
             warnings=warnings,
         )

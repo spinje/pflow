@@ -197,7 +197,7 @@ class TestMetricsCollection:
                 result = runner.invoke(cli, ["--output-format", "json", workflow_file], env={"HOME": str(temp_home)})
 
             assert result.exit_code == 0
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
 
             # Check new unified structure
             assert "success" in output
@@ -258,7 +258,7 @@ class TestMetricsCollection:
                 print(f"Exit code: {result.exit_code}")
                 print(f"Output: {result.output}")
             assert result.exit_code == 0
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
 
             # Check cost calculation
             # gpt-4o-mini: 20 tokens @ $0.15/M + 30 tokens @ $0.60/M = $0.000021
@@ -299,24 +299,13 @@ class TestMetricsCollection:
             # Should have non-zero exit code
             assert result.exit_code != 0
 
-            # Try to extract JSON from output (might be mixed with error messages)
-            output = None
-            lines = result.output.strip().split("\n")
+            # stdout has pure JSON even on error (stderr has error messages)
+            output = json.loads(result.stdout)
 
-            # Try to find JSON in the output (often at the end)
-            for line in reversed(lines):
-                if line.strip().startswith("{"):
-                    try:
-                        output = json.loads(line)
-                        break
-                    except json.JSONDecodeError:
-                        continue
-
-            # If we found JSON output, verify it has error info
-            if output:
-                assert output.get("success") is False or "error" in output
-                # Should have some metrics even on error
-                assert "duration_ms" in output or "metrics" in output
+            # Verify it has error info
+            assert output.get("success") is False or "error" in output
+            # Should have some metrics even on error
+            assert "duration_ms" in output or "metrics" in output
 
         finally:
             Path(workflow_file).unlink()
@@ -699,7 +688,7 @@ class TestCLIFlags:
             result = runner.invoke(cli, ["--output-format", "json", workflow_file])
             assert result.exit_code == 0
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
 
             # Metrics should be present at top level
             assert "duration_ms" in output
@@ -729,7 +718,7 @@ class TestJSONOutputStructure:
 
         try:
             result = runner.invoke(cli, ["--output-format", "json", workflow_file])
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
 
             # Top-level structure
             assert output["success"] is True
@@ -791,34 +780,16 @@ class TestJSONOutputStructure:
             # The workflow should fail
             assert result.exit_code != 0
 
-            # The output should be valid JSON even on error
-            try:
-                output = json.loads(result.output)
-                json_parsed = True
-            except json.JSONDecodeError:
-                json_parsed = False
-                # If JSON parsing fails, check if it's because of mixed output
-                # Look for JSON in the output
-                lines = result.output.strip().split("\n")
-                for line in reversed(lines):  # Check from end where JSON usually is
-                    try:
-                        output = json.loads(line)
-                        json_parsed = True
-                        break
-                    except (json.JSONDecodeError, ValueError):
-                        continue
+            # stdout has pure JSON even on error (stderr has error messages)
+            output = json.loads(result.stdout)
 
-            if json_parsed:
-                # Test behavior: Error information is present
-                assert output.get("success") is False
+            # Test behavior: Error information is present
+            assert output.get("success") is False
 
-                # Test behavior: Some metrics are available even on error
-                # At least one of these should be present
-                has_metrics = "duration_ms" in output or "metrics" in output or "num_nodes" in output
-                assert has_metrics, "Should have some metrics even on error"
-            else:
-                # If we can't parse JSON, at least verify error output exists
-                assert "error" in result.output.lower() or "fail" in result.output.lower()
+            # Test behavior: Some metrics are available even on error
+            # At least one of these should be present
+            has_metrics = "duration_ms" in output or "metrics" in output or "num_nodes" in output
+            assert has_metrics, "Should have some metrics even on error"
 
         finally:
             Path(workflow_file).unlink()
@@ -842,7 +813,7 @@ class TestMetricsAccuracy:
             result = runner.invoke(cli, ["--output-format", "json", workflow_file])
             elapsed = (time.time() - start) * 1000  # Convert to ms
 
-            output = json.loads(result.output)
+            output = json.loads(result.stdout)
             reported_duration = output["duration_ms"]
 
             # Duration should be positive and reasonable
@@ -934,7 +905,7 @@ class TestMetricsAccuracy:
                     result = runner.invoke(
                         cli, ["--output-format", "json", workflow_file], env={"HOME": str(temp_home)}
                     )
-                output = json.loads(result.output)
+                output = json.loads(result.stdout)
 
                 assert output.get("success", False), f"Workflow failed for {expected_count}-node: {output}"
                 assert output["nodes_executed"] == expected_count

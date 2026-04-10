@@ -51,7 +51,7 @@ class TestEnhancedErrorOutput:
         assert result.exit_code != 0
 
         # Parse JSON output
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         # Verify execution state exists
         assert "execution" in output, "JSON output should include execution state"
@@ -101,7 +101,7 @@ class TestEnhancedErrorOutput:
 
         assert result.exit_code == 0
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         # Verify execution state exists in success case too
         assert "execution" in output
@@ -132,14 +132,14 @@ class TestEnhancedErrorOutput:
         # First run - no cache
         result1 = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
         assert result1.exit_code == 0
-        output1 = json.loads(result1.output)
+        output1 = json.loads(result1.stdout)
         steps1 = output1["execution"]["steps"]
         assert steps1[0]["cached"] is False
 
         # Second run - should hit cache
         result2 = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
         assert result2.exit_code == 0
-        output2 = json.loads(result2.output)
+        output2 = json.loads(result2.stdout)
         steps2 = output2["execution"]["steps"]
 
         # Verify cache field is tracked (value depends on cache config)
@@ -187,7 +187,7 @@ class TestEnhancedErrorOutput:
 
         assert result.exit_code != 0
 
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         # Verify required fields
         assert "success" in output
@@ -267,7 +267,7 @@ class TestEnhancedErrorOutput:
             assert result.exit_code != 0
 
             if output_format == "json":
-                output = json.loads(result.output)
+                output = json.loads(result.stdout)
                 assert output["success"] is False
             else:
                 assert "error" in result.output.lower() or "failed" in result.output.lower()
@@ -289,7 +289,7 @@ class TestEnhancedErrorOutput:
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code == 0
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         steps = output["execution"]["steps"]
         assert len(steps) == 1
@@ -326,7 +326,7 @@ class TestEnhancedErrorOutput:
         result = runner.invoke(main, ["--output-format", "json", str(workflow_path)])
 
         assert result.exit_code != 0
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         steps = output["execution"]["steps"]
         step_map = {step["node_id"]: step for step in steps}

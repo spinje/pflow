@@ -130,7 +130,7 @@ Diagnostic(
 
 ## Integration
 
-**CLI**: `cli/main.py:execute_json_workflow()` calls `WorkflowRunner().run()`, passing `progress_callback=output_controller.create_progress_callback()` when progress is enabled. Handles: stdin routing, logging suppression, trace saving, display.
+**CLI**: `cli/main.py:execute_json_workflow()` calls `WorkflowRunner().run()`, passing `progress_callback=output_controller.create_progress_callback()` when progress is enabled. Handles: stdin routing, trace saving, display.
 
 **MCP Server**: `mcp_server/services/execution_service.py` calls `WorkflowRunner().run()` without a progress callback (defaults to `None`). Three methods: `execute_workflow()`, `validate_workflow()`, `run_registry_node()`.
 

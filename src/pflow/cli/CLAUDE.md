@@ -116,7 +116,7 @@ CLI text mode emits a stderr warning when auto-detection is used (not in `--prin
 
 ### JSON/Text Duality
 
-Error output is unified: `output_error()` in `error_output.py` handles JSON/text branching for ALL error types. Success output still has parallel paths in `workflow_output.py`. The `--output-format json` flag gates which path executes. JSON mode suppresses all logging below ERROR level to prevent stdout contamination.
+Error output is unified: `output_error()` in `error_output.py` handles JSON/text branching for ALL error types. Success output still has parallel paths in `workflow_output.py`. The `--output-format json` flag gates which path executes. `--output-format` controls stdout format only; stderr verbosity is controlled solely by `-p`.
 
 ## workflow_output.py
 
@@ -179,7 +179,7 @@ Note: has its own copy of `_get_output_controller` (duplicated from main.py to a
 --version              # Show version
 --verbose, -v          # Detailed output (extra error context)
 --output-key, -o       # Extract specific shared store key instead of auto-detection
---output-format        # "text" (default) or "json" — json forces non-interactive
+--output-format        # "text" (default) or "json" — controls stdout format only
 --print, -p            # Minimal output: suppress stderr header/summary/warnings
 --no-trace             # Disable automatic workflow trace saving
 --cache/--no-cache     # Enable/disable memoization cache reads (default: --cache). Writes always happen.
@@ -237,9 +237,9 @@ Note: `commands/mcp.py` still uses inline formatting (not yet migrated to shared
 ## Interactive Mode
 
 `OutputController.is_interactive()` has exactly one caller: `cli/mcp_sync.py` for MCP discovery progress gating. It does NOT gate workflow-execution progress.
-- **Progress display**: always streams to stderr via `create_progress_callback()` (TTY and non-TTY alike). Suppressed in `-p` and `--output-format json` by the callsite gate `progress_enabled = not print_flag and output_format != "json"` in `main.py`, not by TTY detection. The one TTY-specific branch is `_handle_batch_progress`'s `\r` inline counter.
+- **Progress display**: always streams to stderr via `create_progress_callback()` (TTY and non-TTY alike). Suppressed in `-p` by the callsite gate `progress_enabled = not print_flag` in `main.py`, not by TTY detection. The one TTY-specific branch is `_handle_batch_progress`'s `\r` inline counter.
 - **Save prompts**: use `click.confirm(...)` directly. There is no `OutputController` method for this.
-- **Trace path echo**: `_echo_trace` suppresses the "📊 Workflow trace saved" line in `-p` and JSON mode.
+- **Trace path echo**: `_echo_trace` suppresses the "📊 Workflow trace saved" line in `-p` mode.
 
 ## Common Usage
 

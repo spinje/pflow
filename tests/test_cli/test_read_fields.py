@@ -101,7 +101,7 @@ class TestReadFieldsCommand:
         assert result.exit_code == 0
 
         # Parse JSON output
-        output_data = json.loads(result.output)
+        output_data = json.loads(result.stdout)
         assert output_data["status"] == "success"
         assert output_data["result[0].id"] == 1
 

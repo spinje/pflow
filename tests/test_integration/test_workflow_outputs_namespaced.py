@@ -97,7 +97,7 @@ class TestWorkflowOutputsNamespaced:
             assert result.exit_code == 0, f"Failed with output: {result.output}"
 
             # Parse JSON output
-            output_json = json.loads(result.output)
+            output_json = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_json.get("result", output_json)
 
@@ -150,7 +150,7 @@ class TestWorkflowOutputsNamespaced:
             assert result.exit_code == 0, f"Failed with output: {result.output}"
 
             # Parse JSON and verify all outputs
-            output_json = json.loads(result.output)
+            output_json = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_json.get("result", output_json)
 

@@ -215,7 +215,7 @@ def test_json_output_format_produces_valid_json(runner, tmp_path):
         assert result.exit_code == 0
 
         # --output-format json should produce valid JSON with actual data
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         assert output["success"] is True
         assert output["node_type"] == "read-file"
         assert "outputs" in output
@@ -253,7 +253,7 @@ def test_json_output_bypasses_structure_formatting(runner, tmp_path):
         result = runner.invoke(registry, ["run", "read-file", f"file_path={test_file}", "--output-format", "json"])
 
         assert result.exit_code == 0
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
 
         # JSON output should NOT contain structure mode formatting
         output_str = json.dumps(output)
@@ -801,7 +801,7 @@ def test_json_mode_error_response_is_valid(runner, mock_registry):
 
     # Should still be valid JSON
     try:
-        output = json.loads(result.output)
+        output = json.loads(result.stdout)
         assert "error" in output or "success" in output
     except json.JSONDecodeError:
         # Error messages might not be JSON in error cases, that's acceptable

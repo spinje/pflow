@@ -51,16 +51,14 @@ class OutputController:
 
     Rules for interactive mode detection:
     1. If print_flag is True then is_interactive returns False
-    2. If output_format equals "json" then is_interactive returns False
-    3. If stdin_tty is False then is_interactive returns False
-    4. If stdout_tty is False then is_interactive returns False
-    5. Only if all conditions pass is the mode considered interactive
+    2. If stdin_tty is False then is_interactive returns False
+    3. If stdout_tty is False then is_interactive returns False
+    4. Only if all conditions pass is the mode considered interactive
     """
 
     def __init__(
         self,
         print_flag: bool = False,
-        output_format: str = "text",
         stdin_tty: Optional[bool] = None,
         stdout_tty: Optional[bool] = None,
     ):
@@ -68,12 +66,10 @@ class OutputController:
 
         Args:
             print_flag: CLI flag -p/--print to force non-interactive mode
-            output_format: Output format (text/json), json implies non-interactive
             stdin_tty: Override for sys.stdin.isatty() (for testing)
             stdout_tty: Override for sys.stdout.isatty() (for testing)
         """
         self.print_flag = print_flag
-        self.output_format = output_format
 
         # Handle Windows edge case where sys.stdin can be None
         if stdin_tty is not None:
@@ -127,11 +123,7 @@ class OutputController:
         if self.print_flag:
             return False
 
-        # Rule 2: JSON output format implies non-interactive
-        if self.output_format == "json":
-            return False
-
-        # Rules 3 & 4: Both stdin AND stdout must be TTY for interactive
+        # Rules 2 & 3: Both stdin AND stdout must be TTY for interactive
         return self.stdin_tty and self.stdout_tty
 
     def _close_partial_line(self) -> None:
@@ -342,8 +334,8 @@ class OutputController:
         Python's logging machinery running the filter before each emit.
 
         Only called from ``create_progress_callback`` so non-progress modes
-        (``-p``, ``--output-format json``, MCP server) never install the
-        filter and never pay its (negligible) cost.
+        (``-p``, MCP server) never install the filter and never pay its
+        (negligible) cost.
         """
         if self._log_filter_installed:
             return

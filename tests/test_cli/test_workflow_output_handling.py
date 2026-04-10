@@ -638,7 +638,7 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             # Parse the JSON output - it's now wrapped in a result structure
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             assert actual_result == {"summary": "Task completed successfully"}
@@ -680,7 +680,7 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             # Parse the JSON output - it's now wrapped in a result structure
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             # Should include ALL declared outputs
@@ -726,7 +726,7 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-format", "json", "--output-key", "custom_key", workflow_file])
 
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             # Should only return the requested key
@@ -762,7 +762,7 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             # Should return empty JSON object
@@ -796,7 +796,7 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             # Should return first matching fallback key
@@ -844,7 +844,7 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
 
@@ -910,14 +910,14 @@ class TestWorkflowOutputHandling:
             # Test "JSON" (uppercase)
             result = runner.invoke(main, ["--output-format", "JSON", workflow_file])
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             actual_result = output_data.get("result", output_data)
             assert actual_result == {"data": "Test value"}
 
             # Test "Json" (mixed case)
             result = runner.invoke(main, ["--output-format", "Json", workflow_file])
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             actual_result = output_data.get("result", output_data)
             assert actual_result == {"data": "Test value"}
         finally:
@@ -947,22 +947,8 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
 
-            # The output should contain valid JSON, possibly with verbose messages
-            # Try to parse the whole output first
-            try:
-                # If it's pure JSON, this will work
-                json_output = json.loads(result.output)
-            except json.JSONDecodeError:
-                # If there are verbose messages mixed in, try to find JSON in the output
-                # Look for JSON-like structure (including nested objects)
-                import re
-
-                json_match = re.search(r"\{.*\}", result.output, re.DOTALL)
-                if json_match:
-                    json_output = json.loads(json_match.group())
-                else:
-                    # If still not found, fail with helpful message
-                    raise AssertionError(f"Could not find valid JSON in output:\n{result.output}") from None
+            # Verbose messages go to stderr; stdout has pure JSON
+            json_output = json.loads(result.stdout)
 
             # Extract the actual result from the wrapper
             actual_result = json_output.get("result", json_output)
@@ -1002,7 +988,7 @@ class TestWorkflowOutputHandling:
 
             assert result.exit_code == 0
             # Should handle binary data without crashing
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             actual_result = output_data.get("result", output_data)
             assert "binary_output" in actual_result
         finally:
@@ -1031,7 +1017,7 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             # Both fields should be present
@@ -1075,7 +1061,7 @@ class TestWorkflowOutputHandling:
             result = runner.invoke(main, ["--output-format", "json", workflow_file])
 
             assert result.exit_code == 0
-            output_data = json.loads(result.output)
+            output_data = json.loads(result.stdout)
             # Extract the actual result from the wrapper
             actual_result = output_data.get("result", output_data)
             # Should only include found outputs

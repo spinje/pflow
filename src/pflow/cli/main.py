@@ -7,6 +7,7 @@ import logging
 import os
 import signal
 import sys
+import time
 import warnings
 from pathlib import Path
 from typing import Any, cast
@@ -66,17 +67,13 @@ def _get_output_controller(ctx: click.Context) -> OutputController:
     # Fallback: create one if not in context (shouldn't happen normally)
     return OutputController(
         print_flag=ctx.obj.get("print_flag", False) if ctx.obj else False,
-        output_format=ctx.obj.get("output_format", "text") if ctx.obj else "text",
     )
 
 
 def _echo_trace(ctx: click.Context, message: str) -> None:
     """Output trace file location message.
 
-    Shown in all modes EXCEPT:
-    - -p (print) mode: user explicitly wants only raw output
-    - JSON output mode: structured output only
-
+    Suppressed in -p (print) mode where user explicitly wants only raw output.
     Trace files are valuable for debugging in non-interactive contexts
     like CI/CD, agents, and scripts.
 
@@ -85,8 +82,7 @@ def _echo_trace(ctx: click.Context, message: str) -> None:
         message: Trace message to display
     """
     output_controller = _get_output_controller(ctx)
-    # Suppress in -p (print) or JSON modes - user wants only structured output
-    if output_controller.print_flag or output_controller.output_format == "json":
+    if output_controller.print_flag:
         return
     click.echo(message, err=True)
 
@@ -135,7 +131,7 @@ def _handle_workflow_success(
     verbose: bool,
 ) -> None:
     """Handle successful workflow execution."""
-    if verbose and output_format != "json":
+    if verbose:
         click.echo("cli: Workflow execution completed", err=True)
 
     # Check for output from shared store (now with metrics)
@@ -274,7 +270,7 @@ def execute_json_workflow(  # noqa: C901
     # Build config
     verbose = ctx.obj.get("verbose", False)
     print_flag = ctx.obj.get("print_flag", False)
-    effective_verbose = verbose and not print_flag and output_format != "json"
+    effective_verbose = verbose and not print_flag
     config = RunnerConfig(
         trace_enabled=ctx.obj.get("trace", True),
         cache_enabled=ctx.obj.get("cache", True),
@@ -286,15 +282,11 @@ def execute_json_workflow(  # noqa: C901
     if not effective_verbose:
         warnings.filterwarnings("ignore", message="Flow ends:.*", module="pflow.core.node")
 
-    # Suppress logging in JSON mode (except CRITICAL) to keep output clean
-    if output_format == "json":
-        logging.getLogger().setLevel(logging.CRITICAL)
-
     # Store total nodes for --report
     ctx.obj["total_nodes"] = len(ir_data.get("nodes", []))
 
     output_controller = _get_output_controller(ctx)
-    progress_enabled = not print_flag and output_format != "json"
+    progress_enabled = not print_flag
 
     # Show execution starting
     if effective_verbose:
@@ -324,13 +316,16 @@ def execute_json_workflow(  # noqa: C901
         click.echo("\n✗ Workflow execution interrupted", err=True)
         ctx.exit(130)
     except Exception as e:
+        metrics = result.metrics if result else None
+        _emit_failure_tag(ctx, metrics)
+
         output_error(
             ctx,
             exception=e,
             output_format=output_format,
             verbose=effective_verbose,
             workflow_metadata=ctx.obj.get("workflow_metadata") if ctx.obj else None,
-            metrics_collector=result.metrics if result else None,
+            metrics_collector=metrics,
             shared_storage=result.shared_after if result else {},
         )
         ctx.exit(1)
@@ -340,8 +335,18 @@ def execute_json_workflow(  # noqa: C901
         if trace and config.trace_enabled:
             _save_trace_and_report(ctx, trace)
         _cleanup_temp_files(stdin_data, effective_verbose)
-        if output_format == "json":
-            logging.getLogger().setLevel(logging.WARNING)
+
+
+def _emit_failure_tag(ctx: click.Context, metrics: Any | None) -> None:
+    """Emit one-line failure tag to stderr for agent observability.
+
+    Mirrors the success path's ``✓ Workflow completed in Xs`` completion tag.
+    Suppressed by ``-p`` (same as all stderr diagnostics).
+    """
+    print_flag = ctx.obj.get("print_flag", False) if ctx.obj else False
+    if not print_flag and metrics:
+        duration_s = time.perf_counter() - metrics.start_time
+        click.echo(f"❌ Workflow failed after {duration_s:.3f}s", err=True)
 
 
 def _display_execution_result(
@@ -371,6 +376,8 @@ def _display_execution_result(
         if result.status == WorkflowStatus.DEGRADED:
             ctx.exit(2)
     else:
+        _emit_failure_tag(ctx, result.metrics)
+
         output_error(
             ctx,
             result=result,
@@ -468,7 +475,6 @@ def _initialize_context(
     # Create OutputController once and store it for reuse
     ctx.obj["output_controller"] = OutputController(
         print_flag=print_flag,
-        output_format=output_format,
     )
 
 
@@ -773,12 +779,9 @@ def _handle_named_workflow(
 
     ctx.obj["execution_params"] = filter_user_params(params)
 
-    # Show what we're doing if verbose (but not in JSON mode).
-    # All `cli:` diagnostic lines go to stderr per the GH #194 fix
-    # convention (data → stdout, diagnostics → stderr) so that
-    # ``pflow -v workflow.pflow.md | jq`` does not mix CLI diagnostic
-    # noise with parseable workflow output on stdout.
-    if verbose and output_format != "json":
+    # All `cli:` diagnostic lines go to stderr (data → stdout,
+    # diagnostics → stderr) so they never contaminate stdout.
+    if verbose:
         if source == "library":
             click.echo(f"cli: Loading workflow '{first_arg}' from registry", err=True)
         else:
@@ -985,20 +988,6 @@ def workflow_command(
     # NOTE: Logging already configured in main_wrapper.py before routing
     # No need to configure again here
 
-    # Suppress WARNING logs in JSON mode to prevent stdout contamination
-    # Only ERROR and CRITICAL logs will be shown
-    original_log_levels = {}
-    if output_format == "json":
-        # Save and update root logger level
-        root_logger = logging.getLogger()
-        original_log_levels["root"] = root_logger.level
-        root_logger.setLevel(logging.ERROR)
-
-        # Also update pflow logger level (child loggers inherit from this)
-        pflow_logger = logging.getLogger("pflow")
-        original_log_levels["pflow"] = pflow_logger.level
-        pflow_logger.setLevel(logging.ERROR)
-
     try:
         # Inject API keys from pflow settings into environment
         # This must happen early, before any LLM operations
@@ -1025,7 +1014,7 @@ def workflow_command(
         # Only show MCP output if verbose AND not in print mode or JSON output
         print_flag = ctx.obj.get("print_flag", False)
         output_format = ctx.obj.get("output_format", "text")
-        effective_verbose = verbose and not print_flag and output_format != "json"
+        effective_verbose = verbose and not print_flag
         _auto_discover_mcp_servers(ctx, effective_verbose)
 
         # Handle stdin data
@@ -1060,12 +1049,6 @@ def workflow_command(
         wm = ctx.obj.get("workflow_metadata") if ctx.obj else None
         output_error(ctx, exception=e, output_format=of, verbose=vb, workflow_metadata=wm)
         ctx.exit(1)
-    finally:
-        # Restore original logging levels if we changed them
-        if "root" in original_log_levels:
-            logging.getLogger().setLevel(original_log_levels["root"])
-        if "pflow" in original_log_levels:
-            logging.getLogger("pflow").setLevel(original_log_levels["pflow"])
 
 
 # Alias for backward compatibility with tests that import main directly

@@ -75,9 +75,9 @@ FORBIDDEN_FIELDS = frozenset({
 def _parse_json_output(result: Any) -> dict[str, Any]:
     """Parse JSON from CLI runner output, raising a clear error on failure."""
     try:
-        return json.loads(result.output)
+        return json.loads(result.stdout)
     except json.JSONDecodeError as exc:
-        raise AssertionError(f"Expected valid JSON output but got:\n{result.output[:500]}") from exc
+        raise AssertionError(f"Expected valid JSON output but got:\n{result.stdout[:500]}") from exc
 
 
 def _assert_unified_shape(output: dict[str, Any]) -> None:
