@@ -100,10 +100,40 @@ class TestWorkflowSaveCLI:
 
         # Should fail
         assert result.exit_code != 0, "Should reject invalid workflow"
+        assert "Error:" in result.output or "Validation failed" in result.output
 
         # Should NOT create file
         saved_file = home_pflow / "bad-workflow" / "bad-workflow.pflow.md"
         assert not saved_file.exists(), "Invalid workflow should not be saved"
+
+    def test_workflow_save_renders_rich_validation_diagnostics(
+        self, runner: click.testing.CliRunner, tmp_path: Any
+    ) -> None:
+        """Unknown params should render the unified validator output, not a flat exception string."""
+        home_pflow = tmp_path / ".pflow" / "workflows"
+        home_pflow.mkdir(parents=True)
+
+        draft = tmp_path / "broken.pflow.md"
+        broken_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "reader", "type": "read-file", "params": {"file_pat": "README.md"}}],
+            "edges": [],
+        }
+        write_workflow_file(broken_ir, draft)
+
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", "broken-workflow"],
+            env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code != 0
+        assert "Validation failed (1 error)" in result.output
+        assert "Unknown parameter" in result.output
+        assert "file_pat" in result.output
+
+        saved_file = home_pflow / "broken-workflow" / "broken-workflow.pflow.md"
+        assert not saved_file.exists()
 
     def test_workflow_save_validates_name_format(
         self, runner: click.testing.CliRunner, tmp_path: Any, sample_workflow_ir: dict[str, Any]
@@ -256,6 +286,49 @@ class TestWorkflowSaveCLI:
         existing = home_pflow / "my-workflow" / "my-workflow.pflow.md"
         content = existing.read_text()
         assert "### new" in content
+
+    def test_force_save_invalid_content_preserves_existing(
+        self, runner: click.testing.CliRunner, tmp_path: Any, sample_workflow_ir: dict[str, Any]
+    ) -> None:
+        """Force-saving invalid content must NOT delete the existing valid workflow.
+
+        Ordering invariant: validation runs before deletion in the force-save path.
+        If this order is reversed, --force with broken content would delete the
+        existing workflow and then fail, causing data loss.
+        """
+        home_pflow = tmp_path / ".pflow" / "workflows"
+        home_pflow.mkdir(parents=True)
+
+        # Save a valid workflow first
+        from pflow.core.workflow.manager import WorkflowManager
+
+        wm = WorkflowManager(home_pflow)
+        wm.save("my-workflow", ir_to_markdown(sample_workflow_ir, title="Good Workflow"))
+
+        existing = home_pflow / "my-workflow" / "my-workflow.pflow.md"
+        assert existing.exists()
+        original_content = existing.read_text()
+
+        # Try to force-save invalid content over it
+        broken_ir = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "bad", "type": "read-file", "params": {"file_pat": "x.txt"}}],
+            "edges": [],
+        }
+        draft = tmp_path / "broken.pflow.md"
+        write_workflow_file(broken_ir, draft)
+
+        result = runner.invoke(
+            workflow_cmd,
+            ["save", str(draft), "--name", "my-workflow", "--force"],
+            env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code != 0, "Should reject invalid workflow"
+
+        # The existing valid workflow must survive
+        assert existing.exists(), "Valid workflow was deleted before validation caught the error"
+        assert existing.read_text() == original_content, "Valid workflow content was modified"
 
     def test_workflow_save_rejects_overwrite_without_force(
         self, runner: click.testing.CliRunner, tmp_path: Any, sample_workflow_ir: dict[str, Any]

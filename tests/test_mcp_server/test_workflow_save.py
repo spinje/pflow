@@ -258,6 +258,40 @@ ${malformed
             ExecutionService.save_workflow(workflow=markdown_content, name="test-unused-input", force=True)
 
 
+class TestWorkflowSaveRichDiagnostics:
+    """MCP save must render validation errors through format_validation_failure.
+
+    Regression guard for GH #236: without the explicit re-raise in
+    _save_and_format_result, WorkflowValidationError is swallowed by
+    the generic except-Exception handler and the MCP agent gets a flat
+    'Failed to save workflow: ...' string instead of the rich numbered
+    diagnostic format.
+    """
+
+    def test_unknown_param_produces_rich_diagnostic(self) -> None:
+        """Unknown parameter error must include 'Validation failed' header and suggestions."""
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [
+                {
+                    "id": "reader",
+                    "type": "read-file",
+                    "params": {"file_pat": "README.md"},
+                }
+            ],
+            "edges": [],
+        }
+
+        markdown_content = ir_to_markdown(workflow)
+        with pytest.raises(ValueError, match=r"Validation failed \(1 error\)") as exc_info:
+            ExecutionService.save_workflow(workflow=markdown_content, name="test-rich-diag", force=True)
+
+        error_text = str(exc_info.value)
+        assert "Unknown parameter" in error_text
+        assert "file_pat" in error_text
+        assert "file_path" in error_text  # "Did you mean" suggestion
+
+
 class TestWorkflowSaveNameValidation:
     """Test workflow name validation during save."""
 

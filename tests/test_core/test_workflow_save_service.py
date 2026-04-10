@@ -402,13 +402,18 @@ class TestSaveWorkflowWithOptions:
             mock_wm.save.return_value = str(tmp_path / "new-workflow.pflow.md")
             mock_wm_class.return_value = mock_wm
 
-            path, bundled = save_workflow_with_options("new-workflow", markdown_content, force=False)
+            path, bundled, saved_ir = save_workflow_with_options("new-workflow", markdown_content, force=False)
 
             mock_wm.exists.assert_called_once_with("new-workflow")
             mock_wm.save.assert_called_once_with("new-workflow", markdown_content, None, None)
             mock_wm.delete.assert_not_called()
             assert path == Path(str(tmp_path / "new-workflow.pflow.md"))
             assert bundled == []
+            assert saved_ir["ir_version"] == sample_ir["ir_version"]
+            assert saved_ir["edges"] == sample_ir["edges"]
+            assert saved_ir["nodes"][0]["id"] == sample_ir["nodes"][0]["id"]
+            assert saved_ir["nodes"][0]["type"] == sample_ir["nodes"][0]["type"]
+            assert saved_ir["nodes"][0]["params"]["command"] == sample_ir["nodes"][0]["params"]["command"]
 
     def test_save_existing_with_force_deletes_first(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """FORCE OVERWRITE: Must delete existing before saving.
@@ -425,13 +430,18 @@ class TestSaveWorkflowWithOptions:
             mock_wm.save.return_value = str(tmp_path / "existing.pflow.md")
             mock_wm_class.return_value = mock_wm
 
-            path, bundled = save_workflow_with_options("existing", markdown_content, force=True)
+            path, bundled, saved_ir = save_workflow_with_options("existing", markdown_content, force=True)
 
             # Verify delete was called before save
             mock_wm.delete.assert_called_once_with("existing")
             mock_wm.save.assert_called_once_with("existing", markdown_content, None, None)
             assert path == Path(str(tmp_path / "existing.pflow.md"))
             assert bundled == []
+            assert saved_ir["ir_version"] == sample_ir["ir_version"]
+            assert saved_ir["edges"] == sample_ir["edges"]
+            assert saved_ir["nodes"][0]["id"] == sample_ir["nodes"][0]["id"]
+            assert saved_ir["nodes"][0]["type"] == sample_ir["nodes"][0]["type"]
+            assert saved_ir["nodes"][0]["params"]["command"] == sample_ir["nodes"][0]["params"]["command"]
 
     def test_save_existing_without_force_raises(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """OVERWRITE PROTECTION: Reject overwrite without force flag.
@@ -472,12 +482,17 @@ class TestSaveWorkflowWithOptions:
             mock_wm.save.return_value = str(tmp_path / "with-metadata.pflow.md")
             mock_wm_class.return_value = mock_wm
 
-            path, bundled = save_workflow_with_options("with-metadata", markdown_content, metadata=metadata)
+            path, bundled, saved_ir = save_workflow_with_options("with-metadata", markdown_content, metadata=metadata)
 
             # Verify metadata was passed to save()
             mock_wm.save.assert_called_once_with("with-metadata", markdown_content, metadata, None)
             assert path == Path(str(tmp_path / "with-metadata.pflow.md"))
             assert bundled == []
+            assert saved_ir["ir_version"] == sample_ir["ir_version"]
+            assert saved_ir["edges"] == sample_ir["edges"]
+            assert saved_ir["nodes"][0]["id"] == sample_ir["nodes"][0]["id"]
+            assert saved_ir["nodes"][0]["type"] == sample_ir["nodes"][0]["type"]
+            assert saved_ir["nodes"][0]["params"]["command"] == sample_ir["nodes"][0]["params"]["command"]
 
     def test_delete_failure_raises_clear_error(self, sample_ir: dict[str, Any], tmp_path: Path) -> None:
         """DELETE ERROR: Clear error when delete fails during force overwrite.
@@ -539,10 +554,15 @@ class TestSaveWorkflowWithOptions:
             mock_re_enrich.side_effect = Exception("Enrichment failed")
 
             # Save should still succeed
-            path, bundled = save_workflow_with_options("my-workflow", markdown_content, force=False)
+            path, bundled, saved_ir = save_workflow_with_options("my-workflow", markdown_content, force=False)
 
             assert path == Path(str(tmp_path / "my-workflow.pflow.md"))
             assert bundled == []
+            assert saved_ir["ir_version"] == sample_ir["ir_version"]
+            assert saved_ir["edges"] == sample_ir["edges"]
+            assert saved_ir["nodes"][0]["id"] == sample_ir["nodes"][0]["id"]
+            assert saved_ir["nodes"][0]["type"] == sample_ir["nodes"][0]["type"]
+            assert saved_ir["nodes"][0]["params"]["command"] == sample_ir["nodes"][0]["params"]["command"]
 
 
 class TestGenerateWorkflowMetadata:

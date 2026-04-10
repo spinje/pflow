@@ -3,7 +3,6 @@
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 import click
 
@@ -222,107 +221,6 @@ def _validate_discovery_query(query: str, command_name: str) -> str:
     return query
 
 
-def _load_and_parse_workflow(file_path: str) -> tuple[dict[str, Any], str, str | None]:
-    """Load workflow from .pflow.md file, parse, and validate.
-
-    Args:
-        file_path: Path to workflow .pflow.md file
-
-    Returns:
-        Tuple of (validated_ir, markdown_content, description)
-
-    Raises:
-        SystemExit: If file can't be loaded or validation fails
-    """
-    from pathlib import Path
-
-    from pflow.core import normalize_ir
-    from pflow.core.markdown_parser import parse_markdown
-
-    path = Path(file_path)
-
-    # Reject .json files with a clear migration message
-    if path.suffix == ".json":
-        click.echo(
-            "Error: JSON workflow format is no longer supported. Use .pflow.md format instead.",
-            err=True,
-        )
-        sys.exit(1)
-
-    try:
-        content = path.read_text(encoding="utf-8")
-        result = parse_markdown(content)
-
-        # Normalize IR (adds ir_version, etc.)
-        normalize_ir(result.ir)
-
-        # Validate IR structure (raises WorkflowValidationError on failure)
-        from pflow.core.ir_schema import validate_ir
-
-        validate_ir(result.ir)
-
-        return result.ir, content, result.description
-    except MarkdownParseError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-    except FileNotFoundError:
-        click.echo(f"Error: File not found: {file_path}", err=True)
-        sys.exit(1)
-    except Exception as e:
-        click.echo(f"Error loading workflow: {e}", err=True)
-        sys.exit(1)
-
-
-def _save_with_overwrite_check(
-    name: str,
-    markdown_content: str,
-    metadata: dict[str, Any] | None,
-    force: bool,
-    source_path: Path | None = None,
-) -> tuple[str, list[str]]:
-    """Save workflow to library with overwrite handling.
-
-    Args:
-        name: Workflow name
-        markdown_content: Original markdown content to save
-        metadata: Optional metadata
-        force: Whether to overwrite existing workflow
-        source_path: Optional source file path for dependency discovery
-
-    Returns:
-        Tuple of (saved_path, bundled_files_list)
-
-    Raises:
-        SystemExit: If workflow exists and force=False, or save fails
-    """
-    from pflow.core.workflow.save_service import save_workflow_with_options
-
-    try:
-        saved_path, bundled_files = save_workflow_with_options(
-            name=name,
-            markdown_content=markdown_content,
-            force=force,
-            metadata=metadata,
-            source_path=source_path,
-        )
-
-        if force:
-            click.echo(f"✓ Overwritten existing workflow '{name}'")
-
-        return str(saved_path), bundled_files
-
-    except FileExistsError as e:
-        click.echo(f"Error: {e}", err=True)
-        click.echo("  Use --force to overwrite.", err=True)
-        sys.exit(1)
-    except WorkflowValidationError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-    except Exception as e:
-        click.echo(f"Error saving workflow: {e}", err=True)
-        sys.exit(1)
-
-
 def _delete_draft_if_requested(file_path: str, delete_draft: bool) -> None:
     """Delete draft file if requested and safe to do so.
 
@@ -363,7 +261,7 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) ->
     Example:
         pflow workflow save ./my-workflow.pflow.md --name my-analyzer
     """
-    from pflow.core.workflow.save_service import validate_workflow_name
+    from pflow.core.workflow.save_service import save_workflow_with_options, validate_workflow_name
 
     # Validate workflow name
     is_valid, error = validate_workflow_name(name)
@@ -371,15 +269,50 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) ->
         click.echo(f"Error: {error}", err=True)
         sys.exit(1)
 
-    # Load, parse, and validate workflow
-    validated_ir, markdown_content, _description = _load_and_parse_workflow(file_path)
+    path = Path(file_path)
+
+    if path.suffix == ".json":
+        click.echo(
+            "Error: JSON workflow format is no longer supported. Use .pflow.md format instead.",
+            err=True,
+        )
+        sys.exit(1)
 
     metadata = None
 
-    # Save workflow (passes markdown content, not IR)
-    saved_path, bundled_files = _save_with_overwrite_check(
-        name, markdown_content, metadata, force, source_path=Path(file_path)
-    )
+    try:
+        markdown_content = path.read_text(encoding="utf-8")
+        saved_path, bundled_files, workflow_ir = save_workflow_with_options(
+            name=name,
+            markdown_content=markdown_content,
+            force=force,
+            metadata=metadata,
+            source_path=path,
+        )
+    except FileExistsError as e:
+        click.echo(f"Error: {e}", err=True)
+        click.echo("  Use --force to overwrite.", err=True)
+        sys.exit(1)
+    except WorkflowValidationError as e:
+        if e.validation_errors:
+            from pflow.execution.formatters.validation_formatter import format_validation_failure
+
+            click.echo(format_validation_failure(e.validation_errors), err=True)
+        else:
+            click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except MarkdownParseError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except FileNotFoundError:
+        click.echo(f"Error: File not found: {file_path}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error saving workflow: {e}", err=True)
+        sys.exit(1)
+
+    if force:
+        click.echo(f"✓ Overwritten existing workflow '{name}'")
 
     # Delete draft if requested
     _delete_draft_if_requested(file_path, delete_draft)
@@ -389,8 +322,8 @@ def save_workflow(file_path: str, name: str, delete_draft: bool, force: bool) ->
 
     success_message = format_save_success(
         name=name,
-        saved_path=saved_path,
-        workflow_ir=validated_ir,
+        saved_path=str(saved_path),
+        workflow_ir=workflow_ir,
         metadata=metadata,
         bundled_files=bundled_files,
     )

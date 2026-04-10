@@ -357,27 +357,36 @@ def save_workflow_with_options(
     force: bool = False,
     metadata: Optional[dict[str, Any]] = None,
     source_path: Optional[Path] = None,
-) -> tuple[Path, list[str]]:
-    """Save workflow to library with existence checks, dependency bundling, and overwrite handling.
+) -> tuple[Path, list[str], dict[str, Any]]:
+    """Parse, validate, and save a workflow with dependency bundling and overwrite handling.
 
     When source_path is provided, discovers file dependencies (sub-workflows,
     prompts, scripts) and bundles them into the saved workflow folder.
 
     Args:
         name: Workflow name (must be validated first using validate_workflow_name)
-        markdown_content: Original .pflow.md content string (pre-validated by caller)
+        markdown_content: Original .pflow.md content string
         force: If True, overwrite existing workflow by deleting it first
         metadata: Optional metadata dict (keywords, capabilities, use cases)
         source_path: Optional path to the source workflow file. When provided,
             dependency discovery runs and files are bundled into the saved folder.
 
     Returns:
-        Tuple of (path_to_saved_entry_point, list_of_bundled_relative_paths)
+        Tuple of (path_to_saved_entry_point, list_of_bundled_relative_paths, validated_ir)
 
     Raises:
+        MarkdownParseError: If markdown_content cannot be parsed
         FileExistsError: If workflow exists and force=False
-        WorkflowValidationError: If save fails
+        WorkflowValidationError: If validation or save fails
     """
+    result = parse_markdown(markdown_content)
+    validated_ir = _validate_and_normalize_ir(
+        result.ir,
+        auto_normalize=True,
+        source_desc=f"Invalid workflow '{name}'",
+        source_path=source_path,
+    )
+
     manager = WorkflowManager()
 
     # Check existence
@@ -418,7 +427,7 @@ def save_workflow_with_options(
     except Exception:
         logger.warning(f"Failed to re-enrich skill for '{name}'", exc_info=True)
 
-    return Path(saved_path), bundled_files
+    return Path(saved_path), bundled_files, validated_ir
 
 
 def generate_workflow_metadata(

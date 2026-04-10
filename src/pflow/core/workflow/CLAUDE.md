@@ -139,6 +139,8 @@ Uses Kahn's algorithm for topological sort. Catches: forward references, circula
 
 **Reserved workflow names**: `null`, `undefined`, `none`, `test`, `settings`, `registry`, `workflow`, `mcp`, `skill`.
 
+**`save_workflow_with_options()`** is now the save-time trust boundary: it parses markdown, normalizes IR, runs the full `WorkflowValidator`, then performs dependency bundling and persistence. Callers must pass raw markdown, not pre-validated IR. The return value is `(saved_path, bundled_files, validated_ir)`.
+
 **`generate_workflow_metadata()`**: Stub — returns None unconditionally (planning module removed).
 
 ### skill_service.py
