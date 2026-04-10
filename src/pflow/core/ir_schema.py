@@ -567,11 +567,12 @@ def _validate_duplicate_node_ids(data: dict[str, Any]) -> None:
         seen.add(node_id)
 
 
-def normalize_ir(workflow_ir: dict[str, Any]) -> None:
+def normalize_ir(workflow_ir: dict[str, Any]) -> dict[str, Any]:
     """Normalize workflow IR by adding missing boilerplate fields.
 
     This function adds required fields that are often omitted by agent-generated
-    workflows to reduce friction. It modifies the workflow IR in-place.
+    workflows to reduce friction. It modifies the workflow IR in-place and
+    returns it for convenience.
 
     Fields added:
     - ir_version: "0.1.0" if missing
@@ -581,13 +582,18 @@ def normalize_ir(workflow_ir: dict[str, Any]) -> None:
     Args:
         workflow_ir: Workflow IR dictionary (modified in-place)
 
+    Returns:
+        The same workflow_ir dict (for chaining convenience).
+
     Example:
         >>> ir = {"nodes": [{"id": "n1", "type": "test"}]}
-        >>> normalize_ir(ir)
-        >>> ir["ir_version"]
+        >>> result = normalize_ir(ir)
+        >>> result["ir_version"]
         '0.1.0'
-        >>> ir["edges"]
+        >>> result["edges"]
         []
+        >>> result is ir
+        True
     """
     if "ir_version" not in workflow_ir:
         workflow_ir["ir_version"] = "0.1.0"
@@ -600,3 +606,5 @@ def normalize_ir(workflow_ir: dict[str, Any]) -> None:
         for node in workflow_ir["nodes"]:
             if "parameters" in node and "params" not in node:
                 node["params"] = node.pop("parameters")
+
+    return workflow_ir
