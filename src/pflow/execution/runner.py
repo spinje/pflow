@@ -470,20 +470,44 @@ class WorkflowRunner:
     def _extract_runtime_warnings(self, shared_store: dict[str, Any]) -> list[Diagnostic]:
         """Extract runtime warnings from shared store."""
         warnings: list[Diagnostic] = []
+        failures = shared_store.get("__failures__", {})
         for node_id, message in shared_store.get("__warnings__", {}).items():
-            warnings.append(
-                Diagnostic(
-                    severity=Severity.WARNING,
-                    message=message,
-                    suggestions=[
-                        f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
-                        "If unintended, fix the upstream data or add error handling to this node.",
-                    ],
-                    node_id=node_id,
-                    source="runtime",
-                    context={"type": "api_warning"},
-                )
+            failure = failures.get(node_id)
+            is_recovery = (
+                failure is not None
+                and failure.get("warning") is not None
+                and failure.get("category") not in ("api_warning", "routing_error")
+            ) or (
+                # Sub-workflow recovery: __warnings__ propagates to parent
+                # but __failures__ stays in child scope. Fall back to the
+                # message pattern written by engine step 17.5.
+                failure is None and "\u2014 on-error \u2192" in message
             )
+            if is_recovery:
+                category = failure.get("category") if failure else None
+                warnings.append(
+                    Diagnostic(
+                        severity=Severity.WARNING,
+                        message=message,
+                        node_id=node_id,
+                        source="runtime",
+                        context={"type": "on_error_recovery", "category": category},
+                    )
+                )
+            else:
+                warnings.append(
+                    Diagnostic(
+                        severity=Severity.WARNING,
+                        message=message,
+                        suggestions=[
+                            f"Inspect '{node_id}' upstream inputs and output to verify the warning is expected.",
+                            "If unintended, fix the upstream data or add error handling to this node.",
+                        ],
+                        node_id=node_id,
+                        source="runtime",
+                        context={"type": "api_warning"},
+                    )
+                )
         for node_id, error_data in shared_store.get("__template_errors__", {}).items():
             # Every entry in __template_errors__ carries a structured
             # Diagnostic built at the source site (see

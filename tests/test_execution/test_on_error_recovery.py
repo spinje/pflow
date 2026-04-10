@@ -1,0 +1,209 @@
+"""Tests for on-error recovery status and diagnostics (GH #246).
+
+When a node fails and is recovered via on-error routing, the workflow
+must report DEGRADED status (not SUCCESS) with a WARNING diagnostic
+describing the recovery. Tests run through WorkflowRunner().run() to
+exercise the full pipeline: engine step 17.5 → mark_node_failed →
+__warnings__ → _determine_status → _extract_runtime_warnings.
+"""
+
+from pflow.core.diagnostic import Severity
+from pflow.core.workflow.status import WorkflowStatus
+from pflow.execution.result import RunnerConfig
+from pflow.execution.runner import WorkflowRunner
+
+
+def _on_error_recovery_ir() -> dict:
+    """Shell node that fails, recovered by an on-error handler."""
+    return {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "will-fail",
+                "type": "shell",
+                "purpose": "Node that always fails by design.",
+                "params": {"command": "exit 1"},
+            },
+            {
+                "id": "recovery",
+                "type": "shell",
+                "purpose": "Error handler that recovers the failure.",
+                "params": {"command": 'echo "recovered"'},
+            },
+        ],
+        "edges": [
+            {"from": "will-fail", "to": "recovery", "action": "error"},
+        ],
+        "start_node": "will-fail",
+    }
+
+
+def test_on_error_recovery_reports_degraded_status():
+    """A workflow that recovers via on-error must report DEGRADED, not SUCCESS."""
+    result = WorkflowRunner().run(_on_error_recovery_ir(), {}, config=RunnerConfig())
+
+    assert result.success is True, "Workflow should still be successful"
+    assert result.status == WorkflowStatus.DEGRADED, f"Expected DEGRADED for on-error recovery, got {result.status}"
+
+
+def test_on_error_recovery_produces_warning_diagnostic():
+    """The recovery diagnostic must name the failed node and handler."""
+    result = WorkflowRunner().run(_on_error_recovery_ir(), {}, config=RunnerConfig())
+
+    recovery_diags = [
+        d
+        for d in result.diagnostics
+        if d.severity == Severity.WARNING and d.context and d.context.get("type") == "on_error_recovery"
+    ]
+    assert len(recovery_diags) == 1, (
+        f"Expected exactly one recovery diagnostic, got {len(recovery_diags)}: {result.diagnostics}"
+    )
+
+    diag = recovery_diags[0]
+    assert diag.node_id == "will-fail"
+    assert "will-fail" in diag.message
+    assert "recovery" in diag.message
+    assert diag.context["category"] == "shell_failure"
+
+
+def test_recovery_diagnostic_has_no_misleading_suggestions():
+    """Recovery diagnostics must not suggest 'add error handling' — it already has it."""
+    result = WorkflowRunner().run(_on_error_recovery_ir(), {}, config=RunnerConfig())
+
+    recovery_diags = [d for d in result.diagnostics if d.context and d.context.get("type") == "on_error_recovery"]
+    assert recovery_diags, "Should have at least one recovery diagnostic"
+
+    for diag in recovery_diags:
+        assert not diag.suggestions, f"Recovery diagnostic should have no suggestions, got: {diag.suggestions}"
+
+
+def test_clean_workflow_still_reports_success():
+    """Regression guard: a workflow with no failures must report SUCCESS."""
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "greet",
+                "type": "shell",
+                "purpose": "Simple echo that always succeeds.",
+                "params": {"command": 'echo "hello"'},
+            },
+        ],
+        "start_node": "greet",
+    }
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert result.success is True
+    assert result.status == WorkflowStatus.SUCCESS
+
+
+def test_node_failure_without_on_error_still_fails():
+    """Regression guard: a node failure with no handler must report FAILED."""
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "will-fail",
+                "type": "shell",
+                "purpose": "Node that always fails, no error handler.",
+                "params": {"command": "exit 1"},
+            },
+        ],
+        "start_node": "will-fail",
+    }
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert result.success is False
+    assert result.status == WorkflowStatus.FAILED
+
+
+def test_multiple_on_error_recoveries_all_surface():
+    """When two nodes fail and recover via separate handlers, both produce diagnostics."""
+    ir = {
+        "ir_version": "0.1.0",
+        "nodes": [
+            {
+                "id": "fail-a",
+                "type": "shell",
+                "purpose": "First node that fails by design.",
+                "params": {"command": "exit 1"},
+            },
+            {
+                "id": "handler-a",
+                "type": "shell",
+                "purpose": "Error handler for fail-a node.",
+                "params": {"command": 'echo "recovered-a"'},
+            },
+            {
+                "id": "fail-b",
+                "type": "shell",
+                "purpose": "Second node that fails by design.",
+                "params": {"command": "exit 2"},
+            },
+            {
+                "id": "handler-b",
+                "type": "shell",
+                "purpose": "Error handler for fail-b node.",
+                "params": {"command": 'echo "recovered-b"'},
+            },
+        ],
+        "edges": [
+            {"from": "fail-a", "to": "handler-a", "action": "error"},
+            {"from": "handler-a", "to": "fail-b", "action": "default"},
+            {"from": "fail-b", "to": "handler-b", "action": "error"},
+        ],
+        "start_node": "fail-a",
+    }
+    result = WorkflowRunner().run(ir, {}, config=RunnerConfig())
+
+    assert result.success is True
+    assert result.status == WorkflowStatus.DEGRADED
+
+    recovery_diags = [d for d in result.diagnostics if d.context and d.context.get("type") == "on_error_recovery"]
+    assert len(recovery_diags) == 2, f"Expected 2 recovery diagnostics, got {len(recovery_diags)}: {result.diagnostics}"
+
+    recovered_nodes = {d.node_id for d in recovery_diags}
+    assert recovered_nodes == {"fail-a", "fail-b"}
+
+
+def test_api_warning_not_classified_as_recovery():
+    """Regression guard: api_warning entries must retain api_warning type, not on_error_recovery."""
+    runner = WorkflowRunner()
+    shared = {
+        "__warnings__": {"api-node": "API error (404): Not Found"},
+        "__failures__": {
+            "api-node": {
+                "data": {},
+                "category": "api_warning",
+                "error": "API error (404): Not Found",
+                "warning": "API error (404): Not Found",
+            },
+        },
+    }
+    diagnostics = runner._extract_runtime_warnings(shared)
+
+    assert len(diagnostics) == 1
+    diag = diagnostics[0]
+    assert diag.context["type"] == "api_warning", (
+        f"api_warning should keep api_warning type, got {diag.context['type']}"
+    )
+    assert diag.suggestions, "api_warning should have suggestions"
+
+
+def test_sub_workflow_recovery_classified_correctly_without_failures():
+    """When a child sub-workflow recovers via on-error, __warnings__ propagates
+    to the parent but __failures__ stays in child scope. The cross-reference
+    fails — fall back to message pattern detection."""
+    runner = WorkflowRunner()
+    shared = {
+        "__warnings__": {
+            "child-node": "Node 'child-node' failed \u2014 on-error \u2192 'handler'",
+        },
+        # No __failures__ entry — child's __failures__ didn't propagate
+    }
+    diagnostics = runner._extract_runtime_warnings(shared)
+
+    recovery_diags = [d for d in diagnostics if d.context and d.context.get("type") == "on_error_recovery"]
+    assert len(recovery_diags) == 1, f"Sub-workflow recovery should be detected via message pattern, got: {diagnostics}"
+    assert recovery_diags[0].node_id == "child-node"
+    assert not recovery_diags[0].suggestions, "Recovery diagnostic should have no suggestions"
