@@ -2,7 +2,7 @@
 
 Import from specific submodules for symbols not listed here:
     from pflow.core.shell_integration import detect_stdin
-    from pflow.core.param_coercion import coerce_to_declared_type
+    from pflow.core.param_coercion import coerce_param_for_node
     from pflow.core.llm_pricing import calculate_llm_cost
 """
 

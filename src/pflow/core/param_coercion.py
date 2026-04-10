@@ -1,11 +1,8 @@
 """Parameter type coercion utilities.
 
-Provides coercion between Python types and declared parameter types.
-
-Two main use cases:
-1. Serializing dict/list to JSON strings when declared type is "str" (for MCP tools)
-2. Coercing CLI-provided values to match workflow input declarations
-   (e.g., int → str when input declares type: string)
+Two functions for two pipeline stages:
+- coerce_param_for_node: Serializes dict/list → JSON string for nodes expecting "str"
+- coerce_workflow_input: Full bidirectional coercion for CLI/env values entering a workflow
 """
 
 import json
@@ -36,31 +33,36 @@ def _normalize_type(type_name: str) -> str:
     return normalized if normalized else type_name  # Preserve case for unknowns
 
 
-def coerce_to_declared_type(
+def coerce_param_for_node(
     value: Any,
     expected_type: str | None,
 ) -> Any:
-    """Coerce a value to match its declared parameter type.
+    """Coerce a resolved parameter value for node execution.
 
-    When expected_type is "str" and value is dict/list, serialize to JSON string.
-    This enables MCP tools that declare `param: str` but expect JSON content
-    to receive properly serialized JSON strings instead of Python dicts.
+    Intentionally narrow: only serializes dict/list → JSON string when the
+    node declares the parameter as type "str". All other values pass through
+    unchanged. This handles the MCP tool case where a tool declares `param: str`
+    but the upstream produced a dict/list.
+
+    This function does NOT perform general type coercion (e.g., str→int).
+    At this pipeline stage, values are already in their intended form from
+    template resolution or the shared store.
 
     Args:
-        value: The value to potentially coerce
+        value: The resolved value to potentially coerce
         expected_type: Declared type from node interface ("str", "dict", etc.)
 
     Returns:
         Coerced value if conversion needed, otherwise original value
 
     Examples:
-        >>> coerce_to_declared_type({"key": "value"}, "str")
+        >>> coerce_param_for_node({"key": "value"}, "str")
         '{"key": "value"}'
-        >>> coerce_to_declared_type([1, 2, 3], "str")
+        >>> coerce_param_for_node([1, 2, 3], "str")
         '[1, 2, 3]'
-        >>> coerce_to_declared_type("hello", "str")
+        >>> coerce_param_for_node("hello", "str")
         'hello'
-        >>> coerce_to_declared_type({"key": "value"}, "dict")
+        >>> coerce_param_for_node({"key": "value"}, "dict")
         {'key': 'value'}
     """
     if expected_type is None:
@@ -99,7 +101,7 @@ def _coerce_to_string(value: Any, log_context: dict[str, Any]) -> Any:
     """Coerce non-string values to string.
 
     For dict/list, uses json.dumps() to produce valid JSON strings.
-    This is consistent with coerce_to_declared_type() and ensures
+    This is consistent with coerce_param_for_node() and ensures
     nodes expecting JSON strings receive proper JSON, not Python repr.
     """
     if isinstance(value, str):
@@ -231,12 +233,12 @@ _COERCION_DISPATCH = {
 }
 
 
-def coerce_input_to_declared_type(
+def coerce_workflow_input(
     value: Any,
     declared_type: str | None,
     input_name: str | None = None,
 ) -> Any:
-    """Coerce a CLI-provided value to match the workflow input's declared type.
+    """Coerce a CLI/env-provided value to match the workflow input's declared type.
 
     This function handles the case where CLI parameter parsing (via infer_type)
     converts numeric strings to int/float before the workflow's declared type
@@ -268,15 +270,15 @@ def coerce_input_to_declared_type(
         - No declared type: Return value unchanged
 
     Examples:
-        >>> coerce_input_to_declared_type(1458059302022549698, "string")
+        >>> coerce_workflow_input(1458059302022549698, "string")
         '1458059302022549698'
-        >>> coerce_input_to_declared_type("42", "integer")
+        >>> coerce_workflow_input("42", "integer")
         42
-        >>> coerce_input_to_declared_type("3.14", "number")
+        >>> coerce_workflow_input("3.14", "number")
         3.14
-        >>> coerce_input_to_declared_type("true", "boolean")
+        >>> coerce_workflow_input("true", "boolean")
         True
-        >>> coerce_input_to_declared_type('{"a": 1}', "object")
+        >>> coerce_workflow_input('{"a": 1}', "object")
         {'a': 1}
     """
     if declared_type is None:
