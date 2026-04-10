@@ -339,14 +339,11 @@ class WorkflowValidator:
 
     @staticmethod
     def _validate_output_sources(workflow_ir: dict[str, Any], registry: Optional[Registry] = None) -> list[Diagnostic]:
-        """Validate that workflow outputs reference valid nodes and output keys.
+        """Validate that workflow output sources reference valid roots.
 
-        This validation ensures that output source fields (when specified) point to
-        existing nodes in the workflow. The source field can use two formats:
-        - "node_id" - References entire node output
-        - "node_id.output_key" - References specific output key
-
-        Template variables (${...}) are skipped as they cannot be validated statically.
+        Ensures output source fields reference existing node IDs or declared
+        workflow input names. Supports plain references (node.key), template
+        references (${node.key}), and bracket access (${data[0]}).
 
         Args:
             workflow_ir: Workflow to validate
@@ -362,8 +359,9 @@ class WorkflowValidator:
         if not outputs:
             return diagnostics
 
-        # Build nodes map for O(1) lookup
-        nodes_map = {node["id"]: node for node in workflow_ir.get("nodes", [])}
+        # Build valid source roots: node IDs + declared input names
+        node_ids = {node["id"] for node in workflow_ir.get("nodes", [])}
+        valid_sources = node_ids | set((workflow_ir.get("inputs") or {}).keys())
 
         # Validate each output's source field
         for output_name, output_def in outputs.items():
@@ -395,20 +393,17 @@ class WorkflowValidator:
 
             # Validate templates instead of skipping
             if "${" in source:
-                diagnostics.extend(WorkflowValidator._validate_template_in_source(output_name, source, nodes_map))
+                diagnostics.extend(WorkflowValidator._validate_template_in_source(output_name, source, valid_sources))
                 continue
 
-            # Parse source format: "node_id.output_key" or "node_id"
-            if "." in source:
-                # Split on first dot only (supports nested keys like "node.a.b.c")
-                node_id, _output_key = source.split(".", 1)
-            else:
-                # Reference to entire node output
-                node_id = source
+            # Extract root identifier (handles both dot and bracket syntax)
+            node_id = TemplateResolver.extract_root_node_id(source)
 
-            # Validate node exists
-            if node_id not in nodes_map:
-                diagnostics.append(WorkflowValidator._build_node_not_found_diagnostic(output_name, node_id, nodes_map))
+            # Validate source root exists (node or declared input)
+            if node_id not in valid_sources:
+                diagnostics.append(
+                    WorkflowValidator._build_node_not_found_diagnostic(output_name, node_id, valid_sources)
+                )
                 continue
 
             # Note: Output key validation skipped in v1
@@ -418,16 +413,17 @@ class WorkflowValidator:
         return diagnostics
 
     @staticmethod
-    def _validate_template_in_source(output_name: str, source: str, nodes_map: dict[str, Any]) -> list[Diagnostic]:
+    def _validate_template_in_source(output_name: str, source: str, valid_sources: set[str]) -> list[Diagnostic]:
         """Validate template variable references in output source.
 
-        Validates that ${node.key} templates reference existing nodes.
+        Validates that ${root.key} templates reference valid source roots
+        (node IDs or declared workflow input names).
         Provides "Did you mean?" suggestions for typos.
 
         Args:
             output_name: Name of output being validated
             source: Source value with template (e.g., "${node.key}")
-            nodes_map: Map of node IDs to definitions
+            valid_sources: Set of valid root identifiers (node IDs + input names)
 
         Returns:
             Validation diagnostics (empty if valid)
@@ -460,22 +456,18 @@ class WorkflowValidator:
             # Split coalesce operands and validate each one
             operands = TemplateResolver.split_coalesce_operands(template_var)
             for operand in operands:
-                # Skip if not a node reference (no dot or bracket)
-                if "." not in operand and "[" not in operand:
-                    continue  # Could be workflow input
-
-                # Parse node.key via the canonical extractor so operands like
-                # `${data[0].x}` yield node_id="data" (not "data[0]").
+                # Parse root identifier via the canonical extractor so operands
+                # like `${data[0].x}` yield node_id="data" (not "data[0]").
                 # Strip a leading dot only so bracket forms like `[0].x` are
                 # preserved in the rendered output_key for error messages.
                 node_id = TemplateResolver.extract_root_node_id(operand)
                 output_key = operand[len(node_id) :].lstrip(".")
 
-                # Validate node exists
-                if node_id not in nodes_map:
+                # Validate source root exists (node ID or declared input)
+                if node_id not in valid_sources:
                     diagnostics.append(
                         WorkflowValidator._build_template_node_diagnostic(
-                            output_name, source, node_id, output_key, nodes_map
+                            output_name, source, node_id, output_key, valid_sources
                         )
                     )
 
@@ -485,26 +477,26 @@ class WorkflowValidator:
     def _build_node_not_found_diagnostic(
         output_name: str,
         missing_node_id: str,
-        nodes_map: dict[str, Any],
+        valid_sources: set[str],
     ) -> Diagnostic:
-        """Build diagnostic for plain reference to non-existent node."""
+        """Build diagnostic for plain reference to non-existent source."""
         from pflow.core.suggestion_utils import find_similar_items
 
-        available = sorted(nodes_map.keys())
+        available = sorted(valid_sources)
         similar = find_similar_items(missing_node_id, available, max_results=3, method="fuzzy") if available else []
 
         return Diagnostic(
             severity=Severity.ERROR,
             source="validator",
             title="Validation Error",
-            message=f"Output '{output_name}' references non-existent node '{missing_node_id}'.",
+            message=f"Output '{output_name}' references non-existent source '{missing_node_id}'.",
             suggestions=[f"Did you mean '{similar[0]}'?"] if similar else None,
             context={
                 "category": "validation",
                 "path": f"outputs.{output_name}.source",
                 "available_fields": available,
                 "available_fields_total": len(available),
-                "available_fields_label": "nodes",
+                "available_fields_label": "sources",
                 "similar_names": similar or None,
             },
         )
@@ -515,28 +507,29 @@ class WorkflowValidator:
         source: str,
         missing_node_id: str,
         output_key: str | None,
-        nodes_map: dict[str, Any],
+        valid_sources: set[str],
     ) -> Diagnostic:
-        """Build structured diagnostic for template reference to missing node."""
+        """Build structured diagnostic for template reference to missing source."""
         from pflow.core.suggestion_utils import find_similar_items
 
-        available = sorted(nodes_map.keys())
+        available = sorted(valid_sources)
         similar = find_similar_items(missing_node_id, available, max_results=3, method="fuzzy") if available else []
 
         suggestions: list[str] = []
         if similar:
             best = similar[0]
-            corrected = f"${{{best}.{output_key}}}" if output_key else f"${{{best}}}"
+            sep = "" if output_key and output_key.startswith("[") else "."
+            corrected = f"${{{best}{sep}{output_key}}}" if output_key else f"${{{best}}}"
             suggestions.append(f'Change "{source}" to "{corrected}"')
             for suggestion in similar[1:]:
-                alternative = f"${{{suggestion}.{output_key}}}" if output_key else f"${{{suggestion}}}"
+                alternative = f"${{{suggestion}{sep}{output_key}}}" if output_key else f"${{{suggestion}}}"
                 suggestions.append(f"Or use {alternative}")
 
         return Diagnostic(
             severity=Severity.ERROR,
             source="validator",
             title="Template Error",
-            message=f"Output '{output_name}' source references non-existent node '{missing_node_id}'.",
+            message=f"Output '{output_name}' source references non-existent source '{missing_node_id}'.",
             suggestions=suggestions or None,
             context={
                 "category": "template_error",
@@ -544,7 +537,7 @@ class WorkflowValidator:
                 "template": source,
                 "available_fields": available,
                 "available_fields_total": len(available),
-                "available_fields_label": "nodes",
+                "available_fields_label": "sources",
                 "similar_names": similar or None,
             },
         )

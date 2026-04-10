@@ -56,7 +56,7 @@ class TestOutputSourceValidation:
         assert len(errors) == 1
         assert "nonexistent" in errors[0].message.lower()
         assert "result" in errors[0].message
-        assert "non-existent node" in errors[0].message.lower()
+        assert "non-existent source" in errors[0].message.lower()
 
     def test_invalid_output_source_shows_available_nodes(self):
         """❌ Invalid: Error message includes available nodes for debugging."""
@@ -74,7 +74,7 @@ class TestOutputSourceValidation:
         assert len(errors) == 1
         assert "missing" in errors[0].message
         assert errors[0].context is not None
-        assert errors[0].context.get("available_fields_label") == "nodes"
+        assert errors[0].context.get("available_fields_label") == "sources"
         assert "fetch" in errors[0].context.get("available_fields", [])
         assert "process" in errors[0].context.get("available_fields", [])
 
@@ -90,17 +90,38 @@ class TestOutputSourceValidation:
         errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
-    def test_valid_output_with_template_variable_in_source(self):
-        """✅ Valid: Template variables in source cannot be validated statically."""
+    def test_valid_output_with_template_input_field_access(self):
+        """✅ Valid: Template referencing declared input field passes.
+
+        Bug prevented: Validator rejects ${input.field} as non-existent node (GH #247).
+        Without this test: Can't use ${data.field} in outputs when data is a declared input.
+        """
         workflow = {
             "ir_version": "0.1.0",
             "nodes": [{"id": "node1", "type": "shell", "params": {}}],
             "edges": [],
-            "outputs": {"result": {"source": "${dynamic_node}.output"}},  # Template variable
+            "inputs": {"data": {"type": "dict", "description": "A dict with a field"}},
+            "outputs": {"result": {"source": "${data.field}"}},
         }
 
-        errors, _ = split_validator_diagnostics(workflow, {}, Registry(), skip_node_types=True)
-        # Should NOT error - template variables are skipped
+        errors, _ = split_validator_diagnostics(workflow, None, Registry(), skip_node_types=True)
+        assert len(errors) == 0
+
+    def test_valid_plain_source_references_declared_input(self):
+        """✅ Valid: Plain source referencing declared input passes.
+
+        Bug prevented: Plain data.field rejected when data is a declared input.
+        Without this test: Only template ${data.field} works, plain data.field doesn't.
+        """
+        workflow = {
+            "ir_version": "0.1.0",
+            "nodes": [{"id": "node1", "type": "shell", "params": {}}],
+            "edges": [],
+            "inputs": {"data": {"type": "dict", "description": "A dict"}},
+            "outputs": {"result": {"source": "data.field"}},
+        }
+
+        errors, _ = split_validator_diagnostics(workflow, None, Registry(), skip_node_types=True)
         assert len(errors) == 0
 
     def test_multiple_outputs_mixed_validity(self):

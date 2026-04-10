@@ -127,8 +127,6 @@ Unified pre-execution orchestrator — returns `list[Diagnostic]` directly. Ever
 
 **Dual-propagation-path dedup invariant** — child workflow warnings flow through BOTH this validator path (`_add_child_provenance`) AND the runtime path (`WorkflowExecutor._propagate_child_parser_warnings`). Both MUST use `format_child_provenance()` for the message, `node_id=d.node_id or step_id` for differentiating siblings, and `setdefault` for context keys. Divergence on any of these breaks `Diagnostic.__hash__` equality and dedup silently duplicates warnings.
 
-**Known false positive in step 6**: `_validate_template_in_source` only treats bare `${name}` references as potential workflow inputs (the "skip if no dot or bracket" check). Any `${input_name.field}` or `${input_name[0]}` form falls through to the "node not in nodes_map" check and errors, even when `input_name` is declared in the workflow's `inputs:` section. Blocks `pflow workflow save` for workflows that access fields on declared inputs in output sources. Tracked as spinje/pflow#247.
-
 ### data_flow.py
 
 Uses Kahn's algorithm for topological sort. Catches: forward references, circular dependencies, references to non-existent nodes, undefined input parameters.
@@ -157,7 +155,6 @@ Tri-state: `SUCCESS` (all nodes clean), `DEGRADED` (completed with warnings, e.g
 
 ## Known Issues
 
-- **Validator rejects `${input.field}` in output sources** — see `validator.py` section. Workflows using workflow input field access in outputs cannot be saved.
 - **Claude Code requires `description` in frontmatter** for skill discovery (workaround in `skill_service.py`).
 
 ## Key Lessons
