@@ -3,6 +3,7 @@
 import pytest
 
 from pflow.core.exceptions import (
+    _PFLOW_EXCEPTION_ANNOTATIONS,
     CompilationError,
     CriticalDiscoveryError,
     MarkdownParseError,
@@ -12,6 +13,7 @@ from pflow.core.exceptions import (
     WorkflowExistsError,
     WorkflowNotFoundError,
     WorkflowValidationError,
+    copy_pflow_annotations,
 )
 from pflow.core.user_errors import MCPError, OutputResolutionError, UserFriendlyError
 
@@ -106,3 +108,63 @@ class TestExceptionHierarchy:
         exc_summary = WorkflowValidationError("failed")
         assert exc_summary.validation_errors == []
         assert exc_summary.validation_warnings == []
+
+
+class TestCopyPflowAnnotations:
+    """Tests for the copy_pflow_annotations helper and _PFLOW_EXCEPTION_ANNOTATIONS constant."""
+
+    def test_copies_all_present_annotations(self):
+        """All _pflow_* attributes on source are copied to target."""
+        source = ValueError("original")
+        source._pflow_node_id = "fetch-data"  # type: ignore[attr-defined]
+        source._pflow_shared_store = {"key": "value"}  # type: ignore[attr-defined]
+        source._pflow_template_diagnostic = "diag"  # type: ignore[attr-defined]
+
+        target = RuntimeError("wrapper")
+        copy_pflow_annotations(source, target)
+
+        assert target._pflow_node_id == "fetch-data"  # type: ignore[attr-defined]
+        assert target._pflow_shared_store == {"key": "value"}  # type: ignore[attr-defined]
+        assert target._pflow_template_diagnostic == "diag"  # type: ignore[attr-defined]
+
+    def test_skips_absent_annotations(self):
+        """Attributes not present on source are not set on target."""
+        source = ValueError("original")
+        source._pflow_node_id = "fetch-data"  # type: ignore[attr-defined]
+
+        target = RuntimeError("wrapper")
+        copy_pflow_annotations(source, target)
+
+        assert target._pflow_node_id == "fetch-data"  # type: ignore[attr-defined]
+        assert not hasattr(target, "_pflow_shared_store")
+        assert not hasattr(target, "_pflow_template_diagnostic")
+        assert not hasattr(target, "_pflow_partial_resolutions")
+
+    def test_source_overwrites_existing_target_attrs(self):
+        """Existing non-None attrs on source overwrite target — this is the
+        expected behavior when wrapping (source has the authoritative context).
+        """
+        source = ValueError("original")
+        source._pflow_node_id = "source-node"  # type: ignore[attr-defined]
+
+        target = RuntimeError("wrapper")
+        target._pflow_node_id = "target-node"  # type: ignore[attr-defined]
+        copy_pflow_annotations(source, target)
+
+        assert target._pflow_node_id == "source-node"  # type: ignore[attr-defined]
+
+    def test_constant_covers_all_known_annotations(self):
+        """_PFLOW_EXCEPTION_ANNOTATIONS lists every annotation used in production.
+
+        If a new _pflow_* annotation is added to the engine/runner/template
+        resolution without updating the constant, this test should be updated
+        to catch the gap.
+        """
+        expected = {
+            "_pflow_node_id",
+            "_pflow_shared_store",
+            "_pflow_parser_diagnostics",
+            "_pflow_template_diagnostic",
+            "_pflow_partial_resolutions",
+        }
+        assert set(_PFLOW_EXCEPTION_ANNOTATIONS) == expected

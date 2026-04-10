@@ -63,7 +63,7 @@ WorkflowEngine(metrics, trace, only_node).run(workflow, shared) → action_strin
 
 4. **Engine does NOT restore node.params** — sets `node.params = resolved_params` permanently. Safe because: each node is visited once per traversal (loops re-resolve), batch items use the callback which sets params per item.
 
-5. **Template resolution inside try block** — so that strict-mode `ValueError` gets trace recording on the error path. `resolve_templates` attaches `._partial_resolutions` to the exception (non-standard, but needed for trace to show what resolved before the error).
+5. **Template resolution inside try block** — so that strict-mode `ValueError` gets trace recording on the error path. `resolve_templates` attaches `._pflow_partial_resolutions` to the exception (non-standard, but needed for trace to show what resolved before the error).
 
 6. **`record_trace` has explicit `success` parameter** — nodes returning `"error"` action (without raising) need `success=False` in the trace. Without explicit `success`, `error is None` → `success=True` would be wrong. Engine passes `success=not str(action).startswith("error")`.
 
@@ -85,10 +85,10 @@ Stateless executor. No per-node instance state.
 Happy path: steps 1-17.5, returns action string. Error path: catches exception, records metrics/trace/callback, archives via `mark_node_failed`, annotates exception, re-raises.
 
 **Error path details** (load-bearing — preserve these on any modification):
-- `getattr(e, "_partial_resolutions", None)` extracts template resolutions before the error (attached by `resolve_templates`)
+- `getattr(e, "_pflow_partial_resolutions", None)` extracts template resolutions before the error (attached by `resolve_templates`)
 - `getattr(e, "_pflow_template_diagnostic", None)` extracts a structured Diagnostic for strict-mode template errors so `_builtin_exception_diagnostic` can return it directly without losing the per-reference structure
 - `call_completion_callback(..., action="error", error=e)` — without this the progress spinner shows the failed node as still running
-- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution `ValueError` (via `_partial_resolutions` presence) as `template_error`, otherwise `exception`
+- `mark_node_failed(shared, id, category=..., error=...)` — categorizes template-resolution `ValueError` (via `_pflow_partial_resolutions` presence) as `template_error`, otherwise `exception`
 - `e._pflow_node_id = config.node_id` — the Runner's `_exception_to_result` reads this to annotate diagnostics
 - The Runner additionally attaches `e._pflow_shared_store = shared_store` so `_exception_to_result` can populate `ExecutionResult.shared_after`. Without this, exception-path failures have empty `shared_after` and CLI/MCP formatters lose all per-node detail.
 
@@ -128,7 +128,7 @@ The `inputs` key is ALWAYS processed first. Resolved input values are merged int
 
 ### Error handling
 
-**Strict mode**: raises `ValueError` with `._partial_resolutions` attribute (dict of params resolved before the error). The engine's except handler extracts these for trace recording.
+**Strict mode**: raises `ValueError` with `._pflow_partial_resolutions` attribute (dict of params resolved before the error). The engine's except handler extracts these for trace recording.
 
 **Permissive mode**: returns errors in `template_errors` list. Each error is a dict with `message`, `type`/`unresolved`, `param`/`template`, **and a structured `diagnostic`** (`Diagnostic` object). The engine writes them to `shared["__template_errors__"][node_id]`. Both the unresolved-template path and the type_validation path attach a Diagnostic at the source site so `runner._extract_runtime_warnings` has a single code path — any entry without a `diagnostic` key is a contract violation and gets skipped with a logger warning.
 
@@ -262,7 +262,7 @@ The structured `Diagnostic` carries all rich data in `context.unresolved_referen
 
 - **Step 17.5 is the only place that archives action="error" failures.** Don't add direct writes to `__failures__` elsewhere — they'll drift from the canonical record shape and break the "single write site" guarantee.
 - **`_handle_no_successor` must check `get_node_failure` first** before re-archiving. Step 17.5 may have already archived with the real category and data; a second `mark_node_failed` call would `pop` an already-empty `shared[id]` and overwrite the rich record with `{data: {}, category: routing_error}`.
-- **Exception annotation pattern** (load-bearing — survives across the engine→runner→formatter boundary): `e._pflow_node_id`, `e._pflow_shared_store`, `e._pflow_template_diagnostic`, `e._pflow_parser_diagnostics`, `e._partial_resolutions`. `raise X from e` LOSES these unless explicitly copied. Readers use `getattr(e, "_pflow_*", None)`.
+- **Exception annotation pattern** (load-bearing — survives across the engine→runner→formatter boundary): all annotations listed in `_PFLOW_EXCEPTION_ANNOTATIONS` (`core/exceptions.py`). `raise X from e` LOSES these — use `copy_pflow_annotations(source, target)` when wrapping. Readers use `getattr(e, "_pflow_*", None)`.
 - **Batch fail_fast raises in `execute_batch`, NOT in `_execute_sequential`/`_execute_parallel`.** The inner functions break out of their loops on first failure and return partial state. The raise happens AFTER `_aggregate_batch_results` writes `shared[node_id]` so step 17.5 can archive the metadata.
 - **Steps 1-4 are outside try, 5-17.5 inside try** in `_execute_node`. Config hash (step 4) runs before template resolution (step 5) because it doesn't need resolved params.
 - **Batch nodes skip top-level template resolution** — per-item resolution in callback instead.

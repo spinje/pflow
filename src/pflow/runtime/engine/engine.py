@@ -386,7 +386,7 @@ class WorkflowEngine:
             enrich_llm_cost(config.node_id, shared)
 
             # Extract partial resolutions from template errors (attached by resolve_templates)
-            error_resolutions = getattr(e, "_partial_resolutions", None) or last_resolutions
+            error_resolutions = getattr(e, "_pflow_partial_resolutions", None) or last_resolutions
 
             record_trace(
                 config.node_id,
@@ -409,7 +409,7 @@ class WorkflowEngine:
 
             # Categorize template-resolution ValueErrors specifically so the
             # formatter can render them as template errors, not generic exceptions.
-            is_template_error = isinstance(e, ValueError) and getattr(e, "_partial_resolutions", None) is not None
+            is_template_error = isinstance(e, ValueError) and getattr(e, "_pflow_partial_resolutions", None) is not None
             category = FAILURE_CATEGORY_TEMPLATE if is_template_error else FAILURE_CATEGORY_EXCEPTION
 
             node_data = shared.get(config.node_id, {})

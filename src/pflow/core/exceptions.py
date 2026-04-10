@@ -6,6 +6,30 @@ from typing import Any
 
 from pflow.core.diagnostic import Diagnostic, Severity
 
+# Canonical list of dynamic attributes the engine/runner attach to exceptions
+# for cross-boundary context threading.  Used by copy_pflow_annotations() and
+# as the single source of truth for what survives the propagation chain.
+_PFLOW_EXCEPTION_ANNOTATIONS = (
+    "_pflow_node_id",
+    "_pflow_shared_store",
+    "_pflow_parser_diagnostics",
+    "_pflow_template_diagnostic",
+    "_pflow_partial_resolutions",
+)
+
+
+def copy_pflow_annotations(source: BaseException, target: BaseException) -> None:
+    """Copy _pflow_* attributes from source to target exception.
+
+    Use when wrapping an annotated exception: the engine/runner attach
+    diagnostic context via these attributes, and ``raise X from e``
+    creates a new object that loses them.
+    """
+    for attr in _PFLOW_EXCEPTION_ANNOTATIONS:
+        val = getattr(source, attr, None)
+        if val is not None:
+            setattr(target, attr, val)
+
 
 class PflowError(Exception):
     """Base exception for all pflow errors."""

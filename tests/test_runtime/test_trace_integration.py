@@ -397,7 +397,7 @@ class TestTemplateResolutionsOnError:
 
         Note: Template resolution errors ARE also captured in trace events
         (resolution runs inside the engine's try/except). Partial resolutions
-        up to the error point are included via _partial_resolutions on the ValueError.
+        up to the error point are included via _pflow_partial_resolutions on the ValueError.
         """
         ir = {
             "ir_version": "0.1.0",
@@ -439,10 +439,11 @@ class TestTemplateResolutionsOnError:
         """When template resolution fails in strict mode, the trace event should
         capture partial resolutions (params resolved up to the error point).
 
-        This tests the _partial_resolutions mechanism: resolve_templates() attaches
-        partial resolutions to the ValueError, and the engine's except handler
-        extracts them for trace recording. Without this, template errors produce
-        trace events with empty template_resolutions — losing debug information.
+        This tests the _pflow_partial_resolutions mechanism: resolve_templates()
+        attaches partial resolutions to the ValueError, and the engine's except
+        handler extracts them for trace recording. Without this, template errors
+        produce trace events with empty template_resolutions — losing debug
+        information.
         """
         # Two template params: first resolves, second fails.
         # The trace should show the first param's resolution.
