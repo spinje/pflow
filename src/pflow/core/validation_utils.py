@@ -50,6 +50,11 @@ def is_valid_parameter_name(name: str) -> bool:
     if not name or not name.strip():
         return False
 
+    # Reject reserved framework keys — __*__ bypasses NamespacedSharedStore
+    # and writes directly to root store, corrupting execution state
+    if name.startswith("__") and name.endswith("__"):
+        return False
+
     # Disallow shell special characters and whitespace that could cause issues
     # - Shell special chars: dangerous in commands or template expansion
     # - Spaces/tabs: break CLI parsing, incompatible with template regex
@@ -69,6 +74,9 @@ def get_parameter_validation_error(name: str, param_type: str = "parameter") -> 
     """
     if not name or not name.strip():
         return f"Invalid {param_type} name - cannot be empty"
+
+    if name.startswith("__") and name.endswith("__"):
+        return f"Invalid {param_type} name '{name}' - names wrapped in double underscores are reserved for internal use"
 
     # Check for specific dangerous characters and provide helpful messages
     if " " in name:

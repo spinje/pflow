@@ -29,6 +29,11 @@ def test_valid_parameter_names():
     # Complex but valid
     assert is_valid_parameter_name("my-complex.param-123")
 
+    # Single/double underscores that are NOT reserved (only __X__ is reserved)
+    assert is_valid_parameter_name("_private")
+    assert is_valid_parameter_name("__double_leading")
+    assert is_valid_parameter_name("trailing__")
+
 
 def test_invalid_parameter_names():
     """Test that invalid parameter names are rejected."""
@@ -63,6 +68,12 @@ def test_invalid_parameter_names():
     assert not is_valid_parameter_name("my'var")
     assert not is_valid_parameter_name("my\\var")
 
+    # Reserved double-underscore names (bypass NamespacedSharedStore)
+    assert not is_valid_parameter_name("__execution__")
+    assert not is_valid_parameter_name("__failures__")
+    assert not is_valid_parameter_name("__warnings__")
+    assert not is_valid_parameter_name("__custom__")
+
 
 def test_parameter_validation_error_messages():
     """Test that error messages are descriptive."""
@@ -95,3 +106,7 @@ def test_parameter_validation_error_messages():
     # Quotes
     error = get_parameter_validation_error('"quoted"', "input")
     assert "quotes" in error
+
+    # Reserved dunder names
+    error = get_parameter_validation_error("__execution__", "input")
+    assert "reserved" in error
