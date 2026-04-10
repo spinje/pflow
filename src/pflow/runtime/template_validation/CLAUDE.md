@@ -62,7 +62,7 @@ validator.py (orchestrator)
 
 ## `node_outputs` Dict Shape
 
-All passes consume the `node_outputs` dict built by `extract_node_outputs()` in `validator.py`. Three shapes exist — distinguished by flags:
+All passes consume the `node_outputs` dict built by `extract_node_outputs()` in `validator.py`. Four shapes exist — distinguished by flags:
 
 ```python
 # Standard node output (namespaced)
@@ -83,9 +83,15 @@ node_outputs["item"] = {
     "type": "any", "node_id": "process", "node_type": "llm",
     "is_batch_item": True,
 }
+
+# Inputs-as-context key (injected so ${key} and ${key.field} resolve during validation)
+node_outputs["concept_brief"] = {
+    "type": "any", "node_id": "consumer", "node_type": "llm",
+    "is_inputs_context": True,
+}
 ```
 
-Passes use `is_batch_output` and `is_batch_item` to branch behavior. Workflow nodes get special handling — `validator.py` tries to resolve child workflow outputs at validation time via `_resolve_child_workflow_outputs()`.
+Passes use `is_batch_output` to branch behavior (path_validation uses it to detect batch nodes). `is_batch_item` and `is_inputs_context` are metadata flags for provenance — not read by any pass currently. Workflow nodes get special handling — `validator.py` tries to resolve child workflow outputs at validation time via `_resolve_child_workflow_outputs()`.
 
 **Note:** `validator.py` has dual responsibility — it orchestrates validation passes AND builds the `node_outputs` dict (`extract_node_outputs`, also used by `compilation/compile_validation.py`). Agents looking for output-related code need to look here, not just in the passes.
 

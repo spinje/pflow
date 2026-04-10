@@ -111,16 +111,6 @@ def validate_workflow_templates(
     # Get full output structure from nodes
     node_outputs = extract_node_outputs(workflow_ir, registry, available_params)
 
-    # Remove inputs keys from templates — these are resolved by the inputs-as-context
-    # mechanism at runtime, not from node_outputs. Per-node scoping is handled by
-    # data_flow.py validation (which gives better errors with node ID and param name).
-    inputs_keys: set[str] = set()
-    for node in workflow_ir.get("nodes", []):
-        inputs_param = node.get("params", {}).get("inputs")
-        if isinstance(inputs_param, dict):
-            inputs_keys.update(inputs_param.keys())
-    all_templates -= inputs_keys
-
     logger.debug(
         f"Extracted outputs from {len(node_outputs)} node variables", extra={"outputs": sorted(node_outputs.keys())}
     )
@@ -388,6 +378,13 @@ def extract_node_outputs(
         if not node_type or not node_id:
             continue
 
+        # Register inputs-as-context keys for all node types.
+        # Runs before type-specific branching so workflow, batch, and regular
+        # nodes all get their inputs keys registered.
+        inputs_param = node.get("params", {}).get("inputs")
+        if isinstance(inputs_param, dict):
+            _register_inputs_context_variables(node_outputs, node_id, node_type, inputs_param)
+
         # Workflow nodes: resolve child outputs for validation.
         if node_type in ("workflow", "pflow.runtime.workflow_executor"):
             _register_workflow_node_outputs(
@@ -501,6 +498,30 @@ def _register_batch_item_variables(
         "node_type": node_type,
         "is_batch_item": True,
     }
+
+
+def _register_inputs_context_variables(
+    node_outputs: dict[str, Any],
+    node_id: str,
+    node_type: str,
+    inputs_param: dict[str, Any],
+) -> None:
+    """Register inputs-as-context keys as available variables for template validation.
+
+    When a node declares ``- inputs: {key: ${source}}``, resolved keys become
+    template variables within that node (same mechanism as batch item aliases).
+    Registering them here lets path validation accept both bare (``${key}``) and
+    dotted (``${key.field}``) references.  Per-node scoping is handled by
+    ``data_flow.py`` validation.
+    """
+    for key in inputs_param:
+        node_outputs[key] = {
+            "type": "any",
+            "description": f"Template context variable from inputs mapping (node '{node_id}')",
+            "node_id": node_id,
+            "node_type": node_type,
+            "is_inputs_context": True,
+        }
 
 
 def _resolve_child_workflow_outputs(

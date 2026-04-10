@@ -1021,3 +1021,168 @@ Invokes the middle workflow.
         # guard against the overwrite bug.
         assert context.get("sub_workflow_step") == "invoke-grandchild"
         assert "grandchild.pflow.md" in str(context.get("sub_workflow_path", ""))
+
+
+# ---------------------------------------------------------------------------
+# 12. inputs mapping skips required-input check (fixes #239)
+# ---------------------------------------------------------------------------
+
+
+class TestInputsMappingRequiredCheck:
+    """When a parent uses ``inputs`` to forward values to a child workflow,
+    the validator should check key coverage for dict mappings and skip the
+    check entirely for opaque string templates."""
+
+    def test_inputs_dict_mapping_satisfies_required_check(self, tmp_path: Path) -> None:
+        """Parent with inputs: {name: ..., value: ...} should satisfy child requirements."""
+        child = tmp_path / "child.pflow.md"
+        write_pflow_md(
+            child,
+            """\
+# Child With Required Inputs
+
+A child workflow requiring name and value.
+
+## Inputs
+
+### name
+
+The name field for the child.
+
+- type: string
+- required: true
+
+### value
+
+The value field for the child.
+
+- type: integer
+- required: true
+
+## Steps
+
+### echo-it
+
+Echo the provided input values.
+
+- type: shell
+- command: echo "${name}=${value}"
+""",
+        )
+
+        parent_ir = _parent_ir(
+            str(child),
+            provided_params={"inputs": {"name": "${upstream.name}", "value": "${upstream.value}"}},
+        )
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            registry=None,
+            skip_node_types=True,
+        )
+        missing_input_errors = [e for e in errors if "requires input" in e.message]
+        assert missing_input_errors == [], f"False-positive missing-input errors: {missing_input_errors}"
+
+    def test_inputs_dict_partial_coverage_detected(self, tmp_path: Path) -> None:
+        """Parent with inputs: {name: ...} but child needs name AND value should error."""
+        child = tmp_path / "child.pflow.md"
+        write_pflow_md(
+            child,
+            """\
+# Child With Required Inputs
+
+A child workflow requiring name and value.
+
+## Inputs
+
+### name
+
+The name field for the child.
+
+- type: string
+- required: true
+
+### value
+
+The value field for the child.
+
+- type: integer
+- required: true
+
+## Steps
+
+### echo-it
+
+Echo the provided input values.
+
+- type: shell
+- command: echo "${name}=${value}"
+""",
+        )
+
+        # Only provide 'name' via inputs, not 'value'
+        parent_ir = _parent_ir(
+            str(child),
+            provided_params={"inputs": {"name": "${upstream.name}"}},
+        )
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            registry=None,
+            skip_node_types=True,
+        )
+        missing_value_errors = [e for e in errors if "requires input 'value'" in e.message]
+        assert len(missing_value_errors) == 1, f"Expected error for missing 'value', got: {errors}"
+        # 'name' should NOT be flagged
+        missing_name_errors = [e for e in errors if "requires input 'name'" in e.message]
+        assert missing_name_errors == [], f"Unexpected error for 'name': {missing_name_errors}"
+
+    def test_inputs_template_mapping_skips_required_check(self, tmp_path: Path) -> None:
+        """Parent with inputs: '${item}' (opaque template) should skip required-input check."""
+        child = tmp_path / "child.pflow.md"
+        write_pflow_md(
+            child,
+            """\
+# Child With Required Inputs
+
+A child workflow requiring name and value.
+
+## Inputs
+
+### name
+
+The name field for the child.
+
+- type: string
+- required: true
+
+### value
+
+The value field for the child.
+
+- type: integer
+- required: true
+
+## Steps
+
+### echo-it
+
+Echo the provided input values.
+
+- type: shell
+- command: echo "${name}=${value}"
+""",
+        )
+
+        parent_ir = _parent_ir(str(child), provided_params={"inputs": "${item}"})
+        errors, _warnings = split_validator_diagnostics(
+            workflow_ir=parent_ir,
+            extracted_params={},
+            workflow_file=tmp_path / "parent.pflow.md",
+            registry=None,
+            skip_node_types=True,
+        )
+        missing_input_errors = [e for e in errors if "requires input" in e.message]
+        assert missing_input_errors == [], f"False-positive missing-input errors: {missing_input_errors}"

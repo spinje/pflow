@@ -957,26 +957,48 @@ class TestWorkflowExecutorComprehensive:
         assert is_workflow_file_reference("my-workflow") is False
         assert is_workflow_file_reference("simple") is False
 
-    # --- Test 33: 'inputs' key excluded from child inputs ---
+    # --- Test 33: 'inputs' dict values forwarded as child inputs ---
 
-    def test_inputs_not_passed_as_child_input(self):
-        """Verify 'inputs' framework key is excluded from child inputs.
+    def test_inputs_dict_values_forwarded_as_child_inputs(self):
+        """Resolved ``inputs`` dict values are forwarded as child inputs.
 
-        The 'inputs' param is consumed by the engine's template resolution to inject
-        additional template context. It must NOT leak through to child workflow
-        inputs — it is a framework-level concern, not a user param.
+        The ``inputs`` key itself stays reserved (consumed by template resolution),
+        but its resolved dict values are included in child inputs so that
+        ``inputs: ${item}`` forwarding works for sub-workflows.
         """
         executor = WorkflowExecutor()
         executor.params = {
             "workflow": "./child.pflow.md",
-            "inputs": {"api_key": "xxx"},  # Framework key, not a child input
+            "inputs": {"api_key": "xxx", "name": "alice"},
             "text": "hello",
             "count": 5,
         }
         child_inputs = executor._extract_child_inputs()
-        assert "inputs" not in child_inputs
+        assert "inputs" not in child_inputs  # The key itself is not forwarded
         assert "workflow" not in child_inputs  # Also reserved
-        assert child_inputs == {"text": "hello", "count": 5}
+        assert child_inputs == {"api_key": "xxx", "name": "alice", "text": "hello", "count": 5}
+
+    def test_inputs_toplevel_params_override_inputs_values(self):
+        """Top-level params take precedence over ``inputs`` dict values."""
+        executor = WorkflowExecutor()
+        executor.params = {
+            "workflow": "./child.pflow.md",
+            "inputs": {"name": "from-inputs"},
+            "name": "from-toplevel",
+        }
+        child_inputs = executor._extract_child_inputs()
+        assert child_inputs["name"] == "from-toplevel"
+
+    def test_inputs_non_dict_not_forwarded(self):
+        """When ``inputs`` resolves to a non-dict (e.g. a string), nothing is forwarded."""
+        executor = WorkflowExecutor()
+        executor.params = {
+            "workflow": "./child.pflow.md",
+            "inputs": "not-a-dict",
+            "text": "hello",
+        }
+        child_inputs = executor._extract_child_inputs()
+        assert child_inputs == {"text": "hello"}
 
     # --- Test 34: required: false with no default is not rejected ---
 

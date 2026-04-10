@@ -58,7 +58,7 @@ class WorkflowExecutor(BaseNode):
         "max_depth",
         "error_action",
         "__registry__",
-        "inputs",  # Framework key consumed by engine's template resolution, not a child input
+        "inputs",  # Framework key consumed by engine's template resolution; resolved dict values forwarded via _extract_child_inputs
     })
 
     # Cross-cutting infrastructure keys propagated from parent to child storage.
@@ -407,12 +407,19 @@ class WorkflowExecutor(BaseNode):
         return f"Sub-workflow failed at {workflow_path} (returned error action)"
 
     def _extract_child_inputs(self) -> dict[str, Any]:
-        """Extract child workflow inputs from params (everything not reserved)."""
-        return {
-            key: value
-            for key, value in self.params.items()
-            if key not in self.RESERVED_PARAMS and not key.startswith("__")
-        }
+        """Extract child workflow inputs from params.
+
+        Includes non-reserved top-level params AND resolved ``inputs`` dict
+        values.  Top-level params take precedence over ``inputs`` values.
+        """
+        result: dict[str, Any] = {}
+        inputs = self.params.get("inputs")
+        if isinstance(inputs, dict):
+            result.update(inputs)
+        for key, value in self.params.items():
+            if key not in self.RESERVED_PARAMS and not key.startswith("__"):
+                result[key] = value
+        return result
 
     def _load_workflow(
         self, shared: dict[str, Any], execution_stack: list[str]
