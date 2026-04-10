@@ -248,8 +248,10 @@ When building mock node interfaces, parameters use `{"key": "param_name", ...}`,
 ### 9. `purpose` Field Minimum Length
 FlowIR schema requires `purpose` to be at least 10 characters. When building IR dicts for tests, don't use short strings like `"test"`.
 
-### 10. Click Interactive Testing Limitation
+### 10. CliRunner Limitations
 `CliRunner` always returns `False` for `isatty()`. Can't test interactive prompts (workflow save dialog). Test execution and save functionality independently.
+
+**CliRunner also masks stderr coherence bugs**: `logging` writes to the original stderr fd, not Click's captured stream. Partial-line corruption, logger interleaving, and pipe routing bugs are invisible to CliRunner. Use real subprocess tests (Pattern 4) for anything involving stderr output, `logger.*` calls, or pipe routing.
 
 ### 11. Mock Pollution Between Test Files
 Mocks from one file persist and break others → Use `@pytest.fixture(autouse=True)` with `patch.stopall()` and `importlib.reload()` for modules with persistent mocks.
@@ -303,7 +305,10 @@ def test_warns(caplog):
 ### 17. `claude_agent_sdk` Mocked via `sys.modules` (Session-Wide)
 `test_nodes/test_claude/test_claude_code.py` injects mock `claude_agent_sdk` into `sys.modules` **at module level** (not in a fixture). This happens at import time, persists for the entire pytest session, and has no cleanup. If you need to test real `claude_agent_sdk` integration, it won't work in the same pytest run.
 
-### 18. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
+### 18. Rewritten Tests That Assert Less Are Regression Signals
+When rewriting tests during a refactor, if the new test asserts LESS than the original, the new implementation likely dropped behavior — the old test wasn't over-specified. Investigate before weakening the assertion.
+
+### 19. Cross-Layer Features Need End-to-End Tests Through `WorkflowRunner`
 Unit tests that mock the boundary you're testing will pass while the real pipeline breaks. When a feature crosses ≥2 layers (e.g. shared store → engine → runner → formatter), write at least one test that runs through `WorkflowRunner().run()` and inspects `result.shared_after` / `result.diagnostics` end-to-end. Failure modes that this catches:
 - Engine archives data correctly but the runner drops `shared_store` on the exception path
 - Diagnostic context is populated correctly but the renderer never consumes it
